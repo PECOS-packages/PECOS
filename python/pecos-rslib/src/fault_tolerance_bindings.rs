@@ -1033,7 +1033,12 @@ impl PyInfluenceBuilder {
     ///
     /// Returns:
     ///     `DagFaultInfluenceMap` with proper detector definitions and tracked Paulis.
-    fn build(&self) -> PyDagFaultInfluenceMap {
+    ///
+    /// Raises:
+    ///     ValueError: A circuit annotation cannot be resolved -- an observable
+    ///         referencing a missing node or a non-measurement gate, or a
+    ///         tracked Pauli with no meta gate.
+    fn build(&self) -> PyResult<PyDagFaultInfluenceMap> {
         let mut builder = RustInfluenceBuilder::new(&self.dag);
 
         if !self.tracked_x_qubits.is_empty() {
@@ -1044,14 +1049,18 @@ impl PyInfluenceBuilder {
         }
 
         if self.use_circuit_tracked_paulis {
-            builder = builder.with_circuit_annotations(&self.dag);
+            builder = builder
+                .with_circuit_annotations()
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         }
         for pauli in &self.tracked_paulis {
             builder = builder.with_tracked_pauli(pauli.clone());
         }
 
-        let inner = builder.build();
-        PyDagFaultInfluenceMap { inner }
+        let inner = builder
+            .build()
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        Ok(PyDagFaultInfluenceMap { inner })
     }
 
     fn __repr__(&self) -> String {

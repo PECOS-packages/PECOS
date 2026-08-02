@@ -3038,7 +3038,8 @@ mod tests {
 
         let map = crate::fault_tolerance::InfluenceBuilder::new(&dag)
             .with_z(&[0])
-            .build();
+            .build()
+            .expect("circuit is replayable");
 
         assert_eq!(map.num_dem_outputs(), 0);
         assert_eq!(map.num_tracked_paulis(), 1);

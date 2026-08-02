@@ -44,7 +44,10 @@ fn repetition_code_circuit(num_rounds: usize) -> DagCircuit {
 fn build_influence_map(
     circuit: &DagCircuit,
 ) -> pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap {
-    InfluenceBuilder::new(circuit).with_z(&[0, 1, 2]).build()
+    InfluenceBuilder::new(circuit)
+        .with_z(&[0, 1, 2])
+        .build()
+        .expect("circuit is replayable")
 }
 
 // ============================================================================
@@ -457,6 +460,7 @@ fn circuit_annotation_dual_output() {
     let sampler = DemSamplerBuilder::new(&influence_map)
         .with_uniform_noise(0.05) // high noise for visible effect
         .with_circuit_annotations(&dag)
+        .expect("annotations resolve against the influence map")
         .build()
         .unwrap();
 

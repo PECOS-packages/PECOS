@@ -49,7 +49,7 @@ fn main() {
     let num_rounds = 8;
     let gates = build_weight4_circuit(num_rounds);
     let noise = pecos_eeg::noise::UniformNoise::coherent_only(0.05);
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates).expect("supported circuit");
     let na = 1; // one ancilla
 
     let mut detectors = Vec::new();

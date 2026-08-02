@@ -57,7 +57,7 @@ fn main() {
     // =========================================================================
     let builder = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]); // Z logical on all data qubits
 
-    let influence_map = builder.build();
+    let influence_map = builder.build().expect("circuit is replayable");
 
     println!("\n2. Influence map built:");
     println!("   Fault locations: {}", influence_map.locations.len());

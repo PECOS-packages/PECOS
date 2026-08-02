@@ -484,8 +484,10 @@ mod tests {
         dag.observable_labeled("obs0", &[meas[0]]);
 
         let map = InfluenceBuilder::new(&dag)
-            .with_circuit_annotations(&dag)
-            .build();
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
+            .build()
+            .expect("circuit is replayable");
         assert_eq!(map.num_tracked_paulis(), 1);
         assert_eq!(map.num_observables(), 1);
 
@@ -501,7 +503,9 @@ mod tests {
         let meas = dag.mz(&[1]);
         dag.detector(&[meas[0]]);
 
-        let map = InfluenceBuilder::new(&dag).build();
+        let map = InfluenceBuilder::new(&dag)
+            .build()
+            .expect("circuit is replayable");
         assert_eq!(map.num_observables(), 0);
 
         let decoder = LookupDecoder::build(&map, &NoiseConfig::uniform(0.01), 0);

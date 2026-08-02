@@ -131,8 +131,10 @@ fn custom_p1_weights_affect_decoder() {
     dag.observable(&[ms[0], ms[1]]);
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     // Uniform weights
     let noise_uniform = NoiseConfig::uniform(0.001);
@@ -205,8 +207,10 @@ fn prep_gate_stops_propagation() {
     dag.mz(&[0]);
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     // Find the H gate's after-location
     let mut h_has_influence = false;
@@ -311,8 +315,10 @@ fn probability_sums_to_one() {
     dag.observable(&[ms[0], ms[1]]);
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     let noise = NoiseConfig::uniform(0.001);
     let decoder = LookupDecoder::build(&map, &noise, 3);

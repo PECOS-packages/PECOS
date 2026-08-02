@@ -300,7 +300,7 @@ fn relative_records(num_measurements: usize, refs: &[TickMeasRef]) -> Vec<i32> {
     let num_measurements = i32::try_from(num_measurements).expect("measurement count fits in i32");
     refs.iter()
         .map(|m| {
-            i32::try_from(m.record_idx).expect("measurement record index fits in i32")
+            i32::try_from(m.meas_id.index()).expect("measurement record index fits in i32")
                 - num_measurements
         })
         .collect()

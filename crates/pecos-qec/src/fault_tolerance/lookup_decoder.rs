@@ -481,7 +481,8 @@ mod tests {
         dag.pz(&[0]);
         dag.tracked_pauli_labeled("track_x", X(0));
         let meas = dag.mz(&[0]);
-        dag.observable_labeled("obs0", &[meas[0]]);
+        dag.observable_labeled("obs0", &[meas[0]])
+            .expect("refs are from this circuit");
 
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()
@@ -501,7 +502,8 @@ mod tests {
         dag.pz(&[0, 1]);
         dag.cx(&[(0, 1)]);
         let meas = dag.mz(&[1]);
-        dag.detector(&[meas[0]]);
+        dag.detector(&[meas[0]])
+            .expect("refs are from this circuit");
 
         let map = InfluenceBuilder::new(&dag)
             .build()

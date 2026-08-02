@@ -990,23 +990,38 @@ pyo3::create_exception!(
     pyo3::exceptions::PyException
 );
 
-/// Extract node indices from a list of either `int` or `(int, int)` tuples.
-/// This allows `detector()` / `observable()` to accept both raw node indices
-/// and measurement refs from `mz()`.
-fn extract_measurement_nodes(list: &Bound<'_, pyo3::types::PyList>) -> PyResult<Vec<usize>> {
+/// Resolve `(node, qubit)` measurement refs from `mz()` against the circuit.
+///
+/// Plain ints are rejected: a bare int is ambiguous between a node index and
+/// a measurement id, and silently reinterpreting it is how annotations end up
+/// referencing the wrong measurement. The tuple is resolved against the gate
+/// it names, so a stale or foreign ref raises instead of resolving to nonsense.
+fn extract_dag_meas_refs(
+    circuit: &DagCircuit,
+    list: &Bound<'_, pyo3::types::PyList>,
+) -> PyResult<Vec<pecos_quantum::MeasRef>> {
     list.iter()
         .map(|item| {
-            // Try (node, qubit) tuple first
-            if let Ok((node, _qubit)) = item.extract::<(usize, usize)>() {
-                Ok(node)
-            } else {
-                // Fall back to plain int
-                item.extract::<usize>().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err(
-                        "measurements must be a list of ints or (node, qubit) tuples from mz()",
-                    )
+            let (node, qubit): (usize, usize) = item.extract().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "measurements must be (node, qubit) tuples from mz(); plain ints are \
+                     not accepted because a bare index does not identify a measurement",
+                )
+            })?;
+            let refs = circuit.meas_refs(node).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "measurement ref (node={node}, qubit={qubit}) does not name a \
+                     measurement gate in this circuit; pass refs returned by mz()"
+                ))
+            })?;
+            refs.into_iter()
+                .find(|r| r.qubit.index() == qubit)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "measurement gate at node {node} does not measure qubit {qubit}; \
+                         pass refs returned by mz()"
+                    ))
                 })
-            }
         })
         .collect()
 }
@@ -1457,12 +1472,13 @@ impl PyDagCircuit {
         measurements: &Bound<'_, pyo3::types::PyList>,
         label: Option<String>,
     ) -> PyResult<usize> {
-        let nodes = extract_measurement_nodes(measurements)?;
-        Ok(if let Some(l) = label {
-            self.inner.detector_labeled(&l, &nodes)
+        let refs = extract_dag_meas_refs(&self.inner, measurements)?;
+        let result = if let Some(l) = label {
+            self.inner.detector_labeled(&l, &refs)
         } else {
-            self.inner.detector(&nodes)
-        })
+            self.inner.detector(&refs)
+        };
+        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// Annotate a logical observable: measurements whose XOR gives a logical outcome.
@@ -1480,12 +1496,13 @@ impl PyDagCircuit {
         measurements: &Bound<'_, pyo3::types::PyList>,
         label: Option<String>,
     ) -> PyResult<usize> {
-        let nodes = extract_measurement_nodes(measurements)?;
-        Ok(if let Some(l) = label {
-            self.inner.observable_labeled(&l, &nodes)
+        let refs = extract_dag_meas_refs(&self.inner, measurements)?;
+        let result = if let Some(l) = label {
+            self.inner.observable_labeled(&l, &refs)
         } else {
-            self.inner.observable(&nodes)
-        })
+            self.inner.observable(&refs)
+        };
+        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// Place a tracked-Pauli annotation at this point in the circuit.
@@ -1534,6 +1551,16 @@ impl PyDagCircuit {
                 pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
             };
             dict.set_item("kind", kind_str)?;
+            match &ann.kind {
+                pecos_quantum::AnnotationKind::Detector {
+                    measurement_ids, ..
+                }
+                | pecos_quantum::AnnotationKind::Observable { measurement_ids } => {
+                    let ids: Vec<usize> = measurement_ids.iter().map(|id| id.index()).collect();
+                    dict.set_item("measurement_ids", ids)?;
+                }
+                pecos_quantum::AnnotationKind::TrackedPauli => {}
+            }
             dict.set_item("label", &ann.label)?;
             list.append(dict)?;
         }
@@ -2981,12 +3008,12 @@ impl PyTickCircuit {
         label: Option<String>,
     ) -> PyResult<usize> {
         let refs = extract_tick_meas_refs(&self.inner, measurements)?;
-        let idx = if let Some(l) = label {
+        let result = if let Some(l) = label {
             self.inner.detector_labeled(&l, &refs)
         } else {
             self.inner.detector(&refs)
         };
-        Ok(idx)
+        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// Annotate a logical observable.
@@ -2997,12 +3024,12 @@ impl PyTickCircuit {
         label: Option<String>,
     ) -> PyResult<usize> {
         let refs = extract_tick_meas_refs(&self.inner, measurements)?;
-        let idx = if let Some(l) = label {
+        let result = if let Some(l) = label {
             self.inner.observable_labeled(&l, &refs)
         } else {
             self.inner.observable(&refs)
         };
-        Ok(idx)
+        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// Place a tracked-Pauli annotation.
@@ -3034,6 +3061,16 @@ impl PyTickCircuit {
                 pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
             };
             dict.set_item("kind", kind_str)?;
+            match &ann.kind {
+                pecos_quantum::AnnotationKind::Detector {
+                    measurement_ids, ..
+                }
+                | pecos_quantum::AnnotationKind::Observable { measurement_ids } => {
+                    let ids: Vec<usize> = measurement_ids.iter().map(|id| id.index()).collect();
+                    dict.set_item("measurement_ids", ids)?;
+                }
+                pecos_quantum::AnnotationKind::TrackedPauli => {}
+            }
             dict.set_item("label", &ann.label)?;
             list.append(dict)?;
         }
@@ -3054,10 +3091,9 @@ fn extract_tick_meas_refs(
                 )
             })?;
             let qubit = pecos_core::QubitId::from(qubit);
-            // Resolve against the circuit rather than fabricating the record
-            // index. `TickCircuit::detector`/`observable` read `record_idx`
-            // immediately, so a placeholder collapsed every reference onto
-            // record 0 and silently corrupted the annotation (issue #382).
+            // Resolve against the circuit rather than fabricating the id.
+            // A placeholder id collapsed every reference onto measurement 0
+            // and silently corrupted the annotation (issue #382).
             circuit.meas_ref(tick, gate_idx, qubit).ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err(format!(
                     "measurement ref (tick={tick}, gate_idx={gate_idx}, qubit={}) does not \

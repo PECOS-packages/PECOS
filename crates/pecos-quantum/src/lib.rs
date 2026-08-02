@@ -82,12 +82,13 @@ pub mod hugr_convert;
 
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
 pub use dag_circuit::{
-    AnnotationKind, Attribute, DagCircuit, DagTraversalIndex, MeasRef, MeasResolveError,
-    PauliAnnotation, TraversalWorkBuffers,
+    AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagTraversalIndex, MeasRef,
+    MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
 };
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
-    Tick, TickCircuit, TickGateError, TickHandle, TickMeasRef, TickMeasureHandle, TickPrepHandle,
+    Tick, TickAnnotationRefError, TickCircuit, TickGateError, TickHandle, TickMeasRef,
+    TickMeasureHandle, TickPrepHandle,
 };
 
 // Re-export commonly used types from dependencies

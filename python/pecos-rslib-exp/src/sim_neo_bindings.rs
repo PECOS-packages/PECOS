@@ -1764,9 +1764,9 @@ fn create_annotations_from_json(
                 .collect();
             if !refs.is_empty() {
                 if is_detector {
-                    tc.detector(&refs);
+                    tc.detector(&refs).expect("refs are from this circuit");
                 } else {
-                    tc.observable(&refs);
+                    tc.observable(&refs).expect("refs are from this circuit");
                 }
             }
         }

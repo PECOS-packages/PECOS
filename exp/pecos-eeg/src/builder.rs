@@ -188,37 +188,22 @@ fn build_detectors(
 ) -> Result<(Vec<Detector>, Vec<Observable>), EegBuildError> {
     let mut detectors = Vec::new();
     let mut observables = Vec::new();
-    let num_meas = expanded.measurement_qubit.len();
 
     for annotation in tc.annotations() {
         match &annotation.kind {
             AnnotationKind::Detector {
-                measurement_nodes, ..
+                measurement_ids, ..
             } => {
-                // measurement_nodes are gate indices in the ORIGINAL circuit.
-                // We need to map these to measurement record indices, then
-                // to auxiliary qubits in the expanded circuit.
-                //
-                // The gate indices correspond to MZ gates. Each MZ gate can
-                // measure multiple qubits. We need to find which measurement
-                // record each gate index maps to.
-                //
-                // Strategy: the k-th measurement record corresponds to the
-                // k-th qubit measured across all MZ gates in order. Each
-                // measurement_node is a gate index — we find which measurement
-                // records that gate produced.
-                let bitmask =
-                    measurement_nodes_to_aux_bitmask(measurement_nodes, tc, expanded, num_meas)?;
+                let bitmask = measurement_ids_to_aux_bitmask(measurement_ids, expanded)?;
                 detectors.push(Detector {
                     id: detectors.len(),
                     stabilizer: bitmask,
                 });
             }
             AnnotationKind::Observable {
-                measurement_nodes, ..
+                measurement_ids, ..
             } => {
-                let bitmask =
-                    measurement_nodes_to_aux_bitmask(measurement_nodes, tc, expanded, num_meas)?;
+                let bitmask = measurement_ids_to_aux_bitmask(measurement_ids, expanded)?;
                 observables.push(Observable {
                     id: observables.len(),
                     pauli: bitmask,
@@ -231,32 +216,66 @@ fn build_detectors(
     Ok((detectors, observables))
 }
 
-/// Map measurement record indices to a Z bitmask on auxiliary qubits.
+/// Map measurement ids to a Z bitmask on auxiliary qubits.
 ///
-/// Each measurement_node is a measurement record index (counting all
-/// MZ qubits in circuit order). Maps directly to an auxiliary qubit
-/// in the expanded circuit via `expanded.measurement_qubit[record]`.
-fn measurement_nodes_to_aux_bitmask(
-    measurement_nodes: &[usize],
-    _tc: &TickCircuit,
+/// Each id resolves through the expansion's own id-rank map, so external
+/// (non-positional) ids land on the right auxiliary qubit. An unknown id is
+/// an error, never a skip.
+fn measurement_ids_to_aux_bitmask(
+    measurement_ids: &[pecos_core::MeasId],
     expanded: &expand::ExpandedCircuit,
-    num_meas: usize,
 ) -> Result<Bm, EegBuildError> {
     let mut bitmask = Bm::default();
-
-    let _ = num_meas;
-    for &record_idx in measurement_nodes {
-        // Single resolver: an out-of-range record is an error, never a skip.
-        let aux_qubit = expanded.aux_qubit_for_record(record_idx)?;
+    for &meas_id in measurement_ids {
+        let aux_qubit = expanded.aux_qubit_for_id(meas_id)?;
         bitmask.z_bits.xor_bit(aux_qubit);
     }
-
     Ok(bitmask)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Scrambled (non-positional) annotation ids must produce a byte-identical
+    /// DEM to positional ids on the same physical circuit: eeg orders its
+    /// auxiliaries by expansion rank, which is invariant under id relabeling.
+    #[test]
+    fn scrambled_annotation_ids_build_a_byte_identical_dem() {
+        let build = |ids: [usize; 3]| {
+            let mut dag = pecos_quantum::DagCircuit::new();
+            dag.pz(&[0, 1, 2]);
+            dag.cx(&[(0, 2)]);
+            dag.cx(&[(1, 2)]);
+            for (qubit, id) in [(2usize, ids[0]), (0, ids[1]), (1, ids[2])] {
+                let mut gate = pecos_core::Gate::mz(&[qubit]);
+                gate.meas_ids = smallvec::smallvec![pecos_core::MeasId::from_raw(id)];
+                dag.try_add_gate_auto_wire(gate).expect("gate is valid");
+            }
+            let refs: Vec<_> = ids
+                .iter()
+                .map(|&id| {
+                    dag.find_measurement(pecos_core::MeasId::from_raw(id))
+                        .expect("the id was just supplied")
+                })
+                .collect();
+            dag.detector(&refs).expect("refs are from this circuit");
+            dag.observable(&[refs[1]])
+                .expect("refs are from this circuit");
+            let tc = TickCircuit::from(&dag);
+            EegDemBuilder::from_tick_circuit(&tc)
+                .noise(NoiseModel::depolarizing(0.01))
+                .build_dem_string()
+                .expect("the circuit is MZ-only and every id resolves")
+        };
+        let positional = build([0, 1, 2]);
+        let scrambled = build([9, 1, 5]);
+        assert!(
+            positional.contains("error("),
+            "the comparison is vacuous without error mechanisms:\n{positional}"
+        );
+        assert_eq!(positional, scrambled);
+    }
 
     /// A `MeasureFree` used to pass through the expansion unchanged, silently
     /// deleting its measurement record. It now lowers to `MZ`.
@@ -305,31 +324,34 @@ mod tests {
         assert!(matches!(err, EegBuildError::UnsupportedMeasurement { .. }));
     }
 
-    /// An annotation referencing a record the expansion never produced used to
-    /// be skipped, thinning the observable. It is now an error naming both
-    /// sides of the mismatch.
+    /// An annotation referencing an id the expansion never recorded used to
+    /// be skipped, thinning the observable. It is now an error naming the id.
+    ///
+    /// Construction validation cannot catch this reference: it arrives
+    /// pre-built on a converted circuit, which is exactly how a stale
+    /// reference reaches eeg in practice.
     #[test]
-    fn an_out_of_range_record_annotation_is_an_error() {
-        let mut tc = TickCircuit::new();
-        tc.tick().pz(&[0]);
-        let refs = tc.tick().mz(&[0]);
-        tc.detector(&refs);
-        // Forge a measurement ref onto record 7 of a 1-record circuit.
-        // TickMeasRef fields are public, so a caller can construct exactly this.
-        let forged = pecos_quantum::TickMeasRef {
-            record_idx: 7,
-            ..refs[0]
-        };
-        tc.observable(&[forged]);
+    fn an_unknown_id_annotation_is_an_error() {
+        let mut dag = pecos_quantum::DagCircuit::new();
+        dag.pz(&[0]);
+        dag.mz(&[0]);
+        dag.add_annotation(pecos_quantum::PauliAnnotation {
+            pauli: pecos_core::PauliString::zs(&[0usize]),
+            kind: pecos_quantum::AnnotationKind::Observable {
+                measurement_ids: vec![pecos_core::MeasId::from_raw(7)],
+            },
+            label: None,
+        });
+        let tc = TickCircuit::from(&dag);
 
         let err = EegDemBuilder::from_tick_circuit(&tc)
             .noise(NoiseModel::coherent_only(0.01))
             .build()
-            .expect_err("record 7 does not exist");
+            .expect_err("id 7 was never recorded by the expansion");
         assert_eq!(
             err,
-            EegBuildError::UnresolvableAnnotationRecord {
-                record_idx: 7,
+            EegBuildError::UnresolvableAnnotationId {
+                meas_id: pecos_core::MeasId::from_raw(7),
                 num_measurements: 1,
             }
         );
@@ -455,7 +477,8 @@ mod tests {
         let m2 = tc.tick().mz(&[2]);
 
         // Detector: compare m1 and m2
-        tc.detector(&[m1[0], m2[0]]);
+        tc.detector(&[m1[0], m2[0]])
+            .expect("refs are from this circuit");
 
         // Final readout
         tc.tick().mz(&[0, 1]);

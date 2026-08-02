@@ -3273,7 +3273,8 @@ fn build_dem_from_circuit(
     use pecos_num::graph::Attribute;
 
     let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
-    let annotated_observable_records = observable_records_from_annotations(circuit, &influence_map);
+    let annotated_observable_records =
+        observable_records_from_annotations(circuit, &influence_map)?;
     let annotation_map = InfluenceBuilder::new(circuit)
         .with_circuit_annotations()
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
@@ -3365,36 +3366,36 @@ fn circuit_with_omitted_two_qubit_gate(
 fn observable_records_from_annotations(
     circuit: &pecos_quantum::DagCircuit,
     influence_map: &DagFaultInfluenceMap,
-) -> Vec<Vec<i32>> {
+) -> Result<Vec<Vec<i32>>, DemBuilderError> {
     use pecos_quantum::AnnotationKind;
 
     let num_measurements = influence_map.measurements.len();
     if num_measurements == 0 {
-        return Vec::new();
-    }
-
-    let mut node_to_meas_idx: BTreeMap<usize, usize> = BTreeMap::new();
-    for (meas_idx, &(node, _qubit, _basis)) in influence_map.measurements.iter().enumerate() {
-        node_to_meas_idx.entry(node).or_insert(meas_idx);
+        return Ok(Vec::new());
     }
 
     circuit
         .observables()
-        .map(|ann| {
-            if let AnnotationKind::Observable { measurement_nodes } = &ann.kind {
-                measurement_nodes
-                    .iter()
-                    .filter_map(|node| node_to_meas_idx.get(node).copied())
-                    .map(|meas_idx| {
-                        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-                        {
-                            meas_idx as i32 - num_measurements as i32
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            }
+        .enumerate()
+        .map(|(annotation_index, ann)| {
+            let AnnotationKind::Observable { measurement_ids } = &ann.kind else {
+                return Ok(Vec::new());
+            };
+            measurement_ids
+                .iter()
+                .map(|&meas_id| {
+                    let meas_idx = influence_map.meas_index_of(meas_id).ok_or_else(|| {
+                        DemBuilderError::ConfigurationError(format!(
+                            "observable annotation {annotation_index} references \
+                                 MeasId({}), which does not resolve to a measurement \
+                                 in the influence map",
+                            meas_id.index()
+                        ))
+                    })?;
+                    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+                    Ok(meas_idx as i32 - num_measurements as i32)
+                })
+                .collect()
         })
         .collect()
 }
@@ -3834,7 +3835,9 @@ mod tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let meas = circuit.mz(&[0]);
-        circuit.observable_labeled("obs0", &[meas[0]]);
+        circuit
+            .observable_labeled("obs0", &[meas[0]])
+            .expect("refs are from this circuit");
 
         let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 1.0, 0.0);
 

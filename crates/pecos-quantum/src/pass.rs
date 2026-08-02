@@ -3236,8 +3236,8 @@ mod tests {
     fn split_batched_tick_commands_preserves_payloads_attrs_and_counters() {
         let mut tc = TickCircuit::new();
         let initial_refs = tc.tick().mz(&[0, 1]);
-        assert_eq!(initial_refs[0].record_idx, 0);
-        assert_eq!(initial_refs[1].record_idx, 1);
+        assert_eq!(initial_refs[0].meas_id.index(), 0);
+        assert_eq!(initial_refs[1].meas_id.index(), 1);
         tc.get_tick_mut(0).unwrap().set_gate_attr(
             0,
             "role",
@@ -3298,7 +3298,7 @@ mod tests {
         }
 
         let later_refs = tc.tick().mz(&[6]);
-        assert_eq!(later_refs[0].record_idx, 2);
+        assert_eq!(later_refs[0].meas_id.index(), 2);
         assert_eq!(later_refs[0].meas_id, MeasId::from_raw(2));
         assert_eq!(tc.next_tick_index(), 3);
         assert_eq!(tc.num_measurements(), 3);

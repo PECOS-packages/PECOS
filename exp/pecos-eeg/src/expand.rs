@@ -31,6 +31,13 @@ pub enum EegBuildError {
         /// How many measurement records the expansion produced.
         num_measurements: usize,
     },
+    /// An annotation references a measurement id the expansion never recorded.
+    UnresolvableAnnotationId {
+        /// The unknown id.
+        meas_id: pecos_core::MeasId,
+        /// How many measurement records the expansion produced.
+        num_measurements: usize,
+    },
 }
 
 impl std::fmt::Display for EegBuildError {
@@ -48,6 +55,15 @@ impl std::fmt::Display for EegBuildError {
                 f,
                 "annotation references measurement record {record_idx}, but the expansion \
                  produced only {num_measurements}"
+            ),
+            Self::UnresolvableAnnotationId {
+                meas_id,
+                num_measurements,
+            } => write!(
+                f,
+                "annotation references MeasId({}), which the expansion never recorded \
+                 ({num_measurements} measurement records exist)",
+                meas_id.index()
             ),
         }
     }
@@ -360,6 +376,26 @@ impl ExpandedCircuit {
                 num_measurements: self.measurement_qubit.len(),
             },
         )
+    }
+
+    /// The auxiliary qubit whose final Z-measurement carries the measurement
+    /// named by `meas_id`.
+    ///
+    /// Resolution goes through `meas_id_rank`, so it is correct for external
+    /// (non-positional) ids -- an id's numeric value is never used as an index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EegBuildError::UnresolvableAnnotationId`] when the expansion
+    /// never recorded the id.
+    pub fn aux_qubit_for_id(&self, meas_id: pecos_core::MeasId) -> Result<usize, EegBuildError> {
+        let rank = self.meas_id_rank.get(&meas_id).copied().ok_or(
+            EegBuildError::UnresolvableAnnotationId {
+                meas_id,
+                num_measurements: self.measurement_qubit.len(),
+            },
+        )?;
+        self.aux_qubit_for_record(rank)
     }
 }
 

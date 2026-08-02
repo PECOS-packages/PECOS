@@ -778,7 +778,7 @@ impl<'a> DemBuilder<'a> {
         // -- that combination is routine in the surface pipeline -- but
         // external non-positional ids can reorder a qubit's measurements in
         // the map, and no heuristic can recover the caller's record order.
-        if self.measurement_order.is_some() && !stamped_ids_are_positional(&self.influence_map) {
+        if self.measurement_order.is_some() && !stamped_ids_are_positional(self.influence_map) {
             return Err(DemBuilderError::ConfigurationError(
                 "measurement_order cannot be combined with a circuit whose stable \
                  MeasIds are non-positional; the caller's record order is not \

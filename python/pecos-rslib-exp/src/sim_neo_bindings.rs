@@ -34,7 +34,13 @@ use pyo3::prelude::*;
 
 #[derive(serde::Deserialize)]
 struct RecDef {
+    /// DEM-style negative record offsets. Alternative to `meas_ids`.
+    #[serde(default)]
     records: Vec<i32>,
+    /// Stable measurement ids. Alternative to `records`; the traced-QIS
+    /// pipeline emits only this field.
+    #[serde(default)]
+    meas_ids: Vec<usize>,
 }
 
 fn measurement_record_index(record: i32, num_measurements: usize) -> Option<usize> {
@@ -1762,8 +1768,18 @@ fn create_annotations_from_json(
     let defs: Vec<RecDef> = serde_json::from_str(json_str).map_err(|err| {
         pyo3::exceptions::PyValueError::new_err(format!("malformed {kind} JSON metadata: {err}"))
     })?;
+    let ref_by_id: std::collections::BTreeMap<usize, pecos_quantum::TickMeasRef> = all_meas_refs
+        .iter()
+        .map(|r| (r.meas_id.index(), *r))
+        .collect();
     for (def_idx, def) in defs.iter().enumerate() {
-        let mut refs: Vec<pecos_quantum::TickMeasRef> = Vec::with_capacity(def.records.len());
+        if def.records.is_empty() && def.meas_ids.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{kind} {def_idx} carries neither records nor meas_ids"
+            )));
+        }
+        let mut refs: Vec<pecos_quantum::TickMeasRef> =
+            Vec::with_capacity(def.records.len() + def.meas_ids.len());
         for &rec in &def.records {
             let mref = measurement_record_index(rec, num_meas)
                 .and_then(|abs_idx| all_meas_refs.get(abs_idx).copied())
@@ -1773,6 +1789,15 @@ fn create_annotations_from_json(
                          not resolve among the circuit's {num_meas} measurement(s)"
                     ))
                 })?;
+            refs.push(mref);
+        }
+        for &meas_id in &def.meas_ids {
+            let mref = ref_by_id.get(&meas_id).copied().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "{kind} {def_idx} references MeasId({meas_id}), which no \
+                     measurement in the circuit holds"
+                ))
+            })?;
             refs.push(mref);
         }
         let result = if is_detector {

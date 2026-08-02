@@ -1230,11 +1230,46 @@ pub struct TickMeasRef {
     pub gate_idx: usize,
     /// Qubit that was measured.
     pub qubit: QubitId,
-    /// Measurement record index (cumulative count of MZ qubits in circuit order).
-    pub record_idx: usize,
     /// Stable measurement result identity (SSA value).
+    ///
+    /// This is the only number that names the measurement. A record ordinal is
+    /// not stored: allocation order and storage order diverge under `tick_at`
+    /// out-of-order filling and compatible-batch merging, so any boundary that
+    /// needs an ordinal computes its own from the ids it can see.
     pub meas_id: MeasId,
 }
+
+/// Why a measurement reference was rejected at annotation construction.
+///
+/// Validation is a direct lookup at the referenced batch (linear only in the
+/// batch's own width), so it catches stale
+/// references and references whose (tick, batch, qubit, id) tuple this circuit
+/// does not hold. A reference minted by a *different* circuit that agrees
+/// structurally cannot be detected -- ids are circuit-local numbers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickAnnotationRefError {
+    pub tick: usize,
+    pub gate_idx: usize,
+    pub qubit: usize,
+    pub meas_id: MeasId,
+}
+
+impl std::fmt::Display for TickAnnotationRefError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "measurement reference (tick {}, batch {}, qubit {}, MeasId({})) does not \
+             name a measurement this circuit holds -- the reference is stale or from \
+             another circuit",
+            self.tick,
+            self.gate_idx,
+            self.qubit,
+            self.meas_id.index()
+        )
+    }
+}
+
+impl std::error::Error for TickAnnotationRefError {}
 
 #[derive(Debug, Clone, Default)]
 pub struct TickCircuit {
@@ -1476,9 +1511,9 @@ impl TickCircuit {
     /// gate-batch index and qubit.
     ///
     /// Callers that hold only `(tick, gate_idx, qubit)` -- notably the Python
-    /// bindings, whose measurement handles are plain tuples -- need the record
-    /// index and [`MeasId`] that `mz()` assigned. Fabricating a `TickMeasRef`
-    /// with placeholder values instead silently collapses every reference onto
+    /// bindings, whose measurement handles are plain tuples -- need the
+    /// [`MeasId`] that `mz()` assigned. Fabricating a `TickMeasRef` with
+    /// placeholder values instead silently collapses every reference onto
     /// record 0, which corrupts detector and observable annotations built from
     /// them (issue #382).
     ///
@@ -1491,17 +1526,6 @@ impl TickCircuit {
     /// was not measured by it.
     #[must_use]
     pub fn meas_ref(&self, tick: usize, gate_idx: usize, qubit: QubitId) -> Option<TickMeasRef> {
-        // The `MeasId` stored alongside each measured qubit is what `mz` /
-        // `mz_free` assigned at call time, so reading it back recovers the
-        // record index directly. Reconstructing the ordinal by walking stored
-        // ticks and batches instead is wrong: a later measurement can be
-        // appended to an earlier compatible batch, and `tick_at` allows filling
-        // ticks out of order, so storage order is not allocation order.
-        //
-        // Limitation: `mz_with_ids` lets callers supply external stable ids
-        // (Guppy result ids) that are not positional, and for those the record
-        // index and the id genuinely differ. `TickCircuit` does not store the
-        // positional ordinal separately, so that case cannot be resolved here.
         let batch = self.get_tick(tick)?.iter_gate_batches().nth(gate_idx)?;
         let gate = batch.as_gate();
         if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
@@ -1513,7 +1537,6 @@ impl TickCircuit {
             tick,
             gate_idx,
             qubit,
-            record_idx: meas_id.index(),
             meas_id,
         })
     }
@@ -2259,58 +2282,105 @@ impl TickCircuit {
     // ==================== Annotations ====================
 
     /// Annotate a detector: measurements whose XOR should be deterministic.
-    pub fn detector(&mut self, measurements: &[TickMeasRef]) -> usize {
-        let meas_nodes: Vec<usize> = measurements.iter().map(|m| m.record_idx).collect();
-        let pauli = pecos_core::PauliString::zs(
-            &measurements
-                .iter()
-                .map(|m| m.qubit.index())
-                .collect::<Vec<_>>(),
-        );
+    ///
+    /// Returns the annotation index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TickAnnotationRefError`] if any reference does not name a
+    /// measurement this circuit holds.
+    pub fn detector(
+        &mut self,
+        measurements: &[TickMeasRef],
+    ) -> Result<usize, TickAnnotationRefError> {
+        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
         let idx = self.annotations.len();
         self.annotations.push(PauliAnnotation {
             pauli,
             kind: AnnotationKind::Detector {
-                measurement_nodes: meas_nodes,
+                measurement_ids,
                 coords: Vec::new(),
             },
             label: None,
         });
-        idx
+        Ok(idx)
     }
 
     /// Annotate a labeled detector.
-    pub fn detector_labeled(&mut self, label: &str, measurements: &[TickMeasRef]) -> usize {
-        let idx = self.detector(measurements);
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::detector`].
+    pub fn detector_labeled(
+        &mut self,
+        label: &str,
+        measurements: &[TickMeasRef],
+    ) -> Result<usize, TickAnnotationRefError> {
+        let idx = self.detector(measurements)?;
         self.annotations[idx].label = Some(label.to_string());
-        idx
+        Ok(idx)
     }
 
     /// Annotate a logical observable.
-    pub fn observable(&mut self, measurements: &[TickMeasRef]) -> usize {
-        let meas_nodes: Vec<usize> = measurements.iter().map(|m| m.record_idx).collect();
-        let pauli = pecos_core::PauliString::zs(
-            &measurements
-                .iter()
-                .map(|m| m.qubit.index())
-                .collect::<Vec<_>>(),
-        );
+    ///
+    /// Returns the annotation index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TickAnnotationRefError`] if any reference does not name a
+    /// measurement this circuit holds.
+    pub fn observable(
+        &mut self,
+        measurements: &[TickMeasRef],
+    ) -> Result<usize, TickAnnotationRefError> {
+        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
         let idx = self.annotations.len();
         self.annotations.push(PauliAnnotation {
             pauli,
-            kind: AnnotationKind::Observable {
-                measurement_nodes: meas_nodes,
-            },
+            kind: AnnotationKind::Observable { measurement_ids },
             label: None,
         });
-        idx
+        Ok(idx)
     }
 
     /// Annotate a labeled observable.
-    pub fn observable_labeled(&mut self, label: &str, measurements: &[TickMeasRef]) -> usize {
-        let idx = self.observable(measurements);
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::observable`].
+    pub fn observable_labeled(
+        &mut self,
+        label: &str,
+        measurements: &[TickMeasRef],
+    ) -> Result<usize, TickAnnotationRefError> {
+        let idx = self.observable(measurements)?;
         self.annotations[idx].label = Some(label.to_string());
-        idx
+        Ok(idx)
+    }
+
+    /// Validate each reference against the batch it names and derive the ids
+    /// and Z-Pauli. Validation re-runs the [`Self::meas_ref`] lookup: the
+    /// reference must round-trip to the same id.
+    fn validated_ids_and_pauli(
+        &self,
+        measurements: &[TickMeasRef],
+    ) -> Result<(Vec<MeasId>, pecos_core::PauliString), TickAnnotationRefError> {
+        for m in measurements {
+            let held = self
+                .meas_ref(m.tick, m.gate_idx, m.qubit)
+                .is_some_and(|found| found.meas_id == m.meas_id);
+            if !held {
+                return Err(TickAnnotationRefError {
+                    tick: m.tick,
+                    gate_idx: m.gate_idx,
+                    qubit: m.qubit.index(),
+                    meas_id: m.meas_id,
+                });
+            }
+        }
+        let ids = measurements.iter().map(|m| m.meas_id).collect();
+        let qubits: Vec<usize> = measurements.iter().map(|m| m.qubit.index()).collect();
+        Ok((ids, pecos_core::PauliString::zs(&qubits)))
     }
 
     /// Place a tracked-Pauli annotation.
@@ -3117,7 +3187,6 @@ impl<'a> TickHandle<'a> {
                 tick: tick_idx,
                 gate_idx: 0, // placeholder, updated below
                 qubit: q.into(),
-                record_idx,
                 meas_id: mr,
             });
         }
@@ -3168,7 +3237,6 @@ impl<'a> TickHandle<'a> {
                 tick: tick_idx,
                 gate_idx: 0,
                 qubit: q.into(),
-                record_idx,
                 meas_id: mr,
             });
         }
@@ -3300,7 +3368,6 @@ impl From<&DagCircuit> for TickCircuit {
     /// ```
     fn from(dag: &DagCircuit) -> Self {
         let mut tc = TickCircuit::new();
-        let mut dag_node_to_record_indices: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         let mut next_meas_record = 0usize;
 
         for layer in dag.layers() {
@@ -3316,24 +3383,14 @@ impl From<&DagCircuit> for TickCircuit {
                     // already held.
                     if gate.gate_type.consumes_measurement_record() {
                         if gate.meas_ids.is_empty() {
-                            let mut records = Vec::with_capacity(gate.qubits.len());
                             for _ in &gate.qubits {
-                                let record_idx = next_meas_record;
+                                gate.meas_ids.push(MeasId::from_raw(next_meas_record));
                                 next_meas_record += 1;
-                                gate.meas_ids.push(MeasId::from_raw(record_idx));
-                                records.push(record_idx);
                             }
-                            dag_node_to_record_indices.insert(node_id, records);
-                        } else {
-                            let records: Vec<usize> = gate
-                                .meas_ids
-                                .iter()
-                                .map(|meas_id| meas_id.index())
-                                .collect();
-                            if let Some(next) = records.iter().max().map(|record| record + 1) {
-                                next_meas_record = next_meas_record.max(next);
-                            }
-                            dag_node_to_record_indices.insert(node_id, records);
+                        } else if let Some(next) =
+                            gate.meas_ids.iter().map(|id| id.index() + 1).max()
+                        {
+                            next_meas_record = next_meas_record.max(next);
                         }
                     }
 
@@ -3383,60 +3440,12 @@ impl From<&DagCircuit> for TickCircuit {
             }
         }
 
-        // Transfer annotations, remapping DAG measurement nodes to TickCircuit
-        // measurement record indices. Tracked Paulis have no measurement
-        // readout and keep their Pauli role unchanged.
-        tc.annotations = dag
-            .annotations()
-            .iter()
-            .map(|ann| {
-                let kind = match &ann.kind {
-                    AnnotationKind::Detector {
-                        measurement_nodes,
-                        coords,
-                    } => AnnotationKind::Detector {
-                        measurement_nodes: remap_dag_measurement_nodes(
-                            &dag_node_to_record_indices,
-                            measurement_nodes,
-                        ),
-                        coords: coords.clone(),
-                    },
-                    AnnotationKind::Observable { measurement_nodes } => {
-                        AnnotationKind::Observable {
-                            measurement_nodes: remap_dag_measurement_nodes(
-                                &dag_node_to_record_indices,
-                                measurement_nodes,
-                            ),
-                        }
-                    }
-                    AnnotationKind::TrackedPauli => AnnotationKind::TrackedPauli,
-                };
-                PauliAnnotation {
-                    pauli: ann.pauli.clone(),
-                    kind,
-                    label: ann.label.clone(),
-                }
-            })
-            .collect();
+        // Annotations copy verbatim: they reference measurements by identity,
+        // and identities travel on the gates themselves.
+        tc.annotations = dag.annotations().to_vec();
 
         tc
     }
-}
-
-fn remap_dag_measurement_nodes(
-    dag_node_to_record_indices: &BTreeMap<usize, Vec<usize>>,
-    measurement_nodes: &[usize],
-) -> Vec<usize> {
-    measurement_nodes
-        .iter()
-        .flat_map(|node| {
-            dag_node_to_record_indices
-                .get(node)
-                .unwrap_or_else(|| panic!("annotation references non-measurement DAG node {node}"))
-                .iter()
-                .copied()
-        })
-        .collect()
 }
 
 impl From<DagCircuit> for TickCircuit {
@@ -3504,10 +3513,6 @@ impl TryFrom<&TickCircuit> for DagCircuit {
         // Track the last node for each qubit to connect wires
         let mut last_node: BTreeMap<QubitId, usize> = BTreeMap::new();
 
-        // Map measurement_record_index -> dag node for annotation transfer
-        let mut meas_record_to_node: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut meas_record_idx = 0usize;
-
         for (tick_idx, tick) in tc.iter_ticks() {
             for batch in tick.iter_gate_batches() {
                 // DagCircuit stores individual gate applications. Use the
@@ -3532,22 +3537,6 @@ impl TryFrom<&TickCircuit> for DagCircuit {
                                 reason,
                             })?;
                     split_nodes.push(node);
-
-                    // Every measurement consumes a record, `MeasureFree`
-                    // included -- `TickHandle::mz_free` advances
-                    // `next_meas_record` exactly like `mz`. Counting only `MZ`
-                    // here left later records unmappable, so annotations
-                    // referencing them silently resolved to nothing.
-                    //
-                    // `MeasureLeaked` is a measurement too but is excluded
-                    // here, matching every other site that decides which gates
-                    // consume a record.
-                    if split_gate.gate_type.consumes_measurement_record() {
-                        for _q in &split_gate.qubits {
-                            meas_record_to_node.insert(meas_record_idx, node);
-                            meas_record_idx += 1;
-                        }
-                    }
 
                     // Connect wires from previous gates on the same qubits
                     for qubit in &split_gate.qubits {
@@ -3578,43 +3567,12 @@ impl TryFrom<&TickCircuit> for DagCircuit {
             dag.set_attr(key.clone(), value.clone());
         }
 
-        // Transfer annotations, remapping measurement record indices to DAG node indices
+        // Annotations copy verbatim: they reference measurements by identity,
+        // and identities travel on the gates themselves. Tracked-Pauli meta
+        // gates already crossed with the gate stream, so no meta gate is
+        // re-inserted here.
         for ann in &tc.annotations {
-            let remapped_kind = match &ann.kind {
-                AnnotationKind::Detector {
-                    measurement_nodes,
-                    coords,
-                } => {
-                    let dag_nodes: Vec<usize> = measurement_nodes
-                        .iter()
-                        .filter_map(|&rec| meas_record_to_node.get(&rec).copied())
-                        .collect();
-                    AnnotationKind::Detector {
-                        measurement_nodes: dag_nodes,
-                        coords: coords.clone(),
-                    }
-                }
-                AnnotationKind::Observable { measurement_nodes } => {
-                    let dag_nodes: Vec<usize> = measurement_nodes
-                        .iter()
-                        .filter_map(|&rec| meas_record_to_node.get(&rec).copied())
-                        .collect();
-                    AnnotationKind::Observable {
-                        measurement_nodes: dag_nodes,
-                    }
-                }
-                AnnotationKind::TrackedPauli => AnnotationKind::TrackedPauli,
-            };
-            let remapped_annotation = PauliAnnotation {
-                pauli: ann.pauli.clone(),
-                kind: remapped_kind,
-                label: ann.label.clone(),
-            };
-            if matches!(remapped_annotation.kind, AnnotationKind::TrackedPauli) {
-                dag.add_annotation_without_meta_gate(remapped_annotation);
-            } else {
-                dag.add_annotation(remapped_annotation);
-            }
+            dag.add_annotation_without_meta_gate(ann.clone());
         }
 
         Ok(dag)
@@ -4588,8 +4546,10 @@ mod tests {
     fn test_batched_measurement_annotation_records_round_trip() {
         let mut tc1 = TickCircuit::new();
         let ms = tc1.tick().mz(&[0, 1]);
-        tc1.detector_labeled("det01", &ms);
-        tc1.observable_labeled("obs1", &[ms[1]]);
+        tc1.detector_labeled("det01", &ms)
+            .expect("refs are from this circuit");
+        tc1.observable_labeled("obs1", &[ms[1]])
+            .expect("refs are from this circuit");
 
         let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
         let tc2 = TickCircuit::from(&dag);
@@ -4598,13 +4558,16 @@ mod tests {
         assert_eq!(tc2.annotations().len(), 2);
         match &tc2.annotations()[0].kind {
             AnnotationKind::Detector {
-                measurement_nodes, ..
-            } => assert_eq!(measurement_nodes.as_slice(), &[0, 1]),
+                measurement_ids, ..
+            } => assert_eq!(
+                measurement_ids.as_slice(),
+                &[MeasId::from_raw(0), MeasId::from_raw(1)]
+            ),
             other => panic!("expected detector annotation, got {other:?}"),
         }
         match &tc2.annotations()[1].kind {
-            AnnotationKind::Observable { measurement_nodes } => {
-                assert_eq!(measurement_nodes.as_slice(), &[1]);
+            AnnotationKind::Observable { measurement_ids } => {
+                assert_eq!(measurement_ids.as_slice(), &[MeasId::from_raw(1)]);
             }
             other => panic!("expected observable annotation, got {other:?}"),
         }
@@ -4620,15 +4583,20 @@ mod tests {
     fn test_dag_batched_measurement_node_annotation_expands_to_tick_records() {
         let mut dag = DagCircuit::new();
         let node = dag.add_gate(Gate::mz(&[0, 1]));
-        dag.detector_labeled("batched-detector", &[node]);
+        let refs = dag.meas_refs(node).expect("MZ holds measurements");
+        dag.detector_labeled("batched-detector", &refs)
+            .expect("refs are from this circuit");
 
         let tc = TickCircuit::from(&dag);
         assert_eq!(tc.num_measurements(), 2);
         assert_eq!(tc.annotations().len(), 1);
         match &tc.annotations()[0].kind {
             AnnotationKind::Detector {
-                measurement_nodes, ..
-            } => assert_eq!(measurement_nodes.as_slice(), &[0, 1]),
+                measurement_ids, ..
+            } => assert_eq!(
+                measurement_ids.as_slice(),
+                &[MeasId::from_raw(0), MeasId::from_raw(1)]
+            ),
             other => panic!("expected detector annotation, got {other:?}"),
         }
 
@@ -4647,7 +4615,9 @@ mod tests {
         let mut gate = Gate::mz(&[0]);
         gate.meas_ids.push(MeasId::from_raw(5));
         let node = dag.add_gate(gate);
-        dag.observable_labeled("obs5", &[node]);
+        let refs = dag.meas_refs(node).expect("MZ holds measurements");
+        dag.observable_labeled("obs5", &refs)
+            .expect("refs are from this circuit");
 
         let mut tc = TickCircuit::from(&dag);
         assert_eq!(tc.num_measurements(), 6);
@@ -4657,26 +4627,33 @@ mod tests {
             &[MeasId::from_raw(5)]
         );
         match &tc.annotations()[0].kind {
-            AnnotationKind::Observable { measurement_nodes } => {
-                assert_eq!(measurement_nodes.as_slice(), &[5]);
+            AnnotationKind::Observable { measurement_ids } => {
+                assert_eq!(measurement_ids.as_slice(), &[MeasId::from_raw(5)]);
             }
             other => panic!("expected observable annotation, got {other:?}"),
         }
 
         let next = tc.tick().mz(&[1]);
-        assert_eq!(next[0].record_idx, 6);
+        assert_eq!(next[0].meas_id.index(), 6);
         assert_eq!(next[0].meas_id, MeasId::from_raw(6));
         assert_eq!(tc.num_measurements(), 7);
     }
 
     #[test]
-    #[should_panic(expected = "annotation references non-measurement DAG node")]
-    fn test_dag_to_tick_rejects_annotation_referencing_non_measurement_node() {
+    fn dag_detector_rejects_reference_to_non_measurement_node() {
+        use crate::dag_circuit::{AnnotationRefError, MeasRef};
+
         let mut dag = DagCircuit::new();
         let h = dag.add_gate(Gate::h(&[0]));
-        dag.detector_labeled("not-a-measurement", &[h]);
-
-        let _ = TickCircuit::from(&dag);
+        let forged = MeasRef {
+            node: h,
+            qubit: QubitId::from(0),
+            meas_id: MeasId::from_raw(0),
+        };
+        let err = dag
+            .detector_labeled("not-a-measurement", &[forged])
+            .expect_err("H consumes no measurement record");
+        assert!(matches!(err, AnnotationRefError::NotAMeasurement { .. }));
     }
 
     #[test]
@@ -4686,8 +4663,10 @@ mod tests {
         let mut tc1 = TickCircuit::new();
         tc1.tick().pz(&[0, 1, 2]);
         let ms = tc1.tick().mz(&[0, 1]);
-        tc1.detector_labeled("detector", &[ms[0]]);
-        tc1.observable_labeled("observable", &[ms[1]]);
+        tc1.detector_labeled("detector", &[ms[0]])
+            .expect("refs are from this circuit");
+        tc1.observable_labeled("observable", &[ms[1]])
+            .expect("refs are from this circuit");
         tc1.tracked_pauli_labeled("tracked", X(0) & Z(2));
 
         let tc2 = TickCircuit::from(&DagCircuit::try_from(&tc1).expect("valid circuit"));
@@ -4696,15 +4675,15 @@ mod tests {
         assert_eq!(tc2.annotations()[0].label.as_deref(), Some("detector"));
         match &tc2.annotations()[0].kind {
             AnnotationKind::Detector {
-                measurement_nodes, ..
-            } => assert_eq!(measurement_nodes.as_slice(), &[0]),
+                measurement_ids, ..
+            } => assert_eq!(measurement_ids.as_slice(), &[MeasId::from_raw(0)]),
             other => panic!("expected detector annotation, got {other:?}"),
         }
 
         assert_eq!(tc2.annotations()[1].label.as_deref(), Some("observable"));
         match &tc2.annotations()[1].kind {
-            AnnotationKind::Observable { measurement_nodes } => {
-                assert_eq!(measurement_nodes.as_slice(), &[1]);
+            AnnotationKind::Observable { measurement_ids } => {
+                assert_eq!(measurement_ids.as_slice(), &[MeasId::from_raw(1)]);
             }
             other => panic!("expected observable annotation, got {other:?}"),
         }
@@ -4768,9 +4747,11 @@ mod tests {
 
             let ms = tc1.tick().mz(&[base, base + 1]);
             if case_idx % 2 == 0 {
-                tc1.detector_labeled("det", &ms);
+                tc1.detector_labeled("det", &ms)
+                    .expect("refs are from this circuit");
             } else {
-                tc1.observable_labeled("obs", &ms);
+                tc1.observable_labeled("obs", &ms)
+                    .expect("refs are from this circuit");
             }
 
             let tc2 = TickCircuit::from(&DagCircuit::try_from(&tc1).expect("valid circuit"));
@@ -4829,8 +4810,10 @@ mod tests {
                 Y(base + 3)
             };
 
-            tc1.detector_labeled(&format!("det-{case_idx}"), &detector_records);
-            tc1.observable_labeled(&format!("obs-{case_idx}"), &observable_records);
+            tc1.detector_labeled(&format!("det-{case_idx}"), &detector_records)
+                .expect("refs are from this circuit");
+            tc1.observable_labeled(&format!("obs-{case_idx}"), &observable_records)
+                .expect("refs are from this circuit");
             tc1.tracked_pauli_labeled(&format!("track-{case_idx}"), tracked.clone());
 
             let tc2 = TickCircuit::from(&DagCircuit::try_from(&tc1).expect("valid circuit"));
@@ -4845,12 +4828,12 @@ mod tests {
             let det = annotation_by_label(&tc2, &format!("det-{case_idx}"));
             match &det.kind {
                 AnnotationKind::Detector {
-                    measurement_nodes, ..
+                    measurement_ids, ..
                 } => assert_eq!(
-                    measurement_nodes,
+                    measurement_ids,
                     &detector_records
                         .iter()
-                        .map(|m| m.record_idx)
+                        .map(|m| m.meas_id)
                         .collect::<Vec<_>>(),
                     "case {case_idx}"
                 ),
@@ -4859,11 +4842,11 @@ mod tests {
 
             let obs = annotation_by_label(&tc2, &format!("obs-{case_idx}"));
             match &obs.kind {
-                AnnotationKind::Observable { measurement_nodes } => assert_eq!(
-                    measurement_nodes,
+                AnnotationKind::Observable { measurement_ids } => assert_eq!(
+                    measurement_ids,
                     &observable_records
                         .iter()
-                        .map(|m| m.record_idx)
+                        .map(|m| m.meas_id)
                         .collect::<Vec<_>>(),
                     "case {case_idx}"
                 ),
@@ -4941,8 +4924,10 @@ mod tests {
         tc1.tick().idle(3u64, &[60]);
         tc1.tick().pz(&[70, 71]);
         let ms = tc1.tick().mz(&[70, 71]);
-        tc1.detector_labeled("det-all-gates", &[ms[0]]);
-        tc1.observable_labeled("obs-all-gates", &[ms[1]]);
+        tc1.detector_labeled("det-all-gates", &[ms[0]])
+            .expect("refs are from this circuit");
+        tc1.observable_labeled("obs-all-gates", &[ms[1]])
+            .expect("refs are from this circuit");
         tc1.tracked_pauli_labeled("tracked-all-gates", X(70) & Z(71));
 
         let tc2 = TickCircuit::from(&DagCircuit::try_from(&tc1).expect("valid circuit"));
@@ -5139,8 +5124,10 @@ mod tests {
             tc1.detector_labeled(
                 &format!("det-{case_idx}"),
                 &[measurements[0], measurements[2]],
-            );
-            tc1.observable_labeled(&format!("obs-{case_idx}"), &[measurements[1]]);
+            )
+            .expect("refs are from this circuit");
+            tc1.observable_labeled(&format!("obs-{case_idx}"), &[measurements[1]])
+                .expect("refs are from this circuit");
             let tracked = if state & (1 << 32) == 0 {
                 X(base) & Z(base + 3)
             } else {
@@ -5788,8 +5775,10 @@ mod tests {
     fn test_reset_clears_annotations_and_measurement_counter() {
         let mut tc = TickCircuit::new();
         let first_measurement = tc.tick().mz(&[0]);
-        tc.detector(&first_measurement);
-        tc.observable(&first_measurement);
+        tc.detector(&first_measurement)
+            .expect("refs are from this circuit");
+        tc.observable(&first_measurement)
+            .expect("refs are from this circuit");
         tc.tracked_pauli(pecos_core::pauli::Z(0));
 
         assert_eq!(tc.num_measurements(), 1);
@@ -5802,7 +5791,7 @@ mod tests {
         assert!(tc.annotations().is_empty());
 
         let reused_measurement = tc.tick().mz(&[1]);
-        assert_eq!(reused_measurement[0].record_idx, 0);
+        assert_eq!(reused_measurement[0].meas_id.index(), 0);
     }
 
     #[test]
@@ -6311,8 +6300,10 @@ mod tests {
         assert_eq!(ms.len(), 1);
         assert_eq!(ms[0].qubit, QubitId::from(2));
 
-        tc.detector_labeled("Z_check", &ms);
-        tc.observable_labeled("logical_Z", &ms);
+        tc.detector_labeled("Z_check", &ms)
+            .expect("refs are from this circuit");
+        tc.observable_labeled("logical_Z", &ms)
+            .expect("refs are from this circuit");
         tc.tracked_pauli_labeled("logical_X", X(0) & X(1));
 
         assert_eq!(tc.annotations().len(), 3);
@@ -6330,8 +6321,10 @@ mod tests {
         tc.tick().cx(&[(0, 2)]);
         tc.tick().cx(&[(1, 2)]);
         let ms = tc.tick().mz(&[2]);
-        tc.detector_labeled("det0", &ms);
-        tc.observable_labeled("obs0", &ms);
+        tc.detector_labeled("det0", &ms)
+            .expect("refs are from this circuit");
+        tc.observable_labeled("obs0", &ms)
+            .expect("refs are from this circuit");
         tc.tracked_pauli_labeled("op0", Z(0) & Z(1));
 
         let dag = DagCircuit::try_from(&tc).expect("valid circuit");
@@ -6365,8 +6358,10 @@ mod tests {
         dag.pz(&[0, 1]);
         dag.cx(&[(0, 1)]);
         let ms = dag.mz(&[0, 1]);
-        dag.detector_labeled("d0", &[ms[0]]);
-        dag.observable_labeled("o0", &[ms[0], ms[1]]);
+        dag.detector_labeled("d0", &[ms[0]])
+            .expect("refs are from this circuit");
+        dag.observable_labeled("o0", &[ms[0], ms[1]])
+            .expect("refs are from this circuit");
         dag.tracked_pauli_labeled("p0", X(0) & X(1));
 
         let tc = TickCircuit::from(&dag);
@@ -6387,9 +6382,11 @@ mod tests {
         tc1.tick().cx(&[(0, 2)]);
         tc1.tick().cx(&[(1, 2)]);
         let ms = tc1.tick().mz(&[2]);
-        tc1.detector_labeled("syndr", &ms);
+        tc1.detector_labeled("syndr", &ms)
+            .expect("refs are from this circuit");
         let ms_data = tc1.tick().mz(&[0, 1]);
-        tc1.observable_labeled("log_Z", &ms_data);
+        tc1.observable_labeled("log_Z", &ms_data)
+            .expect("refs are from this circuit");
         tc1.tracked_pauli_labeled("log_X", X(0) & X(1));
 
         // TickCircuit -> DagCircuit -> TickCircuit
@@ -6787,20 +6784,20 @@ mod tests {
         let mut tc = TickCircuit::new();
         let m0 = tc.tick().mz(&[0]);
         let m1 = tc.tick().mz(&[1]);
-        assert_eq!(m0[0].record_idx, 0);
-        assert_eq!(m1[0].record_idx, 1);
+        assert_eq!(m0[0].meas_id.index(), 0);
+        assert_eq!(m1[0].meas_id.index(), 1);
     }
 
     #[test]
     fn test_meas_record_idx_multi_qubit() {
         let mut tc = TickCircuit::new();
         let ms = tc.tick().mz(&[0, 1, 2]);
-        assert_eq!(ms[0].record_idx, 0);
-        assert_eq!(ms[1].record_idx, 1);
-        assert_eq!(ms[2].record_idx, 2);
+        assert_eq!(ms[0].meas_id.index(), 0);
+        assert_eq!(ms[1].meas_id.index(), 1);
+        assert_eq!(ms[2].meas_id.index(), 2);
         // Next measurement continues the count
         let m2 = tc.tick().mz(&[3]);
-        assert_eq!(m2[0].record_idx, 3);
+        assert_eq!(m2[0].meas_id.index(), 3);
     }
 
     #[test]
@@ -6812,24 +6809,32 @@ mod tests {
         let ms = tc.tick().mz(&[0, 1]);
 
         // Detector on qubit 0's measurement
-        tc.detector(&[ms[0]]);
+        tc.detector(&[ms[0]]).expect("refs are from this circuit");
         // Detector on qubit 1's measurement
-        tc.detector(&[ms[1]]);
+        tc.detector(&[ms[1]]).expect("refs are from this circuit");
 
         let anns = tc.annotations();
         match &anns[0].kind {
             AnnotationKind::Detector {
-                measurement_nodes, ..
+                measurement_ids, ..
             } => {
-                assert_eq!(measurement_nodes, &[0], "D0 should reference record 0 (q0)");
+                assert_eq!(
+                    measurement_ids,
+                    &[MeasId::from_raw(0)],
+                    "D0 should reference measurement 0 (q0)"
+                );
             }
             _ => panic!("Expected detector"),
         }
         match &anns[1].kind {
             AnnotationKind::Detector {
-                measurement_nodes, ..
+                measurement_ids, ..
             } => {
-                assert_eq!(measurement_nodes, &[1], "D1 should reference record 1 (q1)");
+                assert_eq!(
+                    measurement_ids,
+                    &[MeasId::from_raw(1)],
+                    "D1 should reference measurement 1 (q1)"
+                );
             }
             _ => panic!("Expected detector"),
         }
@@ -6845,17 +6850,18 @@ mod tests {
         let ms = tc.tick().mz(&[0, 1]);
 
         // Detector comparing both measurements (XOR of records 0 and 1)
-        tc.detector(&[ms[0], ms[1]]);
+        tc.detector(&[ms[0], ms[1]])
+            .expect("refs are from this circuit");
 
         let anns = tc.annotations();
         match &anns[0].kind {
             AnnotationKind::Detector {
-                measurement_nodes, ..
+                measurement_ids, ..
             } => {
-                assert_eq!(measurement_nodes.len(), 2);
+                assert_eq!(measurement_ids.len(), 2);
                 assert_ne!(
-                    measurement_nodes[0], measurement_nodes[1],
-                    "Two qubits from same MZ must have different record indices"
+                    measurement_ids[0], measurement_ids[1],
+                    "Two qubits from same MZ must have different identities"
                 );
             }
             _ => panic!("Expected detector"),
@@ -6878,20 +6884,47 @@ mod tests {
                 .meas_ref(expected.tick, expected.gate_idx, expected.qubit)
                 .expect("mz() refs must resolve");
             assert_eq!(
-                recovered.record_idx, expected.record_idx,
+                recovered.meas_id.index(),
+                expected.meas_id.index(),
                 "record index for qubit {:?}",
                 expected.qubit
             );
             assert_eq!(recovered.meas_id, expected.meas_id);
         }
 
-        let records: Vec<usize> = first.iter().map(|r| r.record_idx).collect();
+        let records: Vec<usize> = first.iter().map(|r| r.meas_id.index()).collect();
         assert_eq!(
             records,
             vec![0, 1, 2],
             "a batched mz must hand out distinct record indices"
         );
-        assert_eq!(second[0].record_idx, 3);
+        assert_eq!(second[0].meas_id.index(), 3);
+    }
+
+    /// A forged or stale reference is rejected at annotation construction --
+    /// the validation is the round-trip through `meas_ref`.
+    #[test]
+    fn detector_rejects_a_forged_measurement_ref() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        let refs = circuit.tick().mz(&[0]);
+
+        let forged = TickMeasRef {
+            meas_id: MeasId::from_raw(7),
+            ..refs[0]
+        };
+        let err = circuit
+            .detector(&[forged])
+            .expect_err("id 7 is not what the batch holds");
+        assert_eq!(err.meas_id, MeasId::from_raw(7));
+
+        let stale = TickMeasRef {
+            tick: 99,
+            ..refs[0]
+        };
+        circuit
+            .observable(&[stale])
+            .expect_err("tick 99 does not exist");
     }
 
     #[test]
@@ -6929,9 +6962,9 @@ mod tests {
         let third = circuit.tick_at(1).mz(&[2]);
         assert_eq!(
             (
-                first[0].record_idx,
-                freed[0].record_idx,
-                third[0].record_idx
+                first[0].meas_id.index(),
+                freed[0].meas_id.index(),
+                third[0].meas_id.index()
             ),
             (0, 1, 2),
             "records are allocated in call order"
@@ -6942,7 +6975,8 @@ mod tests {
                 .meas_ref(expected.tick, expected.gate_idx, expected.qubit)
                 .expect("every ref mz() handed out must resolve");
             assert_eq!(
-                recovered.record_idx, expected.record_idx,
+                recovered.meas_id.index(),
+                expected.meas_id.index(),
                 "qubit {:?} must recover the record it was allocated",
                 expected.qubit
             );
@@ -6959,17 +6993,18 @@ mod tests {
         let freed = circuit.tick().mz_free(&[0, 1]);
         let kept = circuit.tick().mz(&[2]);
 
-        assert_eq!(freed[0].record_idx, 0);
-        assert_eq!(freed[1].record_idx, 1);
+        assert_eq!(freed[0].meas_id.index(), 0);
+        assert_eq!(freed[1].meas_id.index(), 1);
         assert_eq!(
-            kept[0].record_idx, 2,
+            kept[0].meas_id.index(),
+            2,
             "MZ after two MeasureFree is record 2"
         );
 
         let recovered = circuit
             .meas_ref(kept[0].tick, kept[0].gate_idx, kept[0].qubit)
             .expect("ref must resolve");
-        assert_eq!(recovered.record_idx, 2);
+        assert_eq!(recovered.meas_id.index(), 2);
     }
 
     /// A measurement record that `mz()` handed out must still resolve after the
@@ -6983,30 +7018,29 @@ mod tests {
         let _freed = circuit.tick().mz_free(&[0, 1]);
         let kept = circuit.tick().mz(&[2, 3]);
         assert_eq!(
-            kept[0].record_idx, 2,
+            kept[0].meas_id.index(),
+            2,
             "MZ after two MeasureFree is record 2"
         );
-        circuit.observable(&kept);
+        circuit
+            .observable(&kept)
+            .expect("refs are from this circuit");
 
         let dag = crate::DagCircuit::try_from(&circuit).expect("valid circuit");
-        let nodes: Vec<Vec<usize>> = dag
+        let ids: Vec<Vec<MeasId>> = dag
             .annotations()
             .iter()
             .filter_map(|ann| match &ann.kind {
-                AnnotationKind::Observable { measurement_nodes } => Some(measurement_nodes.clone()),
+                AnnotationKind::Observable { measurement_ids } => Some(measurement_ids.clone()),
                 _ => None,
             })
             .collect();
 
-        assert_eq!(nodes.len(), 1);
+        assert_eq!(ids.len(), 1);
         assert_eq!(
-            nodes[0].len(),
-            2,
-            "both records must resolve; an empty annotation silently drops the observable"
-        );
-        assert_ne!(
-            nodes[0][0], nodes[0][1],
-            "records must map to distinct nodes"
+            ids[0],
+            vec![MeasId::from_raw(2), MeasId::from_raw(3)],
+            "both identities must survive the conversion unchanged"
         );
     }
 }

@@ -67,8 +67,8 @@ pub enum DetectorValidationError {
         output_kind: &'static str,
         /// Index among that kind's annotations.
         annotation_index: usize,
-        /// The unresolvable node reference.
-        node: usize,
+        /// The unresolvable measurement id.
+        meas_id: pecos_core::MeasId,
     },
 }
 
@@ -110,11 +110,12 @@ impl std::fmt::Display for DetectorValidationError {
             Self::UnresolvableAnnotationRef {
                 output_kind,
                 annotation_index,
-                node,
+                meas_id,
             } => write!(
                 f,
-                "{output_kind} annotation {annotation_index} references node {node}, which \
-                 does not resolve to a measurement in the influence map"
+                "{output_kind} annotation {annotation_index} references MeasId({}), which \
+                 does not resolve to a measurement in the influence map",
+                meas_id.index()
             ),
         }
     }
@@ -1151,12 +1152,20 @@ impl<'a> DemSamplerBuilder<'a> {
     ) -> Result<Self, DetectorValidationError> {
         use pecos_quantum::AnnotationKind;
 
-        let mut node_to_meas_idx: std::collections::BTreeMap<usize, usize> =
-            std::collections::BTreeMap::new();
-        for (meas_idx, &(node, _qubit, _basis)) in
-            self.influence_map.measurements.iter().enumerate()
-        {
-            node_to_meas_idx.entry(node).or_insert(meas_idx);
+        // A duplicate stamped id would make `meas_index_of` bind to the first
+        // holder -- an ambiguous, silently-wrong bind. Mirrors the guard on
+        // the JSON path (`reject_duplicate_stamped_meas_ids`).
+        let mut seen = std::collections::BTreeSet::new();
+        for mid in &self.influence_map.meas_ids {
+            if !seen.insert(mid.index()) {
+                return Err(DetectorValidationError::InvalidMetadata {
+                    message: format!(
+                        "duplicate stable MeasId {} in the circuit; each \
+                         measurement must have a unique stamped id",
+                        mid.index()
+                    ),
+                });
+            }
         }
 
         let detectors: Vec<&pecos_quantum::PauliAnnotation> = circuit.detectors().collect();
@@ -1172,19 +1181,19 @@ impl<'a> DemSamplerBuilder<'a> {
             let mut det_records_abs: Vec<Vec<usize>> = Vec::with_capacity(detectors.len());
             for (annotation_index, ann) in detectors.iter().enumerate() {
                 let AnnotationKind::Detector {
-                    measurement_nodes, ..
+                    measurement_ids, ..
                 } = &ann.kind
                 else {
                     det_records_abs.push(Vec::new());
                     continue;
                 };
-                let mut resolved = Vec::with_capacity(measurement_nodes.len());
-                for &node in measurement_nodes {
-                    let Some(&im_idx) = node_to_meas_idx.get(&node) else {
+                let mut resolved = Vec::with_capacity(measurement_ids.len());
+                for &meas_id in measurement_ids {
+                    let Some(im_idx) = self.influence_map.meas_index_of(meas_id) else {
                         return Err(DetectorValidationError::UnresolvableAnnotationRef {
                             output_kind: "detector",
                             annotation_index,
-                            node,
+                            meas_id,
                         });
                     };
                     resolved.push(im_idx);
@@ -1208,17 +1217,17 @@ impl<'a> DemSamplerBuilder<'a> {
                 })?;
             let mut records: Vec<Vec<i32>> = Vec::with_capacity(observables.len());
             for (annotation_index, ann) in observables.iter().enumerate() {
-                let AnnotationKind::Observable { measurement_nodes } = &ann.kind else {
+                let AnnotationKind::Observable { measurement_ids } = &ann.kind else {
                     records.push(Vec::new());
                     continue;
                 };
-                let mut resolved = Vec::with_capacity(measurement_nodes.len());
-                for &node in measurement_nodes {
-                    let Some(&meas_idx) = node_to_meas_idx.get(&node) else {
+                let mut resolved = Vec::with_capacity(measurement_ids.len());
+                for &meas_id in measurement_ids {
+                    let Some(meas_idx) = self.influence_map.meas_index_of(meas_id) else {
                         return Err(DetectorValidationError::UnresolvableAnnotationRef {
                             output_kind: "observable",
                             annotation_index,
-                            node,
+                            meas_id,
                         });
                     };
                     let meas_idx = i32::try_from(meas_idx)
@@ -1272,6 +1281,27 @@ impl<'a> DemSamplerBuilder<'a> {
         // measurement count would resolve in a different (shorter/longer) frame
         // at sample time and silently misbind. (See sampler-JSON validation.)
         if let Some(ref order) = self.measurement_order {
+            // A supplied order feeds the qubit-occurrence heuristic, which
+            // needs per-qubit chronology on both sides. Minted (positional)
+            // ids keep it; external non-positional ids can reorder a qubit's
+            // measurements in the map, and the caller's record order is then
+            // not recoverable.
+            let n = self.influence_map.meas_ids.len();
+            let mut seen = vec![false; n];
+            let positional = self
+                .influence_map
+                .meas_ids
+                .iter()
+                .all(|mid| seen.get_mut(mid.index()).map(|slot| *slot = true).is_some())
+                && seen.into_iter().all(|s| s);
+            if !positional {
+                return Err(DetectorValidationError::InvalidMetadata {
+                    message: "measurement_order cannot be combined with a circuit \
+                              whose stable MeasIds are non-positional; the \
+                              caller's record order is not recoverable"
+                        .to_string(),
+                });
+            }
             let expected = self.influence_map.measurements.len();
             if order.len() != expected {
                 return Err(DetectorValidationError::InvalidMetadata {
@@ -1543,7 +1573,7 @@ mod tests {
         dag.mz(&[0]); // raw measurement 0
         dag.pz(&[1]);
         let named = dag.mz(&[1]); // raw measurement 1 -- the detector's target
-        dag.detector(&named);
+        dag.detector(&named).expect("refs are from this circuit");
 
         let im =
             crate::fault_tolerance::propagator::DagFaultAnalyzer::new(&dag).build_influence_map();
@@ -1577,9 +1607,9 @@ mod tests {
         );
     }
 
-    /// An observable annotation referencing a node absent from the influence
+    /// An observable annotation referencing an id absent from the influence
     /// map used to be silently dropped, thinning the observable. It is now an
-    /// error naming the annotation and the node.
+    /// error naming the annotation and the id.
     #[test]
     fn an_unresolvable_observable_ref_is_an_error() {
         use pecos_quantum::DagCircuit;
@@ -1589,7 +1619,7 @@ mod tests {
         dag.add_annotation(pecos_quantum::PauliAnnotation {
             pauli: pecos_core::PauliString::zs(&[0usize]),
             kind: pecos_quantum::AnnotationKind::Observable {
-                measurement_nodes: vec![99],
+                measurement_ids: vec![pecos_core::MeasId::from_raw(99)],
             },
             label: None,
         });
@@ -1605,9 +1635,9 @@ mod tests {
             err,
             DetectorValidationError::UnresolvableAnnotationRef {
                 output_kind: "observable",
-                node: 99,
+                meas_id,
                 ..
-            }
+            } if meas_id == pecos_core::MeasId::from_raw(99)
         ));
     }
 
@@ -1835,7 +1865,9 @@ mod tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let meas = circuit.mz(&[0]);
-        circuit.observable_labeled("obs0", &[meas[0]]);
+        circuit
+            .observable_labeled("obs0", &[meas[0]])
+            .expect("refs are from this circuit");
 
         let im = InfluenceBuilder::new(&circuit)
             .with_circuit_annotations()
@@ -1954,8 +1986,12 @@ mod tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let meas = circuit.mz(&[0]);
-        circuit.detector_labeled("det0", &[meas[0]]);
-        circuit.observable_labeled("obs0", &[meas[0]]);
+        circuit
+            .detector_labeled("det0", &[meas[0]])
+            .expect("refs are from this circuit");
+        circuit
+            .observable_labeled("obs0", &[meas[0]])
+            .expect("refs are from this circuit");
         circuit.tracked_pauli_labeled("tracked_x0", X(0));
         circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
         circuit.set_attr(

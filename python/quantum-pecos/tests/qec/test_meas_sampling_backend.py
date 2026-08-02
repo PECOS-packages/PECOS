@@ -179,3 +179,21 @@ class TestMethodDispatch:
     def test_no_noise_errors(self, d3_tc):
         with pytest.raises(Exception, match="noise"):
             sim_neo(d3_tc).quantum(meas_sampling()).shots(10).seed(42).run()
+
+
+class TestMalformedAnnotationMetadata:
+    """Detector/observable JSON that cannot be honored raises, never thins.
+
+    A malformed or out-of-range entry used to be silently dropped, producing a
+    weaker DEM with no signal to the caller.
+    """
+
+    def test_malformed_detectors_json_raises(self, d3_tc, depol):
+        d3_tc.set_meta("detectors", "not json at all")
+        with pytest.raises(ValueError, match="malformed detector JSON"):
+            sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).shots(1).seed(1).run()
+
+    def test_out_of_range_detector_record_raises(self, d3_tc, depol):
+        d3_tc.set_meta("detectors", '[{"records": [-100000]}]')
+        with pytest.raises(ValueError, match="does not resolve"):
+            sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).shots(1).seed(1).run()

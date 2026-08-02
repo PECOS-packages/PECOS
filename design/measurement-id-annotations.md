@@ -1,9 +1,11 @@
 # Annotations should reference measurements by identity
 
-Status: in progress. Revised after three adversarial design reviews (core
+Status: implemented. Revised after three adversarial design reviews (core
 claim upheld, plan corrected twice). Step 3 of #387. Depends on #391 (merged as
 `cdfddba1b`), which made every `DagCircuit` measurement carry a unique `MeasId`.
-Steps 1 and 2 below are merged (#397, #401); the pivot itself is not started.
+Steps 1-3 below are merged (#397, #401, #403); step 4 -- the pivot -- is built,
+with the deviations from the plan, and the closures from the pivot's
+adversarial review round, recorded in "As built" at the end.
 
 ## The defect
 
@@ -172,6 +174,19 @@ Scope cut, stated explicitly: the DEM builder's id plumbing stays untyped --
 (`builder.rs:3413`), JSON `meas_ids: Vec<usize>`. Conflation can persist there
 and the tests must cover it.
 
+**Result tags, when that seam is typed (follow-on, not this series):** tags
+remain supported as names layered over identity, never as a second key space.
+The durable shape is `tag -> Vec<MeasId>` in emission order -- equivalently
+`(tag, occurrence) -> MeasId` -- because a tag emitted inside a loop or a
+repeat-until-success gadget names one measurement *per emission*, so the tag
+alone is not unique; the id always is. Flattening this is the `_selene_harness`
+defect in #72, where internal RUS measurements shifted record positions under
+the `measurement_N` tags. The tag table is boundary-owned, built where tags
+enter (Guppy/Selene `result(...)`, detector/observable JSON), and is never
+consulted inside the analysis -- the same rule as ordinals. Numeric Guppy
+result ids already follow this design degenerately: `mz_with_ids` makes the
+external id *be* the `MeasId`, a one-element association per emission.
+
 ## Test strategy
 
 The reason conflation bugs have been invisible: in virtually every existing test
@@ -265,3 +280,68 @@ make the DEM comparisons that validate this change impossible to interpret.
 identity-over-ordering direction. Originally written in an external notes vault
 and cited from there by an earlier draft of this document; now ported into this
 directory so the citation chain is complete.
+
+## As built
+
+The pivot landed as designed -- `measurement_ids: Vec<MeasId>` on both
+variants, `&[MeasRef]`/`&[TickMeasRef]` fallible annotation constructors, both
+conversions copying annotations verbatim, consumers on the step-3 resolvers,
+the record-index maps (`meas_record_to_node`, `dag_node_to_record_indices`,
+`node_to_meas_idx`) deleted -- with three deviations:
+
+**1. Construction validation is an O(1) lookup, not a `find_measurement`
+scan.** A reference carries its node (or tick/batch), so validation checks the
+gate it names directly: exists, consumes a record, holds the (qubit, id) pair.
+The O(gates) scan per reference would have made surface-code builders
+quadratic. The honesty limit is unchanged: a foreign reference that agrees
+structurally cannot be detected.
+
+**2. Python keeps tuple handles instead of opaque reference objects.** The
+seam the opaque-object plan closed was integer *id* forgery -- and the tuples
+never contain an id. A dag handle is `(node, qubit)`, a tick handle is
+`(tick, gate_idx, qubit)`; both are resolved against the circuit at
+annotation construction, and the recovered id comes from the gate itself.
+Plain ints are rejected with a `TypeError`. Forging a tuple is node-space
+forgery, caught by resolution unless the forger names a real measurement --
+the same limit the Rust `MeasRef` has.
+
+**3. One order per influence map.** The de-aliased tests exposed that
+`InfluenceBuilder` maps carried two internal orderings: `detectors` (and the
+propagation data, and the sampler's raw channels) in symbolic-replay order,
+`measurements`/`meas_ids` re-sorted by id rank. `meas_index_of` therefore did
+not index the raw stream -- invisible while ids were positional, wrong the
+moment they were not. `InfluenceBuilder` now emits `measurements`/`meas_ids`
+in replay order, aligned with everything else in the map;
+`DagFaultAnalyzer` maps were already internally consistent (id-rank
+throughout). The rule stands: orderings differ *between* maps and are never
+interchanged; within one map there is exactly one.
+
+The de-aliased matrix lives in `crates/pecos-qec/tests/meas_id_pivot_tests.rs`
+plus the eeg byte-equivalence test and the Python `mz_with_ids` tier; every
+guard is mutation-tested.
+
+Closed by the adversarial round (two independent reviews):
+
+- **Duplicate ids are refused at every id-resolving consumer.** `TickCircuit`
+  permits duplicate supplied ids (and `try_add_gate` does not advance the mint
+  counter, so supplied/minted collisions are constructible); `gate_mut` can
+  duplicate ids on a `DagCircuit`. eeg's expansion and the sampler's
+  annotation ingestion now refuse such circuits loudly, mirroring the guard
+  the DEM JSON path already had. The influence builder was already safe via
+  `find_measurement`'s `Inconsistent`.
+- **`measurement_order` ordinal mixing, fixed at its actual defect.** The
+  stamped branch of the DEM builder's mapping resolved an id to an
+  influence-map index and then re-composed it through the tick-to-influence
+  occurrence mapping -- wrong whenever the two orders differ. The composition
+  is gone: stamped resolution is used directly, and only the legacy positional
+  branch routes through the occurrence mapping. A first attempt rejected the
+  order/ids combination outright; the test suite falsified that (the surface
+  pipeline supplies `measurement_order` on minted-id circuits routinely, where
+  per-qubit chronology holds and the combination is benign). The narrow
+  rejection that survives: a supplied order with *non-positional* stamped ids,
+  where the caller's record order is genuinely unrecoverable.
+- **The record-arithmetic callers got the real migration** the plan asked for:
+  the three files now emit `meas_ids` JSON and read out in id space; the
+  `record_idx - num_measurements` arithmetic is gone, not renamed.
+- Validation cost is stated honestly: linear in the named gate's batch width,
+  never in the circuit.

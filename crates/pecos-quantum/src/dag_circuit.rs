@@ -451,6 +451,59 @@ impl fmt::Display for MeasResolveError {
 
 impl std::error::Error for MeasResolveError {}
 
+/// Why a measurement reference was rejected at annotation construction.
+///
+/// Validation is a direct lookup at the referenced node (linear only in the
+/// gate's own batch width), so it catches stale
+/// references (the gate was removed or replaced) and references whose
+/// (node, qubit, id) triple this circuit does not hold. A reference minted by a
+/// *different* circuit that agrees structurally at that node cannot be detected
+/// here -- ids are circuit-local numbers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnnotationRefError {
+    /// No gate lives at the referenced node.
+    NoSuchNode { node: usize },
+    /// The gate at the referenced node does not consume measurement records.
+    NotAMeasurement { node: usize },
+    /// The gate does not hold this (qubit, id) pair.
+    RefMismatch {
+        node: usize,
+        qubit: usize,
+        meas_id: MeasId,
+    },
+}
+
+impl fmt::Display for AnnotationRefError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoSuchNode { node } => {
+                write!(
+                    f,
+                    "measurement reference names node {node}, which holds no gate"
+                )
+            }
+            Self::NotAMeasurement { node } => write!(
+                f,
+                "measurement reference names node {node}, whose gate consumes no \
+                 measurement record"
+            ),
+            Self::RefMismatch {
+                node,
+                qubit,
+                meas_id,
+            } => write!(
+                f,
+                "measurement reference (node {node}, qubit {qubit}, MeasId({})) does not \
+                 match the measurement stored there -- the reference is stale or from \
+                 another circuit",
+                meas_id.index()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AnnotationRefError {}
+
 /// The role of a Pauli annotation in the circuit.
 ///
 /// All three kinds track the same thing -- whether a Pauli string flips due to
@@ -458,15 +511,20 @@ impl std::error::Error for MeasResolveError {}
 #[derive(Debug, Clone)]
 pub enum AnnotationKind {
     /// Stabilizer check: the Pauli should be deterministic (flip = error detected).
-    /// Stores measurement node indices for classical readout via XOR, plus
+    /// Stores the identities of the measurements whose XOR is the readout, plus
     /// optional coordinates for visualization/matching.
+    ///
+    /// Identities, not positions: a [`MeasId`] travels on the gate itself, so it
+    /// survives conversion between circuit representations and reordering.
+    /// Duplicate ids are kept, not deduplicated -- XOR readout cancels them,
+    /// matching the stim convention.
     Detector {
-        measurement_nodes: Vec<usize>,
+        measurement_ids: Vec<MeasId>,
         coords: Vec<f64>,
     },
     /// Logical observable: the Pauli's flip determines a logical outcome.
-    /// Stores measurement node indices for classical readout via XOR.
-    Observable { measurement_nodes: Vec<usize> },
+    /// Stores the identities of the measurements whose XOR is the readout.
+    Observable { measurement_ids: Vec<MeasId> },
     /// Tracked Pauli: no measurement readout.
     /// Position is determined by a `TrackedPauliMeta` node in the DAG.
     TrackedPauli,
@@ -2015,115 +2073,159 @@ impl DagCircuit {
     /// Annotate a detector: a set of measurements whose XOR should be
     /// deterministic in the noiseless case.
     ///
-    /// The Pauli string is automatically Z on the measured qubits.
+    /// The Pauli string is Z on each referenced measurement's own qubit --
+    /// referencing one measurement of a batched gate touches only that qubit.
     ///
     /// Returns the annotation index.
-    pub fn detector(&mut self, measurements: &[impl Into<usize> + Copy]) -> usize {
-        let meas_nodes: Vec<usize> = measurements.iter().map(|&m| m.into()).collect();
-        let pauli = self.pauli_from_measurement_nodes(&meas_nodes);
-        let idx = self.annotations.len();
-        self.annotations.push(PauliAnnotation {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationRefError`] if any reference does not name a
+    /// measurement this circuit holds.
+    pub fn detector(&mut self, measurements: &[MeasRef]) -> Result<usize, AnnotationRefError> {
+        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        Ok(self.push_annotation(PauliAnnotation {
             pauli,
             kind: AnnotationKind::Detector {
-                measurement_nodes: meas_nodes,
+                measurement_ids,
                 coords: Vec::new(),
             },
             label: None,
-        });
-        idx
+        }))
     }
 
     /// Annotate a labeled detector.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::detector`].
     pub fn detector_labeled(
         &mut self,
         label: &str,
-        measurements: &[impl Into<usize> + Copy],
-    ) -> usize {
-        let meas_nodes: Vec<usize> = measurements.iter().map(|&m| m.into()).collect();
-        let pauli = self.pauli_from_measurement_nodes(&meas_nodes);
-        let idx = self.annotations.len();
-        self.annotations.push(PauliAnnotation {
-            pauli,
-            kind: AnnotationKind::Detector {
-                measurement_nodes: meas_nodes,
-                coords: Vec::new(),
-            },
-            label: Some(label.to_string()),
-        });
-        idx
+        measurements: &[MeasRef],
+    ) -> Result<usize, AnnotationRefError> {
+        let idx = self.detector(measurements)?;
+        self.annotations[idx].label = Some(label.to_string());
+        Ok(idx)
     }
 
     /// Annotate a detector with coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::detector`].
     pub fn detector_with_coords(
         &mut self,
-        measurements: &[impl Into<usize> + Copy],
+        measurements: &[MeasRef],
         coords: &[f64],
-    ) -> usize {
-        let meas_nodes: Vec<usize> = measurements.iter().map(|&m| m.into()).collect();
-        let pauli = self.pauli_from_measurement_nodes(&meas_nodes);
-        let idx = self.annotations.len();
-        self.annotations.push(PauliAnnotation {
-            pauli,
-            kind: AnnotationKind::Detector {
-                measurement_nodes: meas_nodes,
-                coords: coords.to_vec(),
-            },
-            label: None,
-        });
-        idx
+    ) -> Result<usize, AnnotationRefError> {
+        let idx = self.detector(measurements)?;
+        let AnnotationKind::Detector { coords: c, .. } = &mut self.annotations[idx].kind else {
+            unreachable!("detector() pushes a Detector annotation");
+        };
+        *c = coords.to_vec();
+        Ok(idx)
     }
 
     /// Annotate a logical observable: a set of measurements whose XOR
     /// defines whether a logical operator flipped.
     ///
-    /// The Pauli string is automatically Z on the measured qubits.
+    /// The Pauli string is Z on each referenced measurement's own qubit.
     ///
     /// Returns the annotation index.
-    pub fn observable(&mut self, measurements: &[impl Into<usize> + Copy]) -> usize {
-        let meas_nodes: Vec<usize> = measurements.iter().map(|&m| m.into()).collect();
-        let pauli = self.pauli_from_measurement_nodes(&meas_nodes);
-        let idx = self.annotations.len();
-        self.annotations.push(PauliAnnotation {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationRefError`] if any reference does not name a
+    /// measurement this circuit holds.
+    pub fn observable(&mut self, measurements: &[MeasRef]) -> Result<usize, AnnotationRefError> {
+        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        Ok(self.push_annotation(PauliAnnotation {
             pauli,
-            kind: AnnotationKind::Observable {
-                measurement_nodes: meas_nodes,
-            },
+            kind: AnnotationKind::Observable { measurement_ids },
             label: None,
-        });
-        idx
+        }))
     }
 
     /// Annotate a labeled observable.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::observable`].
     pub fn observable_labeled(
         &mut self,
         label: &str,
-        measurements: &[impl Into<usize> + Copy],
-    ) -> usize {
-        let meas_nodes: Vec<usize> = measurements.iter().map(|&m| m.into()).collect();
-        let pauli = self.pauli_from_measurement_nodes(&meas_nodes);
+        measurements: &[MeasRef],
+    ) -> Result<usize, AnnotationRefError> {
+        let idx = self.observable(measurements)?;
+        self.annotations[idx].label = Some(label.to_string());
+        Ok(idx)
+    }
+
+    /// The measurement references held by the gate at `node`, in qubit order.
+    ///
+    /// This is how callers that added a batched measurement via `add_gate`
+    /// (which returns only the node) recover the per-measurement references
+    /// that [`Self::detector`] and [`Self::observable`] take.
+    ///
+    /// Returns `None` when the node holds no gate or the gate consumes no
+    /// measurement records.
+    #[must_use]
+    pub fn meas_refs(&self, node: usize) -> Option<Vec<MeasRef>> {
+        let gate = self.gate(node)?;
+        if !gate.gate_type.consumes_measurement_record() {
+            return None;
+        }
+        Some(
+            gate.qubits
+                .iter()
+                .zip(gate.meas_ids.iter())
+                .map(|(&qubit, &meas_id)| MeasRef {
+                    node,
+                    qubit,
+                    meas_id,
+                })
+                .collect(),
+        )
+    }
+
+    fn push_annotation(&mut self, annotation: PauliAnnotation) -> usize {
         let idx = self.annotations.len();
-        self.annotations.push(PauliAnnotation {
-            pauli,
-            kind: AnnotationKind::Observable {
-                measurement_nodes: meas_nodes,
-            },
-            label: Some(label.to_string()),
-        });
+        self.annotations.push(annotation);
         idx
     }
 
-    /// Derive a `PauliString` from measurement nodes.
-    /// Z-basis measurements → Z on the measured qubit.
-    fn pauli_from_measurement_nodes(&self, nodes: &[usize]) -> pecos_core::PauliString {
-        let qubits: Vec<usize> = nodes
-            .iter()
-            .filter_map(|&node| {
-                let gate = self.gate(node)?;
-                Some(gate.qubits.iter().map(pecos_core::QubitId::index))
-            })
-            .flatten()
-            .collect();
-        pecos_core::PauliString::zs(&qubits)
+    /// Validate each reference against the gate it names and derive the ids
+    /// and Z-Pauli. Validation is a direct lookup per reference -- linear only
+    /// in the named gate's batch width, never in the circuit: the gate must
+    /// exist, consume measurement records, and hold the (qubit, id) pair.
+    fn validated_ids_and_pauli(
+        &self,
+        measurements: &[MeasRef],
+    ) -> Result<(Vec<MeasId>, pecos_core::PauliString), AnnotationRefError> {
+        for m in measurements {
+            let Some(gate) = self.gate(m.node) else {
+                return Err(AnnotationRefError::NoSuchNode { node: m.node });
+            };
+            if !gate.gate_type.consumes_measurement_record() {
+                return Err(AnnotationRefError::NotAMeasurement { node: m.node });
+            }
+            let held = gate
+                .qubits
+                .iter()
+                .position(|&q| q == m.qubit)
+                .is_some_and(|pos| gate.meas_ids.get(pos) == Some(&m.meas_id));
+            if !held {
+                return Err(AnnotationRefError::RefMismatch {
+                    node: m.node,
+                    qubit: m.qubit.index(),
+                    meas_id: m.meas_id,
+                });
+            }
+        }
+        let ids = measurements.iter().map(|m| m.meas_id).collect();
+        let qubits: Vec<usize> = measurements.iter().map(|m| m.qubit.index()).collect();
+        Ok((ids, pecos_core::PauliString::zs(&qubits)))
     }
 
     /// Place a tracked-Pauli meta-gate at this point in the circuit.

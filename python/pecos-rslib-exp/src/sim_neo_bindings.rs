@@ -34,7 +34,13 @@ use pyo3::prelude::*;
 
 #[derive(serde::Deserialize)]
 struct RecDef {
+    /// DEM-style negative record offsets. Alternative to `meas_ids`.
+    #[serde(default)]
     records: Vec<i32>,
+    /// Stable measurement ids. Alternative to `records`; the traced-QIS
+    /// pipeline emits only this field.
+    #[serde(default)]
+    meas_ids: Vec<usize>,
 }
 
 fn measurement_record_index(record: i32, num_measurements: usize) -> Option<usize> {
@@ -1636,13 +1642,13 @@ fn build_rust_tick_circuit_from_gates(
         && let Ok(s) = det_json.extract::<String>()
     {
         // Create structured annotations from JSON
-        create_annotations_from_json(&mut tc, &s, &all_meas_refs, true);
+        create_annotations_from_json(&mut tc, &s, &all_meas_refs, true)?;
         tc.set_meta("detectors", Attribute::String(s));
     }
     if let Ok(obs_json) = py_tc.call_method1("get_meta", ("observables",))
         && let Ok(s) = obs_json.extract::<String>()
     {
-        create_annotations_from_json(&mut tc, &s, &all_meas_refs, false);
+        create_annotations_from_json(&mut tc, &s, &all_meas_refs, false)?;
         tc.set_meta("observables", Attribute::String(s));
     }
     copy_tracked_pauli_annotations_from_python(py_tc, &mut tc)?;
@@ -1745,32 +1751,63 @@ fn channel_expr_from_python_gate(gate: &Bound<'_, PyAny>) -> PyResult<ChannelExp
 }
 
 /// Create detector or observable annotations from JSON metadata.
+/// Malformed JSON and unresolvable record offsets are errors: a dropped or
+/// thinned annotation silently weakens the DEM.
 fn create_annotations_from_json(
     tc: &mut pecos_quantum::TickCircuit,
     json_str: &str,
     all_meas_refs: &[pecos_quantum::TickMeasRef],
     is_detector: bool,
-) {
+) -> PyResult<()> {
+    let kind = if is_detector {
+        "detector"
+    } else {
+        "observable"
+    };
     let num_meas = all_meas_refs.len();
-    if let Ok(defs) = serde_json::from_str::<Vec<RecDef>>(json_str) {
-        for def in &defs {
-            let refs: Vec<pecos_quantum::TickMeasRef> = def
-                .records
-                .iter()
-                .filter_map(|&rec| {
-                    let abs_idx = measurement_record_index(rec, num_meas)?;
-                    all_meas_refs.get(abs_idx).copied()
-                })
-                .collect();
-            if !refs.is_empty() {
-                if is_detector {
-                    tc.detector(&refs);
-                } else {
-                    tc.observable(&refs);
-                }
-            }
+    let defs: Vec<RecDef> = serde_json::from_str(json_str).map_err(|err| {
+        pyo3::exceptions::PyValueError::new_err(format!("malformed {kind} JSON metadata: {err}"))
+    })?;
+    let ref_by_id: std::collections::BTreeMap<usize, pecos_quantum::TickMeasRef> = all_meas_refs
+        .iter()
+        .map(|r| (r.meas_id.index(), *r))
+        .collect();
+    for (def_idx, def) in defs.iter().enumerate() {
+        if def.records.is_empty() && def.meas_ids.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{kind} {def_idx} carries neither records nor meas_ids"
+            )));
         }
+        let mut refs: Vec<pecos_quantum::TickMeasRef> =
+            Vec::with_capacity(def.records.len() + def.meas_ids.len());
+        for &rec in &def.records {
+            let mref = measurement_record_index(rec, num_meas)
+                .and_then(|abs_idx| all_meas_refs.get(abs_idx).copied())
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "{kind} {def_idx} references record offset {rec}, which does \
+                         not resolve among the circuit's {num_meas} measurement(s)"
+                    ))
+                })?;
+            refs.push(mref);
+        }
+        for &meas_id in &def.meas_ids {
+            let mref = ref_by_id.get(&meas_id).copied().ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "{kind} {def_idx} references MeasId({meas_id}), which no \
+                     measurement in the circuit holds"
+                ))
+            })?;
+            refs.push(mref);
+        }
+        let result = if is_detector {
+            tc.detector(&refs)
+        } else {
+            tc.observable(&refs)
+        };
+        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     }
+    Ok(())
 }
 
 /// Build a pecos_core::Gate from a Python gate object.

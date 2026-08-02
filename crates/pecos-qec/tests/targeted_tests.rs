@@ -128,7 +128,8 @@ fn custom_p1_weights_affect_decoder() {
     dag.h(&[0]);
     dag.cx(&[(0, 1)]);
     let ms = dag.mz(&[0, 1]);
-    dag.observable(&[ms[0], ms[1]]);
+    dag.observable(&[ms[0], ms[1]])
+        .expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()
@@ -277,7 +278,8 @@ fn detector_derives_pauli_from_measurements() {
     dag.pz(&[0, 1]);
     dag.cx(&[(0, 1)]);
     let ms = dag.mz(&[0, 1]);
-    dag.detector(&[ms[0], ms[1]]);
+    dag.detector(&[ms[0], ms[1]])
+        .expect("refs are from this circuit");
 
     let ann = &dag.annotations()[0];
     // Pauli should be Z on both measured qubits
@@ -312,7 +314,8 @@ fn probability_sums_to_one() {
     dag.h(&[0]);
     dag.cx(&[(0, 1)]);
     let ms = dag.mz(&[0, 1]);
-    dag.observable(&[ms[0], ms[1]]);
+    dag.observable(&[ms[0], ms[1]])
+        .expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()

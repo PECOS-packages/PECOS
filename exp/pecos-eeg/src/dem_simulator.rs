@@ -234,7 +234,8 @@ fn build_tick_circuit(
             det_refs.push(resolve_record_offset_ref(rec, meta, &all_meas_refs)?);
         }
         if !det_refs.is_empty() {
-            tc.detector(&det_refs);
+            tc.detector(&det_refs)
+                .expect("refs were just resolved from this circuit");
         }
     }
 
@@ -245,7 +246,8 @@ fn build_tick_circuit(
             obs_refs.push(resolve_record_offset_ref(rec, meta, &all_meas_refs)?);
         }
         if !obs_refs.is_empty() {
-            tc.observable(&obs_refs);
+            tc.observable(&obs_refs)
+                .expect("refs were just resolved from this circuit");
         }
     }
 

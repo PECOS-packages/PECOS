@@ -88,20 +88,15 @@ struct PauliPropagationTerm {
 /// record-based fallback downstream. So unresolvable references are errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnnotationIngestError {
-    /// An observable annotation references a node that does not exist.
-    ObservableRefNotFound {
+    /// An observable annotation references a measurement id that does not
+    /// resolve against the circuit.
+    ObservableRefUnresolved {
         /// Index of the annotation among the circuit's annotations.
         annotation_index: usize,
-        /// The nonexistent node.
-        node: usize,
-    },
-    /// An observable annotation references a node whose gate consumes no
-    /// measurement record, so it cannot contribute a readout term.
-    ObservableRefNotAMeasurement {
-        /// Index of the annotation among the circuit's annotations.
-        annotation_index: usize,
-        /// The referenced node.
-        node: usize,
+        /// The unresolved id.
+        meas_id: pecos_core::MeasId,
+        /// Why resolution failed.
+        source: pecos_quantum::MeasResolveError,
     },
     /// A tracked-Pauli annotation has no matching `TrackedPauliMeta` gate.
     TrackedPauliWithoutMetaNode {
@@ -113,21 +108,15 @@ pub enum AnnotationIngestError {
 impl std::fmt::Display for AnnotationIngestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ObservableRefNotFound {
+            Self::ObservableRefUnresolved {
                 annotation_index,
-                node,
+                meas_id,
+                source,
             } => write!(
                 f,
-                "annotation {annotation_index}: observable references node {node}, \
-                 which does not exist in the circuit"
-            ),
-            Self::ObservableRefNotAMeasurement {
-                annotation_index,
-                node,
-            } => write!(
-                f,
-                "annotation {annotation_index}: observable references node {node}, \
-                 whose gate consumes no measurement record"
+                "annotation {annotation_index}: observable references MeasId({}), which \
+                 does not resolve against the circuit: {source}",
+                meas_id.index()
             ),
             Self::TrackedPauliWithoutMetaNode { annotation_index } => write!(
                 f,
@@ -317,26 +306,22 @@ impl<'a> InfluenceBuilder<'a> {
         let mut ingested = Vec::new();
         for (annotation_index, ann) in circuit.annotations().iter().enumerate() {
             match &ann.kind {
-                pecos_quantum::AnnotationKind::Observable { measurement_nodes } => {
+                pecos_quantum::AnnotationKind::Observable { measurement_ids } => {
                     let mut terms = Vec::new();
-                    for &meas_node in measurement_nodes {
-                        let Some(gate) = circuit.gate(meas_node) else {
-                            return Err(AnnotationIngestError::ObservableRefNotFound {
+                    for &meas_id in measurement_ids {
+                        // Each id names one measurement, so each term is Z on
+                        // that measurement's own qubit -- not a Z-spray over
+                        // every qubit of a batched node.
+                        let mref = circuit.find_measurement(meas_id).map_err(|source| {
+                            AnnotationIngestError::ObservableRefUnresolved {
                                 annotation_index,
-                                node: meas_node,
-                            });
-                        };
-                        if !gate.gate_type.consumes_measurement_record() {
-                            return Err(AnnotationIngestError::ObservableRefNotAMeasurement {
-                                annotation_index,
-                                node: meas_node,
-                            });
-                        }
-                        let qubits: Vec<usize> =
-                            gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+                                meas_id,
+                                source,
+                            }
+                        })?;
                         terms.push(PauliPropagationTerm {
-                            pauli: PauliString::zs(&qubits),
-                            start_node: Some(meas_node),
+                            pauli: PauliString::zs(&[mref.qubit.index()]),
+                            start_node: Some(mref.node),
                         });
                     }
                     ingested.push(NonDetectorOutputTarget {
@@ -552,10 +537,33 @@ impl<'a> InfluenceBuilder<'a> {
         // Copy locations from analyzer
         map.locations = Self::extract_locations(propagator);
 
-        // Build measurement node lookup
-        let (measurements, meas_ids) = Self::extract_measurements(propagator);
+        // One order per map: measurements, meas_ids, detectors, and the
+        // backward-propagation recorder all number measurements by the replay
+        // ordinal, so `meas_index_of` is the ordinal the influence data (and
+        // the sampler's raw channels) actually use. Re-sorting measurements by
+        // id rank here while the detectors kept replay order gave one map two
+        // internal orderings, which only agreed while ids were positional.
+        let mut measurements = vec![(0usize, 0usize, 0u8); info.num_measurements];
+        let mut meas_ids = vec![pecos_core::MeasId::from_raw(usize::MAX); info.num_measurements];
+        let mut any_id = false;
+        for (node, opt) in info.node_to_meas_idx.iter().enumerate() {
+            if let Some(meas_idx) = *opt {
+                let gate = self
+                    .dag
+                    .gate(node)
+                    .expect("a replayed measurement node holds a gate");
+                // Batched measurement nodes are refused by the replay, so the
+                // node holds exactly one measurement.
+                let qubit = gate.qubits.first().map_or(0, pecos_core::QubitId::index);
+                measurements[meas_idx] = (node, qubit, 0);
+                if let Some(&id) = gate.meas_ids.first() {
+                    meas_ids[meas_idx] = id;
+                    any_id = true;
+                }
+            }
+        }
         map.measurements.clone_from(&measurements);
-        map.meas_ids = meas_ids;
+        map.meas_ids = if any_id { meas_ids } else { Vec::new() };
 
         // Create DetectorId entries for each detector
         for detector in detectors {
@@ -563,21 +571,12 @@ impl<'a> InfluenceBuilder<'a> {
                 .measurement_indices
                 .iter()
                 .filter_map(|&meas_idx| {
-                    // Find the node for this measurement index
-                    info.node_to_meas_idx
-                        .iter()
-                        .position(|&opt| opt == Some(meas_idx))
-                        .map(|node| {
-                            // Find qubit for this measurement
-                            let qubit = measurements
-                                .iter()
-                                .find(|&&(n, _, _)| n == node)
-                                .map_or(0, |&(_, q, _)| q);
-                            MeasurementId {
-                                tick: node,
-                                qubit,
-                                basis: 0, // Z-basis
-                            }
+                    measurements
+                        .get(meas_idx)
+                        .map(|&(node, qubit, basis)| MeasurementId {
+                            tick: node,
+                            qubit,
+                            basis,
                         })
                 })
                 .collect();
@@ -669,54 +668,6 @@ impl<'a> InfluenceBuilder<'a> {
         }
 
         locations
-    }
-
-    /// Extract measurements from the propagator.
-    fn extract_measurements(
-        propagator: &DagPropagator<'_>,
-    ) -> (Vec<(usize, usize, u8)>, Vec<pecos_core::MeasId>) {
-        let mut entries: Vec<(usize, usize, usize, u8, Option<pecos_core::MeasId>)> = Vec::new();
-
-        for &node in propagator.topo_order() {
-            if let Some(gate) = propagator.gate(node) {
-                let basis = match gate.gate_type {
-                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => 0,
-                    _ => continue,
-                };
-
-                if gate.meas_ids.is_empty() {
-                    let topo_pos = propagator.topo_position(node);
-                    for qubit in &gate.qubits {
-                        entries.push((topo_pos, node, qubit.index(), basis, None));
-                    }
-                } else {
-                    for (i, qubit) in gate.qubits.iter().enumerate() {
-                        let mr = gate.meas_ids.get(i).copied();
-                        let sort_key = mr.map_or(usize::MAX, pecos_core::MeasId::index);
-                        entries.push((sort_key, node, qubit.index(), basis, mr));
-                    }
-                }
-            }
-        }
-
-        entries.sort_by_key(|&(sort_key, _, qubit, _, _)| (sort_key, qubit));
-
-        let has_meas_ids = entries.iter().any(|(_, _, _, _, mr)| mr.is_some());
-        let meas_ids = if has_meas_ids {
-            entries
-                .iter()
-                .map(|(_, _, _, _, mr)| mr.unwrap_or(pecos_core::MeasId::from_raw(usize::MAX)))
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let measurements = entries
-            .into_iter()
-            .map(|(_, node, qubit, basis, _)| (node, qubit, basis))
-            .collect();
-
-        (measurements, meas_ids)
     }
 
     /// Propagate backward from all detectors.
@@ -1267,7 +1218,8 @@ mod tests {
         dag.pz(&[0]);
         dag.h(&[0]);
         let meas = dag.mz(&[0]);
-        dag.observable_labeled("record_obs", &[meas[0]]);
+        dag.observable_labeled("record_obs", &[meas[0]])
+            .expect("refs are from this circuit");
         dag.tracked_pauli_labeled("track_x", X(0));
 
         let map = InfluenceBuilder::new(&dag)
@@ -1303,7 +1255,8 @@ mod tests {
         let early = dag.mz(&[0]);
         dag.h(&[0]);
         let late = dag.mz(&[1]);
-        dag.observable_labeled("split_time_obs", &[early[0], late[0]]);
+        dag.observable_labeled("split_time_obs", &[early[0], late[0]])
+            .expect("refs are from this circuit");
 
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()
@@ -1348,7 +1301,8 @@ mod tests {
         let early = dag.mz(&[0]);
         dag.h(&[1]);
         let late = dag.mz(&[1]);
-        dag.observable_labeled("split_obs", &[early[0], late[0]]);
+        dag.observable_labeled("split_obs", &[early[0], late[0]])
+            .expect("refs are from this circuit");
 
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()
@@ -1394,7 +1348,8 @@ mod tests {
         let early = dag.mz(&[0]);
         dag.h(&[1]);
         let late = dag.mz(&[1]);
-        dag.observable_labeled("split_obs", &[early[0], late[0]]);
+        dag.observable_labeled("split_obs", &[early[0], late[0]])
+            .expect("refs are from this circuit");
 
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()
@@ -1519,57 +1474,62 @@ mod tests {
         );
     }
 
-    /// An observable referencing a missing node is an error, not a silently
-    /// thinner observable. De-aliased: node 99 exists in no space.
+    /// An observable referencing an unknown id is an error, not a silently
+    /// thinner observable. De-aliased: id 99 exists in no space.
     #[test]
-    fn an_observable_ref_to_a_missing_node_is_an_error() {
+    fn an_observable_ref_to_an_unknown_id_is_an_error() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
         dag.mz(&[0]);
         dag.add_annotation(pecos_quantum::PauliAnnotation {
             pauli: PauliString::zs(&[0usize]),
             kind: pecos_quantum::AnnotationKind::Observable {
-                measurement_nodes: vec![99],
+                measurement_ids: vec![pecos_core::MeasId::from_raw(99)],
             },
             label: None,
         });
 
         let Err(err) = InfluenceBuilder::new(&dag).with_circuit_annotations() else {
-            panic!("node 99 does not exist, so ingest must fail");
-        };
-        assert_eq!(
-            err,
-            AnnotationIngestError::ObservableRefNotFound {
-                annotation_index: 0,
-                node: 99,
-            }
-        );
-    }
-
-    /// A reference to a real gate that consumes no measurement record cannot
-    /// contribute a readout term, so it is an error rather than a Z-spray over
-    /// the gate's qubits.
-    #[test]
-    fn an_observable_ref_to_a_non_measurement_gate_is_an_error() {
-        let mut dag = DagCircuit::new();
-        dag.pz(&[0]);
-        let h_node = dag.gate_count(); // next node index is the H below
-        dag.h(&[0]);
-        dag.mz(&[0]);
-        dag.add_annotation(pecos_quantum::PauliAnnotation {
-            pauli: PauliString::zs(&[0usize]),
-            kind: pecos_quantum::AnnotationKind::Observable {
-                measurement_nodes: vec![h_node],
-            },
-            label: None,
-        });
-
-        let Err(err) = InfluenceBuilder::new(&dag).with_circuit_annotations() else {
-            panic!("an H gate holds no measurement record, so ingest must fail");
+            panic!("id 99 was never minted, so ingest must fail");
         };
         assert!(matches!(
             err,
-            AnnotationIngestError::ObservableRefNotAMeasurement { .. }
+            AnnotationIngestError::ObservableRefUnresolved {
+                annotation_index: 0,
+                source: pecos_quantum::MeasResolveError::Unknown(_),
+                ..
+            }
+        ));
+    }
+
+    /// An id held by a gate that consumes no measurement record cannot
+    /// contribute a readout term, so it is an error rather than a Z-spray over
+    /// the gate's qubits.
+    #[test]
+    fn an_observable_ref_to_a_record_less_measurement_is_an_error() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let mut leaked = pecos_core::Gate::measure_leaked(&[0usize]);
+        leaked.meas_ids = smallvec::smallvec![pecos_core::MeasId::from_raw(7)];
+        dag.try_add_gate(leaked).expect("gate is valid");
+        dag.mz(&[1]);
+        dag.add_annotation(pecos_quantum::PauliAnnotation {
+            pauli: PauliString::zs(&[0usize]),
+            kind: pecos_quantum::AnnotationKind::Observable {
+                measurement_ids: vec![pecos_core::MeasId::from_raw(7)],
+            },
+            label: None,
+        });
+
+        let Err(err) = InfluenceBuilder::new(&dag).with_circuit_annotations() else {
+            panic!("MeasureLeaked consumes no record, so ingest must fail");
+        };
+        assert!(matches!(
+            err,
+            AnnotationIngestError::ObservableRefUnresolved {
+                source: pecos_quantum::MeasResolveError::RecordLess { .. },
+                ..
+            }
         ));
     }
 
@@ -1579,7 +1539,8 @@ mod tests {
         dag.pz(&[0]);
         dag.h(&[0]);
         let meas = dag.mz(&[0]);
-        dag.observable_labeled("duplicate_record_obs", &[meas[0], meas[0]]);
+        dag.observable_labeled("duplicate_record_obs", &[meas[0], meas[0]])
+            .expect("refs are from this circuit");
 
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()

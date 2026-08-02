@@ -218,10 +218,12 @@ both `records` and `meas_ids` with a consistency check.
   helpers rather than on paper: they make forgery **more** dangerous, because a
   forged `MeasId(x)` that collides with a real id now resolves to a real
   `MeasRef`. Resolution rejects absent numbers but silently accepts the common
-  collision case, so the seam cannot be left open. Closing it -- private tuple
-  field, constructor-controlled creation, opaque Python references instead of
-  integer tuples -- is a **pivot prerequisite**, done as its own change (it
-  touches every `MeasId(x)` constructor in the tree).
+  collision case, so the seam cannot be left open. The Rust half is done on
+  this branch: the tuple field is private, both `From` impls are gone, and the
+  single integer route is `MeasId::from_raw`, whose doc names the boundaries it
+  belongs at -- every use is now greppable and auditable. Opaque Python
+  references (replacing integer tuples) ride with the pivot's Python-boundary
+  migration, where the `mz()` return shape changes anyway.
 
 ## Pivot API consequences (from the same review)
 

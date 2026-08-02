@@ -609,7 +609,7 @@ impl<'a> DemBuilder<'a> {
         self.influence_map
             .meas_ids
             .iter()
-            .position(|mid| mid.0 == meas_id)
+            .position(|mid| mid.index() == meas_id)
     }
 
     fn meas_id_to_record_offset(&self, meas_id: usize) -> Option<i32> {
@@ -765,11 +765,11 @@ impl<'a> DemBuilder<'a> {
         // measurement; it indicates a trace/replay bug, not bad caller input.
         let mut seen = std::collections::HashSet::with_capacity(self.influence_map.meas_ids.len());
         for mid in &self.influence_map.meas_ids {
-            if !seen.insert(mid.0) {
+            if !seen.insert(mid.index()) {
                 return Err(DemBuilderError::ParseError(format!(
                     "duplicate stable MeasId {} in the traced circuit; each \
                      measurement must have a unique stamped id",
-                    mid.0
+                    mid.index()
                 )));
             }
         }
@@ -2795,11 +2795,11 @@ fn reject_duplicate_stamped_meas_ids(
 ) -> Result<(), DemBuilderError> {
     let mut seen = std::collections::HashSet::with_capacity(influence_map.meas_ids.len());
     for mid in &influence_map.meas_ids {
-        if !seen.insert(mid.0) {
+        if !seen.insert(mid.index()) {
             return Err(DemBuilderError::ParseError(format!(
                 "duplicate stable MeasId {} in the traced circuit; each \
                  measurement must have a unique stamped id",
-                mid.0
+                mid.index()
             )));
         }
     }
@@ -2816,7 +2816,7 @@ fn resolve_sampler_meas_id(influence_map: &DagFaultInfluenceMap, meas_id: usize)
         influence_map
             .meas_ids
             .iter()
-            .position(|mid| mid.0 == meas_id)
+            .position(|mid| mid.index() == meas_id)
     }
 }
 
@@ -4991,7 +4991,10 @@ mod tests {
     #[test]
     fn test_validate_measurement_count_rejects_duplicate_stamped_meas_id() {
         let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
-        influence_map.meas_ids = vec![pecos_core::MeasId(5), pecos_core::MeasId(5)];
+        influence_map.meas_ids = vec![
+            pecos_core::MeasId::from_raw(5),
+            pecos_core::MeasId::from_raw(5),
+        ];
         let result = DemBuilder::new(&influence_map)
             .with_detectors_json(r#"[{"id": 0, "meas_ids": [5]}]"#)
             .unwrap()

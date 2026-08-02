@@ -1527,7 +1527,7 @@ impl CircuitPass for AssignMissingMeasIds {
                 tick.update_gate_batch(gate_idx, |gate| {
                     if gate.gate_type.consumes_measurement_record() && gate.meas_ids.is_empty() {
                         for _ in &gate.qubits {
-                            gate.meas_ids.push(pecos_core::MeasId(next_id));
+                            gate.meas_ids.push(pecos_core::MeasId::from_raw(next_id));
                             next_id += 1;
                         }
                     }
@@ -3262,7 +3262,7 @@ mod tests {
         );
         assert_eq!(
             meas_tick.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(0)]
+            &[MeasId::from_raw(0)]
         );
         assert_eq!(
             meas_tick.gate_batches()[1].qubits.as_slice(),
@@ -3270,7 +3270,7 @@ mod tests {
         );
         assert_eq!(
             meas_tick.gate_batches()[1].meas_ids.as_slice(),
-            &[MeasId(1)]
+            &[MeasId::from_raw(1)]
         );
         for batch in meas_tick.iter_gate_batches() {
             assert_eq!(
@@ -3299,7 +3299,7 @@ mod tests {
 
         let later_refs = tc.tick().mz(&[6]);
         assert_eq!(later_refs[0].record_idx, 2);
-        assert_eq!(later_refs[0].meas_id, MeasId(2));
+        assert_eq!(later_refs[0].meas_id, MeasId::from_raw(2));
         assert_eq!(tc.next_tick_index(), 3);
         assert_eq!(tc.num_measurements(), 3);
     }

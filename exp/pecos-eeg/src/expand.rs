@@ -301,8 +301,8 @@ mod tests {
         // first id, by id value, or by anything except the per-position walk
         // fails.
         let mut batch = super::make_gate(super::GateType::MZ, &[0, 1]);
-        batch.meas_ids.push(MeasId(9));
-        batch.meas_ids.push(MeasId(3));
+        batch.meas_ids.push(MeasId::from_raw(9));
+        batch.meas_ids.push(MeasId::from_raw(3));
         let gates = vec![
             super::make_gate(super::GateType::PZ, &[0]),
             super::make_gate(super::GateType::PZ, &[1]),
@@ -311,12 +311,12 @@ mod tests {
 
         let expanded = super::expand_circuit(&gates);
         assert_eq!(
-            expanded.meas_id_rank.get(&MeasId(9)),
+            expanded.meas_id_rank.get(&MeasId::from_raw(9)),
             Some(&0),
             "first batch member is expansion rank 0"
         );
         assert_eq!(
-            expanded.meas_id_rank.get(&MeasId(3)),
+            expanded.meas_id_rank.get(&MeasId::from_raw(3)),
             Some(&1),
             "second batch member is rank 1 -- per-position, not first-id"
         );

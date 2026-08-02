@@ -724,7 +724,7 @@ impl PyGate {
     /// Measurement result identities (one per qubit for measurement gates, empty otherwise).
     #[getter]
     fn meas_ids(&self) -> Vec<usize> {
-        self.inner.meas_ids.iter().map(|mr| mr.0).collect()
+        self.inner.meas_ids.iter().map(|mr| mr.index()).collect()
     }
 
     /// Check if this is a single-qubit gate.
@@ -3808,7 +3808,7 @@ impl PyTickHandle {
             base
         };
         for (i, _) in qubits.iter().enumerate() {
-            gate.meas_ids.push(pecos_core::MeasId(base + i));
+            gate.meas_ids.push(pecos_core::MeasId::from_raw(base + i));
         }
         let gate_idx = handle.add_gate_get_idx(py, gate)?;
         handle
@@ -3867,7 +3867,7 @@ impl PyTickHandle {
         let mut handle = slf.borrow_mut(py);
         let mut gate = Gate::mz(&qubits);
         for &mid in &meas_ids {
-            gate.meas_ids.push(pecos_core::MeasId(mid));
+            gate.meas_ids.push(pecos_core::MeasId::from_raw(mid));
         }
         let gate_idx = handle.add_gate_get_idx(py, gate)?;
         // Committed only once the gate is in, so a failed add leaves the counter
@@ -3915,7 +3915,7 @@ impl PyTickHandle {
             base
         };
         for (i, _) in qubits.iter().enumerate() {
-            gate.meas_ids.push(pecos_core::MeasId(base + i));
+            gate.meas_ids.push(pecos_core::MeasId::from_raw(base + i));
         }
         let gate_idx = handle.add_gate_get_idx(py, gate)?;
         handle

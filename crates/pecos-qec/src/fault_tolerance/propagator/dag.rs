@@ -649,10 +649,10 @@ impl DagFaultInfluenceMap {
     #[must_use]
     pub fn meas_index_of(&self, id: pecos_core::MeasId) -> Option<usize> {
         // `extract_measurements` fills id-less entries of a mixed map with
-        // `MeasId(usize::MAX)` as a sentinel. No real gate can hold that id --
+        // `MeasId::from_raw(usize::MAX)` as a sentinel. No real gate can hold that id --
         // insertion rejects it -- so a lookup for it must not "succeed" against
         // the sentinel.
-        if id == pecos_core::MeasId(usize::MAX) {
+        if id == pecos_core::MeasId::from_raw(usize::MAX) {
             return None;
         }
         self.meas_ids.iter().position(|&held| held == id)
@@ -1981,7 +1981,7 @@ impl<'a> DagFaultAnalyzer<'a> {
         let meas_ids = if has_meas_ids {
             entries
                 .iter()
-                .map(|(_, _, _, _, mr)| mr.unwrap_or(pecos_core::MeasId(usize::MAX)))
+                .map(|(_, _, _, _, mr)| mr.unwrap_or(pecos_core::MeasId::from_raw(usize::MAX)))
                 .collect()
         } else {
             Vec::new()
@@ -2634,16 +2634,16 @@ mod tests {
         dag.h(&[0]);
         dag.h(&[0]);
         let mut deep = Gate::mz(&[0usize]);
-        deep.meas_ids = smallvec::smallvec![MeasId(5)];
+        deep.meas_ids = smallvec::smallvec![MeasId::from_raw(5)];
         dag.add_gate_auto_wire(deep);
 
         let mut shallow = Gate::mz(&[1usize]);
-        shallow.meas_ids = smallvec::smallvec![MeasId(9)];
+        shallow.meas_ids = smallvec::smallvec![MeasId::from_raw(9)];
         dag.add_gate_auto_wire(shallow);
 
         dag.h(&[2]);
         let mut middle = Gate::mz(&[2usize]);
-        middle.meas_ids = smallvec::smallvec![MeasId(1)];
+        middle.meas_ids = smallvec::smallvec![MeasId::from_raw(1)];
         dag.add_gate_auto_wire(middle);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
@@ -2675,36 +2675,40 @@ mod tests {
         dag.pz(&[0, 1, 2]);
         for (qubit, id) in [(0usize, 7usize), (1, 9), (2, 4)] {
             let mut gate = Gate::mz(&[qubit]);
-            gate.meas_ids = smallvec::smallvec![MeasId(id)];
+            gate.meas_ids = smallvec::smallvec![MeasId::from_raw(id)];
             dag.add_gate_auto_wire(gate);
         }
 
         let map = DagFaultAnalyzer::new(&dag).build_influence_map();
         assert_eq!(
-            map.meas_index_of(MeasId(7)),
+            map.meas_index_of(MeasId::from_raw(7)),
             Some(1),
             "id-rank order is [4, 7, 9], so MeasId(7) is index 1"
         );
-        assert_eq!(map.meas_index_of(MeasId(9)), Some(2));
-        assert_eq!(map.meas_index_of(MeasId(4)), Some(0));
-        assert_eq!(map.meas_index_of(MeasId(2)), None, "absent id is None");
+        assert_eq!(map.meas_index_of(MeasId::from_raw(9)), Some(2));
+        assert_eq!(map.meas_index_of(MeasId::from_raw(4)), Some(0));
+        assert_eq!(
+            map.meas_index_of(MeasId::from_raw(2)),
+            None,
+            "absent id is None"
+        );
     }
 
     /// A mixed map -- some entries stamped, some id-less -- fills the id-less
-    /// slots with `MeasId(usize::MAX)` as a sentinel. Looking that value up
+    /// slots with `MeasId::from_raw(usize::MAX)` as a sentinel. Looking that value up
     /// must not "find" the sentinel: no real gate can hold it.
     #[test]
     fn the_id_less_sentinel_never_resolves_as_a_held_id() {
         use pecos_core::MeasId;
         let mut map = DagFaultInfluenceMap::with_capacity(0);
-        map.meas_ids = vec![MeasId(4), MeasId(usize::MAX)];
+        map.meas_ids = vec![MeasId::from_raw(4), MeasId::from_raw(usize::MAX)];
         assert_eq!(
-            map.meas_index_of(MeasId(usize::MAX)),
+            map.meas_index_of(MeasId::from_raw(usize::MAX)),
             None,
             "the sentinel occupies index 1, but it is not a held id"
         );
         assert_eq!(
-            map.meas_index_of(MeasId(4)),
+            map.meas_index_of(MeasId::from_raw(4)),
             Some(0),
             "real ids still resolve"
         );

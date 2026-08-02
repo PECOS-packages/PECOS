@@ -3111,7 +3111,7 @@ impl<'a> TickHandle<'a> {
         for (offset, &q) in qubits.iter().enumerate() {
             let tick_idx = self.tick_idx;
             let record_idx = base + offset;
-            let mr = MeasId(record_idx);
+            let mr = MeasId::from_raw(record_idx);
             gate.meas_ids.push(mr);
             refs.push(TickMeasRef {
                 tick: tick_idx,
@@ -3162,7 +3162,7 @@ impl<'a> TickHandle<'a> {
         for (offset, &q) in qubits.iter().enumerate() {
             let tick_idx = self.tick_idx;
             let record_idx = base + offset;
-            let mr = MeasId(record_idx);
+            let mr = MeasId::from_raw(record_idx);
             gate.meas_ids.push(mr);
             refs.push(TickMeasRef {
                 tick: tick_idx,
@@ -3320,13 +3320,16 @@ impl From<&DagCircuit> for TickCircuit {
                             for _ in &gate.qubits {
                                 let record_idx = next_meas_record;
                                 next_meas_record += 1;
-                                gate.meas_ids.push(MeasId(record_idx));
+                                gate.meas_ids.push(MeasId::from_raw(record_idx));
                                 records.push(record_idx);
                             }
                             dag_node_to_record_indices.insert(node_id, records);
                         } else {
-                            let records: Vec<usize> =
-                                gate.meas_ids.iter().map(|meas_id| meas_id.0).collect();
+                            let records: Vec<usize> = gate
+                                .meas_ids
+                                .iter()
+                                .map(|meas_id| meas_id.index())
+                                .collect();
                             if let Some(next) = records.iter().max().map(|record| record + 1) {
                                 next_meas_record = next_meas_record.max(next);
                             }
@@ -3638,14 +3641,14 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1]);
         let mut first = Gate::mz(&[0usize]);
-        first.meas_ids = smallvec::smallvec![MeasId(4)];
+        first.meas_ids = smallvec::smallvec![MeasId::from_raw(4)];
         tc.tick().try_add_gate(first).expect("gate is valid");
         let mut second = Gate::mz(&[1usize]);
-        second.meas_ids = smallvec::smallvec![MeasId(4)];
+        second.meas_ids = smallvec::smallvec![MeasId::from_raw(4)];
         tc.tick().try_add_gate(second).expect("gate is valid");
 
         let err = DagCircuit::try_from(&tc)
-            .expect_err("two measurements share MeasId(4), which DagCircuit refuses");
+            .expect_err("two measurements share MeasId::from_raw(4), which DagCircuit refuses");
         assert_eq!(
             err.tick, 2,
             "the error must name the tick that was rejected"
@@ -3687,7 +3690,7 @@ mod tests {
         dag.pz(&[0, 1]);
         dag.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
         let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
-        assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId(0));
+        assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId::from_raw(0));
 
         let tc = TickCircuit::from(&dag);
         let ids: Vec<usize> = tc
@@ -3837,14 +3840,14 @@ mod tests {
 
         let tick = tc.get_tick_mut(0).unwrap();
         tick.update_gate_batch(0, |gate| {
-            gate.meas_ids[0] = MeasId(10);
-            gate.meas_ids[1] = MeasId(11);
+            gate.meas_ids[0] = MeasId::from_raw(10);
+            gate.meas_ids[1] = MeasId::from_raw(11);
         })
         .expect("measurement id update should be valid");
 
         assert_eq!(
             tick.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(10), MeasId(11)]
+            &[MeasId::from_raw(10), MeasId::from_raw(11)]
         );
     }
 
@@ -3973,11 +3976,11 @@ mod tests {
         assert_eq!(tick.gate_batch_count(), 1);
         assert_eq!(refs0[0].gate_idx, 0);
         assert_eq!(refs1[0].gate_idx, 0);
-        assert_eq!(refs0[0].meas_id, MeasId(0));
-        assert_eq!(refs1[0].meas_id, MeasId(1));
+        assert_eq!(refs0[0].meas_id, MeasId::from_raw(0));
+        assert_eq!(refs1[0].meas_id, MeasId::from_raw(1));
         assert_eq!(
             tick.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(0), MeasId(1)]
+            &[MeasId::from_raw(0), MeasId::from_raw(1)]
         );
     }
 
@@ -4002,7 +4005,7 @@ mod tests {
         assert_eq!(tick.gate_batch_count(), 1);
         assert_eq!(
             tick.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(0), MeasId(1)]
+            &[MeasId::from_raw(0), MeasId::from_raw(1)]
         );
         assert_eq!(
             tick.get_gate_attr(0, "basis"),
@@ -4026,8 +4029,14 @@ mod tests {
         assert_eq!(tick.len(), 2);
         assert_eq!(tick.gate_count(), 2);
         assert_eq!(tick.gate_batch_count(), 2);
-        assert_eq!(tick.gate_batches()[0].meas_ids.as_slice(), &[MeasId(0)]);
-        assert_eq!(tick.gate_batches()[1].meas_ids.as_slice(), &[MeasId(1)]);
+        assert_eq!(
+            tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId::from_raw(0)]
+        );
+        assert_eq!(
+            tick.gate_batches()[1].meas_ids.as_slice(),
+            &[MeasId::from_raw(1)]
+        );
         assert_eq!(
             tick.get_gate_attr(0, "basis"),
             Some(&Attribute::String("Z".into()))
@@ -4388,8 +4397,8 @@ mod tests {
         assert_eq!(tc1.num_ticks(), 3);
         assert_eq!(tc1.gate_count(), 6);
         assert_eq!(tc1.gate_batch_count(), 3);
-        assert_eq!(ms[0].meas_id, MeasId(0));
-        assert_eq!(ms[1].meas_id, MeasId(1));
+        assert_eq!(ms[0].meas_id, MeasId::from_raw(0));
+        assert_eq!(ms[1].meas_id, MeasId::from_raw(1));
 
         let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
         assert_eq!(dag.gate_count(), 6);
@@ -4456,7 +4465,7 @@ mod tests {
         assert_eq!(tick2.gate_batches()[0].gate_type, GateType::MZ);
         assert_eq!(
             tick2.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(0), MeasId(1)]
+            &[MeasId::from_raw(0), MeasId::from_raw(1)]
         );
     }
 
@@ -4528,7 +4537,7 @@ mod tests {
         assert_eq!(tick.gate_batches()[0].gate_type, GateType::MZ);
         assert_eq!(
             tick.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(0), MeasId(1)]
+            &[MeasId::from_raw(0), MeasId::from_raw(1)]
         );
         assert_eq!(
             tick.get_gate_attr(0, "basis"),
@@ -4603,7 +4612,7 @@ mod tests {
         let tick = tc2.get_tick(0).unwrap();
         assert_eq!(
             tick.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(0), MeasId(1)]
+            &[MeasId::from_raw(0), MeasId::from_raw(1)]
         );
     }
 
@@ -4628,7 +4637,7 @@ mod tests {
         assert_eq!(tick.gate_batches()[0].gate_type, GateType::MZ);
         assert_eq!(
             tick.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(0), MeasId(1)]
+            &[MeasId::from_raw(0), MeasId::from_raw(1)]
         );
     }
 
@@ -4636,14 +4645,17 @@ mod tests {
     fn test_dag_to_tick_preserves_existing_measurement_ids_and_advances_counter() {
         let mut dag = DagCircuit::new();
         let mut gate = Gate::mz(&[0]);
-        gate.meas_ids.push(MeasId(5));
+        gate.meas_ids.push(MeasId::from_raw(5));
         let node = dag.add_gate(gate);
         dag.observable_labeled("obs5", &[node]);
 
         let mut tc = TickCircuit::from(&dag);
         assert_eq!(tc.num_measurements(), 6);
         let tick = tc.get_tick(0).unwrap();
-        assert_eq!(tick.gate_batches()[0].meas_ids.as_slice(), &[MeasId(5)]);
+        assert_eq!(
+            tick.gate_batches()[0].meas_ids.as_slice(),
+            &[MeasId::from_raw(5)]
+        );
         match &tc.annotations()[0].kind {
             AnnotationKind::Observable { measurement_nodes } => {
                 assert_eq!(measurement_nodes.as_slice(), &[5]);
@@ -4653,7 +4665,7 @@ mod tests {
 
         let next = tc.tick().mz(&[1]);
         assert_eq!(next[0].record_idx, 6);
-        assert_eq!(next[0].meas_id, MeasId(6));
+        assert_eq!(next[0].meas_id, MeasId::from_raw(6));
         assert_eq!(tc.num_measurements(), 7);
     }
 
@@ -5235,9 +5247,12 @@ mod tests {
         assert_eq!(tick.gate_batch_count(), 2);
         assert_eq!(
             tick.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(0), MeasId(1)]
+            &[MeasId::from_raw(0), MeasId::from_raw(1)]
         );
-        assert_eq!(tick.gate_batches()[1].meas_ids.as_slice(), &[MeasId(2)]);
+        assert_eq!(
+            tick.gate_batches()[1].meas_ids.as_slice(),
+            &[MeasId::from_raw(2)]
+        );
     }
 
     #[test]
@@ -5589,12 +5604,12 @@ mod tests {
         assert_eq!(instances_with_tick[6].0, 2);
         assert_eq!(instances_with_tick[6].1.gate_type(), GateType::MZ);
         assert_eq!(instances_with_tick[6].1.qubits(), &[QubitId::from(0)]);
-        assert_eq!(instances_with_tick[6].1.meas_ids(), &[MeasId(0)]);
+        assert_eq!(instances_with_tick[6].1.meas_ids(), &[MeasId::from_raw(0)]);
         assert_eq!(
             instances_with_tick[6].1.to_gate().meas_ids.as_slice(),
-            &[MeasId(0)]
+            &[MeasId::from_raw(0)]
         );
-        assert_eq!(instances_with_tick[9].1.meas_ids(), &[MeasId(3)]);
+        assert_eq!(instances_with_tick[9].1.meas_ids(), &[MeasId::from_raw(3)]);
 
         // Test iter_ticks
         let ticks: Vec<_> = tc.iter_ticks().collect();
@@ -5668,11 +5683,11 @@ mod tests {
         assert_eq!(meas_instances.len(), 2);
         assert_eq!(
             meas_instances[0].to_gate().meas_ids.as_slice(),
-            &[MeasId(0)]
+            &[MeasId::from_raw(0)]
         );
         assert_eq!(
             meas_instances[1].to_gate().meas_ids.as_slice(),
-            &[MeasId(1)]
+            &[MeasId::from_raw(1)]
         );
 
         let channel = pecos_core::channel::Depolarizing(0.125, 6);
@@ -6608,7 +6623,7 @@ mod tests {
         assert_eq!(calls.get(), 1);
         assert_eq!(
             seen_measurement_ids.borrow().as_slice(),
-            &[MeasId(0), MeasId(1)]
+            &[MeasId::from_raw(0), MeasId::from_raw(1)]
         );
         assert_eq!(noisy.num_ticks(), 2);
 
@@ -6616,7 +6631,7 @@ mod tests {
         assert_eq!(meas_tick.gate_batches()[0].gate_type, GateType::MZ);
         assert_eq!(
             meas_tick.gate_batches()[0].meas_ids.as_slice(),
-            &[MeasId(0), MeasId(1)]
+            &[MeasId::from_raw(0), MeasId::from_raw(1)]
         );
 
         let noise_tick = noisy.get_tick(1).unwrap();

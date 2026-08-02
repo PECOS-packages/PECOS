@@ -1203,7 +1203,11 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                 // MZ: keep multi-qubit (expansion handles per-qubit)
                 _ => {
                     let gt = match name.as_str() {
-                        "MZ" | "MeasureFree" => pecos_core::gate_type::GateType::MZ,
+                        "MZ" => pecos_core::gate_type::GateType::MZ,
+                        // Preserved, NOT normalized to MZ: the MZ-only EEG
+                        // expansion must see and refuse it, or its measurement
+                        // record silently vanishes.
+                        "MeasureFree" => pecos_core::gate_type::GateType::MeasureFree,
                         "RZ" => pecos_core::gate_type::GateType::RZ,
                         "Idle" | "I" => pecos_core::gate_type::GateType::Idle,
                         other => {

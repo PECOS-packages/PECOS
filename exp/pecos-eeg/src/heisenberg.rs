@@ -1769,9 +1769,9 @@ pub fn heisenberg_detection_probability_from_circuit(
 
     let mut detector = Bm::default();
     for &m in detector_meas_indices {
-        if m < expanded.measurement_qubit.len() {
-            detector.z_bits.set_bit(expanded.measurement_qubit[m]);
-        }
+        // Single resolver: an out-of-range record is an error, never a
+        // silently thinner detector.
+        detector.z_bits.set_bit(expanded.aux_qubit_for_record(m)?);
     }
 
     let init_gates: Vec<Gate> = (0..num_original_qubits)
@@ -1813,11 +1813,16 @@ pub fn heisenberg_exact_from_circuit(
     // Build detector matrix: diagonal with Z eigenvalues on the detector aux qubits.
     let mut obs_re = vec![0.0f64; dim * dim];
     let obs_im = vec![0.0f64; dim * dim];
+    // Pre-resolve outside the matrix loop: out-of-range is an error, and the
+    // resolver must not run 2^n times.
+    let mut detector_aux = Vec::with_capacity(detector_meas_indices.len());
+    for &m in detector_meas_indices {
+        detector_aux.push(expanded.aux_qubit_for_record(m)?);
+    }
     for i in 0..dim {
         let mut eigenvalue = 1.0f64;
-        for &m in detector_meas_indices {
-            if m < expanded.measurement_qubit.len() {
-                let aux = expanded.measurement_qubit[m];
+        for &aux in &detector_aux {
+            {
                 if (i >> aux) & 1 == 1 {
                     eigenvalue = -eigenvalue;
                 }

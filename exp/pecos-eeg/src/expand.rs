@@ -76,12 +76,10 @@ pub struct ExpandedCircuit {
     /// one this expansion recorded -- an index into `measurement_qubit` and
     /// `original_measured_qubit`.
     ///
-    /// **`MZ` only.** The expansion walk handles no other measurement type, so
-    /// a stamped `MeasureFree` -- record-bearing and valid -- does not appear
-    /// here, exactly as its measurement does not appear in `measurement_qubit`.
-    /// An absent id is therefore ambiguous between "unknown" and "unsupported
-    /// measurement type"; resolving that needs an error channel on the eeg
-    /// builder, tracked in #387. Id-less legacy circuits yield an empty map.
+    /// `MZ` and `MeasureFree` both appear -- `MeasureFree` lowers to `MZ` in
+    /// this expansion, since the free has no stabilizer effect and its record
+    /// is real. `MeasureLeaked` is refused at the entrance, so an absent id
+    /// here means unknown. Id-less legacy circuits yield an empty map.
     ///
     /// This is eeg's private ordinal. It is expansion order, not id-rank order
     /// and not any other component's ordering; resolve ids through this map
@@ -107,11 +105,12 @@ pub struct ExpandedCircuit {
 /// so the check cannot drift across copies.
 pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> {
     for gate in gates {
-        let is_measurement = matches!(
-            gate.gate_type,
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-        );
-        if is_measurement && gate.gate_type != GateType::MZ {
+        // `MeasureFree` is record-bearing and lowers to `MZ` below -- the
+        // "free" is resource bookkeeping with no stabilizer effect, and a
+        // reused qubit reappears behind an explicit prep the expansion keeps.
+        // Only `MeasureLeaked` is refused: it consumes no record, so this
+        // record-aligned expansion cannot represent it.
+        if gate.gate_type == GateType::MeasureLeaked {
             return Err(EegBuildError::UnsupportedMeasurement {
                 gate_type: gate.gate_type,
             });
@@ -164,7 +163,7 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
         let gate = &gates[i];
 
         match gate.gate_type {
-            GateType::MZ => {
+            GateType::MZ | GateType::MeasureFree => {
                 // For each qubit in this MZ gate, create CX to auxiliary
                 for (position, q) in gate.qubits.iter().enumerate() {
                     let q_idx = q.index();

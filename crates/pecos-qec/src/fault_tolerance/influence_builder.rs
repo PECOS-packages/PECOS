@@ -456,9 +456,16 @@ impl<'a> InfluenceBuilder<'a> {
                         meas_idx += 1;
                     }
                     // A leaked measurement collapses its qubit but consumes no
-                    // measurement record, so it gets no measurement index.
+                    // record -- and this replay cannot express that: `sim.mz`
+                    // advances the simulator's internal history index, so a
+                    // record-less collapse desyncs symbolic indices from
+                    // records and manufactures phantom detectors. Refused,
+                    // exactly as `symbolic_measurement_history` refuses it.
                     pecos_quantum::GateType::MeasureLeaked => {
-                        sim.mz(&qubits);
+                        return Err(InfluenceBuildError::UnsupportedGate {
+                            node,
+                            gate_type: op.gate_type,
+                        });
                     }
                     // Resets project onto |0>. Skipping them treated a reused
                     // qubit as still carrying its pre-reset correlations.
@@ -1459,6 +1466,25 @@ mod tests {
         ));
     }
 
+    /// A leaked measurement cannot be represented in this replay: collapsing
+    /// it via `sim.mz` advances the simulator's internal history index without
+    /// a matching record, desyncing symbolic indices from records. The witness
+    /// circuit manufactured a phantom detector on the visible measurement.
+    #[test]
+    fn a_leaked_measurement_is_refused_not_desynced() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.add_gate_auto_wire(pecos_quantum::Gate::measure_leaked(&[0usize]));
+        dag.mz(&[0]);
+
+        let err = InfluenceBuilder::new(&dag)
+            .build()
+            .map(|_| ())
+            .expect_err("a leaked measurement has no record this replay can express");
+        assert!(matches!(err, InfluenceBuildError::UnsupportedGate { .. }));
+    }
+
     /// A mid-circuit reset must reach the simulator: skipping it treated a
     /// reused qubit as still carrying its pre-reset correlations, so the
     /// re-measurement looked like a deterministic repeat instead of fresh.
@@ -1478,6 +1504,18 @@ mod tests {
             map.detectors.len(),
             1,
             "the post-reset measurement is deterministic on its own"
+        );
+        // Skipping the reset ALSO yields one detector -- the parity of both
+        // measurements -- so counting alone distinguishes nothing. The
+        // detector must contain exactly the post-reset measurement.
+        assert_eq!(
+            map.detectors[0].measurements.len(),
+            1,
+            "one measurement, not a two-measurement parity"
+        );
+        assert_eq!(
+            map.detectors[0].measurements[0].qubit, 0,
+            "and it is the post-reset measurement on qubit 0"
         );
     }
 

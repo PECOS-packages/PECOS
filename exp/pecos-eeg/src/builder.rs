@@ -258,19 +258,50 @@ fn measurement_nodes_to_aux_bitmask(
 mod tests {
     use super::*;
 
-    /// A `MeasureFree` used to pass through the MZ-only expansion unchanged,
-    /// silently deleting its measurement record. It is now refused.
+    /// A `MeasureFree` used to pass through the expansion unchanged, silently
+    /// deleting its measurement record. It now lowers to `MZ`.
     #[test]
-    fn a_measure_free_circuit_is_refused_not_silently_thinned() {
+    fn a_measure_free_circuit_expands_with_its_record_intact() {
+        // Surface-code circuits read every ancilla with `mz_free`; refusing it
+        // was a regression, not a guard. It lowers to `MZ` -- the record is
+        // real, the free has no stabilizer effect.
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1]);
         tc.tick().mz_free(&[0]);
         tc.tick().mz(&[1]);
 
+        EegDemBuilder::from_tick_circuit(&tc)
+            .noise(NoiseModel::coherent_only(0.01))
+            .build()
+            .expect("MeasureFree lowers to MZ in the expansion");
+
+        let gates: Vec<pecos_core::Gate> = tc
+            .iter_gate_batches()
+            .map(|batch| batch.as_gate().clone())
+            .collect();
+        let expanded = crate::expand::expand_circuit(&gates).expect("supported");
+        assert_eq!(
+            expanded.measurement_qubit.len(),
+            2,
+            "both the MeasureFree and the MZ keep their measurement records"
+        );
+    }
+
+    /// `MeasureLeaked` stays refused: it consumes no record, so the
+    /// record-aligned expansion genuinely cannot represent it.
+    #[test]
+    fn a_measure_leaked_circuit_is_refused() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick()
+            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .expect("gate is valid");
+        tc.tick().mz(&[1]);
+
         let err = EegDemBuilder::from_tick_circuit(&tc)
             .noise(NoiseModel::coherent_only(0.01))
             .build()
-            .expect_err("MeasureFree cannot be represented by the MZ-only expansion");
+            .expect_err("MeasureLeaked consumes no record");
         assert!(matches!(err, EegBuildError::UnsupportedMeasurement { .. }));
     }
 

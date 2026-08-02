@@ -137,7 +137,7 @@ fn stochastic_path(
     seed: u64,
 ) -> Result<DemSimulationResult, DemSimulationError> {
     // Build TickCircuit using typed API (proper measurement record tracking)
-    let mut tc = build_tick_circuit(gates, meta);
+    let mut tc = build_tick_circuit(gates, meta)?;
 
     // Compact ticks to reduce DAG complexity (critical for performance)
     tc.compact_ticks();
@@ -177,7 +177,31 @@ fn stochastic_path(
 /// After building all gates, creates detector/observable annotations using
 /// the stored measurement references. This ensures the DagCircuit conversion
 /// and DagFaultAnalyzer see proper structured annotations.
-fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> TickCircuit {
+/// Resolve one Stim-style record offset to its measurement ref, loudly.
+fn resolve_record_offset_ref(
+    offset: i32,
+    meta: &CircuitMeasurementMeta,
+    all_meas_refs: &[pecos_quantum::TickMeasRef],
+) -> Result<pecos_quantum::TickMeasRef, DemSimulationError> {
+    record_offset_to_absolute_index(meta.num_measurements, offset)
+        .and_then(|abs_idx| all_meas_refs.get(abs_idx).copied())
+        .ok_or_else(|| {
+            DemSimulationError::FaultTable(format!(
+                "record offset {offset} does not resolve against {} measurements",
+                meta.num_measurements
+            ))
+        })
+}
+
+/// # Errors
+///
+/// Returns [`DemSimulationError`] when a detector or observable record offset
+/// does not resolve against the circuit's measurements. Unresolvable offsets
+/// used to be silently dropped, thinning the annotation.
+fn build_tick_circuit(
+    gates: &[Gate],
+    meta: &CircuitMeasurementMeta,
+) -> Result<TickCircuit, DemSimulationError> {
     use pecos_quantum::{Attribute, TickMeasRef};
 
     let mut tc = TickCircuit::default();
@@ -202,15 +226,13 @@ fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> TickCirc
         }
     }
 
-    // Create detector annotations from record definitions
+    // Create detector annotations from record definitions. An offset that
+    // does not resolve is an error, not a silently thinner annotation.
     for records in &meta.detector_records {
-        let det_refs: Vec<TickMeasRef> = records
-            .iter()
-            .filter_map(|&rec| {
-                let abs_idx = (meta.num_measurements as i32 + rec) as usize;
-                all_meas_refs.get(abs_idx).copied()
-            })
-            .collect();
+        let mut det_refs: Vec<TickMeasRef> = Vec::with_capacity(records.len());
+        for &rec in records {
+            det_refs.push(resolve_record_offset_ref(rec, meta, &all_meas_refs)?);
+        }
         if !det_refs.is_empty() {
             tc.detector(&det_refs);
         }
@@ -218,13 +240,10 @@ fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> TickCirc
 
     // Create observable annotations from record definitions
     for records in &meta.observable_records {
-        let obs_refs: Vec<TickMeasRef> = records
-            .iter()
-            .filter_map(|&rec| {
-                let abs_idx = (meta.num_measurements as i32 + rec) as usize;
-                all_meas_refs.get(abs_idx).copied()
-            })
-            .collect();
+        let mut obs_refs: Vec<TickMeasRef> = Vec::with_capacity(records.len());
+        for &rec in records {
+            obs_refs.push(resolve_record_offset_ref(rec, meta, &all_meas_refs)?);
+        }
         if !obs_refs.is_empty() {
             tc.observable(&obs_refs);
         }
@@ -256,7 +275,7 @@ fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> TickCirc
         tc.set_meta("observables", Attribute::String(obs_json));
     }
 
-    tc
+    Ok(tc)
 }
 
 /// EEG path: DEM generation + ParsedDem sampling + measurement synthesis.
@@ -319,12 +338,13 @@ fn build_detectors_from_meta(
     for (id, records) in meta.detector_records.iter().enumerate() {
         let mut bm = crate::Bm::default();
         for &rec in records {
-            let meas_idx = record_offset_to_absolute_index(meta.num_measurements, rec).ok_or(
-                crate::expand::EegBuildError::UnresolvableAnnotationRecord {
-                    record_idx: usize::MAX,
-                    num_measurements: meta.num_measurements,
-                },
-            )?;
+            let meas_idx =
+                record_offset_to_absolute_index(meta.num_measurements, rec).ok_or_else(|| {
+                    DemSimulationError::FaultTable(format!(
+                        "record offset {rec} does not resolve against {} measurements",
+                        meta.num_measurements
+                    ))
+                })?;
             // Single resolver: out-of-range is an error, never a skip.
             let q = expanded.aux_qubit_for_record(meas_idx)?;
             bm.z_bits.set_bit(q);
@@ -343,12 +363,13 @@ fn build_observables_from_meta(
     for (id, records) in meta.observable_records.iter().enumerate() {
         let mut bm = crate::Bm::default();
         for &rec in records {
-            let meas_idx = record_offset_to_absolute_index(meta.num_measurements, rec).ok_or(
-                crate::expand::EegBuildError::UnresolvableAnnotationRecord {
-                    record_idx: usize::MAX,
-                    num_measurements: meta.num_measurements,
-                },
-            )?;
+            let meas_idx =
+                record_offset_to_absolute_index(meta.num_measurements, rec).ok_or_else(|| {
+                    DemSimulationError::FaultTable(format!(
+                        "record offset {rec} does not resolve against {} measurements",
+                        meta.num_measurements
+                    ))
+                })?;
             let q = expanded.aux_qubit_for_record(meas_idx)?;
             bm.z_bits.set_bit(q);
         }

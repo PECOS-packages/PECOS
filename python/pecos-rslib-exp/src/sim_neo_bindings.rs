@@ -1585,9 +1585,12 @@ fn build_rust_tick_circuit_from_gates(
                 qubits.iter().map(|&q| pecos_core::QubitId(q)).collect();
 
             match gate_name.as_str() {
+                // MeasureFree lowers to MZ here: record-bearing, and the free
+                // has no stabilizer effect. The expansion accepts it either way.
                 "MZ" | "Measure" | "MeasureFree" => {
                     mz_qubits.extend(qubit_ids);
                 }
+
                 "QAlloc" | "PZ" | "Prep" => {
                     pz_qubits.extend(qubit_ids);
                 }

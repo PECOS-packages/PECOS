@@ -1523,6 +1523,60 @@ pub(crate) fn gate_location_prob_from_locations(
 
 #[cfg(test)]
 mod tests {
+    /// The reviewer's happy-path witness for the rewritten detector mapping:
+    /// `detector_records_abs` must hold absolute raw-measurement indices, so a
+    /// single-measurement detector's event equals that measurement's flip on
+    /// every shot. The old auto-detector hop stored detector ids in the field,
+    /// which reads the wrong measurement whenever the numberings differ.
+    ///
+    /// `raw_measurements` is FLIP space, so the discriminator is statistical:
+    /// noise makes the two measurements' flips independent, and the test
+    /// asserts its own non-vacuity by requiring measurement 1's flip to vary
+    /// AND to disagree with measurement 0's on at least one shot. A fixture
+    /// where the compared streams never differ proves nothing -- the first
+    /// version of this test had exactly that hole, twice.
+    #[test]
+    fn dual_output_detector_events_xor_the_named_raw_measurements() {
+        use pecos_quantum::DagCircuit;
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.mz(&[0]); // raw measurement 0
+        dag.pz(&[1]);
+        let named = dag.mz(&[1]); // raw measurement 1 -- the detector's target
+        dag.detector(&named);
+
+        let im =
+            crate::fault_tolerance::propagator::DagFaultAnalyzer::new(&dag).build_influence_map();
+        let sampler = DemSamplerBuilder::new(&im)
+            .with_uniform_noise(0.3)
+            .raw_measurements()
+            .with_circuit_annotations(&dag)
+            .expect("the annotation resolves")
+            .build()
+            .expect("the detector is valid");
+
+        let mut rng = PecosRng::seed_from_u64(42);
+        let (mut saw_one_flip, mut saw_one_clear, mut saw_disagreement) = (false, false, false);
+        for _ in 0..64 {
+            let shot = sampler
+                .sample_dual(&mut rng)
+                .expect("annotations enable dual output");
+            assert_eq!(
+                shot.detector_events[0], shot.raw_measurements[1],
+                "the detector names raw measurement 1; reading any other \
+                 numbering lands on a different flip stream"
+            );
+            saw_one_flip |= shot.raw_measurements[1];
+            saw_one_clear |= !shot.raw_measurements[1];
+            saw_disagreement |= shot.raw_measurements[0] != shot.raw_measurements[1];
+        }
+        assert!(
+            saw_one_flip && saw_one_clear && saw_disagreement,
+            "vacuity check: measurement 1's flip must vary and must disagree \
+             with measurement 0 at least once, or the equality above proves nothing"
+        );
+    }
+
     /// An observable annotation referencing a node absent from the influence
     /// map used to be silently dropped, thinning the observable. It is now an
     /// error naming the annotation and the node.

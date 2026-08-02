@@ -173,6 +173,19 @@ Scope cut, stated explicitly: the DEM builder's id plumbing stays untyped --
 (`builder.rs:3413`), JSON `meas_ids: Vec<usize>`. Conflation can persist there
 and the tests must cover it.
 
+**Result tags, when that seam is typed (follow-on, not this series):** tags
+remain supported as names layered over identity, never as a second key space.
+The durable shape is `tag -> Vec<MeasId>` in emission order -- equivalently
+`(tag, occurrence) -> MeasId` -- because a tag emitted inside a loop or a
+repeat-until-success gadget names one measurement *per emission*, so the tag
+alone is not unique; the id always is. Flattening this is the `_selene_harness`
+defect in #72, where internal RUS measurements shifted record positions under
+the `measurement_N` tags. The tag table is boundary-owned, built where tags
+enter (Guppy/Selene `result(...)`, detector/observable JSON), and is never
+consulted inside the analysis -- the same rule as ordinals. Numeric Guppy
+result ids already follow this design degenerately: `mz_with_ids` makes the
+external id *be* the `MeasId`, a one-element association per emission.
+
 ## Test strategy
 
 The reason conflation bugs have been invisible: in virtually every existing test

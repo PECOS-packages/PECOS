@@ -81,6 +81,65 @@ struct PauliPropagationTerm {
     start_node: Option<usize>,
 }
 
+/// Why circuit annotations could not be ingested into the influence map.
+///
+/// An annotation that loses references silently becomes an output with no
+/// propagation terms -- not merely empty, but wrong: it suppresses the
+/// record-based fallback downstream. So unresolvable references are errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnnotationIngestError {
+    /// An observable annotation references a node that does not exist.
+    ObservableRefNotFound {
+        /// Index of the annotation among the circuit's annotations.
+        annotation_index: usize,
+        /// The nonexistent node.
+        node: usize,
+    },
+    /// An observable annotation references a node whose gate consumes no
+    /// measurement record, so it cannot contribute a readout term.
+    ObservableRefNotAMeasurement {
+        /// Index of the annotation among the circuit's annotations.
+        annotation_index: usize,
+        /// The referenced node.
+        node: usize,
+    },
+    /// A tracked-Pauli annotation has no matching `TrackedPauliMeta` gate.
+    TrackedPauliWithoutMetaNode {
+        /// Index of the annotation among the circuit's annotations.
+        annotation_index: usize,
+    },
+}
+
+impl std::fmt::Display for AnnotationIngestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ObservableRefNotFound {
+                annotation_index,
+                node,
+            } => write!(
+                f,
+                "annotation {annotation_index}: observable references node {node}, \
+                 which does not exist in the circuit"
+            ),
+            Self::ObservableRefNotAMeasurement {
+                annotation_index,
+                node,
+            } => write!(
+                f,
+                "annotation {annotation_index}: observable references node {node}, \
+                 whose gate consumes no measurement record"
+            ),
+            Self::TrackedPauliWithoutMetaNode { annotation_index } => write!(
+                f,
+                "annotation {annotation_index}: tracked Pauli has no matching \
+                 TrackedPauliMeta gate in the circuit"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AnnotationIngestError {}
+
 pub struct InfluenceBuilder<'a> {
     dag: &'a pecos_quantum::DagCircuit,
     /// Non-detector parity outputs to track for flipping.
@@ -184,8 +243,20 @@ impl<'a> InfluenceBuilder<'a> {
     /// Detector annotations are NOT handled here -- they are processed
     /// by `DemSamplerBuilder::with_circuit_annotations` which maps them
     /// to auto-detected detectors.
-    #[must_use]
-    pub fn with_circuit_annotations(mut self, circuit: &pecos_quantum::DagCircuit) -> Self {
+    ///
+    /// The circuit is `self.dag` -- the one this builder was constructed with.
+    /// It used to be a parameter, which let annotations come from a *different*
+    /// circuit than the one being analyzed, silently producing nonsense.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationIngestError`] when an annotation cannot be resolved
+    /// against the circuit: an observable referencing a missing node or a
+    /// non-measurement gate, or a tracked Pauli with no meta gate. Dropping
+    /// such references silently produced outputs with missing propagation
+    /// terms.
+    pub fn with_circuit_annotations(mut self) -> Result<Self, AnnotationIngestError> {
+        let circuit = self.dag;
         // Find TrackedPauliMeta nodes in topological order.
         // The nth meta-gate corresponds to the nth tracked-Pauli annotation.
         let meta_nodes: Vec<usize> = circuit
@@ -195,41 +266,63 @@ impl<'a> InfluenceBuilder<'a> {
             .collect();
 
         let mut operator_idx = 0;
-        for ann in circuit.annotations() {
+        let mut ingested = Vec::new();
+        for (annotation_index, ann) in circuit.annotations().iter().enumerate() {
             match &ann.kind {
                 pecos_quantum::AnnotationKind::Observable { measurement_nodes } => {
                     let mut terms = Vec::new();
                     for &meas_node in measurement_nodes {
-                        if let Some(gate) = circuit.gate(meas_node) {
-                            let qubits: Vec<usize> =
-                                gate.qubits.iter().map(pecos_core::QubitId::index).collect();
-                            terms.push(PauliPropagationTerm {
-                                pauli: PauliString::zs(&qubits),
-                                start_node: Some(meas_node),
+                        let Some(gate) = circuit.gate(meas_node) else {
+                            return Err(AnnotationIngestError::ObservableRefNotFound {
+                                annotation_index,
+                                node: meas_node,
+                            });
+                        };
+                        if !gate.gate_type.consumes_measurement_record() {
+                            return Err(AnnotationIngestError::ObservableRefNotAMeasurement {
+                                annotation_index,
+                                node: meas_node,
                             });
                         }
+                        let qubits: Vec<usize> =
+                            gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+                        terms.push(PauliPropagationTerm {
+                            pauli: PauliString::zs(&qubits),
+                            start_node: Some(meas_node),
+                        });
                     }
-                    self.non_detector_outputs.push(NonDetectorOutputTarget {
+                    ingested.push(NonDetectorOutputTarget {
                         metadata: DemOutputMetadata::observable(ann.pauli.clone())
                             .with_optional_label(ann.label.clone()),
                         terms,
                     });
                 }
                 pecos_quantum::AnnotationKind::TrackedPauli => {
-                    let meta_node = meta_nodes.get(operator_idx).copied();
+                    let Some(meta_node) = meta_nodes.get(operator_idx).copied() else {
+                        return Err(AnnotationIngestError::TrackedPauliWithoutMetaNode {
+                            annotation_index,
+                        });
+                    };
                     operator_idx += 1;
-                    self.push_single_term_output(
-                        DemOutputMetadata::tracked_pauli(ann.pauli.clone())
-                            .with_optional_label(ann.label.clone()),
-                        meta_node,
-                    );
+                    let metadata = DemOutputMetadata::tracked_pauli(ann.pauli.clone())
+                        .with_optional_label(ann.label.clone());
+                    ingested.push(NonDetectorOutputTarget {
+                        terms: vec![PauliPropagationTerm {
+                            pauli: metadata.pauli.clone(),
+                            start_node: Some(meta_node),
+                        }],
+                        metadata,
+                    });
                 }
                 pecos_quantum::AnnotationKind::Detector { .. } => {
                     // Detectors handled separately by DemSamplerBuilder
                 }
             }
         }
-        self
+        // Nothing is committed until every annotation resolved: a rejected
+        // ingest must not leave the builder holding half the outputs.
+        self.non_detector_outputs.extend(ingested);
+        Ok(self)
     }
 
     /// Build the influence map.
@@ -1078,7 +1171,8 @@ mod tests {
         dag.tracked_pauli_labeled("track_x", X(0));
 
         let map = InfluenceBuilder::new(&dag)
-            .with_circuit_annotations(&dag)
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
             .build();
 
         // 1 observable (record_obs) + 1 tracked Pauli (track_x) = 2 DEM outputs
@@ -1111,7 +1205,8 @@ mod tests {
         dag.observable_labeled("split_time_obs", &[early[0], late[0]]);
 
         let map = InfluenceBuilder::new(&dag)
-            .with_circuit_annotations(&dag)
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
             .build();
 
         assert_eq!(map.num_observables(), 1);
@@ -1154,7 +1249,8 @@ mod tests {
         dag.observable_labeled("split_obs", &[early[0], late[0]]);
 
         let map = InfluenceBuilder::new(&dag)
-            .with_circuit_annotations(&dag)
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
             .build();
 
         assert_eq!(map.num_observables(), 1);
@@ -1198,7 +1294,8 @@ mod tests {
         dag.observable_labeled("split_obs", &[early[0], late[0]]);
 
         let map = InfluenceBuilder::new(&dag)
-            .with_circuit_annotations(&dag)
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
             .build();
 
         assert_eq!(map.num_observables(), 1);
@@ -1228,6 +1325,92 @@ mod tests {
         );
     }
 
+    /// An observable referencing a missing node is an error, not a silently
+    /// thinner observable. De-aliased: node 99 exists in no space.
+    #[test]
+    fn an_observable_ref_to_a_missing_node_is_an_error() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.mz(&[0]);
+        dag.add_annotation(pecos_quantum::PauliAnnotation {
+            pauli: PauliString::zs(&[0usize]),
+            kind: pecos_quantum::AnnotationKind::Observable {
+                measurement_nodes: vec![99],
+            },
+            label: None,
+        });
+
+        let Err(err) = InfluenceBuilder::new(&dag).with_circuit_annotations() else {
+            panic!("node 99 does not exist, so ingest must fail");
+        };
+        assert_eq!(
+            err,
+            AnnotationIngestError::ObservableRefNotFound {
+                annotation_index: 0,
+                node: 99,
+            }
+        );
+    }
+
+    /// A reference to a real gate that consumes no measurement record cannot
+    /// contribute a readout term, so it is an error rather than a Z-spray over
+    /// the gate's qubits.
+    #[test]
+    fn an_observable_ref_to_a_non_measurement_gate_is_an_error() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        let h_node = dag.gate_count(); // next node index is the H below
+        dag.h(&[0]);
+        dag.mz(&[0]);
+        dag.add_annotation(pecos_quantum::PauliAnnotation {
+            pauli: PauliString::zs(&[0usize]),
+            kind: pecos_quantum::AnnotationKind::Observable {
+                measurement_nodes: vec![h_node],
+            },
+            label: None,
+        });
+
+        let Err(err) = InfluenceBuilder::new(&dag).with_circuit_annotations() else {
+            panic!("an H gate holds no measurement record, so ingest must fail");
+        };
+        assert!(matches!(
+            err,
+            AnnotationIngestError::ObservableRefNotAMeasurement { .. }
+        ));
+    }
+
+    /// A rejected ingest commits nothing observable-side: a caller who catches
+    /// the error and rebuilds sees no half-state.
+    #[test]
+    fn a_rejected_ingest_leaves_no_partial_outputs() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let good = dag.mz(&[0]);
+        dag.mz(&[1]);
+        dag.observable_labeled("resolves_fine", &good);
+        dag.add_annotation(pecos_quantum::PauliAnnotation {
+            pauli: PauliString::zs(&[1usize]),
+            kind: pecos_quantum::AnnotationKind::Observable {
+                measurement_nodes: vec![99],
+            },
+            label: None,
+        });
+
+        assert!(
+            InfluenceBuilder::new(&dag)
+                .with_circuit_annotations()
+                .is_err(),
+            "the second annotation cannot resolve"
+        );
+        let clean = InfluenceBuilder::new(&dag).build();
+        let fresh = InfluenceBuilder::new(&dag).build();
+        assert_eq!(
+            clean.num_observables(),
+            fresh.num_observables(),
+            "a fresh build is unaffected by the failed ingest"
+        );
+    }
+
     #[test]
     fn test_duplicate_observable_terms_cancel_in_influence_map() {
         let mut dag = DagCircuit::new();
@@ -1237,7 +1420,8 @@ mod tests {
         dag.observable_labeled("duplicate_record_obs", &[meas[0], meas[0]]);
 
         let map = InfluenceBuilder::new(&dag)
-            .with_circuit_annotations(&dag)
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
             .build();
 
         assert_eq!(map.num_observables(), 1);

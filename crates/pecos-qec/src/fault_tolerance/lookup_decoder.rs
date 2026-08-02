@@ -484,7 +484,8 @@ mod tests {
         dag.observable_labeled("obs0", &[meas[0]]);
 
         let map = InfluenceBuilder::new(&dag)
-            .with_circuit_annotations(&dag)
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
             .build();
         assert_eq!(map.num_tracked_paulis(), 1);
         assert_eq!(map.num_observables(), 1);

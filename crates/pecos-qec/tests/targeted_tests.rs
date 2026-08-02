@@ -131,7 +131,8 @@ fn custom_p1_weights_affect_decoder() {
     dag.observable(&[ms[0], ms[1]]);
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
         .build();
 
     // Uniform weights
@@ -205,7 +206,8 @@ fn prep_gate_stops_propagation() {
     dag.mz(&[0]);
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
         .build();
 
     // Find the H gate's after-location
@@ -311,7 +313,8 @@ fn probability_sums_to_one() {
     dag.observable(&[ms[0], ms[1]]);
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
         .build();
 
     let noise = NoiseConfig::uniform(0.001);

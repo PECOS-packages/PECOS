@@ -457,6 +457,7 @@ fn circuit_annotation_dual_output() {
     let sampler = DemSamplerBuilder::new(&influence_map)
         .with_uniform_noise(0.05) // high noise for visible effect
         .with_circuit_annotations(&dag)
+        .expect("annotations resolve against the influence map")
         .build()
         .unwrap();
 

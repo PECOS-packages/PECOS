@@ -3272,7 +3272,8 @@ fn build_dem_from_circuit(
     let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
     let annotated_observable_records = observable_records_from_annotations(circuit, &influence_map);
     let annotation_map = InfluenceBuilder::new(circuit)
-        .with_circuit_annotations(circuit)
+        .with_circuit_annotations()
+        .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
         .build();
     influence_map.merge_dem_outputs_from(&annotation_map);
 

@@ -1057,7 +1057,9 @@ impl PyInfluenceBuilder {
             builder = builder.with_tracked_pauli(pauli.clone());
         }
 
-        let inner = builder.build();
+        let inner = builder
+            .build()
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         Ok(PyDagFaultInfluenceMap { inner })
     }
 

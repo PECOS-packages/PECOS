@@ -1764,8 +1764,8 @@ pub fn heisenberg_detection_probability_from_circuit(
     noise: &dyn NoiseSpec,
     num_original_qubits: usize,
     prune_threshold: f64,
-) -> f64 {
-    let expanded = crate::expand::expand_circuit(original_gates);
+) -> Result<f64, crate::expand::EegBuildError> {
+    let expanded = crate::expand::expand_circuit(original_gates)?;
 
     let mut detector = Bm::default();
     for &m in detector_meas_indices {
@@ -1779,7 +1779,13 @@ pub fn heisenberg_detection_probability_from_circuit(
         .collect();
     let stab = StabilizerGroup::from_circuit(&init_gates, expanded.num_qubits);
 
-    heisenberg_detection_probability(&expanded.gates, &detector, noise, &stab, prune_threshold)
+    Ok(heisenberg_detection_probability(
+        &expanded.gates,
+        &detector,
+        noise,
+        &stab,
+        prune_threshold,
+    ))
 }
 
 /// Exact detection probability via matrix-based backward Heisenberg.
@@ -1793,8 +1799,8 @@ pub fn heisenberg_exact_from_circuit(
     detector_meas_indices: &[usize],
     noise: &dyn NoiseSpec,
     _num_original_qubits: usize,
-) -> f64 {
-    let expanded = crate::expand::expand_circuit(original_gates);
+) -> Result<f64, crate::expand::EegBuildError> {
+    let expanded = crate::expand::expand_circuit(original_gates)?;
     let n = expanded.num_qubits;
 
     assert!(
@@ -1874,7 +1880,7 @@ pub fn heisenberg_exact_from_circuit(
     // ⟨0...0|O_backward|0...0⟩ = obs_re[0]
     let expectation = obs_re[0];
     let prob = 0.5 * (1.0 - expectation);
-    prob.clamp(0.0, 1.0)
+    Ok(prob.clamp(0.0, 1.0))
 }
 
 // --- Matrix helpers for exact Heisenberg ---
@@ -2098,7 +2104,7 @@ mod tests {
             gate(GateType::MZ, &[3]),
         ];
 
-        let expanded = expand::expand_circuit(&gates_orig);
+        let expanded = expand::expand_circuit(&gates_orig).expect("supported circuit");
         let theta = 0.05;
         let noise = UniformNoise::coherent_only(theta);
 
@@ -2273,7 +2279,8 @@ mod tests {
 
         for &theta in &[0.01, 0.05, 0.1, 0.2, 0.5] {
             let noise = crate::noise::UniformNoise::coherent_only(theta);
-            let p = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 2);
+            let p = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 2)
+                .expect("supported circuit");
             let exact = theta.sin().powi(2);
             assert!(
                 (p - exact).abs() < 1e-10,
@@ -2305,7 +2312,8 @@ mod tests {
 
         for &theta in &[0.01, 0.05, 0.1, 0.2] {
             let noise = crate::noise::UniformNoise::coherent_only(theta);
-            let p = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 3);
+            let p = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 3)
+                .expect("supported circuit");
             let exact = (2.0 - (6.0 * theta).cos() - (2.0 * theta).cos()) / 4.0;
             eprintln!("theta={theta:.2}: exact_heisenberg={p:.10}, analytical={exact:.10}");
             assert!(
@@ -2368,7 +2376,7 @@ mod tests {
             gate(GateType::MZ, &[6]),
         ];
 
-        let expanded = crate::expand::expand_circuit(&gates_orig);
+        let expanded = crate::expand::expand_circuit(&gates_orig).expect("supported circuit");
         let gate_index = crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
 
         let init_gates: Vec<Gate> = (0..7).map(|q| gate(GateType::PZ, &[q])).collect();
@@ -2548,7 +2556,7 @@ mod tests {
                 gates.push(gate(GateType::MZ, &[q]));
             }
 
-            let expanded = crate::expand::expand_circuit(&gates);
+            let expanded = crate::expand::expand_circuit(&gates).expect("supported circuit");
             let gate_index = crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
             let noise_map = build_noise_map(&expanded.gates, &noise, &gate_index.expansion_gates);
 
@@ -2674,7 +2682,7 @@ mod tests {
                 gates.push(gate(GateType::MZ, &[q]));
             }
 
-            let expanded = crate::expand::expand_circuit(&gates);
+            let expanded = crate::expand::expand_circuit(&gates).expect("supported circuit");
             let gate_index = crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
             let noise_map = build_noise_map(&expanded.gates, &noise, &gate_index.expansion_gates);
 

@@ -110,7 +110,8 @@ pub fn eeg_summary(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let result = circuit::analyze_expanded(&expanded.gates, &noise);
     let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
     let h = result
@@ -148,7 +149,8 @@ pub fn eeg_event_diagnostics(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let result = circuit::analyze_expanded(&expanded.gates, &noise);
     let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
 
@@ -214,7 +216,8 @@ pub fn eeg_per_detector(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let result = circuit::analyze_expanded(&expanded.gates, &noise);
     let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
 
@@ -402,7 +405,8 @@ pub fn exact_detection_rates(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
 
     // Build initial stabilizer group: Z on each original qubit
@@ -477,7 +481,8 @@ pub fn exact_pairwise_rates(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
 
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
@@ -557,7 +562,8 @@ pub fn coherent_dem_exact(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
     let gate_index = pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
 
@@ -650,7 +656,8 @@ pub fn coherent_dem_decomposed(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
     let gate_index = pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
 
@@ -757,7 +764,8 @@ pub fn exact_correlation_table(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
 
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
@@ -821,7 +829,8 @@ pub fn correlation_matching_dem(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
 
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
@@ -871,7 +880,8 @@ pub fn compress_noise(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let gate_index = pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
 
     let result = pecos_eeg::noise_compression::compress_noise_to_boundaries(
@@ -913,7 +923,8 @@ pub fn noise_characterization(
         p_prep,
     };
     let gates = extract_gates(tick_circuit)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
 
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
@@ -998,7 +1009,8 @@ fn run_eeg(
     let gates = extract_gates(py_tc)?;
 
     // Step 1: Expand circuit (defer measurements)
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
     // Step 2: Propagate through expanded circuit
     let result = pecos_eeg::circuit::analyze_expanded(&expanded.gates, &noise);
@@ -1054,7 +1066,8 @@ fn run_eeg_decomposable(
         p_prep,
     };
     let gates = extract_gates(py_tc)?;
-    let expanded = pecos_eeg::expand::expand_circuit(&gates);
+    let expanded = pecos_eeg::expand::expand_circuit(&gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let result = pecos_eeg::circuit::analyze_expanded(&expanded.gates, &noise);
     let (detectors, observables) = extract_detectors_expanded(py_tc, &expanded)?;
     let expanded_pre_readout = exclude_final_mz(&expanded.gates);
@@ -1260,11 +1273,18 @@ fn extract_detectors_expanded(
         for (id, records) in det_list {
             let mut bm = Bm::default();
             for &rec in &records {
-                if let Some(abs_idx) = measurement_record_index(rec, num_meas) {
-                    // Map to AUXILIARY qubit in expanded circuit
-                    let aux_qubit = expanded.measurement_qubit[abs_idx];
-                    bm.z_bits.xor_bit(aux_qubit);
-                }
+                // Single resolver: an unresolvable record is an error, not a
+                // silently thinner detector.
+                let abs_idx = measurement_record_index(rec, num_meas).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "detector {id} references record offset {rec}, which does not \
+                         resolve against {num_meas} measurements"
+                    ))
+                })?;
+                let aux_qubit = expanded
+                    .aux_qubit_for_record(abs_idx)
+                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+                bm.z_bits.xor_bit(aux_qubit);
             }
             detectors.push(Detector { id, stabilizer: bm });
         }
@@ -1278,10 +1298,16 @@ fn extract_detectors_expanded(
         for (id, records) in obs_list {
             let mut bm = Bm::default();
             for &rec in &records {
-                if let Some(abs_idx) = measurement_record_index(rec, num_meas) {
-                    let aux_qubit = expanded.measurement_qubit[abs_idx];
-                    bm.z_bits.xor_bit(aux_qubit);
-                }
+                let abs_idx = measurement_record_index(rec, num_meas).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "observable {id} references record offset {rec}, which does not \
+                         resolve against {num_meas} measurements"
+                    ))
+                })?;
+                let aux_qubit = expanded
+                    .aux_qubit_for_record(abs_idx)
+                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+                bm.z_bits.xor_bit(aux_qubit);
             }
             observables.push(Observable { id, pauli: bm });
         }

@@ -452,7 +452,10 @@ impl DemSampler {
             .map_err(|err| DetectorValidationError::InvalidMetadata {
                 message: err.to_string(),
             })?
-            .build();
+            .build()
+            .map_err(|err| DetectorValidationError::InvalidMetadata {
+                message: err.to_string(),
+            })?;
         influence_map.merge_dem_outputs_from(&annotation_map);
 
         // Extract metadata before building (avoids ownership issues with builder methods)
@@ -1159,28 +1162,13 @@ impl<'a> DemSamplerBuilder<'a> {
         let detectors: Vec<&pecos_quantum::PauliAnnotation> = circuit.detectors().collect();
         let observables: Vec<&pecos_quantum::PauliAnnotation> = circuit.observables().collect();
 
-        // Map user-defined detector annotations to auto-detected detector indices
+        // Map each user detector directly to absolute raw-measurement indices --
+        // the coordinate space `detector_records_abs` documents and `sample_dual`
+        // XORs. An earlier version routed through a first-match-by-qubit/basis
+        // auto-detector lookup, which both stored the wrong coordinate space and
+        // rejected legitimate detectors on circuits that measure one qubit more
+        // than once.
         if !detectors.is_empty() {
-            // For each IM measurement index, find which auto-detector contains it
-            let mut meas_idx_to_auto_det: Vec<Option<usize>> =
-                vec![None; self.influence_map.measurements.len()];
-            for (det_idx, det) in self.influence_map.detectors.iter().enumerate() {
-                for meas_id in &det.measurements {
-                    for (im_idx, &(_node, qubit, basis)) in
-                        self.influence_map.measurements.iter().enumerate()
-                    {
-                        if qubit == meas_id.qubit
-                            && basis == meas_id.basis
-                            && meas_idx_to_auto_det[im_idx].is_none()
-                        {
-                            meas_idx_to_auto_det[im_idx] = Some(det_idx);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Map each user detector: measurement_nodes → IM meas index → auto-detector index
             let mut det_records_abs: Vec<Vec<usize>> = Vec::with_capacity(detectors.len());
             for (annotation_index, ann) in detectors.iter().enumerate() {
                 let AnnotationKind::Detector {
@@ -1192,17 +1180,14 @@ impl<'a> DemSamplerBuilder<'a> {
                 };
                 let mut resolved = Vec::with_capacity(measurement_nodes.len());
                 for &node in measurement_nodes {
-                    let record = node_to_meas_idx
-                        .get(&node)
-                        .and_then(|&im_idx| meas_idx_to_auto_det[im_idx]);
-                    let Some(det_idx) = record else {
+                    let Some(&im_idx) = node_to_meas_idx.get(&node) else {
                         return Err(DetectorValidationError::UnresolvableAnnotationRef {
                             output_kind: "detector",
                             annotation_index,
                             node,
                         });
                     };
-                    resolved.push(det_idx);
+                    resolved.push(im_idx);
                 }
                 det_records_abs.push(resolved);
             }
@@ -1560,8 +1545,8 @@ mod tests {
         let err = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.01)
             .with_circuit_annotations(&dag)
-            .err()
-            .expect("node 99 resolves to no measurement");
+            .map(|_| ())
+            .expect_err("node 99 resolves to no measurement");
         assert!(matches!(
             err,
             DetectorValidationError::UnresolvableAnnotationRef {
@@ -1595,7 +1580,10 @@ mod tests {
     #[test]
     fn raw_mode_output_length_matches_measurements() {
         let circuit = repetition_code(2);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.01)
@@ -1613,7 +1601,10 @@ mod tests {
     #[test]
     fn zero_noise_raw_mode_deterministic_measurements_are_zero() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.0)
@@ -1632,7 +1623,10 @@ mod tests {
     #[test]
     fn raw_mode_matches_dem_sampler_from_influence_map() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let p = 0.01;
         let num_shots = 20_000;
@@ -1662,7 +1656,9 @@ mod tests {
     #[test]
     fn detector_mode_output_length_matches_definitions() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .build()
+            .expect("circuit is replayable");
 
         // Define 2 simple detectors (last two measurements)
         let detector_records = vec![vec![-1i32], vec![-2]];
@@ -1685,7 +1681,9 @@ mod tests {
     #[test]
     fn detector_mode_accepts_observable_aliases() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .build()
+            .expect("circuit is replayable");
 
         let records_sampler = DemSamplerBuilder::new(&im)
             .with_detector_records(vec![vec![-1]])
@@ -1755,7 +1753,8 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
-            .build();
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_noise(0.03, 0.0, 0.02, 0.0)
@@ -1787,7 +1786,8 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
-            .build();
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_noise(0.0, 0.0, 1.0, 0.0)
@@ -1930,7 +1930,8 @@ mod tests {
         let influence_map = InfluenceBuilder::new(&circuit)
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
-            .build();
+            .build()
+            .expect("circuit is replayable");
         let from_builder = DemSamplerBuilder::new(&influence_map)
             .with_noise(0.0, 0.0, 1.0, 0.0)
             .with_detector_records(vec![vec![-1]])
@@ -2014,7 +2015,9 @@ mod tests {
         circuit.pz(&[0]);
         circuit.h(&[0]);
         circuit.mz(&[0]);
-        let im = InfluenceBuilder::new(&circuit).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.01)
@@ -2112,7 +2115,10 @@ mod tests {
     #[test]
     fn high_noise_produces_nonzero_rates_both_modes() {
         let circuit = repetition_code(2);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let p = 0.1;
         let num_shots = 5_000;
@@ -2147,7 +2153,10 @@ mod tests {
     #[test]
     fn dual_output_returns_none_without_definitions() {
         let circuit = repetition_code(2);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.01)
@@ -2162,7 +2171,10 @@ mod tests {
     #[test]
     fn dual_output_produces_both_views() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         // Define detectors: first and second measurements
         let det_defs = vec![vec![0usize], vec![1]];
@@ -2186,7 +2198,10 @@ mod tests {
     #[test]
     fn dual_output_detector_events_consistent_with_raw() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         // Detector = XOR of measurements 0 and 1
         let det_defs = vec![vec![0usize, 1]];

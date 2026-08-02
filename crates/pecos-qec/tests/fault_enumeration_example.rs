@@ -124,7 +124,8 @@ fn repetition_code_fault_enumeration() {
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
-        .build();
+        .build()
+        .expect("circuit is replayable");
 
     let locs = map.gate_fault_locations();
     println!(
@@ -289,7 +290,8 @@ fn repetition_code_labels() {
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
-        .build();
+        .build()
+        .expect("circuit is replayable");
 
     // Check DEM-output labels are populated (observables + tracked Paulis)
     println!("DEM output labels: {:?}", map.dem_output_labels);
@@ -329,7 +331,8 @@ fn repetition_code_lookup_table() {
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
-        .build();
+        .build()
+        .expect("circuit is replayable");
 
     // Build lookup: syndrome pattern -> list of possible logical effects
     let mut lookup: std::collections::BTreeMap<Vec<u32>, Vec<pecos_core::PauliString>> =
@@ -373,7 +376,8 @@ fn repetition_code_ml_decoder() {
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
-        .build();
+        .build()
+        .expect("circuit is replayable");
 
     // Build ML decoder from fault enumeration up to weight 3
     let decoder = LookupDecoder::build(&map, &noise, 3);
@@ -451,7 +455,8 @@ fn decoder_empty_syndrome() {
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
-        .build();
+        .build()
+        .expect("circuit is replayable");
 
     let decoder = LookupDecoder::build(&map, &noise, 2);
 
@@ -476,7 +481,8 @@ fn decoder_table_size_and_truncation() {
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
-        .build();
+        .build()
+        .expect("circuit is replayable");
 
     let d1 = LookupDecoder::build(&map, &noise, 1);
     let d2 = LookupDecoder::build(&map, &noise, 2);
@@ -644,7 +650,8 @@ fn code_422_fault_enumeration() {
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
-        .build();
+        .build()
+        .expect("circuit is replayable");
 
     let locs = map.gate_fault_locations();
     println!(
@@ -720,7 +727,8 @@ fn code_422_ml_decoder() {
     let map = InfluenceBuilder::new(&dag)
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
-        .build();
+        .build()
+        .expect("circuit is replayable");
 
     // Build ML decoder up to weight 2
     let decoder = LookupDecoder::build(&map, &noise, 2);

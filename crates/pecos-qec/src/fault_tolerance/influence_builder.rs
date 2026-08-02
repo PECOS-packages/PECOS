@@ -22,7 +22,7 @@
 //!
 //! // Build influence map with automatic detector discovery
 //! let builder = InfluenceBuilder::new(&dag);
-//! let influence_map = builder.build();
+//! let influence_map = builder.build().expect("circuit is replayable");
 //!
 //! // Build a fast DemSampler from the influence map
 //! let num_locations = influence_map.locations.len();
@@ -140,6 +140,54 @@ impl std::fmt::Display for AnnotationIngestError {
 
 impl std::error::Error for AnnotationIngestError {}
 
+/// Why the influence map could not be built from the circuit.
+///
+/// The forward symbolic replay used to skip anything it did not recognize --
+/// including mid-circuit resets and non-Clifford rotations -- and to measure
+/// only the first qubit of a batched measurement node. All of those produced
+/// silently wrong detector analyses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InfluenceBuildError {
+    /// A gate the symbolic replay cannot represent.
+    UnsupportedGate {
+        /// The DAG node holding the gate.
+        node: usize,
+        /// The offending gate type.
+        gate_type: pecos_core::gate_type::GateType,
+    },
+    /// A single node carrying more than one measurement.
+    ///
+    /// The measurement-info model maps a node to one measurement index, so a
+    /// batched node cannot be represented yet (issue #398 tracks per-measurement
+    /// mapping). Refused rather than analyzed as if only the first qubit were
+    /// measured.
+    BatchedMeasurementUnsupported {
+        /// The DAG node holding the batched measurement.
+        node: usize,
+        /// How many measurements it carries.
+        count: usize,
+    },
+}
+
+impl std::fmt::Display for InfluenceBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedGate { node, gate_type } => write!(
+                f,
+                "symbolic replay cannot represent {gate_type:?} at node {node}; lower it to \
+                 supported Cliffords first"
+            ),
+            Self::BatchedMeasurementUnsupported { node, count } => write!(
+                f,
+                "node {node} carries {count} measurements in one gate; the influence map \
+                 cannot yet represent a batched measurement node"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InfluenceBuildError {}
+
 pub struct InfluenceBuilder<'a> {
     dag: &'a pecos_quantum::DagCircuit,
     /// Non-detector parity outputs to track for flipping.
@@ -212,7 +260,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// let builder = InfluenceBuilder::new(&dag).with_tracked_pauli(
     ///     PauliString::from_paulis(&[Pauli::X, Pauli::Z, Pauli::Z]),
     /// );
-    /// let _map = builder.build();
+    /// let _map = builder.build().expect("circuit is replayable");
     /// ```
     #[must_use]
     pub fn with_tracked_pauli(mut self, pauli: PauliString) -> Self {
@@ -319,8 +367,11 @@ impl<'a> InfluenceBuilder<'a> {
                 }
             }
         }
-        // Nothing is committed until every annotation resolved: a rejected
-        // ingest must not leave the builder holding half the outputs.
+        // Staged so interleaved observables and tracked Paulis keep annotation
+        // order in one place. Partial state cannot escape an `Err` regardless:
+        // the method consumes `self`, so a failed ingest drops the builder --
+        // which also means transactionality here is structural and untestable,
+        // not a behavior a test could pin.
         self.non_detector_outputs.extend(ingested);
         Ok(self)
     }
@@ -331,20 +382,30 @@ impl<'a> InfluenceBuilder<'a> {
     /// 1. Forward symbolic simulation to get measurement correlations
     /// 2. Detector extraction from deterministic measurements
     /// 3. Backward propagation from detectors and DEM outputs
-    #[must_use]
-    pub fn build(&self) -> DagFaultInfluenceMap {
+    /// # Errors
+    ///
+    /// Returns [`InfluenceBuildError`] when the circuit contains a gate the
+    /// symbolic replay cannot represent, or a batched measurement node. Both
+    /// used to be analyzed silently wrong -- an ignored rotation manufactured
+    /// phantom detectors, and a batched node was treated as measuring only its
+    /// first qubit.
+    pub fn build(&self) -> Result<DagFaultInfluenceMap, InfluenceBuildError> {
         // Step 1: Run forward symbolic simulation
-        let measurement_info = self.run_symbolic_simulation();
+        let measurement_info = self.run_symbolic_simulation()?;
 
         // Step 2: Extract detectors from deterministic measurements
         let detectors = Self::extract_detectors(&measurement_info);
 
         // Step 3: Build influence map with backward propagation
-        self.build_influence_map_with_detectors(&measurement_info, &detectors)
+        Ok(self.build_influence_map_with_detectors(&measurement_info, &detectors))
     }
 
     /// Run symbolic simulation to get measurement correlations.
-    pub(crate) fn run_symbolic_simulation(&self) -> MeasurementInfo {
+    ///
+    /// # Errors
+    ///
+    /// See [`build`](Self::build).
+    pub(crate) fn run_symbolic_simulation(&self) -> Result<MeasurementInfo, InfluenceBuildError> {
         let topo_order = self.dag.topological_order();
 
         // Determine number of qubits from the circuit
@@ -384,23 +445,55 @@ impl<'a> InfluenceBuilder<'a> {
 
                 match op.gate_type {
                     pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => {
+                        if qubits.len() > 1 {
+                            return Err(InfluenceBuildError::BatchedMeasurementUnsupported {
+                                node,
+                                count: qubits.len(),
+                            });
+                        }
                         sim.mz(&[qubits[0]]);
                         node_to_meas_idx[node] = Some(meas_idx);
                         meas_idx += 1;
                     }
-                    // Skip other gates (identity, barriers, Prep, etc.)
-                    _ => {}
+                    // A leaked measurement collapses its qubit but consumes no
+                    // measurement record, so it gets no measurement index.
+                    pecos_quantum::GateType::MeasureLeaked => {
+                        sim.mz(&qubits);
+                    }
+                    // Resets project onto |0>. Skipping them treated a reused
+                    // qubit as still carrying its pre-reset correlations.
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc => {
+                        for &q in &qubits {
+                            sim.pz(q);
+                        }
+                    }
+                    // No effect on stabilizer correlations.
+                    pecos_quantum::GateType::I
+                    | pecos_quantum::GateType::Idle
+                    | pecos_quantum::GateType::QFree
+                    | pecos_quantum::GateType::MeasCrosstalkGlobalPayload
+                    | pecos_quantum::GateType::MeasCrosstalkLocalPayload
+                    | pecos_quantum::GateType::TrackedPauliMeta => {}
+                    // Anything else would be silently mis-analyzed: an ignored
+                    // rotation manufactures detectors its backward propagation
+                    // then contradicts.
+                    other => {
+                        return Err(InfluenceBuildError::UnsupportedGate {
+                            node,
+                            gate_type: other,
+                        });
+                    }
                 }
             }
         }
 
         let history = sim.measurement_history().clone();
 
-        MeasurementInfo {
+        Ok(MeasurementInfo {
             history,
             node_to_meas_idx,
             num_measurements: meas_idx,
-        }
+        })
     }
 
     /// Extract detectors from deterministic measurements.
@@ -1074,7 +1167,7 @@ mod tests {
         dag.mz(&[0]);
 
         let builder = InfluenceBuilder::new(&dag);
-        let map = builder.build();
+        let map = builder.build().expect("circuit is replayable");
 
         // Should have some locations and at least one detector
         assert!(!map.locations.is_empty());
@@ -1096,7 +1189,7 @@ mod tests {
         dag.mz(&[2]);
 
         let builder = InfluenceBuilder::new(&dag);
-        let map = builder.build();
+        let map = builder.build().expect("circuit is replayable");
 
         assert!(!map.locations.is_empty());
         assert!(!map.measurements.is_empty());
@@ -1120,7 +1213,7 @@ mod tests {
         dag.mz(&[2]);
 
         let builder = InfluenceBuilder::new(&dag);
-        let map = builder.build();
+        let map = builder.build().expect("circuit is replayable");
 
         // Should have multiple measurements
         assert!(map.measurements.len() >= 2);
@@ -1139,7 +1232,7 @@ mod tests {
 
         let builder = InfluenceBuilder::new(&dag).with_z(&[0]); // Track Z logical on qubit 0
 
-        let map = builder.build();
+        let map = builder.build().expect("circuit is replayable");
 
         // Should track the logical
         assert!(map.influences.max_dem_output_index().is_some());
@@ -1173,7 +1266,8 @@ mod tests {
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
-            .build();
+            .build()
+            .expect("circuit is replayable");
 
         // 1 observable (record_obs) + 1 tracked Pauli (track_x) = 2 DEM outputs
         assert_eq!(map.num_dem_outputs(), 1, "1 observable");
@@ -1207,7 +1301,8 @@ mod tests {
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
-            .build();
+            .build()
+            .expect("circuit is replayable");
 
         assert_eq!(map.num_observables(), 1);
 
@@ -1251,7 +1346,8 @@ mod tests {
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
-            .build();
+            .build()
+            .expect("circuit is replayable");
 
         assert_eq!(map.num_observables(), 1);
 
@@ -1296,7 +1392,8 @@ mod tests {
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
-            .build();
+            .build()
+            .expect("circuit is replayable");
 
         assert_eq!(map.num_observables(), 1);
 
@@ -1322,6 +1419,65 @@ mod tests {
                     .get_observable_indices(h_q1, Pauli::Z.as_u8())
                     .is_empty(),
             "at least one Pauli fault between measurements should flip the late term"
+        );
+    }
+
+    /// An ignored rotation used to manufacture phantom detectors: forward
+    /// replay skipped `RZ` while backward propagation simplified it, so the two
+    /// halves of the analysis disagreed. Reviewer witness on #408.
+    #[test]
+    fn an_unrepresentable_gate_is_refused_not_skipped() {
+        use pecos_core::Angle64;
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.rz(Angle64::QUARTER_TURN, &[0]);
+        dag.mz(&[0]);
+
+        let err = InfluenceBuilder::new(&dag)
+            .build()
+            .map(|_| ())
+            .expect_err("RZ is not representable in the symbolic replay");
+        assert!(matches!(err, InfluenceBuildError::UnsupportedGate { .. }));
+    }
+
+    /// A batched measurement node used to be analyzed as measuring only its
+    /// first qubit, silently undercounting detectors. Refused until the
+    /// per-measurement model (#398) can represent it.
+    #[test]
+    fn a_batched_measurement_node_is_refused_not_undercounted() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        dag.add_gate_auto_wire(pecos_quantum::Gate::mz(&[0usize, 1]));
+
+        let err = InfluenceBuilder::new(&dag)
+            .build()
+            .map(|_| ())
+            .expect_err("a batched measurement node cannot be represented");
+        assert!(matches!(
+            err,
+            InfluenceBuildError::BatchedMeasurementUnsupported { count: 2, .. }
+        ));
+    }
+
+    /// A mid-circuit reset must reach the simulator: skipping it treated a
+    /// reused qubit as still carrying its pre-reset correlations, so the
+    /// re-measurement looked like a deterministic repeat instead of fresh.
+    #[test]
+    fn a_mid_circuit_reset_reaches_the_simulator() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]); // random
+        dag.pz(&[0]); // reset -- was silently skipped
+        dag.mz(&[0]); // deterministic |0>, NOT a repeat of the first
+
+        let map = InfluenceBuilder::new(&dag)
+            .build()
+            .expect("all gates representable");
+        assert_eq!(
+            map.detectors.len(),
+            1,
+            "the post-reset measurement is deterministic on its own"
         );
     }
 
@@ -1379,38 +1535,6 @@ mod tests {
         ));
     }
 
-    /// A rejected ingest commits nothing observable-side: a caller who catches
-    /// the error and rebuilds sees no half-state.
-    #[test]
-    fn a_rejected_ingest_leaves_no_partial_outputs() {
-        let mut dag = DagCircuit::new();
-        dag.pz(&[0, 1]);
-        let good = dag.mz(&[0]);
-        dag.mz(&[1]);
-        dag.observable_labeled("resolves_fine", &good);
-        dag.add_annotation(pecos_quantum::PauliAnnotation {
-            pauli: PauliString::zs(&[1usize]),
-            kind: pecos_quantum::AnnotationKind::Observable {
-                measurement_nodes: vec![99],
-            },
-            label: None,
-        });
-
-        assert!(
-            InfluenceBuilder::new(&dag)
-                .with_circuit_annotations()
-                .is_err(),
-            "the second annotation cannot resolve"
-        );
-        let clean = InfluenceBuilder::new(&dag).build();
-        let fresh = InfluenceBuilder::new(&dag).build();
-        assert_eq!(
-            clean.num_observables(),
-            fresh.num_observables(),
-            "a fresh build is unaffected by the failed ingest"
-        );
-    }
-
     #[test]
     fn test_duplicate_observable_terms_cancel_in_influence_map() {
         let mut dag = DagCircuit::new();
@@ -1422,7 +1546,8 @@ mod tests {
         let map = InfluenceBuilder::new(&dag)
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
-            .build();
+            .build()
+            .expect("circuit is replayable");
 
         assert_eq!(map.num_observables(), 1);
         for loc_idx in 0..map.locations.len() {
@@ -1469,12 +1594,14 @@ mod batched_node_tests {
 
         let batched_det: Vec<bool> = InfluenceBuilder::new(&batched)
             .run_symbolic_simulation()
+            .expect("circuit is replayable")
             .history
             .iter()
             .map(|result| result.is_deterministic)
             .collect();
         let split_det: Vec<bool> = InfluenceBuilder::new(&split)
             .run_symbolic_simulation()
+            .expect("circuit is replayable")
             .history
             .iter()
             .map(|result| result.is_deterministic)

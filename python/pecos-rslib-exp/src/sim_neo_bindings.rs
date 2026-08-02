@@ -1446,7 +1446,8 @@ impl PySimNeoBuilder {
             generator.as_ref(),
             shots,
             self.resolved_seed_u64(),
-        );
+        )
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         Ok(result.measurements)
     }
 }

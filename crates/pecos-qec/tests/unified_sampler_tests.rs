@@ -44,7 +44,10 @@ fn repetition_code_circuit(num_rounds: usize) -> DagCircuit {
 fn build_influence_map(
     circuit: &DagCircuit,
 ) -> pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap {
-    InfluenceBuilder::new(circuit).with_z(&[0, 1, 2]).build()
+    InfluenceBuilder::new(circuit)
+        .with_z(&[0, 1, 2])
+        .build()
+        .expect("circuit is replayable")
 }
 
 // ============================================================================

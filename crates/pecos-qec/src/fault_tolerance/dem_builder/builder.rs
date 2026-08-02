@@ -1251,8 +1251,10 @@ impl<'a> DemBuilder<'a> {
     ) -> Result<FaultMechanism, DemBuilderError> {
         use crate::fault_tolerance::influence_builder::InfluenceBuilder;
 
-        let ideal_history = self.exact_ideal_measurement_history(context);
-        let branch_info = InfluenceBuilder::new(branch).run_symbolic_simulation();
+        let ideal_history = self.exact_ideal_measurement_history(context)?;
+        let branch_info = InfluenceBuilder::new(branch)
+            .run_symbolic_simulation()
+            .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
         let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
         let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
 
@@ -1294,20 +1296,21 @@ impl<'a> DemBuilder<'a> {
     fn exact_ideal_measurement_history(
         &self,
         context: ExactBranchReplayContext<'_>,
-    ) -> Rc<MeasurementHistory> {
+    ) -> Result<Rc<MeasurementHistory>, DemBuilderError> {
         use crate::fault_tolerance::influence_builder::InfluenceBuilder;
 
         if let Some(cached) = self.exact_ideal_history_cache.borrow().as_ref().cloned() {
-            return cached;
+            return Ok(cached);
         }
 
         let history = Rc::new(
             InfluenceBuilder::new(context.circuit)
                 .run_symbolic_simulation()
+                .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
                 .history,
         );
         *self.exact_ideal_history_cache.borrow_mut() = Some(history.clone());
-        history
+        Ok(history)
     }
 
     fn exact_branch_analysis(
@@ -3274,7 +3277,8 @@ fn build_dem_from_circuit(
     let annotation_map = InfluenceBuilder::new(circuit)
         .with_circuit_annotations()
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
-        .build();
+        .build()
+        .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
     influence_map.merge_dem_outputs_from(&annotation_map);
 
     // Extract metadata before building (to avoid borrow issues)

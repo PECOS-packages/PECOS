@@ -1281,15 +1281,24 @@ impl<'a> DemSamplerBuilder<'a> {
         // measurement count would resolve in a different (shorter/longer) frame
         // at sample time and silently misbind. (See sampler-JSON validation.)
         if let Some(ref order) = self.measurement_order {
-            // With stamped ids the order is derivable from the ids, and the
-            // qubit-occurrence heuristic behind a supplied order silently
-            // mis-binds on non-positional ids. The escape hatch is for id-less
-            // legacy circuits only.
-            if !self.influence_map.meas_ids.is_empty() {
+            // A supplied order feeds the qubit-occurrence heuristic, which
+            // needs per-qubit chronology on both sides. Minted (positional)
+            // ids keep it; external non-positional ids can reorder a qubit's
+            // measurements in the map, and the caller's record order is then
+            // not recoverable.
+            let n = self.influence_map.meas_ids.len();
+            let mut seen = vec![false; n];
+            let positional = self
+                .influence_map
+                .meas_ids
+                .iter()
+                .all(|mid| seen.get_mut(mid.index()).map(|slot| *slot = true).is_some())
+                && seen.into_iter().all(|s| s);
+            if !positional {
                 return Err(DetectorValidationError::InvalidMetadata {
                     message: "measurement_order cannot be combined with a circuit \
-                              that carries stable MeasIds; the ids already define \
-                              the measurement mapping"
+                              whose stable MeasIds are non-positional; the \
+                              caller's record order is not recoverable"
                         .to_string(),
                 });
             }

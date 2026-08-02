@@ -773,14 +773,16 @@ impl<'a> DemBuilder<'a> {
                 )));
             }
         }
-        // With stamped ids the measurement mapping is defined by the ids;
-        // a supplied order feeds the qubit-occurrence heuristic, which
-        // silently mis-binds on non-positional ids. Legacy id-less circuits
-        // are the only clients of the escape hatch.
-        if self.measurement_order.is_some() && !self.influence_map.meas_ids.is_empty() {
+        // A supplied order feeds the qubit-occurrence heuristic, which needs
+        // per-qubit chronology on both sides. Minted (positional) ids keep it
+        // -- that combination is routine in the surface pipeline -- but
+        // external non-positional ids can reorder a qubit's measurements in
+        // the map, and no heuristic can recover the caller's record order.
+        if self.measurement_order.is_some() && !stamped_ids_are_positional(&self.influence_map) {
             return Err(DemBuilderError::ConfigurationError(
-                "measurement_order cannot be combined with a circuit that carries \
-                 stable MeasIds; the ids already define the measurement mapping"
+                "measurement_order cannot be combined with a circuit whose stable \
+                 MeasIds are non-positional; the caller's record order is not \
+                 recoverable"
                     .to_string(),
             ));
         }
@@ -2236,9 +2238,16 @@ impl<'a> DemBuilder<'a> {
         for det in &self.detectors {
             if det.records.is_empty() {
                 for &meas_id in &det.meas_ids {
-                    if let Some(tc_idx) = self.resolve_meas_id_to_tc_index(meas_id)
-                        && let Some(&influence_idx) = tc_to_influence.get(&tc_idx)
-                    {
+                    // Stamped resolution already yields the influence-map
+                    // index; only the legacy positional branch speaks tick
+                    // order and needs the occurrence mapping.
+                    let resolved = self.resolve_meas_id_to_tc_index(meas_id);
+                    let influence_idx = if self.influence_map.meas_ids.is_empty() {
+                        resolved.and_then(|tc_idx| tc_to_influence.get(&tc_idx).copied())
+                    } else {
+                        resolved
+                    };
+                    if let Some(influence_idx) = influence_idx {
                         meas_to_detectors
                             .entry(influence_idx)
                             .or_default()
@@ -2266,9 +2275,14 @@ impl<'a> DemBuilder<'a> {
             }
             if obs.records.is_empty() {
                 for &meas_id in &obs.meas_ids {
-                    if let Some(tc_idx) = self.resolve_meas_id_to_tc_index(meas_id)
-                        && let Some(&influence_idx) = tc_to_influence.get(&tc_idx)
-                    {
+                    // Same split as the detector branch above.
+                    let resolved = self.resolve_meas_id_to_tc_index(meas_id);
+                    let influence_idx = if self.influence_map.meas_ids.is_empty() {
+                        resolved.and_then(|tc_idx| tc_to_influence.get(&tc_idx).copied())
+                    } else {
+                        resolved
+                    };
+                    if let Some(influence_idx) = influence_idx {
                         meas_to_observables
                             .entry(influence_idx)
                             .or_default()
@@ -2804,6 +2818,23 @@ pub(crate) fn parse_observable_record_vectors(
 /// bug, not bad caller input. Mirrors the guard in
 /// `DemBuilder::validate_measurement_count` so the sampler JSON path rejects
 /// exactly what `DemBuilder` does.
+/// Whether the map's stamped ids are exactly the positional set `0..n`.
+///
+/// True for every circuit whose ids were minted by `mz()`; false for external
+/// (Guppy/traced) ids. An empty id list counts as positional -- the legacy
+/// id-less case.
+fn stamped_ids_are_positional(influence_map: &DagFaultInfluenceMap) -> bool {
+    let n = influence_map.meas_ids.len();
+    let mut seen = vec![false; n];
+    for mid in &influence_map.meas_ids {
+        let Some(slot) = seen.get_mut(mid.index()) else {
+            return false;
+        };
+        *slot = true;
+    }
+    seen.into_iter().all(|s| s)
+}
+
 fn reject_duplicate_stamped_meas_ids(
     influence_map: &DagFaultInfluenceMap,
 ) -> Result<(), DemBuilderError> {
@@ -5021,6 +5052,55 @@ mod tests {
         assert!(
             result.is_err(),
             "a duplicate stable MeasId must fail loud, not bind to the first",
+        );
+    }
+
+    /// The stamped branch of `build_measurement_mappings` must use the
+    /// resolved index directly: it is already an influence-map index, and
+    /// composing it with the tick-to-influence occurrence mapping re-binds
+    /// annotations whenever the two orders differ.
+    #[test]
+    fn stamped_meas_id_mapping_is_not_recomposed_through_the_order() {
+        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
+        // Map order disagrees with tick record order: the map holds q1's
+        // measurement (id 1) first, q0's (id 0) second. The id SET is
+        // positional, so the order combination is accepted.
+        influence_map.meas_ids = vec![
+            pecos_core::MeasId::from_raw(1),
+            pecos_core::MeasId::from_raw(0),
+        ];
+        influence_map.measurements = vec![(5, 1, 0), (2, 0, 0)];
+        let builder = DemBuilder::new(&influence_map)
+            .with_measurement_order(vec![0, 1])
+            .with_detectors_json(r#"[{"id": 0, "meas_ids": [1]}]"#)
+            .unwrap();
+        let (meas_to_detectors, _) = builder.build_measurement_mappings();
+        assert_eq!(
+            meas_to_detectors.keys().copied().collect::<Vec<_>>(),
+            vec![0],
+            "id 1 lives at influence index 0; composing through the order \
+             re-bound it to index 1"
+        );
+    }
+
+    /// Positional (minted) ids with a supplied order is the routine surface
+    /// pipeline combination and must keep building.
+    #[test]
+    fn measurement_order_is_accepted_with_positional_ids() {
+        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
+        influence_map.meas_ids = vec![
+            pecos_core::MeasId::from_raw(0),
+            pecos_core::MeasId::from_raw(1),
+        ];
+        influence_map.measurements = vec![(2, 0, 0), (5, 1, 0)];
+        let result = DemBuilder::new(&influence_map)
+            .with_measurement_order(vec![0, 1])
+            .with_detectors_json(r#"[{"id": 0, "meas_ids": [1]}]"#)
+            .unwrap()
+            .try_build();
+        assert!(
+            result.is_ok(),
+            "minted ids keep per-qubit chronology; the combination is benign: {result:?}"
         );
     }
 

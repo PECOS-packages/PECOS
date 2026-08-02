@@ -329,11 +329,17 @@ Closed by the adversarial round (two independent reviews):
   annotation ingestion now refuse such circuits loudly, mirroring the guard
   the DEM JSON path already had. The influence builder was already safe via
   `find_measurement`'s `Inconsistent`.
-- **`measurement_order` cannot be combined with stamped ids.** The
-  qubit-occurrence heuristic behind a supplied order silently mis-binds on
-  non-positional ids; ids already define the mapping. Both the DEM builder and
-  the sampler reject the combination; the escape hatch remains for id-less
-  legacy circuits only.
+- **`measurement_order` ordinal mixing, fixed at its actual defect.** The
+  stamped branch of the DEM builder's mapping resolved an id to an
+  influence-map index and then re-composed it through the tick-to-influence
+  occurrence mapping -- wrong whenever the two orders differ. The composition
+  is gone: stamped resolution is used directly, and only the legacy positional
+  branch routes through the occurrence mapping. A first attempt rejected the
+  order/ids combination outright; the test suite falsified that (the surface
+  pipeline supplies `measurement_order` on minted-id circuits routinely, where
+  per-qubit chronology holds and the combination is benign). The narrow
+  rejection that survives: a supplied order with *non-positional* stamped ids,
+  where the caller's record order is genuinely unrecoverable.
 - **The record-arithmetic callers got the real migration** the plan asked for:
   the three files now emit `meas_ids` JSON and read out in id space; the
   `record_idx - num_measurements` arithmetic is gone, not renamed.

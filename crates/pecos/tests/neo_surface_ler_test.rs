@@ -42,7 +42,6 @@ struct MemoryExperiment {
     detectors: Vec<Vec<usize>>,
     /// The logical-Z observable as stable measurement ids.
     observable: Vec<usize>,
-    num_measurements: usize,
     /// Classical registers in declaration order: (name, width).
     registers: Vec<(String, usize)>,
     /// Global measurement record index -> (register index, bit index).
@@ -199,7 +198,6 @@ fn build_surface_memory(distance: usize, rounds: usize) -> MemoryExperiment {
         tick,
         detectors,
         observable,
-        num_measurements,
         registers,
         record_map,
     }

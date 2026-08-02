@@ -2075,8 +2075,12 @@ impl DagCircuit {
     /// The Pauli string is Z on each referenced measurement's own qubit --
     /// referencing one measurement of a batched gate touches only that qubit.
     ///
-    /// Returns the annotation index, or [`AnnotationRefError`] if any
-    /// reference does not name a measurement this circuit holds.
+    /// Returns the annotation index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationRefError`] if any reference does not name a
+    /// measurement this circuit holds.
     pub fn detector(&mut self, measurements: &[MeasRef]) -> Result<usize, AnnotationRefError> {
         let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
         Ok(self.push_annotation(PauliAnnotation {
@@ -2090,6 +2094,10 @@ impl DagCircuit {
     }
 
     /// Annotate a labeled detector.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::detector`].
     pub fn detector_labeled(
         &mut self,
         label: &str,
@@ -2101,6 +2109,10 @@ impl DagCircuit {
     }
 
     /// Annotate a detector with coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::detector`].
     pub fn detector_with_coords(
         &mut self,
         measurements: &[MeasRef],
@@ -2119,8 +2131,12 @@ impl DagCircuit {
     ///
     /// The Pauli string is Z on each referenced measurement's own qubit.
     ///
-    /// Returns the annotation index, or [`AnnotationRefError`] if any
-    /// reference does not name a measurement this circuit holds.
+    /// Returns the annotation index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationRefError`] if any reference does not name a
+    /// measurement this circuit holds.
     pub fn observable(&mut self, measurements: &[MeasRef]) -> Result<usize, AnnotationRefError> {
         let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
         Ok(self.push_annotation(PauliAnnotation {
@@ -2131,6 +2147,10 @@ impl DagCircuit {
     }
 
     /// Annotate a labeled observable.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::observable`].
     pub fn observable_labeled(
         &mut self,
         label: &str,

@@ -110,7 +110,7 @@ fn location_key(
 ) -> LocationKey {
     (
         loc.node,
-        loc.qubits.iter().map(|q| q.index()).collect(),
+        loc.qubits.iter().map(pecos_core::QubitId::index).collect(),
         loc.before,
         loc.gate_type,
     )
@@ -158,7 +158,7 @@ fn scrambled_ids_influence_the_same_named_measurements() {
 
     // scr-index -> pos-index for the same physical measurement: ids[i] of one
     // circuit names the same physical measurement as ids[i] of the other.
-    let mut scr_to_pos = vec![usize::MAX; 3];
+    let mut scr_to_pos = [usize::MAX; 3];
     for (pos_id, scr_id) in [(0usize, 9usize), (1, 1), (2, 5)] {
         let pi = map_pos
             .meas_index_of(MeasId::from_raw(pos_id))

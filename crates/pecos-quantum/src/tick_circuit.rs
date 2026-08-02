@@ -2282,8 +2282,12 @@ impl TickCircuit {
 
     /// Annotate a detector: measurements whose XOR should be deterministic.
     ///
-    /// Returns the annotation index, or [`TickAnnotationRefError`] if any
-    /// reference does not name a measurement this circuit holds.
+    /// Returns the annotation index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TickAnnotationRefError`] if any reference does not name a
+    /// measurement this circuit holds.
     pub fn detector(
         &mut self,
         measurements: &[TickMeasRef],
@@ -2302,6 +2306,10 @@ impl TickCircuit {
     }
 
     /// Annotate a labeled detector.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::detector`].
     pub fn detector_labeled(
         &mut self,
         label: &str,
@@ -2314,8 +2322,12 @@ impl TickCircuit {
 
     /// Annotate a logical observable.
     ///
-    /// Returns the annotation index, or [`TickAnnotationRefError`] if any
-    /// reference does not name a measurement this circuit holds.
+    /// Returns the annotation index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TickAnnotationRefError`] if any reference does not name a
+    /// measurement this circuit holds.
     pub fn observable(
         &mut self,
         measurements: &[TickMeasRef],
@@ -2331,6 +2343,10 @@ impl TickCircuit {
     }
 
     /// Annotate a labeled observable.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::observable`].
     pub fn observable_labeled(
         &mut self,
         label: &str,

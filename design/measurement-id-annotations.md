@@ -1,9 +1,10 @@
 # Annotations should reference measurements by identity
 
-Status: in progress. Revised after three adversarial design reviews (core
+Status: implemented. Revised after three adversarial design reviews (core
 claim upheld, plan corrected twice). Step 3 of #387. Depends on #391 (merged as
 `cdfddba1b`), which made every `DagCircuit` measurement carry a unique `MeasId`.
-Steps 1 and 2 below are merged (#397, #401); the pivot itself is not started.
+Steps 1-3 below are merged (#397, #401, #403); step 4 -- the pivot -- is built,
+with three deviations from the plan recorded in "As built" at the end.
 
 ## The defect
 
@@ -265,3 +266,42 @@ make the DEM comparisons that validate this change impossible to interpret.
 identity-over-ordering direction. Originally written in an external notes vault
 and cited from there by an earlier draft of this document; now ported into this
 directory so the citation chain is complete.
+
+## As built
+
+The pivot landed as designed -- `measurement_ids: Vec<MeasId>` on both
+variants, `&[MeasRef]`/`&[TickMeasRef]` fallible annotation constructors, both
+conversions copying annotations verbatim, consumers on the step-3 resolvers,
+the record-index maps (`meas_record_to_node`, `dag_node_to_record_indices`,
+`node_to_meas_idx`) deleted -- with three deviations:
+
+**1. Construction validation is an O(1) lookup, not a `find_measurement`
+scan.** A reference carries its node (or tick/batch), so validation checks the
+gate it names directly: exists, consumes a record, holds the (qubit, id) pair.
+The O(gates) scan per reference would have made surface-code builders
+quadratic. The honesty limit is unchanged: a foreign reference that agrees
+structurally cannot be detected.
+
+**2. Python keeps tuple handles instead of opaque reference objects.** The
+seam the opaque-object plan closed was integer *id* forgery -- and the tuples
+never contain an id. A dag handle is `(node, qubit)`, a tick handle is
+`(tick, gate_idx, qubit)`; both are resolved against the circuit at
+annotation construction, and the recovered id comes from the gate itself.
+Plain ints are rejected with a `TypeError`. Forging a tuple is node-space
+forgery, caught by resolution unless the forger names a real measurement --
+the same limit the Rust `MeasRef` has.
+
+**3. One order per influence map.** The de-aliased tests exposed that
+`InfluenceBuilder` maps carried two internal orderings: `detectors` (and the
+propagation data, and the sampler's raw channels) in symbolic-replay order,
+`measurements`/`meas_ids` re-sorted by id rank. `meas_index_of` therefore did
+not index the raw stream -- invisible while ids were positional, wrong the
+moment they were not. `InfluenceBuilder` now emits `measurements`/`meas_ids`
+in replay order, aligned with everything else in the map;
+`DagFaultAnalyzer` maps were already internally consistent (id-rank
+throughout). The rule stands: orderings differ *between* maps and are never
+interchanged; within one map there is exactly one.
+
+The de-aliased matrix lives in `crates/pecos-qec/tests/meas_id_pivot_tests.rs`
+plus the eeg byte-equivalence test and the Python `mz_with_ids` tier; every
+guard is mutation-tested.

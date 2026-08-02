@@ -31,6 +31,13 @@ pub enum EegBuildError {
         /// How many measurement records the expansion produced.
         num_measurements: usize,
     },
+    /// Two measurements carry the same id, so id resolution would be
+    /// ambiguous. `TickCircuit` does not enforce uniqueness; this expansion
+    /// must, because it resolves annotations by id.
+    DuplicateMeasId {
+        /// The id held by more than one measurement.
+        meas_id: pecos_core::MeasId,
+    },
     /// An annotation references a measurement id the expansion never recorded.
     UnresolvableAnnotationId {
         /// The unknown id.
@@ -55,6 +62,12 @@ impl std::fmt::Display for EegBuildError {
                 f,
                 "annotation references measurement record {record_idx}, but the expansion \
                  produced only {num_measurements}"
+            ),
+            Self::DuplicateMeasId { meas_id } => write!(
+                f,
+                "two measurements carry MeasId({}); annotation resolution by id \
+                 requires each measurement to hold a unique id",
+                meas_id.index()
             ),
             Self::UnresolvableAnnotationId {
                 meas_id,
@@ -183,8 +196,12 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
                 // For each qubit in this MZ gate, create CX to auxiliary
                 for (position, q) in gate.qubits.iter().enumerate() {
                     let q_idx = q.index();
-                    if let Some(&id) = gate.meas_ids.get(position) {
-                        meas_id_rank.insert(id, measurement_qubit.len());
+                    if let Some(&id) = gate.meas_ids.get(position)
+                        && meas_id_rank.insert(id, measurement_qubit.len()).is_some()
+                    {
+                        // Last-wins would silently rebind every annotation
+                        // naming this id to the later measurement.
+                        return Err(EegBuildError::DuplicateMeasId { meas_id: id });
                     }
                     let aux = next_aux;
                     next_aux += 1;

@@ -65,7 +65,7 @@ fn parity_check_with_ids(ids: [usize; 3]) -> DagCircuit {
 #[test]
 fn scrambled_ids_build_the_same_influence_relations_as_positional_ids() {
     let positional = parity_check_with_ids([0, 1, 2]);
-    let scrambled = parity_check_with_ids([9, 1, 5]);
+    let scrambled = parity_check_with_ids([9, 4, 7]);
 
     let map_pos = InfluenceBuilder::new(&positional)
         .with_circuit_annotations()
@@ -144,7 +144,7 @@ fn location_index_by_key(
 #[test]
 fn scrambled_ids_influence_the_same_named_measurements() {
     let positional = parity_check_with_ids([0, 1, 2]);
-    let scrambled = parity_check_with_ids([9, 1, 5]);
+    let scrambled = parity_check_with_ids([9, 4, 7]);
 
     let build = |dag: &DagCircuit| {
         InfluenceBuilder::new(dag)
@@ -159,7 +159,7 @@ fn scrambled_ids_influence_the_same_named_measurements() {
     // scr-index -> pos-index for the same physical measurement: ids[i] of one
     // circuit names the same physical measurement as ids[i] of the other.
     let mut scr_to_pos = [usize::MAX; 3];
-    for (pos_id, scr_id) in [(0usize, 9usize), (1, 1), (2, 5)] {
+    for (pos_id, scr_id) in [(0usize, 9usize), (1, 4), (2, 7)] {
         let pi = map_pos
             .meas_index_of(MeasId::from_raw(pos_id))
             .expect("id is in the positional map");
@@ -200,10 +200,11 @@ fn scrambled_ids_influence_the_same_named_measurements() {
 }
 
 /// Under scrambled ids, `sample_dual` detector events must XOR exactly the
-/// raw channels that `meas_index_of` names -- the sampler witness for the
-/// one-order-per-map invariant. FLIP space: with a noiseless deterministic
-/// circuit, a detector event equals the raw flip of its single named
-/// measurement, shot by shot.
+/// raw channels that `meas_index_of` names. Both sides of the assertion
+/// resolve through the same `meas_index_of`, so this pins the sampler's
+/// internal consistency; the one-order-per-map invariant itself is killed by
+/// `scrambled_ids_influence_the_same_named_measurements`, whose id-to-ordinal
+/// map is checked against the independent influence data.
 #[test]
 fn scrambled_ids_dual_output_xors_the_named_raw_channels() {
     use pecos_random::PecosRng;
@@ -259,6 +260,57 @@ fn scrambled_ids_dual_output_xors_the_named_raw_channels() {
         "the witness is vacuous unless the named channel varies and disagrees \
          with the other channel at least once"
     );
+}
+
+/// A `gate_mut` edit can leave two measurements holding one id. The sampler's
+/// annotation resolution refuses the whole map instead of silently binding to
+/// the first holder.
+#[test]
+fn sampler_annotations_refuse_a_map_with_duplicate_ids() {
+    use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
+
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0, 1]);
+    let a = dag.mz(&[0]);
+    let b = dag.mz(&[1]);
+    dag.gate_mut(b[0].node).expect("gate exists").meas_ids[0] = a[0].meas_id;
+
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let err = DemSamplerBuilder::new(&map)
+        .with_uniform_noise(0.01)
+        .raw_measurements()
+        .with_circuit_annotations(&dag)
+        .map(|_| ())
+        .expect_err("two measurements hold one id");
+    assert!(matches!(
+        err,
+        pecos_qec::fault_tolerance::dem_builder::DetectorValidationError::InvalidMetadata { .. }
+    ));
+}
+
+/// `measurement_order` is a legacy escape hatch for id-less circuits; on a
+/// stamped-id circuit its qubit-occurrence heuristic silently mis-binds, so
+/// the combination is refused outright.
+#[test]
+fn measurement_order_is_refused_on_a_stamped_id_circuit() {
+    let dag = parity_check_with_ids([9, 4, 7]);
+    let map = InfluenceBuilder::new(&dag)
+        .with_circuit_annotations()
+        .expect("annotations resolve")
+        .build()
+        .expect("circuit is replayable");
+
+    let err = DemSamplerBuilder::new(&map)
+        .with_uniform_noise(0.01)
+        .raw_measurements()
+        .with_measurement_order(vec![0, 1, 2])
+        .build()
+        .map(|_| ())
+        .expect_err("stamped ids already define the mapping");
+    assert!(matches!(
+        err,
+        pecos_qec::fault_tolerance::dem_builder::DetectorValidationError::InvalidMetadata { .. }
+    ));
 }
 
 /// A detector can reference exactly one measurement of a batched gate --

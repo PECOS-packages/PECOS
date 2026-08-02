@@ -237,6 +237,51 @@ fn measurement_ids_to_aux_bitmask(
 mod tests {
     use super::*;
 
+    /// Two measurements carrying the same supplied id would make id
+    /// resolution last-wins -- a silently wrong DEM. `TickCircuit` permits the
+    /// duplicate; the expansion must refuse it.
+    #[test]
+    fn duplicate_supplied_ids_are_refused() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        for qubit in [0usize, 1] {
+            let mut gate = pecos_core::Gate::mz(&[qubit]);
+            gate.meas_ids = smallvec::smallvec![pecos_core::MeasId::from_raw(5)];
+            tc.tick().try_add_gate(gate).expect("gate is valid");
+        }
+
+        let err = EegDemBuilder::from_tick_circuit(&tc)
+            .noise(NoiseModel::depolarizing(0.01))
+            .build()
+            .expect_err("two measurements hold id 5");
+        assert_eq!(
+            err,
+            EegBuildError::DuplicateMeasId {
+                meas_id: pecos_core::MeasId::from_raw(5),
+            }
+        );
+    }
+
+    /// A supplied id colliding with a later minted one is the same ambiguity
+    /// arriving through two different doors; the expansion refuses it too.
+    #[test]
+    fn a_supplied_id_colliding_with_a_minted_id_is_refused() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        let mut gate = pecos_core::Gate::mz(&[0usize]);
+        gate.meas_ids = smallvec::smallvec![pecos_core::MeasId::from_raw(0)];
+        tc.tick().try_add_gate(gate).expect("gate is valid");
+        // `try_add_gate` does not advance the mint counter, so this mints 0.
+        let minted = tc.tick().mz(&[1]);
+        assert_eq!(minted[0].meas_id, pecos_core::MeasId::from_raw(0));
+
+        let err = EegDemBuilder::from_tick_circuit(&tc)
+            .noise(NoiseModel::depolarizing(0.01))
+            .build()
+            .expect_err("supplied and minted ids collide on 0");
+        assert!(matches!(err, EegBuildError::DuplicateMeasId { .. }));
+    }
+
     /// Scrambled (non-positional) annotation ids must produce a byte-identical
     /// DEM to positional ids on the same physical circuit: eeg orders its
     /// auxiliaries by expansion rank, which is invariant under id relabeling.
@@ -269,7 +314,7 @@ mod tests {
                 .expect("the circuit is MZ-only and every id resolves")
         };
         let positional = build([0, 1, 2]);
-        let scrambled = build([9, 1, 5]);
+        let scrambled = build([9, 4, 7]);
         assert!(
             positional.contains("error("),
             "the comparison is vacuous without error mechanisms:\n{positional}"

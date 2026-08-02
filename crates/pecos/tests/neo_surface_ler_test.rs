@@ -39,9 +39,9 @@ struct MemoryExperiment {
     tick: TickCircuit,
     /// Detector definitions as relative measurement records (Stim style:
     /// record -k is the k-th most recent measurement).
-    detectors: Vec<Vec<i32>>,
-    /// The logical-Z observable as relative measurement records.
-    observable: Vec<i32>,
+    detectors: Vec<Vec<usize>>,
+    /// The logical-Z observable as stable measurement ids.
+    observable: Vec<usize>,
     num_measurements: usize,
     /// Classical registers in declaration order: (name, width).
     registers: Vec<(String, usize)>,
@@ -149,22 +149,22 @@ fn build_surface_memory(distance: usize, rounds: usize) -> MemoryExperiment {
     // first-round Z checks are deterministic for |0...0> initialization,
     // consecutive rounds compare like checks, and the final round compares
     // each Z check against the data measurements in its support.
-    let mut detectors: Vec<Vec<i32>> = Vec::new();
+    let mut detectors: Vec<Vec<usize>> = Vec::new();
     for &meas_ref in &z_round[0] {
-        detectors.push(relative_records(num_measurements, &[meas_ref]));
+        detectors.push(ref_meas_ids(&[meas_ref]));
     }
     for round in 1..rounds {
         for (&current, &previous) in x_round[round].iter().zip(&x_round[round - 1]) {
-            detectors.push(relative_records(num_measurements, &[current, previous]));
+            detectors.push(ref_meas_ids(&[current, previous]));
         }
         for (&current, &previous) in z_round[round].iter().zip(&z_round[round - 1]) {
-            detectors.push(relative_records(num_measurements, &[current, previous]));
+            detectors.push(ref_meas_ids(&[current, previous]));
         }
     }
     for check in code.z_stabilizers() {
         let mut refs = vec![z_round[rounds - 1][check.index]];
         refs.extend(check.qubits().into_iter().map(|q| final_data[q]));
-        detectors.push(relative_records(num_measurements, &refs));
+        detectors.push(ref_meas_ids(&refs));
     }
 
     let logical_refs: Vec<TickMeasRef> = code
@@ -173,16 +173,16 @@ fn build_surface_memory(distance: usize, rounds: usize) -> MemoryExperiment {
         .iter()
         .map(|&q| final_data[q])
         .collect();
-    let observable = relative_records(num_measurements, &logical_refs);
+    let observable = ref_meas_ids(&logical_refs);
 
     tick.set_meta(
         "num_measurements",
         Attribute::String(num_measurements.to_string()),
     );
-    tick.set_meta("detectors", Attribute::String(records_json(&detectors)));
+    tick.set_meta("detectors", Attribute::String(meas_ids_json(&detectors)));
     tick.set_meta(
         "observables",
-        Attribute::String(records_json(std::slice::from_ref(&observable))),
+        Attribute::String(meas_ids_json(std::slice::from_ref(&observable))),
     );
 
     let mut qasm = String::new();
@@ -205,22 +205,21 @@ fn build_surface_memory(distance: usize, rounds: usize) -> MemoryExperiment {
     }
 }
 
-fn relative_records(num_measurements: usize, refs: &[TickMeasRef]) -> Vec<i32> {
-    let num_measurements = i32::try_from(num_measurements).expect("measurement count fits in i32");
-    refs.iter()
-        .map(|m| {
-            i32::try_from(m.meas_id.index()).expect("record index fits in i32") - num_measurements
-        })
-        .collect()
+fn ref_meas_ids(refs: &[TickMeasRef]) -> Vec<usize> {
+    refs.iter().map(|m| m.meas_id.index()).collect()
 }
 
-fn records_json(records: &[Vec<i32>]) -> String {
-    let entries: Vec<String> = records
+fn meas_ids_json(annotations: &[Vec<usize>]) -> String {
+    let entries: Vec<String> = annotations
         .iter()
         .enumerate()
-        .map(|(id, rs)| {
-            let values = rs.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
-            format!(r#"{{"id":{id},"records":[{values}]}}"#)
+        .map(|(id, ids)| {
+            let values = ids
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(r#"{{"id":{id},"meas_ids":[{values}]}}"#)
         })
         .collect();
     format!("[{}]", entries.join(","))
@@ -252,12 +251,10 @@ fn shot_record_bits(
 }
 
 /// XOR a relative-record definition over a shot's measurement bits.
-fn xor_records(bits: &[u8], records: &[i32], num_measurements: usize) -> u8 {
-    records.iter().fold(0u8, |acc, &rec| {
-        let idx = i64::try_from(num_measurements).unwrap() + i64::from(rec);
-        let idx = usize::try_from(idx).expect("record index in range");
-        acc ^ bits[idx]
-    })
+fn xor_meas_bits(bits: &[u8], meas_ids: &[usize]) -> u8 {
+    // Ids in this test are minted positionally by `mz()`, so they coincide
+    // with the record order of the shot bits the engines produce.
+    meas_ids.iter().fold(0u8, |acc, &id| acc ^ bits[id])
 }
 
 /// Convert a `ShotVec` into per-shot detector syndromes and observable masks.
@@ -272,13 +269,9 @@ fn shots_to_syndromes(
         let syndrome: Vec<u8> = experiment
             .detectors
             .iter()
-            .map(|records| xor_records(&bits, records, experiment.num_measurements))
+            .map(|meas_ids| xor_meas_bits(&bits, meas_ids))
             .collect();
-        let mask = u64::from(xor_records(
-            &bits,
-            &experiment.observable,
-            experiment.num_measurements,
-        ));
+        let mask = u64::from(xor_meas_bits(&bits, &experiment.observable));
         syndromes.push(syndrome);
         masks.push(mask);
     }

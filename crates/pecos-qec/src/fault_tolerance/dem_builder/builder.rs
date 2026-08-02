@@ -773,6 +773,17 @@ impl<'a> DemBuilder<'a> {
                 )));
             }
         }
+        // With stamped ids the measurement mapping is defined by the ids;
+        // a supplied order feeds the qubit-occurrence heuristic, which
+        // silently mis-binds on non-positional ids. Legacy id-less circuits
+        // are the only clients of the escape hatch.
+        if self.measurement_order.is_some() && !self.influence_map.meas_ids.is_empty() {
+            return Err(DemBuilderError::ConfigurationError(
+                "measurement_order cannot be combined with a circuit that carries \
+                 stable MeasIds; the ids already define the measurement mapping"
+                    .to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -5010,6 +5021,26 @@ mod tests {
         assert!(
             result.is_err(),
             "a duplicate stable MeasId must fail loud, not bind to the first",
+        );
+    }
+
+    #[test]
+    fn test_validate_measurement_count_rejects_order_with_stamped_ids() {
+        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
+        influence_map.meas_ids = vec![
+            pecos_core::MeasId::from_raw(9),
+            pecos_core::MeasId::from_raw(4),
+        ];
+        influence_map.measurements = vec![(0, 0, 0), (1, 1, 0)];
+        let result = DemBuilder::new(&influence_map)
+            .with_measurement_order(vec![0, 1])
+            .with_detectors_json(r#"[{"id": 0, "meas_ids": [9]}]"#)
+            .unwrap()
+            .try_build();
+        assert!(
+            result.is_err(),
+            "measurement_order on a stamped-id circuit silently mis-binds; it \
+             must fail loud",
         );
     }
 

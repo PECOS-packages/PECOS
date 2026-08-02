@@ -4,7 +4,8 @@ Status: implemented. Revised after three adversarial design reviews (core
 claim upheld, plan corrected twice). Step 3 of #387. Depends on #391 (merged as
 `cdfddba1b`), which made every `DagCircuit` measurement carry a unique `MeasId`.
 Steps 1-3 below are merged (#397, #401, #403); step 4 -- the pivot -- is built,
-with three deviations from the plan recorded in "As built" at the end.
+with the deviations from the plan, and the closures from the pivot's
+adversarial review round, recorded in "As built" at the end.
 
 ## The defect
 
@@ -318,3 +319,23 @@ interchanged; within one map there is exactly one.
 The de-aliased matrix lives in `crates/pecos-qec/tests/meas_id_pivot_tests.rs`
 plus the eeg byte-equivalence test and the Python `mz_with_ids` tier; every
 guard is mutation-tested.
+
+Closed by the adversarial round (two independent reviews):
+
+- **Duplicate ids are refused at every id-resolving consumer.** `TickCircuit`
+  permits duplicate supplied ids (and `try_add_gate` does not advance the mint
+  counter, so supplied/minted collisions are constructible); `gate_mut` can
+  duplicate ids on a `DagCircuit`. eeg's expansion and the sampler's
+  annotation ingestion now refuse such circuits loudly, mirroring the guard
+  the DEM JSON path already had. The influence builder was already safe via
+  `find_measurement`'s `Inconsistent`.
+- **`measurement_order` cannot be combined with stamped ids.** The
+  qubit-occurrence heuristic behind a supplied order silently mis-binds on
+  non-positional ids; ids already define the mapping. Both the DEM builder and
+  the sampler reject the combination; the escape hatch remains for id-less
+  legacy circuits only.
+- **The record-arithmetic callers got the real migration** the plan asked for:
+  the three files now emit `meas_ids` JSON and read out in id space; the
+  `record_idx - num_measurements` arithmetic is gone, not renamed.
+- Validation cost is stated honestly: linear in the named gate's batch width,
+  never in the circuit.

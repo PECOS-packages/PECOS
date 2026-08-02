@@ -228,7 +228,7 @@ fn build_d3_z_memory_circuit(rounds: usize) -> Result<MemoryCircuit, String> {
     let final_data_measurements = circuit.tick().mz(&data_qubits);
     let num_measurements = circuit.num_measurements();
 
-    let mut detectors: Vec<Vec<i32>> = Vec::new();
+    let mut detectors: Vec<Vec<usize>> = Vec::new();
 
     // Initial Z-basis boundary detectors: data starts in |0...0>, so the first
     // Z-check round is deterministic. Without these, an initial data X fault can
@@ -238,7 +238,7 @@ fn build_d3_z_memory_circuit(rounds: usize) -> Result<MemoryCircuit, String> {
         .iter()
         .take(code.num_z_stabilizers())
     {
-        detectors.push(relative_records(num_measurements, &[meas_ref]));
+        detectors.push(ref_meas_ids(&[meas_ref]));
     }
 
     // Repeated syndrome detectors: current stabilizer measurement XOR previous
@@ -249,14 +249,14 @@ fn build_d3_z_memory_circuit(rounds: usize) -> Result<MemoryCircuit, String> {
             .zip(x_round_measurements[round - 1].iter())
             .take(code.num_x_stabilizers())
         {
-            detectors.push(relative_records(num_measurements, &[current, previous]));
+            detectors.push(ref_meas_ids(&[current, previous]));
         }
         for (&current, &previous) in z_round_measurements[round]
             .iter()
             .zip(z_round_measurements[round - 1].iter())
             .take(code.num_z_stabilizers())
         {
-            detectors.push(relative_records(num_measurements, &[current, previous]));
+            detectors.push(ref_meas_ids(&[current, previous]));
         }
     }
 
@@ -271,7 +271,7 @@ fn build_d3_z_memory_circuit(rounds: usize) -> Result<MemoryCircuit, String> {
                 .into_iter()
                 .map(|q| final_data_measurements[q]),
         );
-        detectors.push(relative_records(num_measurements, &refs));
+        detectors.push(ref_meas_ids(&refs));
     }
 
     let logical_z_refs: Vec<TickMeasRef> = code
@@ -280,14 +280,17 @@ fn build_d3_z_memory_circuit(rounds: usize) -> Result<MemoryCircuit, String> {
         .iter()
         .map(|&q| final_data_measurements[q])
         .collect();
-    let observables = vec![relative_records(num_measurements, &logical_z_refs)];
+    let observables = vec![ref_meas_ids(&logical_z_refs)];
 
     circuit.set_meta(
         "num_measurements",
         Attribute::String(num_measurements.to_string()),
     );
-    circuit.set_meta("detectors", Attribute::String(records_json(&detectors)));
-    circuit.set_meta("observables", Attribute::String(records_json(&observables)));
+    circuit.set_meta("detectors", Attribute::String(meas_ids_json(&detectors)));
+    circuit.set_meta(
+        "observables",
+        Attribute::String(meas_ids_json(&observables)),
+    );
 
     Ok(MemoryCircuit {
         circuit,
@@ -296,22 +299,20 @@ fn build_d3_z_memory_circuit(rounds: usize) -> Result<MemoryCircuit, String> {
     })
 }
 
-fn relative_records(num_measurements: usize, refs: &[TickMeasRef]) -> Vec<i32> {
-    let num_measurements = i32::try_from(num_measurements).expect("measurement count fits in i32");
-    refs.iter()
-        .map(|m| {
-            i32::try_from(m.meas_id.index()).expect("measurement record index fits in i32")
-                - num_measurements
-        })
-        .collect()
+fn ref_meas_ids(refs: &[TickMeasRef]) -> Vec<usize> {
+    refs.iter().map(|m| m.meas_id.index()).collect()
 }
 
-fn records_json(records: &[Vec<i32>]) -> String {
-    let entries: Vec<String> = records
+fn meas_ids_json(annotations: &[Vec<usize>]) -> String {
+    let entries: Vec<String> = annotations
         .iter()
-        .map(|rs| {
-            let values = rs.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
-            format!(r#"{{"records":[{values}]}}"#)
+        .map(|ids| {
+            let values = ids
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(r#"{{"meas_ids":[{values}]}}"#)
         })
         .collect();
     format!("[{}]", entries.join(","))

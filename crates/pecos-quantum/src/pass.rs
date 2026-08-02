@@ -3232,6 +3232,48 @@ mod tests {
         );
     }
 
+    /// Splitting batched commands must not disturb annotations: they
+    /// reference measurements by identity, and the ids ride on the gates.
+    #[test]
+    fn split_batched_tick_commands_preserves_annotation_ids() {
+        use crate::AnnotationKind;
+
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        let mut gate = pecos_core::Gate::mz(&[0, 1]);
+        gate.meas_ids = smallvec::smallvec![MeasId::from_raw(9), MeasId::from_raw(4)];
+        tc.tick().try_add_gate(gate).expect("gate is valid");
+        let r0 = tc
+            .meas_ref(1, 0, QubitId::from(0))
+            .expect("measurement exists");
+        let r1 = tc
+            .meas_ref(1, 0, QubitId::from(1))
+            .expect("measurement exists");
+        tc.detector(&[r0, r1]).expect("refs are from this circuit");
+
+        split_batched_tick_commands(&mut tc);
+
+        let anns = tc.annotations();
+        assert_eq!(anns.len(), 1);
+        let AnnotationKind::Detector {
+            measurement_ids, ..
+        } = &anns[0].kind
+        else {
+            panic!("expected detector annotation");
+        };
+        assert_eq!(
+            measurement_ids,
+            &[MeasId::from_raw(9), MeasId::from_raw(4)],
+            "split must not renumber or reorder annotation ids"
+        );
+        // The split gates still hold the ids, so the refs remain resolvable.
+        let dag = crate::DagCircuit::try_from(&tc).expect("valid circuit");
+        dag.find_measurement(MeasId::from_raw(9))
+            .expect("id 9 still resolves");
+        dag.find_measurement(MeasId::from_raw(4))
+            .expect("id 4 still resolves");
+    }
+
     #[test]
     fn split_batched_tick_commands_preserves_payloads_attrs_and_counters() {
         let mut tc = TickCircuit::new();

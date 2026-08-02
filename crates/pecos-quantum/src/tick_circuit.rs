@@ -1241,7 +1241,8 @@ pub struct TickMeasRef {
 
 /// Why a measurement reference was rejected at annotation construction.
 ///
-/// Validation is an O(1) lookup at the referenced batch, so it catches stale
+/// Validation is a direct lookup at the referenced batch (linear only in the
+/// batch's own width), so it catches stale
 /// references and references whose (tick, batch, qubit, id) tuple this circuit
 /// does not hold. A reference minted by a *different* circuit that agrees
 /// structurally cannot be detected -- ids are circuit-local numbers.

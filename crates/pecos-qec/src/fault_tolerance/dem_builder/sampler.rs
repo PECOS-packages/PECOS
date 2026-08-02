@@ -1152,6 +1152,22 @@ impl<'a> DemSamplerBuilder<'a> {
     ) -> Result<Self, DetectorValidationError> {
         use pecos_quantum::AnnotationKind;
 
+        // A duplicate stamped id would make `meas_index_of` bind to the first
+        // holder -- an ambiguous, silently-wrong bind. Mirrors the guard on
+        // the JSON path (`reject_duplicate_stamped_meas_ids`).
+        let mut seen = std::collections::BTreeSet::new();
+        for mid in &self.influence_map.meas_ids {
+            if !seen.insert(mid.index()) {
+                return Err(DetectorValidationError::InvalidMetadata {
+                    message: format!(
+                        "duplicate stable MeasId {} in the circuit; each \
+                         measurement must have a unique stamped id",
+                        mid.index()
+                    ),
+                });
+            }
+        }
+
         let detectors: Vec<&pecos_quantum::PauliAnnotation> = circuit.detectors().collect();
         let observables: Vec<&pecos_quantum::PauliAnnotation> = circuit.observables().collect();
 
@@ -1265,6 +1281,18 @@ impl<'a> DemSamplerBuilder<'a> {
         // measurement count would resolve in a different (shorter/longer) frame
         // at sample time and silently misbind. (See sampler-JSON validation.)
         if let Some(ref order) = self.measurement_order {
+            // With stamped ids the order is derivable from the ids, and the
+            // qubit-occurrence heuristic behind a supplied order silently
+            // mis-binds on non-positional ids. The escape hatch is for id-less
+            // legacy circuits only.
+            if !self.influence_map.meas_ids.is_empty() {
+                return Err(DetectorValidationError::InvalidMetadata {
+                    message: "measurement_order cannot be combined with a circuit \
+                              that carries stable MeasIds; the ids already define \
+                              the measurement mapping"
+                        .to_string(),
+                });
+            }
             let expected = self.influence_map.measurements.len();
             if order.len() != expected {
                 return Err(DetectorValidationError::InvalidMetadata {

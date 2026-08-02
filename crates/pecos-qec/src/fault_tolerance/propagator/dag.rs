@@ -617,7 +617,12 @@ pub struct DagFaultInfluenceMap {
     pub detectors: Vec<DetectorId>,
 
     /// All measurements in the circuit (node, qubit, basis).
-    /// Ordered by `MeasId` when gates carry `MeasId` values.
+    ///
+    /// The order is this map's single private ordinal, shared by `meas_ids`,
+    /// `detectors`, and the influence data. Which order that is depends on the
+    /// builder (`DagFaultAnalyzer` uses id rank; `InfluenceBuilder` uses
+    /// replay order) -- resolve through `meas_index_of`, never by assuming a
+    /// particular ordering.
     pub measurements: Vec<(usize, usize, u8)>,
 
     /// `MeasId` IDs for each measurement, in the same order as `measurements`.
@@ -641,7 +646,8 @@ pub struct DagFaultInfluenceMap {
 impl DagFaultInfluenceMap {
     /// Index into `measurements` of the measurement holding `id`.
     ///
-    /// This is the influence map's private ordinal (id-rank order). `None`
+    /// This is the influence map's private ordinal -- the one order shared by
+    /// every array in the map, whichever the builder chose. `None`
     /// means the id is absent from this map -- the map cannot distinguish why;
     /// resolve against the circuit with `DagCircuit::find_measurement` when the
     /// reason matters. Callers resolving many ids should iterate `meas_ids`

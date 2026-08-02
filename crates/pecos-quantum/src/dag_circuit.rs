@@ -453,7 +453,8 @@ impl std::error::Error for MeasResolveError {}
 
 /// Why a measurement reference was rejected at annotation construction.
 ///
-/// Validation is an O(1) lookup at the referenced node, so it catches stale
+/// Validation is a direct lookup at the referenced node (linear only in the
+/// gate's own batch width), so it catches stale
 /// references (the gate was removed or replaced) and references whose
 /// (node, qubit, id) triple this circuit does not hold. A reference minted by a
 /// *different* circuit that agrees structurally at that node cannot be detected
@@ -2195,7 +2196,8 @@ impl DagCircuit {
     }
 
     /// Validate each reference against the gate it names and derive the ids
-    /// and Z-Pauli. Validation is an O(1) lookup per reference: the gate must
+    /// and Z-Pauli. Validation is a direct lookup per reference -- linear only
+    /// in the named gate's batch width, never in the circuit: the gate must
     /// exist, consume measurement records, and hold the (qubit, id) pair.
     fn validated_ids_and_pauli(
         &self,

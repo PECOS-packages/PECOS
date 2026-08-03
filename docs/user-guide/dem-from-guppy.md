@@ -207,10 +207,21 @@ The recommended structured interface mirrors the engines
   cannot represent leakage. `p_idle` remains shorthand for the uniform model.
 - `p_idle_quadratic` is the engines-style quadratic dephasing rate. By default,
   an idle of duration `t` has a stochastic Z probability
-  `sin(p_idle_quadratic * t) ** 2`. With `p_idle_coherent=True`, it instead
-  contributes an `RZ(p_idle_quadratic * t)` angle. The DEM coherently adds
-  angles for matching detector sets and uses the RZ half-angle probability
-  `sin(total_angle / 2) ** 2`.
+  `sin(p_idle_quadratic * t) ** 2`. With `p_idle_coherent=True`, the rate is
+  interpreted as a coherent `RZ` angle per unit idle time and stored as its
+  exact Pauli twirl — a stochastic Z channel with the half-angle probability
+  `sin(p_idle_quadratic / 2) ** 2` per unit idle time. Coherent
+  cross-location accumulation belongs to the EEG tooling, not this
+  constructor. Because the conversion replaces the base idle channel,
+  `p_idle_coherent=True` cannot be combined with `p_idle` or `t1`/`t2`
+  (and `p_idle` with `t1`/`t2` is likewise rejected — the T1/T2 channel
+  replaces the depolarizing base channel).
+
+These rates match the engines *runtime* application semantics
+(`GeneralNoiseModel`'s internal fields); the engines `GeneralNoiseModelBuilder`
+additionally rescales its public inputs (square-root scaling, an
+incoherent-conversion factor, and cycles-to-radians), so builder inputs are
+not directly interchangeable with these parameters.
 
 The per-axis `p_idle_{x,y,z}_linear_rate`,
 `p_idle_{x,y,z}_quadratic_rate`, and

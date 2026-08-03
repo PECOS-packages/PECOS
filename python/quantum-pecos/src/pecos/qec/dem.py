@@ -65,6 +65,8 @@ _IDLE_MODEL_FLOAT_EPSILON = 1.0e-10
 def _translate_structured_idle_noise(
     *,
     p_idle: float | None,
+    t1: float | None,
+    t2: float | None,
     p_idle_linear: float | None,
     p_idle_linear_model: Mapping[str, float] | None,
     p_idle_quadratic: float | None,
@@ -98,6 +100,20 @@ def _translate_structured_idle_noise(
     if p_idle is not None and p_idle_linear is not None:
         msg = "p_idle and p_idle_linear cannot be combined; p_idle is the uniform-model shorthand"
         raise ValueError(msg)
+    if p_idle is not None and (t1 is not None or t2 is not None):
+        # The Rust NoiseConfig base idle channel is T1/T2 when set, else
+        # p_idle-depolarizing -- passing both would silently ignore p_idle.
+        msg = "p_idle and t1/t2 cannot be combined; the T1/T2 channel replaces the depolarizing base channel"
+        raise ValueError(msg)
+    if p_idle_coherent:
+        # NoiseConfig::set_idle_rz replaces the T1/T2 fields with a synthetic
+        # T2 and zeroes p_idle -- both combinations would be silently lost.
+        if p_idle is not None:
+            msg = "p_idle_coherent=True cannot be combined with p_idle; the coherent RZ conversion replaces the base idle channel"
+            raise ValueError(msg)
+        if t1 is not None or t2 is not None:
+            msg = "p_idle_coherent=True cannot be combined with t1/t2; the coherent RZ conversion overwrites the T1/T2 channel"
+            raise ValueError(msg)
 
     quadratic_primitives = {
         "p_idle_quadratic_rate": p_idle_quadratic_rate,
@@ -514,10 +530,15 @@ class _DetectorErrorModelMixin:
             p_idle_quadratic: Optional quadratic dephasing rate. With
                 ``p_idle_coherent=False``, an idle of duration ``t`` produces a
                 stochastic Z fault with probability ``sin(rate * t)^2``.
-                With ``p_idle_coherent=True``, the same rate is forwarded as a
-                coherent ``RZ(rate * t)`` angle; the DEM converts an isolated
-                rotation to ``sin(rate * t / 2)^2`` and coherently accumulates
-                angles for matching detector sets.
+                With ``p_idle_coherent=True``, the rate is interpreted as a
+                coherent ``RZ(rate)`` angle per unit idle time and stored by
+                the DEM builder as its exact Pauli twirl: a stochastic Z
+                channel with ``sin(rate / 2)^2`` per unit idle time,
+                represented internally via an equivalent T2. Coherent
+                cross-location angle accumulation is the EEG pipeline's
+                domain, not this constructor's. Because that conversion
+                replaces the base idle channel, ``p_idle_coherent=True``
+                cannot be combined with ``p_idle`` or ``t1``/``t2``.
             p_idle_coherent: Select coherent RZ rather than stochastic Z
                 interpretation for ``p_idle_quadratic``. Defaults to ``False``.
             t1: Optional T1 relaxation time for explicit idle gates.
@@ -614,6 +635,8 @@ class _DetectorErrorModelMixin:
             idle_rz,
         ) = _translate_structured_idle_noise(
             p_idle=p_idle,
+            t1=t1,
+            t2=t2,
             p_idle_linear=p_idle_linear,
             p_idle_linear_model=p_idle_linear_model,
             p_idle_quadratic=p_idle_quadratic,
@@ -1128,8 +1151,11 @@ def build_dem_from_guppy(
             reserved but unsupported by DEM construction.
         p_idle_quadratic: Optional quadratic dephasing rate. The default
             stochastic interpretation gives probability ``sin(rate * t)^2``;
-            the coherent interpretation forwards ``RZ(rate * t)`` and the DEM
-            uses its ``sin(rate * t / 2)^2`` half-angle convention.
+            the coherent interpretation stores the exact Pauli twirl of an
+            ``RZ(rate)`` per unit idle time (stochastic Z with
+            ``sin(rate / 2)^2``, via an equivalent T2) and cannot be combined
+            with ``p_idle`` or ``t1``/``t2``. Coherent cross-location
+            accumulation belongs to the EEG pipeline.
         p_idle_coherent: Select coherent RZ rather than stochastic Z
             interpretation for ``p_idle_quadratic``. Defaults to ``False``.
         t1: Optional T1 relaxation time for explicit idle gates.
@@ -1188,6 +1214,8 @@ def build_dem_from_guppy(
         idle_rz,
     ) = _translate_structured_idle_noise(
         p_idle=p_idle,
+        t1=t1,
+        t2=t2,
         p_idle_linear=p_idle_linear,
         p_idle_linear_model=p_idle_linear_model,
         p_idle_quadratic=p_idle_quadratic,

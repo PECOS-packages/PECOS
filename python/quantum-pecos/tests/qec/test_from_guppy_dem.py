@@ -479,6 +479,63 @@ def test_from_guppy_rejects_non_positive_idle_duration(bad_duration: float) -> N
         _two_qubit_dem(idle_after_2q_duration=bad_duration, p_idle=0.01)
 
 
+def test_from_guppy_rejects_coherent_with_base_idle_channel() -> None:
+    # NoiseConfig::set_idle_rz zeroes p_idle in Rust; the combination must
+    # fail loud instead of silently dropping the depolarizing channel.
+    with pytest.raises(ValueError, match=r"coherent RZ conversion replaces the base idle channel"):
+        _two_qubit_dem(
+            idle_after_2q_duration=1.0,
+            p_idle=0.01,
+            p_idle_quadratic=0.02,
+            p_idle_coherent=True,
+        )
+
+
+def test_from_guppy_rejects_coherent_with_t1_t2() -> None:
+    # NoiseConfig::set_idle_rz overwrites the T1/T2 fields in Rust.
+    with pytest.raises(ValueError, match=r"overwrites the T1/T2 channel"):
+        _two_qubit_dem(
+            idle_after_2q_duration=1.0,
+            t1=100.0,
+            t2=50.0,
+            p_idle_quadratic=0.02,
+            p_idle_coherent=True,
+        )
+
+
+def test_from_guppy_rejects_p_idle_with_t1_t2() -> None:
+    # The Rust base idle channel is T1/T2 when set, silently ignoring p_idle.
+    with pytest.raises(ValueError, match=r"T1/T2 channel replaces the depolarizing base channel"):
+        _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01, t1=100.0, t2=50.0)
+
+
+def test_from_guppy_coherent_composes_with_structured_linear() -> None:
+    # p_idle_linear maps to the dedicated idle-memory fields, which compose
+    # with the RZ-derived channel -- this combination must stay legal.
+    dem = _two_qubit_dem(
+        idle_after_2q_duration=1.0,
+        p_idle_linear=0.01,
+        p_idle_quadratic=0.02,
+        p_idle_coherent=True,
+    )
+    assert dem.num_contributions > 0
+
+
+def test_build_dem_from_guppy_rejects_coherent_with_base_idle_channel() -> None:
+    with pytest.raises(ValueError, match=r"coherent RZ conversion replaces the base idle channel"):
+        build_dem_from_guppy(
+            _two_qubit_idle_target,
+            num_qubits=2,
+            detectors=[Detector(rec[-2])],
+            observables=[Observable(rec[-1])],
+            idle_after_2q_duration=1.0,
+            p_idle=0.01,
+            p_idle_quadratic=0.02,
+            p_idle_coherent=True,
+            **_NO_GATE_NOISE,
+        )
+
+
 def test_from_guppy_idle_guard_accepts_inserted_idles_and_idles_without_noise() -> None:
     with_noise = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01)
     without_noise = _two_qubit_dem(idle_after_2q_duration=1.0)

@@ -248,3 +248,37 @@ fn a_measure_free_stops_propagation_where_a_plain_mz_does_not() {
         "through a MeasureFree it does not -- the qubit was discarded"
     );
 }
+
+/// `MPZ` stops propagation exactly where `MeasureFree` does -- its built-in
+/// reset absorbs the error -- but records a real measurement whose flip the
+/// fault still causes, and leaves the wire usable.
+#[test]
+fn an_mpz_records_its_flip_and_stops_propagation() {
+    use pecos_qec::fault_tolerance::propagator::types::Pauli;
+
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    let m1 = dag.mpz(&[0]);
+    let m2 = dag.mz(&[0]);
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+
+    let i1 = u32::try_from(
+        map.meas_index_of(m1[0].meas_id)
+            .expect("the MPZ measurement is in the map"),
+    )
+    .expect("fits");
+    let i2 = u32::try_from(
+        map.meas_index_of(m2[0].meas_id)
+            .expect("the second measurement is in the map"),
+    )
+    .expect("fits");
+
+    // X after the prep flips the MPZ readout and nothing after the reset.
+    assert_eq!(
+        detector_hits(&map, 0, false, Pauli::X),
+        vec![i1],
+        "the flip is recorded; the reset stops it from reaching {i2}"
+    );
+    // Between the MPZ and the final MZ: only the final measurement flips.
+    assert_eq!(detector_hits(&map, m2[0].node, true, Pauli::X), vec![i2]);
+}

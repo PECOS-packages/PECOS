@@ -214,11 +214,12 @@ impl BiasedDepolarizingNoiseModel {
                     self.apply_tq_faults(&mut builder, gate);
                 }
                 // Measure-and-prepare: the measurement bias is applied after
-                // the engine returns results (like the other measurements);
-                // the preparation half takes its fault here.
+                // the engine returns results, like the other measurements; the
+                // prepare-half fault is deferred to the dedicated
+                // measure-prepare channel so every noise path models MPZ
+                // identically.
                 GateType::MPZ => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
-                    self.apply_prep_faults(&mut builder, gate);
                 }
                 GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     trace!("Applying measurement. Will apply bias after engine returns results.");

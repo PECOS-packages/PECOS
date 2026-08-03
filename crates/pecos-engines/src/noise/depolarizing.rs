@@ -228,12 +228,13 @@ impl DepolarizingNoiseModel {
                 trace!("Applying three-qubit gate with possible fault");
                 Self::apply_tq_faults(rng, p2_threshold, builder, gate);
             }
-            // Measure-and-prepare composes the two channels: a measurement
-            // fault before the readout, a preparation fault after the reset.
+            // Measure-and-prepare draws the measurement-half fault only, so
+            // every noise path (engines, DEM builders, eeg) models MPZ
+            // identically; the prepare-half lands with the dedicated
+            // measure-prepare channel across all of them at once.
             GateType::MPZ => {
                 Self::apply_meas_faults(rng, p_meas_threshold, builder, gate);
                 NoiseUtils::add_gate_to_builder(builder, gate);
-                Self::apply_prep_faults(rng, p_prep_threshold, builder, gate);
             }
             GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                 trace!("Applying measurement with possible fault");

@@ -395,9 +395,10 @@ assert bp_osd_result.observables_mask >= 0
 
 For direct PyMatching construction, use the
 `PyMatchingDecoder.from_dem(...)` pattern in the
-[surface-memory example](#surface-code-memory-dem). Matching decoders require
-the terminal-decomposed graph-like projection. Tesseract and BP-OSD can consume
-the raw hyperedge DEM directly; the batch comparison above uses the established
+[surface-memory example](#surface-code-memory-dem). That DEM's source-attached
+decomposition is already graph-like; in general, matching decoders require the
+terminal-decomposed graph-like projection. Tesseract and BP-OSD can consume the
+raw hyperedge DEM directly; the batch comparison above uses the established
 source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
 
 ## Limitations

@@ -718,14 +718,20 @@ mod collapse_tests {
         }
     }
 
-    /// A discarded qubit carries nothing across, in either direction.
+    /// A discarded (`MeasureFree`) or reset (`MPZ`) qubit carries nothing
+    /// across, in either direction.
     #[test]
-    fn measure_free_clears_both_directions() {
-        for direction in [Direction::Forward, Direction::Backward] {
-            let mut prop = PauliProp::new();
-            prop.track_y(&[0]);
-            cross_measurement(&mut prop, 0, GateType::MeasureFree, direction);
-            assert!(!prop.contains_x(0) && !prop.contains_z(0));
+    fn measure_free_and_mpz_clear_both_directions() {
+        for gate_type in [GateType::MeasureFree, GateType::MPZ] {
+            for direction in [Direction::Forward, Direction::Backward] {
+                let mut prop = PauliProp::new();
+                prop.track_y(&[0]);
+                cross_measurement(&mut prop, 0, gate_type, direction);
+                assert!(
+                    !prop.contains_x(0) && !prop.contains_z(0),
+                    "{gate_type:?} {direction:?}"
+                );
+            }
         }
     }
 

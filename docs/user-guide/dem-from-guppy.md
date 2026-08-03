@@ -197,25 +197,36 @@ different DEM.
 
 ## Idle Noise
 
-The recommended structured interface mirrors the engines
-`GeneralNoiseModel`:
+The recommended structured interface has three uniform rate-and-model
+families. Every model value is a **relative-rate multiplier**: for each axis,
+`axis_rate = family_rate * axis_multiplier`. The linear law is additive, so
+its multipliers are exactly the engines relative-probability distribution and
+must sum to 1. The nonlinear laws are not additive, so their finite,
+non-negative multipliers have no sum constraint.
 
-- `p_idle_linear` is the total stochastic idle rate, linear in duration.
-  `p_idle_linear_model` supplies relative `X`, `Y`, and `Z` weights that sum
-  to 1; its default is the uniform `{X: 1/3, Y: 1/3, Z: 1/3}` engines model.
-  The engines `L` leakage key is reserved but rejected because DEM construction
-  cannot represent leakage. `p_idle` remains shorthand for the uniform model.
-- `p_idle_quadratic` is the engines-style quadratic dephasing rate. By default,
-  an idle of duration `t` has a stochastic Z probability
-  `sin(p_idle_quadratic * t) ** 2`. With `p_idle_coherent=True`, the rate is
-  interpreted as a coherent `RZ` angle per unit idle time and stored as its
-  exact Pauli twirl — a stochastic Z channel with the half-angle probability
-  `sin(p_idle_quadratic / 2) ** 2` per unit idle time. Coherent
-  cross-location accumulation belongs to the EEG tooling, not this
-  constructor. Because the conversion replaces the base idle channel,
-  `p_idle_coherent=True` cannot be combined with `p_idle` or `t1`/`t2`
-  (and `p_idle` with `t1`/`t2` is likewise rejected — the T1/T2 channel
-  replaces the depolarizing base channel).
+- Linear: `p_idle_linear` with `p_idle_linear_model`. An axis fault has
+  probability `(p_idle_linear * m_axis) * t`. The model keys are `X`, `Y`, and
+  `Z`, and the default is the uniform `{X: 1/3, Y: 1/3, Z: 1/3}` engines
+  model. `p_idle` remains shorthand for that uniform model.
+- Sine-squared: `p_idle_sin_squared` with `p_idle_sin_squared_model`. An axis
+  fault has probability `sin((p_idle_sin_squared * m_axis) * t) ** 2`. The
+  model keys are `X`, `Y`, and `Z`; there is no sum constraint, and the default
+  `{Z: 1.0}` means scalar-only use is full-rate stochastic Z dephasing.
+- Coherent: `p_idle_coherent` with `p_idle_coherent_model`. An axis rotation has
+  angle `(p_idle_coherent * m_axis) * t`. The default is `{RZ: 1.0}`. DEM v1
+  represents only RZ, so nonzero `RX`/`RY` multipliers are rejected and `U` is
+  reserved for future Hamiltonian-level support. This constructor stores RZ as
+  its exact Pauli twirl — a stochastic Z channel with half-angle probability
+  `sin(rate / 2) ** 2` per unit idle time, via an equivalent T2. True coherent
+  cross-location accumulation belongs to the EEG tooling. Because this
+  conversion replaces the base idle channel, the coherent family cannot be
+  combined with `p_idle` or `t1`/`t2` (and `p_idle` with `t1`/`t2` is likewise
+  rejected — the T1/T2 channel replaces the depolarizing base channel).
+
+The engines `L` leakage key is reserved but rejected for all three models
+because DEM construction cannot represent leakage. Multi-qubit idle faults
+are outside the scope of these keyword arguments and will arrive through a
+typed channel interface.
 
 These rates match the engines *runtime* application semantics
 (`GeneralNoiseModel`'s internal fields); the engines `GeneralNoiseModelBuilder`
@@ -289,7 +300,7 @@ with_idle_noise = DetectorErrorModel.from_guppy(
     idle_after_2q_duration=1.0,
     p_idle_linear=0.01,
     p_idle_linear_model={"X": 0.25, "Z": 0.75},
-    p_idle_quadratic=0.02,
+    p_idle_sin_squared=0.02,
     **common,
 )
 

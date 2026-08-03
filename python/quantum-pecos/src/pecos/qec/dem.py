@@ -60,6 +60,81 @@ P2Weights = Mapping[str, float]
 _GENERATOR_LAYOUT_ATTR = "__pecos_named_measurement_layout_v2__"
 _IDLE_MODEL_NORMALIZATION_TOLERANCE = 1.0e-5
 _IDLE_MODEL_FLOAT_EPSILON = 1.0e-10
+_EMPTY_IDLE_MODEL_KEYS: frozenset[str] = frozenset()
+
+
+def _validate_idle_family_model(
+    *,
+    rate: float | None,
+    rate_name: str,
+    model: Mapping[str, float] | None,
+    model_name: str,
+    default_model: Mapping[str, float],
+    valid_keys: frozenset[str],
+    require_normalized: bool,
+    unsupported_keys: frozenset[str] = _EMPTY_IDLE_MODEL_KEYS,
+) -> tuple[float, dict[str, float]] | None:
+    """Validate one structured idle family and return its rate and multipliers."""
+    if model is not None and rate is None:
+        msg = f"{model_name} requires {rate_name}; otherwise the model is inert"
+        raise ValueError(msg)
+    if rate is None:
+        return None
+
+    if isinstance(rate, bool):
+        msg = f"{rate_name} must be a finite, non-negative float"
+        raise TypeError(msg)
+    try:
+        numeric_rate = float(rate)
+    except (TypeError, ValueError) as exc:
+        msg = f"{rate_name} must be a finite, non-negative float"
+        raise ValueError(msg) from exc
+    if not math.isfinite(numeric_rate) or numeric_rate < 0.0:
+        msg = f"{rate_name} must be a finite, non-negative float"
+        raise ValueError(msg)
+
+    if model is not None and not isinstance(model, Mapping):
+        expected = ", ".join(repr(key) for key in sorted(valid_keys))
+        msg = f"{model_name} must be a mapping from {expected} to relative-rate multipliers"
+        raise ValueError(msg)
+    selected_model = model if model is not None else default_model
+    validated_model: dict[str, float] = {}
+    for key, multiplier in selected_model.items():
+        if key == "L":
+            msg = (
+                f"{model_name} key 'L' denotes leakage, which is supported by the engines simulators "
+                "but not by DEM construction"
+            )
+            raise ValueError(msg)
+        if key in unsupported_keys:
+            msg = f"{model_name} key {key!r} is reserved; only 'RZ' is representable by DEM construction today"
+            raise ValueError(msg)
+        if key not in valid_keys:
+            expected = ", ".join(repr(valid_key) for valid_key in sorted(valid_keys))
+            msg = f"invalid {model_name} key {key!r}; expected {expected}"
+            raise ValueError(msg)
+        try:
+            numeric_multiplier = float(multiplier)
+        except (TypeError, ValueError) as exc:
+            msg = f"{model_name} multiplier for {key!r} must be a finite, non-negative float"
+            raise ValueError(msg) from exc
+        if not math.isfinite(numeric_multiplier) or numeric_multiplier < 0.0:
+            msg = f"{model_name} multiplier for {key!r} must be a finite, non-negative float"
+            raise ValueError(msg)
+        validated_model[key] = numeric_multiplier
+
+    if require_normalized:
+        total_multiplier = sum(validated_model.values())
+        if total_multiplier <= 0.0 or abs(total_multiplier - 1.0) > _IDLE_MODEL_NORMALIZATION_TOLERANCE:
+            msg = (
+                f"{model_name} multipliers must sum to 1.0 within tolerance "
+                f"{_IDLE_MODEL_NORMALIZATION_TOLERANCE:g}; got {total_multiplier}"
+            )
+            raise ValueError(msg)
+        if abs(total_multiplier - 1.0) > _IDLE_MODEL_FLOAT_EPSILON:
+            validated_model = {key: multiplier / total_multiplier for key, multiplier in validated_model.items()}
+
+    return numeric_rate, validated_model
 
 
 def _translate_structured_idle_noise(
@@ -69,21 +144,28 @@ def _translate_structured_idle_noise(
     t2: float | None,
     p_idle_linear: float | None,
     p_idle_linear_model: Mapping[str, float] | None,
-    p_idle_quadratic: float | None,
-    p_idle_coherent: bool,
+    p_idle_sin_squared: float | None,
+    p_idle_sin_squared_model: Mapping[str, float] | None,
+    p_idle_coherent: float | None,
+    p_idle_coherent_model: Mapping[str, float] | None,
     p_idle_linear_rate: float | None,
     p_idle_quadratic_rate: float | None,
     p_idle_x_linear_rate: float | None,
     p_idle_y_linear_rate: float | None,
     p_idle_z_linear_rate: float | None,
-    p_idle_x_quadratic_rate: float | None,
-    p_idle_y_quadratic_rate: float | None,
-    p_idle_z_quadratic_rate: float | None,
     p_idle_quadratic_sine_rate: float | None,
     p_idle_x_quadratic_sine_rate: float | None,
     p_idle_y_quadratic_sine_rate: float | None,
     p_idle_z_quadratic_sine_rate: float | None,
-) -> tuple[float | None, float | None, float | None, float | None, float | None]:
+) -> tuple[
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+]:
     """Validate and translate engines-style idle noise to DEM primitives."""
     linear_primitives = {
         "p_idle_linear_rate": p_idle_linear_rate,
@@ -105,38 +187,32 @@ def _translate_structured_idle_noise(
         # p_idle-depolarizing -- passing both would silently ignore p_idle.
         msg = "p_idle and t1/t2 cannot be combined; the T1/T2 channel replaces the depolarizing base channel"
         raise ValueError(msg)
-    if p_idle_coherent:
+    if p_idle_coherent is not None:
         # NoiseConfig::set_idle_rz replaces the T1/T2 fields with a synthetic
         # T2 and zeroes p_idle -- both combinations would be silently lost.
         if p_idle is not None:
-            msg = "p_idle_coherent=True cannot be combined with p_idle; the coherent RZ conversion replaces the base idle channel"
+            msg = (
+                "p_idle_coherent cannot be combined with p_idle; "
+                "the coherent RZ conversion replaces the base idle channel"
+            )
             raise ValueError(msg)
         if t1 is not None or t2 is not None:
-            msg = "p_idle_coherent=True cannot be combined with t1/t2; the coherent RZ conversion overwrites the T1/T2 channel"
+            msg = (
+                "p_idle_coherent cannot be combined with t1/t2; the coherent RZ conversion overwrites the T1/T2 channel"
+            )
             raise ValueError(msg)
 
-    quadratic_primitives = {
-        "p_idle_quadratic_rate": p_idle_quadratic_rate,
-        "p_idle_x_quadratic_rate": p_idle_x_quadratic_rate,
-        "p_idle_y_quadratic_rate": p_idle_y_quadratic_rate,
-        "p_idle_z_quadratic_rate": p_idle_z_quadratic_rate,
+    sine_primitives = {
         "p_idle_quadratic_sine_rate": p_idle_quadratic_sine_rate,
         "p_idle_x_quadratic_sine_rate": p_idle_x_quadratic_sine_rate,
         "p_idle_y_quadratic_sine_rate": p_idle_y_quadratic_sine_rate,
         "p_idle_z_quadratic_sine_rate": p_idle_z_quadratic_sine_rate,
     }
-    if (p_idle_quadratic is not None or p_idle_coherent) and any(
-        value is not None for value in quadratic_primitives.values()
+    if (p_idle_sin_squared is not None or p_idle_sin_squared_model is not None) and any(
+        value is not None for value in sine_primitives.values()
     ):
-        conflicts = ", ".join(name for name, value in quadratic_primitives.items() if value is not None)
-        msg = f"p_idle_quadratic/p_idle_coherent cannot be combined with low-level idle rate(s): {conflicts}"
-        raise ValueError(msg)
-
-    if p_idle_linear_model is not None and p_idle_linear is None:
-        msg = "p_idle_linear_model requires p_idle_linear; otherwise the model is inert"
-        raise ValueError(msg)
-    if p_idle_coherent and p_idle_quadratic is None:
-        msg = "p_idle_coherent=True requires p_idle_quadratic; otherwise it is inert"
+        conflicts = ", ".join(name for name, value in sine_primitives.items() if value is not None)
+        msg = f"p_idle_sin_squared/p_idle_sin_squared_model cannot be combined with sine-law idle rate(s): {conflicts}"
         raise ValueError(msg)
 
     legacy_replacements = {
@@ -150,14 +226,14 @@ def _translate_structured_idle_noise(
         "p_idle_quadratic_rate": (
             p_idle_quadratic_rate,
             (
-                "p_idle_quadratic for the engines-consistent quadratic interface, "
+                "p_idle_sin_squared for the engines-consistent dephasing interface, "
                 "or p_idle_z_quadratic_rate for literal coefficient-style Z-only behavior"
             ),
         ),
         "p_idle_quadratic_sine_rate": (
             p_idle_quadratic_sine_rate,
             (
-                "p_idle_quadratic for the engines-consistent quadratic interface, "
+                "p_idle_sin_squared for the engines-consistent sine-law interface, "
                 "or p_idle_z_quadratic_sine_rate for literal Z-only behavior"
             ),
         ),
@@ -170,59 +246,70 @@ def _translate_structured_idle_noise(
                 stacklevel=3,
             )
 
-    if p_idle_linear is not None:
-        if p_idle_linear_model is not None and not isinstance(p_idle_linear_model, Mapping):
-            msg = "p_idle_linear_model must be a mapping from 'X', 'Y', and 'Z' to weights"
-            raise ValueError(msg)
-        model = (
-            p_idle_linear_model if p_idle_linear_model is not None else {"X": 1.0 / 3.0, "Y": 1.0 / 3.0, "Z": 1.0 / 3.0}
-        )
-        normalized_model: dict[str, float] = {}
-        for key, weight in model.items():
-            if key == "L":
-                msg = (
-                    "p_idle_linear_model key 'L' denotes leakage, which is supported by the engines simulators "
-                    "but not by DEM construction"
-                )
-                raise ValueError(msg)
-            if key not in {"X", "Y", "Z"}:
-                msg = f"invalid p_idle_linear_model key {key!r}; expected 'X', 'Y', or 'Z'"
-                raise ValueError(msg)
-            try:
-                numeric_weight = float(weight)
-            except (TypeError, ValueError) as exc:
-                msg = f"p_idle_linear_model weight for {key!r} must be a finite, non-negative float"
-                raise ValueError(msg) from exc
-            if not math.isfinite(numeric_weight) or numeric_weight < 0.0:
-                msg = f"p_idle_linear_model weight for {key!r} must be a finite, non-negative float"
-                raise ValueError(msg)
-            normalized_model[key] = numeric_weight
+    linear_family = _validate_idle_family_model(
+        rate=p_idle_linear,
+        rate_name="p_idle_linear",
+        model=p_idle_linear_model,
+        model_name="p_idle_linear_model",
+        default_model={"X": 1.0 / 3.0, "Y": 1.0 / 3.0, "Z": 1.0 / 3.0},
+        valid_keys=frozenset({"X", "Y", "Z"}),
+        require_normalized=True,
+    )
+    if linear_family is not None:
+        linear_rate, linear_model = linear_family
+        p_idle_x_linear_rate = linear_rate * linear_model.get("X", 0.0)
+        p_idle_y_linear_rate = linear_rate * linear_model.get("Y", 0.0)
+        p_idle_z_linear_rate = linear_rate * linear_model.get("Z", 0.0)
 
-        total_weight = sum(normalized_model.values())
-        if total_weight <= 0.0 or abs(total_weight - 1.0) > _IDLE_MODEL_NORMALIZATION_TOLERANCE:
+    sin_squared_family = _validate_idle_family_model(
+        rate=p_idle_sin_squared,
+        rate_name="p_idle_sin_squared",
+        model=p_idle_sin_squared_model,
+        model_name="p_idle_sin_squared_model",
+        default_model={"Z": 1.0},
+        valid_keys=frozenset({"X", "Y", "Z"}),
+        require_normalized=False,
+    )
+    if sin_squared_family is not None:
+        sin_squared_rate, sin_squared_model = sin_squared_family
+        p_idle_x_quadratic_sine_rate = (
+            sin_squared_rate * sin_squared_model["X"] if sin_squared_model.get("X", 0.0) != 0.0 else None
+        )
+        p_idle_y_quadratic_sine_rate = (
+            sin_squared_rate * sin_squared_model["Y"] if sin_squared_model.get("Y", 0.0) != 0.0 else None
+        )
+        p_idle_z_quadratic_sine_rate = (
+            sin_squared_rate * sin_squared_model["Z"] if sin_squared_model.get("Z", 0.0) != 0.0 else None
+        )
+
+    coherent_family = _validate_idle_family_model(
+        rate=p_idle_coherent,
+        rate_name="p_idle_coherent",
+        model=p_idle_coherent_model,
+        model_name="p_idle_coherent_model",
+        default_model={"RZ": 1.0},
+        valid_keys=frozenset({"RX", "RY", "RZ"}),
+        require_normalized=False,
+        unsupported_keys=frozenset({"U"}),
+    )
+    idle_rz = None
+    if coherent_family is not None:
+        coherent_rate, coherent_model = coherent_family
+        unsupported_axes = [axis for axis in ("RX", "RY") if coherent_model.get(axis, 0.0) != 0.0]
+        if unsupported_axes:
             msg = (
-                "p_idle_linear_model weights must sum to 1.0 within tolerance "
-                f"{_IDLE_MODEL_NORMALIZATION_TOLERANCE:g}; got {total_weight}"
+                f"p_idle_coherent_model has nonzero {', '.join(unsupported_axes)} multiplier(s); "
+                "only 'RZ' is representable by DEM construction today"
             )
             raise ValueError(msg)
-        if abs(total_weight - 1.0) > _IDLE_MODEL_FLOAT_EPSILON:
-            normalized_model = {key: weight / total_weight for key, weight in normalized_model.items()}
-
-        p_idle_x_linear_rate = p_idle_linear * normalized_model.get("X", 0.0)
-        p_idle_y_linear_rate = p_idle_linear * normalized_model.get("Y", 0.0)
-        p_idle_z_linear_rate = p_idle_linear * normalized_model.get("Z", 0.0)
-
-    idle_rz = None
-    if p_idle_quadratic is not None:
-        if p_idle_coherent:
-            idle_rz = p_idle_quadratic
-        else:
-            p_idle_z_quadratic_sine_rate = p_idle_quadratic
+        idle_rz = coherent_rate * coherent_model.get("RZ", 0.0)
 
     return (
         p_idle_x_linear_rate,
         p_idle_y_linear_rate,
         p_idle_z_linear_rate,
+        p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate,
         p_idle_z_quadratic_sine_rate,
         idle_rz,
     )
@@ -407,8 +494,10 @@ class _DetectorErrorModelMixin:
         p_idle: float | None = None,
         p_idle_linear: float | None = None,
         p_idle_linear_model: Mapping[str, float] | None = None,
-        p_idle_quadratic: float | None = None,
-        p_idle_coherent: bool = False,
+        p_idle_sin_squared: float | None = None,
+        p_idle_sin_squared_model: Mapping[str, float] | None = None,
+        p_idle_coherent: float | None = None,
+        p_idle_coherent_model: Mapping[str, float] | None = None,
         t1: float | None = None,
         t2: float | None = None,
         p_idle_linear_rate: float | None = None,
@@ -437,6 +526,13 @@ class _DetectorErrorModelMixin:
         caller-supplied detector/observable definitions, and builds the DEM via
         native PECOS fault propagation. All metadata validation happens in the
         Rust DEM builder (single source of truth).
+
+        The three structured idle models contain relative-rate multipliers:
+        each axis rate is ``family_rate * axis_multiplier``. The linear law is
+        additive, so its multipliers must sum to 1.0 and coincide with the
+        engines relative-probability distribution. The nonlinear sine-squared
+        and coherent laws are not additive, so their finite, non-negative
+        multipliers have no sum constraint.
 
         Args:
             guppy: A HUGR-certifiable program: a ``@guppy``-decorated function,
@@ -527,29 +623,38 @@ class _DetectorErrorModelMixin:
                 non-negative, and sum to 1.0 within ``1e-5``. Defaults to the
                 engines' uniform model. The engines leakage key ``"L"`` is
                 reserved but unsupported by DEM construction.
-            p_idle_quadratic: Optional quadratic dephasing rate. With
-                ``p_idle_coherent=False``, an idle of duration ``t`` produces a
-                stochastic Z fault with probability ``sin(rate * t)^2``.
-                With ``p_idle_coherent=True``, the rate is interpreted as a
-                coherent ``RZ(rate)`` angle per unit idle time and stored by
-                the DEM builder as its exact Pauli twirl: a stochastic Z
-                channel with ``sin(rate / 2)^2`` per unit idle time,
-                represented internally via an equivalent T2. Coherent
-                cross-location angle accumulation is the EEG pipeline's
-                domain, not this constructor's. Because that conversion
-                replaces the base idle channel, ``p_idle_coherent=True``
+            p_idle_sin_squared: Optional stochastic sine-law dephasing rate. An
+                axis multiplier ``m`` gives probability
+                ``sin((p_idle_sin_squared * m) * t)^2`` for an idle of duration
+                ``t``. Defaults to Z-only dephasing at the full family rate.
+            p_idle_sin_squared_model: Optional relative-rate multipliers over
+                ``"X"``, ``"Y"``, and ``"Z"`` for ``p_idle_sin_squared``.
+                Values must be finite and non-negative, with no sum constraint.
+                Defaults to ``{"Z": 1.0}``. The engines leakage key ``"L"`` is
+                reserved but unsupported by DEM construction.
+            p_idle_coherent: Optional coherent-rotation rate. An ``RZ``
+                multiplier ``m`` gives angle ``(p_idle_coherent * m) * t``.
+                DEM construction currently supports only RZ and stores its
+                exact Pauli twirl: a stochastic Z channel with half-angle
+                probability ``sin(rate / 2)^2`` per unit idle time, represented
+                internally via an equivalent T2. Coherent cross-location angle
+                accumulation is the EEG pipeline's domain. This conversion
                 cannot be combined with ``p_idle`` or ``t1``/``t2``.
-            p_idle_coherent: Select coherent RZ rather than stochastic Z
-                interpretation for ``p_idle_quadratic``. Defaults to ``False``.
+            p_idle_coherent_model: Optional relative-rate multipliers over
+                ``"RX"``, ``"RY"``, and ``"RZ"`` for ``p_idle_coherent``.
+                Values must be finite and non-negative, with no sum constraint;
+                the default is ``{"RZ": 1.0}``. Nonzero ``"RX"``/``"RY"`` are
+                rejected because DEM v1 represents only RZ. ``"U"`` is reserved
+                for future Hamiltonian-level support and is rejected today.
             t1: Optional T1 relaxation time for explicit idle gates.
             t2: Optional T2 dephasing time for explicit idle gates.
             p_idle_linear_rate: Deprecated bare Z-only alias for a stochastic
                 rate linear in idle duration. Use ``p_idle_linear`` with a
                 Z-only model, or ``p_idle_z_linear_rate`` for literal behavior.
             p_idle_quadratic_rate: Deprecated bare Z-only coefficient-style
-                rate quadratic in idle duration. Use ``p_idle_quadratic`` for
-                engines semantics, or ``p_idle_z_quadratic_rate`` for literal
-                behavior.
+                rate quadratic in idle duration. Use ``p_idle_sin_squared`` for
+                the structured engines-style dephasing interface, or
+                ``p_idle_z_quadratic_rate`` for literal behavior.
             p_idle_x_linear_rate: Optional stochastic X-memory rate linear in idle duration.
             p_idle_y_linear_rate: Optional stochastic Y-memory rate linear in idle duration.
             p_idle_z_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
@@ -558,7 +663,7 @@ class _DetectorErrorModelMixin:
             p_idle_z_quadratic_rate: Optional stochastic Z-memory rate quadratic in idle duration.
             p_idle_quadratic_sine_rate: Deprecated bare Z-only alias for a
                 stochastic rate with probability ``sin(rate * duration)^2``.
-                Use ``p_idle_quadratic`` or ``p_idle_z_quadratic_sine_rate``.
+                Use ``p_idle_sin_squared`` or ``p_idle_z_quadratic_sine_rate``.
             p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
             p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
             p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
@@ -631,6 +736,8 @@ class _DetectorErrorModelMixin:
             p_idle_x_linear_rate,
             p_idle_y_linear_rate,
             p_idle_z_linear_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
             p_idle_z_quadratic_sine_rate,
             idle_rz,
         ) = _translate_structured_idle_noise(
@@ -639,16 +746,15 @@ class _DetectorErrorModelMixin:
             t2=t2,
             p_idle_linear=p_idle_linear,
             p_idle_linear_model=p_idle_linear_model,
-            p_idle_quadratic=p_idle_quadratic,
+            p_idle_sin_squared=p_idle_sin_squared,
+            p_idle_sin_squared_model=p_idle_sin_squared_model,
             p_idle_coherent=p_idle_coherent,
+            p_idle_coherent_model=p_idle_coherent_model,
             p_idle_linear_rate=p_idle_linear_rate,
             p_idle_quadratic_rate=p_idle_quadratic_rate,
             p_idle_x_linear_rate=p_idle_x_linear_rate,
             p_idle_y_linear_rate=p_idle_y_linear_rate,
             p_idle_z_linear_rate=p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
             p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
             p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
             p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
@@ -722,7 +828,8 @@ class _DetectorErrorModelMixin:
             idle_noise_parameters=(
                 p_idle,
                 p_idle_linear,
-                p_idle_quadratic,
+                p_idle_sin_squared,
+                p_idle_coherent,
                 t1,
                 t2,
                 p_idle_linear_rate,
@@ -1088,8 +1195,10 @@ def build_dem_from_guppy(
     p_idle: float | None = None,
     p_idle_linear: float | None = None,
     p_idle_linear_model: Mapping[str, float] | None = None,
-    p_idle_quadratic: float | None = None,
-    p_idle_coherent: bool = False,
+    p_idle_sin_squared: float | None = None,
+    p_idle_sin_squared_model: Mapping[str, float] | None = None,
+    p_idle_coherent: float | None = None,
+    p_idle_coherent_model: Mapping[str, float] | None = None,
     t1: float | None = None,
     t2: float | None = None,
     p_idle_linear_rate: float | None = None,
@@ -1122,6 +1231,13 @@ def build_dem_from_guppy(
     Measurement-dependent quantum control remains unsupported because one
     captured execution is not a static circuit model.
 
+    The three structured idle models contain relative-rate multipliers: each
+    axis rate is ``family_rate * axis_multiplier``. The linear law is additive,
+    so its multipliers must sum to 1.0 and coincide with the engines
+    relative-probability distribution. The nonlinear sine-squared and coherent
+    laws are not additive, so their finite, non-negative multipliers have no
+    sum constraint.
+
     Args:
         guppy: A HUGR-certifiable Guppy program to trace once under the Selene
             QIS engine.
@@ -1149,23 +1265,34 @@ def build_dem_from_guppy(
             non-negative, and sum to 1.0 within ``1e-5``. Defaults to the
             engines' uniform model. The engines leakage key ``"L"`` is
             reserved but unsupported by DEM construction.
-        p_idle_quadratic: Optional quadratic dephasing rate. The default
-            stochastic interpretation gives probability ``sin(rate * t)^2``;
-            the coherent interpretation stores the exact Pauli twirl of an
-            ``RZ(rate)`` per unit idle time (stochastic Z with
-            ``sin(rate / 2)^2``, via an equivalent T2) and cannot be combined
-            with ``p_idle`` or ``t1``/``t2``. Coherent cross-location
-            accumulation belongs to the EEG pipeline.
-        p_idle_coherent: Select coherent RZ rather than stochastic Z
-            interpretation for ``p_idle_quadratic``. Defaults to ``False``.
+        p_idle_sin_squared: Optional stochastic sine-law dephasing rate. An
+            axis multiplier ``m`` gives probability
+            ``sin((p_idle_sin_squared * m) * t)^2``. Defaults to Z-only
+            dephasing at the full family rate.
+        p_idle_sin_squared_model: Optional finite, non-negative relative-rate
+            multipliers over ``"X"``, ``"Y"``, and ``"Z"``. There is no sum
+            constraint; the default is ``{"Z": 1.0}``. The engines leakage
+            key ``"L"`` is reserved but unsupported by DEM construction.
+        p_idle_coherent: Optional coherent-rotation rate. An ``RZ`` multiplier
+            ``m`` gives angle ``(p_idle_coherent * m) * t``. DEM construction
+            stores the exact RZ Pauli twirl (stochastic Z with
+            ``sin(rate / 2)^2`` per unit idle time, via an equivalent T2), and
+            cannot combine it with ``p_idle`` or ``t1``/``t2``. True coherent
+            cross-location accumulation belongs to the EEG pipeline.
+        p_idle_coherent_model: Optional finite, non-negative relative-rate
+            multipliers over ``"RX"``, ``"RY"``, and ``"RZ"``, with no sum
+            constraint. Defaults to ``{"RZ": 1.0}``. DEM v1 rejects nonzero
+            ``"RX"``/``"RY"``; ``"U"`` is reserved for future
+            Hamiltonian-level support and is rejected today.
         t1: Optional T1 relaxation time for explicit idle gates.
         t2: Optional T2 dephasing time for explicit idle gates.
         p_idle_linear_rate: Deprecated bare Z-only alias for a stochastic rate
             linear in idle duration. Use ``p_idle_linear`` with a Z-only model,
             or ``p_idle_z_linear_rate`` for literal behavior.
         p_idle_quadratic_rate: Deprecated bare Z-only coefficient-style rate
-            quadratic in idle duration. Use ``p_idle_quadratic`` for engines
-            semantics, or ``p_idle_z_quadratic_rate`` for literal behavior.
+            quadratic in idle duration. Use ``p_idle_sin_squared`` for the
+            structured engines-style dephasing interface, or
+            ``p_idle_z_quadratic_rate`` for literal behavior.
         p_idle_x_linear_rate: Optional stochastic X-memory rate linear in idle duration.
         p_idle_y_linear_rate: Optional stochastic Y-memory rate linear in idle duration.
         p_idle_z_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
@@ -1174,7 +1301,7 @@ def build_dem_from_guppy(
         p_idle_z_quadratic_rate: Optional stochastic Z-memory rate quadratic in idle duration.
         p_idle_quadratic_sine_rate: Deprecated bare Z-only alias for a
             stochastic rate with probability ``sin(rate * duration)^2``. Use
-            ``p_idle_quadratic`` or ``p_idle_z_quadratic_sine_rate``.
+            ``p_idle_sin_squared`` or ``p_idle_z_quadratic_sine_rate``.
         p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
         p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
         p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
@@ -1210,6 +1337,8 @@ def build_dem_from_guppy(
         p_idle_x_linear_rate,
         p_idle_y_linear_rate,
         p_idle_z_linear_rate,
+        p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate,
         p_idle_z_quadratic_sine_rate,
         idle_rz,
     ) = _translate_structured_idle_noise(
@@ -1218,16 +1347,15 @@ def build_dem_from_guppy(
         t2=t2,
         p_idle_linear=p_idle_linear,
         p_idle_linear_model=p_idle_linear_model,
-        p_idle_quadratic=p_idle_quadratic,
+        p_idle_sin_squared=p_idle_sin_squared,
+        p_idle_sin_squared_model=p_idle_sin_squared_model,
         p_idle_coherent=p_idle_coherent,
+        p_idle_coherent_model=p_idle_coherent_model,
         p_idle_linear_rate=p_idle_linear_rate,
         p_idle_quadratic_rate=p_idle_quadratic_rate,
         p_idle_x_linear_rate=p_idle_x_linear_rate,
         p_idle_y_linear_rate=p_idle_y_linear_rate,
         p_idle_z_linear_rate=p_idle_z_linear_rate,
-        p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
-        p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
-        p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
         p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
         p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
         p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
@@ -1264,7 +1392,8 @@ def build_dem_from_guppy(
         idle_noise_parameters=(
             p_idle,
             p_idle_linear,
-            p_idle_quadratic,
+            p_idle_sin_squared,
+            p_idle_coherent,
             t1,
             t2,
             p_idle_linear_rate,

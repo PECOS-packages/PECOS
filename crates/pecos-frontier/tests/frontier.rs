@@ -35,6 +35,7 @@ fn exact_config() -> FrontierConfig {
     FrontierConfig {
         k: usize::MAX,
         delta: f64::INFINITY,
+        score_alpha: 0.8,
         column_order: None,
     }
 }
@@ -387,6 +388,7 @@ fn overpruning_can_remove_the_only_eventually_feasible_prefix() {
     let tight = FrontierConfig {
         k: 1,
         delta: 0.01,
+        score_alpha: 0.0,
         column_order: None,
     };
     let mut overpruned = FrontierDecoder::from_sparse_dem(&dem, tight).unwrap();
@@ -419,6 +421,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
         FrontierConfig {
             k: 1,
             delta: f64::INFINITY,
+            score_alpha: 0.0,
             column_order: None,
         },
     )
@@ -430,6 +433,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
         FrontierConfig {
             k: usize::MAX,
             delta: 0.1,
+            score_alpha: 0.0,
             column_order: None,
         },
     )
@@ -438,6 +442,44 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
         delta_pruned.decode(&[1]).unwrap().predicted,
         ObsMask::from_u64(1)
     );
+}
+
+#[test]
+fn suffix_compatibility_changes_the_greedy_survivor() {
+    // After column 0, prefix-only scoring prefers skip (mass 0.6) over take
+    // (mass 0.4). For observed D0=1, the future p=0.1 column gives residual
+    // compatibility rho=0.1 after skip and rho=0.9 after take. At alpha=0.8:
+    //   skip: ln(0.6) + 0.8 ln(0.1) = -2.353
+    //   take: ln(0.4) + 0.8 ln(0.9) = -1.001
+    // Taking column 0 then skipping column 1 is the correct logical class;
+    // prefix-only K=1 instead keeps skip and must take logical-flipping column 1.
+    let dem = sparse_dem(vec![(0.4, vec![0], vec![]), (0.1, vec![0], vec![0])], 1, 1);
+    let mut prefix_only = FrontierDecoder::from_sparse_dem(
+        &dem,
+        FrontierConfig {
+            k: 1,
+            delta: f64::INFINITY,
+            score_alpha: 0.0,
+            column_order: None,
+        },
+    )
+    .unwrap();
+    let mut suffix_scored = FrontierDecoder::from_sparse_dem(
+        &dem,
+        FrontierConfig {
+            k: 1,
+            delta: f64::INFINITY,
+            score_alpha: 0.8,
+            column_order: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        prefix_only.decode(&[1]).unwrap().predicted,
+        ObsMask::from_u64(1)
+    );
+    assert!(suffix_scored.decode(&[1]).unwrap().predicted.is_zero());
 }
 
 #[test]
@@ -481,6 +523,10 @@ fn parses_a_stim_dem_string() {
 
 #[test]
 fn validates_probabilities_indices_order_and_pruning_configuration() {
+    assert_eq!(
+        FrontierConfig::default().score_alpha.to_bits(),
+        0.8_f64.to_bits()
+    );
     let probability_one_dem = sparse_dem(vec![(1.0, vec![], vec![])], 0, 0);
     assert!(FrontierDecoder::from_sparse_dem(&probability_one_dem, exact_config()).is_ok());
 
@@ -544,6 +590,18 @@ fn validates_probabilities_indices_order_and_pruning_configuration() {
     )
     .unwrap_err();
     assert!(nan_delta_error.to_string().contains("delta"));
+
+    for score_alpha in [-0.1, f64::NAN, f64::INFINITY] {
+        let alpha_error = FrontierDecoder::from_sparse_dem(
+            &zero_dem,
+            FrontierConfig {
+                score_alpha,
+                ..FrontierConfig::default()
+            },
+        )
+        .unwrap_err();
+        assert!(alpha_error.to_string().contains("score_alpha"));
+    }
 }
 
 #[test]

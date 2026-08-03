@@ -19,10 +19,9 @@
 //! for a fixed build and platform; underlying `ln`/`exp` implementations may
 //! differ across platforms.
 //!
-//! `k` and `delta` operate on prefix log mass only (upstream's `score_alpha`
-//! suffix-compatibility scoring is a planned follow-up); pruned results and
-//! K/Delta values are not directly comparable to upstream until then. Unpruned
-//! results are exact and upstream-verified.
+//! Pruning ranks accumulated prefix log mass plus a `score_alpha`-weighted
+//! suffix-compatibility estimate. Unpruned results are exact and
+//! upstream-verified.
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::dem::SparseDem;
@@ -36,16 +35,18 @@ const WORD_BITS: usize = u64::BITS as usize;
 /// Frontier pruning and column-order configuration.
 ///
 /// The [`Default`] pruning values are provisional pending benchmarking.
-/// `k` and `delta` operate on prefix log mass only (upstream's `score_alpha`
-/// suffix-compatibility scoring is a planned follow-up); pruned results and
-/// K/Delta values are not directly comparable to upstream until then. Unpruned
-/// results are exact and upstream-verified.
+/// Pruning ranks accumulated prefix log mass plus a `score_alpha`-weighted
+/// suffix-compatibility estimate. Unpruned results are exact and
+/// upstream-verified.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrontierConfig {
     /// Maximum number of boundary states retained after each column.
     pub k: usize,
     /// Log-mass window below the best boundary state retained after each column.
     pub delta: f64,
+    /// Weight applied to the suffix-compatibility score during pruning.
+    /// Defaults to `0.8`, matching upstream Frontier.
+    pub score_alpha: f64,
     /// Optional permutation of the DEM mechanism indices.
     pub column_order: Option<Vec<usize>>,
 }
@@ -56,6 +57,7 @@ impl Default for FrontierConfig {
         Self {
             k: 64,
             delta: 50.0,
+            score_alpha: 0.8,
             column_order: None,
         }
     }
@@ -103,8 +105,17 @@ struct Column {
     logical_toggle: Vec<u64>,
     close_mask: Vec<u64>,
     active_mask: Vec<u64>,
+    suffix_compatibility: Vec<SuffixCompatibility>,
     log_odds: f64,
     log_one_minus_probability: f64,
+}
+
+#[derive(Clone, Debug)]
+struct SuffixCompatibility {
+    word_index: usize,
+    bit_mask: u64,
+    log_probability_zero: f64,
+    log_probability_one: f64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +141,12 @@ impl PartialOrd for StateKey {
 struct Candidate {
     key: StateKey,
     log_mass: f64,
+}
+
+#[derive(Clone, Debug)]
+struct ScoredCandidate {
+    candidate: Candidate,
+    score: f64,
 }
 
 /// Ordered, pruned dynamic-programming decoder for sparse detector error models.
@@ -208,6 +225,7 @@ impl FrontierDecoder {
         // per-step projection would erase the bit before that column arrives.
         let mut open_detectors = forced_syndrome.clone();
         let mut columns = Vec::with_capacity(raw_columns.len());
+        let mut column_moments = Vec::with_capacity(raw_columns.len());
         for (column_index, (detector_toggle, logical_toggle, probability)) in
             raw_columns.into_iter().enumerate()
         {
@@ -220,14 +238,38 @@ impl FrontierDecoder {
             }
             and_not_assign(&mut open_detectors, &close_mask);
 
+            column_moments.push(1.0 - 2.0 * probability);
             columns.push(Column {
                 detector_toggle,
                 logical_toggle,
                 close_mask,
                 active_mask: open_detectors.clone(),
+                suffix_compatibility: Vec::new(),
                 log_odds: (probability / (1.0 - probability)).ln(),
                 log_one_minus_probability: (1.0 - probability).ln(),
             });
+        }
+
+        let mut row_moments: Vec<f64> = vec![1.0; dem.num_detectors];
+        for (column, moment) in columns
+            .iter_mut()
+            .rev()
+            .zip(column_moments.into_iter().rev())
+        {
+            column.suffix_compatibility = set_bits(&column.active_mask)
+                .map(|detector| {
+                    let eta = row_moments[detector];
+                    SuffixCompatibility {
+                        word_index: detector / WORD_BITS,
+                        bit_mask: 1 << (detector % WORD_BITS),
+                        log_probability_zero: 1.0_f64.midpoint(eta).ln(),
+                        log_probability_one: 1.0_f64.midpoint(-eta).ln(),
+                    }
+                })
+                .collect();
+            for detector in set_bits(&column.detector_toggle) {
+                row_moments[detector] *= moment;
+            }
         }
 
         Ok(Self {
@@ -308,7 +350,14 @@ impl FrontierDecoder {
             if merged.is_empty() {
                 return Err(unexplainable_error());
             }
-            frontier = prune(merged, self.config.k, self.config.delta);
+            frontier = prune(
+                merged,
+                self.config.k,
+                self.config.delta,
+                self.config.score_alpha,
+                &column.suffix_compatibility,
+                &observed,
+            );
             if frontier.is_empty() {
                 return Err(unexplainable_error());
             }
@@ -371,6 +420,12 @@ fn validate_config(config: &FrontierConfig, mechanism_count: usize) -> Result<()
         return Err(DecoderError::InvalidConfiguration(format!(
             "FrontierConfig.delta must be non-negative and not NaN, got {}",
             config.delta
+        )));
+    }
+    if !config.score_alpha.is_finite() || config.score_alpha < 0.0 {
+        return Err(DecoderError::InvalidConfiguration(format!(
+            "FrontierConfig.score_alpha must be finite and non-negative, got {}",
+            config.score_alpha
         )));
     }
     if let Some(order) = &config.column_order {
@@ -450,19 +505,68 @@ fn merge_branch(
         .or_insert(log_mass);
 }
 
-fn prune(frontier: BTreeMap<StateKey, f64>, k: usize, delta: f64) -> BTreeMap<StateKey, f64> {
-    let mut candidates: Vec<Candidate> = frontier
+fn prune(
+    frontier: BTreeMap<StateKey, f64>,
+    k: usize,
+    delta: f64,
+    score_alpha: f64,
+    suffix_compatibility: &[SuffixCompatibility],
+    observed: &[u64],
+) -> BTreeMap<StateKey, f64> {
+    if k == usize::MAX && delta.is_infinite() {
+        return frontier;
+    }
+
+    let mut candidates: Vec<ScoredCandidate> = frontier
         .into_iter()
-        .map(|(key, log_mass)| Candidate { key, log_mass })
+        .map(|(key, log_mass)| {
+            let score = if score_alpha == 0.0 {
+                log_mass
+            } else {
+                log_mass
+                    + score_alpha
+                        * suffix_compatibility_score(
+                            &key.active_syndrome,
+                            observed,
+                            suffix_compatibility,
+                        )
+            };
+            ScoredCandidate {
+                candidate: Candidate { key, log_mass },
+                score,
+            }
+        })
         .collect();
-    sort_candidates(&mut candidates);
-    let cutoff = candidates[0].log_mass - delta;
+    candidates.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left.candidate.key.cmp(&right.candidate.key))
+    });
+    let cutoff = candidates[0].score - delta;
     candidates
         .into_iter()
         .take(k)
-        .take_while(|candidate| candidate.log_mass >= cutoff)
-        .map(|candidate| (candidate.key, candidate.log_mass))
+        .take_while(|candidate| candidate.score >= cutoff)
+        .map(|scored| (scored.candidate.key, scored.candidate.log_mass))
         .collect()
+}
+
+fn suffix_compatibility_score(
+    active_syndrome: &[u64],
+    observed: &[u64],
+    suffix_compatibility: &[SuffixCompatibility],
+) -> f64 {
+    suffix_compatibility
+        .iter()
+        .map(|row| {
+            if (active_syndrome[row.word_index] ^ observed[row.word_index]) & row.bit_mask == 0 {
+                row.log_probability_zero
+            } else {
+                row.log_probability_one
+            }
+        })
+        .sum()
 }
 
 fn sort_candidates(candidates: &mut [Candidate]) {

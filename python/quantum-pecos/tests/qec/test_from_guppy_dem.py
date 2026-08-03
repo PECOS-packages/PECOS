@@ -58,6 +58,17 @@ def _two_qubit_idle_target() -> None:
 
 
 @guppy
+def _structured_idle_noise_target() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    cx(q0, q1)
+    h(q0)
+    h(q1)
+    result("m0", measure(q0))
+    result("m1", measure(q1))
+
+
+@guppy
 def _measurement_feedback() -> None:
     q0 = qubit()
     q1 = qubit()
@@ -196,6 +207,219 @@ def _two_qubit_dem(**kwargs):
     )
 
 
+def _structured_idle_dem(entrypoint: str, **kwargs):
+    if entrypoint == "from_guppy":
+        return DetectorErrorModel.from_guppy(
+            _structured_idle_noise_target,
+            num_qubits=2,
+            detectors_json=_TWO_QUBIT_DETECTORS_JSON,
+            observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+            num_measurements=2,
+            seed=0,
+            **_NO_GATE_NOISE,
+            **kwargs,
+        )
+    return build_dem_from_guppy(
+        _structured_idle_noise_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        seed=0,
+        **_NO_GATE_NOISE,
+        **kwargs,
+    ).dem
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_linear_default_matches_axis_primitives(entrypoint: str) -> None:
+    rate = 0.03
+
+    structured = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, p_idle_linear=rate)
+    primitive = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_x_linear_rate=rate / 3.0,
+        p_idle_y_linear_rate=rate / 3.0,
+        p_idle_z_linear_rate=rate / 3.0,
+    )
+
+    assert structured.to_string() == primitive.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_linear_custom_z_model_matches_axis_primitive(entrypoint: str) -> None:
+    rate = 0.03
+
+    structured = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear=rate,
+        p_idle_linear_model={"Z": 1.0},
+    )
+    primitive = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_z_linear_rate=rate,
+    )
+
+    assert structured.to_string() == primitive.to_string()
+    assert structured.num_contributions > 0
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_linear_model_uses_engines_normalization_tolerance(entrypoint: str) -> None:
+    rate = 0.03
+
+    within_tolerance = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear=rate,
+        p_idle_linear_model={"Z": 1.0 + 5.0e-6},
+    )
+    normalized = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear=rate,
+        p_idle_linear_model={"Z": 1.0},
+    )
+
+    assert within_tolerance.to_string() == normalized.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_quadratic_stochastic_matches_sine_primitive(entrypoint: str) -> None:
+    rate = 0.17
+
+    structured = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, p_idle_quadratic=rate)
+    primitive = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_z_quadratic_sine_rate=rate,
+    )
+
+    assert structured.to_string() == primitive.to_string()
+    assert structured.num_contributions > 0
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_p_idle_shorthand_is_byte_identical_to_structured_uniform_linear(entrypoint: str) -> None:
+    rate = 0.03
+
+    shorthand = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, p_idle=rate)
+    structured = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, p_idle_linear=rate)
+
+    assert shorthand.to_string() == structured.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_quadratic_coherent_matches_from_circuit(entrypoint: str) -> None:
+    from pecos.tracing import trace_program_to_tick_circuit
+
+    rate = 0.17
+    structured = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_quadratic=rate,
+        p_idle_coherent=True,
+    )
+    reference_circuit = trace_program_to_tick_circuit(_structured_idle_noise_target, 2, seed=0)
+    normalize_traced_tick_circuit(reference_circuit, context="structured idle coherent reference")
+    reference_circuit.insert_idle_after_two_qubit_gates(1.0)
+    reference_circuit.set_meta("detectors", _TWO_QUBIT_DETECTORS_JSON)
+    reference_circuit.set_meta("observables", _TWO_QUBIT_OBSERVABLES_JSON)
+    reference_circuit.set_meta("num_measurements", "2")
+    reference = DetectorErrorModel.from_circuit(reference_circuit, idle_rz=rate, **_NO_GATE_NOISE)
+
+    assert structured.to_string() == reference.to_string()
+    assert structured.num_contributions > 0
+
+
+_LINEAR_IDLE_PRIMITIVES = (
+    "p_idle_linear_rate",
+    "p_idle_x_linear_rate",
+    "p_idle_y_linear_rate",
+    "p_idle_z_linear_rate",
+)
+_QUADRATIC_IDLE_PRIMITIVES = (
+    "p_idle_quadratic_rate",
+    "p_idle_x_quadratic_rate",
+    "p_idle_y_quadratic_rate",
+    "p_idle_z_quadratic_rate",
+    "p_idle_quadratic_sine_rate",
+    "p_idle_x_quadratic_sine_rate",
+    "p_idle_y_quadratic_sine_rate",
+    "p_idle_z_quadratic_sine_rate",
+)
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("primitive", _LINEAR_IDLE_PRIMITIVES)
+def test_structured_idle_linear_rejects_each_low_level_primitive(entrypoint: str, primitive: str) -> None:
+    with pytest.raises(ValueError, match=primitive):
+        _structured_idle_dem(entrypoint, p_idle_linear=0.01, **{primitive: 0.02})
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_linear_model_rejects_low_level_primitive_without_rate(entrypoint: str) -> None:
+    with pytest.raises(ValueError, match="p_idle_z_linear_rate"):
+        _structured_idle_dem(
+            entrypoint,
+            p_idle_linear_model={"Z": 1.0},
+            p_idle_z_linear_rate=0.02,
+        )
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("primitive", _QUADRATIC_IDLE_PRIMITIVES)
+@pytest.mark.parametrize("structured", [{"p_idle_quadratic": 0.01}, {"p_idle_coherent": True}])
+def test_structured_idle_quadratic_rejects_each_low_level_primitive(
+    entrypoint: str,
+    primitive: str,
+    structured: dict[str, float | bool],
+) -> None:
+    with pytest.raises(ValueError, match=primitive):
+        _structured_idle_dem(entrypoint, **structured, **{primitive: 0.02})
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_p_idle_rejects_structured_linear_rate(entrypoint: str) -> None:
+    with pytest.raises(ValueError, match=r"p_idle and p_idle_linear"):
+        _structured_idle_dem(entrypoint, p_idle=0.01, p_idle_linear=0.01)
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": {"A": 1.0}}, "invalid.*key"),
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": {"L": 1.0}}, "leakage.*engines|engines.*leakage"),
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": {"X": 0.4, "Z": 0.4}}, "sum to 1.0"),
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": {"X": -0.1, "Z": 1.1}}, "non-negative"),
+        ({"p_idle_linear_model": {"Z": 1.0}}, "requires p_idle_linear"),
+        ({"p_idle_coherent": True}, "requires p_idle_quadratic"),
+    ],
+)
+def test_structured_idle_model_validation(entrypoint: str, kwargs: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _structured_idle_dem(entrypoint, **kwargs)
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize(
+    ("alias", "replacement"),
+    [
+        ("p_idle_linear_rate", "p_idle_linear"),
+        ("p_idle_quadratic_rate", "p_idle_quadratic"),
+        ("p_idle_quadratic_sine_rate", "p_idle_quadratic"),
+    ],
+)
+def test_legacy_idle_alias_warns_and_remains_functional(entrypoint: str, alias: str, replacement: str) -> None:
+    with pytest.warns(DeprecationWarning, match=rf"{alias}.*{replacement}"):
+        dem = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, **{alias: 0.03})
+
+    assert dem.num_contributions > 0
+
+
 def test_from_guppy_idle_insertion_matches_manual_pass_pipeline() -> None:
     from pecos.tracing import trace_program_to_tick_circuit
 
@@ -224,6 +448,8 @@ def test_from_guppy_inserted_idles_make_idle_noise_effective() -> None:
 # guard wiring in dem.py must fail the corresponding parametrized case below.
 _ALL_IDLE_NOISE_PARAMS = {
     "p_idle": 0.01,
+    "p_idle_linear": 0.01,
+    "p_idle_quadratic": 0.01,
     "t1": 100.0,
     "t2": 100.0,
     "p_idle_linear_rate": 0.01,

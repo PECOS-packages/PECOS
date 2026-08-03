@@ -197,12 +197,34 @@ different DEM.
 
 ## Idle Noise
 
-The default Selene runtime does not emit idle gates. Idle-noise parameters
-such as `p_idle`, `t1`/`t2`, and the `p_idle_*_rate` family therefore have no
-locations to attach to unless the runtime supplies scheduled idles or you
-insert them explicitly. `from_guppy` raises `ValueError` when any of these
-parameters is supplied but the final traced circuit contains no `Idle` gates;
-it does not silently build a DEM without the requested noise.
+The recommended structured interface mirrors the engines
+`GeneralNoiseModel`:
+
+- `p_idle_linear` is the total stochastic idle rate, linear in duration.
+  `p_idle_linear_model` supplies relative `X`, `Y`, and `Z` weights that sum
+  to 1; its default is the uniform `{X: 1/3, Y: 1/3, Z: 1/3}` engines model.
+  The engines `L` leakage key is reserved but rejected because DEM construction
+  cannot represent leakage. `p_idle` remains shorthand for the uniform model.
+- `p_idle_quadratic` is the engines-style quadratic dephasing rate. By default,
+  an idle of duration `t` has a stochastic Z probability
+  `sin(p_idle_quadratic * t) ** 2`. With `p_idle_coherent=True`, it instead
+  contributes an `RZ(p_idle_quadratic * t)` angle. The DEM coherently adds
+  angles for matching detector sets and uses the RZ half-angle probability
+  `sin(total_angle / 2) ** 2`.
+
+The per-axis `p_idle_{x,y,z}_linear_rate`,
+`p_idle_{x,y,z}_quadratic_rate`, and
+`p_idle_{x,y,z}_quadratic_sine_rate` parameters remain available as low-level
+knobs. The bare Z-only aliases `p_idle_linear_rate`,
+`p_idle_quadratic_rate`, and `p_idle_quadratic_sine_rate` are deprecated; use
+the structured interface or the explicitly named `p_idle_z_*` equivalent.
+
+The default Selene runtime does not emit idle gates. These parameters and
+`t1`/`t2` therefore have no locations to attach to unless the runtime supplies
+scheduled idles or you insert them explicitly. `from_guppy` raises
+`ValueError` when an idle-noise rate is supplied but the final traced circuit
+contains no `Idle` gates; it does not silently build a DEM without the
+requested noise.
 
 Both `DetectorErrorModel.from_guppy` and `build_dem_from_guppy` accept two
 passes for controlling those locations:
@@ -254,7 +276,9 @@ without_idle_noise = DetectorErrorModel.from_guppy(
 with_idle_noise = DetectorErrorModel.from_guppy(
     idle_demo,
     idle_after_2q_duration=1.0,
-    p_idle=0.01,
+    p_idle_linear=0.01,
+    p_idle_linear_model={"X": 0.25, "Z": 0.75},
+    p_idle_quadratic=0.02,
     **common,
 )
 
@@ -266,7 +290,7 @@ def count_errors(model: DetectorErrorModel) -> int:
 assert count_errors(with_idle_noise) > count_errors(without_idle_noise)
 
 try:
-    DetectorErrorModel.from_guppy(idle_demo, p_idle=0.01, **common)
+    DetectorErrorModel.from_guppy(idle_demo, p_idle_linear=0.01, **common)
 except ValueError as exc:
     assert "idle-noise parameters have no idle gates" in str(exc)
 else:
@@ -277,9 +301,10 @@ Runtime-emitted idle durations are replayed as nanosecond `TimeUnits`.
 Inserted idles instead carry the duration passed to
 `idle_after_2q_duration`, which must be finite and positive. Linear and
 sine-law idle rates are per time unit (for example, uniform idle noise uses
-`p_idle * duration`, clamped to the probability range), while quadratic
-rates multiply `duration**2` and therefore scale as inverse time squared.
-T1 and T2 values must use the same units as the idle duration.
+`p_idle * duration`, clamped to the probability range). The low-level
+coefficient-style quadratic rates multiply `duration**2` and therefore scale
+as inverse time squared. T1 and T2 values must use the same units as the idle
+duration.
 
 ## Exporting the DEM as Stim Text
 

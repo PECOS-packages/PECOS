@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +58,158 @@ P1Weights = Mapping[str, float]
 P2Weights = Mapping[str, float]
 
 _GENERATOR_LAYOUT_ATTR = "__pecos_named_measurement_layout_v2__"
+_IDLE_MODEL_NORMALIZATION_TOLERANCE = 1.0e-5
+_IDLE_MODEL_FLOAT_EPSILON = 1.0e-10
+
+
+def _translate_structured_idle_noise(
+    *,
+    p_idle: float | None,
+    p_idle_linear: float | None,
+    p_idle_linear_model: Mapping[str, float] | None,
+    p_idle_quadratic: float | None,
+    p_idle_coherent: bool,
+    p_idle_linear_rate: float | None,
+    p_idle_quadratic_rate: float | None,
+    p_idle_x_linear_rate: float | None,
+    p_idle_y_linear_rate: float | None,
+    p_idle_z_linear_rate: float | None,
+    p_idle_x_quadratic_rate: float | None,
+    p_idle_y_quadratic_rate: float | None,
+    p_idle_z_quadratic_rate: float | None,
+    p_idle_quadratic_sine_rate: float | None,
+    p_idle_x_quadratic_sine_rate: float | None,
+    p_idle_y_quadratic_sine_rate: float | None,
+    p_idle_z_quadratic_sine_rate: float | None,
+) -> tuple[float | None, float | None, float | None, float | None, float | None]:
+    """Validate and translate engines-style idle noise to DEM primitives."""
+    linear_primitives = {
+        "p_idle_linear_rate": p_idle_linear_rate,
+        "p_idle_x_linear_rate": p_idle_x_linear_rate,
+        "p_idle_y_linear_rate": p_idle_y_linear_rate,
+        "p_idle_z_linear_rate": p_idle_z_linear_rate,
+    }
+    if (p_idle_linear is not None or p_idle_linear_model is not None) and any(
+        value is not None for value in linear_primitives.values()
+    ):
+        conflicts = ", ".join(name for name, value in linear_primitives.items() if value is not None)
+        msg = f"p_idle_linear/p_idle_linear_model cannot be combined with low-level idle rate(s): {conflicts}"
+        raise ValueError(msg)
+    if p_idle is not None and p_idle_linear is not None:
+        msg = "p_idle and p_idle_linear cannot be combined; p_idle is the uniform-model shorthand"
+        raise ValueError(msg)
+
+    quadratic_primitives = {
+        "p_idle_quadratic_rate": p_idle_quadratic_rate,
+        "p_idle_x_quadratic_rate": p_idle_x_quadratic_rate,
+        "p_idle_y_quadratic_rate": p_idle_y_quadratic_rate,
+        "p_idle_z_quadratic_rate": p_idle_z_quadratic_rate,
+        "p_idle_quadratic_sine_rate": p_idle_quadratic_sine_rate,
+        "p_idle_x_quadratic_sine_rate": p_idle_x_quadratic_sine_rate,
+        "p_idle_y_quadratic_sine_rate": p_idle_y_quadratic_sine_rate,
+        "p_idle_z_quadratic_sine_rate": p_idle_z_quadratic_sine_rate,
+    }
+    if (p_idle_quadratic is not None or p_idle_coherent) and any(
+        value is not None for value in quadratic_primitives.values()
+    ):
+        conflicts = ", ".join(name for name, value in quadratic_primitives.items() if value is not None)
+        msg = f"p_idle_quadratic/p_idle_coherent cannot be combined with low-level idle rate(s): {conflicts}"
+        raise ValueError(msg)
+
+    if p_idle_linear_model is not None and p_idle_linear is None:
+        msg = "p_idle_linear_model requires p_idle_linear; otherwise the model is inert"
+        raise ValueError(msg)
+    if p_idle_coherent and p_idle_quadratic is None:
+        msg = "p_idle_coherent=True requires p_idle_quadratic; otherwise it is inert"
+        raise ValueError(msg)
+
+    legacy_replacements = {
+        "p_idle_linear_rate": (
+            p_idle_linear_rate,
+            (
+                "p_idle_linear with p_idle_linear_model={'Z': 1.0} for the engines-consistent interface, "
+                "or p_idle_z_linear_rate for literal Z-only behavior"
+            ),
+        ),
+        "p_idle_quadratic_rate": (
+            p_idle_quadratic_rate,
+            (
+                "p_idle_quadratic for the engines-consistent quadratic interface, "
+                "or p_idle_z_quadratic_rate for literal coefficient-style Z-only behavior"
+            ),
+        ),
+        "p_idle_quadratic_sine_rate": (
+            p_idle_quadratic_sine_rate,
+            (
+                "p_idle_quadratic for the engines-consistent quadratic interface, "
+                "or p_idle_z_quadratic_sine_rate for literal Z-only behavior"
+            ),
+        ),
+    }
+    for name, (value, replacement) in legacy_replacements.items():
+        if value is not None:
+            warnings.warn(
+                f"{name} is deprecated; use {replacement}",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
+    if p_idle_linear is not None:
+        if p_idle_linear_model is not None and not isinstance(p_idle_linear_model, Mapping):
+            msg = "p_idle_linear_model must be a mapping from 'X', 'Y', and 'Z' to weights"
+            raise ValueError(msg)
+        model = (
+            p_idle_linear_model if p_idle_linear_model is not None else {"X": 1.0 / 3.0, "Y": 1.0 / 3.0, "Z": 1.0 / 3.0}
+        )
+        normalized_model: dict[str, float] = {}
+        for key, weight in model.items():
+            if key == "L":
+                msg = (
+                    "p_idle_linear_model key 'L' denotes leakage, which is supported by the engines simulators "
+                    "but not by DEM construction"
+                )
+                raise ValueError(msg)
+            if key not in {"X", "Y", "Z"}:
+                msg = f"invalid p_idle_linear_model key {key!r}; expected 'X', 'Y', or 'Z'"
+                raise ValueError(msg)
+            try:
+                numeric_weight = float(weight)
+            except (TypeError, ValueError) as exc:
+                msg = f"p_idle_linear_model weight for {key!r} must be a finite, non-negative float"
+                raise ValueError(msg) from exc
+            if not math.isfinite(numeric_weight) or numeric_weight < 0.0:
+                msg = f"p_idle_linear_model weight for {key!r} must be a finite, non-negative float"
+                raise ValueError(msg)
+            normalized_model[key] = numeric_weight
+
+        total_weight = sum(normalized_model.values())
+        if total_weight <= 0.0 or abs(total_weight - 1.0) > _IDLE_MODEL_NORMALIZATION_TOLERANCE:
+            msg = (
+                "p_idle_linear_model weights must sum to 1.0 within tolerance "
+                f"{_IDLE_MODEL_NORMALIZATION_TOLERANCE:g}; got {total_weight}"
+            )
+            raise ValueError(msg)
+        if abs(total_weight - 1.0) > _IDLE_MODEL_FLOAT_EPSILON:
+            normalized_model = {key: weight / total_weight for key, weight in normalized_model.items()}
+
+        p_idle_x_linear_rate = p_idle_linear * normalized_model.get("X", 0.0)
+        p_idle_y_linear_rate = p_idle_linear * normalized_model.get("Y", 0.0)
+        p_idle_z_linear_rate = p_idle_linear * normalized_model.get("Z", 0.0)
+
+    idle_rz = None
+    if p_idle_quadratic is not None:
+        if p_idle_coherent:
+            idle_rz = p_idle_quadratic
+        else:
+            p_idle_z_quadratic_sine_rate = p_idle_quadratic
+
+    return (
+        p_idle_x_linear_rate,
+        p_idle_y_linear_rate,
+        p_idle_z_linear_rate,
+        p_idle_z_quadratic_sine_rate,
+        idle_rz,
+    )
 
 
 def _certifiable_hugr_bytes(guppy: Any) -> bytes | None:
@@ -140,6 +293,7 @@ def _from_circuit_with_noise(
     p_idle: float | None,
     t1: float | None,
     t2: float | None,
+    idle_rz: float | None,
     p_idle_linear_rate: float | None,
     p_idle_quadratic_rate: float | None,
     p_idle_x_linear_rate: float | None,
@@ -165,6 +319,7 @@ def _from_circuit_with_noise(
         p_idle=p_idle,
         t1=t1,
         t2=t2,
+        idle_rz=idle_rz,
         p_idle_linear_rate=p_idle_linear_rate,
         p_idle_quadratic_rate=p_idle_quadratic_rate,
         p_idle_x_linear_rate=p_idle_x_linear_rate,
@@ -234,6 +389,10 @@ class _DetectorErrorModelMixin:
         p_meas: float = 0.001,
         p_prep: float = 0.001,
         p_idle: float | None = None,
+        p_idle_linear: float | None = None,
+        p_idle_linear_model: Mapping[str, float] | None = None,
+        p_idle_quadratic: float | None = None,
+        p_idle_coherent: bool = False,
         t1: float | None = None,
         t2: float | None = None,
         p_idle_linear_rate: float | None = None,
@@ -343,21 +502,42 @@ class _DetectorErrorModelMixin:
                 entries like plain post-gate Pauli entries.
             p_meas: Measurement flip rate.
             p_prep: Preparation (reset) error rate.
-            p_idle: Optional uniform depolarizing idle-noise rate per idle duration.
+            p_idle: Optional shorthand for ``p_idle_linear`` with the uniform
+                ``{"X": 1/3, "Y": 1/3, "Z": 1/3}`` model.
+            p_idle_linear: Optional total stochastic idle-noise rate linear in
+                duration. Uses the engines ``GeneralNoiseModel`` convention.
+            p_idle_linear_model: Optional relative weights over ``"X"``, ``"Y"``,
+                and ``"Z"`` for ``p_idle_linear``. Weights must be finite,
+                non-negative, and sum to 1.0 within ``1e-5``. Defaults to the
+                engines' uniform model. The engines leakage key ``"L"`` is
+                reserved but unsupported by DEM construction.
+            p_idle_quadratic: Optional quadratic dephasing rate. With
+                ``p_idle_coherent=False``, an idle of duration ``t`` produces a
+                stochastic Z fault with probability ``sin(rate * t)^2``.
+                With ``p_idle_coherent=True``, the same rate is forwarded as a
+                coherent ``RZ(rate * t)`` angle; the DEM converts an isolated
+                rotation to ``sin(rate * t / 2)^2`` and coherently accumulates
+                angles for matching detector sets.
+            p_idle_coherent: Select coherent RZ rather than stochastic Z
+                interpretation for ``p_idle_quadratic``. Defaults to ``False``.
             t1: Optional T1 relaxation time for explicit idle gates.
             t2: Optional T2 dephasing time for explicit idle gates.
-            p_idle_linear_rate: Optional legacy alias for stochastic Z-memory rate
-                linear in idle duration.
-            p_idle_quadratic_rate: Optional legacy alias for stochastic Z-memory rate
-                quadratic in idle duration.
+            p_idle_linear_rate: Deprecated bare Z-only alias for a stochastic
+                rate linear in idle duration. Use ``p_idle_linear`` with a
+                Z-only model, or ``p_idle_z_linear_rate`` for literal behavior.
+            p_idle_quadratic_rate: Deprecated bare Z-only coefficient-style
+                rate quadratic in idle duration. Use ``p_idle_quadratic`` for
+                engines semantics, or ``p_idle_z_quadratic_rate`` for literal
+                behavior.
             p_idle_x_linear_rate: Optional stochastic X-memory rate linear in idle duration.
             p_idle_y_linear_rate: Optional stochastic Y-memory rate linear in idle duration.
             p_idle_z_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
             p_idle_x_quadratic_rate: Optional stochastic X-memory rate quadratic in idle duration.
             p_idle_y_quadratic_rate: Optional stochastic Y-memory rate quadratic in idle duration.
             p_idle_z_quadratic_rate: Optional stochastic Z-memory rate quadratic in idle duration.
-            p_idle_quadratic_sine_rate: Optional legacy alias for stochastic Z-memory
-                rate with probability ``sin(rate * duration)^2``.
+            p_idle_quadratic_sine_rate: Deprecated bare Z-only alias for a
+                stochastic rate with probability ``sin(rate * duration)^2``.
+                Use ``p_idle_quadratic`` or ``p_idle_z_quadratic_sine_rate``.
             p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
             p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
             p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
@@ -426,6 +606,32 @@ class _DetectorErrorModelMixin:
         """
         from pecos.tracing import trace_program_to_tick_circuit
 
+        (
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_z_quadratic_sine_rate,
+            idle_rz,
+        ) = _translate_structured_idle_noise(
+            p_idle=p_idle,
+            p_idle_linear=p_idle_linear,
+            p_idle_linear_model=p_idle_linear_model,
+            p_idle_quadratic=p_idle_quadratic,
+            p_idle_coherent=p_idle_coherent,
+            p_idle_linear_rate=p_idle_linear_rate,
+            p_idle_quadratic_rate=p_idle_quadratic_rate,
+            p_idle_x_linear_rate=p_idle_x_linear_rate,
+            p_idle_y_linear_rate=p_idle_y_linear_rate,
+            p_idle_z_linear_rate=p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+        )
+
         # Tag-referenced detectors require the compiled HUGR (to recover the
         # sound, reorder-immune Guppy `result(tag, ...)` -> measurement
         # binding). `guppy_to_hugr` accepts @guppy-decorated functions and
@@ -492,6 +698,8 @@ class _DetectorErrorModelMixin:
             idle_after_2q_duration=idle_after_2q_duration,
             idle_noise_parameters=(
                 p_idle,
+                p_idle_linear,
+                p_idle_quadratic,
                 t1,
                 t2,
                 p_idle_linear_rate,
@@ -548,6 +756,7 @@ class _DetectorErrorModelMixin:
             p_idle=p_idle,
             t1=t1,
             t2=t2,
+            idle_rz=idle_rz,
             p_idle_linear_rate=p_idle_linear_rate,
             p_idle_quadratic_rate=p_idle_quadratic_rate,
             p_idle_x_linear_rate=p_idle_x_linear_rate,
@@ -854,6 +1063,10 @@ def build_dem_from_guppy(
     p_meas: float = 0.001,
     p_prep: float = 0.001,
     p_idle: float | None = None,
+    p_idle_linear: float | None = None,
+    p_idle_linear_model: Mapping[str, float] | None = None,
+    p_idle_quadratic: float | None = None,
+    p_idle_coherent: bool = False,
     t1: float | None = None,
     t2: float | None = None,
     p_idle_linear_rate: float | None = None,
@@ -904,21 +1117,38 @@ def build_dem_from_guppy(
             replacement labels in ``p2_weights``.
         p_meas: Measurement flip rate.
         p_prep: Preparation (reset) error rate.
-        p_idle: Optional uniform depolarizing idle-noise rate per idle duration.
+        p_idle: Optional shorthand for ``p_idle_linear`` with the uniform
+            ``{"X": 1/3, "Y": 1/3, "Z": 1/3}`` model.
+        p_idle_linear: Optional total stochastic idle-noise rate linear in
+            duration. Uses the engines ``GeneralNoiseModel`` convention.
+        p_idle_linear_model: Optional relative weights over ``"X"``, ``"Y"``,
+            and ``"Z"`` for ``p_idle_linear``. Weights must be finite,
+            non-negative, and sum to 1.0 within ``1e-5``. Defaults to the
+            engines' uniform model. The engines leakage key ``"L"`` is
+            reserved but unsupported by DEM construction.
+        p_idle_quadratic: Optional quadratic dephasing rate. The default
+            stochastic interpretation gives probability ``sin(rate * t)^2``;
+            the coherent interpretation forwards ``RZ(rate * t)`` and the DEM
+            uses its ``sin(rate * t / 2)^2`` half-angle convention.
+        p_idle_coherent: Select coherent RZ rather than stochastic Z
+            interpretation for ``p_idle_quadratic``. Defaults to ``False``.
         t1: Optional T1 relaxation time for explicit idle gates.
         t2: Optional T2 dephasing time for explicit idle gates.
-        p_idle_linear_rate: Optional legacy alias for stochastic Z-memory rate
-            linear in idle duration.
-        p_idle_quadratic_rate: Optional legacy alias for stochastic Z-memory
-            rate quadratic in idle duration.
+        p_idle_linear_rate: Deprecated bare Z-only alias for a stochastic rate
+            linear in idle duration. Use ``p_idle_linear`` with a Z-only model,
+            or ``p_idle_z_linear_rate`` for literal behavior.
+        p_idle_quadratic_rate: Deprecated bare Z-only coefficient-style rate
+            quadratic in idle duration. Use ``p_idle_quadratic`` for engines
+            semantics, or ``p_idle_z_quadratic_rate`` for literal behavior.
         p_idle_x_linear_rate: Optional stochastic X-memory rate linear in idle duration.
         p_idle_y_linear_rate: Optional stochastic Y-memory rate linear in idle duration.
         p_idle_z_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
         p_idle_x_quadratic_rate: Optional stochastic X-memory rate quadratic in idle duration.
         p_idle_y_quadratic_rate: Optional stochastic Y-memory rate quadratic in idle duration.
         p_idle_z_quadratic_rate: Optional stochastic Z-memory rate quadratic in idle duration.
-        p_idle_quadratic_sine_rate: Optional legacy alias for stochastic
-            Z-memory rate with probability ``sin(rate * duration)^2``.
+        p_idle_quadratic_sine_rate: Deprecated bare Z-only alias for a
+            stochastic rate with probability ``sin(rate * duration)^2``. Use
+            ``p_idle_quadratic`` or ``p_idle_z_quadratic_sine_rate``.
         p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
         p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
         p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
@@ -950,6 +1180,32 @@ def build_dem_from_guppy(
     """
     from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
+    (
+        p_idle_x_linear_rate,
+        p_idle_y_linear_rate,
+        p_idle_z_linear_rate,
+        p_idle_z_quadratic_sine_rate,
+        idle_rz,
+    ) = _translate_structured_idle_noise(
+        p_idle=p_idle,
+        p_idle_linear=p_idle_linear,
+        p_idle_linear_model=p_idle_linear_model,
+        p_idle_quadratic=p_idle_quadratic,
+        p_idle_coherent=p_idle_coherent,
+        p_idle_linear_rate=p_idle_linear_rate,
+        p_idle_quadratic_rate=p_idle_quadratic_rate,
+        p_idle_x_linear_rate=p_idle_x_linear_rate,
+        p_idle_y_linear_rate=p_idle_y_linear_rate,
+        p_idle_z_linear_rate=p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+    )
+
     referenced_tags = sorted(
         {ref.tag for item in (*detectors, *observables) for ref in item.refs if isinstance(ref, ResultRef)},
     )
@@ -979,6 +1235,8 @@ def build_dem_from_guppy(
         idle_after_2q_duration=idle_after_2q_duration,
         idle_noise_parameters=(
             p_idle,
+            p_idle_linear,
+            p_idle_quadratic,
             t1,
             t2,
             p_idle_linear_rate,
@@ -1035,6 +1293,7 @@ def build_dem_from_guppy(
         p_idle=p_idle,
         t1=t1,
         t2=t2,
+        idle_rz=idle_rz,
         p_idle_linear_rate=p_idle_linear_rate,
         p_idle_quadratic_rate=p_idle_quadratic_rate,
         p_idle_x_linear_rate=p_idle_x_linear_rate,

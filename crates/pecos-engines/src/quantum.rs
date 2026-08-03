@@ -305,6 +305,13 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 }
             }
 
+            GateType::MPZ => {
+                let meas_ids = sim.mpz(&cmd.qubits);
+                for meas_id in meas_ids {
+                    measurements.push(usize::from(meas_id.outcome));
+                }
+            }
+
             _ => {
                 return Err(PecosError::Processing(format!(
                     "Gate {:?} is not supported by the stabilizer simulator.",

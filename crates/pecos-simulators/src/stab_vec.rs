@@ -930,6 +930,16 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             }
         }
 
+        // The frame's flip was reported in the outcome, but the projection
+        // collapsed the stored (unflipped) eigenstate and the frame is gone.
+        // Re-align the state with the report: collapse projects, it does not
+        // reset, so a repeated measurement must read this outcome again.
+        if flip_outcome {
+            self.apply_clifford(|ch| {
+                ch.x(&[QubitId(q)]);
+            });
+        }
+
         MeasurementResult {
             outcome,
             is_deterministic,

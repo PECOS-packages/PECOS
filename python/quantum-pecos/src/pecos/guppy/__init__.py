@@ -18,7 +18,11 @@ from pecos.guppy_gen import *  # noqa: E402, F403
 from pecos.guppy_gen import __all__  # noqa: E402
 
 # Alias the submodules so `import pecos.guppy.surface` and unpickling of
-# objects serialized before the rename resolve to the real modules.
+# objects serialized before the rename resolve to the real modules. The
+# sys.modules entry satisfies the import system; the attribute binding is
+# needed separately because a cached child import never attaches to its parent.
 for _submodule in ("color", "surface", "transversal", "variant"):
-    sys.modules[f"{__name__}.{_submodule}"] = getattr(guppy_gen, _submodule)
-del _submodule
+    _module = getattr(guppy_gen, _submodule)
+    sys.modules[f"{__name__}.{_submodule}"] = _module
+    globals()[_submodule] = _module
+del _submodule, _module

@@ -47,3 +47,18 @@ def test_attribute_access_on_pecos_package():
     with pytest.warns(DeprecationWarning, match="pecos.guppy has been renamed"):
         legacy = pecos.guppy
     assert legacy.get_num_qubits is pecos.guppy_gen.get_num_qubits
+
+
+def test_submodules_are_package_attributes():
+    # `import pecos.guppy.surface; pecos.guppy.surface` needs the submodule
+    # bound as an attribute; the sys.modules alias alone does not provide it.
+    _purge_alias()
+    with pytest.warns(DeprecationWarning, match="pecos.guppy has been renamed"):
+        legacy = importlib.import_module("pecos.guppy")
+    for submodule in ("color", "surface", "transversal", "variant"):
+        assert getattr(legacy, submodule) is getattr(pecos.guppy_gen, submodule)
+
+
+def test_star_import_contract_keeps_guppy():
+    # `from pecos import *` exported "guppy" before the rename.
+    assert "guppy" in pecos.__all__

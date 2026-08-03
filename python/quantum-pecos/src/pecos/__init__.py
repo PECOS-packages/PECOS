@@ -409,6 +409,7 @@ __all__ = [
     "general_noise",
     "get_guppy_backends",
     "graph",
+    "guppy",  # Deprecated alias for guppy_gen, resolved lazily via __getattr__
     "guppy_gen",
     "hugr_engine",
     "i8",

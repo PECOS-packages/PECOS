@@ -13,20 +13,20 @@ Submodules:
     transversal: Transversal operations (CNOT for CSS codes)
 
 Example:
-    >>> from pecos.guppy import make_surface_code, get_num_qubits
+    >>> from pecos.guppy_gen import make_surface_code, get_num_qubits
     >>> prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
     >>> num_qubits = get_num_qubits(3)
     >>> result = prog.emulator(num_qubits=num_qubits).stabilizer_sim().run()
 """
 
-from pecos.guppy.color import (
+from pecos.guppy_gen.color import (
     generate_color_code_module,
     generate_color_code_source,
     get_color_code_module,
     get_num_qubits_color,
     make_color_code,
 )
-from pecos.guppy.surface import (
+from pecos.guppy_gen.surface import (
     generate_guppy_source,
     generate_memory_experiment,
     generate_surface_code_module,
@@ -34,7 +34,7 @@ from pecos.guppy.surface import (
     get_surface_code_module,
     make_surface_code,
 )
-from pecos.guppy.transversal import (
+from pecos.guppy_gen.transversal import (
     CSSCodeType,
     get_transversal_num_qubits,
     make_color_transversal_cnot,
@@ -46,7 +46,7 @@ from pecos.guppy.transversal import (
     make_surface_transversal_cnot,
     make_surface_transversal_cnot_with_x,
 )
-from pecos.guppy.variant import variant_scoped
+from pecos.guppy_gen.variant import variant_scoped
 
 __all__ = [
     # Surface code

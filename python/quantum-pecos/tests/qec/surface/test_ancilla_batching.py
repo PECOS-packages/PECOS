@@ -6,7 +6,7 @@
 This is the single source of truth for stabilizer-batch ordering used
 by both the abstract surface-circuit builder
 (``pecos.qec.surface.circuit_builder``) and the Guppy emitter
-(``pecos.guppy.surface``). The byte-identical traced-vs-traced surface
+(``pecos.guppy_gen.surface``). The byte-identical traced-vs-traced surface
 DEM oracle in ``tests/qec/test_from_guppy_dem.py`` exercises this
 helper indirectly, but a regression in the partitioning *policy*
 itself (e.g. someone changes the sort key) could pass that oracle
@@ -367,7 +367,7 @@ def _emitted_cx_lines(distance: int, ancilla_budget: int | None) -> list[str]:
     function for a given (distance, budget)."""
     import re
 
-    from pecos.guppy.surface import generate_surface_code_module
+    from pecos.guppy_gen.surface import generate_surface_code_module
 
     src = generate_surface_code_module(distance, ancilla_budget=ancilla_budget)
     in_se = False

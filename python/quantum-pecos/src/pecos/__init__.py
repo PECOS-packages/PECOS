@@ -214,7 +214,7 @@ from pecos import (
     engines,
     exceptions,  # Exception classes
     graph,
-    guppy,  # Direct Guppy code generation for QEC - bypasses SLR
+    guppy_gen,  # Direct Guppy code generation for QEC - bypasses SLR
     noise,
     programs,
     protocols,
@@ -404,7 +404,7 @@ __all__ = [
     "general_noise",
     "get_guppy_backends",
     "graph",
-    "guppy",
+    "guppy_gen",
     "hugr_engine",
     "i8",
     "i16",

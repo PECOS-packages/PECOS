@@ -1,0 +1,25 @@
+[package]
+name = "pecos-frontier"
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Frontier approximate logical maximum-likelihood decoder for PECOS"
+
+[dependencies]
+pecos-decoder-core.workspace = true
+
+[lib]
+name = "pecos_frontier"
+
+[dev-dependencies]
+rand.workspace = true
+rand_xoshiro.workspace = true
+
+[lints]
+workspace = true

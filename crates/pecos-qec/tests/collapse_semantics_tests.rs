@@ -303,7 +303,7 @@ fn the_tick_analyzer_extracts_mpz_measurements() {
     );
 }
 
-/// An MPZ record takes measurement noise in the sampler lane: with p_meas
+/// An MPZ record takes measurement noise in the sampler lane: with `p_meas`
 /// alone, its detector must carry a flip mechanism. The lane previously fell
 /// through to the 1q-depolarizing bucket (or nothing), leaving MPZ records
 /// silently noiseless.

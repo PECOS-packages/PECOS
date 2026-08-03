@@ -213,6 +213,13 @@ impl BiasedDepolarizingNoiseModel {
                     // Apply fault to each qubit pair (treat as three two-qubit interactions)
                     self.apply_tq_faults(&mut builder, gate);
                 }
+                // Measure-and-prepare: the measurement bias is applied after
+                // the engine returns results (like the other measurements);
+                // the preparation half takes its fault here.
+                GateType::MPZ => {
+                    NoiseUtils::add_gate_to_builder(&mut builder, gate);
+                    self.apply_prep_faults(&mut builder, gate);
+                }
                 GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     trace!("Applying measurement. Will apply bias after engine returns results.");
                     // we apply biased measurement after the engine

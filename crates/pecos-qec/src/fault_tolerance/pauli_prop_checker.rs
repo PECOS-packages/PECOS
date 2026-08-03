@@ -150,7 +150,7 @@ pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
                 // Check if this is a measurement gate
                 if matches!(
                     gate.gate_type,
-                    GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+                    GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ
                 ) {
                     measured_qubits.insert(q);
                 }
@@ -201,7 +201,10 @@ impl CircuitIO {
                     }
                     if matches!(
                         gate.gate_type,
-                        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+                        GateType::MZ
+                            | GateType::MeasureLeaked
+                            | GateType::MeasureFree
+                            | GateType::MPZ
                     ) {
                         measured_qubits.insert(q);
                     }
@@ -279,7 +282,10 @@ fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
 /// Cliffords and read back as a phantom flip.
 fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Gate) {
     match gate.gate_type {
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+        // MPZ's built-in preparation deliberately does NOT clear the ledger
+        // entry -- the recorded flip stays readable for the end-read, exactly
+        // like MeasureFree's; a later explicit re-preparation clears it.
+        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ => {
             for q in &gate.qubits {
                 let qubit = q.index();
                 if prop.contains_z(qubit) {
@@ -1046,7 +1052,7 @@ pub fn extract_measurement_rounds(circuit: &TickCircuit) -> Vec<MeasurementRound
 
         for gate in tick.iter_gate_batches() {
             match gate.gate_type {
-                GateType::MZ | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                     // Z-basis measurement
                     for q in &gate.qubits {
                         z_qubits.push(q.0);

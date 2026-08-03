@@ -195,7 +195,10 @@ pub fn cross_measurement<P: PauliComponents>(
                 }
             }
         },
-        GateType::MeasureFree => prop.clear_qubit(qubit),
+        // `MeasureFree` discards the qubit; `MPZ` resets it. Either way the
+        // record flip is taken by the walker before the crossing and nothing
+        // propagates across.
+        GateType::MeasureFree | GateType::MPZ => prop.clear_qubit(qubit),
         _ => debug_assert!(false, "cross_measurement called on {gate_type:?}"),
     }
 }
@@ -208,7 +211,7 @@ fn apply_named_gate(
     direction: Direction,
 ) -> bool {
     match gate_type {
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ => {
             for qid in qubits {
                 cross_measurement(prop, qid.index(), gate_type, direction);
             }

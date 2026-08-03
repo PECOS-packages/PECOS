@@ -94,6 +94,8 @@ pub enum GateType {
     MeasureLeaked = 105,
     /// Measure and free the qubit (destructive measurement)
     MeasureFree = 106,
+    /// Measure +Z, then prepare |0> (measure-and-prepare; the MP* family)
+    MPZ = 107,
     // TODO: MPauli instead of the other variants?
 
     // PX = 130
@@ -174,6 +176,7 @@ impl From<u8> for GateType {
             104 => GateType::MZ,
             105 => GateType::MeasureLeaked,
             106 => GateType::MeasureFree,
+            107 => GateType::MPZ,
             134 => GateType::PZ,
             135 => GateType::QAlloc,
             136 => GateType::QFree,
@@ -217,7 +220,7 @@ impl GateType {
     /// Deciding otherwise means changing this function and nothing else.
     #[must_use]
     pub const fn consumes_measurement_record(self) -> bool {
-        matches!(self, GateType::MZ | GateType::MeasureFree)
+        matches!(self, GateType::MZ | GateType::MeasureFree | GateType::MPZ)
     }
 
     /// Returns the number of angle parameters this gate type requires
@@ -259,6 +262,7 @@ impl GateType {
             | GateType::MZ
             | GateType::MeasureLeaked
             | GateType::MeasureFree
+            | GateType::MPZ
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::MeasCrosstalkLocalPayload
             | GateType::Channel
@@ -323,6 +327,7 @@ impl GateType {
             | GateType::MZ
             | GateType::MeasureLeaked
             | GateType::MeasureFree
+            | GateType::MPZ
             | GateType::PZ
             | GateType::QAlloc
             | GateType::QFree
@@ -478,6 +483,7 @@ impl fmt::Display for GateType {
             GateType::MZ => write!(f, "MZ"),
             GateType::MeasureLeaked => write!(f, "MeasureLeaked"),
             GateType::MeasureFree => write!(f, "MeasureFree"),
+            GateType::MPZ => write!(f, "MPZ"),
             GateType::PZ => write!(f, "PZ"),
             GateType::QAlloc => write!(f, "QAlloc"),
             GateType::QFree => write!(f, "QFree"),

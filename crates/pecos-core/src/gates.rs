@@ -949,6 +949,15 @@ impl Gate {
         )
     }
 
+    /// Create an `MPZ` gate (measure +Z, then prepare |0>) on multiple qubits
+    #[must_use]
+    pub fn mpz(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::MPZ,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
     /// Create a new Idle gate for qubits idling for a specific duration
     ///
     /// # Arguments

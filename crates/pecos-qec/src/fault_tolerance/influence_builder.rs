@@ -429,7 +429,9 @@ impl<'a> InfluenceBuilder<'a> {
                 }
 
                 match op.gate_type {
-                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => {
+                    pecos_quantum::GateType::MZ
+                    | pecos_quantum::GateType::MeasureFree
+                    | pecos_quantum::GateType::MPZ => {
                         if qubits.len() > 1 {
                             return Err(InfluenceBuildError::BatchedMeasurementUnsupported {
                                 node,
@@ -437,6 +439,10 @@ impl<'a> InfluenceBuilder<'a> {
                             });
                         }
                         sim.mz(&[qubits[0]]);
+                        if op.gate_type == pecos_quantum::GateType::MPZ {
+                            // Measure-and-prepare resets after the readout.
+                            sim.pz(qubits[0]);
+                        }
                         node_to_meas_idx[node] = Some(meas_idx);
                         meas_idx += 1;
                     }
@@ -630,7 +636,9 @@ impl<'a> InfluenceBuilder<'a> {
 
                 let is_measurement = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree
+                    pecos_quantum::GateType::MZ
+                        | pecos_quantum::GateType::MeasureFree
+                        | pecos_quantum::GateType::MPZ
                 );
 
                 // Standard circuit noise model: one fault location per gate.
@@ -920,7 +928,9 @@ impl<'a> InfluenceBuilder<'a> {
 
                 let is_measurement = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree
+                    pecos_quantum::GateType::MZ
+                        | pecos_quantum::GateType::MeasureFree
+                        | pecos_quantum::GateType::MPZ
                 );
 
                 let before = is_measurement;

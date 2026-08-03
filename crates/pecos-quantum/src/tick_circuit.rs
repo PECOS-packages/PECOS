@@ -1528,7 +1528,10 @@ impl TickCircuit {
     pub fn meas_ref(&self, tick: usize, gate_idx: usize, qubit: QubitId) -> Option<TickMeasRef> {
         let batch = self.get_tick(tick)?.iter_gate_batches().nth(gate_idx)?;
         let gate = batch.as_gate();
-        if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
+        if !matches!(
+            gate.gate_type,
+            GateType::MZ | GateType::MeasureFree | GateType::MPZ
+        ) {
             return None;
         }
         let position = gate.qubits.iter().position(|&q| q == qubit)?;

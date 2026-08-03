@@ -492,7 +492,7 @@ fn propagate_tracked_pauli_forward(
         };
         match gate.gate_type {
             GateType::TrackedPauliMeta => {}
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ => {
                 if let Some(entries) = measurement_records.get(&node) {
                     for &(qubit, record) in entries {
                         if prop.contains_x(qubit) {

@@ -170,6 +170,7 @@ pub fn is_clifford_gate_type(gate_type: GateType) -> bool {
             | GateType::MZ
             | GateType::MeasureLeaked
             | GateType::MeasureFree
+            | GateType::MPZ
             | GateType::PZ
             | GateType::QAlloc
             | GateType::QFree

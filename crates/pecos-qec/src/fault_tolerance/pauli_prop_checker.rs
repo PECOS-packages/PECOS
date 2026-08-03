@@ -287,6 +287,14 @@ fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Gate) {
                 }
             }
         }
+        // The shared dispatcher keeps preps transparent and expects walkers
+        // to clear at their own call sites; without this arm a stale ledger
+        // entry would survive a re-preparation and read as a phantom flip.
+        GateType::PZ | GateType::QAlloc => {
+            for q in &gate.qubits {
+                prop.clear_qubit(q.index());
+            }
+        }
         _ => {
             apply_gate(prop, gate, Direction::Forward);
         }
@@ -2579,6 +2587,31 @@ mod tests {
             classify_fault(&prop, &[0], &[], &[]),
             FaultClass::DetectableError,
             "the X flips the mz_free outcome; the ledger must still show it"
+        );
+    }
+
+    /// A re-preparation ends the ledger entry: the flip recorded before the
+    /// reset must not read back afterward, and must not spread onward.
+    #[test]
+    fn a_reset_clears_the_ledger_entry() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        circuit.tick().mz(&[0]);
+        circuit.tick().pz(&[0]);
+        circuit.tick().mz(&[0]);
+
+        let loc = SpacetimeLocation {
+            tick: 1,
+            qubits: vec![QubitId(0)],
+            before: true,
+            gate_type: GateType::MZ,
+            gate_index: 0,
+        };
+        let fault = PauliFault::new(loc, vec![1]);
+        let prop = propagate_fault(&circuit, &fault);
+        assert!(
+            !prop.contains_x(0) && !prop.contains_z(0),
+            "the re-preparation must clear the recorded flip from the ledger"
         );
     }
 

@@ -286,9 +286,7 @@ T1 and T2 values must use the same units as the idle duration.
 PECOS's native DEM text is the Stim DEM format; there is no separate
 `to_stim()` conversion. `dem.to_string()` emits standard
 `error(p) D... L...` mechanisms and can be parsed directly as a Stim detector
-error model. The export itself has no extra dependency; the parse checks in
-the example below use the optional interoperability extra
-(`pip install "quantum-pecos[stim]"`).
+error model. The export itself has no extra dependency.
 
 `dem.to_string_decomposed()` uses decomposition components attached to the
 original fault source, writing `^`-separated components when that provenance
@@ -300,7 +298,6 @@ of source provenance.
 
 <!--test-name: dem_from_guppy_stim_export-->
 ```python
-import stim
 from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import cx, measure, qubit
@@ -338,9 +335,47 @@ print(raw_text)
 print(source_decomposed_text)
 print(graphlike_text)
 assert "error(" in raw_text
-stim.DetectorErrorModel(raw_text)
-stim.DetectorErrorModel(source_decomposed_text)
-stim.DetectorErrorModel(graphlike_text)
+```
+
+To verify interoperability against Stim itself, install the optional extra
+(`pip install "quantum-pecos[stim]"`) — the base install does not depend on
+stim:
+
+<!--test-name: dem_from_guppy_stim_parse_check-->
+```python
+import stim
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import cx, measure, qubit
+
+from pecos.qec import DetectorErrorModel
+
+
+@guppy
+def idle_demo() -> None:
+    q0, q1 = qubit(), qubit()
+    cx(q0, q1)
+    result("m0", measure(q0))
+    result("m1", measure(q1))
+
+
+dem = DetectorErrorModel.from_guppy(
+    idle_demo,
+    num_qubits=2,
+    detectors_json='[{"id": "D0", "result_tags": ["m0"]}]',
+    observables_json='[{"id": "L0", "result_tags": ["m1"]}]',
+    idle_after_2q_duration=1.0,
+    p1=0.0,
+    p2=0.0,
+    p_meas=0.0,
+    p_prep=0.0,
+    p_idle=0.01,
+    seed=0,
+)
+
+stim.DetectorErrorModel(dem.to_string())
+stim.DetectorErrorModel(dem.to_string_decomposed())
+stim.DetectorErrorModel(dem.to_string_terminal_graphlike_decomposed())
 ```
 
 ## Decoding: PyMatching, Tesseract, and BP-OSD

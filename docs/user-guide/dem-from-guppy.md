@@ -286,7 +286,9 @@ T1 and T2 values must use the same units as the idle duration.
 PECOS's native DEM text is the Stim DEM format; there is no separate
 `to_stim()` conversion. `dem.to_string()` emits standard
 `error(p) D... L...` mechanisms and can be parsed directly as a Stim detector
-error model.
+error model. The export itself has no extra dependency; the parse checks in
+the example below use the optional interoperability extra
+(`pip install "quantum-pecos[stim]"`).
 
 `dem.to_string_decomposed()` uses decomposition components attached to the
 original fault source, writing `^`-separated components when that provenance

@@ -1324,16 +1324,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     }
 
     fn mnz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
-        // Measure -Z: flip outcome. If frame is diagonal, compose Z into frame.
-        for &q in qubits {
-            let qi = q.index();
-            let old = self.cliff_frame[qi];
-            self.frame_phase = (self.frame_phase
-                + PHASE_COCYCLE[CliffordFrame::Z.index() as usize][old.index() as usize])
-                & 7;
-            self.cliff_frame[qi] = CliffordFrame::Z.compose(old);
-        }
-        self.mz(qubits)
+        // Measure -Z via the trait's reference decomposition (X; MZ; X). The
+        // old shortcut composed a Z frame, which commutes with a Z readout
+        // and could never flip the outcome.
+        self.x(qubits);
+        let results = self.mz(qubits);
+        self.x(qubits);
+        results
     }
 
     fn pz(&mut self, qubits: &[QubitId]) -> &mut Self {

@@ -452,6 +452,26 @@ fn format_gate_stmt(
         );
     }
 
+    // Measure-and-prepare has no fused QASM primitive: lower to its
+    // measure-then-reset spelling.
+    if gate.gate_type == GateType::MPZ {
+        let qubit_strs: Vec<String> = gate.qubits.iter().map(|q| format!("q[{}]", q.0)).collect();
+        let measure = match meas_target {
+            Some(cbit) => format!(
+                "{prefix}measure {} -> c[{}];",
+                qubit_strs.join(", "),
+                cbit.index()
+            ),
+            None => format!("{prefix}measure {};", qubit_strs.join(", ")),
+        };
+        let resets: String = gate
+            .qubits
+            .iter()
+            .map(|q| format!(" reset q[{}];", q.0))
+            .collect();
+        return format!("{measure}{resets}");
+    }
+
     let name = gate_type_to_qasm_name(gate.gate_type);
 
     // Format parameters

@@ -3205,19 +3205,6 @@ impl<'a> TickHandle<'a> {
             .collect()
     }
 
-    /// Measure and free qubit(s) (destructive measurement).
-    ///
-    /// Returns a [`TickMeasureHandle`] that allows attaching metadata via `.meta()`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pecos_quantum::TickCircuit;
-    ///
-    /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().mz_free(&[0, 1]);
-    /// ```
-    ///
     /// Measure +Z and prepare |0> (measure-and-prepare).
     ///
     /// Returns one [`TickMeasRef`] per qubit, like `mz()`.
@@ -3257,6 +3244,18 @@ impl<'a> TickHandle<'a> {
             .collect()
     }
 
+    /// Measure and free qubit(s) (destructive measurement).
+    ///
+    /// Returns a [`TickMeasureHandle`] that allows attaching metadata via `.meta()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().mz_free(&[0, 1]);
+    /// ```
     ///
     /// # Panics
     ///

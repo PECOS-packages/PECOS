@@ -35,3 +35,33 @@ fn mpz_records_the_flip_and_resets_the_qubit() {
         );
     }
 }
+
+/// The general noise model tracks MPZ as a measurement: a noiseless run must
+/// complete with the right outcome count (it previously died on an
+/// outcome-count mismatch after routing MPZ through 1q-depolarizing noise).
+#[test]
+fn mpz_runs_through_the_general_noise_model() {
+    use pecos_engines::noise::general::GeneralNoiseModel;
+
+    let noise = GeneralNoiseModel::builder()
+        .with_prep_probability(0.0)
+        .with_meas_0_probability(0.0)
+        .with_meas_1_probability(0.0)
+        .with_p1_probability(0.0)
+        .with_p2_probability(0.0)
+        .with_seed(7)
+        .build();
+    let engine = Box::new(StateVecEngine::new(1));
+    let mut system = QuantumSystem::new(Box::new(noise), engine);
+
+    let mut builder = ByteMessageBuilder::new();
+    let _ = builder.for_quantum_operations();
+    builder.x(&[0]);
+    builder.mpz(&[0]);
+    builder.mz(&[0]);
+
+    let circuit = builder.build();
+    let result = system.process(circuit).unwrap();
+    let outcomes = result.outcomes().unwrap();
+    assert_eq!(outcomes, vec![1, 0]);
+}

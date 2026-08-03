@@ -523,7 +523,8 @@ fn propagate_forward(
             }
             // The X component flips the measurement and then survives the
             // collapse -- a non-destructive measurement absorbs only the Z
-            // component. Only a discarded qubit (`MeasureFree`) clears fully.
+            // component. A discarded (`MeasureFree`) or reset (`MPZ`) qubit
+            // clears fully.
             GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
                 if !loc.qubits.is_empty() =>
             {

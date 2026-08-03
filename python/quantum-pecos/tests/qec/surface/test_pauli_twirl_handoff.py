@@ -348,8 +348,8 @@ def test_twirl_sine_law_idle_noise_builds_dem_and_sampler() -> None:
         ("depolarizing", NoiseModel(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)),
         ("uniform_idle", NoiseModel(p_idle=0.002)),
         ("t1_t2", NoiseModel(t1=1000.0, t2=800.0)),
-        ("linear_idle", NoiseModel(p_idle_linear_rate=0.001)),
-        ("quadratic_idle", NoiseModel(p_idle_quadratic_rate=0.01)),
+        ("linear_idle", NoiseModel(p_idle_z_linear_rate=0.001)),
+        ("quadratic_idle", NoiseModel(p_idle_z_quadratic_rate=0.01)),
         ("sine_law_idle", NoiseModel(p_idle_x_quadratic_sine_rate=0.03)),
     ],
 )

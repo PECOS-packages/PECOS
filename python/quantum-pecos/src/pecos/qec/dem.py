@@ -137,9 +137,6 @@ def _validate_idle_family_model(
 
 def _translate_structured_idle_noise(
     *,
-    p_idle: float | None,
-    t1: float | None,
-    t2: float | None,
     p_idle_linear: float | None,
     p_idle_linear_model: Mapping[str, float] | None,
     p_idle_sin_squared: float | None,
@@ -192,14 +189,6 @@ def _translate_structured_idle_noise(
     ):
         conflicts = ", ".join(name for name, value in linear_primitives.items() if value is not None)
         msg = f"p_idle_linear/p_idle_linear_model cannot be combined with low-level idle rate(s): {conflicts}"
-        raise ValueError(msg)
-    if p_idle is not None and p_idle_linear is not None:
-        msg = "p_idle and p_idle_linear cannot be combined; p_idle is the uniform-model shorthand"
-        raise ValueError(msg)
-    if p_idle is not None and (t1 is not None or t2 is not None):
-        # The Rust NoiseConfig base idle channel is T1/T2 when set, else
-        # p_idle-depolarizing -- passing both would silently ignore p_idle.
-        msg = "p_idle and t1/t2 cannot be combined; the T1/T2 channel replaces the depolarizing base channel"
         raise ValueError(msg)
     sine_primitives = {
         "p_idle_quadratic_sine_rate": p_idle_quadratic_sine_rate,
@@ -375,7 +364,6 @@ def _from_circuit_with_noise(
     p2_replacement_approximation: str | None,
     p_meas: float,
     p_prep: float,
-    p_idle: float | None,
     t1: float | None,
     t2: float | None,
     p_idle_linear_rate: float | None,
@@ -400,7 +388,7 @@ def _from_circuit_with_noise(
         p2_replacement_approximation=p2_replacement_approximation,
         p_meas=p_meas,
         p_prep=p_prep,
-        p_idle=p_idle,
+        p_idle=None,
         t1=t1,
         t2=t2,
         p_idle_linear_rate=p_idle_linear_rate,
@@ -471,7 +459,6 @@ class _DetectorErrorModelMixin:
         p2_replacement_approximation: str | None = None,
         p_meas: float = 0.001,
         p_prep: float = 0.001,
-        p_idle: float | None = None,
         p_idle_linear: float | None = None,
         p_idle_linear_model: Mapping[str, float] | None = None,
         p_idle_sin_squared: float | None = None,
@@ -594,8 +581,6 @@ class _DetectorErrorModelMixin:
                 entries like plain post-gate Pauli entries.
             p_meas: Measurement flip rate.
             p_prep: Preparation (reset) error rate.
-            p_idle: Optional shorthand for ``p_idle_linear`` with the uniform
-                ``{"X": 1/3, "Y": 1/3, "Z": 1/3}`` model.
             p_idle_linear: Optional total stochastic idle-noise rate linear in
                 duration. Uses the engines ``GeneralNoiseModel`` convention.
             p_idle_linear_model: Optional relative weights over ``"X"``, ``"Y"``,
@@ -728,9 +713,6 @@ class _DetectorErrorModelMixin:
             p_idle_y_quadratic_sine_rate,
             p_idle_z_quadratic_sine_rate,
         ) = _translate_structured_idle_noise(
-            p_idle=p_idle,
-            t1=t1,
-            t2=t2,
             p_idle_linear=p_idle_linear,
             p_idle_linear_model=p_idle_linear_model,
             p_idle_sin_squared=p_idle_sin_squared,
@@ -814,7 +796,6 @@ class _DetectorErrorModelMixin:
             idle_after_2q_duration=idle_after_2q_duration,
             # Nonzero coherent rates were rejected before tracing; zero emits no noise.
             idle_noise_parameters=(
-                p_idle,
                 p_idle_linear,
                 p_idle_sin_squared,
                 t1,
@@ -870,7 +851,6 @@ class _DetectorErrorModelMixin:
             p2_replacement_approximation=p2_replacement_approximation,
             p_meas=p_meas,
             p_prep=p_prep,
-            p_idle=p_idle,
             t1=t1,
             t2=t2,
             p_idle_linear_rate=p_idle_linear_rate,
@@ -1178,7 +1158,6 @@ def build_dem_from_guppy(
     p2_replacement_approximation: str | None = None,
     p_meas: float = 0.001,
     p_prep: float = 0.001,
-    p_idle: float | None = None,
     p_idle_linear: float | None = None,
     p_idle_linear_model: Mapping[str, float] | None = None,
     p_idle_sin_squared: float | None = None,
@@ -1242,8 +1221,6 @@ def build_dem_from_guppy(
             replacement labels in ``p2_weights``.
         p_meas: Measurement flip rate.
         p_prep: Preparation (reset) error rate.
-        p_idle: Optional shorthand for ``p_idle_linear`` with the uniform
-            ``{"X": 1/3, "Y": 1/3, "Z": 1/3}`` model.
         p_idle_linear: Optional total stochastic idle-noise rate linear in
             duration. Uses the engines ``GeneralNoiseModel`` convention.
         p_idle_linear_model: Optional relative weights over ``"X"``, ``"Y"``,
@@ -1335,9 +1312,6 @@ def build_dem_from_guppy(
         p_idle_y_quadratic_sine_rate,
         p_idle_z_quadratic_sine_rate,
     ) = _translate_structured_idle_noise(
-        p_idle=p_idle,
-        t1=t1,
-        t2=t2,
         p_idle_linear=p_idle_linear,
         p_idle_linear_model=p_idle_linear_model,
         p_idle_sin_squared=p_idle_sin_squared,
@@ -1384,7 +1358,6 @@ def build_dem_from_guppy(
         idle_after_2q_duration=idle_after_2q_duration,
         # Nonzero coherent rates were rejected before tracing; zero emits no noise.
         idle_noise_parameters=(
-            p_idle,
             p_idle_linear,
             p_idle_sin_squared,
             t1,
@@ -1440,7 +1413,6 @@ def build_dem_from_guppy(
         p2_replacement_approximation=p2_replacement_approximation,
         p_meas=p_meas,
         p_prep=p_prep,
-        p_idle=p_idle,
         t1=t1,
         t2=t2,
         p_idle_linear_rate=p_idle_linear_rate,

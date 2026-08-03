@@ -86,7 +86,10 @@ def build_circuit(distance, rounds, basis, circuit_source="abstract", *, fill_id
 
     # Optional passes applied to all circuits:
     if fill_idle:
-        # Insert Idle(1) after 2q gates (for idle_rz noise modeling)
+        # Insert Idle(1) after 2q gates: gives the DEM duration-based idle
+        # attachment points mirroring the sim's after-2q coherent channel
+        # placement (the sim idle_rz channel reacts to 2q gates directly,
+        # not to Idle gates).
         tc.insert_idle_after_two_qubit_gates(1.0)
         # Fill remaining inactive qubits with Idle gates
         tc.fill_idle_gates()

@@ -3,6 +3,7 @@
 
 """Regression tests for the Guppy-to-DEM convenience path."""
 
+import inspect
 import json
 from typing import ClassVar
 
@@ -230,6 +231,11 @@ def _structured_idle_dem(entrypoint: str, **kwargs):
     ).dem
 
 
+def test_guppy_dem_entrypoints_do_not_expose_p_idle_shorthand() -> None:
+    assert "p_idle" not in inspect.signature(DetectorErrorModel.from_guppy).parameters
+    assert "p_idle" not in inspect.signature(build_dem_from_guppy).parameters
+
+
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
 def test_structured_idle_linear_default_matches_axis_primitives(entrypoint: str) -> None:
     rate = 0.03
@@ -341,16 +347,6 @@ def test_structured_idle_sin_squared_custom_model_matches_axis_sine_primitives(e
     )
 
     assert structured.to_string() == primitive.to_string()
-
-
-@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
-def test_p_idle_shorthand_is_byte_identical_to_structured_uniform_linear(entrypoint: str) -> None:
-    rate = 0.03
-
-    shorthand = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, p_idle=rate)
-    structured = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, p_idle_linear=rate)
-
-    assert shorthand.to_string() == structured.to_string()
 
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
@@ -473,12 +469,6 @@ def test_structured_idle_sin_squared_composes_with_coefficient_quadratic_primiti
 
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
-def test_p_idle_rejects_structured_linear_rate(entrypoint: str) -> None:
-    with pytest.raises(ValueError, match=r"p_idle and p_idle_linear"):
-        _structured_idle_dem(entrypoint, p_idle=0.01, p_idle_linear=0.01)
-
-
-@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -556,22 +546,29 @@ def test_sin_squared_idle_model_does_not_require_normalized_multipliers(entrypoi
 def test_from_guppy_idle_insertion_matches_manual_pass_pipeline() -> None:
     from pecos.tracing import trace_program_to_tick_circuit
 
+    rate = 0.01
     reference_circuit = trace_program_to_tick_circuit(_two_qubit_idle_target, 2, seed=0)
     normalize_traced_tick_circuit(reference_circuit, context="from_guppy idle insertion reference")
     reference_circuit.insert_idle_after_two_qubit_gates(1.0)
     reference_circuit.set_meta("detectors", _TWO_QUBIT_DETECTORS_JSON)
     reference_circuit.set_meta("observables", _TWO_QUBIT_OBSERVABLES_JSON)
     reference_circuit.set_meta("num_measurements", "2")
-    reference = DetectorErrorModel.from_circuit(reference_circuit, p_idle=0.01, **_NO_GATE_NOISE)
+    reference = DetectorErrorModel.from_circuit(
+        reference_circuit,
+        p_idle_x_linear_rate=rate / 3.0,
+        p_idle_y_linear_rate=rate / 3.0,
+        p_idle_z_linear_rate=rate / 3.0,
+        **_NO_GATE_NOISE,
+    )
 
-    composed = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01)
+    composed = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=rate)
 
     assert composed.to_string() == reference.to_string()
 
 
 def test_from_guppy_inserted_idles_make_idle_noise_effective() -> None:
     without_idle_noise = _two_qubit_dem(idle_after_2q_duration=1.0)
-    with_idle_noise = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01)
+    with_idle_noise = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01)
 
     assert with_idle_noise.to_string() != without_idle_noise.to_string()
     assert with_idle_noise.num_contributions > without_idle_noise.num_contributions
@@ -580,7 +577,6 @@ def test_from_guppy_inserted_idles_make_idle_noise_effective() -> None:
 # Every idle-noise parameter the guard must observe; omitting any one from the
 # guard wiring in dem.py must fail the corresponding parametrized case below.
 _ALL_IDLE_NOISE_PARAMS = {
-    "p_idle": 0.01,
     "p_idle_linear": 0.01,
     "p_idle_sin_squared": 0.01,
     "t1": 100.0,
@@ -609,17 +605,11 @@ def test_from_guppy_rejects_idle_noise_without_idle_gates(idle_param: str) -> No
 @pytest.mark.parametrize("bad_duration", [0.0, -1.0, float("nan"), float("inf")])
 def test_from_guppy_rejects_non_positive_idle_duration(bad_duration: float) -> None:
     with pytest.raises(ValueError, match=r"finite, positive duration"):
-        _two_qubit_dem(idle_after_2q_duration=bad_duration, p_idle=0.01)
-
-
-def test_from_guppy_rejects_p_idle_with_t1_t2() -> None:
-    # The Rust base idle channel is T1/T2 when set, silently ignoring p_idle.
-    with pytest.raises(ValueError, match=r"T1/T2 channel replaces the depolarizing base channel"):
-        _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01, t1=100.0, t2=50.0)
+        _two_qubit_dem(idle_after_2q_duration=bad_duration, p_idle_linear=0.01)
 
 
 def test_from_guppy_idle_guard_accepts_inserted_idles_and_idles_without_noise() -> None:
-    with_noise = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01)
+    with_noise = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01)
     without_noise = _two_qubit_dem(idle_after_2q_duration=1.0)
 
     assert with_noise.num_contributions > 0
@@ -636,7 +626,7 @@ def test_from_guppy_idle_guard_accepts_runtime_emitted_idles(monkeypatch: pytest
     circuit.tick().mz_with_ids([0, 1], [0, 1])
     monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", lambda *_args, **_kwargs: circuit)
 
-    dem = _two_qubit_dem(p_idle=0.01)
+    dem = _two_qubit_dem(p_idle_linear=0.01)
 
     assert dem.num_contributions > 0
 
@@ -662,7 +652,7 @@ def test_from_guppy_strip_traced_idles_removes_runtime_emitted_idles(monkeypatch
     # (test_from_guppy_idle_guard_accepts_runtime_emitted_idles); with
     # strip_traced_idles the guard must find no idle gates left.
     with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
-        _two_qubit_dem(strip_traced_idles=True, p_idle=0.01)
+        _two_qubit_dem(strip_traced_idles=True, p_idle_linear=0.01)
 
 
 def test_from_guppy_insertion_strips_runtime_idles_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -678,9 +668,9 @@ def test_from_guppy_insertion_strips_runtime_idles_by_default(monkeypatch: pytes
 
     monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", _traced_circuit_with_runtime_idles)
 
-    default_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01)
-    explicit_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01, strip_traced_idles=True)
-    keep_runtime_idles = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01, strip_traced_idles=False)
+    default_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01)
+    explicit_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01, strip_traced_idles=True)
+    keep_runtime_idles = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01, strip_traced_idles=False)
 
     # Insertion implies stripping unless explicitly disabled; keeping the
     # runtime idles doubles the idle content and must change the DEM.
@@ -709,7 +699,7 @@ def test_build_dem_from_guppy_rejects_non_positive_idle_duration() -> None:
             detectors=[Detector(rec[-2])],
             observables=[Observable(rec[-1])],
             idle_after_2q_duration=0.0,
-            p_idle=0.01,
+            p_idle_linear=0.01,
             **_NO_GATE_NOISE,
         )
 
@@ -722,7 +712,7 @@ def test_build_dem_from_guppy_strips_then_inserts_idles() -> None:
         observables=[Observable(rec[-1])],
         strip_traced_idles=True,
         idle_after_2q_duration=1.0,
-        p_idle=0.01,
+        p_idle_linear=0.01,
         **_NO_GATE_NOISE,
     )
 

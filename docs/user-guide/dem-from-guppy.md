@@ -208,8 +208,7 @@ non-negative multipliers have no sum constraint.
   probability `(p_idle_linear * m_axis) * t`. The model keys are `X`, `Y`, and
   `Z`, plus the engines leakage key `L`. The default is the uniform
   `{X: 1/3, Y: 1/3, Z: 1/3}` engines model. An explicit `L` weight participates
-  in the sum-to-1 requirement. `p_idle` remains shorthand for the uniform
-  Pauli model.
+  in the sum-to-1 requirement.
 - Sine-squared: `p_idle_sin_squared` with `p_idle_sin_squared_model`. A Pauli
   fault has probability `sin((p_idle_sin_squared * m_axis) * t) ** 2`. The
   model keys are `X`, `Y`, `Z`, and `L`; there is no sum constraint. The
@@ -228,9 +227,6 @@ non-negative multipliers have no sum constraint.
   `p_idle_sin_squared_model={"Z": 1.0}`. A coherent rate of zero or `None` has
   no effect. The `RX`, `RY`, and `RZ` model keys are validation-only on this DEM
   route; `L` and `U` are not valid coherent-model keys.
-
-The `p_idle` shorthand cannot be combined with `t1`/`t2`: the T1/T2 channel
-replaces the depolarizing base channel, so the combination is rejected.
 
 The engines simulators can consume leakage models, such as an engines-bound
 linear model `{"X": 0.8, "L": 0.2}`. DEM fault propagation is Pauli-only:
@@ -333,11 +329,11 @@ else:
 Runtime-emitted idle durations are replayed as nanosecond `TimeUnits`.
 Inserted idles instead carry the duration passed to
 `idle_after_2q_duration`, which must be finite and positive. Linear and
-sine-law idle rates are per time unit (for example, uniform idle noise uses
-`p_idle * duration`, clamped to the probability range). The low-level
-coefficient-style quadratic rates multiply `duration**2` and therefore scale
-as inverse time squared. T1 and T2 values must use the same units as the idle
-duration.
+sine-law idle rates are per time unit. For example, uniform linear idle noise
+uses `(p_idle_linear / 3) * duration` per Pauli axis, clamped to the probability
+range. The low-level coefficient-style quadratic rates multiply `duration**2`
+and therefore scale as inverse time squared. T1 and T2 values must use the same
+units as the idle duration.
 
 ## Exporting the DEM as Stim Text
 
@@ -381,7 +377,7 @@ dem = DetectorErrorModel.from_guppy(
     p2=0.0,
     p_meas=0.0,
     p_prep=0.0,
-    p_idle=0.01,
+    p_idle_linear=0.01,
     seed=0,
 )
 
@@ -427,7 +423,7 @@ dem = DetectorErrorModel.from_guppy(
     p2=0.0,
     p_meas=0.0,
     p_prep=0.0,
-    p_idle=0.01,
+    p_idle_linear=0.01,
     seed=0,
 )
 

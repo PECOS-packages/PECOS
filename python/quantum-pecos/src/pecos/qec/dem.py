@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -179,6 +180,34 @@ def _from_circuit_with_noise(
     )
 
 
+def _apply_traced_idle_passes(
+    circuit: Any,
+    *,
+    strip_traced_idles: bool,
+    idle_after_2q_duration: float | None,
+    idle_noise_parameters: Sequence[float | None],
+) -> None:
+    """Apply requested idle passes and reject idle noise with no target gates."""
+    if strip_traced_idles:
+        circuit.remove_identity()
+    if idle_after_2q_duration is not None:
+        if not math.isfinite(idle_after_2q_duration) or idle_after_2q_duration <= 0.0:
+            msg = (
+                "idle_after_2q_duration must be a finite, positive duration; "
+                f"got {idle_after_2q_duration!r} (a non-positive duration would insert idle "
+                "gates that contribute zero idle noise)"
+            )
+            raise ValueError(msg)
+        circuit.insert_idle_after_two_qubit_gates(idle_after_2q_duration)
+
+    if any(value is not None for value in idle_noise_parameters) and circuit.gate_counts_by_type().get("Idle", 0) == 0:
+        msg = (
+            "idle-noise parameters have no idle gates to attach to; either pass "
+            "idle_after_2q_duration=..., or use a Selene runtime that emits scheduled idles"
+        )
+        raise ValueError(msg)
+
+
 class _DetectorErrorModelMixin:
     """Namespace for the Python Guppy/QIS-trace convenience constructor."""
 
@@ -215,6 +244,8 @@ class _DetectorErrorModelMixin:
         p_idle_x_quadratic_sine_rate: float | None = None,
         p_idle_y_quadratic_sine_rate: float | None = None,
         p_idle_z_quadratic_sine_rate: float | None = None,
+        strip_traced_idles: bool = False,
+        idle_after_2q_duration: float | None = None,
         runtime: object | None = None,
         seed: int = 0,
         require_hosted_operation_order: bool = False,
@@ -326,6 +357,15 @@ class _DetectorErrorModelMixin:
             p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
             p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
             p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
+            strip_traced_idles: If true, remove identity-like gates from the
+                normalized traced circuit, including ``I``, ``Idle``, and
+                zero-angle rotations. This pass runs before idle insertion
+                when both idle-pass options are set.
+            idle_after_2q_duration: If set, insert an ``Idle`` gate of this
+                duration on both qubits after every two-qubit gate in the
+                normalized traced circuit. Insertion runs after
+                ``strip_traced_idles`` and before result-tag resolution and
+                detector/observable metadata attachment.
             runtime: Optional Selene runtime selector/plugin. ``None`` selects
                 the default Selene runtime. Runtime plugin objects are passed
                 through to ``pecos.selene_engine(runtime)``.
@@ -344,8 +384,12 @@ class _DetectorErrorModelMixin:
             ValueError: If ``num_measurements`` disagrees with the traced
                 measurement count, if a detector/observable is malformed or
                 references an out-of-range ``record`` or an absent
-                ``meas_id``, or if the traced operation stream cannot be
-                replayed.
+                ``meas_id``, if ``idle_after_2q_duration`` is not a finite
+                positive number, if any idle-noise parameter is set but the
+                final traced circuit has no ``Idle`` gates, or if the traced
+                operation stream cannot be replayed. To provide targets for
+                idle noise, pass ``idle_after_2q_duration`` or use a Selene
+                runtime that emits scheduled idles.
 
         Note:
             Runtime-lowered idles are replayed as nanosecond PECOS
@@ -434,6 +478,28 @@ class _DetectorErrorModelMixin:
         # stamp stable MeasIds onto measurement gates, and fail loudly if raw
         # traced-QIS rotations survived normalization.
         normalize_traced_tick_circuit(tc, context="DetectorErrorModel.from_guppy")
+        _apply_traced_idle_passes(
+            tc,
+            strip_traced_idles=strip_traced_idles,
+            idle_after_2q_duration=idle_after_2q_duration,
+            idle_noise_parameters=(
+                p_idle,
+                t1,
+                t2,
+                p_idle_linear_rate,
+                p_idle_quadratic_rate,
+                p_idle_x_linear_rate,
+                p_idle_y_linear_rate,
+                p_idle_z_linear_rate,
+                p_idle_x_quadratic_rate,
+                p_idle_y_quadratic_rate,
+                p_idle_z_quadratic_rate,
+                p_idle_quadratic_sine_rate,
+                p_idle_x_quadratic_sine_rate,
+                p_idle_y_quadratic_sine_rate,
+                p_idle_z_quadratic_sine_rate,
+            ),
+        )
 
         # Resolve `result_tags` -> record offsets via Rust (sound HUGR
         # extraction + runtime-loop guard via static-vs-traced measurement
@@ -794,6 +860,8 @@ def build_dem_from_guppy(
     p_idle_x_quadratic_sine_rate: float | None = None,
     p_idle_y_quadratic_sine_rate: float | None = None,
     p_idle_z_quadratic_sine_rate: float | None = None,
+    strip_traced_idles: bool = False,
+    idle_after_2q_duration: float | None = None,
     runtime: object | None = None,
     seed: int = 0,
     require_hosted_operation_order: bool = False,
@@ -809,6 +877,65 @@ def build_dem_from_guppy(
 
     Measurement-dependent quantum control remains unsupported because one
     captured execution is not a static circuit model.
+
+    Args:
+        guppy: A HUGR-certifiable Guppy program to trace once under the Selene
+            QIS engine.
+        num_qubits: Number of qubits to allocate for the trace.
+        detectors: Typed detector definitions using ``rec[...]`` or
+            ``result_ref(...)`` measurement references.
+        observables: Typed logical-observable definitions using the same
+            measurement-reference forms as ``detectors``.
+        p1: Single-qubit gate Pauli error rate.
+        p1_weights: Optional relative probabilities over single-qubit Pauli
+            error labels ``"X"``, ``"Y"``, and ``"Z"``.
+        p2: Two-qubit gate depolarizing rate.
+        p2_weights: Optional relative probabilities over two-qubit Pauli error
+            labels, including starred replacement branches.
+        p2_replacement_approximation: Approximation used for starred
+            replacement labels in ``p2_weights``.
+        p_meas: Measurement flip rate.
+        p_prep: Preparation (reset) error rate.
+        p_idle: Optional uniform depolarizing idle-noise rate per idle duration.
+        t1: Optional T1 relaxation time for explicit idle gates.
+        t2: Optional T2 dephasing time for explicit idle gates.
+        p_idle_linear_rate: Optional legacy alias for stochastic Z-memory rate
+            linear in idle duration.
+        p_idle_quadratic_rate: Optional legacy alias for stochastic Z-memory
+            rate quadratic in idle duration.
+        p_idle_x_linear_rate: Optional stochastic X-memory rate linear in idle duration.
+        p_idle_y_linear_rate: Optional stochastic Y-memory rate linear in idle duration.
+        p_idle_z_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
+        p_idle_x_quadratic_rate: Optional stochastic X-memory rate quadratic in idle duration.
+        p_idle_y_quadratic_rate: Optional stochastic Y-memory rate quadratic in idle duration.
+        p_idle_z_quadratic_rate: Optional stochastic Z-memory rate quadratic in idle duration.
+        p_idle_quadratic_sine_rate: Optional legacy alias for stochastic
+            Z-memory rate with probability ``sin(rate * duration)^2``.
+        p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
+        p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
+        p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
+        strip_traced_idles: If true, remove identity-like gates from the
+            normalized trace, including ``I``, ``Idle``, and zero-angle
+            rotations. This pass runs before idle insertion when both
+            idle-pass options are set.
+        idle_after_2q_duration: If set, insert an ``Idle`` gate of this
+            duration on both qubits after every two-qubit gate. Insertion runs
+            after ``strip_traced_idles`` and before typed result-reference
+            resolution and detector/observable metadata attachment.
+        runtime: Optional Selene runtime selector/plugin. ``None`` selects the
+            default Selene runtime.
+        seed: Seed for the ideal trace run.
+        require_hosted_operation_order: If true, validate generic
+            hosted-operation metadata after trace replay.
+        max_hosted_tick_separation: Optional maximum absolute signed tick
+            separation accepted by the hosted-operation validator.
+
+    Raises:
+        ValueError: If ``idle_after_2q_duration`` is not a finite positive
+            number, or if any idle-noise parameter is set but the final traced
+            circuit has no ``Idle`` gates. Pass ``idle_after_2q_duration`` or
+            use a Selene runtime that emits scheduled idles to provide targets
+            for idle noise.
     """
     from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
@@ -835,6 +962,28 @@ def build_dem_from_guppy(
         allow_raw_measurement_id_fallback=False,
     )
     normalize_traced_tick_circuit(circuit, context="build_dem_from_guppy")
+    _apply_traced_idle_passes(
+        circuit,
+        strip_traced_idles=strip_traced_idles,
+        idle_after_2q_duration=idle_after_2q_duration,
+        idle_noise_parameters=(
+            p_idle,
+            t1,
+            t2,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
+        ),
+    )
     result_traces = _compiler_certified_result_traces(
         generator_layout,
         hugr_bytes,

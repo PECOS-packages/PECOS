@@ -11,7 +11,10 @@ a logical circuit you intend to run on a Selene-compatible runtime.
 - Referencing measurements with `records`, `meas_ids`, and `result_tags`
 - Building a DEM for a generated surface-code memory experiment
 - Sampling and decoding from the resulting DEM
-- Choosing the Selene runtime, and the limitations to know about
+- Adding explicit idle gates so idle-noise parameters take effect
+- Exporting native Stim DEM text and graph-like projections
+- Comparing PyMatching, Tesseract, and BP-OSD on the same samples
+- Choosing the Selene runtime and understanding the limitations
 
 ## Overview
 
@@ -192,6 +195,215 @@ Because the trace records the runtime-lowered QIS operation stream, a
 runtime that schedules or lowers differently produces a (correctly)
 different DEM.
 
+## Idle Noise
+
+The default Selene runtime does not emit idle gates. Idle-noise parameters
+such as `p_idle`, `t1`/`t2`, and the `p_idle_*_rate` family therefore have no
+locations to attach to unless the runtime supplies scheduled idles or you
+insert them explicitly. `from_guppy` raises `ValueError` when any of these
+parameters is supplied but the final traced circuit contains no `Idle` gates;
+it does not silently build a DEM without the requested noise.
+
+Both `DetectorErrorModel.from_guppy` and `build_dem_from_guppy` accept two
+passes for controlling those locations:
+
+- `strip_traced_idles=True` removes identity-like gates from the normalized
+  trace, including `I`, `Idle`, and zero-angle rotations.
+- `idle_after_2q_duration=<positive float>` inserts an `Idle` of that duration
+  on both qubits after every two-qubit gate.
+
+When both options are present, stripping runs before insertion. This is useful
+when you want a consistent idle convention independent of the selected
+runtime.
+
+<!--test-name: dem_from_guppy_idle_noise-->
+```python
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import cx, measure, qubit
+
+from pecos.qec import DetectorErrorModel
+
+
+@guppy
+def idle_demo() -> None:
+    q0, q1 = qubit(), qubit()
+    cx(q0, q1)
+    result("m0", measure(q0))
+    result("m1", measure(q1))
+
+
+common = {
+    "num_qubits": 2,
+    "detectors_json": '[{"id": "D0", "result_tags": ["m0"]}]',
+    "observables_json": '[{"id": "L0", "result_tags": ["m1"]}]',
+    "p1": 0.0,
+    "p2": 0.0,
+    "p_meas": 0.0,
+    "p_prep": 0.0,
+    "seed": 0,
+}
+
+without_idle_noise = DetectorErrorModel.from_guppy(
+    idle_demo,
+    idle_after_2q_duration=1.0,
+    **common,
+)
+with_idle_noise = DetectorErrorModel.from_guppy(
+    idle_demo,
+    idle_after_2q_duration=1.0,
+    p_idle=0.01,
+    **common,
+)
+
+
+def count_errors(model: DetectorErrorModel) -> int:
+    return model.to_string().count("error(")
+
+
+assert count_errors(with_idle_noise) > count_errors(without_idle_noise)
+
+try:
+    DetectorErrorModel.from_guppy(idle_demo, p_idle=0.01, **common)
+except ValueError as exc:
+    assert "idle-noise parameters have no idle gates" in str(exc)
+else:
+    raise AssertionError("idle noise without Idle gates should fail")
+```
+
+Runtime-emitted idle durations are replayed as nanosecond `TimeUnits`.
+Inserted idles instead carry the duration passed to
+`idle_after_2q_duration`, which must be finite and positive. Linear and
+sine-law idle rates are per time unit (for example, uniform idle noise uses
+`p_idle * duration`, clamped to the probability range), while quadratic
+rates multiply `duration**2` and therefore scale as inverse time squared.
+T1 and T2 values must use the same units as the idle duration.
+
+## Exporting the DEM as Stim Text
+
+PECOS's native DEM text is the Stim DEM format; there is no separate
+`to_stim()` conversion. `dem.to_string()` emits standard
+`error(p) D... L...` mechanisms and can be parsed directly as a Stim detector
+error model.
+
+`dem.to_string_decomposed()` uses decomposition components attached to the
+original fault source, writing `^`-separated components when that provenance
+is available. It preserves residual hyperedges when a true hyperedge has no
+source-attached decomposition. Graph matchers instead need
+`dem.to_string_terminal_graphlike_decomposed()`, an explicitly lossy
+hyperedge-to-edge projection based on detector terminals rather than a proof
+of source provenance.
+
+<!--test-name: dem_from_guppy_stim_export-->
+```python
+import stim
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import cx, measure, qubit
+
+from pecos.qec import DetectorErrorModel
+
+
+@guppy
+def idle_demo() -> None:
+    q0, q1 = qubit(), qubit()
+    cx(q0, q1)
+    result("m0", measure(q0))
+    result("m1", measure(q1))
+
+
+dem = DetectorErrorModel.from_guppy(
+    idle_demo,
+    num_qubits=2,
+    detectors_json='[{"id": "D0", "result_tags": ["m0"]}]',
+    observables_json='[{"id": "L0", "result_tags": ["m1"]}]',
+    idle_after_2q_duration=1.0,
+    p1=0.0,
+    p2=0.0,
+    p_meas=0.0,
+    p_prep=0.0,
+    p_idle=0.01,
+    seed=0,
+)
+
+raw_text = dem.to_string()
+source_decomposed_text = dem.to_string_decomposed()
+graphlike_text = dem.to_string_terminal_graphlike_decomposed()
+
+print(raw_text)
+print(source_decomposed_text)
+print(graphlike_text)
+assert "error(" in raw_text
+stim.DetectorErrorModel(raw_text)
+stim.DetectorErrorModel(source_decomposed_text)
+stim.DetectorErrorModel(graphlike_text)
+```
+
+## Decoding: PyMatching, Tesseract, and BP-OSD
+
+A sampled `SampleBatch` provides the uniform
+`batch.decode_count(dem_text, name)` interface. The names used here are
+`"pymatching"` (correlated matching by default), `"tesseract"`, and
+`"bp_osd"`. Passing the same batch to each decoder compares them on identical
+shots rather than on three independently sampled experiments.
+
+<!--test-name: dem_from_guppy_decoder_comparison-->
+```python
+from pecos.decoders import DemAwareDecoder, TesseractDecoder
+from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.qec import DetectorErrorModel
+from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+
+patch = SurfacePatch.create(distance=3)
+meta_tc = generate_tick_circuit_from_patch(patch, num_rounds=3, basis="Z")
+dem = DetectorErrorModel.from_guppy(
+    make_surface_code(distance=3, num_rounds=3, basis="Z"),
+    num_qubits=get_num_qubits(3),
+    detectors_json=meta_tc.get_meta("detectors"),
+    observables_json=meta_tc.get_meta("observables"),
+    num_measurements=int(meta_tc.get_meta("num_measurements")),
+    p1=0.005,
+    p2=0.005,
+    p_meas=0.005,
+    p_prep=0.005,
+)
+
+batch = dem.to_sampler().generate_samples(1000, 0)
+error_counts = {
+    "pymatching": batch.decode_count(
+        dem.to_string_terminal_graphlike_decomposed(),
+        "pymatching",
+    ),
+    "tesseract": batch.decode_count(
+        dem.to_string_source_graphlike_decomposed(),
+        "tesseract",
+    ),
+    "bp_osd": batch.decode_count(dem.to_string(), "bp_osd"),
+}
+assert all(0 <= count <= batch.num_shots for count in error_counts.values())
+print(error_counts)
+
+# Construct a decoder directly when you need per-shot results. The "fast"
+# preset matches the configuration decode_count(..., "tesseract") uses.
+syndrome = batch.get_syndrome(0)
+tesseract = TesseractDecoder.from_dem(dem.to_string(), preset="fast")
+tesseract_result = tesseract.decode_syndrome(syndrome)
+assert tesseract_result.observables_mask >= 0
+
+bp_osd = DemAwareDecoder.from_dem(dem.to_string(), decoder_type="bp_osd")
+bp_osd_result = bp_osd.decode_syndrome(syndrome)
+assert bp_osd_result.observables_mask >= 0
+```
+
+For direct PyMatching construction, use the
+`PyMatchingDecoder.from_dem(...)` pattern in the
+[surface-memory example](#surface-code-memory-dem). That DEM's source-attached
+decomposition is already graph-like; in general, matching decoders require the
+terminal-decomposed graph-like projection. Tesseract and BP-OSD can consume the
+raw hyperedge DEM directly; the batch comparison above uses the established
+source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
+
 ## Limitations
 
 - **Measurement-dependent quantum control flow is unsupported and
@@ -216,10 +428,10 @@ different DEM.
 - **`num_qubits` is required** for HUGR-bytes programs; use
   `get_num_qubits(...)` for the built-in generators.
 - **Idle noise needs idle gates.** The default simple runtime does not emit
-  explicit idles, while other compatible runtimes may emit scheduled idle
-  durations. Runtime-emitted idles are preserved in the traced circuit as
-  nanosecond `TimeUnits`; idle/T1/T2 noise parameters apply only where those
-  gates are present.
+  explicit idles. Use `idle_after_2q_duration` to insert them, optionally after
+  `strip_traced_idles` removes runtime-provided identity-like gates. Passing
+  idle-noise parameters without any final `Idle` gates raises `ValueError`; see
+  [Idle Noise](#idle-noise).
 - **Hand-authored tracked-Pauli observables are rejected** in
   `observables_json`; tracked Paulis come from circuit annotations only.
 

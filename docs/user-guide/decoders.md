@@ -30,12 +30,24 @@ The decoder system in PECOS is designed around modularity and performance:
 
 ### Python Decoders
 
-The following decoders are currently available in Python:
+The following decoder APIs and supporting types are publicly re-exported from
+`pecos.decoders`:
 
-| Decoder | Description | Use Case |
-|---------|-------------|----------|
-| `MWPM2D` | Minimum Weight Perfect Matching for 2D codes | Surface codes, repetition codes |
-| `DummyDecoder` | No-op decoder for testing | Testing and benchmarking |
+| API | Primary input | Description |
+|-----|---------------|-------------|
+| `MWPM2D` | QECC object | Legacy minimum-weight perfect matching for 2D codes. |
+| `DummyDecoder` | None | No-op decoder for tests and interface benchmarks. |
+| `PyMatchingDecoder` | Graph-like DEM text or `CheckMatrix` | PyMatching minimum-weight perfect matching, with optional correlated decoding. |
+| `FusionBlossomDecoder` | Check matrix, standard-code parameters, or a manual graph | Pure-Rust minimum-weight perfect matching. |
+| `TesseractDecoder` | DEM text | Search-based decoder that accepts raw hyperedges. |
+| `DemAwareDecoder` | DEM text | Maps DEM mechanisms and observables onto BP-OSD and other check-matrix decoders. |
+| `BpOsdBuilder` / `BpOsdDecoder` | `SparseMatrix` check matrix | Belief propagation with ordered-statistics post-processing. |
+| `BpLsdBuilder` / `BpLsdDecoder` | `SparseMatrix` check matrix | Belief propagation with localized-statistics post-processing. |
+| `MinSumBpBuilder` / `MinSumBpDecoder` | Dense check matrix and error priors | Min-sum belief propagation. |
+| `RelayBpBuilder` / `RelayBpDecoder` | Dense check matrix and error priors | Relay belief propagation. |
+| `UnionFindBuilder` / `UnionFindDecoder` | `SparseMatrix` check matrix | Union-find decoding with inversion or peeling. |
+| `CheckMatrix` / `SparseMatrix` | Dense or coordinate-form matrix data | Matrix containers used by matching and LDPC decoder constructors. |
+| `MwpmResult` / `BpResult` / `TesseractResult` | Decoder output | Result objects for matching, belief-propagation, and Tesseract decoders. |
 
 ### Rust Decoders
 
@@ -68,7 +80,7 @@ The Rust API provides access to a broader set of decoders:
     pip install quantum-pecos
     ```
 
-    The Python decoders (`MWPM2D`, `DummyDecoder`) are included by default.
+    The Python package exports the decoder APIs listed above.
 
 === ":fontawesome-brands-rust: Rust"
 

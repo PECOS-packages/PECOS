@@ -9,7 +9,7 @@ from typing import ClassVar
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import barrier, owned, result
-from guppylang.std.quantum import h, measure, qubit, x
+from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos._qis_trace_replay import (
     _reject_partially_lowered_trace,
     _replay_lowered_qis_trace_into_tick_circuit,
@@ -21,7 +21,7 @@ from pecos._traced_circuit import (
     normalize_traced_tick_circuit,
 )
 from pecos.guppy import get_num_qubits, make_surface_code
-from pecos.qec import DetectorErrorModel
+from pecos.qec import Detector, DetectorErrorModel, Observable, build_dem_from_guppy, rec
 from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseModel, SurfacePatch
 from pecos.qec.surface.circuit_builder import (
     generate_tick_circuit_from_patch,
@@ -44,6 +44,17 @@ def _single_measurement() -> None:
     q = qubit()
     b = measure(q)
     result("m", b)
+
+
+@guppy
+def _two_qubit_idle_target() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    cx(q0, q1)
+    m0 = measure(q0)
+    m1 = measure(q1)
+    result("m0", m0)
+    result("m1", m1)
 
 
 @guppy
@@ -165,6 +176,191 @@ def _dem_text(*, detectors_json: str = "[]", observables_json: str = "[]") -> st
         seed=0,
     )
     return dem.to_string()
+
+
+_TWO_QUBIT_DETECTORS_JSON = '[{"id":0,"records":[-2]}]'
+_TWO_QUBIT_OBSERVABLES_JSON = '[{"id":0,"records":[-1]}]'
+_NO_GATE_NOISE = {"p1": 0.0, "p2": 0.0, "p_meas": 0.0, "p_prep": 0.0}
+
+
+def _two_qubit_dem(**kwargs):
+    return DetectorErrorModel.from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors_json=_TWO_QUBIT_DETECTORS_JSON,
+        observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+        num_measurements=2,
+        seed=0,
+        **_NO_GATE_NOISE,
+        **kwargs,
+    )
+
+
+def test_from_guppy_idle_insertion_matches_manual_pass_pipeline() -> None:
+    from pecos.tracing import trace_program_to_tick_circuit
+
+    reference_circuit = trace_program_to_tick_circuit(_two_qubit_idle_target, 2, seed=0)
+    normalize_traced_tick_circuit(reference_circuit, context="from_guppy idle insertion reference")
+    reference_circuit.insert_idle_after_two_qubit_gates(1.0)
+    reference_circuit.set_meta("detectors", _TWO_QUBIT_DETECTORS_JSON)
+    reference_circuit.set_meta("observables", _TWO_QUBIT_OBSERVABLES_JSON)
+    reference_circuit.set_meta("num_measurements", "2")
+    reference = DetectorErrorModel.from_circuit(reference_circuit, p_idle=0.01, **_NO_GATE_NOISE)
+
+    composed = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01)
+
+    assert composed.to_string() == reference.to_string()
+
+
+def test_from_guppy_inserted_idles_make_idle_noise_effective() -> None:
+    without_idle_noise = _two_qubit_dem(idle_after_2q_duration=1.0)
+    with_idle_noise = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01)
+
+    assert with_idle_noise.to_string() != without_idle_noise.to_string()
+    assert with_idle_noise.num_contributions > without_idle_noise.num_contributions
+
+
+# Every idle-noise parameter the guard must observe; omitting any one from the
+# guard wiring in dem.py must fail the corresponding parametrized case below.
+_ALL_IDLE_NOISE_PARAMS = {
+    "p_idle": 0.01,
+    "t1": 100.0,
+    "t2": 100.0,
+    "p_idle_linear_rate": 0.01,
+    "p_idle_quadratic_rate": 0.01,
+    "p_idle_x_linear_rate": 0.01,
+    "p_idle_y_linear_rate": 0.01,
+    "p_idle_z_linear_rate": 0.01,
+    "p_idle_x_quadratic_rate": 0.01,
+    "p_idle_y_quadratic_rate": 0.01,
+    "p_idle_z_quadratic_rate": 0.01,
+    "p_idle_quadratic_sine_rate": 0.01,
+    "p_idle_x_quadratic_sine_rate": 0.01,
+    "p_idle_y_quadratic_sine_rate": 0.01,
+    "p_idle_z_quadratic_sine_rate": 0.01,
+}
+
+
+@pytest.mark.parametrize("idle_param", sorted(_ALL_IDLE_NOISE_PARAMS))
+def test_from_guppy_rejects_idle_noise_without_idle_gates(idle_param: str) -> None:
+    with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
+        _two_qubit_dem(**{idle_param: _ALL_IDLE_NOISE_PARAMS[idle_param]})
+
+
+@pytest.mark.parametrize("bad_duration", [0.0, -1.0, float("nan"), float("inf")])
+def test_from_guppy_rejects_non_positive_idle_duration(bad_duration: float) -> None:
+    with pytest.raises(ValueError, match=r"finite, positive duration"):
+        _two_qubit_dem(idle_after_2q_duration=bad_duration, p_idle=0.01)
+
+
+def test_from_guppy_idle_guard_accepts_inserted_idles_and_idles_without_noise() -> None:
+    with_noise = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01)
+    without_noise = _two_qubit_dem(idle_after_2q_duration=1.0)
+
+    assert with_noise.num_contributions > 0
+    assert without_noise is not None
+
+
+def test_from_guppy_idle_guard_accepts_runtime_emitted_idles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1])
+    circuit.tick().cx([(0, 1)])
+    circuit.tick().idle(1, [0, 1])
+    circuit.tick().mz_with_ids([0, 1], [0, 1])
+    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", lambda *_args, **_kwargs: circuit)
+
+    dem = _two_qubit_dem(p_idle=0.01)
+
+    assert dem.num_contributions > 0
+
+
+def test_from_guppy_strip_traced_idles_is_noop_when_trace_has_no_idles() -> None:
+    baseline = _two_qubit_dem()
+    stripped = _two_qubit_dem(strip_traced_idles=True)
+
+    assert stripped.to_string() == baseline.to_string()
+
+
+def test_from_guppy_strip_traced_idles_removes_runtime_emitted_idles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1])
+    circuit.tick().cx([(0, 1)])
+    circuit.tick().idle(1, [0, 1])
+    circuit.tick().mz_with_ids([0, 1], [0, 1])
+    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", lambda *_args, **_kwargs: circuit)
+
+    # The same runtime-emitted-idle circuit passes the guard when idles are kept
+    # (test_from_guppy_idle_guard_accepts_runtime_emitted_idles); with
+    # strip_traced_idles the guard must find no idle gates left.
+    with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
+        _two_qubit_dem(strip_traced_idles=True, p_idle=0.01)
+
+
+def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
+    for idle_param, value in _ALL_IDLE_NOISE_PARAMS.items():
+        with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
+            build_dem_from_guppy(
+                _two_qubit_idle_target,
+                num_qubits=2,
+                detectors=[Detector(rec[-2])],
+                observables=[Observable(rec[-1])],
+                **{idle_param: value},
+                **_NO_GATE_NOISE,
+            )
+
+
+def test_build_dem_from_guppy_rejects_non_positive_idle_duration() -> None:
+    with pytest.raises(ValueError, match=r"finite, positive duration"):
+        build_dem_from_guppy(
+            _two_qubit_idle_target,
+            num_qubits=2,
+            detectors=[Detector(rec[-2])],
+            observables=[Observable(rec[-1])],
+            idle_after_2q_duration=0.0,
+            p_idle=0.01,
+            **_NO_GATE_NOISE,
+        )
+
+
+def test_build_dem_from_guppy_strips_then_inserts_idles() -> None:
+    build = build_dem_from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        strip_traced_idles=True,
+        idle_after_2q_duration=1.0,
+        p_idle=0.01,
+        **_NO_GATE_NOISE,
+    )
+
+    assert build.circuit.gate_counts_by_type().get("Idle") == 2
+    assert build.dem.num_contributions > 0
+
+
+def test_from_guppy_result_tags_coexist_with_idle_insertion() -> None:
+    via_tags = DetectorErrorModel.from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors_json='[{"id":0,"result_tags":["m0"]}]',
+        idle_after_2q_duration=1.0,
+        seed=0,
+        **_NO_GATE_NOISE,
+    )
+    via_records = DetectorErrorModel.from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors_json=_TWO_QUBIT_DETECTORS_JSON,
+        idle_after_2q_duration=1.0,
+        seed=0,
+        **_NO_GATE_NOISE,
+    )
+
+    assert via_tags.to_string() == via_records.to_string()
 
 
 def _flat_mz_ids(tc) -> list[int]:

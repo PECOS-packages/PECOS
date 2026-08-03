@@ -916,8 +916,7 @@ class TestRepeatedMeasurementCollapse:
         tc.set_meta("num_measurements", "2")
         tc.set_meta(
             "detectors",
-            '[{"id": 0, "coords": [0, 0, 0], "records": [-2]},'
-            ' {"id": 1, "coords": [0, 0, 1], "records": [-1]}]',
+            '[{"id": 0, "coords": [0, 0, 0], "records": [-2]}, {"id": 1, "coords": [0, 0, 1], "records": [-1]}]',
         )
         tc.set_meta("observables", "[]")
 
@@ -938,15 +937,15 @@ class TestRepeatedMeasurementCollapse:
         # one joint D0 D1 mechanism, no D0-only mechanism. Clearing at the
         # first measurement predicted the opposite split.
         assert ((0, 1), ()) in pecos_errors, f"missing joint mechanism:\n{pecos_dem}"
-        assert ((0,), ()) not in pecos_errors, (
-            f"a D0-only mechanism means the error was absorbed at the first "
-            f"measurement:\n{pecos_dem}"
+        assert (
+            (0,),
+            (),
+        ) not in pecos_errors, (
+            f"a D0-only mechanism means the error was absorbed at the first measurement:\n{pecos_dem}"
         )
-        assert set(pecos_errors) == set(stim_errors), (
-            f"mechanism sets differ.\nPECOS:\n{pecos_dem}\nStim:\n{stim_dem}"
-        )
+        assert set(pecos_errors) == set(stim_errors), f"mechanism sets differ.\nPECOS:\n{pecos_dem}\nStim:\n{stim_dem}"
         for key, p_pecos in pecos_errors.items():
             # The two DEM strings print at different precisions.
-            assert abs(p_pecos - stim_errors[key]) < 1e-5, (
-                f"probability mismatch at {key}: {p_pecos} vs {stim_errors[key]}"
-            )
+            assert (
+                abs(p_pecos - stim_errors[key]) < 1e-5
+            ), f"probability mismatch at {key}: {p_pecos} vs {stim_errors[key]}"

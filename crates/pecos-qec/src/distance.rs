@@ -345,18 +345,32 @@ pub fn find_min_weight_logicals_with_info(
     code: &StabilizerCodeSpec,
     config: &DistanceSearchConfig,
 ) -> Vec<LogicalOperatorInfo> {
+    find_shortest_logicals(code, config, 0)
+}
+
+/// Find all logical operators from the minimum weight through `delta` weights above it.
+///
+/// The search always starts at weight 1. Once the minimum logical weight is found,
+/// collection continues through `minimum_weight + delta`, subject to
+/// `config.max_weight`.
+#[must_use]
+pub fn find_shortest_logicals(
+    code: &StabilizerCodeSpec,
+    config: &DistanceSearchConfig,
+    delta: usize,
+) -> Vec<LogicalOperatorInfo> {
     let max_weight = config.max_weight.unwrap_or(code.num_qubits());
     let mut results = Vec::new();
-    let mut found_distance = None;
+    let mut found_distance: Option<usize> = None;
 
     // Build indices once for O(weight) lookups instead of O(num_stabilizers * weight)
     let stab_index = code.build_stabilizer_index();
     let log_index = code.build_logical_index();
 
     for weight in 1..=max_weight {
-        // If we've found logical operators and this weight is larger, stop
+        // If we've searched through the requested range above the minimum, stop.
         if let Some(d) = found_distance
-            && weight > d
+            && weight > d.saturating_add(delta)
         {
             break;
         }
@@ -435,6 +449,39 @@ mod tests {
             pecos_core::QuarterPhase::PlusOne,
             paulis.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
+    }
+
+    fn five_qubit_code() -> StabilizerCodeSpec {
+        // The [[5,1,3]] perfect code
+        // Stabilizers: XZZXI, IXZZX, XIXZZ, ZXIXZ
+        let stab1 = pauli_string(&[(Pauli::X, 0), (Pauli::Z, 1), (Pauli::Z, 2), (Pauli::X, 3)]);
+        let stab2 = pauli_string(&[(Pauli::X, 1), (Pauli::Z, 2), (Pauli::Z, 3), (Pauli::X, 4)]);
+        let stab3 = pauli_string(&[(Pauli::X, 0), (Pauli::X, 2), (Pauli::Z, 3), (Pauli::Z, 4)]);
+        let stab4 = pauli_string(&[(Pauli::Z, 0), (Pauli::X, 1), (Pauli::X, 3), (Pauli::Z, 4)]);
+
+        // Logical operators for [[5,1,3]]: Z = ZZZZZ, X = XXXXX
+        let logical_z = pauli_string(&[
+            (Pauli::Z, 0),
+            (Pauli::Z, 1),
+            (Pauli::Z, 2),
+            (Pauli::Z, 3),
+            (Pauli::Z, 4),
+        ]);
+        let logical_x = pauli_string(&[
+            (Pauli::X, 0),
+            (Pauli::X, 1),
+            (Pauli::X, 2),
+            (Pauli::X, 3),
+            (Pauli::X, 4),
+        ]);
+
+        StabilizerCodeSpec::new(
+            5,
+            vec![stab1, stab2, stab3, stab4],
+            vec![logical_z],
+            vec![logical_x],
+        )
+        .unwrap()
     }
 
     #[test]
@@ -533,36 +580,7 @@ mod tests {
 
     #[test]
     fn test_five_qubit_code_distance() {
-        // The [[5,1,3]] perfect code
-        // Stabilizers: XZZXI, IXZZX, XIXZZ, ZXIXZ
-        let stab1 = pauli_string(&[(Pauli::X, 0), (Pauli::Z, 1), (Pauli::Z, 2), (Pauli::X, 3)]);
-        let stab2 = pauli_string(&[(Pauli::X, 1), (Pauli::Z, 2), (Pauli::Z, 3), (Pauli::X, 4)]);
-        let stab3 = pauli_string(&[(Pauli::X, 0), (Pauli::X, 2), (Pauli::Z, 3), (Pauli::Z, 4)]);
-        let stab4 = pauli_string(&[(Pauli::Z, 0), (Pauli::X, 1), (Pauli::X, 3), (Pauli::Z, 4)]);
-
-        // Logical operators for [[5,1,3]]: Z = ZZZZZ, X = XXXXX
-        let logical_z = pauli_string(&[
-            (Pauli::Z, 0),
-            (Pauli::Z, 1),
-            (Pauli::Z, 2),
-            (Pauli::Z, 3),
-            (Pauli::Z, 4),
-        ]);
-        let logical_x = pauli_string(&[
-            (Pauli::X, 0),
-            (Pauli::X, 1),
-            (Pauli::X, 2),
-            (Pauli::X, 3),
-            (Pauli::X, 4),
-        ]);
-
-        let code = StabilizerCodeSpec::new(
-            5,
-            vec![stab1, stab2, stab3, stab4],
-            vec![logical_z],
-            vec![logical_x],
-        )
-        .unwrap();
+        let code = five_qubit_code();
 
         // Verify the code is valid
         assert!(code.verify().is_ok());
@@ -574,6 +592,36 @@ mod tests {
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(result.distance, 3);
+    }
+
+    #[test]
+    fn test_five_qubit_shortest_logicals_respect_logical_weight_spectrum() {
+        let code = five_qubit_code();
+        let config = DistanceSearchConfig::default();
+        let minimum = find_min_weight_logicals_with_info(&code, &config);
+        let delta_one = find_shortest_logicals(&code, &config, 1);
+        let delta_two = find_shortest_logicals(&code, &config, 2);
+
+        assert_eq!(minimum.len(), 30);
+        assert_eq!(delta_one.len(), 30);
+        assert!(
+            delta_one
+                .iter()
+                .map(|info| &info.operator)
+                .eq(minimum.iter().map(|info| &info.operator))
+        );
+
+        assert_eq!(delta_two.len(), 48);
+        assert_eq!(delta_two.iter().filter(|info| info.weight == 3).count(), 30);
+        assert_eq!(delta_two.iter().filter(|info| info.weight == 5).count(), 18);
+        assert!(delta_two.iter().all(|info| matches!(info.weight, 3 | 5)));
+        assert!(
+            delta_two
+                .iter()
+                .take(minimum.len())
+                .map(|info| &info.operator)
+                .eq(minimum.iter().map(|info| &info.operator))
+        );
     }
 
     #[test]

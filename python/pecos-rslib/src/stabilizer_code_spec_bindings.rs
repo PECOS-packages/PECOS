@@ -16,11 +16,12 @@ use pecos_qec::{
     DistanceResult as RustDistanceResult, DistanceSearchConfig,
     LogicalOperatorInfo as RustLogicalOperatorInfo, StabilizerCodeSpec as RustCodeSpec,
     StabilizerCodeSpecBuilder as RustCodeSpecBuilder, calculate_distance,
-    find_min_weight_logicals_with_info,
+    find_min_weight_logicals_with_info, find_shortest_logicals,
 };
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
+use crate::code_matrix_bindings::{PyParityCheckMatrix, PySymplecticMatrix};
 use crate::pauli_bindings::PauliString;
 use crate::stabilizer_code_bindings::PyStabilizerCode;
 
@@ -43,6 +44,15 @@ impl PyDistanceResult {
     #[getter]
     fn min_weight_operator(&self) -> PauliString {
         PauliString::from_rust(self.inner.min_weight_operator.clone())
+    }
+
+    fn __repr__(&self) -> String {
+        let operator = PauliString::from_rust(self.inner.min_weight_operator.clone());
+        format!(
+            "DistanceResult(distance={}, min_weight_operator={})",
+            self.inner.distance,
+            operator.__str__()
+        )
     }
 }
 
@@ -91,6 +101,16 @@ impl PyLogicalOperatorInfo {
     fn equivalence_string(&self) -> String {
         self.inner.equivalence_string()
     }
+
+    fn __repr__(&self) -> String {
+        let operator = PauliString::from_rust(self.inner.operator.clone());
+        format!(
+            "LogicalOperatorInfo(operator={}, weight={}, equivalence={})",
+            operator.__str__(),
+            self.inner.weight,
+            self.inner.equivalence_string()
+        )
+    }
 }
 
 impl From<RustLogicalOperatorInfo> for PyLogicalOperatorInfo {
@@ -131,6 +151,32 @@ impl PyStabilizerCodeSpecBuilder {
     fn check(&mut self, op: &PauliString) -> PyResult<()> {
         let builder = self.take_inner()?;
         self.inner = Some(builder.check(op.to_rust()));
+        Ok(())
+    }
+
+    /// Add X-type and Z-type stabilizers from CSS parity-check matrices.
+    fn checks_from_css(
+        &mut self,
+        x_stabilizers: &PyParityCheckMatrix,
+        z_stabilizers: &PyParityCheckMatrix,
+    ) -> PyResult<()> {
+        let builder = self.take_inner()?;
+        self.inner = Some(
+            builder
+                .checks_from_css(&x_stabilizers.inner, &z_stabilizers.inner)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        );
+        Ok(())
+    }
+
+    /// Add stabilizers from the rows of a symplectic matrix.
+    fn checks_from_symplectic(&mut self, matrix: &PySymplecticMatrix) -> PyResult<()> {
+        let builder = self.take_inner()?;
+        self.inner = Some(
+            builder
+                .checks_from_symplectic(&matrix.inner)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        );
         Ok(())
     }
 
@@ -288,29 +334,55 @@ impl PyStabilizerCodeSpec {
     }
 
     /// Find the code distance and one minimum-weight logical operator.
-    #[pyo3(signature = (max_weight=None, css=false))]
-    fn distance(&self, max_weight: Option<usize>, css: bool) -> Option<PyDistanceResult> {
+    #[pyo3(signature = (max_weight=None, css=false, verbose=false))]
+    fn distance(
+        &self,
+        max_weight: Option<usize>,
+        css: bool,
+        verbose: bool,
+    ) -> Option<PyDistanceResult> {
         let config = DistanceSearchConfig {
             max_weight,
             css_only: css,
-            verbose: false,
+            verbose,
         };
         calculate_distance(&self.inner, &config).map(PyDistanceResult::from)
     }
 
     /// Find all logical operators at the minimum weight searched.
-    #[pyo3(signature = (max_weight=None, css=false))]
+    #[pyo3(signature = (max_weight=None, css=false, verbose=false))]
     fn min_weight_logicals(
         &self,
         max_weight: Option<usize>,
         css: bool,
+        verbose: bool,
     ) -> Vec<PyLogicalOperatorInfo> {
         let config = DistanceSearchConfig {
             max_weight,
             css_only: css,
-            verbose: false,
+            verbose,
         };
         find_min_weight_logicals_with_info(&self.inner, &config)
+            .into_iter()
+            .map(PyLogicalOperatorInfo::from)
+            .collect()
+    }
+
+    /// Find logical operators through ``delta`` weights above the minimum.
+    #[pyo3(signature = (delta=0, max_weight=None, css=false, verbose=false))]
+    fn shortest_logicals(
+        &self,
+        delta: usize,
+        max_weight: Option<usize>,
+        css: bool,
+        verbose: bool,
+    ) -> Vec<PyLogicalOperatorInfo> {
+        let config = DistanceSearchConfig {
+            max_weight,
+            css_only: css,
+            verbose,
+        };
+        find_shortest_logicals(&self.inner, &config, delta)
             .into_iter()
             .map(PyLogicalOperatorInfo::from)
             .collect()

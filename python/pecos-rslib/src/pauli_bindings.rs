@@ -313,7 +313,7 @@ impl PauliString {
     }
 
     /// String representation
-    fn __str__(&self) -> String {
+    pub(crate) fn __str__(&self) -> String {
         // Build string representation
         let phase_str = match self.inner.get_phase() {
             QuarterPhase::PlusOne => "",

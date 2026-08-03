@@ -69,16 +69,19 @@ pub mod fault_tolerance;
 pub mod geometry;
 pub mod logical_discovery;
 pub mod mem_stab;
+pub mod parity_check_matrix;
 pub mod stabilizer_code;
 pub mod stabilizer_code_spec;
 pub mod surface;
 
 pub use dem_stab::{DemStabError, DemStabShotBatch, DemStabSim, DemStabSimBuilder};
 pub use mem_stab::{MemStabError, MemStabSim, MemStabSimBuilder};
+pub use parity_check_matrix::{ParityCheckMatrix, ParityCheckMatrixError};
 
 pub use distance::{
     DistanceResult, DistanceSearchConfig, LogicalOperatorInfo, WeightedPauliIterator,
     calculate_distance, find_min_weight_logicals, find_min_weight_logicals_with_info,
+    find_shortest_logicals,
 };
 pub use fault_tolerance::dem_builder::{
     DecomposedFault, DemBuilder, DemBuilderError, DemOutput, DetectorDef, DetectorErrorModel,

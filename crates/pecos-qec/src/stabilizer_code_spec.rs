@@ -17,7 +17,9 @@
 // Allow similar names for logical_xs/logical_zs - these are intentional and meaningful
 #![allow(clippy::similar_names)]
 
+use crate::parity_check_matrix::ParityCheckMatrix;
 use pecos_core::{PauliOperator, PauliString};
+use pecos_quantum::{PauliSequence, SymplecticMatrix};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
@@ -43,6 +45,22 @@ pub enum StabilizerCodeSpecError {
     /// Logical X and Z from different pairs commute when they should be independent.
     #[error("Logical X{0} and Z{1} anticommute (should commute for different logical qubits)")]
     CrossLogicalAnticommute(usize, usize),
+
+    /// Stabilizer generators are linearly dependent over GF(2).
+    #[error("Stabilizer generators are dependent: rank {rank}, count {count}")]
+    DependentStabilizers { rank: usize, count: usize },
+
+    /// A typed matrix width does not match the builder width.
+    #[error("{matrix} matrix has {actual} qubits, expected {expected}")]
+    MatrixWidthMismatch {
+        matrix: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+
+    /// A CSS X row and Z row are not orthogonal over GF(2).
+    #[error("CSS X row {x_row} and Z row {z_row} are not orthogonal")]
+    CssRowsNotOrthogonal { x_row: usize, z_row: usize },
 
     /// Invalid code parameters.
     #[error("Invalid code: {0}")]
@@ -203,7 +221,8 @@ impl StabilizerCodeSpec {
     /// - `logical_xs`: Logical X operators (one per logical qubit)
     ///
     /// # Errors
-    /// Returns an error if the logical X and Z vectors have different lengths.
+    /// Returns an error if the logical X and Z vectors have different lengths,
+    /// or if the stabilizer generators are linearly dependent.
     pub fn new(
         num_qubits: usize,
         stabilizers: Vec<PauliString>,
@@ -214,6 +233,15 @@ impl StabilizerCodeSpec {
             return Err(StabilizerCodeSpecError::InvalidCode(
                 "Number of logical X and Z operators must match".to_string(),
             ));
+        }
+
+        let stabilizer_count = stabilizers.len();
+        let stabilizer_rank = PauliSequence::new(stabilizers.clone()).rank();
+        if stabilizer_rank != stabilizer_count {
+            return Err(StabilizerCodeSpecError::DependentStabilizers {
+                rank: stabilizer_rank,
+                count: stabilizer_count,
+            });
         }
 
         Ok(Self {
@@ -236,7 +264,8 @@ impl StabilizerCodeSpec {
     /// - `logical_xs`: Logical X operators (one per logical qubit)
     ///
     /// # Errors
-    /// Returns an error if the logical X and Z vectors have different lengths.
+    /// Returns an error if the logical X and Z vectors have different lengths,
+    /// or if the stabilizer generators are linearly dependent.
     pub fn with_destabilizers(
         num_qubits: usize,
         stabilizers: Vec<PauliString>,
@@ -244,35 +273,20 @@ impl StabilizerCodeSpec {
         logical_zs: Vec<PauliString>,
         logical_xs: Vec<PauliString>,
     ) -> Result<Self> {
-        if logical_zs.len() != logical_xs.len() {
-            return Err(StabilizerCodeSpecError::InvalidCode(
-                "Number of logical X and Z operators must match".to_string(),
-            ));
-        }
-
-        Ok(Self {
-            num_qubits,
-            stabilizers,
-            destabilizers,
-            logical_zs,
-            logical_xs,
-            distance: None,
-        })
+        let mut code = Self::new(num_qubits, stabilizers, logical_zs, logical_xs)?;
+        code.destabilizers = destabilizers;
+        Ok(code)
     }
 
     /// Creates a stabilizer code from just the stabilizers.
     ///
     /// The logical operators can be added later.
-    #[must_use]
-    pub fn from_stabilizers(num_qubits: usize, stabilizers: Vec<PauliString>) -> Self {
-        Self {
-            num_qubits,
-            stabilizers,
-            destabilizers: Vec::new(),
-            logical_zs: Vec::new(),
-            logical_xs: Vec::new(),
-            distance: None,
-        }
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stabilizer generators are linearly dependent.
+    pub fn from_stabilizers(num_qubits: usize, stabilizers: Vec<PauliString>) -> Result<Self> {
+        Self::new(num_qubits, stabilizers, Vec::new(), Vec::new())
     }
 
     /// Creates a builder for constructing a stabilizer code.
@@ -752,7 +766,7 @@ impl StabilizerCodeSpec {
     /// let mut code = StabilizerCodeSpec::from_stabilizers(3, vec![
     ///     Zs([0, 1]),  // ZZI
     ///     Zs([1, 2]),  // IZZ
-    /// ]);
+    /// ]).unwrap();
     ///
     /// // Discover logical operators
     /// code.discover_logicals().unwrap();
@@ -811,16 +825,12 @@ impl StabilizerCodeSpec {
     /// The resulting code has stabilizer generators but no logical operators
     /// or destabilizers. Use [`discover_logicals`](Self::discover_logicals)
     /// to compute them.
-    #[must_use]
-    pub fn from_stabilizer_group(group: &pecos_quantum::PauliStabilizerGroup) -> Self {
-        Self {
-            num_qubits: group.num_qubits(),
-            stabilizers: group.stabilizers().to_vec(),
-            destabilizers: Vec::new(),
-            logical_zs: Vec::new(),
-            logical_xs: Vec::new(),
-            distance: None,
-        }
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stabilizer generators are linearly dependent.
+    pub fn from_stabilizer_group(group: &pecos_quantum::PauliStabilizerGroup) -> Result<Self> {
+        Self::from_stabilizers(group.num_qubits(), group.stabilizers().to_vec())
     }
 
     /// Creates a `StabilizerCodeSpec` from a [`StabilizerCode`](crate::StabilizerCode),
@@ -849,7 +859,8 @@ impl StabilizerCodeSpec {
         code: &crate::StabilizerCode,
     ) -> std::result::Result<Self, crate::LogicalDiscoveryError> {
         let mut spec =
-            Self::from_stabilizers(code.num_qubits(), code.group().stabilizers().to_vec());
+            Self::from_stabilizers(code.num_qubits(), code.group().stabilizers().to_vec())
+                .map_err(|_| crate::LogicalDiscoveryError::StabilizersNotIndependent)?;
         spec.discover_logicals()?;
         Ok(spec)
     }
@@ -995,6 +1006,76 @@ impl StabilizerCodeSpecBuilder {
         self
     }
 
+    /// Appends X-type and Z-type stabilizers from role-neutral CSS matrices.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either matrix width differs from the builder width,
+    /// or if the first non-orthogonal X/Z row pair is found.
+    pub fn checks_from_css(
+        mut self,
+        x_stabilizers: &ParityCheckMatrix,
+        z_stabilizers: &ParityCheckMatrix,
+    ) -> Result<Self> {
+        if x_stabilizers.num_qubits() != self.num_qubits {
+            return Err(StabilizerCodeSpecError::MatrixWidthMismatch {
+                matrix: "X parity-check",
+                expected: self.num_qubits,
+                actual: x_stabilizers.num_qubits(),
+            });
+        }
+        if z_stabilizers.num_qubits() != self.num_qubits {
+            return Err(StabilizerCodeSpecError::MatrixWidthMismatch {
+                matrix: "Z parity-check",
+                expected: self.num_qubits,
+                actual: z_stabilizers.num_qubits(),
+            });
+        }
+
+        let overlaps = x_stabilizers
+            .matrix()
+            .mul(&z_stabilizers.matrix().transpose());
+        for x_row in 0..overlaps.num_rows() {
+            for z_row in 0..overlaps.num_cols() {
+                if overlaps.get(x_row, z_row) == 1 {
+                    return Err(StabilizerCodeSpecError::CssRowsNotOrthogonal { x_row, z_row });
+                }
+            }
+        }
+
+        self.stabilizers.extend(x_stabilizers.to_x_stabilizers());
+        self.stabilizers.extend(z_stabilizers.to_z_stabilizers());
+        Ok(self)
+    }
+
+    /// Appends mutually commuting stabilizers from symplectic rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the matrix width differs from the builder width, or
+    /// if the first anticommuting row pair is found.
+    pub fn checks_from_symplectic(mut self, matrix: &SymplecticMatrix) -> Result<Self> {
+        if matrix.num_qubits() != self.num_qubits {
+            return Err(StabilizerCodeSpecError::MatrixWidthMismatch {
+                matrix: "Symplectic",
+                expected: self.num_qubits,
+                actual: matrix.num_qubits(),
+            });
+        }
+
+        let stabilizers = matrix.to_positive_paulis();
+        for i in 0..stabilizers.len() {
+            for j in (i + 1)..stabilizers.len() {
+                if !stabilizers[i].commutes_with(&stabilizers[j]) {
+                    return Err(StabilizerCodeSpecError::StabilizersAnticommute(i, j));
+                }
+            }
+        }
+
+        self.stabilizers.extend(stabilizers);
+        Ok(self)
+    }
+
     /// Adds a logical Z operator from a `PauliString` directly.
     #[must_use]
     pub fn logical_z_pauli(mut self, pauli: PauliString) -> Self {
@@ -1083,7 +1164,8 @@ impl StabilizerCodeSpecBuilder {
     pub fn build_with_discovered_logicals(
         self,
     ) -> std::result::Result<StabilizerCodeSpec, crate::LogicalDiscoveryError> {
-        let mut code = StabilizerCodeSpec::from_stabilizers(self.num_qubits, self.stabilizers);
+        let mut code = StabilizerCodeSpec::from_stabilizers(self.num_qubits, self.stabilizers)
+            .map_err(|_| crate::LogicalDiscoveryError::StabilizersNotIndependent)?;
         code.discover_logicals()?;
         Ok(code)
     }
@@ -1174,12 +1256,42 @@ mod tests {
         let stab1 = pauli_string(&[(Pauli::X, 0)]);
         let stab2 = pauli_string(&[(Pauli::Z, 0)]);
 
-        let code = StabilizerCodeSpec::from_stabilizers(1, vec![stab1, stab2]);
+        let code = StabilizerCodeSpec::from_stabilizers(1, vec![stab1, stab2]).unwrap();
 
         let result = code.verify_stabilizers_commute();
         assert!(matches!(
             result,
             Err(StabilizerCodeSpecError::StabilizersAnticommute(0, 1))
+        ));
+    }
+
+    #[test]
+    fn new_rejects_dependent_stabilizers() {
+        let result = StabilizerCodeSpec::new(
+            3,
+            vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])],
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            &result,
+            Err(StabilizerCodeSpecError::DependentStabilizers { rank: 2, count: 3 })
+        ));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Stabilizer generators are dependent: rank 2, count 3"
+        );
+    }
+
+    #[test]
+    fn from_stabilizers_rejects_dependent_stabilizers() {
+        let result =
+            StabilizerCodeSpec::from_stabilizers(3, vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])]);
+
+        assert!(matches!(
+            result,
+            Err(StabilizerCodeSpecError::DependentStabilizers { rank: 2, count: 3 })
         ));
     }
 
@@ -1205,7 +1317,7 @@ mod tests {
         // 3-qubit bit flip code
         let stab1 = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1)]);
         let stab2 = pauli_string(&[(Pauli::Z, 1), (Pauli::Z, 2)]);
-        let code = StabilizerCodeSpec::from_stabilizers(3, vec![stab1, stab2]);
+        let code = StabilizerCodeSpec::from_stabilizers(3, vec![stab1, stab2]).unwrap();
 
         // X error on qubit 0 should trigger stabilizer 0 only
         let x0 = pauli_string(&[(Pauli::X, 0)]);
@@ -1228,7 +1340,7 @@ mod tests {
     fn test_code_parameters_string() {
         let stab1 = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1)]);
         let stab2 = pauli_string(&[(Pauli::Z, 1), (Pauli::Z, 2)]);
-        let mut code = StabilizerCodeSpec::from_stabilizers(3, vec![stab1, stab2]);
+        let mut code = StabilizerCodeSpec::from_stabilizers(3, vec![stab1, stab2]).unwrap();
 
         assert_eq!(code.code_parameters(), "[[3, 1, ?]]");
 
@@ -1320,7 +1432,7 @@ mod tests {
         // 3-qubit bit flip code
         let stab1 = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1)]);
         let stab2 = pauli_string(&[(Pauli::Z, 1), (Pauli::Z, 2)]);
-        let code = StabilizerCodeSpec::from_stabilizers(3, vec![stab1, stab2]);
+        let code = StabilizerCodeSpec::from_stabilizers(3, vec![stab1, stab2]).unwrap();
         let index = code.build_stabilizer_index();
 
         // X error on qubit 0 should trigger stabilizer 0 only
@@ -1502,6 +1614,81 @@ mod tests {
     // ========================================================================
 
     #[test]
+    fn builder_css_checks_validate_orthogonality() {
+        let x = ParityCheckMatrix::from_dense(vec![vec![1, 0]]).unwrap();
+        let z = ParityCheckMatrix::from_dense(vec![vec![1, 0]]).unwrap();
+
+        let result = StabilizerCodeSpecBuilder::new(2).checks_from_css(&x, &z);
+        assert!(matches!(
+            &result,
+            Err(StabilizerCodeSpecError::CssRowsNotOrthogonal { x_row: 0, z_row: 0 })
+        ));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "CSS X row 0 and Z row 0 are not orthogonal"
+        );
+    }
+
+    #[test]
+    fn builder_css_checks_construct_steane_code() {
+        let h = ParityCheckMatrix::from_dense(vec![
+            vec![1, 0, 1, 0, 1, 0, 1],
+            vec![0, 1, 1, 0, 0, 1, 1],
+            vec![0, 0, 0, 1, 1, 1, 1],
+        ])
+        .unwrap();
+
+        let code = StabilizerCodeSpecBuilder::new(7)
+            .checks_from_css(&h, &h)
+            .unwrap()
+            .build_with_discovered_logicals()
+            .unwrap();
+
+        assert_eq!(code.num_logical_qubits(), 1);
+        assert_eq!(
+            crate::calculate_distance(&code, &crate::DistanceSearchConfig::default())
+                .unwrap()
+                .distance,
+            3
+        );
+    }
+
+    #[test]
+    fn builder_symplectic_checks_construct_five_qubit_code() {
+        let matrix = SymplecticMatrix::from_dense(vec![
+            vec![1, 0, 0, 1, 0, 0, 1, 1, 0, 0],
+            vec![0, 1, 0, 0, 1, 0, 0, 1, 1, 0],
+            vec![1, 0, 1, 0, 0, 0, 0, 0, 1, 1],
+            vec![0, 1, 0, 1, 0, 1, 0, 0, 0, 1],
+        ])
+        .unwrap();
+
+        let code = StabilizerCodeSpecBuilder::new(5)
+            .checks_from_symplectic(&matrix)
+            .unwrap()
+            .build_with_discovered_logicals()
+            .unwrap();
+
+        assert_eq!(
+            crate::calculate_distance(&code, &crate::DistanceSearchConfig::default())
+                .unwrap()
+                .distance,
+            3
+        );
+    }
+
+    #[test]
+    fn builder_symplectic_checks_reject_anticommuting_rows() {
+        let matrix = SymplecticMatrix::from_dense(vec![vec![1, 0], vec![0, 1]]).unwrap();
+
+        let result = StabilizerCodeSpecBuilder::new(1).checks_from_symplectic(&matrix);
+        assert!(matches!(
+            result,
+            Err(StabilizerCodeSpecError::StabilizersAnticommute(0, 1))
+        ));
+    }
+
+    #[test]
     fn test_builder_three_qubit_bit_flip() {
         use pecos_core::{Xs, Zs};
 
@@ -1628,7 +1815,8 @@ mod tests {
                 Zs([0, 1]), // ZZI
                 Zs([1, 2]), // IZZ
             ],
-        );
+        )
+        .unwrap();
 
         assert!(!code.has_logicals());
 
@@ -1691,7 +1879,7 @@ mod tests {
     #[test]
     fn test_from_stabilizer_group() {
         let steane = crate::StabilizerCode::steane();
-        let code = StabilizerCodeSpec::from_stabilizer_group(steane.group());
+        let code = StabilizerCodeSpec::from_stabilizer_group(steane.group()).unwrap();
 
         assert_eq!(code.num_qubits(), 7);
         assert_eq!(code.num_stabilizers(), 6);
@@ -1714,11 +1902,23 @@ mod tests {
             .unwrap();
 
         let group = original.to_stabilizer_group().unwrap();
-        let roundtripped = StabilizerCodeSpec::from_stabilizer_group(&group);
+        let roundtripped = StabilizerCodeSpec::from_stabilizer_group(&group).unwrap();
 
         assert_eq!(roundtripped.num_qubits(), original.num_qubits());
         assert_eq!(roundtripped.num_stabilizers(), original.num_stabilizers());
         assert!(roundtripped.verify_stabilizers_commute().is_ok());
+    }
+
+    #[test]
+    fn from_stabilizer_group_rejects_dependent_stabilizers() {
+        let group =
+            pecos_quantum::PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])])
+                .unwrap();
+
+        assert!(matches!(
+            StabilizerCodeSpec::from_stabilizer_group(&group),
+            Err(StabilizerCodeSpecError::DependentStabilizers { rank: 2, count: 3 })
+        ));
     }
 
     #[test]

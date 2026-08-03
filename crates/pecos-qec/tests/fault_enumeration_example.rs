@@ -86,7 +86,8 @@ fn build_repetition_code(num_rounds: usize) -> DagCircuit {
 
     // Pauli operator: track logical X = X_0 X_1 X_2. Placed BEFORE the
     // transversal Z readout: after it, every data qubit has collapsed and an
-    // X-type operator is gauge -- no fault can deterministically flip it.
+    // X-type operator is destroyed as an observable -- no fault can
+    // deterministically flip it.
     dag.tracked_pauli_labeled("logical_X", X(0) & X(1) & X(2));
 
     // Final data qubit measurements
@@ -611,7 +612,8 @@ fn build_422_code(num_rounds: usize) -> DagCircuit {
 
     // Tracked Paulis: logical X operators. Placed BEFORE the transversal Z
     // readout: after it, every data qubit has collapsed and an X-type
-    // operator is gauge -- no fault can deterministically flip it.
+    // operator is destroyed as an observable -- no fault can
+    // deterministically flip it.
     // Logical X_1 = X_0 X_2
     dag.tracked_pauli_labeled("logical_X1", X(0) & X(2));
     // Logical X_2 = X_0 X_1

@@ -207,7 +207,9 @@ pub(crate) enum PauliType {
 /// - All single-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
 /// - All two-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
 /// - `PZ`, `QAlloc`: absorbs all Pauli components on the reset qubit
-/// - `MZ`: records `X`-component flip, then absorbs all components (state collapse)
+/// - `MZ`, `MeasureLeaked`: records `X`-component flip, then absorbs the Z
+///   component only -- collapse projects, it does not reset, so the X keeps
+///   propagating. `MeasureFree` absorbs everything: the qubit is discarded.
 ///
 /// **No-op** (pass through without noise or transformation):
 /// - `I`, `Idle`, `QFree`, `MeasCrosstalkGlobalPayload`,

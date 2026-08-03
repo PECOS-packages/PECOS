@@ -68,8 +68,10 @@ fn consecutive_pairs(
 /// daggers), we swap the gate with its adjoint for backward propagation.
 ///
 /// Special handling:
-/// - **Prep gates**: No transformation in either direction (transparent to propagation)
-/// - **Measure gates**: No transformation in either direction (for propagation purposes)
+/// - **Prep gates**: No transformation in either direction (transparent to propagation;
+///   walkers that model resets clear at their own call sites)
+/// - **Measure gates**: collapse via [`cross_measurement`] -- the component that
+///   commutes with the measurement in the direction of travel is absorbed
 #[inline]
 pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Direction) {
     if apply_named_gate(prop, gate.gate_type, &gate.qubits, direction) {
@@ -160,16 +162,18 @@ impl PauliComponents for pecos_simulators::BitmaskPauliProp {
 /// measures. A non-destructive Z-collapse (`MZ`, `MeasureLeaked` -- executed
 /// as a plain `MZ` with no reset):
 ///
-/// - Forward: the X component survives -- the faulty and ideal states still
-///   differ by X after collapse, so later measurements keep flipping -- while
-///   the Z component is absorbed (both branches collapse to the same
-///   eigenstate up to phase). This matches the physical simulators and Stim's
-///   `M`-versus-`MR` distinction.
-/// - Backward: the mirror. A Z-type observable passes through (errors before
-///   the measurement flip both it and later measurements); an X-type
-///   observable gains no deterministic dependence on anything before the
-///   collapse, so it is dropped rather than manufacturing a phantom
-///   influence.
+/// - Forward: `(x, z) -> (x, 0)`. The X component survives -- the faulty and
+///   ideal runs still differ by X after collapse, so later measurements keep
+///   flipping (Stim's `M`-versus-`MR` distinction) -- while the Z component
+///   is absorbed. This is Stim's frame algebra with the measurement gauge
+///   fixed to identity instead of randomized; the two choices differ only on
+///   individually non-deterministic measurements, where any detector is
+///   invalid input, and the difference cancels in every deterministic
+///   detector XOR.
+/// - Backward: the symplectic adjoint, `(x, z) -> (0, z)`, so the two
+///   directions agree by construction. A Z-type observable passes through; an
+///   X-type observable is dropped -- relative to the gauge, nothing before
+///   the collapse deterministically flips it.
 ///
 /// `MeasureFree` discards the qubit: nothing crosses in either direction.
 pub fn cross_measurement<P: PauliComponents>(

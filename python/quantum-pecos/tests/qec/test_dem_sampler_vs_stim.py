@@ -923,7 +923,7 @@ class TestRepeatedMeasurementCollapse:
         kwargs = {
             "p1": 0.01,
             "p2": 0.0,
-            "p_meas": 0.0,
+            "p_meas": 0.02,
             "p_prep": 0.0,
             "decompose_errors": False,
         }
@@ -933,15 +933,16 @@ class TestRepeatedMeasurementCollapse:
         pecos_errors = parse_dem_string(pecos_dem)
         stim_errors = parse_dem_string(stim_dem)
 
-        # The X/Y components of the depolarizing fault flip both measurements:
-        # one joint D0 D1 mechanism, no D0-only mechanism. Clearing at the
-        # first measurement predicted the opposite split.
+        # Both PECOS and the Stim reference model p_meas as a PHYSICAL X
+        # before the measurement (X_ERROR then M), so on a repeated
+        # measurement it joins the propagating joint mechanism rather than
+        # flipping one record classically. The last measurement's p_meas has
+        # nothing after it, so it stays alone -- guarding against over-joining.
         assert ((0, 1), ()) in pecos_errors, f"missing joint mechanism:\n{pecos_dem}"
-        assert (
-            (0,),
-            (),
-        ) not in pecos_errors, (
-            f"a D0-only mechanism means the error was absorbed at the first measurement:\n{pecos_dem}"
+        assert ((1,), ()) in pecos_errors, f"missing final p_meas mechanism:\n{pecos_dem}"
+        assert ((0,), ()) not in pecos_errors, (
+            f"a D0-only mechanism means an error was absorbed at the first "
+            f"measurement:\n{pecos_dem}"
         )
         assert set(pecos_errors) == set(stim_errors), f"mechanism sets differ.\nPECOS:\n{pecos_dem}\nStim:\n{stim_dem}"
         for key, p_pecos in pecos_errors.items():

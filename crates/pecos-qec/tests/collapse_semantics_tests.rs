@@ -124,6 +124,92 @@ fn a_z_before_a_collapse_does_not_haunt_a_later_rotated_measurement() {
     let _ = i2;
 }
 
+/// A detector over two same-qubit measurements must keep the influences that
+/// lie BETWEEN its members. Seeding the combined observable at the circuit
+/// end cancels the two Z seeds before the walk starts, deleting the exact
+/// mechanism the detector exists to catch (Stim: `error(p) D0`).
+#[test]
+fn a_detector_over_repeated_measurements_keeps_between_faults() {
+    use pecos_qec::fault_tolerance::InfluenceBuilder;
+    use pecos_qec::fault_tolerance::propagator::types::Pauli;
+
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    dag.h(&[0]);
+    let m0 = dag.mz(&[0]);
+    dag.z(&[0]);
+    let m1 = dag.mz(&[0]);
+    dag.detector(&[m0[0], m1[0]])
+        .expect("refs are from this circuit");
+    let map = InfluenceBuilder::new(&dag)
+        .with_circuit_annotations()
+        .expect("annotations resolve")
+        .build()
+        .expect("circuit is replayable");
+
+    let z_gate_loc = map
+        .locations
+        .iter()
+        .position(|loc| loc.gate_type == GateType::Z && !loc.before)
+        .expect("the Z gate has an after location");
+    assert_eq!(
+        map.get_detector_indices(z_gate_loc, Pauli::X.as_u8()),
+        &[0],
+        "an X between the two measurements flips exactly the second, so it \
+         flips their XOR"
+    );
+    // Faults before the first measurement flip both members and cancel.
+    let prep_loc = map
+        .locations
+        .iter()
+        .position(|loc| loc.node == 0 && !loc.before)
+        .expect("the prep has an after location");
+    for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
+        assert_eq!(
+            map.get_detector_indices(prep_loc, pauli.as_u8()),
+            Vec::<u32>::new(),
+            "{pauli:?} before both members flips both, cancelling in the XOR"
+        );
+    }
+}
+
+/// An SX between two measurements delivers the backward observable to the
+/// first collapse as a Y, exercising the keep-Z branch at integration level:
+/// the Z part passes (faults before the first measurement reach the second,
+/// relative to the measurement gauge), the X part is dropped.
+#[test]
+fn an_sx_rotated_repeated_measurement_keeps_the_z_component() {
+    use pecos_qec::fault_tolerance::propagator::types::Pauli;
+
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    let m1 = dag.mz(&[0]);
+    dag.sx(&[0]);
+    let m2 = dag.mz(&[0]);
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+
+    let i1 = u32::try_from(
+        map.meas_index_of(m1[0].meas_id)
+            .expect("measurement 1 is in the map"),
+    )
+    .expect("fits");
+    let i2 = u32::try_from(
+        map.meas_index_of(m2[0].meas_id)
+            .expect("measurement 2 is in the map"),
+    )
+    .expect("fits");
+
+    // X after the prep: flips m1 directly; the passed Z component of m2's
+    // backward observable anticommutes with it too, so it reaches m2.
+    let mut hits = detector_hits(&map, 0, false, Pauli::X);
+    hits.sort_unstable();
+    let mut want = vec![i1, i2];
+    want.sort_unstable();
+    assert_eq!(hits, want);
+    // Z after the prep: commutes with everything that survives to cross.
+    assert_eq!(detector_hits(&map, 0, false, Pauli::Z), Vec::<u32>::new());
+}
+
 /// `MeasureFree` genuinely discards: nothing before it reaches anything
 /// after, even on the same qubit id.
 #[test]

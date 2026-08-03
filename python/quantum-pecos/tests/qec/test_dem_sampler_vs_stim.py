@@ -940,10 +940,10 @@ class TestRepeatedMeasurementCollapse:
         # nothing after it, so it stays alone -- guarding against over-joining.
         assert ((0, 1), ()) in pecos_errors, f"missing joint mechanism:\n{pecos_dem}"
         assert ((1,), ()) in pecos_errors, f"missing final p_meas mechanism:\n{pecos_dem}"
-        assert ((0,), ()) not in pecos_errors, (
-            f"a D0-only mechanism means an error was absorbed at the first "
-            f"measurement:\n{pecos_dem}"
-        )
+        assert (
+            (0,),
+            (),
+        ) not in pecos_errors, f"a D0-only mechanism means an error was absorbed at the first measurement:\n{pecos_dem}"
         assert set(pecos_errors) == set(stim_errors), f"mechanism sets differ.\nPECOS:\n{pecos_dem}\nStim:\n{stim_dem}"
         for key, p_pecos in pecos_errors.items():
             # The two DEM strings print at different precisions.

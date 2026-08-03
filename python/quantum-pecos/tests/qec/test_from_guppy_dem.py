@@ -300,6 +300,29 @@ def test_from_guppy_strip_traced_idles_removes_runtime_emitted_idles(monkeypatch
         _two_qubit_dem(strip_traced_idles=True, p_idle=0.01)
 
 
+def test_from_guppy_insertion_strips_runtime_idles_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    def _traced_circuit_with_runtime_idles(*_args, **_kwargs):
+        circuit = TickCircuit()
+        circuit.tick().pz([0, 1])
+        circuit.tick().cx([(0, 1)])
+        circuit.tick().idle(1, [0, 1])
+        circuit.tick().mz_with_ids([0, 1], [0, 1])
+        return circuit
+
+    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", _traced_circuit_with_runtime_idles)
+
+    default_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01)
+    explicit_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01, strip_traced_idles=True)
+    keep_runtime_idles = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle=0.01, strip_traced_idles=False)
+
+    # Insertion implies stripping unless explicitly disabled; keeping the
+    # runtime idles doubles the idle content and must change the DEM.
+    assert default_strip.to_string() == explicit_strip.to_string()
+    assert keep_runtime_idles.to_string() != default_strip.to_string()
+
+
 def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
     for idle_param, value in _ALL_IDLE_NOISE_PARAMS.items():
         with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):

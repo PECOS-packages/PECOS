@@ -183,11 +183,15 @@ def _from_circuit_with_noise(
 def _apply_traced_idle_passes(
     circuit: Any,
     *,
-    strip_traced_idles: bool,
+    strip_traced_idles: bool | None,
     idle_after_2q_duration: float | None,
     idle_noise_parameters: Sequence[float | None],
 ) -> None:
     """Apply requested idle passes and reject idle noise with no target gates."""
+    if strip_traced_idles is None:
+        # Inserting a uniform idle convention on top of runtime-emitted idles
+        # would double-count idle noise, so insertion implies stripping first.
+        strip_traced_idles = idle_after_2q_duration is not None
     if strip_traced_idles:
         circuit.remove_identity()
     if idle_after_2q_duration is not None:
@@ -244,7 +248,7 @@ class _DetectorErrorModelMixin:
         p_idle_x_quadratic_sine_rate: float | None = None,
         p_idle_y_quadratic_sine_rate: float | None = None,
         p_idle_z_quadratic_sine_rate: float | None = None,
-        strip_traced_idles: bool = False,
+        strip_traced_idles: bool | None = None,
         idle_after_2q_duration: float | None = None,
         runtime: object | None = None,
         seed: int = 0,
@@ -360,7 +364,11 @@ class _DetectorErrorModelMixin:
             strip_traced_idles: If true, remove identity-like gates from the
                 normalized traced circuit, including ``I``, ``Idle``, and
                 zero-angle rotations. This pass runs before idle insertion
-                when both idle-pass options are set.
+                when both idle-pass options are set. Defaults to ``None``,
+                which strips exactly when ``idle_after_2q_duration`` is set:
+                inserting a uniform idle convention on top of runtime-emitted
+                idles would double-count idle noise. Pass ``False`` explicitly
+                to keep runtime-emitted idles alongside inserted ones.
             idle_after_2q_duration: If set, insert an ``Idle`` gate of this
                 duration on both qubits after every two-qubit gate in the
                 normalized traced circuit. Insertion runs after
@@ -860,7 +868,7 @@ def build_dem_from_guppy(
     p_idle_x_quadratic_sine_rate: float | None = None,
     p_idle_y_quadratic_sine_rate: float | None = None,
     p_idle_z_quadratic_sine_rate: float | None = None,
-    strip_traced_idles: bool = False,
+    strip_traced_idles: bool | None = None,
     idle_after_2q_duration: float | None = None,
     runtime: object | None = None,
     seed: int = 0,
@@ -917,7 +925,10 @@ def build_dem_from_guppy(
         strip_traced_idles: If true, remove identity-like gates from the
             normalized trace, including ``I``, ``Idle``, and zero-angle
             rotations. This pass runs before idle insertion when both
-            idle-pass options are set.
+            idle-pass options are set. Defaults to ``None``, which strips
+            exactly when ``idle_after_2q_duration`` is set; pass ``False``
+            explicitly to keep runtime-emitted idles alongside inserted
+            ones.
         idle_after_2q_duration: If set, insert an ``Idle`` gate of this
             duration on both qubits after every two-qubit gate. Insertion runs
             after ``strip_traced_idles`` and before typed result-reference

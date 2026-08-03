@@ -212,9 +212,11 @@ passes for controlling those locations:
 - `idle_after_2q_duration=<positive float>` inserts an `Idle` of that duration
   on both qubits after every two-qubit gate.
 
-When both options are present, stripping runs before insertion. This is useful
-when you want a consistent idle convention independent of the selected
-runtime.
+Stripping runs before insertion. By default, setting `idle_after_2q_duration`
+also strips first: inserting a uniform idle convention on top of
+runtime-emitted idles would double-count idle noise. Pass
+`strip_traced_idles=False` explicitly to keep runtime-emitted idles alongside
+the inserted ones.
 
 <!--test-name: dem_from_guppy_idle_noise-->
 ```python

@@ -237,6 +237,11 @@ def __getattr__(name: str):
         import importlib
 
         return importlib.import_module("pecos.tools")
+    if name == "guppy":
+        # Lazy import -- guppy/__init__.py emits the deprecation warning
+        import importlib
+
+        return importlib.import_module("pecos.guppy")
     if name == "misc":
         msg = (
             "pecos.misc has been removed. Its contents have been moved to:\n"

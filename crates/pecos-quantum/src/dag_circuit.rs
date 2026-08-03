@@ -2041,6 +2041,36 @@ impl DagCircuit {
         self.measurement_labels.get(&node).map(String::as_str)
     }
 
+    /// Measure +Z and prepare |0> (measure-and-prepare).
+    ///
+    /// Returns one [`MeasRef`] per qubit, like [`Self::mz`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the gate is rejected -- see the `try_` variant for fallible
+    /// insertion.
+    pub fn mpz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<MeasRef> {
+        self.try_mpz(qubits)
+            .unwrap_or_else(|err| panic!("Invalid gate: {err}"))
+    }
+
+    /// Measure-and-prepare, reporting rejection instead of panicking.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the circuit has no measurement ids left to mint.
+    pub fn try_mpz(
+        &mut self,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> Result<Vec<MeasRef>, String> {
+        self.reserve_room_for_mints(qubits.len())?;
+        let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| q.into()).collect();
+        let node = self.try_add_gate_auto_wire(Gate::mpz(&qubit_ids))?;
+        Ok(self
+            .meas_refs(node)
+            .expect("an MPZ gate holds measurements"))
+    }
+
     /// Measure and free qubit(s) (destructive measurement).
     ///
     /// # Panics

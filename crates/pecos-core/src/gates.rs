@@ -1183,7 +1183,7 @@ impl Gate {
         }
         let is_measurement = matches!(
             self.gate_type,
-            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ
         );
         if is_measurement {
             if !self.meas_ids.is_empty() && self.meas_ids.len() != self.qubits.len() {

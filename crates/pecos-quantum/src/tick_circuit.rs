@@ -3222,6 +3222,45 @@ impl<'a> TickHandle<'a> {
     ///
     /// Panics if the circuit has no measurement records left below
     /// [`usize::MAX`].
+    /// Measure +Z and prepare |0> (measure-and-prepare).
+    ///
+    /// Returns one [`TickMeasRef`] per qubit, like `mz()`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit has no measurement records left below
+    /// [`usize::MAX`].
+    pub fn mpz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<TickMeasRef> {
+        let mut gate = Gate::mpz(qubits);
+        let mut refs = Vec::with_capacity(qubits.len());
+        // Reserve the whole batch at once: reserving per qubit left the counter
+        // advanced for the qubits handled before an exhausted one.
+        let base = self
+            .circuit
+            .try_advance_meas_counter(qubits.len())
+            .unwrap_or_else(|err| panic!("{err}"));
+        for (offset, &q) in qubits.iter().enumerate() {
+            let tick_idx = self.tick_idx;
+            let mr = MeasId::from_raw(base + offset);
+            gate.meas_ids.push(mr);
+            refs.push(TickMeasRef {
+                tick: tick_idx,
+                gate_idx: 0, // placeholder, updated below
+                qubit: q.into(),
+                meas_id: mr,
+            });
+        }
+        let gate_idx = self.add_gate_get_idx(gate);
+        self.last_gate_idx = None;
+        self.last_gate_piece = None;
+        refs.into_iter()
+            .map(|mut r| {
+                r.gate_idx = gate_idx;
+                r
+            })
+            .collect()
+    }
+
     pub fn mz_free(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<TickMeasRef> {
         let mut gate = Gate::mz_free(qubits);
         let mut refs = Vec::with_capacity(qubits.len());

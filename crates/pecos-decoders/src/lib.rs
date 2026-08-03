@@ -5,8 +5,6 @@
 //!
 //! ## Features
 //!
-//! - `frontier` - Frontier approximate logical maximum-likelihood decoder (pure Rust;
-//!   native implementation of arXiv:2606.20513, not a wrap of the upstream package)
 //! - `ldpc` - LDPC decoders (BP-OSD, BP-LSD, Union-Find, etc.)
 //! - `fusion-blossom` - Fusion Blossom MWPM decoder (pure Rust)
 //! - `pymatching` - `PyMatching` MWPM decoder (C++ FFI)
@@ -27,10 +25,6 @@ pub use pecos_decoder_core::logical_subgraph::{
     DetectorGroup, LogicalSubgraph, LogicalSubgraphDecoder, ParallelLogicalSubgraphDecoder,
     QubitStabCoords, StabCoords, StabType, partition_dem_by_logical,
 };
-
-// Re-export Frontier decoder when feature is enabled
-#[cfg(feature = "frontier")]
-pub use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierLogicalMass, FrontierResult};
 
 // Re-export LDPC decoders when feature is enabled
 #[cfg(feature = "ldpc")]

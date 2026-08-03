@@ -500,11 +500,17 @@ fn propagate_tracked_pauli_forward(
                         }
                     }
                 }
-                // Every measurement collapses the qubit, including one that
-                // consumes no record. Clearing used to sit inside the record
-                // lookup above, so a `MeasureLeaked` let the Pauli propagate on.
+                // Collapse, not reset: a non-destructive measurement absorbs
+                // only the Z component -- the X component keeps flipping later
+                // measurements on the same qubit. Only a discarded qubit
+                // (`MeasureFree`) clears fully.
                 for qubit in &gate.qubits {
-                    clear_qubit(&mut prop, qubit.index());
+                    crate::fault_tolerance::propagator::cross_measurement(
+                        &mut prop,
+                        qubit.index(),
+                        gate.gate_type,
+                        Direction::Forward,
+                    );
                 }
             }
             GateType::PZ | GateType::QAlloc => {
@@ -568,14 +574,8 @@ mod tests {
     use pecos_quantum::Gate;
 
     /// A `MeasureLeaked` must affect a propagating Pauli exactly as an `MZ`
-    /// does. Clearing used to sit inside the record lookup, so once
-    /// `MeasureLeaked` stopped consuming a record it also stopped touching the
-    /// Pauli, and an X propagated straight through it to flip a later
-    /// measurement that an `MZ` in the same position would have shielded.
-    ///
-    /// This pins the two against each other rather than against an absolute,
-    /// because whether a non-destructive measurement should clear at all is a
-    /// separate question -- see the collapse-semantics issue.
+    /// does: both are non-destructive Z-collapses, executed identically by the
+    /// simulators.
     #[test]
     fn measure_leaked_affects_a_propagating_pauli_like_an_mz() {
         fn later_measurement_flipped(leading: GateType) -> bool {
@@ -619,7 +619,13 @@ mod tests {
         assert_eq!(
             later_measurement_flipped(GateType::MeasureLeaked),
             later_measurement_flipped(GateType::MZ),
-            "a leaked measurement must not let a Pauli through that an MZ stops"
+            "the two non-destructive measurements must treat a Pauli identically"
+        );
+        // And the absolute: collapse projects, it does not reset, so the X
+        // survives the first measurement and flips the later one.
+        assert!(
+            later_measurement_flipped(GateType::MZ),
+            "an X before a non-destructive MZ keeps flipping later measurements"
         );
     }
 

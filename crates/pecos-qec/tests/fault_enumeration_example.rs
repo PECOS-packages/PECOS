@@ -84,6 +84,12 @@ fn build_repetition_code(num_rounds: usize) -> DagCircuit {
         prev_meas_12 = Some(ms_12[0]);
     }
 
+    // Pauli operator: track logical X = X_0 X_1 X_2. Placed BEFORE the
+    // transversal Z readout: after it, every data qubit has collapsed and an
+    // X-type operator is destroyed as an observable -- no fault can
+    // deterministically flip it.
+    dag.tracked_pauli_labeled("logical_X", X(0) & X(1) & X(2));
+
     // Final data qubit measurements
     let ms_data = dag.mz(&data);
 
@@ -104,9 +110,6 @@ fn build_repetition_code(num_rounds: usize) -> DagCircuit {
     // Observable: logical Z readout = Z_0 (any single data qubit works for rep code)
     dag.observable_labeled("logical_Z", &[ms_data[0]])
         .expect("refs are from this circuit");
-
-    // Pauli operator: track logical X = X_0 X_1 X_2
-    dag.tracked_pauli_labeled("logical_X", X(0) & X(1) & X(2));
 
     dag
 }
@@ -307,9 +310,10 @@ fn repetition_code_labels() {
     assert_eq!(map.num_dem_outputs(), 1, "1 observable");
     assert_eq!(map.num_tracked_paulis(), 1, "1 tracked Pauli");
 
-    // Labels accessible via internal index
-    assert_eq!(map.dem_output_label(0), Some("logical_Z"));
-    assert_eq!(map.dem_output_label(1), Some("logical_X"));
+    // Labels accessible via internal index -- annotation order: the tracked
+    // Pauli is placed before the readout, so it precedes the observable.
+    assert_eq!(map.dem_output_label(0), Some("logical_X"));
+    assert_eq!(map.dem_output_label(1), Some("logical_Z"));
     assert_eq!(map.dem_output_label(99), None);
 
     // Use labels during fault introspection
@@ -606,6 +610,15 @@ fn build_422_code(num_rounds: usize) -> DagCircuit {
         prev_meas_z = Some(ms_z[0]);
     }
 
+    // Tracked Paulis: logical X operators. Placed BEFORE the transversal Z
+    // readout: after it, every data qubit has collapsed and an X-type
+    // operator is destroyed as an observable -- no fault can
+    // deterministically flip it.
+    // Logical X_1 = X_0 X_2
+    dag.tracked_pauli_labeled("logical_X1", X(0) & X(2));
+    // Logical X_2 = X_0 X_1
+    dag.tracked_pauli_labeled("logical_X2", X(0) & X(1));
+
     // Final data qubit measurements
     let ms_data = dag.mz(&data);
 
@@ -632,12 +645,6 @@ fn build_422_code(num_rounds: usize) -> DagCircuit {
     // Logical Z_2 = Z_0 Z_2
     dag.observable_labeled("logical_Z2", &[ms_data[0], ms_data[2]])
         .expect("refs are from this circuit");
-
-    // Tracked Paulis: logical X operators
-    // Logical X_1 = X_0 X_2
-    dag.tracked_pauli_labeled("logical_X1", X(0) & X(2));
-    // Logical X_2 = X_0 X_1
-    dag.tracked_pauli_labeled("logical_X2", X(0) & X(1));
 
     dag
 }

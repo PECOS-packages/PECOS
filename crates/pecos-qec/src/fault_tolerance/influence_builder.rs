@@ -691,33 +691,34 @@ impl<'a> InfluenceBuilder<'a> {
         };
 
         for (det_idx, detector) in detectors.iter().enumerate() {
-            // Build combined Pauli from all measurements in the detector
-            let mut combined_prop = PauliProp::new();
-
+            // One walk per member measurement, each seeded at its own node.
+            // A combined seed XORed at the circuit end cancels same-qubit
+            // members to identity before the walk starts, erasing every
+            // influence between the measurements. The recorder toggles, so
+            // influences shared by several members cancel exactly as the
+            // detector's XOR readout does.
             for &meas_idx in &detector.measurement_indices {
-                // Find the node and qubit for this measurement
                 if let Some(node) = info
                     .node_to_meas_idx
                     .iter()
                     .position(|&opt| opt == Some(meas_idx))
                     && let Some(gate) = propagator.gate(node)
                 {
+                    let mut seed = PauliProp::new();
                     for qubit in &gate.qubits {
                         // Z-basis measurement means we propagate Z
-                        combined_prop.track_z(&[qubit.index()]);
+                        seed.track_z(&[qubit.index()]);
                     }
+                    Self::propagate_observable(
+                        propagator,
+                        &seed,
+                        det_idx,
+                        true, // is_detector
+                        &mut work,
+                        Some(propagator.topo_position(node)),
+                    );
                 }
             }
-
-            // Propagate the combined observable backward
-            Self::propagate_observable(
-                propagator,
-                &combined_prop,
-                det_idx,
-                true, // is_detector
-                &mut work,
-                None, // detectors: walk from circuit end
-            );
         }
     }
 

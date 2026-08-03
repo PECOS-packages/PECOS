@@ -68,8 +68,10 @@ fn consecutive_pairs(
 /// daggers), we swap the gate with its adjoint for backward propagation.
 ///
 /// Special handling:
-/// - **Prep gates**: No transformation in either direction (transparent to propagation)
-/// - **Measure gates**: No transformation in either direction (for propagation purposes)
+/// - **Prep gates**: No transformation in either direction (transparent to propagation;
+///   walkers that model resets clear at their own call sites)
+/// - **Measure gates**: collapse via [`cross_measurement`] -- the component that
+///   commutes with the measurement in the direction of travel is absorbed
 #[inline]
 pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Direction) {
     if apply_named_gate(prop, gate.gate_type, &gate.qubits, direction) {
@@ -107,6 +109,97 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
     }
 }
 
+/// The component operations `cross_measurement` needs, implemented by both
+/// Pauli-propagation representations so the collapse rule has exactly one
+/// implementation.
+pub trait PauliComponents {
+    fn contains_x(&self, qubit: usize) -> bool;
+    fn contains_z(&self, qubit: usize) -> bool;
+    fn toggle_x(&mut self, qubit: usize);
+    fn toggle_z(&mut self, qubit: usize);
+    fn clear_qubit(&mut self, qubit: usize);
+}
+
+impl PauliComponents for PauliProp {
+    fn contains_x(&self, qubit: usize) -> bool {
+        Self::contains_x(self, qubit)
+    }
+    fn contains_z(&self, qubit: usize) -> bool {
+        Self::contains_z(self, qubit)
+    }
+    fn toggle_x(&mut self, qubit: usize) {
+        self.track_x(&[qubit]);
+    }
+    fn toggle_z(&mut self, qubit: usize) {
+        self.track_z(&[qubit]);
+    }
+    fn clear_qubit(&mut self, qubit: usize) {
+        Self::clear_qubit(self, qubit);
+    }
+}
+
+impl PauliComponents for pecos_simulators::BitmaskPauliProp {
+    fn contains_x(&self, qubit: usize) -> bool {
+        Self::contains_x(self, qubit)
+    }
+    fn contains_z(&self, qubit: usize) -> bool {
+        Self::contains_z(self, qubit)
+    }
+    fn toggle_x(&mut self, qubit: usize) {
+        self.track_x(&[qubit]);
+    }
+    fn toggle_z(&mut self, qubit: usize) {
+        self.track_z(&[qubit]);
+    }
+    fn clear_qubit(&mut self, qubit: usize) {
+        Self::clear_qubit(self, qubit);
+    }
+}
+
+/// Cross a measurement site with a propagating Pauli.
+///
+/// Clearing follows whether the gate *discards* the qubit, not whether it
+/// measures. A non-destructive Z-collapse (`MZ`, `MeasureLeaked` -- executed
+/// as a plain `MZ` with no reset):
+///
+/// - Forward: `(x, z) -> (x, 0)`. The X component survives -- the faulty and
+///   ideal runs still differ by X after collapse, so later measurements keep
+///   flipping (Stim's `M`-versus-`MR` distinction) -- while the Z component
+///   is absorbed. This is Stim's frame algebra with the measurement gauge
+///   fixed to identity instead of randomized; the two choices differ only on
+///   individually non-deterministic measurements, where any detector is
+///   invalid input, and the difference cancels in every deterministic
+///   detector XOR.
+/// - Backward: the symplectic adjoint, `(x, z) -> (0, z)`, so the two
+///   directions agree by construction. A Z-type observable passes through; an
+///   X-type observable is dropped -- relative to the gauge, nothing before
+///   the collapse deterministically flips it.
+///
+/// `MeasureFree` discards the qubit: nothing crosses in either direction.
+pub fn cross_measurement<P: PauliComponents>(
+    prop: &mut P,
+    qubit: usize,
+    gate_type: GateType,
+    direction: Direction,
+) {
+    match gate_type {
+        GateType::MZ | GateType::MeasureLeaked => match direction {
+            Direction::Forward => {
+                if prop.contains_z(qubit) {
+                    prop.toggle_z(qubit);
+                }
+            }
+            Direction::Backward => {
+                if prop.contains_x(qubit) {
+                    prop.toggle_x(qubit);
+                }
+            }
+        },
+        GateType::MeasureFree => prop.clear_qubit(qubit),
+        _ => debug_assert!(false, "cross_measurement called on {gate_type:?}"),
+    }
+}
+
 #[inline]
 fn apply_named_gate(
     prop: &mut PauliProp,
@@ -115,6 +208,11 @@ fn apply_named_gate(
     direction: Direction,
 ) -> bool {
     match gate_type {
+        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+            for qid in qubits {
+                cross_measurement(prop, qid.index(), gate_type, direction);
+            }
+        }
         // Self-adjoint single-qubit gates - same in both directions
         GateType::I => {
             prop.identity(qubits);
@@ -580,5 +678,61 @@ mod batched_pair_tests {
                  comparison would be vacuous for this gate"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod collapse_tests {
+    use super::{Direction, cross_measurement};
+    use pecos_quantum::GateType;
+    use pecos_simulators::PauliProp;
+
+    /// Forward across a non-destructive measurement: X survives, Z is
+    /// absorbed. This is the StateVec-verified behavior (X; MZ -> 1; MZ -> 1)
+    /// and Stim's `M`.
+    #[test]
+    fn forward_nondestructive_keeps_x_drops_z() {
+        for gate_type in [GateType::MZ, GateType::MeasureLeaked] {
+            let mut prop = PauliProp::new();
+            prop.track_y(&[0]);
+            cross_measurement(&mut prop, 0, gate_type, Direction::Forward);
+            assert!(prop.contains_x(0), "{gate_type:?}: X must survive");
+            assert!(!prop.contains_z(0), "{gate_type:?}: Z must be absorbed");
+        }
+    }
+
+    /// Backward is the mirror: Z passes (errors before the measurement flip
+    /// both it and later measurements), X is dropped (an X-type observable
+    /// gains no deterministic dependence on anything before the collapse).
+    #[test]
+    fn backward_nondestructive_keeps_z_drops_x() {
+        for gate_type in [GateType::MZ, GateType::MeasureLeaked] {
+            let mut prop = PauliProp::new();
+            prop.track_y(&[0]);
+            cross_measurement(&mut prop, 0, gate_type, Direction::Backward);
+            assert!(!prop.contains_x(0), "{gate_type:?}: X must be dropped");
+            assert!(prop.contains_z(0), "{gate_type:?}: Z must pass");
+        }
+    }
+
+    /// A discarded qubit carries nothing across, in either direction.
+    #[test]
+    fn measure_free_clears_both_directions() {
+        for direction in [Direction::Forward, Direction::Backward] {
+            let mut prop = PauliProp::new();
+            prop.track_y(&[0]);
+            cross_measurement(&mut prop, 0, GateType::MeasureFree, direction);
+            assert!(!prop.contains_x(0) && !prop.contains_z(0));
+        }
+    }
+
+    /// Untouched qubits are untouched.
+    #[test]
+    fn collapse_is_local_to_the_measured_qubit() {
+        let mut prop = PauliProp::new();
+        prop.track_y(&[0]);
+        prop.track_y(&[1]);
+        cross_measurement(&mut prop, 0, GateType::MZ, Direction::Forward);
+        assert!(prop.contains_x(1) && prop.contains_z(1));
     }
 }

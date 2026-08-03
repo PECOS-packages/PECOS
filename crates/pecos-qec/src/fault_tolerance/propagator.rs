@@ -107,9 +107,9 @@ pub use dag::{
     GateFaultLocation, InfluencesSoA, InfluencesSoAStats, SoARecorderBuilder,
 };
 pub use pauli::{
-    Direction, apply_gate, init_pauli_prop_with_fault, propagate_backward_from_tick,
-    propagate_fault_backward, propagate_observable_backward, propagate_through_circuit,
-    propagate_tick_range,
+    Direction, apply_gate, cross_measurement, init_pauli_prop_with_fault,
+    propagate_backward_from_tick, propagate_fault_backward, propagate_observable_backward,
+    propagate_through_circuit, propagate_tick_range,
 };
 pub use tick::TickFaultAnalyzer;
 pub use types::{

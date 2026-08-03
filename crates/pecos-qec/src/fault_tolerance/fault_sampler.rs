@@ -519,7 +519,9 @@ fn propagate_forward(
             GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
                 prop.clear_qubit(loc.qubits[0]);
             }
-            // MZ: X component flips the measurement, then qubit state collapses
+            // The X component flips the measurement and then survives the
+            // collapse -- a non-destructive measurement absorbs only the Z
+            // component. Only a discarded qubit (`MeasureFree`) clears fully.
             GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
                 if !loc.qubits.is_empty() =>
             {
@@ -529,7 +531,12 @@ fn propagate_forward(
                 {
                     affected.insert(meas_idx);
                 }
-                prop.clear_qubit(q);
+                super::propagator::cross_measurement(
+                    prop,
+                    q,
+                    loc.gate_type,
+                    super::propagator::Direction::Forward,
+                );
             }
             _ => {}
         }
@@ -2327,10 +2334,13 @@ mod tests {
         );
     }
 
+    /// Collapse projects; it does not reset. After the first measurement the
+    /// faulty and ideal states still differ by X, so the second measurement is
+    /// flipped too -- verified directly on `StateVec` (X; MZ -> 1; MZ -> 1)
+    /// and matching Stim's `M`-versus-`MR` distinction. Clearing here was the
+    /// defect: it predicted the second measurement unflipped.
     #[test]
-    fn test_propagate_x_absorbed_by_mz() {
-        // Circuit: MZ(0) MZ(0) — X on q0 should flip first MZ only
-        // (MZ collapses qubit, absorbing the error)
+    fn test_propagate_x_persists_through_nondestructive_mz() {
         let mut tc = TickCircuit::new();
         tc.tick().mz(&[QubitId(0)]);
         tc.tick().mz(&[QubitId(0)]);
@@ -2339,8 +2349,53 @@ mod tests {
         let affected = propagate_single(PauliType::X, 0, 0, &gates, &meas_pos);
         assert_eq!(
             affected,
+            BTreeSet::from([0, 1]),
+            "X before a non-destructive MZ flips it AND every later measurement \
+             on the qubit until a reset or free"
+        );
+    }
+
+    /// The Z component is what collapse absorbs: it commutes with the
+    /// measurement, and both branches land on the same eigenstate up to phase.
+    #[test]
+    fn test_propagate_z_component_absorbed_by_mz() {
+        // Z -> (via H) X flips the first MZ; the surviving component after the
+        // collapse is X only, so an H after the measurement rotates it to Z,
+        // which cannot flip the final MZ. If the Z component survived the
+        // collapse, the recombined Y would flip it.
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+
+        let (gates, meas_pos) = flatten_tick_circuit(&tc);
+        let affected = propagate_single(PauliType::Y, 0, 0, &gates, &meas_pos);
+        assert_eq!(
+            affected,
             BTreeSet::from([0]),
-            "X should flip first MZ only, not second"
+            "the Y's X part flips MZ 0 (Y -> H -> Y anticommutes with Z); only \
+             X survives the collapse, and H turns it into Z, invisible to MZ 1"
+        );
+    }
+
+    /// `MeasureFree` discards the qubit, so it genuinely clears: an error
+    /// before it cannot reach anything after.
+    #[test]
+    fn test_propagate_x_cleared_by_measure_free() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .try_add_gate(pecos_core::Gate::mz_free(&[0usize]))
+            .expect("gate is valid");
+        tc.tick().pz(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+
+        let (gates, meas_pos) = flatten_tick_circuit(&tc);
+        let affected = propagate_single(PauliType::X, 0, 0, &gates, &meas_pos);
+        assert_eq!(
+            affected,
+            BTreeSet::from([0]),
+            "X flips the MeasureFree it precedes and nothing after the discard"
         );
     }
 

@@ -24,6 +24,7 @@ use std::hash::{Hash, Hasher};
 use crate::prelude::{
     Pauli as RustPauli, PauliOperator, PauliString as RustPauliString, QuarterPhase, QubitId,
 };
+use pecos_core::{Xs as RustXs, Ys as RustYs, Zs as RustZs};
 use pyo3::prelude::*;
 
 /// Single-qubit Pauli operator (I, X, Y, Z)
@@ -595,6 +596,27 @@ pub fn Z(qubit: usize) -> PauliString {
     }
 }
 
+/// Create a multi-qubit X `PauliString`: `Xs([0, 2, 5])`.
+#[pyfunction]
+#[allow(non_snake_case)]
+pub fn Xs(qubits: Vec<usize>) -> PauliString {
+    PauliString::from_rust(RustXs(qubits))
+}
+
+/// Create a multi-qubit Y `PauliString`: `Ys([0, 2, 5])`.
+#[pyfunction]
+#[allow(non_snake_case)]
+pub fn Ys(qubits: Vec<usize>) -> PauliString {
+    PauliString::from_rust(RustYs(qubits))
+}
+
+/// Create a multi-qubit Z `PauliString`: `Zs([0, 2, 5])`.
+#[pyfunction]
+#[allow(non_snake_case)]
+pub fn Zs(qubits: Vec<usize>) -> PauliString {
+    PauliString::from_rust(RustZs(qubits))
+}
+
 /// Register Pauli types with Python module
 pub fn register_pauli_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Pauli>()?;
@@ -602,5 +624,8 @@ pub fn register_pauli_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(pyo3::wrap_pyfunction!(X, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(Y, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(Z, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(Xs, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(Ys, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(Zs, m)?)?;
     Ok(())
 }

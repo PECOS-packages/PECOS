@@ -71,6 +71,7 @@ mod sparse_stab_engine_bindings;
 mod stab_bindings;
 mod stab_vec_bindings;
 mod stabilizer_code_bindings;
+mod stabilizer_code_spec_bindings;
 mod stabilizer_group_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
@@ -303,6 +304,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register stabilizer group, Pauli sequence, and Clifford types
     stabilizer_group_bindings::register_stabilizer_group_types(m)?;
     stabilizer_code_bindings::register_stabilizer_code_types(m)?;
+    stabilizer_code_spec_bindings::register_stabilizer_code_spec_types(m)?;
     pauli_sequence_bindings::register_pauli_sequence_types(m)?;
     clifford_rep_bindings::register_clifford_types(m)?;
 

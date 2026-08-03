@@ -75,6 +75,42 @@ pub struct StabilizerCodeSpec {
     distance: Option<usize>,
 }
 
+impl std::fmt::Display for StabilizerCodeSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "[[{}, {}]]", self.num_qubits, self.num_logical_qubits())?;
+
+        writeln!(f, "Stabilizer generators:")?;
+        for stabilizer in &self.stabilizers {
+            writeln!(f, "{}", stabilizer.to_dense_str(Some(self.num_qubits)))?;
+        }
+
+        writeln!(f, "Destabilizer generators:")?;
+        for destabilizer in &self.destabilizers {
+            writeln!(f, "{}", destabilizer.to_dense_str(Some(self.num_qubits)))?;
+        }
+
+        writeln!(f, "Logical operators:")?;
+        for (index, (logical_z, logical_x)) in
+            self.logical_zs.iter().zip(&self.logical_xs).enumerate()
+        {
+            writeln!(
+                f,
+                "Z{}: {}",
+                index + 1,
+                logical_z.to_dense_str(Some(self.num_qubits))
+            )?;
+            writeln!(
+                f,
+                "X{}: {}",
+                index + 1,
+                logical_x.to_dense_str(Some(self.num_qubits))
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Column-based index for efficient commutation checking.
 ///
 /// For each qubit, tracks which operators have X or Z on that qubit.
@@ -1056,7 +1092,7 @@ impl StabilizerCodeSpecBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::Pauli;
+    use pecos_core::{Pauli, Zs};
 
     /// Helper to create a `PauliString` from a simple specification.
     fn pauli_string(paulis: &[(Pauli, usize)]) -> PauliString {
@@ -1065,6 +1101,30 @@ mod tests {
             pecos_core::QuarterPhase::PlusOne,
             paulis.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
+    }
+
+    #[test]
+    fn display_includes_generators_and_paired_logicals_in_order() {
+        let code = StabilizerCodeSpecBuilder::new(3)
+            .check(Zs([0, 1]))
+            .check(Zs([1, 2]))
+            .build_with_discovered_logicals()
+            .unwrap();
+
+        let rendered = code.to_string();
+        assert!(rendered.starts_with("[[3, 1]]\nStabilizer generators:\n"));
+
+        let stabilizer_section = rendered.find("Stabilizer generators:").unwrap();
+        let destabilizer_section = rendered.find("Destabilizer generators:").unwrap();
+        let logical_section = rendered.find("Logical operators:").unwrap();
+        assert!(stabilizer_section < destabilizer_section);
+        assert!(destabilizer_section < logical_section);
+
+        for operator in code.stabilizers().iter().chain(code.destabilizers()) {
+            assert!(rendered.contains(&operator.to_dense_str(Some(3))));
+        }
+        assert!(rendered.contains("Z1: "));
+        assert!(rendered.contains("X1: "));
     }
 
     #[test]

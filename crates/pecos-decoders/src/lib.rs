@@ -5,7 +5,8 @@
 //!
 //! ## Features
 //!
-//! - `frontier` - Frontier approximate logical maximum-likelihood decoder (pure Rust)
+//! - `frontier` - Frontier approximate logical maximum-likelihood decoder (pure Rust;
+//!   native implementation of arXiv:2606.20513, not a wrap of the upstream package)
 //! - `ldpc` - LDPC decoders (BP-OSD, BP-LSD, Union-Find, etc.)
 //! - `fusion-blossom` - Fusion Blossom MWPM decoder (pure Rust)
 //! - `pymatching` - `PyMatching` MWPM decoder (C++ FFI)

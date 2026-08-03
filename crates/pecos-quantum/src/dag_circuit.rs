@@ -2059,6 +2059,11 @@ impl DagCircuit {
     /// # Errors
     ///
     /// Returns an error if the circuit has no measurement ids left to mint.
+    ///
+    /// # Panics
+    ///
+    /// Cannot panic in practice: the freshly added `MPZ` gate always holds
+    /// its measurement references.
     pub fn try_mpz(
         &mut self,
         qubits: &[impl Into<QubitId> + Copy],

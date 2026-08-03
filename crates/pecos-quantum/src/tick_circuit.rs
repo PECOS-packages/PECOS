@@ -3218,10 +3218,6 @@ impl<'a> TickHandle<'a> {
     /// circuit.tick().mz_free(&[0, 1]);
     /// ```
     ///
-    /// # Panics
-    ///
-    /// Panics if the circuit has no measurement records left below
-    /// [`usize::MAX`].
     /// Measure +Z and prepare |0> (measure-and-prepare).
     ///
     /// Returns one [`TickMeasRef`] per qubit, like `mz()`.
@@ -3261,6 +3257,11 @@ impl<'a> TickHandle<'a> {
             .collect()
     }
 
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit has no measurement records left below
+    /// [`usize::MAX`].
     pub fn mz_free(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<TickMeasRef> {
         let mut gate = Gate::mz_free(qubits);
         let mut refs = Vec::with_capacity(qubits.len());

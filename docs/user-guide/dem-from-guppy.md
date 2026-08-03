@@ -197,36 +197,47 @@ different DEM.
 
 ## Idle Noise
 
-The recommended structured interface has three uniform rate-and-model
-families. Every model value is a **relative-rate multiplier**: for each axis,
-`axis_rate = family_rate * axis_multiplier`. The linear law is additive, so
+The recommended structured interface has three rate-and-model families. Every
+model value is a **relative-rate multiplier**: for each channel,
+`channel_rate = family_rate * channel_multiplier`. The linear law is additive, so
 its multipliers are exactly the engines relative-probability distribution and
 must sum to 1. The nonlinear laws are not additive, so their finite,
 non-negative multipliers have no sum constraint.
 
 - Linear: `p_idle_linear` with `p_idle_linear_model`. An axis fault has
   probability `(p_idle_linear * m_axis) * t`. The model keys are `X`, `Y`, and
-  `Z`, and the default is the uniform `{X: 1/3, Y: 1/3, Z: 1/3}` engines
-  model. `p_idle` remains shorthand for that uniform model.
-- Sine-squared: `p_idle_sin_squared` with `p_idle_sin_squared_model`. An axis
+  `Z`, plus the engines leakage key `L`. The default is the uniform
+  `{X: 1/3, Y: 1/3, Z: 1/3}` engines model. An explicit `L` weight participates
+  in the sum-to-1 requirement. `p_idle` remains shorthand for the uniform
+  Pauli model.
+- Sine-squared: `p_idle_sin_squared` with `p_idle_sin_squared_model`. A Pauli
   fault has probability `sin((p_idle_sin_squared * m_axis) * t) ** 2`. The
-  model keys are `X`, `Y`, and `Z`; there is no sum constraint, and the default
-  `{Z: 1.0}` means scalar-only use is full-rate stochastic Z dephasing.
+  model keys are `X`, `Y`, `Z`, and `L`; there is no sum constraint. The
+  symmetric default `{X: 1.0, Y: 1.0, Z: 1.0}` applies the full family rate to
+  every Pauli axis—these are multipliers, not shares of a normalized total.
+  To request pure dephasing instead, pass the explicit model `{"Z": 1.0}`.
 - Coherent: `p_idle_coherent` with `p_idle_coherent_model`. An axis rotation has
-  angle `(p_idle_coherent * m_axis) * t`. The default is `{RZ: 1.0}`. DEM v1
-  represents only RZ, so nonzero `RX`/`RY` multipliers are rejected and `U` is
-  reserved for future Hamiltonian-level support. This constructor stores RZ as
-  its exact Pauli twirl — a stochastic Z channel with half-angle probability
-  `sin(rate / 2) ** 2` per unit idle time, via an equivalent T2. True coherent
-  cross-location accumulation belongs to the EEG tooling. Because this
-  conversion replaces the base idle channel, the coherent family cannot be
-  combined with `p_idle` or `t1`/`t2` (and `p_idle` with `t1`/`t2` is likewise
-  rejected — the T1/T2 channel replaces the depolarizing base channel).
+  angle `(p_idle_coherent * m_axis) * t`. The symmetric default is
+  `{RX: 1.0, RY: 1.0, RZ: 1.0}`. The standard DEM builder cannot represent
+  coherent idle noise, so it rejects every nonzero family rate at call time;
+  its previous lowering silently stored the Pauli twirl and discarded exactly
+  the coherence requested. The EEG coherent route in `exp/pecos-eeg` is the
+  consumer that can represent coherent idle noise, and only with an RZ
+  generator even there. For an honest stochastic equivalent, the exact Pauli
+  twirl of `RZ(rate * t)`, use `p_idle_sin_squared=rate/2` with
+  `p_idle_sin_squared_model={"Z": 1.0}`. A coherent rate of zero or `None` has
+  no effect. The `RX`, `RY`, and `RZ` model keys are validation-only on this DEM
+  route; `L` and `U` are not valid coherent-model keys.
 
-The engines `L` leakage key is reserved but rejected for all three models
-because DEM construction cannot represent leakage. Multi-qubit idle faults
-are outside the scope of these keyword arguments and will arrive through a
-typed channel interface.
+The `p_idle` shorthand cannot be combined with `t1`/`t2`: the T1/T2 channel
+replaces the depolarizing base channel, so the combination is rejected.
+
+The engines simulators can consume leakage models, such as an engines-bound
+linear model `{"X": 0.8, "L": 0.2}`. DEM fault propagation is Pauli-only:
+these DEM entry points accept `L` in linear and sine-squared models for model
+compatibility, but reject it at call time when its weight is nonzero. A zero
+`L` weight is silently accepted. Multi-qubit idle faults are outside the scope
+of these keyword arguments and will arrive through a typed channel interface.
 
 These rates match the engines *runtime* application semantics
 (`GeneralNoiseModel`'s internal fields); the engines `GeneralNoiseModelBuilder`

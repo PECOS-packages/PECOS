@@ -108,6 +108,10 @@ ignore = [
     "INP001",   # Implicit namespace package - standalone scripts, not a package
     "S311",     # Standard pseudo-random - fixed-seed case sampling, not crypto
 ]
+"exp/*/tests/fixtures/*.py" = [
+    "INP001",   # Implicit namespace package - standalone scripts, not a package
+    "S311",     # Standard pseudo-random - fixed-seed case sampling, not crypto
+]
 
 # Main pecos __init__.py - special case for module initialization
 "python/quantum-pecos/src/pecos/__init__.py" = [

@@ -1,21 +1,21 @@
-# Ordering + committee golden-fixture generator for pecos-frontier, run against
-# the upstream frontier package (github.com/aleverrier/frontier, arXiv:2606.20513).
-#
-# Orchestrator-owned oracle: this script and its JSON output are authored and
-# committed by the reviewer, not by the implementation. The implementation must
-# never edit them.
-#
-# Usage (from a clone of the upstream repo with its venv built):
-#   .venv/bin/python generate_upstream_order_fixtures.py > upstream_order_fixtures.json
-#
-# Per fixture: mechanisms in TIME order. Expected values from upstream:
-# - forward_ordering: optimize_column_order permutation over the time-ordered
-#   columns (deadline reorder). ordering[target] = source index.
-# - backward_ordering: reverse the forward-ordered columns, then
-#   optimize_column_order again (build_backward_deadline_ordered_family
-#   semantics), composed back to original mechanism indices.
-# - committee: decode_frontier_committee on the forward-ordered model per
-#   syndrome: status, logical_hat, direction, log_evidence.
+"""Ordering + committee golden-fixture generator, run against the upstream frontier package.
+
+Orchestrator-owned oracle: this script and its JSON output are authored and
+committed by the reviewer, not by the implementation. The implementation must
+never edit them.
+
+Usage (from a clone of the upstream repo with its venv built):
+  .venv/bin/python generate_upstream_order_fixtures.py > upstream_order_fixtures.json
+
+Per fixture: mechanisms in TIME order. Expected values from upstream:
+- forward_ordering: optimize_column_order permutation over the time-ordered
+  columns (deadline reorder). ordering[target] = source index.
+- backward_ordering: reverse the forward-ordered columns, then
+  optimize_column_order again (build_backward_deadline_ordered_family
+  semantics), composed back to original mechanism indices.
+- committee: decode_frontier_committee on the forward-ordered model per
+  syndrome: status, logical_hat, direction, log_evidence.
+"""
 
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ from frontier.progressive import (
 from tools.frontier_progressive import _reverse_progressive_columns
 
 
-def build_columns(mechanisms):
+def build_columns(mechanisms: list) -> list:
+    """Build upstream progressive columns from binary mechanisms in time order."""
     factors = []
     for idx, (p, dets, obs) in enumerate(mechanisms):
         det_mask = 0
@@ -53,12 +54,18 @@ def build_columns(mechanisms):
                 ),
                 instruction_offset=idx,
                 label=f"f{idx}",
-            )
+            ),
         )
     return list(columns_from_factor_transitions(tuple(factors)))
 
 
-def random_mechanisms(rng, num_mechs, num_detectors, num_observables):
+def random_mechanisms(
+    rng: random.Random,
+    num_mechs: int,
+    num_detectors: int,
+    num_observables: int,
+) -> list:
+    """Sample a seeded random binary-mechanism list (detector-free allowed)."""
     mechs = []
     for _ in range(num_mechs):
         n_d = rng.choice([0, 1, 1, 2, 2, 3])
@@ -69,7 +76,8 @@ def random_mechanisms(rng, num_mechs, num_detectors, num_observables):
     return mechs
 
 
-def main():
+def main() -> int:
+    """Emit the ordering/committee fixture JSON to stdout."""
     fixtures = []
 
     # F1: hand-built chain where time order != deadline order.
@@ -89,7 +97,7 @@ def main():
             "num_observables": 2,
             "syndromes": list(range(16)),
             "pruned": {"k": 3, "delta": 25.0},
-        }
+        },
     )
 
     # F2/F3: seeded random models (include detector-free mechanisms).
@@ -103,26 +111,26 @@ def main():
                 "num_observables": num_obs,
                 "syndromes": sorted(rng.sample(range(1 << num_dets), 10)),
                 "pruned": {"k": 3, "delta": 25.0},
-            }
+            },
         )
 
     for fx in fixtures:
         time_columns = build_columns(fx["mechanisms"])
         forward_columns, forward_ordering = optimize_column_order(
-            list(time_columns), num_detectors=fx["num_detectors"]
+            list(time_columns),
+            num_detectors=fx["num_detectors"],
         )
         fx["forward_ordering"] = [int(v) for v in forward_ordering]
 
         reversed_columns = _reverse_progressive_columns(forward_columns)
         _backward_columns, backward_ordering_local = optimize_column_order(
-            list(reversed_columns), num_detectors=fx["num_detectors"]
+            list(reversed_columns),
+            num_detectors=fx["num_detectors"],
         )
         # Compose back to original mechanism indices: reversed[i] came from
         # forward position len-1-i, which came from mechanism forward_ordering[...].
         n = len(forward_ordering)
-        backward_in_original = [
-            int(forward_ordering[n - 1 - int(local)]) for local in backward_ordering_local
-        ]
+        backward_in_original = [int(forward_ordering[n - 1 - int(local)]) for local in backward_ordering_local]
         fx["backward_ordering"] = backward_in_original
 
         model = FrontierModel(
@@ -134,7 +142,10 @@ def main():
         committee = []
         for syndrome in fx["syndromes"]:
             r = decode_frontier_committee(
-                model, syndrome, K=fx["pruned"]["k"], Delta=fx["pruned"]["delta"]
+                model,
+                syndrome,
+                K=fx["pruned"]["k"],
+                Delta=fx["pruned"]["delta"],
             )
             committee.append(
                 {
@@ -144,7 +155,7 @@ def main():
                     "direction": r.direction,
                     "log_evidence": r.log_evidence if math.isfinite(r.log_evidence) else None,
                     "engine": r.engine,
-                }
+                },
             )
         fx["expected_committee"] = committee
 

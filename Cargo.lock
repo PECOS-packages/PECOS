@@ -4816,6 +4816,7 @@ dependencies = [
  "num-complex 0.4.6",
  "pecos-core",
  "pecos-eeg",
+ "pecos-frontier",
  "pecos-neo",
  "pecos-qec",
  "pecos-quantum",

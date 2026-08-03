@@ -63,6 +63,38 @@ impl Default for FrontierConfig {
     }
 }
 
+/// Generate the deadline-optimized processing order for a sparse DEM.
+///
+/// The input mechanism order is treated as time order. Mechanisms that can
+/// close detectors earlier are placed first; detector-free mechanisms sort
+/// last. The returned permutation maps target positions to source mechanism
+/// indices and can be assigned directly to [`FrontierConfig::column_order`].
+///
+/// # Errors
+///
+/// Returns [`DecoderError::InvalidConfiguration`] if a mechanism contains an
+/// out-of-range or duplicate detector index.
+pub fn deadline_column_order(dem: &SparseDem) -> Result<Vec<usize>, DecoderError> {
+    let time_order: Vec<usize> = (0..dem.mechanisms.len()).collect();
+    deadline_order_for_sequence(dem, &time_order)
+}
+
+/// Generate the backward deadline-optimized processing order for a sparse DEM.
+///
+/// This first computes the forward deadline order, reverses that ordered
+/// sequence, reruns deadline optimization in the reversed time coordinates,
+/// and composes the result back to original mechanism indices.
+///
+/// # Errors
+///
+/// Returns [`DecoderError::InvalidConfiguration`] if a mechanism contains an
+/// out-of-range or duplicate detector index.
+pub fn backward_deadline_column_order(dem: &SparseDem) -> Result<Vec<usize>, DecoderError> {
+    let mut reversed_forward = deadline_column_order(dem)?;
+    reversed_forward.reverse();
+    deadline_order_for_sequence(dem, &reversed_forward)
+}
+
 /// Retained unnormalized joint log mass for one logical label.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrontierLogicalMass {
@@ -97,6 +129,46 @@ pub struct FrontierResult {
     /// and numeric label ascending. The first entry is the winning label and
     /// its retained log mass.
     pub logical_masses: Vec<FrontierLogicalMass>,
+}
+
+/// Direction selected by [`FrontierCommittee`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommitteeDirection {
+    /// The configured processing order.
+    Forward,
+    /// The plain reverse of the configured processing order.
+    Backward,
+}
+
+/// Decode status for one committee leg.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommitteeStatus {
+    /// The leg retained at least one terminal state.
+    Ok,
+    /// The leg found no retained path for the syndrome.
+    NoPath,
+}
+
+/// Summary of one committee leg.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CommitteeMember {
+    /// Decode status for this leg.
+    pub status: CommitteeStatus,
+    /// Total retained log evidence, or negative infinity for no path.
+    pub log_evidence: f64,
+}
+
+/// Result selected from the forward/backward committee.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrontierCommitteeResult {
+    /// Full result from the selected leg.
+    pub selected: FrontierResult,
+    /// Direction of the selected leg.
+    pub direction: CommitteeDirection,
+    /// Forward-leg status and evidence.
+    pub forward: CommitteeMember,
+    /// Backward-leg status and evidence.
+    pub backward: CommitteeMember,
 }
 
 #[derive(Clone, Debug)]
@@ -160,6 +232,13 @@ pub struct FrontierDecoder {
     touched_detectors: Vec<u64>,
     forced_syndrome: Vec<u64>,
     forced_logical: Vec<u64>,
+}
+
+/// Two-leg Frontier decoder using a processing order and its plain reverse.
+#[derive(Clone, Debug)]
+pub struct FrontierCommittee {
+    forward: FrontierDecoder,
+    backward: FrontierDecoder,
 }
 
 impl FrontierDecoder {
@@ -394,6 +473,89 @@ impl FrontierDecoder {
     }
 }
 
+impl FrontierCommittee {
+    /// Construct a forward/backward committee from a sparse DEM.
+    ///
+    /// The forward leg uses `config.column_order` (or DEM order when absent).
+    /// The backward leg uses the plain reverse of that same sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] when the configuration or
+    /// DEM is invalid.
+    pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
+        let FrontierConfig {
+            k,
+            delta,
+            score_alpha,
+            column_order,
+        } = config;
+        let mut forward_order = column_order.unwrap_or_else(|| (0..dem.mechanisms.len()).collect());
+        let forward = FrontierDecoder::from_sparse_dem(
+            dem,
+            FrontierConfig {
+                k,
+                delta,
+                score_alpha,
+                column_order: Some(forward_order.clone()),
+            },
+        )?;
+        forward_order.reverse();
+        let backward_config = FrontierConfig {
+            k,
+            delta,
+            score_alpha,
+            column_order: Some(forward_order),
+        };
+        let backward = FrontierDecoder::from_sparse_dem(dem, backward_config)?;
+        Ok(Self { forward, backward })
+    }
+
+    /// Parse a Stim-format detector error model and construct a committee.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if parsing or committee construction fails.
+    pub fn from_dem_str(dem_str: &str, config: FrontierConfig) -> Result<Self, DecoderError> {
+        let dem = SparseDem::from_dem_str(dem_str)?;
+        Self::from_sparse_dem(&dem, config)
+    }
+
+    /// Decode with both processing directions and select the stronger result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the standard unexplainable-syndrome error if both legs find no
+    /// retained path.
+    pub fn decode(&mut self, syndrome: &[u8]) -> Result<FrontierCommitteeResult, DecoderError> {
+        let forward_result = self.forward.decode(syndrome);
+        let backward_result = self.backward.decode(syndrome);
+        let forward = committee_member(&forward_result);
+        let backward = committee_member(&backward_result);
+        let (selected, direction) = match (forward_result, backward_result) {
+            (Err(_), Err(_)) => return Err(unexplainable_error()),
+            (Ok(selected), Err(_)) => (selected, CommitteeDirection::Forward),
+            (Err(_), Ok(selected)) => (selected, CommitteeDirection::Backward),
+            (Ok(forward_result), Ok(backward_result)) => {
+                if compare_committee_legs(Some(&forward_result), Some(&backward_result))
+                    == Ordering::Less
+                {
+                    (backward_result, CommitteeDirection::Backward)
+                } else {
+                    (forward_result, CommitteeDirection::Forward)
+                }
+            }
+        };
+
+        Ok(FrontierCommitteeResult {
+            selected,
+            direction,
+            forward,
+            backward,
+        })
+    }
+}
+
 impl ObservableDecoder for FrontierDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
         Ok(self.decode(syndrome)?.predicted)
@@ -408,6 +570,134 @@ impl ObservableDecoder for FrontierDecoder {
         let decoded = self.decode(syndrome)?.predicted;
         Ok(decoded.words().first().copied().unwrap_or(0))
     }
+}
+
+impl ObservableDecoder for FrontierCommittee {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        Ok(self.decode(syndrome)?.selected.predicted)
+    }
+}
+
+type DeadlineKey = (usize, usize, usize, usize, usize);
+
+fn deadline_order_for_sequence(
+    dem: &SparseDem,
+    sequence: &[usize],
+) -> Result<Vec<usize>, DecoderError> {
+    let sentinel = dem.mechanisms.len() + 1;
+    let mut first_touch = vec![sentinel; dem.num_detectors];
+    let mut last_touch = vec![sentinel; dem.num_detectors];
+
+    for (position, &mechanism_index) in sequence.iter().enumerate() {
+        let detectors = &dem.mechanisms[mechanism_index].1;
+        validate_indices(detectors, dem.num_detectors, "detector", mechanism_index)?;
+        for &detector in detectors {
+            let detector = detector as usize;
+            first_touch[detector] = first_touch[detector].min(position);
+            last_touch[detector] = position;
+        }
+    }
+
+    let mut positions: Vec<usize> = (0..sequence.len()).collect();
+    positions.sort_by_key(|&position| -> DeadlineKey {
+        let mechanism_index = sequence[position];
+        let detectors = &dem.mechanisms[mechanism_index].1;
+        if detectors.is_empty() {
+            return (sentinel, sentinel, sentinel, mechanism_index, position);
+        }
+
+        let (earliest_last, latest_last, earliest_first) = detectors.iter().fold(
+            (sentinel, 0, sentinel),
+            |(min_last, max_last, min_first), &detector| {
+                let detector = detector as usize;
+                (
+                    min_last.min(last_touch[detector]),
+                    max_last.max(last_touch[detector]),
+                    min_first.min(first_touch[detector]),
+                )
+            },
+        );
+        (
+            earliest_last,
+            latest_last,
+            earliest_first,
+            mechanism_index,
+            position,
+        )
+    });
+    Ok(positions
+        .into_iter()
+        .map(|position| sequence[position])
+        .collect())
+}
+
+fn committee_member(result: &Result<FrontierResult, DecoderError>) -> CommitteeMember {
+    match result {
+        Ok(decoded) => CommitteeMember {
+            status: CommitteeStatus::Ok,
+            log_evidence: decoded.log_evidence,
+        },
+        Err(_) => CommitteeMember {
+            status: CommitteeStatus::NoPath,
+            log_evidence: f64::NEG_INFINITY,
+        },
+    }
+}
+
+fn compare_committee_legs(
+    forward: Option<&FrontierResult>,
+    backward: Option<&FrontierResult>,
+) -> Ordering {
+    let forward_rank = committee_rank(forward, true);
+    let backward_rank = committee_rank(backward, false);
+    forward_rank
+        .iter()
+        .zip(backward_rank)
+        .find_map(|(forward_component, backward_component)| {
+            let ordering = forward_component.total_cmp(&backward_component);
+            (ordering != Ordering::Equal).then_some(ordering)
+        })
+        .unwrap_or(Ordering::Equal)
+}
+
+fn committee_rank(result: Option<&FrontierResult>, is_forward: bool) -> [f64; 6] {
+    let forward_bonus = if is_forward { 1.0 } else { 0.0 };
+    let Some(result) = result else {
+        return [
+            1.0,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+            0.0,
+            forward_bonus,
+        ];
+    };
+
+    let terminal_gap = result.runner_up_gap.unwrap_or(f64::INFINITY);
+    let terminal_gap = if terminal_gap.is_nan() {
+        f64::NEG_INFINITY
+    } else {
+        terminal_gap
+    };
+    let top_one_posterior = result
+        .logical_masses
+        .first()
+        .map_or(f64::NEG_INFINITY, |winner| {
+            winner.log_mass - result.log_evidence
+        });
+    let top_one_posterior = if top_one_posterior.is_finite() {
+        top_one_posterior
+    } else {
+        f64::NEG_INFINITY
+    };
+    [
+        2.0,
+        result.log_evidence,
+        terminal_gap,
+        top_one_posterior,
+        0.0,
+        forward_bonus,
+    ]
 }
 
 fn validate_config(config: &FrontierConfig, mechanism_count: usize) -> Result<(), DecoderError> {
@@ -657,7 +947,8 @@ fn and_not_assign(left: &mut [u64], right: &[u64]) {
 
 #[cfg(test)]
 mod tests {
-    use super::logaddexp;
+    use super::{FrontierLogicalMass, FrontierResult, committee_rank, logaddexp};
+    use pecos_decoder_core::obs_mask::ObsMask;
 
     #[test]
     fn logaddexp_handles_negative_infinity_on_either_side() {
@@ -669,5 +960,40 @@ mod tests {
             logaddexp(-2.5, f64::NEG_INFINITY).to_bits(),
             (-2.5_f64).to_bits()
         );
+    }
+
+    #[test]
+    fn committee_rank_maps_special_terminal_statistics() {
+        let no_runner_up = FrontierResult {
+            predicted: ObsMask::new(),
+            log_evidence: -1.0,
+            runner_up_gap: None,
+            peak_retained_states: 1,
+            processed_columns: 0,
+            logical_masses: vec![FrontierLogicalMass {
+                logical: ObsMask::new(),
+                log_mass: f64::NAN,
+            }],
+        };
+        let rank = committee_rank(Some(&no_runner_up), true);
+        assert_eq!(rank[2].to_bits(), f64::INFINITY.to_bits());
+        assert_eq!(rank[3].to_bits(), f64::NEG_INFINITY.to_bits());
+        assert_eq!(rank[5].to_bits(), 1.0_f64.to_bits());
+
+        let nan_gap = FrontierResult {
+            runner_up_gap: Some(f64::NAN),
+            logical_masses: vec![FrontierLogicalMass {
+                logical: ObsMask::new(),
+                log_mass: -1.5,
+            }],
+            ..no_runner_up
+        };
+        let rank = committee_rank(Some(&nan_gap), false);
+        assert_eq!(rank[2].to_bits(), f64::NEG_INFINITY.to_bits());
+        assert_eq!(rank[3].to_bits(), (-0.5_f64).to_bits());
+
+        let no_path_rank = committee_rank(None, false);
+        assert_eq!(no_path_rank[0].to_bits(), 1.0_f64.to_bits());
+        assert_eq!(no_path_rank[1].to_bits(), f64::NEG_INFINITY.to_bits());
     }
 }

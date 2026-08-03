@@ -196,7 +196,8 @@ fn degeneracy_mass_beats_the_single_most_likely_error() {
     let result = decoder.decode(&[1]).unwrap();
 
     assert!(result.predicted.is_zero());
-    assert!((result.log_evidence.exp() - 0.224).abs() < 1e-12);
+    assert!((result.log_evidence.exp() - (0.224 + 0.204)).abs() < 1e-12);
+    assert!((result.logical_masses[0].log_mass.exp() - 0.224).abs() < 1e-12);
     assert!((result.runner_up_gap.unwrap() - (0.224_f64 / 0.204).ln()).abs() < 1e-12);
 }
 
@@ -365,25 +366,35 @@ fn validates_probabilities_indices_order_and_pruning_configuration() {
         assert!(FrontierDecoder::from_sparse_dem(&two_columns, config).is_err());
     }
 
-    let one_column = sparse_dem(vec![(0.1, vec![], vec![])], 0, 0);
-    for config in [
+    let k_error = FrontierDecoder::from_sparse_dem(
+        &zero_dem,
         FrontierConfig {
             k: 0,
             ..FrontierConfig::default()
         },
+    )
+    .unwrap_err();
+    assert!(k_error.to_string().contains('k'));
+
+    let negative_delta_error = FrontierDecoder::from_sparse_dem(
+        &zero_dem,
         FrontierConfig {
             delta: -0.1,
             ..FrontierConfig::default()
         },
+    )
+    .unwrap_err();
+    assert!(negative_delta_error.to_string().contains("delta"));
+
+    let nan_delta_error = FrontierDecoder::from_sparse_dem(
+        &zero_dem,
         FrontierConfig {
             delta: f64::NAN,
             ..FrontierConfig::default()
         },
-    ] {
-        let mut decoder = FrontierDecoder::from_sparse_dem(&one_column, config).unwrap();
-        let error = decoder.decode(&[]).unwrap_err();
-        assert!(error.to_string().contains("pruning parameters"));
-    }
+    )
+    .unwrap_err();
+    assert!(nan_delta_error.to_string().contains("delta"));
 }
 
 #[test]

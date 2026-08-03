@@ -64,7 +64,11 @@ pub struct FrontierLogicalMass {
 pub struct FrontierResult {
     /// Predicted logical-observable flip mask.
     pub predicted: ObsMask,
-    /// Natural logarithm of the retained probability mass of `predicted`.
+    /// Natural logarithm of the total retained probability mass over all
+    /// terminal logical labels.
+    ///
+    /// The winning label's own log mass is [`Self::logical_masses`]'s first
+    /// entry.
     pub log_evidence: f64,
     /// Difference between the winning and runner-up log masses, if one exists.
     pub runner_up_gap: Option<f64>,
@@ -73,6 +77,7 @@ pub struct FrontierResult {
     /// Number of nonzero-probability columns processed.
     pub processed_columns: usize,
     /// Retained terminal masses, ordered by mass descending and label ascending.
+    /// The first entry is the winning label and its retained log mass.
     pub logical_masses: Vec<FrontierLogicalMass>,
 }
 
@@ -117,10 +122,10 @@ impl FrontierDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError::InvalidConfiguration`] for invalid probabilities,
-    /// indices, or column order.
+    /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning
+    /// parameters, probabilities, indices, or column order.
     pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
-        validate_column_order(&config, dem.mechanisms.len())?;
+        validate_config(&config, dem.mechanisms.len())?;
 
         let detector_words = words_for(dem.num_detectors);
         let logical_words = words_for(dem.num_observables);
@@ -270,6 +275,9 @@ impl FrontierDecoder {
             .collect();
         sort_candidates(&mut terminal);
         let winner = &terminal[0];
+        let log_evidence = terminal.iter().fold(f64::NEG_INFINITY, |total, candidate| {
+            logaddexp(total, candidate.log_mass)
+        });
         let logical_masses = terminal
             .iter()
             .map(|candidate| FrontierLogicalMass {
@@ -280,7 +288,7 @@ impl FrontierDecoder {
 
         Ok(FrontierResult {
             predicted: ObsMask::from_words(&winner.key.logical),
-            log_evidence: winner.log_mass,
+            log_evidence,
             runner_up_gap: terminal
                 .get(1)
                 .map(|runner_up| winner.log_mass - runner_up.log_mass),
@@ -307,10 +315,18 @@ impl ObservableDecoder for FrontierDecoder {
     }
 }
 
-fn validate_column_order(
-    config: &FrontierConfig,
-    mechanism_count: usize,
-) -> Result<(), DecoderError> {
+fn validate_config(config: &FrontierConfig, mechanism_count: usize) -> Result<(), DecoderError> {
+    if config.k == 0 {
+        return Err(DecoderError::InvalidConfiguration(
+            "FrontierConfig.k must be at least 1".into(),
+        ));
+    }
+    if config.delta.is_nan() || config.delta < 0.0 {
+        return Err(DecoderError::InvalidConfiguration(format!(
+            "FrontierConfig.delta must be non-negative and not NaN, got {}",
+            config.delta
+        )));
+    }
     if let Some(order) = &config.column_order {
         if order.len() != mechanism_count {
             return Err(DecoderError::InvalidConfiguration(format!(

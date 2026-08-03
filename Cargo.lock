@@ -4371,6 +4371,8 @@ dependencies = [
  "pecos-decoder-core",
  "rand 0.10.2",
  "rand_xoshiro 0.8.1",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

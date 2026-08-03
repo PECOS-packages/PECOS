@@ -20,6 +20,8 @@ name = "pecos_frontier"
 [dev-dependencies]
 rand.workspace = true
 rand_xoshiro.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

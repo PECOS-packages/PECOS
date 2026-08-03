@@ -43,6 +43,9 @@ fn independent_logaddexp(left: f64, right: f64) -> f64 {
     if left == f64::NEG_INFINITY {
         return right;
     }
+    if right == f64::NEG_INFINITY {
+        return left;
+    }
     let high = left.max(right);
     let low = left.min(right);
     high + (low - high).exp().ln_1p()
@@ -70,7 +73,7 @@ fn independent_enumeration(dem: &SparseDem, observed: &[u8]) -> BTreeMap<Vec<u64
                 }
             }
         }
-        if detectors == observed {
+        if log_mass.is_finite() && detectors == observed {
             masses
                 .entry(logical)
                 .and_modify(|mass| *mass = independent_logaddexp(*mass, log_mass))
@@ -80,13 +83,17 @@ fn independent_enumeration(dem: &SparseDem, observed: &[u8]) -> BTreeMap<Vec<u64
     masses
 }
 
+fn numeric_words_cmp(left: &[u64], right: &[u64]) -> std::cmp::Ordering {
+    left.iter().rev().cmp(right.iter().rev())
+}
+
 fn independent_winner(masses: &BTreeMap<Vec<u64>, f64>) -> Vec<u64> {
     masses
         .iter()
         .min_by(|(left_label, left_mass), (right_label, right_mass)| {
             right_mass
                 .total_cmp(left_mass)
-                .then_with(|| left_label.cmp(right_label))
+                .then_with(|| numeric_words_cmp(left_label, right_label))
         })
         .map(|(label, _)| label.clone())
         .expect("generated syndrome must have at least one explanation")
@@ -103,6 +110,7 @@ fn result_mass_map(result: &FrontierResult) -> BTreeMap<Vec<u64>, f64> {
 #[test]
 fn unpruned_matches_independent_brute_force_on_seeded_random_dems() {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4652_4f4e_5449_4552);
+    let mut forced_mechanism_count = 0;
 
     for case_index in 0..33 {
         let mechanism_count = 4 + case_index % 11;
@@ -113,7 +121,13 @@ fn unpruned_matches_independent_brute_force_on_seeded_random_dems() {
         let mut observed = vec![0_u8; num_detectors];
 
         for mechanism_index in 0..mechanism_count {
-            let probability = rng.random_range(0.01..0.4);
+            let forced = rng.random_bool(0.08);
+            let probability = if forced {
+                forced_mechanism_count += 1;
+                1.0
+            } else {
+                rng.random_range(0.01..0.4)
+            };
             let max_weight = num_detectors.min(3);
             let detector_count = if mechanism_index % 3 == 0 && max_weight >= 2 {
                 rng.random_range(2..=max_weight)
@@ -141,7 +155,7 @@ fn unpruned_matches_independent_brute_force_on_seeded_random_dems() {
             }
             observables.sort_unstable();
 
-            let taken = rng.random_bool(0.35);
+            let taken = forced || rng.random_bool(0.35);
             if taken {
                 for &detector in &detectors {
                     observed[detector as usize] ^= 1;
@@ -175,6 +189,11 @@ fn unpruned_matches_independent_brute_force_on_seeded_random_dems() {
             "case {case_index}, sampled subset {sampled_subset:?}"
         );
     }
+
+    assert!(
+        forced_mechanism_count > 0,
+        "seeded models must exercise forced mechanisms"
+    );
 }
 
 #[test]
@@ -215,6 +234,133 @@ fn supports_wide_detectors_and_observables_without_truncation() {
         decoder.decode_to_observables(&syndrome),
         Err(DecoderError::InvalidConfiguration(_))
     ));
+}
+
+#[test]
+fn wide_logical_ties_use_numeric_label_order() {
+    let dem = sparse_dem(
+        vec![(0.5, vec![0], vec![0]), (0.5, vec![0], vec![64])],
+        1,
+        65,
+    );
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+    let result = decoder.decode(&[1]).unwrap();
+
+    assert_eq!(result.predicted, ObsMask::from_u64(1));
+    assert_eq!(result.runner_up_gap, Some(0.0));
+    assert_eq!(result.logical_masses[0].logical, ObsMask::from_u64(1));
+}
+
+#[test]
+fn rejects_duplicate_detector_and_observable_indices() {
+    let duplicate_detector = sparse_dem(vec![(0.1, vec![0, 0], vec![])], 1, 0);
+    let detector_error =
+        FrontierDecoder::from_sparse_dem(&duplicate_detector, exact_config()).unwrap_err();
+    let detector_message = detector_error.to_string();
+    assert!(detector_message.contains("mechanism 0"));
+    assert!(detector_message.contains("detector index 0"));
+
+    let duplicate_observable = sparse_dem(vec![(0.1, vec![], vec![1, 1])], 0, 2);
+    let observable_error =
+        FrontierDecoder::from_sparse_dem(&duplicate_observable, exact_config()).unwrap_err();
+    let observable_message = observable_error.to_string();
+    assert!(observable_message.contains("mechanism 0"));
+    assert!(observable_message.contains("observable index 1"));
+
+    let parsed_error =
+        FrontierDecoder::from_dem_str("error(0.1) D0 D0\n", FrontierConfig::default()).unwrap_err();
+    assert!(parsed_error.to_string().contains("detector index 0"));
+}
+
+#[test]
+fn forced_only_detector_requires_its_deterministic_syndrome() {
+    let dem = sparse_dem(vec![(1.0, vec![0], vec![])], 1, 0);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+
+    let matching = decoder.decode(&[1]).unwrap();
+    assert!(matching.predicted.is_zero());
+    assert_eq!(matching.log_evidence.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(matching.processed_columns, 0);
+    assert!(decoder.decode(&[0]).is_err());
+}
+
+#[test]
+fn forced_syndrome_shifts_shared_probabilistic_detector() {
+    let dem = sparse_dem(vec![(1.0, vec![0], vec![0]), (0.2, vec![0], vec![1])], 1, 2);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+
+    let probabilistic_skip = decoder.decode(&[1]).unwrap();
+    assert_eq!(probabilistic_skip.predicted, ObsMask::from_u64(1));
+    assert!((probabilistic_skip.log_evidence.exp() - 0.8).abs() < 1e-12);
+
+    let probabilistic_take = decoder.decode(&[0]).unwrap();
+    assert_eq!(probabilistic_take.predicted, ObsMask::from_u64(3));
+    assert!((probabilistic_take.log_evidence.exp() - 0.2).abs() < 1e-12);
+}
+
+#[test]
+fn forced_logical_flip_seeds_the_winning_label() {
+    let dem = sparse_dem(vec![(1.0, vec![], vec![1]), (0.1, vec![], vec![0])], 0, 2);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+    let result = decoder.decode(&[]).unwrap();
+
+    assert_eq!(result.predicted, ObsMask::from_u64(2));
+    assert!((result.logical_masses[0].log_mass.exp() - 0.9).abs() < 1e-12);
+}
+
+#[test]
+fn truly_empty_dem_decodes_to_empty_label_with_unit_evidence() {
+    let dem = sparse_dem(Vec::new(), 0, 0);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+    let result = decoder.decode(&[]).unwrap();
+
+    assert!(result.predicted.is_zero());
+    assert_eq!(result.log_evidence.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(result.logical_masses.len(), 1);
+}
+
+#[test]
+fn interleaved_syndromes_do_not_retain_decode_state() {
+    let dem = sparse_dem(vec![(0.2, vec![0], vec![0]), (0.3, vec![1], vec![1])], 2, 2);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+
+    let first_a = decoder.decode(&[1, 0]).unwrap();
+    let b = decoder.decode(&[0, 1]).unwrap();
+    let second_a = decoder.decode(&[1, 0]).unwrap();
+
+    assert_eq!(first_a, second_a);
+    assert_eq!(first_a.predicted, ObsMask::from_u64(1));
+    assert_eq!(b.predicted, ObsMask::from_u64(2));
+    assert_ne!(first_a.predicted, b.predicted);
+}
+
+#[test]
+fn default_batch_decode_matches_individual_shots() {
+    let dem = sparse_dem(vec![(0.2, vec![0], vec![0]), (0.3, vec![1], vec![1])], 2, 2);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+    let expected = vec![
+        decoder.decode_to_observables(&[1, 0]).unwrap(),
+        decoder.decode_to_observables(&[0, 1]).unwrap(),
+        decoder.decode_to_observables(&[1, 1]).unwrap(),
+    ];
+
+    let batched = decoder
+        .decode_batch_to_observables(&[1, 0, 0, 1, 1, 1], 3, 2)
+        .unwrap();
+    assert_eq!(batched, expected);
+}
+
+#[test]
+fn observable_only_mechanism_has_both_terminal_labels() {
+    let dem = sparse_dem(vec![(0.2, vec![], vec![0])], 0, 1);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+    let result = decoder.decode(&[]).unwrap();
+
+    assert!(result.predicted.is_zero());
+    assert_eq!(result.logical_masses.len(), 2);
+    assert!((result.logical_masses[0].log_mass.exp() - 0.8).abs() < 1e-12);
+    assert!((result.logical_masses[1].log_mass.exp() - 0.2).abs() < 1e-12);
+    assert!(result.log_evidence.abs() < 1e-12);
 }
 
 #[test]
@@ -335,7 +481,10 @@ fn parses_a_stim_dem_string() {
 
 #[test]
 fn validates_probabilities_indices_order_and_pruning_configuration() {
-    for probability in [1.0, 1.1, -0.1, f64::NAN, f64::INFINITY] {
+    let probability_one_dem = sparse_dem(vec![(1.0, vec![], vec![])], 0, 0);
+    assert!(FrontierDecoder::from_sparse_dem(&probability_one_dem, exact_config()).is_ok());
+
+    for probability in [1.000_000_1, 1.1, -0.1, f64::NAN, f64::INFINITY] {
         let dem = sparse_dem(vec![(probability, vec![], vec![])], 0, 0);
         assert!(matches!(
             FrontierDecoder::from_sparse_dem(&dem, FrontierConfig::default()),

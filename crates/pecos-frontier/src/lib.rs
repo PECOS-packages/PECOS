@@ -15,7 +15,14 @@
 //! The decoder performs ordered dynamic programming over independent binary
 //! fault mechanisms. Prefixes with identical active detector boundary and
 //! logical labels are merged by log-sum-exp, preserving degeneracy mass. The
-//! configured frontier width and log-mass window provide deterministic pruning.
+//! configured frontier width and log-mass window provide deterministic pruning
+//! for a fixed build and platform; underlying `ln`/`exp` implementations may
+//! differ across platforms.
+//!
+//! `k` and `delta` operate on prefix log mass only (upstream's `score_alpha`
+//! suffix-compatibility scoring is a planned follow-up); pruned results and
+//! K/Delta values are not directly comparable to upstream until then. Unpruned
+//! results are exact and upstream-verified.
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::dem::SparseDem;
@@ -29,6 +36,10 @@ const WORD_BITS: usize = u64::BITS as usize;
 /// Frontier pruning and column-order configuration.
 ///
 /// The [`Default`] pruning values are provisional pending benchmarking.
+/// `k` and `delta` operate on prefix log mass only (upstream's `score_alpha`
+/// suffix-compatibility scoring is a planned follow-up); pruned results and
+/// K/Delta values are not directly comparable to upstream until then. Unpruned
+/// results are exact and upstream-verified.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrontierConfig {
     /// Maximum number of boundary states retained after each column.
@@ -50,12 +61,14 @@ impl Default for FrontierConfig {
     }
 }
 
-/// Retained posterior log mass for one logical label.
+/// Retained unnormalized joint log mass for one logical label.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrontierLogicalMass {
     /// Logical-observable flip label.
     pub logical: ObsMask,
-    /// Natural logarithm of the retained probability mass for this label.
+    /// Unnormalized joint mass `ln P(logical class, observed syndrome)`.
+    /// Subtract [`FrontierResult::log_evidence`] to obtain the label's log
+    /// posterior probability within the retained terminal mass.
     pub log_mass: f64,
 }
 
@@ -64,20 +77,23 @@ pub struct FrontierLogicalMass {
 pub struct FrontierResult {
     /// Predicted logical-observable flip mask.
     pub predicted: ObsMask,
-    /// Natural logarithm of the total retained probability mass over all
-    /// terminal logical labels.
+    /// Log evidence: the logarithm of the total retained joint mass over all
+    /// terminal logical labels, approximating `ln P(observed syndrome)` when
+    /// pruning is enabled.
     ///
     /// The winning label's own log mass is [`Self::logical_masses`]'s first
     /// entry.
     pub log_evidence: f64,
-    /// Difference between the winning and runner-up log masses, if one exists.
+    /// Difference between the winning and runner-up unnormalized joint log
+    /// masses, if a runner-up exists.
     pub runner_up_gap: Option<f64>,
     /// Largest retained frontier size, including the initial boundary state.
     pub peak_retained_states: usize,
-    /// Number of nonzero-probability columns processed.
+    /// Number of probabilistic columns processed (`0 < p < 1`).
     pub processed_columns: usize,
-    /// Retained terminal masses, ordered by mass descending and label ascending.
-    /// The first entry is the winning label and its retained log mass.
+    /// Retained unnormalized joint terminal masses, ordered by mass descending
+    /// and numeric label ascending. The first entry is the winning label and
+    /// its retained log mass.
     pub logical_masses: Vec<FrontierLogicalMass>,
 }
 
@@ -91,10 +107,23 @@ struct Column {
     log_one_minus_probability: f64,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct StateKey {
     active_syndrome: Vec<u64>,
     logical: Vec<u64>,
+}
+
+impl Ord for StateKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        compare_words_as_unsigned(&self.active_syndrome, &other.active_syndrome)
+            .then_with(|| compare_words_as_unsigned(&self.logical, &other.logical))
+    }
+}
+
+impl PartialOrd for StateKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -112,13 +141,16 @@ pub struct FrontierDecoder {
     detector_words: usize,
     logical_words: usize,
     touched_detectors: Vec<u64>,
+    forced_syndrome: Vec<u64>,
+    forced_logical: Vec<u64>,
 }
 
 impl FrontierDecoder {
     /// Construct a decoder from a sparse detector error model.
     ///
-    /// Zero-probability mechanisms are discarded after validating the optional
-    /// ordering permutation. All indices and nonzero probabilities are checked.
+    /// Zero-probability mechanisms are discarded and probability-one mechanisms
+    /// are folded into the initial state after validating the optional ordering
+    /// permutation. All indices and probabilities are checked.
     ///
     /// # Errors
     ///
@@ -134,6 +166,8 @@ impl FrontierDecoder {
             .clone()
             .unwrap_or_else(|| (0..dem.mechanisms.len()).collect());
         let mut raw_columns = Vec::with_capacity(dem.mechanisms.len());
+        let mut forced_syndrome = vec![0; detector_words];
+        let mut forced_logical = vec![0; logical_words];
 
         for mechanism_index in order {
             let (probability, detectors, observables) = &dem.mechanisms[mechanism_index];
@@ -149,11 +183,15 @@ impl FrontierDecoder {
                 continue;
             }
 
-            raw_columns.push((
-                indices_to_words(detectors, detector_words),
-                indices_to_words(observables, logical_words),
-                *probability,
-            ));
+            let detector_toggle = indices_to_words(detectors, detector_words);
+            let logical_toggle = indices_to_words(observables, logical_words);
+            if probability.to_bits() == 1.0_f64.to_bits() {
+                xor_assign(&mut forced_syndrome, &detector_toggle);
+                xor_assign(&mut forced_logical, &logical_toggle);
+                continue;
+            }
+
+            raw_columns.push((detector_toggle, logical_toggle, *probability));
         }
 
         let mut touched_detectors = vec![0; detector_words];
@@ -165,7 +203,10 @@ impl FrontierDecoder {
             }
         }
 
-        let mut open_detectors = vec![0; detector_words];
+        // Seed with the forced contribution: detectors carrying a forced bit
+        // must stay in every active mask until their closing column, or the
+        // per-step projection would erase the bit before that column arrives.
+        let mut open_detectors = forced_syndrome.clone();
         let mut columns = Vec::with_capacity(raw_columns.len());
         for (column_index, (detector_toggle, logical_toggle, probability)) in
             raw_columns.into_iter().enumerate()
@@ -196,6 +237,8 @@ impl FrontierDecoder {
             detector_words,
             logical_words,
             touched_detectors,
+            forced_syndrome,
+            forced_logical,
         })
     }
 
@@ -228,15 +271,18 @@ impl FrontierDecoder {
         let observed = syndrome_to_words(syndrome, self.detector_words);
         if observed
             .iter()
+            .zip(&self.forced_syndrome)
             .zip(&self.touched_detectors)
-            .any(|(&seen, &touched)| seen & !touched != 0)
+            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
         {
             return Err(unexplainable_error());
         }
 
+        let mut initial_syndrome = self.forced_syndrome.clone();
+        and_assign(&mut initial_syndrome, &self.touched_detectors);
         let initial = StateKey {
-            active_syndrome: vec![0; self.detector_words],
-            logical: vec![0; self.logical_words],
+            active_syndrome: initial_syndrome,
+            logical: self.forced_logical.clone(),
         };
         let mut frontier = BTreeMap::from([(initial, 0.0)]);
         let mut peak_retained_states = frontier.len();
@@ -347,9 +393,9 @@ fn validate_config(config: &FrontierConfig, mechanism_count: usize) -> Result<()
 }
 
 fn validate_probability(probability: f64, index: usize) -> Result<(), DecoderError> {
-    if !(0.0..1.0).contains(&probability) {
+    if !(0.0..=1.0).contains(&probability) {
         return Err(DecoderError::InvalidConfiguration(format!(
-            "mechanism {index} probability must satisfy 0 <= p < 1, got {probability}"
+            "mechanism {index} probability must satisfy 0 <= p <= 1, got {probability}"
         )));
     }
     Ok(())
@@ -361,12 +407,24 @@ fn validate_indices(
     kind: &str,
     mechanism_index: usize,
 ) -> Result<(), DecoderError> {
-    if let Some(&index) = indices.iter().find(|&&index| index as usize >= upper_bound) {
-        return Err(DecoderError::InvalidConfiguration(format!(
-            "mechanism {mechanism_index} {kind} index {index} is out of range 0..{upper_bound}"
-        )));
+    let mut seen = std::collections::BTreeSet::new();
+    for &index in indices {
+        if index as usize >= upper_bound {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "mechanism {mechanism_index} {kind} index {index} is out of range 0..{upper_bound}"
+            )));
+        }
+        if !seen.insert(index) {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "mechanism {mechanism_index} repeats {kind} index {index}"
+            )));
+        }
     }
     Ok(())
+}
+
+fn compare_words_as_unsigned(left: &[u64], right: &[u64]) -> Ordering {
+    left.iter().rev().cmp(right.iter().rev())
 }
 
 fn merge_branch(

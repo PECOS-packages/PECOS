@@ -19,27 +19,41 @@ use std::collections::BTreeMap;
 const FIXTURES_JSON: &str = include_str!("fixtures/upstream_fixtures.json");
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FixtureFile {
+    generator: String,
     fixtures: Vec<Fixture>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Fixture {
     name: String,
     mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>,
     num_detectors: usize,
     num_observables: usize,
     syndromes: Vec<u128>,
+    pruned: PruningConfig,
     expected_unpruned: Vec<ExpectedResult>,
+    expected_pruned: Vec<ExpectedResult>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PruningConfig {
+    k: usize,
+    delta: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ExpectedResult {
     syndrome: u128,
     status: String,
     logical_hat: Option<u128>,
     log_evidence: Option<f64>,
     terminal_log_masses: BTreeMap<String, f64>,
+    engine: String,
 }
 
 fn parse_fixtures() -> FixtureFile {
@@ -72,8 +86,21 @@ fn actual_masses(result: &FrontierResult) -> BTreeMap<u128, f64> {
 #[test]
 fn unpruned_results_match_upstream_golden_fixtures() {
     let fixture_file = parse_fixtures();
+    assert_eq!(fixture_file.generator, "generate_upstream_fixtures.py");
 
     for fixture in fixture_file.fixtures {
+        assert!(fixture.pruned.k > 0, "{}: invalid pruned K", fixture.name);
+        assert!(
+            fixture.pruned.delta >= 0.0,
+            "{}: invalid pruned Delta",
+            fixture.name
+        );
+        assert_eq!(
+            fixture.expected_pruned.len(),
+            fixture.syndromes.len(),
+            "{}: pruned result count differs from syndrome count",
+            fixture.name
+        );
         let dem = SparseDem {
             mechanisms: fixture.mechanisms,
             detector_coords: BTreeMap::new(),
@@ -110,6 +137,11 @@ fn unpruned_results_match_upstream_golden_fixtures() {
             let expected = expected_by_syndrome
                 .remove(&syndrome_mask)
                 .unwrap_or_else(|| panic!("{}: missing expected result", fixture.name));
+            assert_eq!(
+                expected.engine, "native_binary",
+                "{} syndrome {syndrome_mask}: unexpected engine",
+                fixture.name
+            );
             let syndrome = dense_syndrome(syndrome_mask, fixture.num_detectors);
             let decoded = decoder.decode(&syndrome);
 

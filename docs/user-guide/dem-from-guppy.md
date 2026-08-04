@@ -202,10 +202,30 @@ one `NoiseParameters` instance containing the complete noise configuration.
 `NoiseParameters` is available from the `pecos` top level, and supports both
 its original dataclass constructor and immutable `with_<field_name>` chaining.
 The grouped and flat forms below are equivalent. Do not mix them in one call:
-even an explicitly passed flat
-default conflicts with `noise`. When `noise` is present, its defaults fully
-replace the entry point's defaults; for example, `NoiseParameters().p1` is `0.0`,
-not the flat `p1=0.001` default.
+even explicitly passing a flat parameter at its default value conflicts with
+`noise`. When `noise` is present, its defaults fully replace the entry point's
+defaults — `NoiseParameters().p1` is `0.0`, not the flat `p1=0.001` default.
+
+Each `with_<field_name>` returns a new `NoiseParameters`, so chains never mutate
+the object they start from. The idle families are the one exception to the
+one-method-per-field rule: each takes its rate and model **together**, because a
+model without a rate is inert and the two halves cannot be set in separate
+calls.
+
+```python
+from pecos import NoiseParameters
+
+noise = (
+    NoiseParameters()
+    .with_p1(0.002)
+    .with_p_idle_linear(0.01, {"X": 0.25, "Y": 0.25, "Z": 0.5})
+    .with_p_idle_sin_squared(0.03, {"Z": 1.0})
+)
+
+# The families translate into canonical per-axis rates.
+assert noise.p_idle_z_linear_rate == 0.005
+assert noise.p_idle_z_quadratic_sine_rate == 0.03
+```
 
 <!--test-name: dem_from_guppy_grouped_noise-->
 ```python

@@ -40,6 +40,7 @@ pub struct GeneralNoiseModelBuilder {
     p_idle_linear_rate: Option<f64>,
     p_idle_linear_model: Option<SingleQubitWeightedSampler>,
     p_idle_quadratic_rate: Option<f64>,
+    p_idle_sin_squared: Option<(f64, BTreeMap<String, f64>)>,
     p_idle_coherent_to_incoherent_factor: Option<f64>,
     idle_scale: Option<f64>,
     // prep noise
@@ -100,6 +101,7 @@ impl GeneralNoiseModelBuilder {
             p_idle_linear_rate: None,
             p_idle_linear_model: None,
             p_idle_quadratic_rate: None,
+            p_idle_sin_squared: None,
             p_idle_coherent: None,
             p_idle_coherent_to_incoherent_factor: None,
             idle_scale: None,
@@ -148,6 +150,9 @@ impl GeneralNoiseModelBuilder {
     /// Panics if any probabilities are not set or are not between 0 and 1.
     #[must_use]
     pub fn build(mut self) -> GeneralNoiseModel {
+        self.validate_configuration()
+            .unwrap_or_else(|message| panic!("{message}"));
+
         // Start with the default noise model as a base
         let mut model = GeneralNoiseModel::default();
 
@@ -184,6 +189,11 @@ impl GeneralNoiseModelBuilder {
 
         if let Some(p_idle_quadratic_rate) = self.p_idle_quadratic_rate {
             model.p_idle_quadratic_rate = p_idle_quadratic_rate;
+        }
+
+        if let Some((rate, sine_model)) = self.p_idle_sin_squared.clone() {
+            model.p_idle_sin_squared_rate = rate;
+            model.p_idle_sin_squared_model = sine_model;
         }
 
         if let Some(factor) = self.p_idle_coherent_to_incoherent_factor {
@@ -387,6 +397,35 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
+    /// Set the DEM-style linear idle-noise family.
+    ///
+    /// `rate` is the total event rate per time unit. For an idle of duration `d`, one event is
+    /// sampled with probability `rate * d`, then its X, Y, Z, or leakage axis is drawn from
+    /// `model`. The model must therefore be a normalized distribution: this linear family splits
+    /// one total rate across its axes. This is exactly the pairing convenience
+    /// `with_p_idle_linear_rate(rate).with_p_idle_linear_model(model)`.
+    ///
+    /// In contrast, [`Self::with_p_idle_sin_squared`] takes radians per time unit and an
+    /// unnormalized model because sine laws do not add linearly: each axis carries its own
+    /// independent rate. That setter applies no `2*pi` conversion and no
+    /// `coherent_to_incoherent_factor`, unlike [`Self::with_p_idle_quadratic_rate`]. With neutral
+    /// global and idle scales, `with_p_idle_quadratic_rate(r)` equals
+    /// `with_p_idle_sin_squared(r * factor/2 * 2*pi, {"Z": 1.0})`, or `r * 1.5 * pi` at the
+    /// default factor.
+    ///
+    /// Engines idle noise is on by default (`p_idle_linear_rate = 0.001`). When translating a DEM
+    /// configuration, explicitly set every idle family that was not requested to zero.
+    ///
+    /// The linear sampling structure deliberately remains different from the DEM: engines emits
+    /// at most one linear event followed by a categorical axis choice, while the DEM emits
+    /// independent per-axis mechanisms. The difference is second order in the rates; this setter
+    /// aligns the units and axis alphabet, not that sampling structure.
+    #[must_use]
+    pub fn with_p_idle_linear(self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
+        self.with_p_idle_linear_rate(rate)
+            .with_p_idle_linear_model(model)
+    }
+
     /// Set the idling noise error rate for the quadratic term
     #[must_use]
     pub fn with_p_idle_quadratic_rate(mut self, rate: f64) -> Self {
@@ -399,6 +438,43 @@ impl GeneralNoiseModelBuilder {
     pub fn with_average_p_idle_quadratic_rate(mut self, rate: f64) -> Self {
         let rate: f64 = rate * (3.0 / 2.0_f64).sqrt();
         self.p_idle_quadratic_rate = Some(rate);
+        self
+    }
+
+    /// Set the DEM-style stochastic sine-squared idle-noise family.
+    ///
+    /// `rate` is in radians per time unit. No `2*pi` conversion and no
+    /// `coherent_to_incoherent_factor` is applied, unlike
+    /// [`Self::with_p_idle_quadratic_rate`]. For each axis P with multiplier `n_P` and an idle of
+    /// duration `d`, engines independently samples `P(P) = sin^2(rate * n_P * d)`.
+    ///
+    /// The model accepts X, Y, Z, and L and is intentionally unnormalized: sine laws do not add
+    /// linearly, so every axis carries its own independent rate. By comparison,
+    /// [`Self::with_p_idle_linear`] requires a normalized distribution because its one total
+    /// linear event rate is split across axes.
+    ///
+    /// With neutral global and idle scales, `with_p_idle_quadratic_rate(r)` equals
+    /// `with_p_idle_sin_squared(r * factor/2 * 2*pi, {"Z": 1.0})`, or `r * 1.5 * pi` at the
+    /// default factor. The legacy spelling is in cycles per time unit and also folds the factor
+    /// into its runtime rate; this setter is the radians-per-time-unit spelling.
+    ///
+    /// Engines idle noise is on by default (`p_idle_linear_rate = 0.001`). When translating a DEM
+    /// configuration, explicitly set every idle family that was not requested to zero.
+    ///
+    /// The linear sampling structure deliberately remains different from the DEM: engines emits
+    /// at most one linear event followed by a categorical axis choice, while the DEM emits
+    /// independent per-axis mechanisms. The difference is second order in the rates; this setter
+    /// aligns the units and axis alphabet, not that sampling structure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rate` or a multiplier is not finite and non-negative, or if `model` contains a
+    /// key other than X, Y, Z, or L.
+    #[must_use]
+    pub fn with_p_idle_sin_squared(mut self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
+        let rate = Self::validate_finite_non_negative(rate, "sine-squared idling rate");
+        Self::validate_sine_model(model);
+        self.p_idle_sin_squared = Some((rate, model.clone()));
         self
     }
 
@@ -643,8 +719,8 @@ impl GeneralNoiseModelBuilder {
     ///
     /// A duration of `0.0` disables these sites. Nonzero sites receive all configured idle
     /// mechanisms over the given duration: linear stochastic noise from `p_idle_linear_rate` and
-    /// `p_idle_linear_model`, and quadratic dephasing from `p_idle_quadratic_rate`, honoring
-    /// `p_idle_coherent`.
+    /// `p_idle_linear_model`, quadratic dephasing from `p_idle_quadratic_rate` honoring
+    /// `p_idle_coherent`, and the independent per-axis sine-squared family.
     ///
     /// Anyone who previously wrote `with_p2_idle(0.01)` and no linear rate now gets no after-2q
     /// idle noise; the equivalent is
@@ -769,6 +845,51 @@ impl GeneralNoiseModelBuilder {
         value
     }
 
+    /// Validate that a value is finite and non-negative.
+    fn validate_finite_non_negative(value: f64, name: &str) -> f64 {
+        assert!(
+            value.is_finite() && value >= 0.0,
+            "{name} must be finite and non-negative, got {value}"
+        );
+        value
+    }
+
+    /// Validate an unnormalized sine-family multiplier model.
+    fn validate_sine_model(model: &BTreeMap<String, f64>) {
+        for (axis, multiplier) in model {
+            assert!(
+                matches!(axis.as_str(), "X" | "Y" | "Z" | "L"),
+                "p_idle_sin_squared model has invalid key '{axis}'; expected X, Y, Z, or L"
+            );
+            Self::validate_finite_non_negative(
+                *multiplier,
+                &format!("p_idle_sin_squared multiplier for '{axis}'"),
+            );
+        }
+    }
+
+    /// Validate combinations whose interpretation would otherwise depend on silent precedence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description of the conflicting spellings and their incompatible semantics.
+    pub fn validate_configuration(&self) -> Result<(), &'static str> {
+        if self.p_idle_sin_squared.is_some() && self.p_idle_quadratic_rate.is_some() {
+            return Err("with_p_idle_sin_squared cannot be combined with \
+                 with_p_idle_quadratic_rate/with_average_p_idle_quadratic_rate: \
+                 with_p_idle_sin_squared uses radians per time unit, while the legacy quadratic \
+                 spellings use cycles per time unit and apply coherent_to_incoherent_factor");
+        }
+        if self.p_idle_sin_squared.is_some() && self.p_idle_coherent == Some(true) {
+            return Err(
+                "with_p_idle_sin_squared cannot be combined with with_p_idle_coherent(true): \
+                 with_p_idle_sin_squared is stochastic by definition, while \
+                 with_p_idle_coherent(true) selects the legacy coherent path",
+            );
+        }
+        Ok(())
+    }
+
     /// Validate that a duration is finite and non-negative
     fn validate_duration(duration: f64) -> f64 {
         assert!(
@@ -881,6 +1002,7 @@ impl GeneralNoiseModelBuilder {
 
         // Neutral model defaults: unset is fine.
         let optional_features_off = zero_or_unset(self.p_idle_quadratic_rate)
+            && self.p_idle_sin_squared.is_none()
             && zero_or_unset(self.p_prep_crosstalk)
             && zero_or_unset(self.idle_after_2q)
             && zero_or_unset(self.p_meas_crosstalk_global)

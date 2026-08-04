@@ -94,7 +94,7 @@ use pecos_core::errors::PecosError;
 use pecos_core::{Angle64, QubitId};
 use pecos_random::PecosRng;
 use std::any::Any;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// General noise model with parameterized error channels.
 ///
@@ -147,6 +147,12 @@ pub struct GeneralNoiseModel {
     /// This will be a coherent noise channel unless `p_idle_coherent` is set to false. If it is
     /// false it will apply Z to each qubit quadratic dependency on time
     p_idle_quadratic_rate: f64,
+
+    /// DEM-style stochastic sine-squared idle rate in radians per time unit.
+    p_idle_sin_squared_rate: f64,
+
+    /// Unnormalized per-axis relative multipliers for the sine-squared idle family.
+    p_idle_sin_squared_model: BTreeMap<String, f64>,
 
     /// Scaling factor to convert coherent dephasing rates to incoherent rates
     ///
@@ -286,9 +292,9 @@ pub struct GeneralNoiseModel {
     ///
     /// A value of `0.0` disables these sites. For a nonzero duration, the sites receive the same
     /// configured idle mechanisms as a real [`GateType::Idle`] operation: linear stochastic noise
-    /// from `p_idle_linear_rate` and `p_idle_linear_model`, plus quadratic dephasing from
-    /// `p_idle_quadratic_rate` honoring `p_idle_coherent`. The duration is not itself an error
-    /// probability.
+    /// from `p_idle_linear_rate` and `p_idle_linear_model`, quadratic dephasing from
+    /// `p_idle_quadratic_rate` honoring `p_idle_coherent`, and the independent per-axis
+    /// sine-squared family. The duration is not itself an error probability.
     idle_after_2q: f64,
 
     /// Probability of flipping a 0 measurement to 1
@@ -848,6 +854,10 @@ impl GeneralNoiseModel {
         if quadratic_rate.abs() > f64::EPSILON {
             self.apply_idle_quadratic_dephasing(quadratic_rate, duration, qubits, builder);
         }
+
+        if self.p_idle_sin_squared_rate > f64::EPSILON && duration.abs() > f64::EPSILON {
+            self.apply_idle_sin_squared(duration, qubits, builder);
+        }
     }
 
     /// Assuming a general single-qubit stochastic noise for idling that depends on some rate and
@@ -921,6 +931,58 @@ impl GeneralNoiseModel {
                 }
             }
         }
+    }
+
+    /// Apply the DEM-style stochastic sine-squared family independently per axis.
+    fn apply_idle_sin_squared(
+        &mut self,
+        duration: f64,
+        qubits: &[usize],
+        builder: &mut ByteMessageBuilder,
+    ) {
+        for axis in ["X", "Y", "Z", "L"] {
+            let Some(multiplier) = self.p_idle_sin_squared_model.get(axis).copied() else {
+                continue;
+            };
+            let probability =
+                Self::sin_squared_probability(self.p_idle_sin_squared_rate, multiplier, duration);
+            if probability <= f64::EPSILON {
+                continue;
+            }
+
+            let affected = qubits
+                .iter()
+                .copied()
+                .filter(|qubit| !self.is_leaked(*qubit) && self.rng.occurs(probability))
+                .collect::<Vec<_>>();
+            if affected.is_empty() {
+                continue;
+            }
+
+            match axis {
+                "X" => {
+                    builder.x(&affected);
+                }
+                "Y" => {
+                    builder.y(&affected);
+                }
+                "Z" => {
+                    builder.z(&affected);
+                }
+                "L" => {
+                    for qubit in affected {
+                        if let Some(gate) = self.leak(qubit) {
+                            builder.add_gate_command(&gate);
+                        }
+                    }
+                }
+                _ => unreachable!("sine-family model was validated by the builder"),
+            }
+        }
+    }
+
+    fn sin_squared_probability(rate: f64, multiplier: f64, duration: f64) -> f64 {
+        (rate * multiplier * duration).sin().powi(2)
     }
 
     /// Apply preparation (initialization) noise
@@ -1512,6 +1574,8 @@ mod tests {
             (model.p_meas_1 - 0.01).abs() < f64::EPSILON,
             "Default p_meas_1 should be 0.01"
         );
+        assert!(model.p_idle_sin_squared_rate.abs() < f64::EPSILON);
+        assert!(model.p_idle_sin_squared_model.is_empty());
         assert!(
             (model.p1 - 0.001).abs() < f64::EPSILON,
             "Default p1 should be 0.001"
@@ -2897,6 +2961,270 @@ mod tests {
         let second = after_2q_outputs(0.5, 0.4, 0.0, false, 42, 100);
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn dem_sine_and_legacy_quadratic_have_identical_z_probability() {
+        let sine_rate = 0.03;
+        let duration = 10.0;
+        let expected_probability = 0.087_332_192_545_160_84;
+        let legacy_rate = sine_rate / (1.5 * std::f64::consts::PI);
+        let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+
+        let mut sine = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear_rate(0.0)
+            .with_p_idle_sin_squared(sine_rate, &z_model)
+            .build();
+        let mut legacy = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear_rate(0.0)
+            .with_p_idle_quadratic_rate(legacy_rate)
+            .build();
+
+        assert!((sine.p_idle_sin_squared_rate - sine_rate).abs() < f64::EPSILON);
+        assert!((legacy.p_idle_quadratic_rate - sine_rate).abs() < f64::EPSILON);
+        assert!(
+            (GeneralNoiseModel::sin_squared_probability(sine_rate, 1.0, duration)
+                - expected_probability)
+                .abs()
+                < f64::EPSILON
+        );
+
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(duration, &[0]);
+        let input = input_builder.build();
+        let sine_outputs = (0..256)
+            .map(|_| sine.apply_noise_on_start(&input).unwrap().into_bytes())
+            .collect::<Vec<_>>();
+        let legacy_outputs = (0..256)
+            .map(|_| legacy.apply_noise_on_start(&input).unwrap().into_bytes())
+            .collect::<Vec<_>>();
+
+        assert_eq!(sine_outputs, legacy_outputs);
+        assert!(sine_outputs.iter().any(|output| output.len() > 16));
+    }
+
+    #[test]
+    fn x_weighted_sine_model_emits_x_not_z() {
+        let x_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_idle_linear_rate(0.0)
+            .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &x_model)
+            .build();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(1.0, &[0]);
+
+        let gates = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::X);
+    }
+
+    #[test]
+    fn sine_model_axes_are_independent_unnormalized_multipliers() {
+        let model_map = BTreeMap::from([
+            ("X".to_string(), 1.0),
+            ("Y".to_string(), 1.0),
+            ("Z".to_string(), 1.0),
+            ("L".to_string(), 1.0),
+        ]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_idle_linear_rate(0.0)
+            .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &model_map)
+            .build();
+
+        assert_eq!(model.p_idle_sin_squared_model, model_map);
+        for multiplier in model.p_idle_sin_squared_model.values() {
+            assert!((*multiplier - 1.0).abs() < f64::EPSILON);
+        }
+
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(1.0, &[0]);
+        let gate_types = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap()
+            .into_iter()
+            .map(|gate| gate.gate_type)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            gate_types,
+            vec![GateType::X, GateType::Y, GateType::Z, GateType::PZ]
+        );
+    }
+
+    #[test]
+    fn linear_family_rejects_unnormalized_model() {
+        let model = BTreeMap::from([("X".to_string(), 1.0), ("Z".to_string(), 1.0)]);
+        let panic = std::panic::catch_unwind(|| {
+            let _ = GeneralNoiseModel::builder().with_p_idle_linear(0.1, &model);
+        });
+        assert!(
+            panic.is_err(),
+            "an unnormalized linear model must be rejected"
+        );
+    }
+
+    #[test]
+    fn sine_family_rejects_invalid_rates_axes_and_multipliers() {
+        let cases = [
+            (f64::INFINITY, BTreeMap::from([("X".to_string(), 1.0)])),
+            (0.1, BTreeMap::from([("A".to_string(), 1.0)])),
+            (0.1, BTreeMap::from([("X".to_string(), -1.0)])),
+        ];
+        for (rate, model) in cases {
+            assert!(
+                std::panic::catch_unwind(|| {
+                    let _ = GeneralNoiseModel::builder().with_p_idle_sin_squared(rate, &model);
+                })
+                .is_err(),
+                "invalid sine rate/model must be rejected: rate={rate}, model={model:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sine_family_conflicts_with_both_legacy_quadratic_spellings() {
+        let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+        let builders = [
+            GeneralNoiseModel::builder()
+                .with_p_idle_quadratic_rate(0.1)
+                .with_p_idle_sin_squared(0.1, &z_model),
+            GeneralNoiseModel::builder()
+                .with_average_p_idle_quadratic_rate(0.1)
+                .with_p_idle_sin_squared(0.1, &z_model),
+        ];
+        for builder in builders {
+            let error = builder.validate_configuration().unwrap_err();
+            assert!(error.contains("with_p_idle_quadratic_rate"));
+            assert!(error.contains("with_average_p_idle_quadratic_rate"));
+            assert!(error.contains("radians per time unit"));
+            assert!(error.contains("cycles per time unit"));
+            assert!(
+                std::panic::catch_unwind(|| builder.build()).is_err(),
+                "the conflict must fail when the Rust model is built"
+            );
+        }
+    }
+
+    #[test]
+    fn sine_family_conflicts_with_coherent_legacy_path() {
+        let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+        let builder = GeneralNoiseModel::builder()
+            .with_p_idle_sin_squared(0.1, &z_model)
+            .with_p_idle_coherent(true);
+        let error = builder.validate_configuration().unwrap_err();
+        assert!(error.contains("with_p_idle_sin_squared"));
+        assert!(error.contains("with_p_idle_coherent(true)"));
+        assert!(error.contains("stochastic by definition"));
+        assert!(
+            std::panic::catch_unwind(|| builder.build()).is_err(),
+            "the conflict must fail when the Rust model is built"
+        );
+    }
+
+    #[test]
+    fn zero_sine_rate_and_zero_idle_duration_emit_nothing() {
+        assert!(GeneralNoiseModel::sin_squared_probability(0.0, 1.0, 1.0) < f64::EPSILON);
+        assert!(
+            GeneralNoiseModel::sin_squared_probability(std::f64::consts::FRAC_PI_2, 1.0, 0.0)
+                < f64::EPSILON
+        );
+        let x_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let mut zero_rate = GeneralNoiseModel::builder()
+            .with_p_idle_linear_rate(0.0)
+            .with_p_idle_sin_squared(0.0, &x_model)
+            .build();
+        let mut nonzero_rate = GeneralNoiseModel::builder()
+            .with_p_idle_linear_rate(0.0)
+            .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &x_model)
+            .build();
+        let mut duration_one = ByteMessage::quantum_operations_builder();
+        duration_one.idle(1.0, &[0]);
+        let mut duration_zero = ByteMessage::quantum_operations_builder();
+        duration_zero.idle(0.0, &[0]);
+
+        assert!(
+            zero_rate
+                .apply_noise_on_start(&duration_one.build())
+                .unwrap()
+                .quantum_ops()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            nonzero_rate
+                .apply_noise_on_start(&duration_zero.build())
+                .unwrap()
+                .quantum_ops()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn sine_family_is_deterministic_for_same_seed() {
+        let sine_model = BTreeMap::from([
+            ("X".to_string(), 0.5),
+            ("Y".to_string(), 0.75),
+            ("Z".to_string(), 1.0),
+        ]);
+        let make_model = || {
+            GeneralNoiseModel::builder()
+                .with_seed(424)
+                .with_p_idle_linear_rate(0.0)
+                .with_p_idle_sin_squared(0.6, &sine_model)
+                .build()
+        };
+        let mut first = make_model();
+        let mut second = make_model();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(0.7, &[0, 1, 2, 3]);
+        let input = input_builder.build();
+        let first_outputs = (0..128)
+            .map(|_| first.apply_noise_on_start(&input).unwrap().into_bytes())
+            .collect::<Vec<_>>();
+        let second_outputs = (0..128)
+            .map(|_| second.apply_noise_on_start(&input).unwrap().into_bytes())
+            .collect::<Vec<_>>();
+
+        assert_eq!(first_outputs, second_outputs);
+        assert!(first_outputs.iter().any(|output| output.len() > 16));
+    }
+
+    #[test]
+    fn legacy_idle_setters_keep_their_pre_change_bytes() {
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        for _ in 0..8 {
+            input_builder.idle(0.75, &[0, 1, 2, 3]);
+        }
+        let input = input_builder.build();
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear_rate(0.35)
+            .with_p_idle_quadratic_rate(0.07)
+            .with_p_idle_coherent(false)
+            .build();
+        assert!(
+            (model.p_idle_quadratic_rate - 0.07 * 1.5 * std::f64::consts::PI).abs() < f64::EPSILON
+        );
+
+        let output = model.apply_noise_on_start(&input).unwrap().into_bytes();
+        let expected = vec![
+            83, 67, 69, 80, 1, 0, 0, 0, 10, 0, 0, 0, 176, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1,
+            0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 8, 0,
+            0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 3, 0, 0, 0, 10, 0,
+            0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0,
+            0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0,
+            0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0,
+            0, 2, 1, 0, 0, 1, 0, 0, 0,
+        ];
+        assert_eq!(output, expected);
     }
 
     #[test]

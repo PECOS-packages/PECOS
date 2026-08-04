@@ -85,6 +85,8 @@ impl Default for GeneralNoiseModel {
             p_idle_linear_rate: 0.001,
             p_idle_linear_model: SingleQubitWeightedSampler::new(&p1_pauli_model),
             p_idle_quadratic_rate: 0.0,
+            p_idle_sin_squared_rate: 0.0,
+            p_idle_sin_squared_model: BTreeMap::new(),
             p_meas_0,
             p_meas_1,
             p1: 0.001,

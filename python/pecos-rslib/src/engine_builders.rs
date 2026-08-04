@@ -877,6 +877,15 @@ pub struct PyGeneralNoiseModelBuilder {
     pub(crate) inner: GeneralNoiseModelBuilder,
 }
 
+impl PyGeneralNoiseModelBuilder {
+    pub(crate) fn validated_inner(&self) -> PyResult<GeneralNoiseModelBuilder> {
+        self.inner
+            .validate_configuration()
+            .map_err(|message| pyo3::exceptions::PyValueError::new_err(message.to_string()))?;
+        Ok(self.inner.clone())
+    }
+}
+
 #[pymethods]
 impl PyGeneralNoiseModelBuilder {
     #[new]
@@ -1065,10 +1074,71 @@ impl PyGeneralNoiseModelBuilder {
         })
     }
 
+    /// Set the DEM-style linear idle-noise family.
+    ///
+    /// ``rate`` is the total event rate per time unit. The X/Y/Z/L ``model`` must be a
+    /// normalized distribution because this family splits one total linear rate across axes.
+    /// This is a pairing convenience over ``with_p_idle_linear_rate`` plus
+    /// ``with_p_idle_linear_model``.
+    ///
+    /// By contrast, ``with_p_idle_sin_squared`` uses radians per time unit and unnormalized
+    /// relative multipliers because sine laws do not add linearly: each axis has its own
+    /// independent rate. It applies no ``2*pi`` conversion and no
+    /// ``coherent_to_incoherent_factor``, unlike ``with_p_idle_quadratic_rate``. With neutral
+    /// global and idle scales, ``with_p_idle_quadratic_rate(r)`` equals
+    /// ``with_p_idle_sin_squared(r * factor/2 * 2*pi, {"Z": 1.0})``, or ``r * 1.5 * pi`` at the
+    /// default factor.
+    ///
+    /// Engines idle noise is on by default (``p_idle_linear_rate = 0.001``), so translating a DEM
+    /// configuration requires explicitly zeroing every idle family not requested. Engines also
+    /// keeps its existing linear sampling structure: one event followed by a categorical axis
+    /// choice, versus the DEM's independent per-axis mechanisms. The difference is second order
+    /// in the rates; this setter aligns units and the axis alphabet, not the sampling structure.
+    fn with_p_idle_linear(
+        &self,
+        rate: f64,
+        model: std::collections::BTreeMap<String, f64>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().with_p_idle_linear(rate, &model),
+        })
+    }
+
     /// Set the idling noise error rate for the quadratic term
     fn with_p_idle_quadratic_rate(&self, rate: f64) -> PyResult<Self> {
         Ok(Self {
             inner: self.inner.clone().with_p_idle_quadratic_rate(rate),
+        })
+    }
+
+    /// Set the DEM-style stochastic sine-squared idle-noise family.
+    ///
+    /// ``rate`` is radians per time unit; no ``2*pi`` conversion and no
+    /// ``coherent_to_incoherent_factor`` is applied, unlike
+    /// ``with_p_idle_quadratic_rate``. For each X/Y/Z/L axis P, multiplier ``n_P``, and duration
+    /// ``d``, engines independently samples ``P(P) = sin^2(rate * n_P * d)``.
+    ///
+    /// The model is intentionally unnormalized because sine laws do not add linearly: each axis
+    /// carries its own independent rate. ``with_p_idle_linear`` instead requires a normalized
+    /// distribution because it splits one total linear rate across axes.
+    ///
+    /// With neutral global and idle scales, ``with_p_idle_quadratic_rate(r)`` equals
+    /// ``with_p_idle_sin_squared(r * factor/2 * 2*pi, {"Z": 1.0})``, or ``r * 1.5 * pi`` at the
+    /// default factor. Engines idle noise is on by default (``p_idle_linear_rate = 0.001``), so
+    /// translating a DEM configuration requires explicitly zeroing every idle family not
+    /// requested.
+    ///
+    /// Engines deliberately retains its existing linear sampling structure: one event followed
+    /// by a categorical axis choice, versus the DEM's independent per-axis mechanisms. The
+    /// difference is second order in the rates; this setter aligns units and the axis alphabet,
+    /// not the sampling structure.
+    fn with_p_idle_sin_squared(
+        &self,
+        rate: f64,
+        model: std::collections::BTreeMap<String, f64>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().with_p_idle_sin_squared(rate, &model),
         })
     }
 
@@ -1220,8 +1290,8 @@ impl PyGeneralNoiseModelBuilder {
     ///
     /// A duration of `0.0` disables these sites. Nonzero sites receive all configured idle
     /// mechanisms over the given duration: linear stochastic noise from `p_idle_linear_rate` and
-    /// `p_idle_linear_model`, and quadratic dephasing from `p_idle_quadratic_rate`, honoring
-    /// `p_idle_coherent`.
+    /// `p_idle_linear_model`, quadratic dephasing from `p_idle_quadratic_rate` honoring
+    /// `p_idle_coherent`, and the independent per-axis sine-squared family.
     ///
     /// Anyone who previously wrote `with_p2_idle(0.01)` and no linear rate now gets no after-2q
     /// idle noise; the equivalent is

@@ -10,7 +10,7 @@ The stages are:
 1. Define the code in Guppy
 2. Define detectors and observables
 3. Generate the DEM with gate and idle noise
-4. Sample the DEM
+4. Sample — from the DEM, or by simulating the program
 5. Decode the samples and compute logical error rates
 
 Each stage builds on the previous one; the code blocks form a single script when
@@ -80,17 +80,22 @@ it is deterministic in the absence of noise:
 The observable is the logical Z value, which for this code is any single data
 qubit measurement.
 
+`result_ref("tag")` refers to a tagged measurement by name; `rec[-k]` refers to
+one by position in the canonical Guppy measurement stream, as in Stim.
+
 <!--continuation-->
 ```python
-detectors_json = """[
-    {"id": "D0", "result_tags": ["s0_r0"]},
-    {"id": "D1", "result_tags": ["s1_r0"]},
-    {"id": "D2", "result_tags": ["s0_r0", "s0_r1"]},
-    {"id": "D3", "result_tags": ["s1_r0", "s1_r1"]},
-    {"id": "D4", "result_tags": ["s0_r1", "m0", "m1"]},
-    {"id": "D5", "result_tags": ["s1_r1", "m1", "m2"]}
-]"""
-observables_json = '[{"id": "L0", "result_tags": ["m0"]}]'
+from pecos.qec import Detector, Observable, result_ref
+
+detectors = [
+    Detector(result_ref("s0_r0")),
+    Detector(result_ref("s1_r0")),
+    Detector(result_ref("s0_r0"), result_ref("s0_r1")),
+    Detector(result_ref("s1_r0"), result_ref("s1_r1")),
+    Detector(result_ref("s0_r1"), result_ref("m0"), result_ref("m1")),
+    Detector(result_ref("s1_r1"), result_ref("m1"), result_ref("m2")),
+]
+observables = [Observable(result_ref("m0"))]
 ```
 
 ## 3. Generate the DEM with gate and idle noise
@@ -107,15 +112,19 @@ across X, Y, and Z, so the single-axis choice is spelled out explicitly. See
 [Idle Noise](../user-guide/dem-from-guppy.md#idle-noise) for the full family and
 model semantics.
 
+`build_dem_from_guppy` returns the DEM together with the audit trail and the
+result-column evaluator used in stage 4b. `DetectorErrorModel.from_guppy` builds
+the same DEM from JSON metadata instead of typed specifications.
+
 <!--continuation-->
 ```python
-from pecos.qec import DetectorErrorModel
+from pecos.qec import build_dem_from_guppy
 
-dem = DetectorErrorModel.from_guppy(
+build = build_dem_from_guppy(
     rep_code_memory,
     num_qubits=7,
-    detectors_json=detectors_json,
-    observables_json=observables_json,
+    detectors=detectors,
+    observables=observables,
     idle_after_2q_duration=1.0,
     p_idle_linear=0.01,
     p_idle_linear_model={"X": 0.25, "Y": 0.25, "Z": 0.5},
@@ -126,6 +135,7 @@ dem = DetectorErrorModel.from_guppy(
     p_meas=0.02,
     p_prep=0.02,
 )
+dem = build.dem
 
 assert dem.num_detectors == 6
 assert dem.num_observables == 1
@@ -147,12 +157,12 @@ source_graphlike_text = dem.to_string_source_graphlike_decomposed()
 assert all("error(" in text for text in (raw_text, terminal_graphlike_text, source_graphlike_text))
 ```
 
-## 4. Sample the DEM
+## 4a. Sample the DEM
 
-`to_sampler()` draws detector events and observable flips directly from the DEM.
-`get_syndrome()` returns one shot's detector bits and `get_observable_mask()` the
-actual logical flips those shots incurred — the ground truth that decoder
-predictions are scored against.
+`to_sampler()` draws detector events and observable flips directly from the
+error model, without simulating the circuit. `get_syndrome()` returns one shot's
+detector bits and `get_observable_mask()` the actual logical flips those shots
+incurred — the ground truth that decoder predictions are scored against.
 
 <!--continuation-->
 ```python
@@ -165,6 +175,45 @@ for shot in range(2):
     observable_mask = batch.get_observable_mask(shot)
     assert len(syndrome) == dem.num_detectors
     print(f"shot {shot}: syndrome={syndrome}, observable_mask={observable_mask}")
+```
+
+## 4b. Or generate shots by simulating the program
+
+Instead of sampling the error model, you can execute the Guppy program itself
+under a noisy simulator and score those shots against the same DEM.
+`build.evaluate_result_columns()` maps the run's tagged result columns into the
+same detector-event and observable-flip pairs a DEM sample would produce, so
+either source can feed the decoders.
+
+The two paths do not use the same noise: the DEM carries the idle families
+configured in stage 3, while the simulation applies whatever noise model is
+given to `sim(...)` — and the default Selene runtime emits no idle gates, so
+idle noise has nothing to attach to on that path. Treat the numbers as coming
+from two different experiments rather than as a like-for-like comparison.
+
+<!--continuation-->
+```python
+from pecos import depolarizing_noise, selene_engine, sim, stabilizer
+from pecos_rslib.qec import SampleBatch
+
+columns = (
+    sim(rep_code_memory)
+    .classical(selene_engine())
+    .quantum(stabilizer())
+    .qubits(7)
+    .noise(depolarizing_noise().with_uniform_probability(0.01))
+    .seed(42)
+    .run(500)
+    .to_shot_map()
+    .to_dict()
+)
+evaluated = build.evaluate_result_columns(columns)
+sim_batch = SampleBatch(
+    [events for events, _ in evaluated],
+    [mask for _, mask in evaluated],
+)
+
+assert sim_batch.num_shots == 500
 ```
 
 ## 5. Decode the samples and compute logical error rates
@@ -184,9 +233,14 @@ decoder_inputs = {
 error_counts = {name: batch.decode_count(text, name) for name, text in decoder_inputs.items()}
 
 assert all(0 < errors < batch.num_shots for errors in error_counts.values())
+print("DEM-sampled shots")
 print("decoder     errors   logical error rate")
 for name, errors in error_counts.items():
     print(f"{name:10}  {errors:6}   {errors / batch.num_shots:.4%}")
+
+# The simulated shots decode against the same DEM.
+sim_errors = sim_batch.decode_count(terminal_graphlike_text, "pymatching")
+print(f"\nsimulated shots, pymatching: {sim_errors}/{sim_batch.num_shots}")
 ```
 
 At this noise level the three decoders land within about a percentage point of

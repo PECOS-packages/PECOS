@@ -5,7 +5,18 @@ decoded logical error rate under circuit-level gate and idle noise. The example
 is a hand-written three-qubit repetition-code memory, small enough to read in
 full: everything here applies unchanged to larger hand-written programs.
 
-## 1. Write the program
+The stages are:
+
+1. Define the code in Guppy
+2. Define detectors and observables
+3. Generate the DEM with gate and idle noise
+4. Sample the DEM
+5. Decode the samples and compute logical error rates
+
+Each stage builds on the previous one; the code blocks form a single script when
+read in order.
+
+## 1. Define the code in Guppy
 
 The program prepares three data qubits in the logical `|0>` state, extracts the
 two parity checks twice with fresh ancillas, and reads out the data qubits in
@@ -13,68 +24,16 @@ the Z basis. Every measurement that a detector will reference is tagged with
 `result(...)`, so detectors can be written by name instead of by counting
 positions.
 
-Two constraints shape the program. Quantum control flow must be static, so the
+Two constraints shape the program: quantum control flow must be static, so the
 rounds are written out rather than looped, and the circuit must be Clifford.
 Ancillas are freshly allocated each round because `measure()` consumes its
 qubit. For larger codes, the built-in generators in
 [QEC with Guppy](../user-guide/qec-guppy.md) produce this structure for you.
 
-## 2. Define detectors and observables
-
-A detector is the **parity** of the measurements it references, chosen so that
-it is deterministic in the absence of noise:
-
-- `D0`, `D1` — the first-round checks, deterministic because the data qubits
-  start in `|000>`.
-- `D2`, `D3` — each second-round check compared against the same check in the
-  first round.
-- `D4`, `D5` — each second-round check compared against the corresponding parity
-  of the final data readout.
-
-The observable is the logical Z value, which for this code is any single data
-qubit measurement.
-
-## 3. Attach idle gates and noise
-
-`idle_after_2q_duration=1.0` inserts an idle of that duration on both qubits
-after every two-qubit gate; traced identity-like gates are stripped first by
-default, so runtime-emitted idles are not double-counted.
-
-The linear family uses a custom Z-biased distribution, keeping smaller X and Y
-memory errors while making dephasing dominant; its weights are an additive
-probability distribution and must sum to 1. The sine-squared family uses Z only,
-because the sine-law dephasing remnant is Z by nature — its default is symmetric
-across X, Y, and Z, so the single-axis choice is spelled out explicitly. See
-[Idle Noise](../user-guide/dem-from-guppy.md#idle-noise) for the full family and
-model semantics.
-
-## 4. Choose the DEM text for each decoder
-
-`to_string()` returns Stim-format DEM text with raw hyperedges, which BP+OSD and
-Tesseract consume directly. PyMatching requires a graph-like model, so it gets
-the terminal projection from `to_string_terminal_graphlike_decomposed()`. The
-source-informed `to_string_source_graphlike_decomposed()` form is used for
-Tesseract below.
-
-## 5. Sample detector events
-
-`to_sampler()` draws detector events and observable flips directly from the DEM.
-`get_syndrome()` returns one shot's detector bits and `get_observable_mask()` the
-actual logical flips those shots incurred — the ground truth that decoder
-predictions are scored against.
-
-## 6. Decode the same batch three ways
-
-Passing the same batch to each decoder makes the logical error rates directly
-comparable, rather than mixing in sampling variation from separate experiments.
-
-<!--test-name: guppy_dem_decoding_with_idle_noise-->
 ```python
 from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import cx, measure, qubit
-
-from pecos.qec import DetectorErrorModel
 
 
 @guppy
@@ -104,9 +63,25 @@ def rep_code_memory() -> None:
     result("m0", measure(d0))
     result("m1", measure(d1))
     result("m2", measure(d2))
+```
 
+## 2. Define detectors and observables
 
-# Each detector is a parity that is deterministic without noise.
+A detector is the **parity** of the measurements it references, chosen so that
+it is deterministic in the absence of noise:
+
+- `D0`, `D1` — the first-round checks, deterministic because the data qubits
+  start in `|000>`.
+- `D2`, `D3` — each second-round check compared against the same check in the
+  first round.
+- `D4`, `D5` — each second-round check compared against the corresponding parity
+  of the final data readout.
+
+The observable is the logical Z value, which for this code is any single data
+qubit measurement.
+
+<!--continuation-->
+```python
 detectors_json = """[
     {"id": "D0", "result_tags": ["s0_r0"]},
     {"id": "D1", "result_tags": ["s1_r0"]},
@@ -116,6 +91,25 @@ detectors_json = """[
     {"id": "D5", "result_tags": ["s1_r1", "m1", "m2"]}
 ]"""
 observables_json = '[{"id": "L0", "result_tags": ["m0"]}]'
+```
+
+## 3. Generate the DEM with gate and idle noise
+
+`idle_after_2q_duration=1.0` inserts an idle of that duration on both qubits
+after every two-qubit gate; traced identity-like gates are stripped first by
+default, so runtime-emitted idles are not double-counted.
+
+The linear family uses a custom Z-biased distribution, keeping smaller X and Y
+memory errors while making dephasing dominant; its weights are an additive
+probability distribution and must sum to 1. The sine-squared family uses Z only,
+because the sine-law dephasing remnant is Z by nature — its default is symmetric
+across X, Y, and Z, so the single-axis choice is spelled out explicitly. See
+[Idle Noise](../user-guide/dem-from-guppy.md#idle-noise) for the full family and
+model semantics.
+
+<!--continuation-->
+```python
+from pecos.qec import DetectorErrorModel
 
 dem = DetectorErrorModel.from_guppy(
     rep_code_memory,
@@ -133,28 +127,55 @@ dem = DetectorErrorModel.from_guppy(
     p_prep=0.02,
 )
 
-# The decoder-specific text forms.
+assert dem.num_detectors == 6
+assert dem.num_observables == 1
+print(f"detectors: {dem.num_detectors}, mechanisms: {dem.to_string().count('error(')}")
+```
+
+The DEM has several text forms, one per decoder appetite. `to_string()` returns
+Stim-format text with raw hyperedges, which BP+OSD and Tesseract consume
+directly. PyMatching requires a graph-like model, so it gets the terminal
+projection from `to_string_terminal_graphlike_decomposed()`; the source-informed
+`to_string_source_graphlike_decomposed()` form is used for Tesseract below.
+
+<!--continuation-->
+```python
 raw_text = dem.to_string()
 terminal_graphlike_text = dem.to_string_terminal_graphlike_decomposed()
 source_graphlike_text = dem.to_string_source_graphlike_decomposed()
-num_mechanisms = raw_text.count("error(")
 
-assert dem.num_detectors == 6
-assert dem.num_observables == 1
-assert num_mechanisms > 0
-print(f"detectors: {dem.num_detectors}, error mechanisms: {num_mechanisms}")
+assert all("error(" in text for text in (raw_text, terminal_graphlike_text, source_graphlike_text))
+```
 
-# Draw one reproducible batch, then inspect a couple of shots explicitly.
+## 4. Sample the DEM
+
+`to_sampler()` draws detector events and observable flips directly from the DEM.
+`get_syndrome()` returns one shot's detector bits and `get_observable_mask()` the
+actual logical flips those shots incurred — the ground truth that decoder
+predictions are scored against.
+
+<!--continuation-->
+```python
 sampler = dem.to_sampler()
 batch = sampler.generate_samples(2000, 1)
+
 assert batch.num_shots == 2000
 for shot in range(2):
     syndrome = batch.get_syndrome(shot)
     observable_mask = batch.get_observable_mask(shot)
     assert len(syndrome) == dem.num_detectors
     print(f"shot {shot}: syndrome={syndrome}, observable_mask={observable_mask}")
+```
 
-# Decode identical detector events with all three decoders.
+## 5. Decode the samples and compute logical error rates
+
+`decode_count()` decodes every shot and returns the number whose predicted
+observable flip disagreed with the sampled one. Passing the same batch to each
+decoder makes the rates directly comparable, rather than mixing in sampling
+variation from separate experiments.
+
+<!--continuation-->
+```python
 decoder_inputs = {
     "pymatching": terminal_graphlike_text,
     "tesseract": source_graphlike_text,

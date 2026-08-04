@@ -79,6 +79,8 @@ nav:
   - LLVM Setup: user-guide/llvm-setup.md
   - CUDA Setup: user-guide/cuda-setup.md
   - cmake Setup (MWPF): user-guide/cmake-setup.md
+- Workflows:
+  - Decode a Guppy QEC experiment with idle noise: workflows/guppy-dem-decoding.md
 - Concepts:
   - concepts/index.md
   - StabVec Simulator: concepts/clifford-rz-simulator.md
@@ -96,8 +98,6 @@ nav:
 - Experimental:
   - experimental/index.md
   - Composable Noise (pecos-neo): experimental/composable-noise.md
-- Proposals:
-  - proposals/README.md
 - Releases:
   - releases/changelog.md
 markdown_extensions:

@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("pecos_rslib")
 
-from pecos_rslib.qec import SampleBatch  # noqa: E402
+from pecos_rslib.qec import SampleBatch
 
 
 def test_sample_batch_compare_decoders_exposes_joint_counts() -> None:
@@ -24,6 +24,6 @@ def test_sample_batch_compare_decoders_exposes_joint_counts() -> None:
     assert first.dut_correct_reference_correct == 4
     assert first.dut_only_failures == 0
     assert first.both_failed == 0
-    assert 0.0 <= first.dut_only_failure_interval[0]
+    assert first.dut_only_failure_interval[0] >= 0.0
     assert first.dut_only_failure_interval[1] <= 1.0
     assert second.counts == first.counts

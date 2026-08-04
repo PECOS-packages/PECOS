@@ -195,7 +195,10 @@ pub fn cross_measurement<P: PauliComponents>(
                 }
             }
         },
-        GateType::MeasureFree => prop.clear_qubit(qubit),
+        // `MeasureFree` discards the qubit; `MPZ` resets it. Either way the
+        // record flip is taken by the walker before the crossing and nothing
+        // propagates across.
+        GateType::MeasureFree | GateType::MPZ => prop.clear_qubit(qubit),
         _ => debug_assert!(false, "cross_measurement called on {gate_type:?}"),
     }
 }
@@ -208,7 +211,7 @@ fn apply_named_gate(
     direction: Direction,
 ) -> bool {
     match gate_type {
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ => {
             for qid in qubits {
                 cross_measurement(prop, qid.index(), gate_type, direction);
             }
@@ -715,14 +718,20 @@ mod collapse_tests {
         }
     }
 
-    /// A discarded qubit carries nothing across, in either direction.
+    /// A discarded (`MeasureFree`) or reset (`MPZ`) qubit carries nothing
+    /// across, in either direction.
     #[test]
-    fn measure_free_clears_both_directions() {
-        for direction in [Direction::Forward, Direction::Backward] {
-            let mut prop = PauliProp::new();
-            prop.track_y(&[0]);
-            cross_measurement(&mut prop, 0, GateType::MeasureFree, direction);
-            assert!(!prop.contains_x(0) && !prop.contains_z(0));
+    fn measure_free_and_mpz_clear_both_directions() {
+        for gate_type in [GateType::MeasureFree, GateType::MPZ] {
+            for direction in [Direction::Forward, Direction::Backward] {
+                let mut prop = PauliProp::new();
+                prop.track_y(&[0]);
+                cross_measurement(&mut prop, 0, gate_type, direction);
+                assert!(
+                    !prop.contains_x(0) && !prop.contains_z(0),
+                    "{gate_type:?} {direction:?}"
+                );
+            }
         }
     }
 

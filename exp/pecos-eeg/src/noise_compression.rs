@@ -103,7 +103,7 @@ pub fn compress_noise_to_boundaries(
     for (gate_idx, inj) in &all_noise {
         let gate = &gates[*gate_idx];
         match gate.gate_type {
-            GateType::MZ | GateType::MeasureFree => {
+            GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                 measurement_sources.push((*gate_idx, inj.clone()));
             }
             GateType::PZ | GateType::QAlloc => {
@@ -129,7 +129,11 @@ pub fn compress_noise_to_boundaries(
         let mut inject_at = *gate_idx; // default: stay at original position
         for g in (*gate_idx + 1)..n_gates {
             match gates[g].gate_type {
-                GateType::MZ | GateType::MeasureFree | GateType::PZ | GateType::QAlloc => {
+                GateType::MZ
+                | GateType::MeasureFree
+                | GateType::MPZ
+                | GateType::PZ
+                | GateType::QAlloc => {
                     let noise_qubits: Vec<usize> = label_qubits(&label, max_qubit);
                     let boundary_qubits: Vec<usize> = gates[g]
                         .qubits
@@ -208,6 +212,7 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
         | GateType::QFree
         | GateType::MZ
         | GateType::MeasureFree
+        | GateType::MPZ
         | GateType::MeasureLeaked
         | GateType::I
         | GateType::Idle => return,

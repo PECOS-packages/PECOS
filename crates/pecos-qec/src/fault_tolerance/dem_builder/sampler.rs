@@ -1509,7 +1509,7 @@ pub(crate) fn compute_location_probs_from_noise(
             #[allow(clippy::match_same_arms)]
             match loc.gate_type {
                 GateType::PZ | GateType::QAlloc => noise.p_prep,
-                GateType::MZ | GateType::MeasureFree => noise.p_meas,
+                GateType::MZ | GateType::MeasureFree | GateType::MPZ => noise.p_meas,
                 GateType::CX
                 | GateType::CZ
                 | GateType::CY

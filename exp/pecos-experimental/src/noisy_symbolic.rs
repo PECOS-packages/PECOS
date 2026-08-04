@@ -666,7 +666,7 @@ impl NoisyMeasurementHistoryBuilder {
             // Track measurement positions
             if matches!(
                 gate.gate_type,
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
             ) {
                 measurement_positions.insert(gate_locations.len(), measurement_count);
                 measurement_count += 1;
@@ -806,7 +806,7 @@ impl NoisyMeasurementHistoryBuilder {
             }
 
             // Measurement: flip the measurement outcome with probability p_meas
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
                 if self.noise_model.p_meas > 0.0 =>
             {
                 // Measurement fault directly flips this measurement
@@ -882,7 +882,7 @@ impl NoisyMeasurementHistoryBuilder {
                 }
 
                 // Measurements
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
                     if !location.qubits.is_empty() =>
                 {
                     let q = location.qubits[0];
@@ -953,7 +953,7 @@ impl NoisyMeasurementHistoryBuilder {
                     let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
                     prop.h(&[q2]).cx(&[(q1, q2)]).h(&[q2]);
                 }
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
                     if !location.qubits.is_empty() =>
                 {
                     let q = location.qubits[0];

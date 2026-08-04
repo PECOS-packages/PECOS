@@ -581,6 +581,11 @@ impl ByteMessageBuilder {
         self
     }
 
+    /// Add an MPZ (measure-and-prepare) gate: measure +Z, then prepare |0>.
+    pub fn mpz(&mut self, qubits: &[usize]) -> &mut Self {
+        self.add_gate_parts(GateType::MPZ, qubits, &[], &[])
+    }
+
     /// Add a `MeasCrosstalkGlobalPayload`
     pub fn meas_crosstalk_global_payload(&mut self, qubits: &[usize]) -> &mut Self {
         self.add_gate_parts(GateType::MeasCrosstalkGlobalPayload, qubits, &[], &[])

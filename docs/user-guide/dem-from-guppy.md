@@ -136,7 +136,7 @@ metadata, so you do not need to author it by hand:
 
 <!--test-name: dem_from_guppy_surface_memory-->
 ```python
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
@@ -520,7 +520,7 @@ shots rather than on three independently sampled experiments.
 <!--test-name: dem_from_guppy_decoder_comparison-->
 ```python
 from pecos.decoders import DemAwareDecoder, TesseractDecoder
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch

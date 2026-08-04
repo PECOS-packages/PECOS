@@ -1,7 +1,7 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Tests for :func:`pecos.guppy.variant_scoped`.
+"""Tests for :func:`pecos.guppy_gen.variant_scoped`.
 
 ``variant_scoped`` gives a factory-local ``@guppy`` program a variant-unique
 name so that building several parameterizations in one process does not collide
@@ -13,7 +13,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, comptime, result
 from guppylang.std.quantum import h, measure, qubit
-from pecos.guppy import variant_scoped
+from pecos.guppy_gen import variant_scoped
 
 
 def test_variant_scoped_suffixes_name_and_qualname() -> None:

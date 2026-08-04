@@ -305,6 +305,13 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 }
             }
 
+            GateType::MPZ => {
+                let meas_ids = sim.mpz(&cmd.qubits);
+                for meas_id in meas_ids {
+                    measurements.push(usize::from(meas_id.outcome));
+                }
+            }
+
             _ => {
                 return Err(PecosError::Processing(format!(
                     "Gate {:?} is not supported by the stabilizer simulator.",
@@ -580,6 +587,12 @@ fn process_general_message<
                     mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                 }
                 let meas_ids = sim.mz(&mz_qubits);
+                for meas_id in meas_ids {
+                    measurements.push(usize::from(meas_id.outcome));
+                }
+            }
+            GateType::MPZ => {
+                let meas_ids = sim.mpz(&cmd.qubits);
                 for meas_id in meas_ids {
                     measurements.push(usize::from(meas_id.outcome));
                 }
@@ -1212,6 +1225,13 @@ where
                     debug!("Processing QAlloc gate on qubits {:?}", cmd.qubits);
                     self.simulator.pz(&cmd.qubits);
                 }
+                GateType::MPZ => {
+                    debug!("Processing MPZ gate on qubits {:?}", cmd.qubits);
+                    let meas_ids = self.simulator.mpz(&cmd.qubits);
+                    for meas_id in meas_ids {
+                        measurements.push(usize::from(meas_id.outcome));
+                    }
+                }
                 GateType::MeasureFree => {
                     // Measure and deallocate - measure first, then the qubit is implicitly freed
                     debug!("Processing MeasureFree gate on qubits {:?}", cmd.qubits);
@@ -1699,7 +1719,7 @@ impl Engine for CoinTossEngine {
         for cmd in &batch {
             match cmd.gate_type {
                 // All gates are no-ops for CoinToss - only measurements matter
-                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ => {
                     for q in &cmd.qubits {
                         debug!("CoinToss: Processing measurement on qubit {q:?}");
                         let meas_ids = self.simulator.mz(&[*q]);

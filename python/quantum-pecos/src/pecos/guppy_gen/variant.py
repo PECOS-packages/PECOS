@@ -43,7 +43,7 @@ def variant_scoped(func: F, *variant: object) -> F:
     parameterization::
 
         from guppylang import guppy
-        from pecos.guppy import variant_scoped
+        from pecos.guppy_gen import variant_scoped
 
         def make_prog(num_rounds):
             def prog() -> None:

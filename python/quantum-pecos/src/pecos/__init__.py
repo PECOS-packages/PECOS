@@ -214,7 +214,7 @@ from pecos import (
     engines,
     exceptions,  # Exception classes
     graph,
-    guppy,  # Direct Guppy code generation for QEC - bypasses SLR
+    guppy_gen,  # Direct Guppy code generation for QEC - bypasses SLR
     noise,
     programs,
     protocols,
@@ -237,6 +237,11 @@ def __getattr__(name: str):
         import importlib
 
         return importlib.import_module("pecos.tools")
+    if name == "guppy":
+        # Lazy import -- guppy/__init__.py emits the deprecation warning
+        import importlib
+
+        return importlib.import_module("pecos.guppy")
     if name == "misc":
         msg = (
             "pecos.misc has been removed. Its contents have been moved to:\n"
@@ -406,7 +411,8 @@ __all__ = [
     "general_noise",
     "get_guppy_backends",
     "graph",
-    "guppy",
+    "guppy",  # Deprecated alias for guppy_gen, resolved lazily via __getattr__
+    "guppy_gen",
     "hugr_engine",
     "i8",
     "i16",

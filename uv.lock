@@ -3164,10 +3164,10 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
+    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14,<1.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
     { name = "selene-core", specifier = ">=0.2" },
-    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2,<0.3" },
 ]
 provides-extras = ["test"]
 
@@ -3188,10 +3188,10 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
+    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14,<1.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
     { name = "selene-core", specifier = ">=0.2" },
-    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2,<0.3" },
 ]
 provides-extras = ["test"]
 
@@ -3212,10 +3212,10 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
+    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14,<1.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
     { name = "selene-core", specifier = ">=0.2" },
-    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2,<0.3" },
 ]
 provides-extras = ["test"]
 
@@ -3236,10 +3236,10 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
+    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14,<1.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
     { name = "selene-core", specifier = ">=0.2" },
-    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2,<0.3" },
 ]
 provides-extras = ["test"]
 
@@ -3260,10 +3260,10 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14" },
+    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14,<1.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
     { name = "selene-core", specifier = ">=0.2" },
-    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2,<0.3" },
 ]
 provides-extras = ["test"]
 

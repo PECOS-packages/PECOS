@@ -101,7 +101,7 @@ def _run_twirled_guppy_rows_masks_and_raw(
     twirl: TwirlConfig,
 ) -> tuple[list[list[int]], np.ndarray, list[list[int]], list[str]]:
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
+    from pecos.guppy_gen.surface import generate_memory_experiment, get_num_qubits
     from selene_sim import SimpleRuntime, Stim, build
 
     fn = generate_memory_experiment(
@@ -201,7 +201,7 @@ def _sample_twirled_guppy_masks_and_activations(
     twirl: TwirlConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
+    from pecos.guppy_gen.surface import generate_memory_experiment, get_num_qubits
     from selene_sim import SimpleRuntime, Stim, build
 
     fn = generate_memory_experiment(

@@ -2,7 +2,7 @@
 
 The core ``DetectorErrorModel`` is implemented in Rust
 (``pecos_rslib.qec.DetectorErrorModel``). The Guppy -> Selene -> QIS-trace
-pipeline, however, lives entirely in Python (``pecos.sim``, ``pecos.guppy``,
+pipeline, however, lives entirely in Python (``pecos.sim``, ``pecos.guppy_gen``,
 ``pecos.qec.surface.decode``). To keep the convenient
 ``DetectorErrorModel.from_guppy(...)`` call site without making the low-level
 Rust extension import the high-level Python package (a dependency cycle), this
@@ -384,7 +384,7 @@ class _DetectorErrorModelMixin:
         Args:
             guppy: A HUGR-certifiable program: a ``@guppy``-decorated function,
                 a compiled Guppy program (e.g. the object returned by
-                ``pecos.guppy.make_surface_code``), a ``pecos.Guppy`` or
+                ``pecos.guppy_gen.make_surface_code``), a ``pecos.Guppy`` or
                 ``pecos.Hugr`` wrapper, or raw HUGR envelope bytes. Inputs whose
                 HUGR cannot be obtained (e.g. already-lowered QIS/QIR) are
                 rejected: the audited build must be able to certify the static

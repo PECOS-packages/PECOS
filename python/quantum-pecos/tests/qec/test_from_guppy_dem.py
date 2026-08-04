@@ -21,7 +21,7 @@ from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import Detector, DetectorErrorModel, Observable, build_dem_from_guppy, rec
 from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseParameters, SurfacePatch
 from pecos.qec.surface.circuit_builder import (
@@ -2155,7 +2155,7 @@ def test_surface_module_cache_collapses_unconstrained_budget_forms() -> None:
     and any ``budget >= total_ancilla`` resolve to the SAME cached module --
     no redundant codegen for the two ways of saying "unconstrained". A finite
     constrained budget is a distinct entry."""
-    from pecos.guppy.surface import get_surface_code_module
+    from pecos.guppy_gen.surface import get_surface_code_module
 
     d = 3
     total_ancilla = d * d - 1  # all stabilizer ancillas live simultaneously

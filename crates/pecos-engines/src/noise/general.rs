@@ -562,7 +562,10 @@ impl GeneralNoiseModel {
 
         for gate in gates {
             // Track which qubits are being measured for leakage handling
-            if matches!(gate.gate_type, GateType::MZ | GateType::MeasureLeaked) {
+            if matches!(
+                gate.gate_type,
+                GateType::MZ | GateType::MeasureLeaked | GateType::MPZ
+            ) {
                 self.measured_qubits.extend(
                     gate.qubits
                         .iter()
@@ -600,6 +603,16 @@ impl GeneralNoiseModel {
                 GateType::MZ | GateType::MeasureLeaked => {
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
+                    builder.add_gate_command(&gate);
+                }
+                GateType::MPZ => {
+                    // Measurement noise is applied post-engine like MZ; the
+                    // built-in preparation marks the qubits prepared but draws
+                    // no preparation fault (measurement-half only, like every
+                    // other noise path).
+                    for &q in &gate.qubits {
+                        self.prepared_qubits.insert(usize::from(q));
+                    }
                     builder.add_gate_command(&gate);
                 }
                 GateType::MeasCrosstalkGlobalPayload => {
@@ -758,7 +771,7 @@ impl GeneralNoiseModel {
                     }
                     outcomes.push(val);
                 }
-                GateType::MZ => {
+                GateType::MZ | GateType::MPZ => {
                     // Apply biased measurement noise to each outcome
                     // Check if we have leaked qubits that were measured
                     let mut val = outcome as usize;

@@ -81,7 +81,7 @@ yet share an explicit compiler origin-ID ABI.
 This should support calls like:
 
 ```python,notest
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 
 program = make_surface_code(
@@ -145,7 +145,7 @@ The key surface-code use case is Helios-sized rotated surface code memory:
 Important checks:
 
 ```bash
-uv run python -c "from pecos.guppy import make_surface_code, get_num_qubits; from pecos.qec import DetectorErrorModel; print(get_num_qubits(9, ancilla_budget=17)); print(hasattr(DetectorErrorModel, 'from_guppy')); make_surface_code(distance=9, num_rounds=18, basis='Z', ancilla_budget=17); print('ok')"
+uv run python -c "from pecos.guppy_gen import make_surface_code, get_num_qubits; from pecos.qec import DetectorErrorModel; print(get_num_qubits(9, ancilla_budget=17)); print(hasattr(DetectorErrorModel, 'from_guppy')); make_surface_code(distance=9, num_rounds=18, basis='Z', ancilla_budget=17); print('ok')"
 ```
 
 Expected output includes:

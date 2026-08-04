@@ -16,7 +16,7 @@ from pecos._qis_trace_replay import (
     _replay_qis_trace_chunks_into_tick_circuit,
     _validate_audited_trace_stream,
 )
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import (
     Detector,
     Observable,

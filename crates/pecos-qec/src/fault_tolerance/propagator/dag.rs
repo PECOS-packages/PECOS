@@ -1234,9 +1234,11 @@ impl GateFaultLocation<'_> {
     fn all_physical_paulis(&self) -> Vec<pecos_core::PauliString> {
         let physical: &[pecos_core::Pauli] = match self.gate_type {
             // Z-basis prep/measurement: only X (bit-flip) fault.
-            GateType::PZ | GateType::QAlloc | GateType::MZ | GateType::MeasureFree => {
-                &[pecos_core::Pauli::X]
-            }
+            GateType::PZ
+            | GateType::QAlloc
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MPZ => &[pecos_core::Pauli::X],
             // Unitary gates: all single-qubit Paulis.
             _ => &[
                 pecos_core::Pauli::X,
@@ -1304,7 +1306,11 @@ impl GateFaultLocation<'_> {
         // Determine which Paulis are physical for this gate type
         let physical_paulis: &[Pauli] = match self.gate_type {
             // Z-basis prep/measurement: only X (bit-flip) fault.
-            GateType::PZ | GateType::QAlloc | GateType::MZ | GateType::MeasureFree => &[Pauli::X],
+            GateType::PZ
+            | GateType::QAlloc
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MPZ => &[Pauli::X],
             // Unitary gates: all single-qubit Paulis.
             _ => &[Pauli::X, Pauli::Y, Pauli::Z],
         };
@@ -1845,7 +1851,10 @@ impl<'a> DagFaultAnalyzer<'a> {
                     continue;
                 }
 
-                let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
+                let is_measurement = matches!(
+                    gate.gate_type,
+                    GateType::MZ | GateType::MeasureFree | GateType::MPZ
+                );
 
                 // Convert QubitId to usize
                 let qubits: SmallVec<[usize; 2]> =
@@ -1962,7 +1971,7 @@ impl<'a> DagFaultAnalyzer<'a> {
         for &node in self.propagator.topo_order() {
             if let Some(gate) = self.propagator.gate(node) {
                 let basis = match gate.gate_type {
-                    GateType::MZ | GateType::MeasureFree => 0, // Z-basis
+                    GateType::MZ | GateType::MeasureFree | GateType::MPZ => 0, // Z-basis
                     _ => continue,
                 };
 
@@ -2875,8 +2884,12 @@ mod tests {
         }
         // Ensure at least one measurement
         if dag.topological_order().iter().all(|&n| {
-            dag.gate(n)
-                .is_none_or(|g| !matches!(g.gate_type, GateType::MZ | GateType::MeasureFree))
+            dag.gate(n).is_none_or(|g| {
+                !matches!(
+                    g.gate_type,
+                    GateType::MZ | GateType::MeasureFree | GateType::MPZ
+                )
+            })
         }) {
             dag.mz(&[0]);
         }

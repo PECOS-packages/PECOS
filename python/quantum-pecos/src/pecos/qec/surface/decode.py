@@ -1226,7 +1226,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
     max_hosted_tick_separation: int | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a surface Guppy program into a ``TickCircuit`` plus result provenance."""
-    from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
+    from pecos.guppy_gen.surface import generate_memory_experiment, get_num_qubits
 
     program = generate_memory_experiment(
         patch,
@@ -3773,7 +3773,7 @@ def run_noisy_memory_experiment(
     from selene_sim import DepolarizingErrorModel, SimpleRuntime, Stim, build
 
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy.surface import get_num_qubits, make_surface_code
+    from pecos.guppy_gen.surface import get_num_qubits, make_surface_code
     from pecos.qec.surface import SurfacePatch
 
     resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
@@ -4587,7 +4587,7 @@ def _sample_pauli_sideband_results_from_guppy(
     from selene_sim import SimpleRuntime, Stim, build
 
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
+    from pecos.guppy_gen.surface import generate_memory_experiment, get_num_qubits
 
     if twirl is None or rng is None:
         msg = "sample_pauli_masks_from_guppy requires both twirl and rng to be set"

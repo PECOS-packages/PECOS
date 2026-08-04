@@ -125,7 +125,7 @@ the same DEM from JSON metadata instead of typed specifications.
 ```python
 from pecos.qec import build_dem_from_guppy
 
-build = build_dem_from_guppy(
+dem_build = build_dem_from_guppy(
     rep_code_memory,
     num_qubits=7,
     detectors=detectors,
@@ -140,7 +140,7 @@ build = build_dem_from_guppy(
     p_meas=0.02,
     p_prep=0.02,
 )
-dem = build.dem
+dem = dem_build.dem
 
 assert dem.num_detectors == 6
 assert dem.num_observables == 1
@@ -186,7 +186,7 @@ for shot in range(2):
 
 Instead of sampling the error model, you can execute the Guppy program itself
 under a noisy simulator and score those shots against the same DEM.
-`build.evaluate_result_columns()` maps the run's tagged result columns into the
+`dem_build.evaluate_result_columns()` maps the run's tagged result columns into the
 same detector-event and observable-flip pairs a DEM sample would produce, so
 either source can feed the decoders.
 
@@ -212,7 +212,7 @@ columns = (
     .to_shot_map()
     .to_dict()
 )
-evaluated = build.evaluate_result_columns(columns)
+evaluated = dem_build.evaluate_result_columns(columns)
 sim_batch = SampleBatch(
     [events for events, _ in evaluated],
     [mask for _, mask in evaluated],

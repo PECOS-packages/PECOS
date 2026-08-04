@@ -211,9 +211,8 @@ default Selene runtime emits no idle gates for the simulator to attach idle
 noise to. The simulated numbers are therefore the same experiment without the
 idle contribution, not an independent estimate of the same quantity.
 
-The simulator's noise builder spells its setters with explicit suffixes
-(`with_p1`), while `NoiseParameters` names each setter after its
-field (`with_p1`). The two describe the same rates.
+The simulator's noise builder and `NoiseParameters` both name each setter after
+the field it sets, so the same rate carries the same spelling on either side.
 
 <!--continuation-->
 ```python

@@ -484,8 +484,8 @@ def test_raw_twirled_guppy_trace_result_provenance_ignores_sideband_tags() -> No
     pytest.importorskip("guppylang")
     pytest.importorskip("selene_sim")
 
-    from pecos.guppy import get_num_qubits
-    from pecos.guppy.surface import generate_memory_experiment
+    from pecos.guppy_gen import get_num_qubits
+    from pecos.guppy_gen.surface import generate_memory_experiment
     from pecos.qec.surface.decode import (
         _index_surface_result_trace_ids,
         trace_guppy_into_tick_circuit_with_result_traces,

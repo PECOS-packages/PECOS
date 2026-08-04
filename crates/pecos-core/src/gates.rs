@@ -949,6 +949,15 @@ impl Gate {
         )
     }
 
+    /// Create an `MPZ` gate (measure +Z, then prepare |0>) on multiple qubits
+    #[must_use]
+    pub fn mpz(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::MPZ,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
     /// Create a new Idle gate for qubits idling for a specific duration
     ///
     /// # Arguments
@@ -1174,7 +1183,7 @@ impl Gate {
         }
         let is_measurement = matches!(
             self.gate_type,
-            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ
         );
         if is_measurement {
             if !self.meas_ids.is_empty() && self.meas_ids.len() != self.qubits.len() {

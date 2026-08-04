@@ -150,7 +150,7 @@ pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
                 // Check if this is a measurement gate
                 if matches!(
                     gate.gate_type,
-                    GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+                    GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ
                 ) {
                     measured_qubits.insert(q);
                 }
@@ -201,7 +201,10 @@ impl CircuitIO {
                     }
                     if matches!(
                         gate.gate_type,
-                        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+                        GateType::MZ
+                            | GateType::MeasureLeaked
+                            | GateType::MeasureFree
+                            | GateType::MPZ
                     ) {
                         measured_qubits.insert(q);
                     }
@@ -279,6 +282,11 @@ fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
 /// Cliffords and read back as a phantom flip.
 fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Gate) {
     match gate.gate_type {
+        // MPZ clears below like the reset it contains: it hands back a live
+        // |0> wire, so a retained entry would spread through later gates as a
+        // phantom -- and would disagree with the gate's own `mz; pz` lowering,
+        // whose explicit PZ clears. Its mid-circuit flips are invisible to
+        // end-reads, exactly as the lowering's always were.
         GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
             for q in &gate.qubits {
                 let qubit = q.index();
@@ -290,7 +298,7 @@ fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Gate) {
         // The shared dispatcher keeps preps transparent and expects walkers
         // to clear at their own call sites; without this arm a stale ledger
         // entry would survive a re-preparation and read as a phantom flip.
-        GateType::PZ | GateType::QAlloc => {
+        GateType::PZ | GateType::QAlloc | GateType::MPZ => {
             for q in &gate.qubits {
                 prop.clear_qubit(q.index());
             }
@@ -1046,7 +1054,7 @@ pub fn extract_measurement_rounds(circuit: &TickCircuit) -> Vec<MeasurementRound
 
         for gate in tick.iter_gate_batches() {
             match gate.gate_type {
-                GateType::MZ | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                     // Z-basis measurement
                     for q in &gate.qubits {
                         z_qubits.push(q.0);
@@ -2587,6 +2595,45 @@ mod tests {
             classify_fault(&prop, &[0], &[], &[]),
             FaultClass::DetectableError,
             "the X flips the mz_free outcome; the ledger must still show it"
+        );
+    }
+
+    /// An MPZ hands back a live |0> wire: the ledger entry must not survive
+    /// it, or a later CX spreads a flip that is physically absent -- and the
+    /// fused gate would disagree with its own `mz; pz` lowering.
+    #[test]
+    fn an_mpz_clears_the_ledger_like_its_own_lowering() {
+        let build = |fused: bool| {
+            let mut circuit = TickCircuit::new();
+            circuit.tick().pz(&[0, 1]);
+            if fused {
+                circuit.tick().mpz(&[0]);
+            } else {
+                circuit.tick().mz(&[0]);
+                circuit.tick().pz(&[0]);
+            }
+            circuit.tick().cx(&[(0, 1)]);
+            circuit.tick().mz(&[0, 1]);
+
+            let loc = SpacetimeLocation {
+                tick: 1,
+                qubits: vec![QubitId(0)],
+                before: true,
+                gate_type: GateType::MZ,
+                gate_index: 0,
+            };
+            let fault = PauliFault::new(loc, vec![1]);
+            propagate_fault(&circuit, &fault)
+        };
+        let fused = build(true);
+        let split = build(false);
+        for q in [0usize, 1] {
+            assert_eq!(fused.contains_x(q), split.contains_x(q), "X on qubit {q}");
+            assert_eq!(fused.contains_z(q), split.contains_z(q), "Z on qubit {q}");
+        }
+        assert!(
+            !fused.contains_x(1),
+            "the reset absorbed the flip; nothing spreads through the CX"
         );
     }
 

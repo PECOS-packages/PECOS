@@ -105,7 +105,7 @@ pub struct ExpandedCircuit {
     /// one this expansion recorded -- an index into `measurement_qubit` and
     /// `original_measured_qubit`.
     ///
-    /// `MZ` and `MeasureFree` both appear -- `MeasureFree` lowers to `MZ` in
+    /// `MZ`, `MeasureFree`, and `MPZ` all appear -- `MeasureFree` lowers to `MZ` in
     /// this expansion, since the free has no stabilizer effect and its record
     /// is real. `MeasureLeaked` is refused at the entrance, so an absent id
     /// here means unknown. Id-less legacy circuits yield an empty map.
@@ -192,7 +192,7 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
         let gate = &gates[i];
 
         match gate.gate_type {
-            GateType::MZ | GateType::MeasureFree => {
+            GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                 // For each qubit in this MZ gate, create CX to auxiliary
                 for (position, q) in gate.qubits.iter().enumerate() {
                     let q_idx = q.index();
@@ -223,7 +223,9 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
                     // Data readout MZ does NOT get PZ: data qubit Z components
                     // must persist for correct generator labels (Z errors are
                     // invisible to Z-basis readout and must not be cleared).
-                    if ancilla_qubits.contains(&q_idx) {
+                    // MPZ carries its own reset, so the projection PZ is
+                    // unconditional for it.
+                    if ancilla_qubits.contains(&q_idx) || gate.gate_type == GateType::MPZ {
                         expanded.push(make_gate(GateType::PZ, &[q_idx]));
                     }
 

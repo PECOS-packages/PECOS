@@ -2,7 +2,7 @@
 
 Both the abstract surface-circuit builder
 (``pecos.qec.surface.circuit_builder``) and the Guppy emitter
-(``pecos.guppy.surface``) need to agree, byte-for-byte, on how
+(``pecos.guppy_gen.surface``) need to agree, byte-for-byte, on how
 stabilizers are partitioned into ancilla-reuse batches. Otherwise the
 abstract reference TickCircuit and the traced Guppy program produce
 different measurement orders, the detector record offsets the caller

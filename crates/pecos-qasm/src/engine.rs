@@ -672,7 +672,7 @@ impl QASMEngine {
                     gate.angles.iter().map(pecos_core::Angle::to_radians).collect();
                 self.process_parameterized_gate(gate.gate_type, &qubits, &angles_as_radians)
             }
-            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ => {
                 Err(PecosError::Processing(
                     "Measure, MeasureLeaked, and MeasureFree gates should be handled by MeasureWithMapping operation"
                         .to_string(),

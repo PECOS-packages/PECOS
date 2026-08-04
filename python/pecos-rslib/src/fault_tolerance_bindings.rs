@@ -346,6 +346,32 @@ fn apply_noise_options(
     p2_gate_rates: Option<BTreeMap<String, f64>>,
     p1_gate_rates: Option<BTreeMap<String, f64>>,
 ) -> PyResult<NoiseConfig> {
+    // Reject the base-idle-channel combinations this function would otherwise
+    // resolve silently: `set_t1_t2` makes T1/T2 the base channel that shadows
+    // `p_idle`, and `set_idle_rz` zeroes `p_idle` and overwrites T1/T2 with a
+    // synthetic T2. Each combination discards a caller-supplied rate without
+    // any signal (issue #426).
+    if p_idle.is_some() && (t1.is_some() || t2.is_some()) {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "p_idle cannot be combined with t1/t2; the T1/T2 channel replaces the \
+             depolarizing base idle channel, so p_idle would be ignored",
+        ));
+    }
+    if idle_rz.is_some() {
+        if p_idle.is_some() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "idle_rz cannot be combined with p_idle; the coherent RZ conversion \
+                 replaces the base idle channel, so p_idle would be ignored",
+            ));
+        }
+        if t1.is_some() || t2.is_some() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "idle_rz cannot be combined with t1/t2; the coherent RZ conversion \
+                 overwrites the T1/T2 channel with an equivalent T2",
+            ));
+        }
+    }
+
     noise.p_idle = p_idle.unwrap_or(0.0);
     if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
         noise = noise.set_t1_t2(t1_val, t2_val);

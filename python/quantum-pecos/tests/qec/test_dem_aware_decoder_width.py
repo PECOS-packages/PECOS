@@ -22,7 +22,7 @@ _WRAPPED_BIT = _WIDE_OBSERVABLE % 64
 
 
 def _wide_dem(num_observables: int = _WIDE_OBSERVABLE + 1) -> str:
-    lines = [f"error(0.1) D0 L0", f"error(0.1) D1 L{_WIDE_OBSERVABLE}"]
+    lines = ["error(0.1) D0 L0", f"error(0.1) D1 L{_WIDE_OBSERVABLE}"]
     lines += [f"detector D{index}" for index in range(2)]
     lines += [f"logical_observable L{index}" for index in range(num_observables)]
     return "\n".join(lines)

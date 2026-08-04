@@ -135,15 +135,14 @@ take the noise settings as individual keyword arguments instead.
 from pecos import NoiseParameters
 from pecos.qec import DetectorErrorModel
 
-noise = NoiseParameters(
-    p1=0.002,
-    p2=0.02,
-    p_meas=0.02,
-    p_prep=0.02,
-    p_idle_linear=0.01,
-    p_idle_linear_model={"X": 0.25, "Y": 0.25, "Z": 0.5},
-    p_idle_sin_squared=0.03,
-    p_idle_sin_squared_model={"Z": 1.0},
+noise = (
+    NoiseParameters()
+    .with_p1(0.002)
+    .with_p2(0.02)
+    .with_p_meas(0.02)
+    .with_p_prep(0.02)
+    .with_p_idle_linear(0.01, {"X": 0.25, "Y": 0.25, "Z": 0.5})
+    .with_p_idle_sin_squared(0.03, {"Z": 1.0})
 )
 
 dem_build = (
@@ -211,6 +210,10 @@ difference: the DEM carries the idle families configured there, while the
 default Selene runtime emits no idle gates for the simulator to attach idle
 noise to. The simulated numbers are therefore the same experiment without the
 idle contribution, not an independent estimate of the same quantity.
+
+The simulator's noise builder spells its setters with explicit suffixes
+(`with_p1_probability`), while `NoiseParameters` names each setter after its
+field (`with_p1`). The two describe the same rates.
 
 <!--continuation-->
 ```python

@@ -143,7 +143,7 @@ class TestQasmSimDefaults:
         # Noise model builders:
         # - depolarizing_noise(): requires explicit .with_p1()
         # - biased_depolarizing_noise(): requires probability settings
-        # - GeneralNoiseModelBuilder(): has internal defaults
+        # - GeneralNoiseModelBuilder(): no-effect defaults; .auto() opts into the legacy preset
         #
         # New unified API defaults:
         # - All optional fields use builder defaults when not specified

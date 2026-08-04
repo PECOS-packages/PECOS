@@ -154,12 +154,10 @@ pub struct GeneralNoiseModel {
     /// Unnormalized per-axis relative multipliers for the sine-squared idle family.
     p_idle_sin_squared_model: BTreeMap<String, f64>,
 
-    /// Scaling factor to convert coherent dephasing rates to incoherent rates
+    /// Scaling factor to convert coherent dephasing rates to incoherent rates.
     ///
-    /// When using incoherent (stochastic) dephasing, this factor adjusts the dephasing rate. This
-    /// is a fudge factor used to artificially increase the dephasing rate when modeling the
-    /// quadratic dephasing stochastically since such modeling does not account for coherent
-    /// effects.
+    /// A factor of one gives the exact Pauli twirl of the coherent rotation. Values above one can
+    /// be used to deliberately inflate stochastic dephasing.
     ///
     /// # Panics
     ///
@@ -463,9 +461,9 @@ impl GeneralNoiseModel {
 
     /// Create a new noise model with the specified error parameters
     ///
-    /// Creates a `GeneralNoiseModel` with the specified error probabilities while using default values
-    /// for all other parameters. This is a convenience method for cases where you only need to customize
-    /// the basic error rates.
+    /// Creates a `GeneralNoiseModel` with the specified error probabilities while using no-effect
+    /// defaults for all other parameters. This is a convenience method for cases where you only need
+    /// to customize the basic error rates.
     ///
     /// * `p_prep` - Preparation (initialization) error probability
     /// * `p_meas_0` - Probability of measuring 1 when the state is |0⟩
@@ -474,7 +472,7 @@ impl GeneralNoiseModel {
     /// * `p2` - Two-qubit gate error probability (average error rate)
     ///
     /// For more extensive customization, use the builder pattern with `GeneralNoiseModel::builder()`.
-    /// For default parameters, use `GeneralNoiseModel::default()`.
+    /// For a noiseless model, use `GeneralNoiseModel::default()`.
     ///
     /// # Example
     /// ```
@@ -1556,54 +1554,77 @@ mod tests {
     use crate::byte_message::GateType;
     use pecos_core::Angle64;
 
+    fn assert_float_eq(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < f64::EPSILON,
+            "expected {expected}, got {actual}"
+        );
+    }
+
     #[test]
     fn test_default() {
-        // Create a noise model with the default settings
         let model = GeneralNoiseModel::default();
 
-        // Check the default values
-        assert!(
-            (model.p_prep - 0.01).abs() < f64::EPSILON,
-            "Default p_prep should be 0.01"
-        );
-        assert!(
-            (model.p_meas_0 - 0.01).abs() < f64::EPSILON,
-            "Default p_meas_0 should be 0.01"
-        );
-        assert!(
-            (model.p_meas_1 - 0.01).abs() < f64::EPSILON,
-            "Default p_meas_1 should be 0.01"
-        );
-        assert!(model.p_idle_sin_squared_rate.abs() < f64::EPSILON);
+        assert_float_eq(model.p_prep, 0.0);
+        assert_float_eq(model.p_meas_0, 0.0);
+        assert_float_eq(model.p_meas_1, 0.0);
+        assert_float_eq(model.p1, 0.0);
+        assert_float_eq(model.p2, 0.0);
+        assert_float_eq(model.p_idle_linear_rate, 0.0);
+        assert_float_eq(model.p_idle_quadratic_rate, 0.0);
+        assert_float_eq(model.p_idle_sin_squared_rate, 0.0);
+        assert!(!model.p_idle_coherent);
         assert!(model.p_idle_sin_squared_model.is_empty());
-        assert!(
-            (model.p1 - 0.001).abs() < f64::EPSILON,
-            "Default p1 should be 0.001"
+        assert_float_eq(model.p1_emission_ratio, 0.0);
+        assert_float_eq(model.p_prep_leak_ratio, 0.0);
+        assert_float_eq(model.p2_emission_ratio, 0.0);
+        assert_float_eq(model.p1_seepage_prob, 0.0);
+        assert_float_eq(model.p2_seepage_prob, 0.0);
+        assert_float_eq(model.idle_after_2q, 0.0);
+        assert_float_eq(model.p_meas_crosstalk_global, 0.0);
+        assert_float_eq(model.p_meas_crosstalk_local, 0.0);
+        assert_float_eq(model.p_prep_crosstalk, 0.0);
+        assert_float_eq(model.p_idle_coherent_to_incoherent_factor, 1.0);
+        assert_float_eq(model.p2_angle_a, 0.0);
+        assert_float_eq(model.p2_angle_b, 1.0);
+        assert_float_eq(model.p2_angle_c, 0.0);
+        assert_float_eq(model.p2_angle_d, 1.0);
+        assert_float_eq(model.p2_angle_power, 1.0);
+        assert_float_eq(model.leakage_scale, 1.0);
+        assert_eq!(
+            model.p_meas_crosstalk_model.get_weighted_map(0),
+            &BTreeMap::from([("0->0".to_string(), 1.0)])
         );
-        assert!(
-            (model.p2 - 0.01).abs() < f64::EPSILON,
-            "Default p2 should be 0.01"
+        assert_eq!(
+            model.p_meas_crosstalk_model.get_weighted_map(1),
+            &BTreeMap::from([("1->1".to_string(), 1.0)])
         );
-        assert!(
-            (model.p1_emission_ratio - 0.5).abs() < f64::EPSILON,
-            "Default p1_emission_ratio should be 0.5"
-        );
-        assert!(
-            (model.p_prep_leak_ratio - 0.5).abs() < f64::EPSILON,
-            "Default p_prep_leak_ratio should be 0.5"
-        );
-        assert!(
-            (model.p2_emission_ratio - 0.5).abs() < f64::EPSILON,
-            "Default p2_emission_ratio should be 0.5"
-        );
-        assert!(
-            (model.p1_seepage_prob - 0.5).abs() < f64::EPSILON,
-            "Default seepage_prob should be 0.5"
-        );
-        assert!(
-            (model.p2_seepage_prob - 0.5).abs() < f64::EPSILON,
-            "Default seepage_prob should be 0.5"
-        );
+    }
+
+    #[test]
+    fn default_model_emits_no_noise_gates_for_full_circuit() {
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.pz(&[0, 1]);
+        input_builder.h(&[0]);
+        input_builder.cx(&[(0, 1)]);
+        input_builder.idle(2.0, &[0, 1]);
+        input_builder.mz(&[0, 1]);
+        let input = input_builder.build();
+        let expected = input
+            .quantum_ops()
+            .unwrap()
+            .into_iter()
+            .filter(|gate| gate.gate_type != GateType::Idle)
+            .collect::<Vec<_>>();
+
+        let mut model = GeneralNoiseModel::default();
+        let emitted = model
+            .apply_noise_on_start(&input)
+            .unwrap()
+            .quantum_ops()
+            .unwrap();
+
+        assert_eq!(emitted, expected);
     }
 
     #[test]
@@ -1664,22 +1685,15 @@ mod tests {
 
         assert!((p_prep_leak_ratio - 0.6).abs() < f64::EPSILON);
 
-        // Test the builder with no parameters (should use defaults)
+        // Test the builder with no parameters (should use no-effect defaults)
         let default_noise = GeneralNoiseModel::builder().build();
         let default_ref = default_noise
             .as_any()
             .downcast_ref::<GeneralNoiseModel>()
             .unwrap();
 
-        // Verify a few key default values
-        assert!(
-            (default_ref.p1 - 0.001).abs() < 1e-6,
-            "Default p1 should be 0.001"
-        );
-        assert!(
-            (default_ref.p2 - 0.01).abs() < 1e-6,
-            "Default p2 should be 0.01"
-        );
+        assert_float_eq(default_ref.p1, 0.0);
+        assert_float_eq(default_ref.p2, 0.0);
     }
 
     /// Helper function to invoke a measurement request from the user to the noise
@@ -2700,6 +2714,7 @@ mod tests {
             .with_p2_scale(4.0)
             .with_prep_scale(5.0)
             .with_meas_scale(6.0)
+            .with_prep_leak_ratio(0.5)
             .with_leakage_scale(0.25)
             .build();
         let noise = model
@@ -2716,8 +2731,7 @@ mod tests {
         let expected_p1 = 0.01 * 3.0 * 2.0 * (3.0 / 2.0); // Base * p1_scale * overall scale * avg->total
         let expected_p2 = 0.01 * 4.0 * 2.0 * (5.0 / 4.0); // Base * p2_scale * overall scale * avg->total
 
-        // Initial value in constructor is 0.5
-        // and we scale it by overall scale (2.0)
+        // The configured ratio is scaled by the overall scale (2.0).
         let expected_leak_ratio = 0.5 * 2.0; // Base * overall scale, capped at 1.0
 
         println!(
@@ -2837,8 +2851,9 @@ mod tests {
     #[test]
     fn test_emission_ratio_scaling() {
         // Test that emission ratios are properly scaled and capped at a maximum of 1.0
-        // Default emission ratios are 0.5
         let mut model = GeneralNoiseModel::builder()
+            .with_p1_emission_ratio(0.5)
+            .with_p2_emission_ratio(0.5)
             .with_scale(3.0)
             .with_emission_scale(4.0)
             .build();
@@ -2847,7 +2862,7 @@ mod tests {
             .downcast_mut::<GeneralNoiseModel>()
             .unwrap();
 
-        // Verify both ratios are 0.5 after scaling
+        // Verify both configured ratios are capped after scaling.
         // When scaled: 0.5 * 3.0 (scale) * 4.0 (emission_scale) = 6.0
         // But capped at 1.0
         assert!(
@@ -2968,7 +2983,7 @@ mod tests {
         let sine_rate = 0.03;
         let duration = 10.0;
         let expected_probability = 0.087_332_192_545_160_84;
-        let legacy_rate = sine_rate / (1.5 * std::f64::consts::PI);
+        let legacy_rate = sine_rate / std::f64::consts::PI;
         let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
 
         let mut sine = GeneralNoiseModel::builder()
@@ -2984,10 +2999,12 @@ mod tests {
 
         assert!((sine.p_idle_sin_squared_rate - sine_rate).abs() < f64::EPSILON);
         assert!((legacy.p_idle_quadratic_rate - sine_rate).abs() < f64::EPSILON);
+        let coherent_angle = 2.0 * sine_rate * duration;
+        assert!(((coherent_angle / 2.0).sin().powi(2) - expected_probability).abs() < f64::EPSILON);
         assert!(
             (GeneralNoiseModel::sin_squared_probability(sine_rate, 1.0, duration)
-                - expected_probability)
-                .abs()
+                - (coherent_angle / 2.0).sin().powi(2))
+            .abs()
                 < f64::EPSILON
         );
 
@@ -3003,6 +3020,51 @@ mod tests {
 
         assert_eq!(sine_outputs, legacy_outputs);
         assert!(sine_outputs.iter().any(|output| output.len() > 16));
+    }
+
+    #[test]
+    fn default_angle_scaling_is_identity_for_p2_only_model() {
+        let model = GeneralNoiseModel::builder().with_p2(0.37).build();
+
+        assert_float_eq(
+            model.p2_angle_error_rate(-std::f64::consts::FRAC_PI_3),
+            0.37,
+        );
+        assert_float_eq(model.p2_angle_error_rate(0.0), 0.37);
+        assert_float_eq(model.p2_angle_error_rate(std::f64::consts::FRAC_PI_3), 0.37);
+    }
+
+    #[test]
+    fn same_seed_and_configuration_emit_identical_noise() {
+        let make_model = || {
+            GeneralNoiseModel::builder()
+                .with_seed(4_242)
+                .with_p_prep(0.4)
+                .with_p1(0.4)
+                .with_p2(0.4)
+                .with_p_idle_linear_rate(0.4)
+                .with_p1_emission_ratio(0.5)
+                .with_p2_emission_ratio(0.5)
+                .with_prep_leak_ratio(0.5)
+                .build()
+        };
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.pz(&[0, 1]);
+        input_builder.h(&[0]);
+        input_builder.cx(&[(0, 1)]);
+        input_builder.idle(0.5, &[0, 1]);
+        let input = input_builder.build();
+        let collect = |model: &mut GeneralNoiseModel| {
+            (0..64)
+                .map(|_| model.apply_noise_on_start(&input).unwrap().into_bytes())
+                .collect::<Vec<_>>()
+        };
+
+        let first = collect(&mut make_model());
+        let second = collect(&mut make_model());
+
+        assert_eq!(first, second);
+        assert!(first.iter().any(|output| output.len() > 16));
     }
 
     #[test]
@@ -3207,6 +3269,7 @@ mod tests {
         let mut model = GeneralNoiseModel::builder()
             .with_seed(424)
             .with_p_idle_linear_rate(0.35)
+            .with_p_idle_coherent_to_incoherent_factor(1.5)
             .with_p_idle_quadratic_rate(0.07)
             .with_p_idle_coherent(false)
             .build();

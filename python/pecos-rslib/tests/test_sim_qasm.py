@@ -188,8 +188,8 @@ class TestUnifiedSimApi:
         errors = sum(1 for val in results["c"] if val == 0)
         assert errors > 0
 
-        # General noise
-        shot_vec = sim(Qasm.from_string(qasm)).noise(general_noise()).run(10)
+        # Preserve the historical demonstration preset in this all-model smoke test.
+        shot_vec = sim(Qasm.from_string(qasm)).noise(general_noise().auto()).run(10)
         results = shot_vec.to_dict()
         assert len(results["c"]) == 10
 

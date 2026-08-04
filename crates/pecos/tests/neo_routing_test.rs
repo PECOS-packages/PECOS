@@ -284,19 +284,8 @@ fn neo_stack_general_noise_average_convention_matches() {
     let shots = 4000;
     let expected_flip = 0.2;
     let run = |stack: SimStack| {
-        // GeneralNoiseModel defaults are realistic (nonzero emission, prep
-        // leak, idle, and base probabilities); zero everything except the
-        // 1q Pauli channel so the physics is plain depolarizing.
-        let noise = pecos_engines::noise::GeneralNoiseModel::builder()
-            .with_average_p1(0.2)
-            .with_p1_emission_ratio(0.0)
-            .with_p2_emission_ratio(0.0)
-            .with_prep_leak_ratio(0.0)
-            .with_p_idle_linear_rate(0.0)
-            .with_p_prep(0.0)
-            .with_p_meas_0(0.0)
-            .with_p_meas_1(0.0)
-            .with_average_p2(0.0);
+        // No-effect defaults leave only the explicitly configured 1q Pauli channel.
+        let noise = pecos_engines::noise::GeneralNoiseModel::builder().with_average_p1(0.2);
         sim(x_measure_qasm())
             .stack(stack)
             .noise(noise)
@@ -321,12 +310,11 @@ fn neo_stack_general_noise_average_convention_matches() {
 
 #[test]
 fn neo_stack_rejects_unmapped_noise() {
-    // A bare GeneralNoiseModel keeps its realistic defaults for prep leak
-    // (0.5) and linear idling (0.001) — physics beyond the simple Pauli
-    // subset, so the mapping must refuse rather than silently change the
-    // model. (Spontaneous emission IS now mapped, so it is the prep-leak
-    // and idle defaults that force the rejection here.)
-    let general = pecos_engines::noise::GeneralNoiseModel::builder().with_average_p1(0.01);
+    // Explicit preparation leakage is beyond the simple Pauli subset, so the mapping must refuse
+    // rather than silently change the model. Spontaneous emission is mapped separately.
+    let general = pecos_engines::noise::GeneralNoiseModel::builder()
+        .with_average_p1(0.01)
+        .with_prep_leak_ratio(0.5);
     let err = sim(deterministic_conditional_qasm())
         .stack(SimStack::Neo)
         .noise(general)

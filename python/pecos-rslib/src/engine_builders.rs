@@ -852,7 +852,9 @@ pub fn hugr_engine() -> PyHugrEngineBuilder {
     PyHugrEngineBuilder::new()
 }
 
-/// Create a general noise model builder
+/// Create a general noise model builder with no-effect defaults.
+///
+/// Call ``.auto()`` to opt into the legacy demonstration preset.
 #[pyfunction]
 pub fn general_noise() -> PyGeneralNoiseModelBuilder {
     PyGeneralNoiseModelBuilder::new()
@@ -892,6 +894,31 @@ impl PyGeneralNoiseModelBuilder {
     fn new() -> Self {
         Self {
             inner: GeneralNoiseModelBuilder::new(),
+        }
+    }
+
+    /// Fill unset parameters with the legacy demonstration preset.
+    ///
+    /// This reproduces the general noise model's historical defaults for demonstrations; it is
+    /// not a calibrated device model. Explicit setters win in either call order because ``auto``
+    /// fills only parameters that the caller has not set.
+    ///
+    /// The preset sets preparation, measurement, one-qubit, two-qubit, and linear-idle rates to
+    /// 0.01, 0.01/0.01, 0.001, 0.01, and 0.001 respectively. In addition:
+    ///
+    /// * ``p_prep_leak_ratio = 0.5`` means half of preparation faults leak the qubit out of the
+    ///   computational subspace.
+    /// * ``p1_emission_ratio = p2_emission_ratio = 0.5`` means half of gate errors take the
+    ///   spontaneous-emission branch, which removes the original gate and substitutes a sample
+    ///   from the emission model. The preset emission models contain Pauli keys only, so these
+    ///   branches cause no leakage.
+    /// * ``p1_seepage_prob = p2_seepage_prob = 0.5`` applies only to qubits that are already
+    ///   leaked.
+    /// * ``p_idle_coherent_to_incoherent_factor = 1.5`` inflates stochastic quadratic idle
+    ///   dephasing by 50% relative to the exact Pauli twirl.
+    fn auto(&self) -> Self {
+        Self {
+            inner: self.inner.clone().auto(),
         }
     }
 
@@ -1086,14 +1113,14 @@ impl PyGeneralNoiseModelBuilder {
     /// independent rate. It applies no ``2*pi`` conversion and no
     /// ``coherent_to_incoherent_factor``, unlike ``with_p_idle_quadratic_rate``. With neutral
     /// global and idle scales, ``with_p_idle_quadratic_rate(r)`` equals
-    /// ``with_p_idle_sin_squared(r * factor/2 * 2*pi, {"Z": 1.0})``, or ``r * 1.5 * pi`` at the
+    /// ``with_p_idle_sin_squared(r * factor/2 * 2*pi, {"Z": 1.0})``, or ``r * pi`` at the
     /// default factor.
     ///
-    /// Engines idle noise is on by default (``p_idle_linear_rate = 0.001``), so translating a DEM
-    /// configuration requires explicitly zeroing every idle family not requested. Engines also
-    /// keeps its existing linear sampling structure: one event followed by a categorical axis
-    /// choice, versus the DEM's independent per-axis mechanisms. The difference is second order
-    /// in the rates; this setter aligns units and the axis alphabet, not the sampling structure.
+    /// All engines idle-noise families are off by default, so translating a DEM configuration only
+    /// requires setting the requested families. Engines keeps its existing linear sampling
+    /// structure: one event followed by a categorical axis choice, versus the DEM's independent
+    /// per-axis mechanisms. The difference is second order in the rates; this setter aligns units
+    /// and the axis alphabet, not the sampling structure.
     fn with_p_idle_linear(
         &self,
         rate: f64,
@@ -1123,10 +1150,9 @@ impl PyGeneralNoiseModelBuilder {
     /// distribution because it splits one total linear rate across axes.
     ///
     /// With neutral global and idle scales, ``with_p_idle_quadratic_rate(r)`` equals
-    /// ``with_p_idle_sin_squared(r * factor/2 * 2*pi, {"Z": 1.0})``, or ``r * 1.5 * pi`` at the
-    /// default factor. Engines idle noise is on by default (``p_idle_linear_rate = 0.001``), so
-    /// translating a DEM configuration requires explicitly zeroing every idle family not
-    /// requested.
+    /// ``with_p_idle_sin_squared(r * factor/2 * 2*pi, {"Z": 1.0})``, or ``r * pi`` at the
+    /// default factor. All engines idle-noise families are off by default, so translating a DEM
+    /// configuration only requires setting the requested families.
     ///
     /// Engines deliberately retains its existing linear sampling structure: one event followed
     /// by a categorical axis choice, versus the DEM's independent per-axis mechanisms. The

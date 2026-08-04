@@ -23,7 +23,7 @@ import math
 
 import pytest
 from guppylang import guppy
-from guppylang.std.quantum import measure, qubit
+from guppylang.std.quantum import measure, qubit, x
 from pecos import Qasm, qasm_engine, sim
 from pecos_rslib import (
     biased_depolarizing_noise,
@@ -102,6 +102,66 @@ def test_average_setters_keep_their_conversion() -> None:
     assert callable(builder.with_average_p1)
     assert callable(builder.with_average_p2)
     assert builder.with_average_p1(0.01).with_average_p2(0.02) is not None
+
+
+def test_auto_is_chainable_and_explicit_zeros_win_in_both_orders() -> None:
+    """The pyo3 preset preserves explicit zero rates before and after ``auto``."""
+
+    @guppy
+    def deterministic_x() -> bool:
+        q = qubit()
+        x(q)
+        return measure(q)
+
+    auto_then_zeros = (
+        general_noise().auto().with_p_prep(0.0).with_p1(0.0).with_p2(0.0).with_p_meas(0.0).with_p_idle_linear_rate(0.0)
+    )
+    zeros_then_auto = (
+        general_noise().with_p_prep(0.0).with_p1(0.0).with_p2(0.0).with_p_meas(0.0).with_p_idle_linear_rate(0.0).auto()
+    )
+
+    for noise in (auto_then_zeros, zeros_then_auto):
+        results = sim(deterministic_x).qubits(1).quantum(state_vector()).noise(noise).seed(42).run(20).to_dict()
+        raw = results["measurements"]
+        measurements = [m[-1] if isinstance(m, list) else m for m in raw]
+        assert measurements == [1] * 20
+
+
+def test_auto_matches_explicit_legacy_preset_at_python_surface() -> None:
+    """The pyo3 ``auto`` method delegates to the complete Rust legacy preset."""
+
+    @guppy
+    def deterministic_x() -> bool:
+        q = qubit()
+        x(q)
+        return measure(q)
+
+    explicit = (
+        general_noise()
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_p1(0.001)
+        .with_p2(0.01)
+        .with_p_idle_linear_rate(0.001)
+        .with_p1_emission_ratio(0.5)
+        .with_p2_emission_ratio(0.5)
+        .with_prep_leak_ratio(0.5)
+        .with_p1_seepage_prob(0.5)
+        .with_p2_seepage_prob(0.5)
+        .with_p_idle_coherent_to_incoherent_factor(1.5)
+    )
+
+    def run(noise) -> list[bool]:
+        results = sim(deterministic_x).qubits(1).quantum(state_vector()).noise(noise).seed(424).run(512).to_dict()
+        raw = results["measurements"]
+        return [m[-1] if isinstance(m, list) else m for m in raw]
+
+    auto_results = run(general_noise().auto())
+    explicit_results = run(explicit)
+
+    assert auto_results == explicit_results
+    assert auto_results != [1] * 512
 
 
 def test_idle_family_setters_are_chainable() -> None:

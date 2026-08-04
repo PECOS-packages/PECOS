@@ -214,9 +214,10 @@ The two sides express the idle families in different units, so the sine-law
 rate has to be converted rather than copied. `NoiseParameters` takes it in
 radians per time unit, while the simulator takes cycles per time unit and folds
 in `coherent_to_incoherent_factor / 2`. Dividing by `factor / 2 * 2 * pi` --
-that is, `1.5 * pi` at the default factor -- makes the two agree. The linear
-family needs no conversion, and its model dictionary is a normalized
-distribution on both sides.
+that is, `pi` at the default factor of one -- makes the two agree. At one, the
+stochastic branch is the exact Pauli twirl of the coherent rotation. The linear
+family needs no conversion, and its model dictionary is a normalized distribution
+on both sides.
 
 <!--continuation-->
 ```python
@@ -234,13 +235,12 @@ noise = (
     .with_p_idle_linear_rate(0.01)
     .with_p_idle_linear_model({"X": 0.25, "Y": 0.25, "Z": 0.5})
     .with_p_idle_coherent(False)
-    .with_p_idle_coherent_to_incoherent_factor(1.5)
-    .with_p_idle_quadratic_rate(0.03 / (1.5 * math.pi))
+    .with_p_idle_quadratic_rate(0.03 / math.pi)
     .with_idle_after_2q(1.0)
 )
 
 # The conversion above reproduces the DEM's sine-law probability exactly.
-assert math.isclose(math.sin(0.03 / (1.5 * math.pi) * 1.5 * math.pi) ** 2, math.sin(0.03) ** 2)
+assert math.isclose(math.sin(0.03 / math.pi * math.pi) ** 2, math.sin(0.03) ** 2)
 
 results = sim(rep_code_memory).classical(selene_engine()).quantum(stabilizer()).qubits(7).noise(noise).seed(42).run(500)
 

@@ -176,9 +176,8 @@ impl NoiseCell {
                 .run(),
             Self::GnmSimple { average_p1, p_meas } => builder
                 .noise(
-                    // GeneralNoiseModel has realistic non-zero defaults;
-                    // zero everything outside the simple Pauli subset so
-                    // the cell physics is exactly known.
+                    // Spell out the zero channels so the cell physics is immediately visible,
+                    // even though GeneralNoiseModel now defaults them off.
                     pecos_engines::noise::GeneralNoiseModel::builder()
                         .with_average_p1(average_p1)
                         .with_average_p2(0.0)
@@ -198,9 +197,8 @@ impl NoiseCell {
                 angle_power,
             } => builder
                 .noise(
-                    // Plain Pauli two-qubit noise with angle scaling; zero
-                    // every other channel and the non-neutral GNM defaults so
-                    // only the angle-scaled RZZ depolarizing noise remains.
+                    // Plain Pauli two-qubit noise with angle scaling; spell out every other
+                    // channel as zero so only angle-scaled RZZ depolarizing noise remains.
                     pecos_engines::noise::GeneralNoiseModel::builder()
                         .with_p2(p2)
                         .with_p2_angle_params(a, b, c, d)

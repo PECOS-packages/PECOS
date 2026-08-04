@@ -188,7 +188,8 @@ fn test_general_noise_builder_with_prep_errors() {
         include "qelib1.inc";
         qreg q[2];
         creg c[2];
-        // No gates, just measure initialized qubits
+        // Explicit preparation followed by measurement
+        reset q;
         measure q -> c;
     "#;
 

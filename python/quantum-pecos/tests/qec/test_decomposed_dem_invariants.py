@@ -147,7 +147,7 @@ def build_source_tracked_dem(distance: int, basis: str, rounds: int = 20) -> obj
     """Build and cache a source-tracked native DEM for one surface-code shape."""
     from pecos.qec import DagFaultAnalyzer, DemBuilder
     from pecos.qec.surface import (
-        NoiseModel,
+        NoiseParameters,
         SurfacePatch,
         generate_tick_circuit_from_patch,
         get_measurement_order_from_tick_circuit,
@@ -158,7 +158,7 @@ def build_source_tracked_dem(distance: int, basis: str, rounds: int = 20) -> obj
     dag = tc.to_dag_circuit()
     analyzer = DagFaultAnalyzer(dag)
     influence_map = analyzer.build_influence_map()
-    noise = NoiseModel(p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
+    noise = NoiseParameters(p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
 
     builder = DemBuilder(influence_map)
     builder.with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep)
@@ -175,7 +175,7 @@ def test_dem_builder_accepts_public_surface_descriptor_json() -> None:
     """Public surface descriptor JSON should reproduce the legacy builder output."""
     from pecos.qec import DagFaultAnalyzer, DemBuilder
     from pecos.qec.surface import (
-        NoiseModel,
+        NoiseParameters,
         SurfacePatch,
         generate_tick_circuit_from_patch,
         get_detector_descriptors_from_tick_circuit,
@@ -187,7 +187,7 @@ def test_dem_builder_accepts_public_surface_descriptor_json() -> None:
     tc = generate_tick_circuit_from_patch(patch, num_rounds=4, basis="X")
     dag = tc.to_dag_circuit()
     influence_map = DagFaultAnalyzer(dag).build_influence_map()
-    noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+    noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
 
     def _build(detectors_json: str, observables_json: str | None) -> object:
         """Build one source-tracked DEM from serialized detector metadata."""

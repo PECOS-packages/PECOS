@@ -131,12 +131,12 @@ def generate_dems(
     Returns list of (method_name, raw_dem, decomposed_dem_or_None).
     decomposed_dem is None when the method cannot produce a graphlike DEM.
     """
-    from pecos.qec.surface import NoiseModel
+    from pecos.qec.surface import NoiseParameters
     from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
     results = []
 
-    noise = NoiseModel(
+    noise = NoiseParameters(
         p1=noise_params.get("p1", 0.0),
         p2=noise_params.get("p2", 0.0),
         p_meas=noise_params.get("p_meas", 0.0),

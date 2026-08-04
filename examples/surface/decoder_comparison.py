@@ -31,7 +31,7 @@ from textwrap import dedent
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.qec.surface import NoiseModel
+    from pecos.qec.surface import NoiseParameters
 
 
 @dataclass
@@ -69,7 +69,7 @@ class ComparisonPoint:
 def _build_sampler(
     distance: int,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str,
     circuit_source: str,
 ) -> tuple:
@@ -172,7 +172,7 @@ def run_comparison(
     p_prep_scale: float,
 ) -> list[ComparisonPoint]:
     """Run the full comparison and return results."""
-    from pecos.qec.surface import NoiseModel
+    from pecos.qec.surface import NoiseParameters
 
     points: list[ComparisonPoint] = []
     total_configs = len(distances) * len(error_rates)
@@ -182,7 +182,7 @@ def run_comparison(
         num_rounds = 2 * distance
         for p in error_rates:
             config_idx += 1
-            noise = NoiseModel(
+            noise = NoiseParameters(
                 p1=p * p1_scale,
                 p2=p,
                 p_meas=p * p_meas_scale,

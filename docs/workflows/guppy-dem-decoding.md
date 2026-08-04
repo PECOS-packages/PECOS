@@ -123,8 +123,8 @@ model semantics.
 
 `DetectorErrorModel.builder()` configures the run through chained setters and
 returns the DEM together with the audit trail and the result-column evaluator
-used in stage 4b. A `NoiseModel` carries the entire noise configuration as one
-argument.
+used in stage 4b. A `NoiseParameters` instance carries the entire noise
+configuration as one argument.
 
 The one-call forms `DetectorErrorModel.from_guppy(...)` and
 `build_dem_from_guppy(...)` remain available and run this same pipeline; they
@@ -132,10 +132,10 @@ take the noise settings as individual keyword arguments instead.
 
 <!--continuation-->
 ```python
+from pecos import NoiseParameters
 from pecos.qec import DetectorErrorModel
-from pecos.qec.surface import NoiseModel
 
-noise = NoiseModel(
+noise = NoiseParameters(
     p1=0.002,
     p2=0.02,
     p_meas=0.02,

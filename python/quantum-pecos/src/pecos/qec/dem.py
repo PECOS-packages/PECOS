@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from pecos.qec.dem_spec import Detector, Observable
-    from pecos.qec.surface.decode import NoiseModel
+    from pecos.qec.surface.decode import NoiseParameters
 
 P1Weights = Mapping[str, float]
 P2Weights = Mapping[str, float]
@@ -115,7 +115,7 @@ _NOISE_DEFAULT_P1 = _NoiseKeywordDefault(0.001)
 _NOISE_DEFAULT_P2 = _NoiseKeywordDefault(0.01)
 
 
-def _resolve_guppy_noise(noise: NoiseModel | None, call_arguments: Mapping[str, Any]) -> dict[str, Any]:
+def _resolve_guppy_noise(noise: NoiseParameters | None, call_arguments: Mapping[str, Any]) -> dict[str, Any]:
     """Resolve one grouped or flat Guppy DEM noise configuration."""
     explicitly_flat = [
         name for name in _GUPPY_NOISE_KEYWORDS if not isinstance(call_arguments[name], _NoiseKeywordDefault)
@@ -137,10 +137,10 @@ def _resolve_guppy_noise(noise: NoiseModel | None, call_arguments: Mapping[str, 
 
     # Import locally so dem.py remains below surface.decode in the package's
     # initialization graph instead of introducing a module-level back edge.
-    from pecos.qec.surface.decode import NoiseModel
+    from pecos.qec.surface.decode import NoiseParameters
 
-    if not isinstance(noise, NoiseModel):
-        msg = f"noise must be a NoiseModel or None, got {type(noise).__name__}"
+    if not isinstance(noise, NoiseParameters):
+        msg = f"noise must be a NoiseParameters instance or None, got {type(noise).__name__}"
         raise TypeError(msg)
 
     unsupported = {
@@ -150,7 +150,7 @@ def _resolve_guppy_noise(noise: NoiseModel | None, call_arguments: Mapping[str, 
     }
     for field, guidance in unsupported.items():
         if getattr(noise, field) is not None:
-            msg = f"NoiseModel.{field} is not supported by the Guppy DEM entry points; {guidance}"
+            msg = f"NoiseParameters.{field} is not supported by the Guppy DEM entry points; {guidance}"
             raise ValueError(msg)
 
     expanded = {name: getattr(noise, name) for name in _GUPPY_NOISE_KEYWORDS}
@@ -331,7 +331,7 @@ class _DetectorErrorModelMixin:
         detectors_json: str,
         observables_json: str = "[]",
         num_measurements: int | None = None,
-        noise: NoiseModel | None = None,
+        noise: NoiseParameters | None = None,
         p1: float = _NOISE_DEFAULT_P1,
         p1_weights: P1Weights | None = _NOISE_DEFAULT_NONE,
         p2: float = _NOISE_DEFAULT_P2,
@@ -442,7 +442,7 @@ class _DetectorErrorModelMixin:
                 circuit; if given, it must match the traced count.
             noise: Complete grouped noise configuration. When supplied, its
                 values replace all flat noise keywords, including this entry
-                point's defaults. In particular, ``NoiseModel`` defaults such
+                point's defaults. In particular, ``NoiseParameters`` defaults such
                 as ``p1=0.0`` apply instead of this function's ``p1=0.001``.
                 Mixing ``noise`` with any flat noise keyword is rejected.
             p1: Single-qubit gate Pauli error rate.
@@ -605,7 +605,7 @@ class _DetectorErrorModelMixin:
         if num_measurements is not None:
             builder.num_measurements(num_measurements)
         # Same-module private seam: the flat keyword surface stays on this
-        # function while noise() remains strictly a NoiseModel setter.
+        # function while noise() remains strictly a NoiseParameters-instance setter.
         return builder._legacy_noise(noise, noise_keywords).build().dem  # noqa: SLF001
 
 
@@ -1012,21 +1012,21 @@ class GuppyDemBuilder:
         self._set_once("_num_measurements", count, "num_measurements")
         return self
 
-    def noise(self, noise_model: NoiseModel) -> Self:
+    def noise(self, noise_model: NoiseParameters) -> Self:
         """Set the complete grouped noise configuration."""
-        from pecos.qec.surface.decode import NoiseModel
+        from pecos.qec.surface.decode import NoiseParameters
 
-        if not isinstance(noise_model, NoiseModel):
-            msg = f"noise() requires a NoiseModel, got {type(noise_model).__name__}"
+        if not isinstance(noise_model, NoiseParameters):
+            msg = f"noise() requires a NoiseParameters instance, got {type(noise_model).__name__}"
             raise TypeError(msg)
         self._set_once("_noise", noise_model, "noise")
         return self
 
-    def _legacy_noise(self, noise_model: NoiseModel | None, flat_keywords: Mapping[str, Any]) -> Self:
+    def _legacy_noise(self, noise_model: NoiseParameters | None, flat_keywords: Mapping[str, Any]) -> Self:
         """Carry the legacy entry points' flat noise keywords through the builder.
 
         Private: the flat keyword surface stays on ``from_guppy`` and
-        ``build_dem_from_guppy``; ``noise()`` accepts only a ``NoiseModel``.
+        ``build_dem_from_guppy``; ``noise()`` accepts only a ``NoiseParameters``.
         """
         self._set_once("_noise", (_LEGACY_NOISE, noise_model, dict(flat_keywords)), "noise")
         return self
@@ -1291,7 +1291,7 @@ def build_dem_from_guppy(
     num_qubits: int,
     detectors: Sequence[Detector],
     observables: Sequence[Observable] = (),
-    noise: NoiseModel | None = None,
+    noise: NoiseParameters | None = None,
     p1: float = _NOISE_DEFAULT_P1,
     p1_weights: P1Weights | None = _NOISE_DEFAULT_NONE,
     p2: float = _NOISE_DEFAULT_P2,
@@ -1354,7 +1354,7 @@ def build_dem_from_guppy(
             measurement-reference forms as ``detectors``.
         noise: Complete grouped noise configuration. When supplied, its values
             replace all flat noise keywords, including this entry point's
-            defaults. In particular, ``NoiseModel`` defaults such as
+            defaults. In particular, ``NoiseParameters`` defaults such as
             ``p1=0.0`` apply instead of this function's ``p1=0.001``. Mixing
             ``noise`` with any flat noise keyword is rejected.
         p1: Single-qubit gate Pauli error rate.

@@ -532,7 +532,7 @@ def run_case(
     pair_analysis_max_effects: int,
 ) -> CaseResult:
     from pecos._traced_circuit import normalize_traced_tick_circuit
-    from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
+    from pecos.qec.surface import NoiseParameters, SurfacePatch, build_native_sampler
     from pecos.qec.surface.circuit_builder import (
         generate_dem_from_tick_circuit_via_stim,
     )
@@ -542,7 +542,7 @@ def run_case(
     )
 
     patch = SurfacePatch.create(distance=distance)
-    noise = NoiseModel(p1=p / 30.0, p2=p, p_meas=p / 3.0, p_prep=p / 3.0)
+    noise = NoiseParameters(p1=p / 30.0, p2=p, p_meas=p / 3.0, p_prep=p / 3.0)
     noise_args = {
         "p1": noise.p1,
         "p1_gate_rates": SZZ_Z_FRAME_P1_GATE_RATES if interaction_basis == "szz" else None,

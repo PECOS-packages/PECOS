@@ -21,7 +21,7 @@ from pecos.qec import (
     build_dem_from_guppy,
     rec,
 )
-from pecos.qec.surface import NoiseModel
+from pecos.qec.surface import NoiseParameters
 from pecos_rslib.quantum import TickCircuit
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ _OBSERVABLES_JSON = '[{"id":0,"records":[-1]}]'
 
 
 def test_builder_matches_both_wrappers_with_noise_and_inserted_idles() -> None:
-    noise = NoiseModel(p1=0.0, p2=0.01, p_meas=0.02, p_prep=0.0, p_idle_z_linear_rate=0.03)
+    noise = NoiseParameters(p1=0.0, p2=0.01, p_meas=0.02, p_prep=0.0, p_idle_z_linear_rate=0.03)
     via_json_builder = (
         DetectorErrorModel.builder()
         .program(_tagged_two_qubit_program)
@@ -91,7 +91,7 @@ def test_builder_matches_both_wrappers_with_noise_and_inserted_idles() -> None:
 def test_builder_matches_both_wrappers_with_result_tags() -> None:
     detectors_json = '[{"id":0,"result_tags":["m0"]}]'
     observables_json = '[{"id":0,"result_tags":["m1"]}]'
-    noise = NoiseModel(p1=0.0, p2=0.0, p_meas=0.1, p_prep=0.0)
+    noise = NoiseParameters(p1=0.0, p2=0.0, p_meas=0.1, p_prep=0.0)
     via_json_builder = (
         DetectorErrorModel.builder()
         .program(_tagged_two_qubit_program)
@@ -157,7 +157,7 @@ def test_builder_reports_missing_required_setters(
         ("detectors_json", _DETECTORS_JSON),
         ("observables_json", _OBSERVABLES_JSON),
         ("num_measurements", 2),
-        ("noise", NoiseModel()),
+        ("noise", NoiseParameters()),
         ("idle_after_2q", 1.0),
         ("strip_traced_idles", True),
         ("runtime", None),
@@ -220,7 +220,7 @@ def test_builder_result_evaluates_simulation_result_columns() -> None:
         .qubits(2)
         .detectors([Detector("m0")])
         .observables([Observable("m1")])
-        .noise(NoiseModel(p_meas=0.1))
+        .noise(NoiseParameters(p_meas=0.1))
         .build()
     )
     columns = (
@@ -244,7 +244,7 @@ def test_json_builder_audit_accepts_legacy_id_aliases() -> None:
         .qubits(2)
         .detectors_json('[{"detector_id":"D0","records":[-2]}]')
         .observables_json('[{"observable_id":"L0","records":[-1]}]')
-        .noise(NoiseModel(p_meas=0.1))
+        .noise(NoiseParameters(p_meas=0.1))
         .build()
     )
 
@@ -252,7 +252,7 @@ def test_json_builder_audit_accepts_legacy_id_aliases() -> None:
 
 
 def test_builder_setter_order_does_not_change_the_dem() -> None:
-    noise = NoiseModel(p1=0.01, p2=0.02, p_meas=0.03, p_prep=0.04)
+    noise = NoiseParameters(p1=0.01, p2=0.02, p_meas=0.03, p_prep=0.04)
     first = (
         DetectorErrorModel.builder()
         .program(_tagged_two_qubit_program)

@@ -198,10 +198,13 @@ different DEM.
 ## Grouping Noise Parameters
 
 Both Guppy DEM entry points accept either the existing flat noise keywords or
-one `NoiseModel` containing the complete noise configuration. The forms below
-are equivalent. Do not mix them in one call: even an explicitly passed flat
+one `NoiseParameters` instance containing the complete noise configuration.
+`NoiseParameters` is available from the `pecos` top level, and supports both
+its original dataclass constructor and immutable `with_<field_name>` chaining.
+The grouped and flat forms below are equivalent. Do not mix them in one call:
+even an explicitly passed flat
 default conflicts with `noise`. When `noise` is present, its defaults fully
-replace the entry point's defaults; for example, `NoiseModel().p1` is `0.0`,
+replace the entry point's defaults; for example, `NoiseParameters().p1` is `0.0`,
 not the flat `p1=0.001` default.
 
 <!--test-name: dem_from_guppy_grouped_noise-->
@@ -210,8 +213,8 @@ from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import cx, measure, qubit
 
+from pecos import NoiseParameters
 from pecos.qec import DetectorErrorModel
-from pecos.qec.surface import NoiseModel
 
 
 @guppy
@@ -228,7 +231,7 @@ common = {
     "observables_json": '[{"id": "L0", "result_tags": ["m1"]}]',
     "seed": 0,
 }
-noise = NoiseModel(p1=0.002, p2=0.004, p_meas=0.006, p_prep=0.008)
+noise = NoiseParameters().with_p1(0.002).with_p2(0.004).with_p_meas(0.006).with_p_prep(0.008)
 
 grouped = DetectorErrorModel.from_guppy(noisy_pair, noise=noise, **common)
 flat = DetectorErrorModel.from_guppy(

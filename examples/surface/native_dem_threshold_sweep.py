@@ -669,11 +669,11 @@ def _decoder_runtime(
     p_prep_scale: float = 0.5,
 ) -> _DecoderRuntime:
     """Build and cache the expensive native decoder-side objects once."""
-    from pecos.qec.surface import NoiseModel, SurfaceDecoder
+    from pecos.qec.surface import NoiseParameters, SurfaceDecoder
 
     basis = basis.upper()
     patch = _surface_patch(distance)
-    noise = NoiseModel(
+    noise = NoiseParameters(
         p1=physical_error_rate * p1_scale,
         p2=physical_error_rate,
         p_meas=physical_error_rate * p_meas_scale,

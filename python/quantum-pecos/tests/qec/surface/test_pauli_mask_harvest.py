@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from pecos.qec.surface import (
     GuppyRngMaskConfig,
-    NoiseModel,
+    NoiseParameters,
     SurfacePatch,
     TwirlConfig,
     build_memory_circuit,
@@ -482,7 +482,7 @@ def test_runtime_twirled_theta0_demask_null(
     sampler = build_native_sampler(
         patch_d3,
         num_rounds=num_rounds,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis=basis,
         twirl=TwirlConfig(),
     )
@@ -542,7 +542,7 @@ def test_runtime_gate_local_twirled_theta0_demask_null(
     sampler = build_native_sampler(
         patch_d3,
         num_rounds=num_rounds,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis=basis,
         twirl=twirl,
     )
@@ -608,7 +608,7 @@ def _assert_canonical_frame_output_matches_lookup(
     sampler = build_native_sampler(
         patch,
         num_rounds=num_rounds,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis=basis,
         twirl=TwirlConfig(),
     )
@@ -673,7 +673,7 @@ def test_runtime_gate_local_canonical_frame_output_matches_lookup(
     sampler = build_native_sampler(
         patch_d3,
         num_rounds=num_rounds,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis=basis,
         twirl=abstract_twirl,
     )
@@ -763,7 +763,7 @@ def test_harvested_runtime_masks_drive_fixed_dem_sampler_null(patch_d3: SurfaceP
     sampler = build_native_sampler(
         patch_d3,
         num_rounds=num_rounds,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=twirl,
     )

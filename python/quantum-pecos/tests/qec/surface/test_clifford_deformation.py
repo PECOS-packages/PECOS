@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pecos.qec.surface import (
     LocalCliffordFrame,
-    NoiseModel,
+    NoiseParameters,
     OpType,
     SignedPauli,
     SurfacePatch,
@@ -206,7 +206,7 @@ def test_global_axis_cycle_f_native_abstract_dem_path_accepts_frame_policy() -> 
     dem = generate_circuit_level_dem_from_builder(
         patch,
         num_rounds=1,
-        noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
+        noise=NoiseParameters(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
         basis="Z",
         circuit_source="abstract",
         interaction_basis="szz",
@@ -223,7 +223,7 @@ def test_checkerboard_native_abstract_dem_path_accepts_frame_policy(policy: str)
     dem = generate_circuit_level_dem_from_builder(
         patch,
         num_rounds=1,
-        noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
+        noise=NoiseParameters(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
         basis="Z",
         circuit_source="abstract",
         interaction_basis="szz",

@@ -316,11 +316,11 @@ def test_surface_code_memory_rejects_plan_basis_mismatch() -> None:
 
 
 def test_check_plan_does_not_change_current_szz_dem() -> None:
-    from pecos.qec.surface import NoiseModel, SurfacePatch
+    from pecos.qec.surface import NoiseParameters, SurfacePatch
     from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
     patch = SurfacePatch.create(distance=3)
-    noise = NoiseModel(p2=0.001, p_meas=0.001, p_prep=0.001)
+    noise = NoiseParameters(p2=0.001, p_meas=0.001, p_prep=0.001)
 
     by_basis = generate_circuit_level_dem_from_builder(
         patch,
@@ -689,13 +689,13 @@ def test_direct_surface_renderers_reject_plan_basis_mismatch() -> None:
 
 
 def test_native_sampler_records_resolved_check_plan() -> None:
-    from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
+    from pecos.qec.surface import NoiseParameters, SurfacePatch, build_native_sampler
 
     patch = SurfacePatch.create(distance=3)
     sampler = build_native_sampler(
         patch,
         num_rounds=1,
-        noise=NoiseModel(p2=0.001),
+        noise=NoiseParameters(p2=0.001),
         check_plan="szz_current_v1",
         sampling_model="influence_dem",
     )

@@ -99,12 +99,12 @@ def test_surface_code_memory_accepts_traced_qis_runtime() -> None:
 
 
 def test_surface_decoder_accepts_traced_qis_runtime() -> None:
-    from pecos.qec.surface import NoiseModel, SurfaceDecoder, SurfacePatch
+    from pecos.qec.surface import NoiseParameters, SurfaceDecoder, SurfacePatch
 
     decoder = SurfaceDecoder(
         SurfacePatch.create(distance=3),
         num_rounds=1,
-        noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
+        noise=NoiseParameters(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
         decoder_type="pymatching_uncorrelated",
         circuit_level_dem_source="traced_qis",
         runtime=_NON_DEFAULT_RUNTIME,
@@ -114,12 +114,12 @@ def test_surface_decoder_accepts_traced_qis_runtime() -> None:
 
 
 def test_build_native_sampler_accepts_traced_qis_runtime() -> None:
-    from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
+    from pecos.qec.surface import NoiseParameters, SurfacePatch, build_native_sampler
 
     sampler = build_native_sampler(
         SurfacePatch.create(distance=3),
         num_rounds=1,
-        noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
+        noise=NoiseParameters(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
         circuit_source="traced_qis",
         runtime=_NON_DEFAULT_RUNTIME,
     )
@@ -128,12 +128,12 @@ def test_build_native_sampler_accepts_traced_qis_runtime() -> None:
 
 
 def test_surface_code_memory_rejects_ambiguous_noise_inputs() -> None:
-    from pecos.qec.surface import NoiseModel, surface_code_memory
+    from pecos.qec.surface import NoiseParameters, surface_code_memory
 
     with pytest.raises(ValueError, match="either physical_error_rate or noise_model"):
         surface_code_memory(
             physical_error_rate=0.0,
-            noise_model=NoiseModel.uniform(0.001),
+            noise_model=NoiseParameters.uniform(0.001),
             shots=0,
             rounds=1,
         )

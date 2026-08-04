@@ -205,10 +205,10 @@ def main():
     ler_lookup = errors_lookup / n
 
     # Compare with pymatching
-    from pecos.qec.surface import NoiseModel
+    from pecos.qec.surface import NoiseParameters
     from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
-    noise_obj = NoiseModel(
+    noise_obj = NoiseParameters(
         p1=noise_params["p1"],
         p2=noise_params["p2"],
         p_meas=noise_params["p_meas"],

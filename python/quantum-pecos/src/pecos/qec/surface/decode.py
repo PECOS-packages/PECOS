@@ -44,6 +44,7 @@ For circuit-level decoding with MWPM:
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -139,8 +140,8 @@ PYMATCHING_DECODER_TYPES = {
 
 
 @dataclass
-class NoiseModel:
-    """Circuit-level noise parameters for QEC simulation.
+class NoiseParameters:
+    """Noise parameters consumed during detector error model construction.
 
     Matches the Rust ``NoiseConfig`` type. All parameters are optional
     beyond the four base rates.
@@ -290,6 +291,146 @@ class NoiseModel:
         self.p_idle_coherent = None
         self.p_idle_coherent_model = None
 
+    def with_p1(self, p1: float) -> NoiseParameters:
+        """Return a copy with ``p1`` set to the given value."""
+        return replace(self, p1=p1)
+
+    def with_p1_weights(self, p1_weights: P1Weights | None) -> NoiseParameters:
+        """Return a copy with ``p1_weights`` set to the given value."""
+        return replace(self, p1_weights=p1_weights)
+
+    def with_p2(self, p2: float) -> NoiseParameters:
+        """Return a copy with ``p2`` set to the given value."""
+        return replace(self, p2=p2)
+
+    def with_p2_szz(self, p2_szz: float | None) -> NoiseParameters:
+        """Return a copy with ``p2_szz`` set to the given value."""
+        return replace(self, p2_szz=p2_szz)
+
+    def with_p2_szzdg(self, p2_szzdg: float | None) -> NoiseParameters:
+        """Return a copy with ``p2_szzdg`` set to the given value."""
+        return replace(self, p2_szzdg=p2_szzdg)
+
+    def with_p2_weights(self, p2_weights: P2Weights | None) -> NoiseParameters:
+        """Return a copy with ``p2_weights`` set to the given value."""
+        return replace(self, p2_weights=p2_weights)
+
+    def with_p2_replacement_approximation(
+        self,
+        p2_replacement_approximation: str | None,
+    ) -> NoiseParameters:
+        """Return a copy with ``p2_replacement_approximation`` set to the given value."""
+        return replace(self, p2_replacement_approximation=p2_replacement_approximation)
+
+    def with_p_meas(self, p_meas: float) -> NoiseParameters:
+        """Return a copy with ``p_meas`` set to the given value."""
+        return replace(self, p_meas=p_meas)
+
+    def with_p_prep(self, p_prep: float) -> NoiseParameters:
+        """Return a copy with ``p_prep`` set to the given value."""
+        return replace(self, p_prep=p_prep)
+
+    def with_p_idle(self, p_idle: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle`` set to the given value."""
+        return replace(self, p_idle=p_idle)
+
+    def with_t1(self, t1: float | None) -> NoiseParameters:
+        """Return a copy with ``t1`` set to the given value."""
+        return replace(self, t1=t1)
+
+    def with_t2(self, t2: float | None) -> NoiseParameters:
+        """Return a copy with ``t2`` set to the given value."""
+        return replace(self, t2=t2)
+
+    def with_p_idle_linear_rate(self, p_idle_linear_rate: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle_linear_rate`` set to the given value."""
+        return replace(self, p_idle_linear_rate=p_idle_linear_rate)
+
+    def with_p_idle_quadratic_rate(self, p_idle_quadratic_rate: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle_quadratic_rate`` set to the given value."""
+        return replace(self, p_idle_quadratic_rate=p_idle_quadratic_rate)
+
+    def with_p_idle_x_linear_rate(self, p_idle_x_linear_rate: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle_x_linear_rate`` set to the given value."""
+        return replace(self, p_idle_x_linear_rate=p_idle_x_linear_rate)
+
+    def with_p_idle_y_linear_rate(self, p_idle_y_linear_rate: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle_y_linear_rate`` set to the given value."""
+        return replace(self, p_idle_y_linear_rate=p_idle_y_linear_rate)
+
+    def with_p_idle_z_linear_rate(self, p_idle_z_linear_rate: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle_z_linear_rate`` set to the given value."""
+        return replace(self, p_idle_z_linear_rate=p_idle_z_linear_rate)
+
+    def with_p_idle_x_quadratic_rate(self, p_idle_x_quadratic_rate: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle_x_quadratic_rate`` set to the given value."""
+        return replace(self, p_idle_x_quadratic_rate=p_idle_x_quadratic_rate)
+
+    def with_p_idle_y_quadratic_rate(self, p_idle_y_quadratic_rate: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle_y_quadratic_rate`` set to the given value."""
+        return replace(self, p_idle_y_quadratic_rate=p_idle_y_quadratic_rate)
+
+    def with_p_idle_z_quadratic_rate(self, p_idle_z_quadratic_rate: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle_z_quadratic_rate`` set to the given value."""
+        return replace(self, p_idle_z_quadratic_rate=p_idle_z_quadratic_rate)
+
+    def with_p_idle_quadratic_sine_rate(
+        self,
+        p_idle_quadratic_sine_rate: float | None,
+    ) -> NoiseParameters:
+        """Return a copy with ``p_idle_quadratic_sine_rate`` set to the given value."""
+        return replace(self, p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate)
+
+    def with_p_idle_x_quadratic_sine_rate(
+        self,
+        p_idle_x_quadratic_sine_rate: float | None,
+    ) -> NoiseParameters:
+        """Return a copy with ``p_idle_x_quadratic_sine_rate`` set to the given value."""
+        return replace(self, p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate)
+
+    def with_p_idle_y_quadratic_sine_rate(
+        self,
+        p_idle_y_quadratic_sine_rate: float | None,
+    ) -> NoiseParameters:
+        """Return a copy with ``p_idle_y_quadratic_sine_rate`` set to the given value."""
+        return replace(self, p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate)
+
+    def with_p_idle_z_quadratic_sine_rate(
+        self,
+        p_idle_z_quadratic_sine_rate: float | None,
+    ) -> NoiseParameters:
+        """Return a copy with ``p_idle_z_quadratic_sine_rate`` set to the given value."""
+        return replace(self, p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate)
+
+    # The idle families take their rate and model together: a model without a
+    # rate is inert and rejected, and __post_init__ translates a family into the
+    # canonical per-axis fields and then clears it -- so setting the two halves
+    # in separate calls would make the second call collide with the per-axis
+    # values the first one produced.
+    def with_p_idle_linear(
+        self,
+        p_idle_linear: float | None,
+        model: Mapping[str, float] | None = None,
+    ) -> NoiseParameters:
+        """Return a copy with the linear idle family set to the given rate and model."""
+        return replace(self, p_idle_linear=p_idle_linear, p_idle_linear_model=model)
+
+    def with_p_idle_sin_squared(
+        self,
+        p_idle_sin_squared: float | None,
+        model: Mapping[str, float] | None = None,
+    ) -> NoiseParameters:
+        """Return a copy with the sine-law idle family set to the given rate and model."""
+        return replace(self, p_idle_sin_squared=p_idle_sin_squared, p_idle_sin_squared_model=model)
+
+    def with_p_idle_coherent(
+        self,
+        p_idle_coherent: float | None,
+        model: Mapping[str, float] | None = None,
+    ) -> NoiseParameters:
+        """Return a copy with the coherent idle family set to the given rate and model."""
+        return replace(self, p_idle_coherent=p_idle_coherent, p_idle_coherent_model=model)
+
     @property
     def effective_p_idle_z_linear_rate(self) -> float | None:
         """Z-axis linear idle rate, accepting the legacy alias."""
@@ -331,7 +472,7 @@ class NoiseModel:
         self,
         *,
         time_units_per_second: float = RUNTIME_IDLE_TIME_UNITS_PER_SECOND,
-    ) -> NoiseModel:
+    ) -> NoiseParameters:
         """Return a copy whose idle noise is expressed in runtime replay units.
 
         Selene-compatible runtimes emit idle durations in seconds, but the
@@ -370,10 +511,10 @@ class NoiseModel:
         )
 
     @staticmethod
-    def uniform(physical_error_rate: float) -> NoiseModel:
+    def uniform(physical_error_rate: float) -> NoiseParameters:
         """Create a uniform circuit-level noise model from one physical error rate."""
         p = _validate_probability("physical_error_rate", physical_error_rate)
-        return NoiseModel(p1=p, p2=p, p_meas=p, p_prep=p)
+        return NoiseParameters(p1=p, p2=p, p_meas=p, p_prep=p)
 
     @property
     def is_noiseless(self) -> bool:
@@ -397,6 +538,19 @@ class NoiseModel:
             rates.append(self.p_idle)
         rates.extend(rate for rate in self.idle_memory_rates if rate is not None)
         return max(rates)
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve deprecated module attributes lazily."""
+    if name == "NoiseModel":
+        warnings.warn(
+            "NoiseModel is deprecated; use NoiseParameters instead (from pecos import NoiseParameters).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return NoiseParameters
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
 
 
 def _normalize_pauli_weights(weights: P1Weights | P2Weights | None) -> tuple[tuple[str, float], ...] | None:
@@ -424,7 +578,7 @@ def _p2_weights_dict(p2_weights: P2Weights | None) -> dict[str, float] | None:
     return None if normalized is None else dict(normalized)
 
 
-def _p2_gate_rates_dict(noise: NoiseModel) -> dict[str, float] | None:
+def _p2_gate_rates_dict(noise: NoiseParameters) -> dict[str, float] | None:
     rates: dict[str, float] = {}
     if noise.p2_szz is not None:
         rates["SZZ"] = noise.p2_szz
@@ -600,7 +754,7 @@ def generate_repetition_code_dem(
 def generate_surface_code_dem(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     stab_type: str = "Z",
 ) -> str:
     """Generate a phenomenological DEM for surface code decoding.
@@ -1359,7 +1513,7 @@ def _uses_dedicated_idle_noise(
     )
 
 
-def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
+def _noise_uses_dedicated_idle_noise(noise: NoiseParameters) -> bool:
     """Return True when this noise model requires explicit idle locations."""
     return _uses_dedicated_idle_noise(
         p_idle=noise.p_idle,
@@ -1381,7 +1535,7 @@ def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
 
 
 def _reject_szz_unlowered_physical_noise(
-    noise: NoiseModel,
+    noise: NoiseParameters,
     interaction_basis: str,
     circuit_source: Literal["abstract", "traced_qis"],
 ) -> None:
@@ -1403,7 +1557,7 @@ def _reject_szz_unlowered_physical_noise(
 
 
 def _use_szz_physical_prefixes(
-    noise: NoiseModel,
+    noise: NoiseParameters,
     interaction_basis: str,
     circuit_source: Literal["abstract", "traced_qis"],
 ) -> bool:
@@ -1430,7 +1584,7 @@ def _szz_z_frame_p1_gate_rates(topology: _CachedNativeSurfaceTopology) -> dict[s
 
 def _with_noise_compat(
     builder: Any,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     *,
     p1_gate_rates: Mapping[str, float] | None = None,
 ) -> Any:
@@ -1645,7 +1799,7 @@ def _cached_surface_native_topology(
 
 def _dem_string_from_cached_surface_topology(
     topology: _CachedNativeSurfaceTopology,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     *,
     decompose_errors: bool,
     dem_decomposition: NativeDemDecomposition = "source_graphlike",
@@ -1772,7 +1926,7 @@ def _cached_surface_native_dem_string(
     )
     return _dem_string_from_cached_surface_topology(
         topology,
-        NoiseModel(
+        NoiseParameters(
             p1=p1,
             p1_weights=p1_weights,
             p2=p2,
@@ -1813,7 +1967,7 @@ def _cached_parsed_dem(dem_str: str) -> Any:
 
 def _build_native_sampler_from_cached_surface_topology(
     topology: _CachedNativeSurfaceTopology,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     *,
     sampling_model: Literal[
         "dem",
@@ -1871,7 +2025,7 @@ def _build_native_sampler_from_cached_surface_topology(
 def generate_circuit_level_dem_from_builder(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str = "Z",
     *,
     decompose_errors: bool = False,
@@ -1956,10 +2110,10 @@ def generate_circuit_level_dem_from_builder(
         DEM string in standard format
 
     Example:
-        >>> from pecos.qec.surface import SurfacePatch, NoiseModel
+        >>> from pecos.qec.surface import SurfacePatch, NoiseParameters
         >>> from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
         >>> patch = SurfacePatch.create(distance=3)
-        >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
+        >>> noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01)
         >>> dem = generate_circuit_level_dem_from_builder(patch, num_rounds=3, noise=noise)
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
@@ -2047,7 +2201,7 @@ def generate_circuit_level_dem_from_builder(
 def generate_circuit_level_dem(
     distance: int,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str = "Z",
 ) -> str:
     """Generate a circuit-level DEM using Stim's surface code generator.
@@ -2071,8 +2225,8 @@ def generate_circuit_level_dem(
         DEM string in Stim format
 
     Example:
-        >>> from pecos.qec.surface import generate_circuit_level_dem, NoiseModel
-        >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
+        >>> from pecos.qec.surface import generate_circuit_level_dem, NoiseParameters
+        >>> noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01)
         >>> dem = generate_circuit_level_dem(distance=3, num_rounds=3, noise=noise, basis="Z")
     """
     import stim
@@ -2103,7 +2257,7 @@ def generate_circuit_level_dem(
 def build_stim_circuit_from_patch(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel | None = None,
+    noise: NoiseParameters | None = None,
     basis: str = "Z",
 ) -> stim.Circuit:
     """Build a Stim circuit from our patch geometry and CNOT schedule.
@@ -2134,11 +2288,11 @@ def build_stim_circuit_from_patch(
     Example:
         >>> from pecos.qec.surface import (
         ...     SurfacePatch,
-        ...     NoiseModel,
+        ...     NoiseParameters,
         ...     build_stim_circuit_from_patch,
         ... )
         >>> patch = SurfacePatch.create(distance=3)
-        >>> noise = NoiseModel(p2=0.01, p_meas=0.01)
+        >>> noise = NoiseParameters(p2=0.01, p_meas=0.01)
         >>> circuit = build_stim_circuit_from_patch(patch, num_rounds=3, noise=noise)
         >>> dem = circuit.detector_error_model()
     """
@@ -2345,7 +2499,7 @@ def build_stim_circuit_from_patch(
 def generate_dem_from_patch(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str = "Z",
     *,
     decompose_errors: bool = True,
@@ -2371,11 +2525,11 @@ def generate_dem_from_patch(
     Example:
         >>> from pecos.qec.surface import (
         ...     SurfacePatch,
-        ...     NoiseModel,
+        ...     NoiseParameters,
         ...     generate_dem_from_patch,
         ... )
         >>> patch = SurfacePatch.create(distance=3)
-        >>> noise = NoiseModel(p2=0.01, p_meas=0.01)
+        >>> noise = NoiseParameters(p2=0.01, p_meas=0.01)
         >>> dem = generate_dem_from_patch(patch, num_rounds=3, noise=noise)
     """
     circuit = build_stim_circuit_from_patch(patch, num_rounds, noise, basis)
@@ -2393,7 +2547,7 @@ class SurfaceDecoder:
         >>> from pecos.qec.surface import SurfacePatch, SurfaceDecoder
         >>> patch = SurfacePatch.create(distance=3)
         >>> # Default: PyMatching MWPM
-        >>> decoder = SurfaceDecoder(patch, num_rounds=3, noise=NoiseModel(p2=0.01, p_meas=0.01))
+        >>> decoder = SurfaceDecoder(patch, num_rounds=3, noise=NoiseParameters(p2=0.01, p_meas=0.01))
         >>> # Alternative: FusionBlossom MWPM
         >>> decoder = SurfaceDecoder(patch, num_rounds=3, decoder_type="fusion_blossom")
         >>> # Alternative: BP+OSD (LDPC)
@@ -2405,7 +2559,7 @@ class SurfaceDecoder:
         self,
         patch: SurfacePatch,
         num_rounds: int = 1,
-        noise: NoiseModel | None = None,
+        noise: NoiseParameters | None = None,
         decoder_type: Literal[
             "pymatching",
             "pymatching_correlated",
@@ -2479,7 +2633,7 @@ class SurfaceDecoder:
 
         self.patch = patch
         self.num_rounds = num_rounds
-        self.noise = noise or NoiseModel(p2=0.01, p_meas=0.01)
+        self.noise = noise or NoiseParameters(p2=0.01, p_meas=0.01)
         self.decoder_type = DecoderType(decoder_type)
         self.use_circuit_level_dem = use_circuit_level_dem
         if circuit_level_dem_mode not in {
@@ -3420,16 +3574,16 @@ class SimulationResult:
 
 def _memory_noise_model(
     physical_error_rate: float | None,
-    noise_model: NoiseModel | None,
-) -> NoiseModel:
-    """Resolve the surface-memory noise inputs into an explicit NoiseModel."""
+    noise_model: NoiseParameters | None,
+) -> NoiseParameters:
+    """Resolve the surface-memory noise inputs into explicit noise parameters."""
     if noise_model is not None:
         if physical_error_rate is not None:
             msg = "pass either physical_error_rate or noise_model, not both"
             raise ValueError(msg)
         return noise_model
     p = 0.001 if physical_error_rate is None else physical_error_rate
-    return NoiseModel.uniform(p)
+    return NoiseParameters.uniform(p)
 
 
 def _recommended_graphlike_decomposition_for_decoder(decoder_type: str) -> NativeDemDecomposition:
@@ -3443,7 +3597,7 @@ def surface_code_memory(
     *,
     distance: int = 3,
     physical_error_rate: float | None = None,
-    noise_model: NoiseModel | None = None,
+    noise_model: NoiseParameters | None = None,
     shots: int = 1000,
     rounds: int | None = None,
     basis: str = "Z",
@@ -3571,7 +3725,7 @@ def run_noisy_memory_experiment(
     num_rounds: int,
     num_shots: int,
     basis: str,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     *,
     decode: bool = True,
     decoder_type: str = "pymatching",
@@ -3604,8 +3758,8 @@ def run_noisy_memory_experiment(
         SimulationResult with error rate statistics
 
     Example:
-        >>> from pecos.qec.surface import run_noisy_memory_experiment, NoiseModel
-        >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        >>> from pecos.qec.surface import run_noisy_memory_experiment, NoiseParameters
+        >>> noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         >>> result = run_noisy_memory_experiment(
         ...     distance=3,
         ...     num_rounds=3,
@@ -3831,7 +3985,7 @@ class NativeSampler:
 def build_native_sampler(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str = "Z",
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
@@ -3905,9 +4059,9 @@ def build_native_sampler(
         NativeSampler that can generate samples for threshold estimation
 
     Example:
-        >>> from pecos.qec.surface import SurfacePatch, NoiseModel, build_native_sampler
+        >>> from pecos.qec.surface import SurfacePatch, NoiseParameters, build_native_sampler
         >>> patch = SurfacePatch.create(distance=5)
-        >>> noise = NoiseModel(p1=0.001, p2=0.001, p_meas=0.001)
+        >>> noise = NoiseParameters(p1=0.001, p2=0.001, p_meas=0.001)
         >>> sampler = build_native_sampler(patch, num_rounds=5, noise=noise)
         >>> detection_events, observable_flips = sampler.sample(num_shots=10000)
     """

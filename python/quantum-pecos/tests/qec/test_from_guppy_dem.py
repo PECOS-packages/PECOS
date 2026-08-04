@@ -23,7 +23,7 @@ from pecos._traced_circuit import (
 )
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import Detector, DetectorErrorModel, Observable, build_dem_from_guppy, rec
-from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseModel, SurfacePatch
+from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseParameters, SurfacePatch
 from pecos.qec.surface.circuit_builder import (
     generate_tick_circuit_from_patch,
 )
@@ -259,7 +259,7 @@ def _noise_model_entrypoint_dem(entrypoint: str, **kwargs):
 def test_noise_model_matches_flat_gate_noise(entrypoint: str) -> None:
     rates = {"p1": 0.003, "p2": 0.007, "p_meas": 0.011, "p_prep": 0.013}
 
-    grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseModel(**rates))
+    grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(**rates))
     flat = _noise_model_entrypoint_dem(entrypoint, **rates)
 
     assert grouped.to_string() == flat.to_string()
@@ -276,7 +276,7 @@ def test_noise_model_matches_flat_pauli_weights(entrypoint: str) -> None:
         "p_prep": 0.013,
     }
 
-    grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseModel(**noise_kwargs))
+    grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(**noise_kwargs))
     flat = _noise_model_entrypoint_dem(entrypoint, **noise_kwargs)
 
     assert grouped.to_string() == flat.to_string()
@@ -289,7 +289,7 @@ def test_noise_model_structured_idle_family_matches_flat_axis_rates(entrypoint: 
 
     grouped = _noise_model_entrypoint_dem(
         entrypoint,
-        noise=NoiseModel(p_idle_linear=rate, p_idle_linear_model=model),
+        noise=NoiseParameters(p_idle_linear=rate, p_idle_linear_model=model),
         idle_after_2q_duration=2.0,
     )
     flat = _noise_model_entrypoint_dem(
@@ -310,21 +310,21 @@ def test_noise_model_structured_idle_family_matches_flat_axis_rates(entrypoint: 
 @pytest.mark.parametrize("keyword", ["p1", "p2", "p_meas", "p_idle_linear"])
 def test_noise_model_rejects_flat_noise_keyword(entrypoint: str, keyword: str) -> None:
     with pytest.raises(ValueError, match=keyword):
-        _noise_model_entrypoint_dem(entrypoint, noise=NoiseModel(), **{keyword: 0.01})
+        _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(), **{keyword: 0.01})
 
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
 @pytest.mark.parametrize("field", ["p_idle", "p2_szz", "p2_szzdg"])
 def test_noise_model_rejects_fields_not_supported_by_guppy_dem(entrypoint: str, field: str) -> None:
     with pytest.raises(ValueError, match=field):
-        _noise_model_entrypoint_dem(entrypoint, noise=NoiseModel(**{field: 0.01}))
+        _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(**{field: 0.01}))
 
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
 def test_noise_model_combines_with_non_noise_keywords(entrypoint: str) -> None:
     dem = _noise_model_entrypoint_dem(
         entrypoint,
-        noise=NoiseModel(p_idle_linear=0.01),
+        noise=NoiseParameters(p_idle_linear=0.01),
         idle_after_2q_duration=1.0,
         strip_traced_idles=True,
         seed=17,
@@ -992,7 +992,7 @@ def test_lowered_replay_converts_runtime_idle_seconds_to_nanosecond_time_units()
 
 
 def test_noise_model_converts_runtime_idle_rates_from_seconds_to_dem_time_units() -> None:
-    noise = NoiseModel(
+    noise = NoiseParameters(
         p1=0.001,
         p2=0.002,
         p_meas=0.003,
@@ -1021,7 +1021,7 @@ def test_noise_model_converts_runtime_idle_rates_from_seconds_to_dem_time_units(
 
 def test_noise_model_rejects_invalid_runtime_idle_time_unit_scale() -> None:
     with pytest.raises(ValueError, match="time_units_per_second"):
-        NoiseModel(p_idle_z_linear_rate=1.0).for_runtime_idle_time_units(time_units_per_second=0.0)
+        NoiseParameters(p_idle_z_linear_rate=1.0).for_runtime_idle_time_units(time_units_per_second=0.0)
 
 
 def test_lowered_replay_preserves_gate_metadata() -> None:
@@ -1682,7 +1682,7 @@ def test_native_abstract_surface_dem_uses_record_metadata_only_for_r0(basis: str
     assert json.loads(native_tc.get_meta("detectors") or "[]")
     assert json.loads(native_tc.get_meta("observables") or "[]")
 
-    noise = NoiseModel(p1=0.0, p2=0.001, p_meas=0.0, p_prep=0.0)
+    noise = NoiseParameters(p1=0.0, p2=0.001, p_meas=0.0, p_prep=0.0)
     for decompose_errors in (False, True):
         dem_text = generate_circuit_level_dem_from_builder(
             patch,

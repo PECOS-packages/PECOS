@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import pytest
-from pecos.qec.surface import NoiseModel, SurfacePatch, TwirlConfig
+from pecos.qec.surface import NoiseParameters, SurfacePatch, TwirlConfig
 from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
 
-def _native_surface_dem(noise: NoiseModel) -> bytes:
+def _native_surface_dem(noise: NoiseParameters) -> bytes:
     patch = SurfacePatch.create(distance=3)
     dem = generate_circuit_level_dem_from_builder(
         patch,
@@ -21,9 +21,9 @@ def _native_surface_dem(noise: NoiseModel) -> bytes:
 def test_linear_family_matches_per_axis_native_surface_dem() -> None:
     rate = 0.003
 
-    structured = _native_surface_dem(NoiseModel(p_idle_linear=rate))
+    structured = _native_surface_dem(NoiseParameters(p_idle_linear=rate))
     primitive = _native_surface_dem(
-        NoiseModel(
+        NoiseParameters(
             p_idle_x_linear_rate=rate / 3.0,
             p_idle_y_linear_rate=rate / 3.0,
             p_idle_z_linear_rate=rate / 3.0,
@@ -37,18 +37,18 @@ def test_sin_squared_family_matches_per_axis_native_surface_dem() -> None:
     rate = 0.03
 
     structured = _native_surface_dem(
-        NoiseModel(
+        NoiseParameters(
             p_idle_sin_squared=rate,
             p_idle_sin_squared_model={"Z": 1.0},
         ),
     )
-    primitive = _native_surface_dem(NoiseModel(p_idle_z_quadratic_sine_rate=rate))
+    primitive = _native_surface_dem(NoiseParameters(p_idle_z_quadratic_sine_rate=rate))
 
     assert structured == primitive
 
 
 def test_structured_families_survive_runtime_idle_unit_conversion() -> None:
-    noise = NoiseModel(
+    noise = NoiseParameters(
         p_idle_linear=0.3,
         p_idle_sin_squared=0.2,
         p_idle_sin_squared_model={"Z": 1.0},
@@ -79,7 +79,7 @@ def test_structured_families_survive_runtime_idle_unit_conversion() -> None:
 )
 def test_structured_family_conflicts_with_corresponding_primitive(kwargs: dict[str, object]) -> None:
     with pytest.raises(ValueError, match="cannot be combined"):
-        NoiseModel(**kwargs)
+        NoiseParameters(**kwargs)
 
 
 @pytest.mark.parametrize(
@@ -92,11 +92,11 @@ def test_structured_family_conflicts_with_corresponding_primitive(kwargs: dict[s
 )
 def test_bare_z_only_alias_warns_through_noise_model(field: str) -> None:
     with pytest.warns(DeprecationWarning, match=field):
-        NoiseModel(**{field: 0.01})
+        NoiseParameters(**{field: 0.01})
 
 
 def test_idle_memory_rates_include_translated_family_values() -> None:
-    noise = NoiseModel(
+    noise = NoiseParameters(
         p_idle_linear=0.3,
         p_idle_sin_squared=0.2,
         p_idle_sin_squared_model={"Z": 1.0},
@@ -109,4 +109,4 @@ def test_idle_memory_rates_include_translated_family_values() -> None:
 
 def test_nonzero_coherent_family_is_rejected_by_standard_dem_model() -> None:
     with pytest.raises(ValueError, match="cannot represent coherent idle noise"):
-        NoiseModel(p_idle_coherent=0.01)
+        NoiseParameters(p_idle_coherent=0.01)

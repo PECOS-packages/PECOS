@@ -121,28 +121,40 @@ across X, Y, and Z, so the single-axis choice is spelled out explicitly. See
 [Idle Noise](../user-guide/dem-from-guppy.md#idle-noise) for the full family and
 model semantics.
 
-`build_dem_from_guppy` returns the DEM together with the audit trail and the
-result-column evaluator used in stage 4b. `DetectorErrorModel.from_guppy` builds
-the same DEM from JSON metadata instead of typed specifications.
+`DetectorErrorModel.builder()` configures the run through chained setters and
+returns the DEM together with the audit trail and the result-column evaluator
+used in stage 4b. A `NoiseModel` carries the entire noise configuration as one
+argument.
+
+The one-call forms `DetectorErrorModel.from_guppy(...)` and
+`build_dem_from_guppy(...)` remain available and run this same pipeline; they
+take the noise settings as individual keyword arguments instead.
 
 <!--continuation-->
 ```python
-from pecos.qec import build_dem_from_guppy
+from pecos.qec import DetectorErrorModel
+from pecos.qec.surface import NoiseModel
 
-dem_build = build_dem_from_guppy(
-    rep_code_memory,
-    num_qubits=7,
-    detectors=detectors,
-    observables=observables,
-    idle_after_2q_duration=1.0,
-    p_idle_linear=0.01,
-    p_idle_linear_model={"X": 0.25, "Y": 0.25, "Z": 0.5},
-    p_idle_sin_squared=0.03,
-    p_idle_sin_squared_model={"Z": 1.0},
+noise = NoiseModel(
     p1=0.002,
     p2=0.02,
     p_meas=0.02,
     p_prep=0.02,
+    p_idle_linear=0.01,
+    p_idle_linear_model={"X": 0.25, "Y": 0.25, "Z": 0.5},
+    p_idle_sin_squared=0.03,
+    p_idle_sin_squared_model={"Z": 1.0},
+)
+
+dem_build = (
+    DetectorErrorModel.builder()
+    .program(rep_code_memory)
+    .qubits(7)
+    .detectors(detectors)
+    .observables(observables)
+    .noise(noise)
+    .idle_after_2q(1.0)
+    .build()
 )
 dem = dem_build.dem
 

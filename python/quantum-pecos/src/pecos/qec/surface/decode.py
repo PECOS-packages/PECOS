@@ -57,6 +57,7 @@ from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
+from pecos.qec._idle_noise import _translate_structured_idle_noise
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
 
 if TYPE_CHECKING:
@@ -174,6 +175,28 @@ class NoiseModel:
         p_idle: Idle noise rate per time unit (uniform depolarizing).
         t1: T1 relaxation time for idle noise (same units as idle duration).
         t2: T2 dephasing time (must satisfy t2 <= 2*t1).
+        p_idle_linear: Optional total stochastic idle-noise rate linear in idle
+            duration. By default, the total rate is split equally over X, Y,
+            and Z errors.
+        p_idle_linear_model: Optional relative weights over ``"X"``, ``"Y"``,
+            ``"Z"``, and ``"L"`` for ``p_idle_linear``. Weights must be finite,
+            non-negative, and sum to 1.0; ``"L"`` must have zero weight because
+            DEM fault propagation is Pauli-only.
+        p_idle_sin_squared: Optional stochastic sine-law idle rate. An axis
+            multiplier ``m`` produces probability
+            ``sin((p_idle_sin_squared * m) * duration)^2``. By default X, Y,
+            and Z each use multiplier 1.0.
+        p_idle_sin_squared_model: Optional relative-rate multipliers over
+            ``"X"``, ``"Y"``, ``"Z"``, and ``"L"`` for
+            ``p_idle_sin_squared``. Values must be finite and non-negative;
+            ``"L"`` must have zero weight because DEM fault propagation is
+            Pauli-only.
+        p_idle_coherent: Optional coherent-rotation rate. The standard DEM
+            route rejects nonzero coherent idle noise because it cannot
+            represent coherence. Zero has no effect.
+        p_idle_coherent_model: Optional relative-rate multipliers over ``"RX"``,
+            ``"RY"``, and ``"RZ"`` for ``p_idle_coherent``. Values must be
+            finite and non-negative.
         p_idle_linear_rate: Legacy alias for stochastic Z-memory rate linear in idle duration.
         p_idle_quadratic_rate: Legacy alias for stochastic Z-memory rate quadratic in idle duration.
         p_idle_x_linear_rate: Stochastic X-memory rate linear in idle duration.
@@ -187,6 +210,9 @@ class NoiseModel:
         p_idle_x_quadratic_sine_rate: Stochastic X-memory sine-law rate.
         p_idle_y_quadratic_sine_rate: Stochastic Y-memory sine-law rate.
         p_idle_z_quadratic_sine_rate: Stochastic Z-memory sine-law rate.
+
+        Structured family inputs are normalized to the corresponding per-axis
+        fields during construction; the family fields are then cleared.
 
     Runtime idle units:
         For ``traced_qis`` DEMs, runtime idles are replayed as nanosecond
@@ -218,6 +244,12 @@ class NoiseModel:
     p_idle_x_quadratic_sine_rate: float | None = None
     p_idle_y_quadratic_sine_rate: float | None = None
     p_idle_z_quadratic_sine_rate: float | None = None
+    p_idle_linear: float | None = None
+    p_idle_linear_model: Mapping[str, float] | None = None
+    p_idle_sin_squared: float | None = None
+    p_idle_sin_squared_model: Mapping[str, float] | None = None
+    p_idle_coherent: float | None = None
+    p_idle_coherent_model: Mapping[str, float] | None = None
 
     def __post_init__(self) -> None:
         """Normalize cache-sensitive inputs after dataclass initialization."""
@@ -227,6 +259,36 @@ class NoiseModel:
             self.p2_szz = _validate_probability("p2_szz", self.p2_szz)
         if self.p2_szzdg is not None:
             self.p2_szzdg = _validate_probability("p2_szzdg", self.p2_szzdg)
+        (
+            self.p_idle_x_linear_rate,
+            self.p_idle_y_linear_rate,
+            self.p_idle_z_linear_rate,
+            self.p_idle_x_quadratic_sine_rate,
+            self.p_idle_y_quadratic_sine_rate,
+            self.p_idle_z_quadratic_sine_rate,
+        ) = _translate_structured_idle_noise(
+            p_idle_linear=self.p_idle_linear,
+            p_idle_linear_model=self.p_idle_linear_model,
+            p_idle_sin_squared=self.p_idle_sin_squared,
+            p_idle_sin_squared_model=self.p_idle_sin_squared_model,
+            p_idle_coherent=self.p_idle_coherent,
+            p_idle_coherent_model=self.p_idle_coherent_model,
+            p_idle_linear_rate=self.p_idle_linear_rate,
+            p_idle_quadratic_rate=self.p_idle_quadratic_rate,
+            p_idle_x_linear_rate=self.p_idle_x_linear_rate,
+            p_idle_y_linear_rate=self.p_idle_y_linear_rate,
+            p_idle_z_linear_rate=self.p_idle_z_linear_rate,
+            p_idle_quadratic_sine_rate=self.p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate=self.p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate=self.p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate=self.p_idle_z_quadratic_sine_rate,
+        )
+        self.p_idle_linear = None
+        self.p_idle_linear_model = None
+        self.p_idle_sin_squared = None
+        self.p_idle_sin_squared_model = None
+        self.p_idle_coherent = None
+        self.p_idle_coherent_model = None
 
     @property
     def effective_p_idle_z_linear_rate(self) -> float | None:

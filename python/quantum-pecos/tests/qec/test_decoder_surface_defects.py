@@ -22,15 +22,11 @@ import pytest
 from pecos.decoders import DemAwareResult, FusionBlossomDecoder
 from pecos_rslib.qec import decoder_dem_requirement
 
-_DEM = "\n".join(
-    [
-        "error(0.1) D0 D1 L0",
-        "error(0.1) D1 L0",
-        "detector D0",
-        "detector D1",
-        "logical_observable L0",
-    ],
-)
+_DEM = """error(0.1) D0 D1 L0
+error(0.1) D1 L0
+detector D0
+detector D1
+logical_observable L0"""
 
 
 def test_dem_aware_result_is_importable() -> None:

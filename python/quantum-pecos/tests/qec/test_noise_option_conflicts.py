@@ -19,8 +19,8 @@ discard a caller-supplied rate with no signal.
 from __future__ import annotations
 
 import pytest
-from pecos.quantum import TickCircuit
 from pecos.qec import DemSampler, DetectorErrorModel
+from pecos.quantum import TickCircuit
 
 _GATE_NOISE = {"p1": 0.001, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
 

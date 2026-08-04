@@ -702,6 +702,31 @@ impl PyFusionBlossomDecoder {
     /// H = [[1, 1, 0], [0, 1, 1]]
     /// decoder = FusionBlossomDecoder.from_check_matrix(H)
     /// ```
+    /// Create a decoder from a Detector Error Model.
+    ///
+    /// # Arguments
+    ///
+    /// * `dem` - Detector error model string in Stim format
+    /// * `correlated` - Exploit X-Z correlations from decomposed mechanisms
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// decoder = FusionBlossomDecoder.from_dem(dem_string)
+    /// ```
+    #[staticmethod]
+    #[pyo3(signature = (dem, correlated=false))]
+    fn from_dem(dem: &str, correlated: bool) -> PyResult<Self> {
+        let inner = if correlated {
+            RustFusionBlossomDecoder::from_dem_correlated(dem)
+        } else {
+            RustFusionBlossomDecoder::from_dem(dem)
+        };
+        inner
+            .map(|inner| Self { inner })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
     #[staticmethod]
     #[pyo3(signature = (check_matrix, weights=None, num_observables=None))]
     fn from_check_matrix(

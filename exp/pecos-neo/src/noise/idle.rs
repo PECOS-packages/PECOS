@@ -47,8 +47,8 @@
 //! - **Coherent**: Deterministic RZ rotation with angle = rate * duration.
 //!   Represents systematic phase errors.
 //!
-//! - **Incoherent**: Stochastic Z error with probability = sin(rate * duration)^2.
-//!   Represents random dephasing.
+//! - **Incoherent**: Stochastic Z error with probability = sin(rate * duration / 2)^2.
+//!   This is the exact Pauli twirl of the coherent RZ rotation.
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights};
 use crate::command::{GateCommand, GateType};
@@ -77,7 +77,11 @@ pub struct IdleChannel {
     /// Error rate per time unit for quadratic (dephasing) noise.
     ///
     /// For coherent: angle = `quadratic_rate` * duration.
-    /// For incoherent: probability = sin(`quadratic_rate` * duration)^2.
+    /// For incoherent: probability = sin(`quadratic_rate` * duration / 2)^2.
+    ///
+    /// The factor of one half makes the incoherent model the exact Pauli twirl
+    /// of the coherent RZ rotation. This deliberately changes numerical results
+    /// from earlier versions for incoherent quadratic idle noise.
     pub quadratic_rate: f64,
 
     /// Whether to model quadratic dephasing coherently (RZ) or incoherently (stochastic Z).
@@ -93,6 +97,13 @@ pub struct IdleChannel {
     /// Default is 1.0 (no adjustment). Values > 1.0 increase the effective
     /// incoherent dephasing rate.
     pub coherent_to_incoherent_factor: f64,
+
+    /// Duration of the idle-noise site applied after a two-qubit gate.
+    ///
+    /// A duration of zero disables after-two-qubit idle sites. When enabled,
+    /// the same linear and quadratic mechanisms used for explicit idle events
+    /// are applied to every distinct gate operand.
+    pub idle_after_2q: f64,
 }
 
 impl Default for IdleChannel {
@@ -103,6 +114,7 @@ impl Default for IdleChannel {
             quadratic_rate: 0.0,
             coherent_dephasing: false,
             coherent_to_incoherent_factor: 1.0,
+            idle_after_2q: 0.0,
         }
     }
 }
@@ -174,47 +186,57 @@ impl IdleChannel {
         self
     }
 
+    /// Set the duration of the idle-noise site after each two-qubit gate.
+    ///
+    /// The duration uses the channel's abstract time units. A duration of zero
+    /// disables these sites.
+    #[must_use]
+    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
+        self.idle_after_2q = duration;
+        self
+    }
+
     /// Calculate linear (stochastic) error probability for a given duration.
-    fn linear_probability(&self, duration: TimeUnits) -> f64 {
-        let t = duration.as_f64();
-        (self.linear_rate * t).min(1.0)
+    fn linear_probability(&self, duration: f64) -> f64 {
+        (self.linear_rate * duration).min(1.0)
     }
 
     /// Calculate quadratic dephasing probability (for incoherent mode).
     ///
-    /// Applies the coherent-to-incoherent factor to compensate for
-    /// not modeling coherent phase accumulation.
-    fn quadratic_probability(&self, duration: TimeUnits) -> f64 {
-        let t = duration.as_f64();
-        let effective_rate = self.quadratic_rate * self.coherent_to_incoherent_factor;
-        let angle = effective_rate * t;
-        angle.sin().powi(2)
+    /// Applies the coherent-to-incoherent factor as a multiplier on the rate,
+    /// then uses the exact Pauli-twirl probability `sin(effective_angle / 2)^2`.
+    /// This deliberately changes numerical results from earlier versions,
+    /// which omitted the factor of one half.
+    fn quadratic_probability(&self, duration: f64) -> f64 {
+        let effective_angle = self.quadratic_rate * self.coherent_to_incoherent_factor * duration;
+        (effective_angle / 2.0).sin().powi(2)
     }
 
     /// Calculate quadratic dephasing angle (for coherent mode).
-    fn quadratic_angle(&self, duration: TimeUnits) -> f64 {
-        let t = duration.as_f64();
-        self.quadratic_rate * t
-    }
-}
-
-impl NoiseChannel for IdleChannel {
-    fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
-        if self.linear_rate <= 0.0 && self.quadratic_rate <= 0.0 {
-            return false;
-        }
-        matches!(event, NoiseEvent::IdleTime { .. })
+    fn quadratic_angle(&self, duration: f64) -> f64 {
+        self.quadratic_rate * duration
     }
 
-    fn apply(
+    /// Apply every configured idle mechanism for one duration.
+    fn apply_for_duration(
         &self,
-        event: &NoiseEvent<'_>,
+        qubits: &[pecos_core::QubitId],
+        duration: f64,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let NoiseEvent::IdleTime { qubits, duration } = event else {
+        if duration <= 0.0 || (self.linear_rate <= 0.0 && self.quadratic_rate <= 0.0) {
             return NoiseResponse::None;
-        };
+        }
+
+        // A batched two-qubit command can contain multiple pairs. Preserve the
+        // operand order while applying one idle site to each distinct qubit.
+        let mut unique_qubits = SmallVec::<[pecos_core::QubitId; 4]>::new();
+        for &qubit in qubits {
+            if !unique_qubits.contains(&qubit) {
+                unique_qubits.push(qubit);
+            }
+        }
 
         let mut gates = SmallVec::new();
 
@@ -223,8 +245,8 @@ impl NoiseChannel for IdleChannel {
 
         // Apply linear (stochastic) noise
         if self.linear_rate > 0.0 {
-            let p_linear = self.linear_probability(*duration);
-            for &qubit in *qubits {
+            let p_linear = self.linear_probability(duration);
+            for &qubit in &unique_qubits {
                 // Skip leaked qubits (fast path skips check if no leakage exists)
                 if (!has_any_leakage || !ctx.is_leaked(qubit)) && rng.random::<f64>() < p_linear {
                     // Sample Pauli error from linear weights
@@ -238,9 +260,9 @@ impl NoiseChannel for IdleChannel {
         if self.quadratic_rate > 0.0 {
             if self.coherent_dephasing {
                 // Coherent dephasing: deterministic RZ rotation
-                let angle = self.quadratic_angle(*duration);
+                let angle = self.quadratic_angle(duration);
                 if angle.abs() > f64::EPSILON {
-                    for &qubit in *qubits {
+                    for &qubit in &unique_qubits {
                         // Skip leaked qubits (fast path skips check if no leakage exists)
                         if !has_any_leakage || !ctx.is_leaked(qubit) {
                             gates.push(GateCommand::rz(qubit, Angle64::from_radians(angle)));
@@ -248,10 +270,10 @@ impl NoiseChannel for IdleChannel {
                     }
                 }
             } else {
-                // Incoherent dephasing: stochastic Z with sin^2 probability
-                let p_quad = self.quadratic_probability(*duration);
+                // Incoherent dephasing: stochastic Z with exact Pauli-twirl probability
+                let p_quad = self.quadratic_probability(duration);
                 if p_quad > 0.0 {
-                    for &qubit in *qubits {
+                    for &qubit in &unique_qubits {
                         // Skip leaked qubits (fast path skips check if no leakage exists)
                         if (!has_any_leakage || !ctx.is_leaked(qubit))
                             && rng.random::<f64>() < p_quad
@@ -269,6 +291,40 @@ impl NoiseChannel for IdleChannel {
             NoiseResponse::inject_gates(gates)
         }
     }
+}
+
+impl NoiseChannel for IdleChannel {
+    fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+        if self.linear_rate <= 0.0 && self.quadratic_rate <= 0.0 {
+            return false;
+        }
+        match event {
+            NoiseEvent::IdleTime { duration, .. } => *duration != TimeUnits::ZERO,
+            NoiseEvent::AfterGate { gate_type, .. } => {
+                self.idle_after_2q > 0.0 && gate_type.is_two_qubit()
+            }
+            _ => false,
+        }
+    }
+
+    fn apply(
+        &self,
+        event: &NoiseEvent<'_>,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> NoiseResponse {
+        let (qubits, duration) = match event {
+            NoiseEvent::IdleTime { qubits, duration } => (*qubits, duration.as_f64()),
+            NoiseEvent::AfterGate {
+                gate_type, qubits, ..
+            } if self.idle_after_2q > 0.0 && gate_type.is_two_qubit() => {
+                (*qubits, self.idle_after_2q)
+            }
+            _ => return NoiseResponse::None,
+        };
+
+        self.apply_for_duration(qubits, duration, ctx, rng)
+    }
 
     fn name(&self) -> &'static str {
         "IdleChannel"
@@ -283,6 +339,25 @@ impl NoiseChannel for IdleChannel {
 mod tests {
     use super::*;
     use pecos_core::QubitId;
+
+    fn collect_gates(response: NoiseResponse) -> Vec<GateCommand> {
+        match response {
+            NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
+            NoiseResponse::Multiple(responses) => {
+                responses.into_iter().flat_map(collect_gates).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn after_cx(qubits: &[QubitId]) -> NoiseEvent<'_> {
+        NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits,
+            angles: &[],
+            gate_id: None,
+        }
+    }
 
     #[test]
     fn test_idle_error() {
@@ -329,7 +404,7 @@ mod tests {
         let channel = IdleChannel::linear(0.001);
 
         // At 10ns: p = 0.001 * 10 = 0.01
-        let p = channel.linear_probability(TimeUnits::new(10));
+        let p = channel.linear_probability(TimeUnits::new(10).as_f64());
         assert!((p - 0.01).abs() < 1e-10);
     }
 
@@ -404,9 +479,9 @@ mod tests {
 
     #[test]
     fn test_incoherent_dephasing() {
-        // pi/2 rad/ns -> sin^2(pi/2) = 1
+        // pi rad/ns -> sin^2(pi/2) = 1
         let channel = IdleChannel {
-            quadratic_rate: std::f64::consts::FRAC_PI_2,
+            quadratic_rate: std::f64::consts::PI,
             ..Default::default()
         };
 
@@ -433,10 +508,10 @@ mod tests {
 
     #[test]
     fn test_coherent_to_incoherent_factor() {
-        // With factor = 2.0 and rate = pi/4, effective rate = pi/2
+        // With factor = 2.0 and rate = pi/2, effective angle = pi
         // sin^2(pi/2) = 1.0 -> always error
         let channel = IdleChannel {
-            quadratic_rate: std::f64::consts::FRAC_PI_4,
+            quadratic_rate: std::f64::consts::FRAC_PI_2,
             coherent_to_incoherent_factor: 2.0,
             ..Default::default()
         };
@@ -460,5 +535,185 @@ mod tests {
         } else {
             panic!("Expected InjectGates response");
         }
+    }
+
+    #[test]
+    fn after_2q_duration_scales_linear_noise() {
+        let qubits = std::array::from_fn::<_, 64, _>(QubitId);
+        let short = IdleChannel::linear(0.25).with_idle_after_2q(1.0);
+        let long = IdleChannel::linear(0.25).with_idle_after_2q(4.0);
+
+        let mut short_rng = PecosRng::seed_from_u64(17);
+        let short_gates = collect_gates(short.apply(
+            &after_cx(&qubits),
+            &mut NoiseContext::new(),
+            &mut short_rng,
+        ));
+
+        let mut long_rng = PecosRng::seed_from_u64(17);
+        let long_gates =
+            collect_gates(long.apply(&after_cx(&qubits), &mut NoiseContext::new(), &mut long_rng));
+
+        assert!(short_gates.len() < qubits.len());
+        assert_eq!(long_gates.len(), qubits.len());
+    }
+
+    #[test]
+    fn quadratic_only_noise_reaches_after_2q_sites() {
+        let channel = IdleChannel {
+            quadratic_rate: std::f64::consts::PI,
+            idle_after_2q: 1.0,
+            ..Default::default()
+        };
+        let qubits = [QubitId(0), QubitId(1)];
+        let mut rng = PecosRng::seed_from_u64(8);
+
+        let gates =
+            collect_gates(channel.apply(&after_cx(&qubits), &mut NoiseContext::new(), &mut rng));
+
+        assert_eq!(gates.len(), 2);
+        assert!(gates.iter().all(|gate| gate.gate_type == GateType::Z));
+    }
+
+    #[test]
+    fn linear_weights_are_honored_at_after_2q_sites() {
+        let channel = IdleChannel::linear(1.0)
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
+            .with_idle_after_2q(1.0);
+        let qubits = [QubitId(0), QubitId(1)];
+        let mut rng = PecosRng::seed_from_u64(23);
+
+        let gates =
+            collect_gates(channel.apply(&after_cx(&qubits), &mut NoiseContext::new(), &mut rng));
+
+        assert_eq!(gates.len(), 2);
+        assert!(gates.iter().all(|gate| gate.gate_type == GateType::X));
+    }
+
+    #[test]
+    fn batched_after_2q_idles_every_distinct_operand() {
+        let channel = IdleChannel::linear(1.0)
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
+            .with_idle_after_2q(1.0);
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(1)];
+        let mut rng = PecosRng::seed_from_u64(29);
+
+        let gates =
+            collect_gates(channel.apply(&after_cx(&qubits), &mut NoiseContext::new(), &mut rng));
+        let affected = gates.iter().map(|gate| gate.qubits[0]).collect::<Vec<_>>();
+
+        assert_eq!(
+            affected,
+            vec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)]
+        );
+    }
+
+    #[test]
+    fn after_2q_channel_ignores_single_qubit_gates() {
+        let channel = IdleChannel::linear(1.0).with_idle_after_2q(1.0);
+        let qubits = [QubitId(0)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::H,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+
+        assert!(!channel.responds_to(&event));
+        let mut actual_rng = PecosRng::seed_from_u64(31);
+        assert!(
+            channel
+                .apply(&event, &mut NoiseContext::new(), &mut actual_rng)
+                .is_none()
+        );
+        let mut expected_rng = PecosRng::seed_from_u64(31);
+        assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
+    }
+
+    #[test]
+    fn zero_duration_and_zero_rates_produce_nothing_without_rng_draws() {
+        let qubits = [QubitId(0), QubitId(1)];
+
+        let zero_duration = IdleChannel::linear(1.0);
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: TimeUnits::ZERO,
+        };
+        assert!(!zero_duration.responds_to(&event));
+        let mut actual_rng = PecosRng::seed_from_u64(31);
+        assert!(
+            zero_duration
+                .apply(&event, &mut NoiseContext::new(), &mut actual_rng)
+                .is_none()
+        );
+        let mut expected_rng = PecosRng::seed_from_u64(31);
+        assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
+
+        let zero_after_2q_duration = IdleChannel::linear(1.0).with_idle_after_2q(0.0);
+        let event = after_cx(&qubits);
+        assert!(!zero_after_2q_duration.responds_to(&event));
+        let mut actual_rng = PecosRng::seed_from_u64(37);
+        assert!(
+            zero_after_2q_duration
+                .apply(&event, &mut NoiseContext::new(), &mut actual_rng)
+                .is_none()
+        );
+        let mut expected_rng = PecosRng::seed_from_u64(37);
+        assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
+
+        let zero_rates = IdleChannel::default().with_idle_after_2q(10.0);
+        let event = after_cx(&qubits);
+        assert!(!zero_rates.responds_to(&event));
+        let mut actual_rng = PecosRng::seed_from_u64(41);
+        assert!(
+            zero_rates
+                .apply(&event, &mut NoiseContext::new(), &mut actual_rng)
+                .is_none()
+        );
+        let mut expected_rng = PecosRng::seed_from_u64(41);
+        assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
+    }
+
+    #[test]
+    fn after_2q_noise_reproduces_exactly_for_the_same_seed() {
+        let channel = IdleChannel::linear(0.4)
+            .with_linear_depolarizing()
+            .with_idle_after_2q(2.0);
+        let qubits = std::array::from_fn::<_, 16, _>(QubitId);
+
+        let sample = || {
+            let mut rng = PecosRng::seed_from_u64(43);
+            collect_gates(channel.apply(&after_cx(&qubits), &mut NoiseContext::new(), &mut rng))
+        };
+
+        assert_eq!(sample(), sample());
+    }
+
+    #[test]
+    fn incoherent_quadratic_probability_is_exact_twirl_of_coherent_angle() {
+        let theta = 1.0;
+        let incoherent = IdleChannel {
+            quadratic_rate: theta,
+            coherent_to_incoherent_factor: 1.0,
+            ..Default::default()
+        };
+        let probability = incoherent.quadratic_probability(1.0);
+        assert!((probability - 0.229_848_847_065_930_15).abs() < 1e-15);
+
+        let coherent = IdleChannel {
+            coherent_dephasing: true,
+            ..incoherent
+        };
+        let qubits = [QubitId(0)];
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: TimeUnits::new(1),
+        };
+        let mut rng = PecosRng::seed_from_u64(47);
+        let gates = collect_gates(coherent.apply(&event, &mut NoiseContext::new(), &mut rng));
+
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::RZ);
+        assert!((gates[0].angles[0].to_radians() - theta).abs() < 1e-15);
     }
 }

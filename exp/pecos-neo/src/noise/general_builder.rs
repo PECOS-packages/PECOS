@@ -96,7 +96,7 @@ pub struct GeneralNoiseModelBuilder {
     p2_emission_weights: TwoQubitEmissionWeights,
     p2_pauli_weights: TwoQubitPauliWeights,
     p2_seepage_prob: f64,
-    p2_idle: f64,
+    idle_after_2q: f64,
 
     // Measurement
     p_meas_0: f64,
@@ -156,7 +156,7 @@ impl GeneralNoiseModelBuilder {
             p2_emission_weights: TwoQubitEmissionWeights::uniform_pauli(),
             p2_pauli_weights: TwoQubitPauliWeights::uniform(),
             p2_seepage_prob: 0.0,
-            p2_idle: 0.0,
+            idle_after_2q: 0.0,
 
             // Measurement
             p_meas_0: 0.0,
@@ -328,10 +328,13 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
-    /// Set idle noise rate applied after two-qubit gates.
+    /// Set the duration of the idle-noise site applied after each two-qubit gate.
+    ///
+    /// A duration of zero disables these sites. Nonzero sites receive all
+    /// configured linear and quadratic idle mechanisms.
     #[must_use]
-    pub fn with_p2_idle(mut self, rate: f64) -> Self {
-        self.p2_idle = rate;
+    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
+        self.idle_after_2q = duration;
         self
     }
 
@@ -564,7 +567,6 @@ impl GeneralNoiseModelBuilder {
                 self.p2_emission_ratio,
                 self.p2_emission_weights,
                 self.p2_seepage_prob,
-                self.p2_idle,
             );
             model = model.add_channel(channel);
         }
@@ -594,13 +596,17 @@ impl GeneralNoiseModelBuilder {
         }
 
         // Idle channel
-        if self.p_idle_linear_rate > 0.0 || self.p_idle_quadratic_rate > 0.0 {
+        if self.p_idle_linear_rate > 0.0
+            || self.p_idle_quadratic_rate > 0.0
+            || self.idle_after_2q > 0.0
+        {
             let channel = IdleChannel {
                 linear_rate: self.p_idle_linear_rate,
                 linear_weights: self.p_idle_linear_weights,
                 quadratic_rate: self.p_idle_quadratic_rate,
                 coherent_dephasing: self.p_idle_coherent,
                 coherent_to_incoherent_factor: self.p_idle_coherent_to_incoherent_factor,
+                idle_after_2q: self.idle_after_2q,
             };
             model = model.add_channel(channel);
         }
@@ -641,6 +647,20 @@ pub fn general_noise() -> GeneralNoiseModelBuilder {
 #[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
+    use crate::command::GateCommand;
+    use crate::noise::{NoiseEvent, NoiseResponse};
+    use pecos_core::QubitId;
+    use pecos_random::PecosRng;
+
+    fn collect_gates(response: NoiseResponse) -> Vec<GateCommand> {
+        match response {
+            NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
+            NoiseResponse::Multiple(responses) => {
+                responses.into_iter().flat_map(collect_gates).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
 
     #[test]
     fn test_empty_builder() {
@@ -702,6 +722,49 @@ mod tests {
 
         // Should have single-qubit and two-qubit channels
         assert_eq!(model.channel_count(), 2);
+    }
+
+    #[test]
+    fn after_2q_idle_works_without_p2_or_a_two_qubit_channel() {
+        let mut model = GeneralNoiseModelBuilder::new()
+            .with_p_idle_linear(1.0)
+            .with_p_idle_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
+            .with_idle_after_2q(1.0)
+            .build();
+        assert_eq!(model.channel_names(), ["IdleChannel"]);
+
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+        let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(67)));
+
+        assert_eq!(gates.len(), 2);
+        assert!(gates.iter().all(|gate| gate.gate_type == GateType::X));
+    }
+
+    #[test]
+    fn quadratic_only_after_2q_configuration_builds_and_emits() {
+        let mut model = GeneralNoiseModelBuilder::new()
+            .with_p_idle_quadratic(std::f64::consts::PI)
+            .with_idle_after_2q(1.0)
+            .build();
+        assert_eq!(model.channel_names(), ["IdleChannel"]);
+
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+        let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(71)));
+
+        assert_eq!(gates.len(), 2);
+        assert!(gates.iter().all(|gate| gate.gate_type == GateType::Z));
     }
 
     #[test]

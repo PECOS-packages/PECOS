@@ -2057,7 +2057,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                         );
                     }
                 }
-                GateType::MZ | GateType::MeasureFree
+                GateType::MZ | GateType::MeasureFree | GateType::MPZ
                     // Measurement errors: only "before" locations (X error = bit flip)
                     if loc.before =>
                 {

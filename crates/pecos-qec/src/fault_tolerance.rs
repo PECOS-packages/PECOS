@@ -119,7 +119,10 @@ impl SpacetimeLocation {
     /// Returns true if this is a measurement location.
     #[must_use]
     pub fn is_measurement(&self) -> bool {
-        matches!(self.gate_type, GateType::MZ | GateType::MeasureFree)
+        matches!(
+            self.gate_type,
+            GateType::MZ | GateType::MeasureFree | GateType::MPZ
+        )
     }
 }
 

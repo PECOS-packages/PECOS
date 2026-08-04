@@ -164,7 +164,7 @@ def test_tag_strings_mix_with_rec_and_result_ref_refs() -> None:
 def test_tag_string_shorthand_rejects_empty_and_wrong_types() -> None:
     with pytest.raises(ValueError, match="non-empty string"):
         Detector("")
-    with pytest.raises(TypeError, match="rec\\[...\\], result_ref"):
+    with pytest.raises(TypeError, match="measurement references must be"):
         Detector(3.5)
     with pytest.raises(ValueError, match="at least one measurement"):
         Observable()

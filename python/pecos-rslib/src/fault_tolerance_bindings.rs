@@ -5522,7 +5522,7 @@ impl PyCssUfDecoder {
 /// `<= 64` observables become a plain `int` from the single `u64` (identical to
 /// the historical return); `> 64` observables become a big `int` built from the
 /// mask's little-endian words, with no truncation.
-fn obsmask_to_py(
+pub(crate) fn obsmask_to_py(
     py: Python<'_>,
     mask: &pecos_decoder_core::obs_mask::ObsMask,
 ) -> PyResult<Py<pyo3::PyAny>> {

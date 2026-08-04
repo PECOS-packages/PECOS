@@ -2219,9 +2219,8 @@ pub struct PyDemAwareDecoder {
 )]
 #[derive(Clone)]
 pub struct PyDemAwareResult {
-    /// Bitmask of predicted observable flips.
-    #[pyo3(get)]
-    pub observables_mask: u64,
+    /// Predicted observable flips, wide enough for more than 64 observables.
+    pub observables: pecos_decoder_core::obs_mask::ObsMask,
     /// Whether the BP decoder converged.
     #[pyo3(get)]
     pub converged: bool,
@@ -2230,12 +2229,41 @@ pub struct PyDemAwareResult {
     pub iterations: usize,
 }
 
+impl PyDemAwareResult {
+    /// Render the mask for `__repr__`: the plain integer when it fits in 64
+    /// bits, otherwise the set observable indices.
+    fn mask_display(&self) -> String {
+        self.observables.to_u64().map_or_else(
+            || {
+                let bits: Vec<String> = self
+                    .observables
+                    .iter_set_bits()
+                    .map(|bit| bit.to_string())
+                    .collect();
+                format!("<observables {}>", bits.join(","))
+            },
+            |value| value.to_string(),
+        )
+    }
+}
+
 #[pymethods]
 impl PyDemAwareResult {
+    /// Bitmask of predicted observable flips.
+    ///
+    /// A Python integer of arbitrary precision: DEMs with at most 64
+    /// observables yield exactly the value the previous `u64` field held.
+    #[getter]
+    fn observables_mask(&self, py: Python<'_>) -> PyResult<Py<pyo3::PyAny>> {
+        crate::fault_tolerance_bindings::obsmask_to_py(py, &self.observables)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "DemAwareResult(observables_mask={}, converged={}, iterations={})",
-            self.observables_mask, self.converged, self.iterations
+            self.mask_display(),
+            self.converged,
+            self.iterations
         )
     }
 }
@@ -2414,12 +2442,13 @@ impl PyDemAwareDecoder {
         };
 
         let correction: Vec<u8> = decoding.iter().map(|&v| v & 1).collect();
-        let observables_mask = self
+        // Wide packing: the u64 variant silently wraps observable bits at 64.
+        let observables = self
             .dem_check_matrix
-            .observables_mask_from_correction(&correction);
+            .observables_obsmask_from_correction(&correction);
 
         Ok(PyDemAwareResult {
-            observables_mask,
+            observables,
             converged,
             iterations,
         })

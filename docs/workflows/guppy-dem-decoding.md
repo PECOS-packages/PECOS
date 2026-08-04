@@ -83,7 +83,11 @@ qubit measurement.
 A bare string names a tagged measurement. `rec[-k]` refers to one by position
 in the canonical Guppy measurement stream, as in Stim, and
 `result_ref("tag", occurrence=...)` is the explicit form when you need its
-extra selectors. A tag that no `result()` call emits is a hard error, so
+extra selectors.
+
+Detectors and observables are not named: each one's DEM label is its position in
+the list, so `detectors[0]` is `D0` and `observables[0]` is `L0`. That is the
+identity the decoders and the DEM text use. A tag that no `result()` call emits is a hard error, so
 mistyped names fail loudly rather than silently dropping a detector term; in
 larger programs you can also define each tag once as a module-level constant
 and use it in both places, passing it to Guppy as `result(comptime(TAG), ...)`.
@@ -172,7 +176,7 @@ incurred — the ground truth that decoder predictions are scored against.
 <!--continuation-->
 ```python
 sampler = dem.to_sampler()
-batch = sampler.generate_samples(2000, 1)
+batch = sampler.generate_samples(2000, seed=1)
 
 assert batch.num_shots == 2000
 for shot in range(2):
@@ -186,39 +190,35 @@ for shot in range(2):
 
 Instead of sampling the error model, you can execute the Guppy program itself
 under a noisy simulator and score those shots against the same DEM.
-`dem_build.evaluate_result_columns()` maps the run's tagged result columns into the
-same detector-event and observable-flip pairs a DEM sample would produce, so
+`dem_build.evaluate_result_columns()` maps the run's tagged result columns into
+the same (detector events, observable flips) pairs a DEM sample carries, so
 either source can feed the decoders.
 
-The two paths do not use the same noise: the DEM carries the idle families
-configured in stage 3, while the simulation applies whatever noise model is
-given to `sim(...)` — and the default Selene runtime emits no idle gates, so
-idle noise has nothing to attach to on that path. Treat the numbers as coming
-from two different experiments rather than as a like-for-like comparison.
+The gate noise below mirrors stage 3 exactly, so idle is the one remaining
+difference: the DEM carries the idle families configured there, while the
+default Selene runtime emits no idle gates for the simulator to attach idle
+noise to. The simulated numbers are therefore the same experiment without the
+idle contribution, not an independent estimate of the same quantity.
 
 <!--continuation-->
 ```python
-from pecos import depolarizing_noise, selene_engine, sim, stabilizer
-from pecos_rslib.qec import SampleBatch
+from pecos import general_noise, selene_engine, sim, stabilizer
 
-columns = (
-    sim(rep_code_memory)
-    .classical(selene_engine())
-    .quantum(stabilizer())
-    .qubits(7)
-    .noise(depolarizing_noise().with_uniform_probability(0.01))
-    .seed(42)
-    .run(500)
-    .to_shot_map()
-    .to_dict()
-)
-evaluated = dem_build.evaluate_result_columns(columns)
-sim_batch = SampleBatch(
-    [events for events, _ in evaluated],
-    [mask for _, mask in evaluated],
+# The same gate noise the DEM was built with, so only the idle treatment differs.
+noise = (
+    general_noise()
+    .with_p1_probability(0.002)
+    .with_p2_probability(0.02)
+    .with_meas_probability(0.02)
+    .with_prep_probability(0.02)
 )
 
-assert sim_batch.num_shots == 500
+results = sim(rep_code_memory).classical(selene_engine()).quantum(stabilizer()).qubits(7).noise(noise).seed(42).run(500)
+
+columns = results.to_shot_map().to_dict()
+sim_shots = dem_build.evaluate_result_columns(columns)
+
+assert len(sim_shots) == 500
 ```
 
 ## 5. Decode the samples and compute logical error rates
@@ -267,11 +267,11 @@ The simulated shots decode the same way, against the same decoders:
 <!--continuation-->
 ```python
 sim_errors = 0
-for shot in range(sim_batch.num_shots):
-    predicted = pymatching.decode(sim_batch.get_syndrome(shot)).correction[0]
-    sim_errors += predicted != (sim_batch.get_observable_mask(shot) & 1)
+for syndrome, observable_mask in sim_shots:
+    predicted = pymatching.decode(syndrome).correction[0]
+    sim_errors += predicted != (observable_mask & 1)
 
-print(f"simulated shots, pymatching: {sim_errors}/{sim_batch.num_shots}")
+print(f"simulated shots, pymatching: {sim_errors}/{len(sim_shots)}")
 ```
 
 When you only need the count, `batch.decode_count(dem_text, "pymatching")` runs

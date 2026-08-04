@@ -29,11 +29,11 @@ def _two_qubit_program() -> None:
 def _dem_bytes(noise: NoiseParameters) -> bytes:
     build = (
         DetectorErrorModel.builder()
-        .program(_two_qubit_program)
-        .qubits(2)
-        .detectors_json('[{"id":0,"result_tags":["m0"]}]')
-        .observables_json('[{"id":0,"result_tags":["m1"]}]')
-        .noise(noise)
+        .with_program(_two_qubit_program)
+        .with_qubits(2)
+        .with_detectors_json('[{"id":0,"result_tags":["m0"]}]')
+        .with_observables_json('[{"id":0,"result_tags":["m1"]}]')
+        .with_noise(noise)
         .build()
     )
     return build.dem.to_string().encode()

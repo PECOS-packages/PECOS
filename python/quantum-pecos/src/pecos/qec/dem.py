@@ -591,19 +591,19 @@ class _DetectorErrorModelMixin:
         noise_keywords = {name: value for name, value in locals().items() if name in _GUPPY_NOISE_KEYWORDS}
         builder = (
             cls.builder()
-            .program(guppy)
-            .qubits(num_qubits)
-            .detectors_json(detectors_json)
-            .observables_json(observables_json)
-            .strip_traced_idles(strip_traced_idles)
-            .idle_after_2q(idle_after_2q_duration)
-            .runtime(runtime)
-            .seed(seed)
-            .require_hosted_operation_order(require_hosted_operation_order)
-            .max_hosted_tick_separation(max_hosted_tick_separation)
+            .with_program(guppy)
+            .with_qubits(num_qubits)
+            .with_detectors_json(detectors_json)
+            .with_observables_json(observables_json)
+            .with_strip_traced_idles(strip_traced_idles)
+            .with_idle_after_2q(idle_after_2q_duration)
+            .with_runtime(runtime)
+            .with_seed(seed)
+            .with_require_hosted_operation_order(require_hosted_operation_order)
+            .with_max_hosted_tick_separation(max_hosted_tick_separation)
         )
         if num_measurements is not None:
-            builder.num_measurements(num_measurements)
+            builder.with_num_measurements(num_measurements)
         # Same-module private seam: the flat keyword surface stays on this
         # function while noise() remains strictly a NoiseParameters-instance setter.
         return builder._legacy_noise(noise, noise_keywords).build().dem  # noqa: SLF001
@@ -960,66 +960,66 @@ class GuppyDemBuilder:
         kind_attribute = f"_{role}_kind"
         value_attribute = f"_{role}_value"
         current_kind = getattr(self, kind_attribute)
-        setter = role if kind == "typed" else f"{role}_json"
+        setter = f"with_{role}" if kind == "typed" else f"with_{role}_json"
         if current_kind is not _UNSET:
-            previous = role if current_kind == "typed" else f"{role}_json"
+            previous = f"with_{role}" if current_kind == "typed" else f"with_{role}_json"
             if current_kind == kind:
                 msg = f"{setter}() may only be called once"
                 raise ValueError(msg)
             msg = f"{setter}() cannot be combined with {previous}()"
             raise ValueError(msg)
         if kind == "typed" and self._num_measurements is not _UNSET:
-            msg = f"{setter}() cannot be combined with num_measurements()"
+            msg = f"{setter}() cannot be combined with with_num_measurements()"
             raise ValueError(msg)
         setattr(self, kind_attribute, kind)
         setattr(self, value_attribute, value)
 
-    def program(self, program: Any) -> Self:
+    def with_program(self, program: Any) -> Self:
         """Set the Guppy or HUGR program to trace."""
-        self._set_once("_program", program, "program")
+        self._set_once("_program", program, "with_program")
         return self
 
-    def qubits(self, num_qubits: int) -> Self:
+    def with_qubits(self, num_qubits: int) -> Self:
         """Set the number of qubits allocated to the trace."""
-        self._set_once("_qubits", num_qubits, "qubits")
+        self._set_once("_qubits", num_qubits, "with_qubits")
         return self
 
-    def detectors(self, specs: Sequence[Detector]) -> Self:
+    def with_detectors(self, specs: Sequence[Detector]) -> Self:
         """Set typed detector specifications."""
         self._set_specs("detectors", "typed", tuple(specs))
         return self
 
-    def observables(self, specs: Sequence[Observable]) -> Self:
+    def with_observables(self, specs: Sequence[Observable]) -> Self:
         """Set typed logical-observable specifications."""
         self._set_specs("observables", "typed", tuple(specs))
         return self
 
-    def detectors_json(self, text: str) -> Self:
+    def with_detectors_json(self, text: str) -> Self:
         """Set raw JSON detector specifications."""
         self._set_specs("detectors", "json", text)
         return self
 
-    def observables_json(self, text: str) -> Self:
+    def with_observables_json(self, text: str) -> Self:
         """Set raw JSON logical-observable specifications."""
         self._set_specs("observables", "json", text)
         return self
 
-    def num_measurements(self, count: int) -> Self:
+    def with_num_measurements(self, count: int) -> Self:
         """Set the measurement count used by raw JSON record references."""
         if self._detectors_kind == "typed" or self._observables_kind == "typed":
-            msg = "num_measurements() cannot be combined with typed detectors() or observables()"
+            msg = "with_num_measurements() cannot be combined with typed with_detectors() or with_observables()"
             raise ValueError(msg)
-        self._set_once("_num_measurements", count, "num_measurements")
+        self._set_once("_num_measurements", count, "with_num_measurements")
         return self
 
-    def noise(self, noise_model: NoiseParameters) -> Self:
+    def with_noise(self, noise_model: NoiseParameters) -> Self:
         """Set the complete grouped noise configuration."""
         from pecos.qec.surface.decode import NoiseParameters
 
         if not isinstance(noise_model, NoiseParameters):
             msg = f"noise() requires a NoiseParameters instance, got {type(noise_model).__name__}"
             raise TypeError(msg)
-        self._set_once("_noise", noise_model, "noise")
+        self._set_once("_noise", noise_model, "with_noise")
         return self
 
     def _legacy_noise(self, noise_model: NoiseParameters | None, flat_keywords: Mapping[str, Any]) -> Self:
@@ -1028,37 +1028,37 @@ class GuppyDemBuilder:
         Private: the flat keyword surface stays on ``from_guppy`` and
         ``build_dem_from_guppy``; ``noise()`` accepts only a ``NoiseParameters``.
         """
-        self._set_once("_noise", (_LEGACY_NOISE, noise_model, dict(flat_keywords)), "noise")
+        self._set_once("_noise", (_LEGACY_NOISE, noise_model, dict(flat_keywords)), "with_noise")
         return self
 
-    def idle_after_2q(self, duration: float | None) -> Self:
+    def with_idle_after_2q(self, duration: float | None) -> Self:
         """Set the idle duration inserted after every two-qubit gate."""
-        self._set_once("_idle_after_2q", duration, "idle_after_2q")
+        self._set_once("_idle_after_2q", duration, "with_idle_after_2q")
         return self
 
-    def strip_traced_idles(self, flag: bool | None) -> Self:
+    def with_strip_traced_idles(self, flag: bool | None) -> Self:
         """Choose whether runtime-emitted identity-like gates are stripped."""
-        self._set_once("_strip_traced_idles", flag, "strip_traced_idles")
+        self._set_once("_strip_traced_idles", flag, "with_strip_traced_idles")
         return self
 
-    def runtime(self, runtime: object | None) -> Self:
+    def with_runtime(self, runtime: object | None) -> Self:
         """Set the Selene runtime used for the trace."""
-        self._set_once("_runtime", runtime, "runtime")
+        self._set_once("_runtime", runtime, "with_runtime")
         return self
 
-    def seed(self, seed: int) -> Self:
+    def with_seed(self, seed: int) -> Self:
         """Set the ideal trace seed."""
-        self._set_once("_seed", seed, "seed")
+        self._set_once("_seed", seed, "with_seed")
         return self
 
-    def require_hosted_operation_order(self, flag: bool) -> Self:
+    def with_require_hosted_operation_order(self, flag: bool) -> Self:
         """Choose whether hosted-operation ordering is validated."""
-        self._set_once("_require_hosted_operation_order", flag, "require_hosted_operation_order")
+        self._set_once("_require_hosted_operation_order", flag, "with_require_hosted_operation_order")
         return self
 
-    def max_hosted_tick_separation(self, count: int | None) -> Self:
+    def with_max_hosted_tick_separation(self, count: int | None) -> Self:
         """Set the maximum hosted-operation tick separation."""
-        self._set_once("_max_hosted_tick_separation", count, "max_hosted_tick_separation")
+        self._set_once("_max_hosted_tick_separation", count, "with_max_hosted_tick_separation")
         return self
 
     def _noise_parameters(self) -> dict[str, Any]:
@@ -1080,10 +1080,10 @@ class GuppyDemBuilder:
         from pecos.programs import Hugr as _HugrProgram
         from pecos.tracing import _collect_program_result_traces, trace_program_to_tick_circuit
 
-        program = self._required("_program", "program")
-        num_qubits = self._required("_qubits", "qubits")
+        program = self._required("_program", "with_program")
+        num_qubits = self._required("_qubits", "with_qubits")
         if self._detectors_kind is _UNSET:
-            msg = "build() requires detectors() or detectors_json()"
+            msg = "build() requires with_detectors() or with_detectors_json()"
             raise ValueError(msg)
 
         noise_parameters = self._noise_parameters()
@@ -1451,16 +1451,16 @@ def build_dem_from_guppy(
     noise_keywords = {name: value for name, value in locals().items() if name in _GUPPY_NOISE_KEYWORDS}
     builder = (
         GuppyDemBuilder()
-        .program(guppy)
-        .qubits(num_qubits)
-        .detectors(detectors)
-        .observables(observables)
-        .strip_traced_idles(strip_traced_idles)
-        .idle_after_2q(idle_after_2q_duration)
-        .runtime(runtime)
-        .seed(seed)
-        .require_hosted_operation_order(require_hosted_operation_order)
-        .max_hosted_tick_separation(max_hosted_tick_separation)
+        .with_program(guppy)
+        .with_qubits(num_qubits)
+        .with_detectors(detectors)
+        .with_observables(observables)
+        .with_strip_traced_idles(strip_traced_idles)
+        .with_idle_after_2q(idle_after_2q_duration)
+        .with_runtime(runtime)
+        .with_seed(seed)
+        .with_require_hosted_operation_order(require_hosted_operation_order)
+        .with_max_hosted_tick_separation(max_hosted_tick_separation)
     )
     # Same-module private seam: see the note in DetectorErrorModel.from_guppy.
     return builder._legacy_noise(noise, noise_keywords).build()  # noqa: SLF001

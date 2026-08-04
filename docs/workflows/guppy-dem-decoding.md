@@ -147,12 +147,12 @@ noise = (
 
 dem_build = (
     DetectorErrorModel.builder()
-    .program(rep_code_memory)
-    .qubits(7)
-    .detectors(detectors)
-    .observables(observables)
-    .noise(noise)
-    .idle_after_2q(1.0)
+    .with_program(rep_code_memory)
+    .with_qubits(7)
+    .with_detectors(detectors)
+    .with_observables(observables)
+    .with_noise(noise)
+    .with_idle_after_2q(1.0)
     .build()
 )
 dem = dem_build.dem

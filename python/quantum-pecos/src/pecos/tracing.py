@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from pecos._qis_trace_replay import (
@@ -24,7 +26,15 @@ from pecos._qis_trace_replay import (
 from pecos._traced_circuit import measurement_ids_in_execution_order
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pecos.quantum import TickCircuit
+
+
+_RESULT_TRACE_COLLECTOR: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "pecos_result_trace_collector",
+    default=None,
+)
 
 
 def capture_qis_operation_trace(
@@ -182,6 +192,17 @@ def _trace_program_to_tick_circuit_with_result_traces(
     return tick_circuit, named_result_traces_from_operation_trace(chunks)
 
 
+@contextmanager
+def _collect_program_result_traces() -> Iterator[list[dict[str, Any]]]:
+    """Collect result provenance when tracing through the stable public helper."""
+    result_traces: list[dict[str, Any]] = []
+    token = _RESULT_TRACE_COLLECTOR.set(result_traces)
+    try:
+        yield result_traces
+    finally:
+        _RESULT_TRACE_COLLECTOR.reset(token)
+
+
 def trace_program_to_tick_circuit(
     program: object,
     num_qubits: int,
@@ -223,14 +244,20 @@ def trace_program_to_tick_circuit(
         not use a trace from measurement-dependent branches or loops as though
         it represented all possible executions.
     """
-    trace = capture_qis_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    return _qis_operation_trace_to_tick_circuit(
-        trace,
+    tick_circuit, result_traces = _trace_program_to_tick_circuit_with_result_traces(
+        program,
+        num_qubits,
+        seed=seed,
+        runtime=runtime,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
-        context="trace_program_to_tick_circuit",
+        allow_raw_measurement_id_fallback=False,
     )
+    collector = _RESULT_TRACE_COLLECTOR.get()
+    if collector is not None:
+        collector.extend(result_traces)
+    return tick_circuit
 
 
 # Compatibility aliases for the original surface-code-internal names. These

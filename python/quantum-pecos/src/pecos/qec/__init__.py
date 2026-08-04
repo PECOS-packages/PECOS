@@ -78,7 +78,7 @@ from pecos.qec.color import (
 # Python from_guppy convenience constructor attached. The Guppy/Selene trace
 # pipeline is Python-only, so it cannot live in the Rust extension without a
 # dependency cycle.
-from pecos.qec.dem import DetectorErrorModel, build_dem_from_guppy
+from pecos.qec.dem import DetectorErrorModel, GuppyDemBuilder, build_dem_from_guppy
 from pecos.qec.dem_spec import (
     Detector,
     GuppyDemBuild,
@@ -138,6 +138,7 @@ __all__ = [
     "PauliFrameLookup",
     "ParsedDem",
     "GuppyDemBuild",
+    "GuppyDemBuilder",
     "Observable",
     "assert_dems_equivalent",
     "compare_dems_exact",

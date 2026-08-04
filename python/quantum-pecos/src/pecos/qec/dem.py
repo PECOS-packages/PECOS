@@ -49,9 +49,16 @@ from pecos._traced_circuit import (
     normalize_traced_tick_circuit,
 )
 from pecos.qec._idle_noise import _translate_structured_idle_noise
-from pecos.qec.dem_spec import GuppyDemBuild, ResultRef, _resolve_dem_specs
+from pecos.qec.dem_spec import (
+    GuppyDemBuild,
+    ResultRef,
+    _resolve_dem_specs,
+    _resolved_schema_from_validated_json,
+)
 
 if TYPE_CHECKING:
+    from typing_extensions import Self
+
     from pecos.qec.dem_spec import Detector, Observable
     from pecos.qec.surface.decode import NoiseModel
 
@@ -309,6 +316,11 @@ class _DetectorErrorModelMixin:
     """Namespace for the Python Guppy/QIS-trace convenience constructor."""
 
     __slots__ = ()
+
+    @classmethod
+    def builder(cls) -> GuppyDemBuilder:
+        """Create a chained builder for an audited Guppy detector error model."""
+        return GuppyDemBuilder()
 
     @classmethod
     def from_guppy(
@@ -576,200 +588,25 @@ class _DetectorErrorModelMixin:
             scalar ``result(tag, measure(q))`` in straight-line programs; the
             runtime-loop case (per-occurrence binding) remains deferred.
         """
-        from pecos.tracing import trace_program_to_tick_circuit
-
-        noise_parameters = _resolve_guppy_noise(noise, locals())
-        (
-            p1,
-            p1_weights,
-            p2,
-            p2_weights,
-            p2_replacement_approximation,
-            p_meas,
-            p_prep,
-            p_idle_linear,
-            p_idle_linear_model,
-            p_idle_sin_squared,
-            p_idle_sin_squared_model,
-            p_idle_coherent,
-            p_idle_coherent_model,
-            t1,
-            t2,
-            p_idle_linear_rate,
-            p_idle_quadratic_rate,
-            p_idle_x_linear_rate,
-            p_idle_y_linear_rate,
-            p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate,
-            p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate,
-        ) = (noise_parameters[name] for name in _GUPPY_NOISE_KEYWORDS)
-
-        (
-            p_idle_x_linear_rate,
-            p_idle_y_linear_rate,
-            p_idle_z_linear_rate,
-            p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate,
-        ) = _translate_structured_idle_noise(
-            p_idle_linear=p_idle_linear,
-            p_idle_linear_model=p_idle_linear_model,
-            p_idle_sin_squared=p_idle_sin_squared,
-            p_idle_sin_squared_model=p_idle_sin_squared_model,
-            p_idle_coherent=p_idle_coherent,
-            p_idle_coherent_model=p_idle_coherent_model,
-            p_idle_linear_rate=p_idle_linear_rate,
-            p_idle_quadratic_rate=p_idle_quadratic_rate,
-            p_idle_x_linear_rate=p_idle_x_linear_rate,
-            p_idle_y_linear_rate=p_idle_y_linear_rate,
-            p_idle_z_linear_rate=p_idle_z_linear_rate,
-            p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+        noise_keywords = {name: value for name, value in locals().items() if name in _GUPPY_NOISE_KEYWORDS}
+        builder = (
+            cls.builder()
+            .program(guppy)
+            .qubits(num_qubits)
+            .detectors_json(detectors_json)
+            .observables_json(observables_json)
+            .strip_traced_idles(strip_traced_idles)
+            .idle_after_2q(idle_after_2q_duration)
+            .runtime(runtime)
+            .seed(seed)
+            .require_hosted_operation_order(require_hosted_operation_order)
+            .max_hosted_tick_separation(max_hosted_tick_separation)
         )
-
-        # Tag-referenced detectors require the compiled HUGR (to recover the
-        # sound, reorder-immune Guppy `result(tag, ...)` -> measurement
-        # binding). `guppy_to_hugr` accepts @guppy-decorated functions and
-        # `GuppyFunctionDefinition`s (e.g. `make_surface_code(...)`), but
-        # not arbitrary callables / non-Guppy `pecos.sim`-acceptable inputs.
-        # Compile upfront so a wrong input fails loud here, before tracing,
-        # with a clear @guppy-mentioning message instead of crashing later
-        # inside the HUGR step.
-        needs_tags = _result_tags_present(detectors_json, observables_json)
-        hugr_bytes = _certifiable_hugr_bytes(guppy)
-        if hugr_bytes is None:
-            if needs_tags:
-                msg = (
-                    "result_tags requires a @guppy-decorated function (or a "
-                    "GuppyFunctionDefinition, e.g. the object "
-                    "make_surface_code(...) returns) so the program can be "
-                    "compiled to a HUGR. Pass such an input directly, or use "
-                    "positional 'records' / 'meas_ids' instead."
-                )
-                raise ValueError(msg)
-            msg = (
-                "DetectorErrorModel.from_guppy requires a HUGR-certifiable program "
-                "(a @guppy function, pecos.Guppy, pecos.Hugr, or HUGR envelope "
-                f"bytes); a {type(guppy).__name__!r} input cannot be certified as "
-                "statically scheduled, so an audited DEM cannot be built from it"
-            )
-            raise ValueError(msg)
-        certificate_carrier = _certificate_carrier(guppy)
-        generator_layout = (
-            _generator_certified_layout(certificate_carrier, hugr_bytes) if certificate_carrier is not None else None
-        )
-        if generator_layout is None:
-            from pecos_rslib import guppy_hugr_has_nontrivial_control_flow
-
-            if guppy_hugr_has_nontrivial_control_flow(hugr_bytes):
-                msg = (
-                    "DetectorErrorModel.from_guppy requires a statically straight-line Guppy program; "
-                    "branching or looping control flow cannot be certified from one runtime trace"
-                )
-                raise ValueError(msg)
-
-        # Trace the EXACT bytes that were certified above: re-compiling the
-        # original object for execution would let the audit and the execution
-        # diverge (and pays a second compile for nothing).
-        from pecos.programs import Hugr as _HugrProgram
-
-        tc = trace_program_to_tick_circuit(
-            _HugrProgram(hugr_bytes),
-            num_qubits,
-            seed=seed,
-            runtime=runtime,
-            require_hosted_operation_order=require_hosted_operation_order,
-            max_hosted_tick_separation=max_hosted_tick_separation,
-        )
-
-        # Compilation passes required for traced QIS circuits before fault
-        # analysis: normalize parameterized Clifford rotations to named gates,
-        # stamp stable MeasIds onto measurement gates, and fail loudly if raw
-        # traced-QIS rotations survived normalization.
-        normalize_traced_tick_circuit(tc, context="DetectorErrorModel.from_guppy")
-        _apply_traced_idle_passes(
-            tc,
-            strip_traced_idles=strip_traced_idles,
-            idle_after_2q_duration=idle_after_2q_duration,
-            # Nonzero coherent rates were rejected before tracing; zero emits no noise.
-            idle_noise_parameters=(
-                p_idle_linear,
-                p_idle_sin_squared,
-                t1,
-                t2,
-                p_idle_linear_rate,
-                p_idle_quadratic_rate,
-                p_idle_x_linear_rate,
-                p_idle_y_linear_rate,
-                p_idle_z_linear_rate,
-                p_idle_x_quadratic_rate,
-                p_idle_y_quadratic_rate,
-                p_idle_z_quadratic_rate,
-                p_idle_quadratic_sine_rate,
-                p_idle_x_quadratic_sine_rate,
-                p_idle_y_quadratic_sine_rate,
-                p_idle_z_quadratic_sine_rate,
-            ),
-        )
-
-        # Resolve `result_tags` -> record offsets via Rust (sound HUGR
-        # extraction + runtime-loop guard via static-vs-traced measurement
-        # count). After this, `detectors_json` / `observables_json` no longer
-        # contain `result_tags`; the downstream Rust DEM builder is unchanged.
-        if needs_tags:
-            from pecos_rslib import resolve_result_tags_for_guppy
-
-            source_ids_json = tc.get_meta("qis_source_measurement_ids") or tc.get_meta("guppy_source_measurement_ids")
-            source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
-
-            detectors_json, observables_json = resolve_result_tags_for_guppy(
-                detectors_json,
-                observables_json,
-                hugr_bytes,
-                source_measurement_ids,
-                measurement_ids_in_execution_order(tc),
-            )
-
-        # Hand the caller's metadata to the Rust builder verbatim; it owns all
-        # schema/ref validation (including D0/L0 id forms, tracked-Pauli
-        # rejection, num_measurements consistency, and stamped-MeasId
-        # resolution).
-        tc.set_meta("detectors", detectors_json)
-        tc.set_meta("observables", observables_json)
         if num_measurements is not None:
-            tc.set_meta("num_measurements", str(num_measurements))
-
-        return _from_circuit_with_noise(
-            tc,
-            p1=p1,
-            p1_weights=p1_weights,
-            p2=p2,
-            p2_weights=p2_weights,
-            p2_replacement_approximation=p2_replacement_approximation,
-            p_meas=p_meas,
-            p_prep=p_prep,
-            t1=t1,
-            t2=t2,
-            p_idle_linear_rate=p_idle_linear_rate,
-            p_idle_quadratic_rate=p_idle_quadratic_rate,
-            p_idle_x_linear_rate=p_idle_x_linear_rate,
-            p_idle_y_linear_rate=p_idle_y_linear_rate,
-            p_idle_z_linear_rate=p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
-            p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
-        )
+            builder.num_measurements(num_measurements)
+        # Same-module private seam: the flat keyword surface stays on this
+        # function while noise() remains strictly a NoiseModel setter.
+        return builder._legacy_noise(noise, noise_keywords).build().dem  # noqa: SLF001
 
 
 def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
@@ -808,6 +645,7 @@ def _preflight_guppy_static_schedule(
     guppy: Any,
     *,
     required_tags: Sequence[str],
+    json_result_tags: bool = False,
 ) -> tuple[Sequence[Any] | None, bytes]:
     """Validate program-level trust before any runtime trace is captured.
 
@@ -821,13 +659,23 @@ def _preflight_guppy_static_schedule(
     hugr_bytes = _certifiable_hugr_bytes(guppy)
     if hugr_bytes is None:
         if required_tags:
-            msg = "result_ref(...) requires a HUGR-compilable Guppy program"
+            msg = (
+                "result_ref(...) requires a HUGR-compilable Guppy program; use "
+                "DetectorErrorModel.from_circuit(...) for circuit inputs"
+            )
+            raise ValueError(msg)
+        if json_result_tags:
+            msg = (
+                "result_tags requires a @guppy-decorated function (or a GuppyFunctionDefinition) so the program can "
+                "be compiled to a HUGR; use DetectorErrorModel.from_circuit(...) for circuit inputs"
+            )
             raise ValueError(msg)
         msg = (
-            "build_dem_from_guppy requires a HUGR-certifiable program (a @guppy "
+            "GuppyDemBuilder.program() requires a HUGR-certifiable program (a @guppy "
             "function, pecos.Guppy, pecos.Hugr, or HUGR envelope bytes); a "
             f"{type(guppy).__name__!r} input cannot be certified as statically "
-            "scheduled, so an audited DEM cannot be built from it"
+            "scheduled, so an audited DEM cannot be built from it; use "
+            "DetectorErrorModel.from_circuit(...) for circuit inputs"
         )
         raise ValueError(msg)
 
@@ -842,7 +690,7 @@ def _preflight_guppy_static_schedule(
 
     if guppy_hugr_has_nontrivial_control_flow(hugr_bytes):
         msg = (
-            "build_dem_from_guppy requires a statically straight-line Guppy program unless it carries "
+            "GuppyDemBuilder requires a statically straight-line Guppy program unless it carries "
             "a trusted generator-owned measurement layout; branching or looping control flow cannot be "
             "certified from one runtime trace"
         )
@@ -1049,6 +897,394 @@ def _generator_certified_result_traces(
     ]
 
 
+_UNSET = object()
+_LEGACY_NOISE = object()
+
+
+def _builder_noise_defaults() -> dict[str, Any]:
+    """Return the legacy Guppy entry-point defaults with explicitness intact."""
+    defaults = dict.fromkeys(_GUPPY_NOISE_KEYWORDS, _NOISE_DEFAULT_NONE)
+    defaults.update(
+        p1=_NOISE_DEFAULT_P1,
+        p2=_NOISE_DEFAULT_P2,
+        p_meas=_NOISE_DEFAULT_P1,
+        p_prep=_NOISE_DEFAULT_P1,
+    )
+    return defaults
+
+
+class GuppyDemBuilder:
+    """Configure and build an audited detector error model from a Guppy program."""
+
+    __slots__ = (
+        "_detectors_kind",
+        "_detectors_value",
+        "_idle_after_2q",
+        "_max_hosted_tick_separation",
+        "_noise",
+        "_num_measurements",
+        "_observables_kind",
+        "_observables_value",
+        "_program",
+        "_qubits",
+        "_require_hosted_operation_order",
+        "_runtime",
+        "_seed",
+        "_strip_traced_idles",
+    )
+
+    def __init__(self) -> None:
+        """Create an empty builder whose required inputs are not yet set."""
+        self._program: Any = _UNSET
+        self._qubits: Any = _UNSET
+        self._detectors_kind: str | object = _UNSET
+        self._detectors_value: Any = _UNSET
+        self._observables_kind: str | object = _UNSET
+        self._observables_value: Any = _UNSET
+        self._num_measurements: Any = _UNSET
+        self._noise: Any = _UNSET
+        self._idle_after_2q: Any = _UNSET
+        self._strip_traced_idles: Any = _UNSET
+        self._runtime: Any = _UNSET
+        self._seed: Any = _UNSET
+        self._require_hosted_operation_order: Any = _UNSET
+        self._max_hosted_tick_separation: Any = _UNSET
+
+    def _set_once(self, attribute: str, value: Any, setter: str) -> None:
+        if getattr(self, attribute) is not _UNSET:
+            msg = f"{setter}() may only be called once"
+            raise ValueError(msg)
+        setattr(self, attribute, value)
+
+    def _set_specs(self, role: str, kind: str, value: Any) -> None:
+        kind_attribute = f"_{role}_kind"
+        value_attribute = f"_{role}_value"
+        current_kind = getattr(self, kind_attribute)
+        setter = role if kind == "typed" else f"{role}_json"
+        if current_kind is not _UNSET:
+            previous = role if current_kind == "typed" else f"{role}_json"
+            if current_kind == kind:
+                msg = f"{setter}() may only be called once"
+                raise ValueError(msg)
+            msg = f"{setter}() cannot be combined with {previous}()"
+            raise ValueError(msg)
+        if kind == "typed" and self._num_measurements is not _UNSET:
+            msg = f"{setter}() cannot be combined with num_measurements()"
+            raise ValueError(msg)
+        setattr(self, kind_attribute, kind)
+        setattr(self, value_attribute, value)
+
+    def program(self, program: Any) -> Self:
+        """Set the Guppy or HUGR program to trace."""
+        self._set_once("_program", program, "program")
+        return self
+
+    def qubits(self, num_qubits: int) -> Self:
+        """Set the number of qubits allocated to the trace."""
+        self._set_once("_qubits", num_qubits, "qubits")
+        return self
+
+    def detectors(self, specs: Sequence[Detector]) -> Self:
+        """Set typed detector specifications."""
+        self._set_specs("detectors", "typed", tuple(specs))
+        return self
+
+    def observables(self, specs: Sequence[Observable]) -> Self:
+        """Set typed logical-observable specifications."""
+        self._set_specs("observables", "typed", tuple(specs))
+        return self
+
+    def detectors_json(self, text: str) -> Self:
+        """Set raw JSON detector specifications."""
+        self._set_specs("detectors", "json", text)
+        return self
+
+    def observables_json(self, text: str) -> Self:
+        """Set raw JSON logical-observable specifications."""
+        self._set_specs("observables", "json", text)
+        return self
+
+    def num_measurements(self, count: int) -> Self:
+        """Set the measurement count used by raw JSON record references."""
+        if self._detectors_kind == "typed" or self._observables_kind == "typed":
+            msg = "num_measurements() cannot be combined with typed detectors() or observables()"
+            raise ValueError(msg)
+        self._set_once("_num_measurements", count, "num_measurements")
+        return self
+
+    def noise(self, noise_model: NoiseModel) -> Self:
+        """Set the complete grouped noise configuration."""
+        from pecos.qec.surface.decode import NoiseModel
+
+        if not isinstance(noise_model, NoiseModel):
+            msg = f"noise() requires a NoiseModel, got {type(noise_model).__name__}"
+            raise TypeError(msg)
+        self._set_once("_noise", noise_model, "noise")
+        return self
+
+    def _legacy_noise(self, noise_model: NoiseModel | None, flat_keywords: Mapping[str, Any]) -> Self:
+        """Carry the legacy entry points' flat noise keywords through the builder.
+
+        Private: the flat keyword surface stays on ``from_guppy`` and
+        ``build_dem_from_guppy``; ``noise()`` accepts only a ``NoiseModel``.
+        """
+        self._set_once("_noise", (_LEGACY_NOISE, noise_model, dict(flat_keywords)), "noise")
+        return self
+
+    def idle_after_2q(self, duration: float | None) -> Self:
+        """Set the idle duration inserted after every two-qubit gate."""
+        self._set_once("_idle_after_2q", duration, "idle_after_2q")
+        return self
+
+    def strip_traced_idles(self, flag: bool | None) -> Self:
+        """Choose whether runtime-emitted identity-like gates are stripped."""
+        self._set_once("_strip_traced_idles", flag, "strip_traced_idles")
+        return self
+
+    def runtime(self, runtime: object | None) -> Self:
+        """Set the Selene runtime used for the trace."""
+        self._set_once("_runtime", runtime, "runtime")
+        return self
+
+    def seed(self, seed: int) -> Self:
+        """Set the ideal trace seed."""
+        self._set_once("_seed", seed, "seed")
+        return self
+
+    def require_hosted_operation_order(self, flag: bool) -> Self:
+        """Choose whether hosted-operation ordering is validated."""
+        self._set_once("_require_hosted_operation_order", flag, "require_hosted_operation_order")
+        return self
+
+    def max_hosted_tick_separation(self, count: int | None) -> Self:
+        """Set the maximum hosted-operation tick separation."""
+        self._set_once("_max_hosted_tick_separation", count, "max_hosted_tick_separation")
+        return self
+
+    def _noise_parameters(self) -> dict[str, Any]:
+        if isinstance(self._noise, tuple) and len(self._noise) == 3 and self._noise[0] is _LEGACY_NOISE:
+            _, noise, call_arguments = self._noise
+            return _resolve_guppy_noise(noise, call_arguments)
+        noise = None if self._noise is _UNSET else self._noise
+        return _resolve_guppy_noise(noise, _builder_noise_defaults())
+
+    def _required(self, attribute: str, setter: str) -> Any:
+        value = getattr(self, attribute)
+        if value is _UNSET:
+            msg = f"build() requires {setter}()"
+            raise ValueError(msg)
+        return value
+
+    def build(self) -> GuppyDemBuild:
+        """Trace the configured program once and return its audited DEM build."""
+        from pecos.programs import Hugr as _HugrProgram
+        from pecos.tracing import _collect_program_result_traces, trace_program_to_tick_circuit
+
+        program = self._required("_program", "program")
+        num_qubits = self._required("_qubits", "qubits")
+        if self._detectors_kind is _UNSET:
+            msg = "build() requires detectors() or detectors_json()"
+            raise ValueError(msg)
+
+        noise_parameters = self._noise_parameters()
+        (
+            p1,
+            p1_weights,
+            p2,
+            p2_weights,
+            p2_replacement_approximation,
+            p_meas,
+            p_prep,
+            p_idle_linear,
+            p_idle_linear_model,
+            p_idle_sin_squared,
+            p_idle_sin_squared_model,
+            p_idle_coherent,
+            p_idle_coherent_model,
+            t1,
+            t2,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
+        ) = (noise_parameters[name] for name in _GUPPY_NOISE_KEYWORDS)
+        (
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
+        ) = _translate_structured_idle_noise(
+            p_idle_linear=p_idle_linear,
+            p_idle_linear_model=p_idle_linear_model,
+            p_idle_sin_squared=p_idle_sin_squared,
+            p_idle_sin_squared_model=p_idle_sin_squared_model,
+            p_idle_coherent=p_idle_coherent,
+            p_idle_coherent_model=p_idle_coherent_model,
+            p_idle_linear_rate=p_idle_linear_rate,
+            p_idle_quadratic_rate=p_idle_quadratic_rate,
+            p_idle_x_linear_rate=p_idle_x_linear_rate,
+            p_idle_y_linear_rate=p_idle_y_linear_rate,
+            p_idle_z_linear_rate=p_idle_z_linear_rate,
+            p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+        )
+        typed_detectors = self._detectors_value if self._detectors_kind == "typed" else ()
+        typed_observables = self._observables_value if self._observables_kind == "typed" else ()
+        referenced_tags = sorted(
+            {
+                ref.tag
+                for item in (*typed_detectors, *typed_observables)
+                for ref in item.refs
+                if isinstance(ref, ResultRef)
+            },
+        )
+        raw_detectors_json = self._detectors_value if self._detectors_kind == "json" else "[]"
+        raw_observables_json = self._observables_value if self._observables_kind == "json" else "[]"
+        json_needs_tags = _result_tags_present(raw_detectors_json, raw_observables_json)
+        generator_layout, hugr_bytes = _preflight_guppy_static_schedule(
+            program,
+            required_tags=referenced_tags,
+            json_result_tags=json_needs_tags,
+        )
+        with _collect_program_result_traces() as result_traces:
+            circuit = trace_program_to_tick_circuit(
+                _HugrProgram(hugr_bytes),
+                num_qubits,
+                seed=0 if self._seed is _UNSET else self._seed,
+                runtime=None if self._runtime is _UNSET else self._runtime,
+                require_hosted_operation_order=(
+                    False if self._require_hosted_operation_order is _UNSET else self._require_hosted_operation_order
+                ),
+                max_hosted_tick_separation=(
+                    None if self._max_hosted_tick_separation is _UNSET else self._max_hosted_tick_separation
+                ),
+            )
+        normalize_traced_tick_circuit(circuit, context="GuppyDemBuilder.build")
+
+        _apply_traced_idle_passes(
+            circuit,
+            strip_traced_idles=None if self._strip_traced_idles is _UNSET else self._strip_traced_idles,
+            idle_after_2q_duration=None if self._idle_after_2q is _UNSET else self._idle_after_2q,
+            idle_noise_parameters=(
+                p_idle_linear,
+                p_idle_sin_squared,
+                t1,
+                t2,
+                p_idle_linear_rate,
+                p_idle_quadratic_rate,
+                p_idle_x_linear_rate,
+                p_idle_y_linear_rate,
+                p_idle_z_linear_rate,
+                p_idle_x_quadratic_rate,
+                p_idle_y_quadratic_rate,
+                p_idle_z_quadratic_rate,
+                p_idle_quadratic_sine_rate,
+                p_idle_x_quadratic_sine_rate,
+                p_idle_y_quadratic_sine_rate,
+                p_idle_z_quadratic_sine_rate,
+            ),
+        )
+        result_traces = _compiler_certified_result_traces(
+            generator_layout,
+            hugr_bytes,
+            circuit,
+            result_traces,
+            required_tags=referenced_tags,
+        )
+        typed_schema = _resolve_dem_specs(
+            typed_detectors,
+            typed_observables,
+            circuit=circuit,
+            result_traces=result_traces,
+        )
+        detectors_json = typed_schema.detectors_json if self._detectors_kind == "typed" else raw_detectors_json
+        observables_json = typed_schema.observables_json if self._observables_kind == "typed" else raw_observables_json
+        if json_needs_tags:
+            from pecos_rslib import resolve_result_tags_for_guppy
+
+            source_ids_json = circuit.get_meta("qis_source_measurement_ids") or circuit.get_meta(
+                "guppy_source_measurement_ids",
+            )
+            source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
+            detectors_json, observables_json = resolve_result_tags_for_guppy(
+                detectors_json,
+                observables_json,
+                hugr_bytes,
+                source_measurement_ids,
+                measurement_ids_in_execution_order(circuit),
+            )
+
+        circuit.set_meta("detectors", detectors_json)
+        circuit.set_meta("observables", observables_json)
+        measurement_count = circuit.num_measurements() if self._num_measurements is _UNSET else self._num_measurements
+        circuit.set_meta("num_measurements", str(measurement_count))
+        dem = _from_circuit_with_noise(
+            circuit,
+            p1=p1,
+            p1_weights=p1_weights,
+            p2=p2,
+            p2_weights=p2_weights,
+            p2_replacement_approximation=p2_replacement_approximation,
+            p_meas=p_meas,
+            p_prep=p_prep,
+            t1=t1,
+            t2=t2,
+            p_idle_linear_rate=p_idle_linear_rate,
+            p_idle_quadratic_rate=p_idle_quadratic_rate,
+            p_idle_x_linear_rate=p_idle_x_linear_rate,
+            p_idle_y_linear_rate=p_idle_y_linear_rate,
+            p_idle_z_linear_rate=p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+        )
+        schema = _resolved_schema_from_validated_json(
+            detectors_json,
+            observables_json,
+            circuit=circuit,
+            result_traces=result_traces,
+        )
+        circuit.set_meta("dem_schema_fingerprint", schema.schema_fingerprint)
+        if generator_layout is not None:
+            named_result_binding = "generator_layout_v2_program_bound"
+        else:
+            result_ids = [result_id for _, ids in schema.result_ids_by_tag for result_id in ids]
+            if not result_ids or all(result_id is None for result_id in result_ids):
+                named_result_binding = "none"
+            elif any(result_id is None for result_id in result_ids):
+                named_result_binding = "compiler_direct_scalar_partial"
+            else:
+                named_result_binding = "compiler_direct_scalar_complete"
+        return GuppyDemBuild(
+            dem=dem,
+            circuit=circuit,
+            detectors_json=schema.detectors_json,
+            observables_json=schema.observables_json,
+            measurement_ledger=schema.ledger,
+            schema_fingerprint=schema.schema_fingerprint,
+            named_result_binding=named_result_binding,
+            _detector_meas_ids=schema.detector_meas_ids,
+            _observable_meas_ids=schema.observable_meas_ids,
+            _result_ids_by_tag=schema.result_ids_by_tag,
+        )
+
+
 def build_dem_from_guppy(
     guppy: Any,
     *,
@@ -1212,176 +1448,24 @@ def build_dem_from_guppy(
             runtime that emits scheduled idles to provide targets for idle
             noise.
     """
-    from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
-
-    noise_parameters = _resolve_guppy_noise(noise, locals())
-    (
-        p1,
-        p1_weights,
-        p2,
-        p2_weights,
-        p2_replacement_approximation,
-        p_meas,
-        p_prep,
-        p_idle_linear,
-        p_idle_linear_model,
-        p_idle_sin_squared,
-        p_idle_sin_squared_model,
-        p_idle_coherent,
-        p_idle_coherent_model,
-        t1,
-        t2,
-        p_idle_linear_rate,
-        p_idle_quadratic_rate,
-        p_idle_x_linear_rate,
-        p_idle_y_linear_rate,
-        p_idle_z_linear_rate,
-        p_idle_x_quadratic_rate,
-        p_idle_y_quadratic_rate,
-        p_idle_z_quadratic_rate,
-        p_idle_quadratic_sine_rate,
-        p_idle_x_quadratic_sine_rate,
-        p_idle_y_quadratic_sine_rate,
-        p_idle_z_quadratic_sine_rate,
-    ) = (noise_parameters[name] for name in _GUPPY_NOISE_KEYWORDS)
-
-    (
-        p_idle_x_linear_rate,
-        p_idle_y_linear_rate,
-        p_idle_z_linear_rate,
-        p_idle_x_quadratic_sine_rate,
-        p_idle_y_quadratic_sine_rate,
-        p_idle_z_quadratic_sine_rate,
-    ) = _translate_structured_idle_noise(
-        p_idle_linear=p_idle_linear,
-        p_idle_linear_model=p_idle_linear_model,
-        p_idle_sin_squared=p_idle_sin_squared,
-        p_idle_sin_squared_model=p_idle_sin_squared_model,
-        p_idle_coherent=p_idle_coherent,
-        p_idle_coherent_model=p_idle_coherent_model,
-        p_idle_linear_rate=p_idle_linear_rate,
-        p_idle_quadratic_rate=p_idle_quadratic_rate,
-        p_idle_x_linear_rate=p_idle_x_linear_rate,
-        p_idle_y_linear_rate=p_idle_y_linear_rate,
-        p_idle_z_linear_rate=p_idle_z_linear_rate,
-        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
-        p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
-        p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
-        p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+    noise_keywords = {name: value for name, value in locals().items() if name in _GUPPY_NOISE_KEYWORDS}
+    builder = (
+        GuppyDemBuilder()
+        .program(guppy)
+        .qubits(num_qubits)
+        .detectors(detectors)
+        .observables(observables)
+        .strip_traced_idles(strip_traced_idles)
+        .idle_after_2q(idle_after_2q_duration)
+        .runtime(runtime)
+        .seed(seed)
+        .require_hosted_operation_order(require_hosted_operation_order)
+        .max_hosted_tick_separation(max_hosted_tick_separation)
     )
-
-    referenced_tags = sorted(
-        {ref.tag for item in (*detectors, *observables) for ref in item.refs if isinstance(ref, ResultRef)},
-    )
-    generator_layout, hugr_bytes = _preflight_guppy_static_schedule(
-        guppy,
-        required_tags=referenced_tags,
-    )
-    has_generator_layout = generator_layout is not None
-    # Trace the EXACT bytes that were certified: re-compiling the original
-    # object for execution would let the audit and the execution diverge (and
-    # pays a second compile for nothing).
-    from pecos.programs import Hugr as _HugrProgram
-
-    circuit, result_traces = _trace_program_to_tick_circuit_with_result_traces(
-        _HugrProgram(hugr_bytes),
-        num_qubits,
-        seed=seed,
-        runtime=runtime,
-        require_hosted_operation_order=require_hosted_operation_order,
-        max_hosted_tick_separation=max_hosted_tick_separation,
-        allow_raw_measurement_id_fallback=False,
-    )
-    normalize_traced_tick_circuit(circuit, context="build_dem_from_guppy")
-    _apply_traced_idle_passes(
-        circuit,
-        strip_traced_idles=strip_traced_idles,
-        idle_after_2q_duration=idle_after_2q_duration,
-        # Nonzero coherent rates were rejected before tracing; zero emits no noise.
-        idle_noise_parameters=(
-            p_idle_linear,
-            p_idle_sin_squared,
-            t1,
-            t2,
-            p_idle_linear_rate,
-            p_idle_quadratic_rate,
-            p_idle_x_linear_rate,
-            p_idle_y_linear_rate,
-            p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate,
-            p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate,
-        ),
-    )
-    result_traces = _compiler_certified_result_traces(
-        generator_layout,
-        hugr_bytes,
-        circuit,
-        result_traces,
-        required_tags=referenced_tags,
-    )
-    schema = _resolve_dem_specs(
-        detectors,
-        observables,
-        circuit=circuit,
-        result_traces=result_traces,
-    )
-    if has_generator_layout:
-        named_result_binding = "generator_layout_v2_program_bound"
-    else:
-        result_ids = [result_id for _, ids in schema.result_ids_by_tag for result_id in ids]
-        if not result_ids or all(result_id is None for result_id in result_ids):
-            named_result_binding = "none"
-        elif any(result_id is None for result_id in result_ids):
-            named_result_binding = "compiler_direct_scalar_partial"
-        else:
-            named_result_binding = "compiler_direct_scalar_complete"
-    circuit.set_meta("detectors", schema.detectors_json)
-    circuit.set_meta("observables", schema.observables_json)
-    circuit.set_meta("num_measurements", str(circuit.num_measurements()))
-    circuit.set_meta("dem_schema_fingerprint", schema.schema_fingerprint)
-
-    dem = _from_circuit_with_noise(
-        circuit,
-        p1=p1,
-        p1_weights=p1_weights,
-        p2=p2,
-        p2_weights=p2_weights,
-        p2_replacement_approximation=p2_replacement_approximation,
-        p_meas=p_meas,
-        p_prep=p_prep,
-        t1=t1,
-        t2=t2,
-        p_idle_linear_rate=p_idle_linear_rate,
-        p_idle_quadratic_rate=p_idle_quadratic_rate,
-        p_idle_x_linear_rate=p_idle_x_linear_rate,
-        p_idle_y_linear_rate=p_idle_y_linear_rate,
-        p_idle_z_linear_rate=p_idle_z_linear_rate,
-        p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
-        p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
-        p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
-        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
-        p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
-        p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
-        p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
-    )
-    return GuppyDemBuild(
-        dem=dem,
-        circuit=circuit,
-        detectors_json=schema.detectors_json,
-        observables_json=schema.observables_json,
-        measurement_ledger=schema.ledger,
-        schema_fingerprint=schema.schema_fingerprint,
-        named_result_binding=named_result_binding,
-        _detector_meas_ids=schema.detector_meas_ids,
-        _observable_meas_ids=schema.observable_meas_ids,
-        _result_ids_by_tag=schema.result_ids_by_tag,
-    )
+    # Same-module private seam: see the note in DetectorErrorModel.from_guppy.
+    return builder._legacy_noise(noise, noise_keywords).build()  # noqa: SLF001
 
 
 DetectorErrorModel = _RustDetectorErrorModel
+DetectorErrorModel.builder = classmethod(_DetectorErrorModelMixin.__dict__["builder"].__func__)
 DetectorErrorModel.from_guppy = classmethod(_DetectorErrorModelMixin.__dict__["from_guppy"].__func__)

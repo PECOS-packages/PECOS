@@ -593,3 +593,83 @@ def _resolve_dem_specs(
         result_ids_by_tag=result_ids_by_tag,
         schema_fingerprint=fingerprint,
     )
+
+
+def _resolved_schema_from_validated_json(
+    detectors_json: str,
+    observables_json: str,
+    *,
+    circuit: Any,
+    result_traces: Sequence[Mapping[str, Any]],
+) -> _ResolvedSchema:
+    """Build audit data from metadata already validated by the Rust DEM builder."""
+    runtime_order = _measurement_ids_in_runtime_order(circuit)
+    result_calls, refs_by_id = _index_result_traces(result_traces)
+    detector_entries = json.loads(detectors_json) if detectors_json.strip() else []
+    observable_entries = json.loads(observables_json) if observables_json.strip() else []
+
+    def normalized_id(raw_id: Any, *, prefix: str) -> int:
+        if isinstance(raw_id, str) and raw_id.startswith(prefix):
+            return int(raw_id[len(prefix) :])
+        return int(raw_id)
+
+    def entry_meas_ids(entry: Mapping[str, Any]) -> tuple[int, ...]:
+        records = entry.get("records", ())
+        if records:
+            return tuple(runtime_order[len(runtime_order) + int(record)] for record in records)
+        return tuple(int(meas_id) for meas_id in entry["meas_ids"])
+
+    resolved_detectors = sorted(
+        (
+            normalized_id(entry["id"] if "id" in entry else entry["detector_id"], prefix="D"),
+            entry_meas_ids(entry),
+        )
+        for entry in detector_entries
+    )
+    resolved_observables = sorted(
+        (
+            normalized_id(entry["id"] if "id" in entry else entry["observable_id"], prefix="L"),
+            entry_meas_ids(entry),
+        )
+        for entry in observable_entries
+    )
+    result_ids_by_tag = tuple(
+        (
+            tag,
+            tuple(result_id for occurrence in range(len(calls)) for result_id in calls[occurrence]),
+        )
+        for tag, calls in sorted(result_calls.items())
+        if calls
+        and sorted(calls) == list(range(len(calls)))
+        and all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
+        and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)
+    )
+    fingerprint_payload = {
+        "detectors": detector_entries,
+        "observables": observable_entries,
+        "runtime_measurement_order": runtime_order,
+        "named_result_measurements": result_ids_by_tag,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode(),
+    ).hexdigest()
+    runtime_ids = set(runtime_order)
+    dense_ids = sorted(runtime_ids) == list(range(len(runtime_order)))
+    ledger = tuple(
+        MeasurementLedgerEntry(
+            meas_id=meas_id,
+            runtime_record_index=runtime_index,
+            canonical_record_index=meas_id if dense_ids else None,
+            result_refs=tuple(refs_by_id.get(meas_id, ())),
+        )
+        for runtime_index, meas_id in enumerate(runtime_order)
+    )
+    return _ResolvedSchema(
+        detectors_json=detectors_json,
+        observables_json=observables_json,
+        detector_meas_ids=tuple(meas_ids for _, meas_ids in resolved_detectors),
+        observable_meas_ids=tuple(resolved_observables),
+        ledger=ledger,
+        result_ids_by_tag=result_ids_by_tag,
+        schema_fingerprint=fingerprint,
+    )

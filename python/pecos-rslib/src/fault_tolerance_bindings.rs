@@ -74,6 +74,10 @@ use pyo3::prelude::*;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
+mod decoder_comparison;
+
+use decoder_comparison::{PyDecoderComparisonResult, compare_decoder_outcomes};
+
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
 /// Per-shot detector rows paired with per-shot observable/DEM-output rows.
@@ -3646,6 +3650,48 @@ impl PySampleBatch {
         Ok(predictions)
     }
 
+    /// Decode every shot with a decoder under test (DUT) and a reference decoder.
+    ///
+    /// Both decoders receive the same shots in the same order. Each result is
+    /// independently classified as correct, mismatch, or decode error, and a
+    /// decode error is counted for that shot without aborting the comparison.
+    /// Predictions and truth are compared as wide observable masks, with no
+    /// 64-observable limit.
+    ///
+    /// Args:
+    ///     dem: DEM string shared by both decoders.
+    ///     `dut_decoder_type`: Decoder type string for the decoder under test.
+    ///     `reference_decoder_type`: Decoder type string for the reference.
+    ///     alpha: Tail probability for equal-tailed Jeffreys intervals.
+    ///
+    /// Returns:
+    ///     A `DecoderComparisonResult` containing the raw 3x3 counts and
+    ///     headline DUT-only-failure and both-failed proportions.
+    #[pyo3(signature = (dem, dut_decoder_type, reference_decoder_type, alpha=0.05))]
+    fn compare_decoders(
+        &self,
+        dem: &str,
+        dut_decoder_type: &str,
+        reference_decoder_type: &str,
+        alpha: f64,
+    ) -> PyResult<PyDecoderComparisonResult> {
+        let mut dut = create_observable_decoder(dem, dut_decoder_type)?;
+        let mut reference = create_observable_decoder(dem, reference_decoder_type)?;
+        let mut syndrome = vec![0u8; self.num_detectors];
+        let counts = compare_decoder_outcomes(
+            self.num_shots,
+            &mut syndrome,
+            |shot, buffer| {
+                self.extract_syndrome(shot, buffer);
+                self.extract_obs_mask_wide(shot)
+            },
+            dut.as_mut(),
+            reference.as_mut(),
+        );
+        PyDecoderComparisonResult::new(counts, alpha)
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
+    }
+
     /// Parallel decode: distributes samples across rayon workers.
     ///
     /// Each worker creates its own decoder instance. Faster for slow decoders.
@@ -6940,6 +6986,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDetectorErrorModel>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
+    qec.add_class::<PyDecoderComparisonResult>()?;
     qec.add_class::<PyCssUfDecoder>()?;
     qec.add_class::<PyLogicalSubgraphDecoder>()?;
     qec.add_class::<PyWindowedLogicalSubgraphDecoder>()?;

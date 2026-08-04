@@ -223,30 +223,59 @@ assert sim_batch.num_shots == 500
 
 ## 5. Decode the samples and compute logical error rates
 
-`decode_count()` decodes every shot and returns the number whose predicted
-observable flip disagreed with the sampled one. Passing the same batch to each
-decoder makes the rates directly comparable, rather than mixing in sampling
-variation from separate experiments.
+Each decoder is constructed from the DEM text form it accepts, then asked for a
+prediction per shot. A shot counts as a logical error when the predicted
+observable flip disagrees with the flip the sample actually carried.
+
+The three decoders expose slightly different call shapes today: PyMatching
+returns a per-observable `correction` vector, while Tesseract and BP+OSD return
+an `observables_mask` bitmask.
 
 <!--continuation-->
 ```python
-decoder_inputs = {
-    "pymatching": terminal_graphlike_text,
-    "tesseract": source_graphlike_text,
-    "bp_osd": raw_text,
-}
-error_counts = {name: batch.decode_count(text, name) for name, text in decoder_inputs.items()}
+from pecos.decoders import DemAwareDecoder, PyMatchingDecoder, TesseractDecoder
 
-assert all(0 < errors < batch.num_shots for errors in error_counts.values())
+pymatching = PyMatchingDecoder.from_dem(terminal_graphlike_text)
+tesseract = TesseractDecoder.from_dem(source_graphlike_text, preset="fast")
+bp_osd = DemAwareDecoder.from_dem(raw_text, decoder_type="bp_osd")
+
+pymatching_errors = 0
+tesseract_errors = 0
+bp_osd_errors = 0
+
+for shot in range(batch.num_shots):
+    syndrome = batch.get_syndrome(shot)
+    actual = batch.get_observable_mask(shot) & 1
+
+    pymatching_errors += pymatching.decode(syndrome).correction[0] != actual
+    tesseract_errors += (tesseract.decode_syndrome(syndrome).observables_mask & 1) != actual
+    bp_osd_errors += (bp_osd.decode_syndrome(syndrome).observables_mask & 1) != actual
+
+shots = batch.num_shots
+assert 0 < pymatching_errors < shots
+assert 0 < tesseract_errors < shots
+assert 0 < bp_osd_errors < shots
+
 print("DEM-sampled shots")
-print("decoder     errors   logical error rate")
-for name, errors in error_counts.items():
-    print(f"{name:10}  {errors:6}   {errors / batch.num_shots:.4%}")
-
-# The simulated shots decode against the same DEM.
-sim_errors = sim_batch.decode_count(terminal_graphlike_text, "pymatching")
-print(f"\nsimulated shots, pymatching: {sim_errors}/{sim_batch.num_shots}")
+print(f"pymatching  {pymatching_errors:5}   {pymatching_errors / shots:.4%}")
+print(f"tesseract   {tesseract_errors:5}   {tesseract_errors / shots:.4%}")
+print(f"bp_osd      {bp_osd_errors:5}   {bp_osd_errors / shots:.4%}")
 ```
+
+The simulated shots decode the same way, against the same decoders:
+
+<!--continuation-->
+```python
+sim_errors = 0
+for shot in range(sim_batch.num_shots):
+    predicted = pymatching.decode(sim_batch.get_syndrome(shot)).correction[0]
+    sim_errors += predicted != (sim_batch.get_observable_mask(shot) & 1)
+
+print(f"simulated shots, pymatching: {sim_errors}/{sim_batch.num_shots}")
+```
+
+When you only need the count, `batch.decode_count(dem_text, "pymatching")` runs
+this same loop natively and returns the number of mismatches.
 
 At this noise level the three decoders land within about a percentage point of
 each other on this code; the gaps between decoders widen with code distance and

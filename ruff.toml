@@ -146,16 +146,16 @@ ignore = [
     "RUF022",   # __all__ not sorted - intentionally grouped by graph type
 ]
 # Guppy code generation - lazy imports for optional deps, __all__ grouped by code type
-"python/quantum-pecos/src/pecos/guppy/__init__.py" = [
+"python/quantum-pecos/src/pecos/guppy_gen/__init__.py" = [
     "RUF022",   # __all__ not sorted - grouped by code type (surface, color, transversal)
 ]
-"python/quantum-pecos/src/pecos/guppy/color.py" = [
+"python/quantum-pecos/src/pecos/guppy_gen/color.py" = [
     "PLC0415",  # Import inside function - lazy loading of qec.color
 ]
-"python/quantum-pecos/src/pecos/guppy/surface.py" = [
+"python/quantum-pecos/src/pecos/guppy_gen/surface.py" = [
     "PLC0415",  # Import inside function - lazy loading of qec.surface
 ]
-"python/quantum-pecos/src/pecos/guppy/transversal.py" = [
+"python/quantum-pecos/src/pecos/guppy_gen/transversal.py" = [
     "PLC0415",  # Import inside function - lazy loading of qec modules
 ]
 # QEC modules - __all__ grouped by category, lazy imports

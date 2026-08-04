@@ -1,7 +1,7 @@
 """Canonical Pauli-twirl site mapping.
 
 This maps twirl-site declarations for both the abstract circuit
-(`circuit_builder.py`) and the Guppy runtime renderer (`pecos.guppy.surface`).
+(`circuit_builder.py`) and the Guppy runtime renderer (`pecos.guppy_gen.surface`).
 
 Both tracks must agree byte-for-byte on the ordering of twirl-site
 metadata: the abstract circuit's `tracked_pauli` annotations populate

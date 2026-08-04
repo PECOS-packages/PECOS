@@ -53,11 +53,104 @@ from pecos.qec.dem_spec import GuppyDemBuild, ResultRef, _resolve_dem_specs
 
 if TYPE_CHECKING:
     from pecos.qec.dem_spec import Detector, Observable
+    from pecos.qec.surface.decode import NoiseModel
 
 P1Weights = Mapping[str, float]
 P2Weights = Mapping[str, float]
 
 _GENERATOR_LAYOUT_ATTR = "__pecos_named_measurement_layout_v2__"
+
+_GUPPY_NOISE_KEYWORDS = (
+    "p1",
+    "p1_weights",
+    "p2",
+    "p2_weights",
+    "p2_replacement_approximation",
+    "p_meas",
+    "p_prep",
+    "p_idle_linear",
+    "p_idle_linear_model",
+    "p_idle_sin_squared",
+    "p_idle_sin_squared_model",
+    "p_idle_coherent",
+    "p_idle_coherent_model",
+    "t1",
+    "t2",
+    "p_idle_linear_rate",
+    "p_idle_quadratic_rate",
+    "p_idle_x_linear_rate",
+    "p_idle_y_linear_rate",
+    "p_idle_z_linear_rate",
+    "p_idle_x_quadratic_rate",
+    "p_idle_y_quadratic_rate",
+    "p_idle_z_quadratic_rate",
+    "p_idle_quadratic_sine_rate",
+    "p_idle_x_quadratic_sine_rate",
+    "p_idle_y_quadratic_sine_rate",
+    "p_idle_z_quadratic_sine_rate",
+)
+
+
+class _NoiseKeywordDefault:
+    """Track whether a flat noise keyword was explicitly supplied."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def __repr__(self) -> str:
+        return repr(self.value)
+
+
+_NOISE_DEFAULT_NONE = _NoiseKeywordDefault(None)
+_NOISE_DEFAULT_P1 = _NoiseKeywordDefault(0.001)
+_NOISE_DEFAULT_P2 = _NoiseKeywordDefault(0.01)
+
+
+def _resolve_guppy_noise(noise: NoiseModel | None, call_arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve one grouped or flat Guppy DEM noise configuration."""
+    explicitly_flat = [
+        name for name in _GUPPY_NOISE_KEYWORDS if not isinstance(call_arguments[name], _NoiseKeywordDefault)
+    ]
+    if noise is None:
+        return {
+            name: (
+                call_arguments[name].value
+                if isinstance(call_arguments[name], _NoiseKeywordDefault)
+                else call_arguments[name]
+            )
+            for name in _GUPPY_NOISE_KEYWORDS
+        }
+
+    if explicitly_flat:
+        conflicts = ", ".join(explicitly_flat)
+        msg = f"noise cannot be combined with flat noise keyword(s): {conflicts}"
+        raise ValueError(msg)
+
+    # Import locally so dem.py remains below surface.decode in the package's
+    # initialization graph instead of introducing a module-level back edge.
+    from pecos.qec.surface.decode import NoiseModel
+
+    if not isinstance(noise, NoiseModel):
+        msg = f"noise must be a NoiseModel or None, got {type(noise).__name__}"
+        raise TypeError(msg)
+
+    unsupported = {
+        "p_idle": "use p_idle_linear instead",
+        "p2_szz": "use the shared p2 rate instead",
+        "p2_szzdg": "use the shared p2 rate instead",
+    }
+    for field, guidance in unsupported.items():
+        if getattr(noise, field) is not None:
+            msg = f"NoiseModel.{field} is not supported by the Guppy DEM entry points; {guidance}"
+            raise ValueError(msg)
+
+    expanded = {name: getattr(noise, name) for name in _GUPPY_NOISE_KEYWORDS}
+    for weights_name in ("p1_weights", "p2_weights"):
+        if expanded[weights_name] is not None:
+            expanded[weights_name] = dict(expanded[weights_name])
+    return expanded
 
 
 def _certifiable_hugr_bytes(guppy: Any) -> bytes | None:
@@ -226,33 +319,34 @@ class _DetectorErrorModelMixin:
         detectors_json: str,
         observables_json: str = "[]",
         num_measurements: int | None = None,
-        p1: float = 0.001,
-        p1_weights: P1Weights | None = None,
-        p2: float = 0.01,
-        p2_weights: P2Weights | None = None,
-        p2_replacement_approximation: str | None = None,
-        p_meas: float = 0.001,
-        p_prep: float = 0.001,
-        p_idle_linear: float | None = None,
-        p_idle_linear_model: Mapping[str, float] | None = None,
-        p_idle_sin_squared: float | None = None,
-        p_idle_sin_squared_model: Mapping[str, float] | None = None,
-        p_idle_coherent: float | None = None,
-        p_idle_coherent_model: Mapping[str, float] | None = None,
-        t1: float | None = None,
-        t2: float | None = None,
-        p_idle_linear_rate: float | None = None,
-        p_idle_quadratic_rate: float | None = None,
-        p_idle_x_linear_rate: float | None = None,
-        p_idle_y_linear_rate: float | None = None,
-        p_idle_z_linear_rate: float | None = None,
-        p_idle_x_quadratic_rate: float | None = None,
-        p_idle_y_quadratic_rate: float | None = None,
-        p_idle_z_quadratic_rate: float | None = None,
-        p_idle_quadratic_sine_rate: float | None = None,
-        p_idle_x_quadratic_sine_rate: float | None = None,
-        p_idle_y_quadratic_sine_rate: float | None = None,
-        p_idle_z_quadratic_sine_rate: float | None = None,
+        noise: NoiseModel | None = None,
+        p1: float = _NOISE_DEFAULT_P1,
+        p1_weights: P1Weights | None = _NOISE_DEFAULT_NONE,
+        p2: float = _NOISE_DEFAULT_P2,
+        p2_weights: P2Weights | None = _NOISE_DEFAULT_NONE,
+        p2_replacement_approximation: str | None = _NOISE_DEFAULT_NONE,
+        p_meas: float = _NOISE_DEFAULT_P1,
+        p_prep: float = _NOISE_DEFAULT_P1,
+        p_idle_linear: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_linear_model: Mapping[str, float] | None = _NOISE_DEFAULT_NONE,
+        p_idle_sin_squared: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_sin_squared_model: Mapping[str, float] | None = _NOISE_DEFAULT_NONE,
+        p_idle_coherent: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_coherent_model: Mapping[str, float] | None = _NOISE_DEFAULT_NONE,
+        t1: float | None = _NOISE_DEFAULT_NONE,
+        t2: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_linear_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_quadratic_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_x_linear_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_y_linear_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_z_linear_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_x_quadratic_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_y_quadratic_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_z_quadratic_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_quadratic_sine_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_x_quadratic_sine_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_y_quadratic_sine_rate: float | None = _NOISE_DEFAULT_NONE,
+        p_idle_z_quadratic_sine_rate: float | None = _NOISE_DEFAULT_NONE,
         strip_traced_idles: bool | None = None,
         idle_after_2q_duration: float | None = None,
         runtime: object | None = None,
@@ -334,6 +428,11 @@ class _DetectorErrorModelMixin:
             num_measurements: Total measurement count, used to resolve negative
                 ``records`` offsets. If omitted, it is inferred from the traced
                 circuit; if given, it must match the traced count.
+            noise: Complete grouped noise configuration. When supplied, its
+                values replace all flat noise keywords, including this entry
+                point's defaults. In particular, ``NoiseModel`` defaults such
+                as ``p1=0.0`` apply instead of this function's ``p1=0.001``.
+                Mixing ``noise`` with any flat noise keyword is rejected.
             p1: Single-qubit gate Pauli error rate.
             p1_weights: Optional relative probabilities over single-qubit
                 Pauli error labels ``"X"``, ``"Y"``, and ``"Z"``. Values must
@@ -457,7 +556,7 @@ class _DetectorErrorModelMixin:
             ``TimeUnits``. If idle parameters come from a per-second
             simulator/runtime model, use
             ``noise.for_runtime_idle_time_units()`` and pass the converted
-            scalar idle-rate fields to this constructor.
+            model through this constructor's ``noise`` keyword.
 
             **Measurement-dependent (dynamic) control flow is unsupported.**
             ``from_guppy`` traces one ideal execution; a Guppy program whose
@@ -478,6 +577,37 @@ class _DetectorErrorModelMixin:
             runtime-loop case (per-occurrence binding) remains deferred.
         """
         from pecos.tracing import trace_program_to_tick_circuit
+
+        noise_parameters = _resolve_guppy_noise(noise, locals())
+        (
+            p1,
+            p1_weights,
+            p2,
+            p2_weights,
+            p2_replacement_approximation,
+            p_meas,
+            p_prep,
+            p_idle_linear,
+            p_idle_linear_model,
+            p_idle_sin_squared,
+            p_idle_sin_squared_model,
+            p_idle_coherent,
+            p_idle_coherent_model,
+            t1,
+            t2,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
+        ) = (noise_parameters[name] for name in _GUPPY_NOISE_KEYWORDS)
 
         (
             p_idle_x_linear_rate,
@@ -925,33 +1055,34 @@ def build_dem_from_guppy(
     num_qubits: int,
     detectors: Sequence[Detector],
     observables: Sequence[Observable] = (),
-    p1: float = 0.001,
-    p1_weights: P1Weights | None = None,
-    p2: float = 0.01,
-    p2_weights: P2Weights | None = None,
-    p2_replacement_approximation: str | None = None,
-    p_meas: float = 0.001,
-    p_prep: float = 0.001,
-    p_idle_linear: float | None = None,
-    p_idle_linear_model: Mapping[str, float] | None = None,
-    p_idle_sin_squared: float | None = None,
-    p_idle_sin_squared_model: Mapping[str, float] | None = None,
-    p_idle_coherent: float | None = None,
-    p_idle_coherent_model: Mapping[str, float] | None = None,
-    t1: float | None = None,
-    t2: float | None = None,
-    p_idle_linear_rate: float | None = None,
-    p_idle_quadratic_rate: float | None = None,
-    p_idle_x_linear_rate: float | None = None,
-    p_idle_y_linear_rate: float | None = None,
-    p_idle_z_linear_rate: float | None = None,
-    p_idle_x_quadratic_rate: float | None = None,
-    p_idle_y_quadratic_rate: float | None = None,
-    p_idle_z_quadratic_rate: float | None = None,
-    p_idle_quadratic_sine_rate: float | None = None,
-    p_idle_x_quadratic_sine_rate: float | None = None,
-    p_idle_y_quadratic_sine_rate: float | None = None,
-    p_idle_z_quadratic_sine_rate: float | None = None,
+    noise: NoiseModel | None = None,
+    p1: float = _NOISE_DEFAULT_P1,
+    p1_weights: P1Weights | None = _NOISE_DEFAULT_NONE,
+    p2: float = _NOISE_DEFAULT_P2,
+    p2_weights: P2Weights | None = _NOISE_DEFAULT_NONE,
+    p2_replacement_approximation: str | None = _NOISE_DEFAULT_NONE,
+    p_meas: float = _NOISE_DEFAULT_P1,
+    p_prep: float = _NOISE_DEFAULT_P1,
+    p_idle_linear: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_linear_model: Mapping[str, float] | None = _NOISE_DEFAULT_NONE,
+    p_idle_sin_squared: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_sin_squared_model: Mapping[str, float] | None = _NOISE_DEFAULT_NONE,
+    p_idle_coherent: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_coherent_model: Mapping[str, float] | None = _NOISE_DEFAULT_NONE,
+    t1: float | None = _NOISE_DEFAULT_NONE,
+    t2: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_linear_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_quadratic_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_x_linear_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_y_linear_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_z_linear_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_x_quadratic_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_y_quadratic_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_z_quadratic_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_quadratic_sine_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_x_quadratic_sine_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_y_quadratic_sine_rate: float | None = _NOISE_DEFAULT_NONE,
+    p_idle_z_quadratic_sine_rate: float | None = _NOISE_DEFAULT_NONE,
     strip_traced_idles: bool | None = None,
     idle_after_2q_duration: float | None = None,
     runtime: object | None = None,
@@ -985,6 +1116,11 @@ def build_dem_from_guppy(
             ``result_ref(...)`` measurement references.
         observables: Typed logical-observable definitions using the same
             measurement-reference forms as ``detectors``.
+        noise: Complete grouped noise configuration. When supplied, its values
+            replace all flat noise keywords, including this entry point's
+            defaults. In particular, ``NoiseModel`` defaults such as
+            ``p1=0.0`` apply instead of this function's ``p1=0.001``. Mixing
+            ``noise`` with any flat noise keyword is rejected.
         p1: Single-qubit gate Pauli error rate.
         p1_weights: Optional relative probabilities over single-qubit Pauli
             error labels ``"X"``, ``"Y"``, and ``"Z"``.
@@ -1077,6 +1213,37 @@ def build_dem_from_guppy(
             noise.
     """
     from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
+
+    noise_parameters = _resolve_guppy_noise(noise, locals())
+    (
+        p1,
+        p1_weights,
+        p2,
+        p2_weights,
+        p2_replacement_approximation,
+        p_meas,
+        p_prep,
+        p_idle_linear,
+        p_idle_linear_model,
+        p_idle_sin_squared,
+        p_idle_sin_squared_model,
+        p_idle_coherent,
+        p_idle_coherent_model,
+        t1,
+        t2,
+        p_idle_linear_rate,
+        p_idle_quadratic_rate,
+        p_idle_x_linear_rate,
+        p_idle_y_linear_rate,
+        p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate,
+    ) = (noise_parameters[name] for name in _GUPPY_NOISE_KEYWORDS)
 
     (
         p_idle_x_linear_rate,

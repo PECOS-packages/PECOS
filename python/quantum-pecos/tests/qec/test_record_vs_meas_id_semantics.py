@@ -93,7 +93,9 @@ def test_traced_records_agree_with_meas_ids(offset_from_end: int) -> None:
 def test_traced_records_reject_every_other_meas_id() -> None:
     # Guards against an accept-everything redundancy check.
     mismatched = [
-        meas_id for meas_id in range(5) if meas_id != 0 and _accepts(f'[{{"id":0,"records":[-5],"meas_ids":[{meas_id}]}}]')
+        meas_id
+        for meas_id in range(5)
+        if meas_id != 0 and _accepts(f'[{{"id":0,"records":[-5],"meas_ids":[{meas_id}]}}]')
     ]
 
     assert mismatched == []

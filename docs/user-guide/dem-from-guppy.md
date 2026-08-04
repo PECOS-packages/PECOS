@@ -195,6 +195,60 @@ Because the trace records the runtime-lowered QIS operation stream, a
 runtime that schedules or lowers differently produces a (correctly)
 different DEM.
 
+## Grouping Noise Parameters
+
+Both Guppy DEM entry points accept either the existing flat noise keywords or
+one `NoiseModel` containing the complete noise configuration. The forms below
+are equivalent. Do not mix them in one call: even an explicitly passed flat
+default conflicts with `noise`. When `noise` is present, its defaults fully
+replace the entry point's defaults; for example, `NoiseModel().p1` is `0.0`,
+not the flat `p1=0.001` default.
+
+<!--test-name: dem_from_guppy_grouped_noise-->
+```python
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import cx, measure, qubit
+
+from pecos.qec import DetectorErrorModel
+from pecos.qec.surface import NoiseModel
+
+
+@guppy
+def noisy_pair() -> None:
+    q0, q1 = qubit(), qubit()
+    cx(q0, q1)
+    result("m0", measure(q0))
+    result("m1", measure(q1))
+
+
+common = {
+    "num_qubits": 2,
+    "detectors_json": '[{"id": "D0", "result_tags": ["m0"]}]',
+    "observables_json": '[{"id": "L0", "result_tags": ["m1"]}]',
+    "seed": 0,
+}
+noise = NoiseModel(p1=0.002, p2=0.004, p_meas=0.006, p_prep=0.008)
+
+grouped = DetectorErrorModel.from_guppy(noisy_pair, noise=noise, **common)
+flat = DetectorErrorModel.from_guppy(
+    noisy_pair,
+    p1=0.002,
+    p2=0.004,
+    p_meas=0.006,
+    p_prep=0.008,
+    **common,
+)
+assert grouped.to_string() == flat.to_string()
+
+try:
+    DetectorErrorModel.from_guppy(noisy_pair, noise=noise, p1=0.002, **common)
+except ValueError as exc:
+    assert "p1" in str(exc)
+else:
+    raise AssertionError("grouped and flat noise must not be mixed")
+```
+
 ## Idle Noise
 
 The recommended structured interface has three rate-and-model families. Every

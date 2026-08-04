@@ -236,6 +236,103 @@ def test_guppy_dem_entrypoints_do_not_expose_p_idle_shorthand() -> None:
     assert "p_idle" not in inspect.signature(build_dem_from_guppy).parameters
 
 
+def _noise_model_entrypoint_dem(entrypoint: str, **kwargs):
+    if entrypoint == "from_guppy":
+        return DetectorErrorModel.from_guppy(
+            _structured_idle_noise_target,
+            num_qubits=2,
+            detectors_json=_TWO_QUBIT_DETECTORS_JSON,
+            observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+            num_measurements=2,
+            **kwargs,
+        )
+    return build_dem_from_guppy(
+        _structured_idle_noise_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        **kwargs,
+    ).dem
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_noise_model_matches_flat_gate_noise(entrypoint: str) -> None:
+    rates = {"p1": 0.003, "p2": 0.007, "p_meas": 0.011, "p_prep": 0.013}
+
+    grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseModel(**rates))
+    flat = _noise_model_entrypoint_dem(entrypoint, **rates)
+
+    assert grouped.to_string() == flat.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_noise_model_matches_flat_pauli_weights(entrypoint: str) -> None:
+    noise_kwargs = {
+        "p1": 0.003,
+        "p1_weights": {"X": 0.6, "Y": 0.3, "Z": 0.1},
+        "p2": 0.007,
+        "p2_weights": {"IX": 0.4, "XI": 0.6},
+        "p_meas": 0.011,
+        "p_prep": 0.013,
+    }
+
+    grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseModel(**noise_kwargs))
+    flat = _noise_model_entrypoint_dem(entrypoint, **noise_kwargs)
+
+    assert grouped.to_string() == flat.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_noise_model_structured_idle_family_matches_flat_axis_rates(entrypoint: str) -> None:
+    rate = 0.03
+    model = {"X": 0.25, "Z": 0.75}
+
+    grouped = _noise_model_entrypoint_dem(
+        entrypoint,
+        noise=NoiseModel(p_idle_linear=rate, p_idle_linear_model=model),
+        idle_after_2q_duration=2.0,
+    )
+    flat = _noise_model_entrypoint_dem(
+        entrypoint,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        p_idle_x_linear_rate=rate * model["X"],
+        p_idle_z_linear_rate=rate * model["Z"],
+        idle_after_2q_duration=2.0,
+    )
+
+    assert grouped.to_string() == flat.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("keyword", ["p1", "p2", "p_meas", "p_idle_linear"])
+def test_noise_model_rejects_flat_noise_keyword(entrypoint: str, keyword: str) -> None:
+    with pytest.raises(ValueError, match=keyword):
+        _noise_model_entrypoint_dem(entrypoint, noise=NoiseModel(), **{keyword: 0.01})
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("field", ["p_idle", "p2_szz", "p2_szzdg"])
+def test_noise_model_rejects_fields_not_supported_by_guppy_dem(entrypoint: str, field: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        _noise_model_entrypoint_dem(entrypoint, noise=NoiseModel(**{field: 0.01}))
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_noise_model_combines_with_non_noise_keywords(entrypoint: str) -> None:
+    dem = _noise_model_entrypoint_dem(
+        entrypoint,
+        noise=NoiseModel(p_idle_linear=0.01),
+        idle_after_2q_duration=1.0,
+        strip_traced_idles=True,
+        seed=17,
+    )
+
+    assert "error(" in dem.to_string()
+
+
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
 def test_structured_idle_linear_default_matches_axis_primitives(entrypoint: str) -> None:
     rate = 0.03

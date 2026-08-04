@@ -75,11 +75,20 @@ def result_ref(tag: str, *, occurrence: int = 0, element: int | None = None) -> 
 MeasurementRef = RecordRef | ResultRef
 
 
-def _validate_refs(refs: tuple[MeasurementRef, ...]) -> None:
+def _coerce_refs(refs: tuple[MeasurementRef | str, ...]) -> tuple[MeasurementRef, ...]:
+    """Accept a bare tag string as shorthand for ``result_ref(tag)``."""
     if not refs:
         raise ValueError("detectors and observables must reference at least one measurement")
-    if any(not isinstance(ref, (RecordRef, ResultRef)) for ref in refs):
-        raise TypeError("measurement references must be rec[...] or result_ref(...) values")
+    coerced: list[MeasurementRef] = []
+    for ref in refs:
+        if isinstance(ref, str):
+            coerced.append(ResultRef(ref))
+        elif isinstance(ref, (RecordRef, ResultRef)):
+            coerced.append(ref)
+        else:
+            msg = 'measurement references must be rec[...], result_ref(...), or a "tag" string'
+            raise TypeError(msg)
+    return tuple(coerced)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -93,14 +102,17 @@ class Detector:
 
     def __init__(
         self,
-        *refs: MeasurementRef,
+        *refs: MeasurementRef | str,
         id: int | None = None,
         coords: Sequence[float] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Create a detector from typed measurement references."""
-        refs_tuple = tuple(refs)
-        _validate_refs(refs_tuple)
+        """Create a detector from measurement references.
+
+        Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
+        string, which is shorthand for ``result_ref(tag)``.
+        """
+        refs_tuple = _coerce_refs(tuple(refs))
         object.__setattr__(self, "refs", refs_tuple)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "coords", tuple(float(value) for value in coords) if coords is not None else None)
@@ -117,13 +129,16 @@ class Observable:
 
     def __init__(
         self,
-        *refs: MeasurementRef,
+        *refs: MeasurementRef | str,
         id: int | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Create an observable from typed measurement references."""
-        refs_tuple = tuple(refs)
-        _validate_refs(refs_tuple)
+        """Create an observable from measurement references.
+
+        Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
+        string, which is shorthand for ``result_ref(tag)``.
+        """
+        refs_tuple = _coerce_refs(tuple(refs))
         object.__setattr__(self, "refs", refs_tuple)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "metadata", dict(metadata) if metadata is not None else None)

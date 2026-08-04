@@ -80,22 +80,27 @@ it is deterministic in the absence of noise:
 The observable is the logical Z value, which for this code is any single data
 qubit measurement.
 
-`result_ref("tag")` refers to a tagged measurement by name; `rec[-k]` refers to
-one by position in the canonical Guppy measurement stream, as in Stim.
+A bare string names a tagged measurement. `rec[-k]` refers to one by position
+in the canonical Guppy measurement stream, as in Stim, and
+`result_ref("tag", occurrence=...)` is the explicit form when you need its
+extra selectors. A tag that no `result()` call emits is a hard error, so
+mistyped names fail loudly rather than silently dropping a detector term; in
+larger programs you can also define each tag once as a module-level constant
+and use it in both places, passing it to Guppy as `result(comptime(TAG), ...)`.
 
 <!--continuation-->
 ```python
-from pecos.qec import Detector, Observable, result_ref
+from pecos.qec import Detector, Observable
 
 detectors = [
-    Detector(result_ref("s0_r0")),
-    Detector(result_ref("s1_r0")),
-    Detector(result_ref("s0_r0"), result_ref("s0_r1")),
-    Detector(result_ref("s1_r0"), result_ref("s1_r1")),
-    Detector(result_ref("s0_r1"), result_ref("m0"), result_ref("m1")),
-    Detector(result_ref("s1_r1"), result_ref("m1"), result_ref("m2")),
+    Detector("s0_r0"),
+    Detector("s1_r0"),
+    Detector("s0_r0", "s0_r1"),
+    Detector("s1_r0", "s1_r1"),
+    Detector("s0_r1", "m0", "m1"),
+    Detector("s1_r1", "m1", "m2"),
 ]
-observables = [Observable(result_ref("m0"))]
+observables = [Observable("m0")]
 ```
 
 ## 3. Generate the DEM with gate and idle noise

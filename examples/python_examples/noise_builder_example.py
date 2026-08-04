@@ -27,7 +27,7 @@ def simple_noise_example() -> None:
     """
 
     # Simple uniform noise
-    noise = GeneralNoiseModelBuilder().with_seed(42).with_p1_probability(0.001).with_p2_probability(0.01)
+    noise = GeneralNoiseModelBuilder().with_seed(42).with_p1(0.001).with_p2(0.01)
 
     results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)
     results_dict = results.to_dict()
@@ -58,12 +58,12 @@ def hardware_realistic_noise() -> None:
         GeneralNoiseModelBuilder()
         .with_seed(42)
         # Gate errors (two-qubit much worse)
-        .with_average_p1_probability(0.0001)  # 0.01%
-        .with_average_p2_probability(0.001)  # 0.1%
+        .with_average_p1(0.0001)  # 0.01%
+        .with_average_p2(0.001)  # 0.1%
         # Measurement is often the dominant error
-        .with_prep_probability(0.001)
-        .with_meas_0_probability(0.01)  # 1% false positive
-        .with_meas_1_probability(0.005)
+        .with_p_prep(0.001)
+        .with_p_meas_0(0.01)  # 1% false positive
+        .with_p_meas_1(0.005)
     )  # 0.5% false negative
 
     results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)
@@ -99,7 +99,7 @@ def biased_noise_example() -> None:
     noise = (
         GeneralNoiseModelBuilder()
         .with_seed(42)
-        .with_average_p1_probability(0.01)  # Higher error for visibility
+        .with_average_p1(0.01)  # Higher error for visibility
         .with_p1_pauli_model(
             {
                 "X": 0.1,  # 10% bit flips
@@ -136,12 +136,15 @@ def ion_trap_noise() -> None:
         GeneralNoiseModelBuilder()
         .with_seed(42)
         # Excellent single-qubit gates
-        .with_average_p1_probability(0.00001)  # 0.001% error
+        .with_average_p1(0.00001)  # 0.001% error
         # Two-qubit gates are limiting factor
-        .with_average_p2_probability(0.003)  # 0.3% error
+        .with_average_p2(0.003)  # 0.3% error
+        # Apply configured idle noise for one time unit after each two-qubit gate
+        .with_p_idle_linear_rate(0.0001)
+        .with_idle_after_2q(1.0)
         # Asymmetric measurement
-        .with_meas_0_probability(0.001)  # Dark state error
-        .with_meas_1_probability(0.005)
+        .with_p_meas_0(0.001)  # Dark state error
+        .with_p_meas_1(0.005)
     )  # Bright state error
 
     results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)
@@ -171,8 +174,8 @@ def noiseless_gates_example() -> None:
     noise = (
         GeneralNoiseModelBuilder()
         .with_seed(42)
-        .with_p1_probability(0.01)  # High error for visibility
-        .with_p2_probability(0.01)
+        .with_p1(0.01)  # High error for visibility
+        .with_p2(0.01)
         .with_noiseless_gate("H")
     )  # H gates have no error
 
@@ -200,22 +203,17 @@ def scaled_noise_example() -> None:
 
     # Base noise model
     base_noise = (
-        GeneralNoiseModelBuilder()
-        .with_seed(42)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.002)
+        GeneralNoiseModelBuilder().with_seed(42).with_p1(0.001).with_p2(0.01).with_p_meas_0(0.002).with_p_meas_1(0.002)
     )
 
     # Same model scaled up 3x
     scaled_noise = (
         GeneralNoiseModelBuilder()
         .with_seed(42)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.002)
+        .with_p1(0.001)
+        .with_p2(0.01)
+        .with_p_meas_0(0.002)
+        .with_p_meas_1(0.002)
         .with_scale(3.0)
     )  # Triple all error rates!
 
@@ -262,9 +260,9 @@ def full_noise_model_example() -> None:
         # Make Hadamard noiseless
         .with_noiseless_gate("h")
         # State preparation
-        .with_prep_probability(0.001)
+        .with_p_prep(0.001)
         # Single-qubit with custom Pauli
-        .with_average_p1_probability(0.0001)
+        .with_average_p1(0.0001)
         .with_p1_pauli_model(
             {
                 "X": 0.2,
@@ -273,10 +271,10 @@ def full_noise_model_example() -> None:
             },
         )
         # Two-qubit gates
-        .with_average_p2_probability(0.001)
+        .with_average_p2(0.001)
         # Measurement errors
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.005)
+        .with_p_meas_0(0.002)
+        .with_p_meas_1(0.005)
     )
 
     results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().noise(noise).run(1000)

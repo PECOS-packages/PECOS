@@ -212,7 +212,7 @@ noise to. The simulated numbers are therefore the same experiment without the
 idle contribution, not an independent estimate of the same quantity.
 
 The simulator's noise builder spells its setters with explicit suffixes
-(`with_p1_probability`), while `NoiseParameters` names each setter after its
+(`with_p1`), while `NoiseParameters` names each setter after its
 field (`with_p1`). The two describe the same rates.
 
 <!--continuation-->
@@ -220,13 +220,7 @@ field (`with_p1`). The two describe the same rates.
 from pecos import general_noise, selene_engine, sim, stabilizer
 
 # The same gate noise the DEM was built with, so only the idle treatment differs.
-noise = (
-    general_noise()
-    .with_p1_probability(0.002)
-    .with_p2_probability(0.02)
-    .with_meas_probability(0.02)
-    .with_prep_probability(0.02)
-)
+noise = general_noise().with_p1(0.002).with_p2(0.02).with_p_meas(0.02).with_p_prep(0.02)
 
 results = sim(rep_code_memory).classical(selene_engine()).quantum(stabilizer()).qubits(7).noise(noise).seed(42).run(500)
 

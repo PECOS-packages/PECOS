@@ -279,10 +279,10 @@ fn shots_to_syndromes(
 /// Uniform circuit-level depolarizing noise for the engines/neo mapping.
 fn depolarizing_noise(p: f64) -> pecos_engines::noise::DepolarizingNoiseModelBuilder {
     pecos_engines::noise::DepolarizingNoiseModel::builder()
-        .with_prep_probability(p)
-        .with_meas_probability(p)
-        .with_p1_probability(p)
-        .with_p2_probability(p)
+        .with_p_prep(p)
+        .with_p_meas(p)
+        .with_p1(p)
+        .with_p2(p)
 }
 
 /// Run the experiment on one stack and return its `ShotVec`.

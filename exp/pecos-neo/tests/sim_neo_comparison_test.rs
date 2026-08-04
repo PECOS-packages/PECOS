@@ -283,7 +283,7 @@ fn test_sim_neo_vs_sim_depolarizing_noise() {
     let p1 = 0.05;
 
     // pecos-engines noise model builder
-    let engines_noise = EnginesNoiseBuilder::new().with_average_p1_probability(p1 / 1.5); // Scale factor for engines
+    let engines_noise = EnginesNoiseBuilder::new().with_average_p1(p1 / 1.5); // Scale factor for engines
 
     let qasm = r#"
         OPENQASM 2.0;
@@ -348,8 +348,8 @@ fn test_sim_neo_vs_sim_measurement_noise() {
 
     // pecos-engines noise model
     let engines_noise = EnginesNoiseBuilder::new()
-        .with_meas_0_probability(p_meas)
-        .with_meas_1_probability(p_meas);
+        .with_p_meas_0(p_meas)
+        .with_p_meas_1(p_meas);
 
     let qasm = r#"
         OPENQASM 2.0;
@@ -514,7 +514,7 @@ fn test_sim_neo_vs_sim_conditional_with_noise() {
         measure q[0] -> c[0];
     "#;
 
-    let engines_noise = EnginesNoiseBuilder::new().with_average_p1_probability(p1 / 1.5);
+    let engines_noise = EnginesNoiseBuilder::new().with_average_p1(p1 / 1.5);
 
     // Run with sim()
     let engines_results = sim(qasm_engine().qasm(qasm))
@@ -660,7 +660,7 @@ fn test_sim_neo_ergonomic_builder_direct() {
     let p1 = 0.10;
 
     // pecos-engines
-    let engines_noise = EnginesNoiseBuilder::new().with_average_p1_probability(p1 / 1.5);
+    let engines_noise = EnginesNoiseBuilder::new().with_average_p1(p1 / 1.5);
 
     let qasm = r#"
         OPENQASM 2.0;
@@ -890,7 +890,7 @@ fn test_sim_neo_noise_level_scaling() {
 
     for &p1 in &noise_levels {
         // pecos-engines
-        let engines_noise = EnginesNoiseBuilder::new().with_average_p1_probability(p1 / 1.5);
+        let engines_noise = EnginesNoiseBuilder::new().with_average_p1(p1 / 1.5);
 
         let qasm = r#"
             OPENQASM 2.0;
@@ -958,11 +958,11 @@ fn test_sim_neo_noise_level_scaling() {
 fn test_sim_neo_vs_sim_zero_noise() {
     // Explicitly test with noise model but zero error rates
     let engines_noise = EnginesNoiseBuilder::new()
-        .with_prep_probability(0.0)
-        .with_average_p1_probability(0.0)
-        .with_average_p2_probability(0.0)
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0);
+        .with_p_prep(0.0)
+        .with_average_p1(0.0)
+        .with_average_p2(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0);
 
     let qasm = r#"
         OPENQASM 2.0;
@@ -1029,7 +1029,7 @@ fn test_sim_neo_high_noise_chaos() {
     // Test behavior at high noise levels (near 50% depolarizing)
     let p1 = 0.40; // 40% depolarizing - very noisy
 
-    let engines_noise = EnginesNoiseBuilder::new().with_average_p1_probability(p1 / 1.5);
+    let engines_noise = EnginesNoiseBuilder::new().with_average_p1(p1 / 1.5);
 
     let qasm = r#"
         OPENQASM 2.0;
@@ -1092,7 +1092,7 @@ fn test_sim_neo_vs_sim_two_qubit_noise() {
     let p2 = 0.10;
 
     // pecos-engines noise model with scaling factor
-    let engines_noise = EnginesNoiseBuilder::new().with_average_p2_probability(p2 / 1.25); // Scale factor for engines
+    let engines_noise = EnginesNoiseBuilder::new().with_average_p2(p2 / 1.25); // Scale factor for engines
 
     let qasm = r#"
         OPENQASM 2.0;
@@ -1165,7 +1165,7 @@ fn test_sim_neo_vs_sim_preparation_noise() {
     let p_prep = 0.15;
 
     // pecos-engines noise model
-    let engines_noise = EnginesNoiseBuilder::new().with_prep_probability(p_prep);
+    let engines_noise = EnginesNoiseBuilder::new().with_p_prep(p_prep);
 
     let qasm = r#"
         OPENQASM 2.0;
@@ -1227,11 +1227,11 @@ fn test_sim_neo_vs_sim_combined_noise() {
 
     // pecos-engines noise model (with scaling factors)
     let engines_noise = EnginesNoiseBuilder::new()
-        .with_prep_probability(p_prep)
-        .with_average_p1_probability(p1 / 1.5)
-        .with_average_p2_probability(p2 / 1.25)
-        .with_meas_0_probability(p_meas)
-        .with_meas_1_probability(p_meas);
+        .with_p_prep(p_prep)
+        .with_average_p1(p1 / 1.5)
+        .with_average_p2(p2 / 1.25)
+        .with_p_meas_0(p_meas)
+        .with_p_meas_1(p_meas);
 
     // Bell state circuit with noise
     let qasm = r#"

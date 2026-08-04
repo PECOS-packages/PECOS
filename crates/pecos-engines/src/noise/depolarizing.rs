@@ -40,8 +40,8 @@ use std::any::Any;
 ///
 /// // Or use the builder pattern
 /// let noise_model = DepolarizingNoiseModel::builder()
-///     .with_prep_probability(0.01)
-///     .with_meas_probability(0.02)
+///     .with_p_prep(0.01)
+///     .with_p_meas(0.02)
 ///     .with_single_qubit_probability(0.03)
 ///     .with_two_qubit_probability(0.04)
 ///     .with_seed(42)
@@ -485,46 +485,46 @@ impl DepolarizingNoiseModelBuilder {
 
     /// Set the probability of error during preparation
     #[must_use]
-    pub fn with_prep_probability(mut self, probability: f64) -> Self {
+    pub fn with_p_prep(mut self, probability: f64) -> Self {
         self.p_prep = Some(probability);
         self
     }
 
     /// Set the probability of error during measurement
     #[must_use]
-    pub fn with_meas_probability(mut self, probability: f64) -> Self {
+    pub fn with_p_meas(mut self, probability: f64) -> Self {
         self.p_meas = Some(probability);
         self
     }
 
     /// Set the probability of error after single-qubit gates
     #[must_use]
-    pub fn with_p1_probability(mut self, probability: f64) -> Self {
+    pub fn with_p1(mut self, probability: f64) -> Self {
         self.p1 = Some(probability);
         self
     }
 
     /// Set the probability of error after single-qubit gates
     ///
-    /// This is an alias for `with_p1_probability` for API consistency.
+    /// This is an alias for `with_p1` for API consistency.
     #[must_use]
     pub fn with_single_qubit_probability(self, probability: f64) -> Self {
-        self.with_p1_probability(probability)
+        self.with_p1(probability)
     }
 
     /// Set the probability of error after two-qubit gates
     #[must_use]
-    pub fn with_p2_probability(mut self, probability: f64) -> Self {
+    pub fn with_p2(mut self, probability: f64) -> Self {
         self.p2 = Some(probability);
         self
     }
 
     /// Set the probability of error after two-qubit gates
     ///
-    /// This is an alias for `with_p2_probability` for API consistency.
+    /// This is an alias for `with_p2` for API consistency.
     #[must_use]
     pub fn with_two_qubit_probability(self, probability: f64) -> Self {
-        self.with_p2_probability(probability)
+        self.with_p2(probability)
     }
 
     /// Set the seed for the random number generator
@@ -697,10 +697,10 @@ mod tests {
     fn test_builder() {
         // Create a noise model with the builder
         let mut noise = DepolarizingNoiseModel::builder()
-            .with_prep_probability(0.1)
-            .with_meas_probability(0.2)
-            .with_p1_probability(0.3)
-            .with_p2_probability(0.4)
+            .with_p_prep(0.1)
+            .with_p_meas(0.2)
+            .with_p1(0.3)
+            .with_p2(0.4)
             .build();
 
         // Create a direct instance with the same probabilities
@@ -784,10 +784,10 @@ mod tests {
     fn test_builder_with_probability() {
         // Create a noise model with the builder
         let mut noise = DepolarizingNoiseModel::builder()
-            .with_prep_probability(0.01)
-            .with_meas_probability(0.02)
-            .with_p1_probability(0.03)
-            .with_p2_probability(0.04)
+            .with_p_prep(0.01)
+            .with_p_meas(0.02)
+            .with_p1(0.03)
+            .with_p2(0.04)
             .build();
 
         // Create a direct instance with the same probabilities

@@ -63,11 +63,11 @@
 //!
 //! // Using the builder with explicit error rates
 //! let noise_model = GeneralNoiseModel::builder()
-//!     .with_prep_probability(0.01)
-//!     .with_meas_0_probability(0.02)
-//!     .with_meas_1_probability(0.03)
-//!     .with_p1_probability(0.04)
-//!     .with_p2_probability(0.05)
+//!     .with_p_prep(0.01)
+//!     .with_p_meas_0(0.02)
+//!     .with_p_meas_1(0.03)
+//!     .with_p1(0.04)
+//!     .with_p2(0.05)
 //!     .with_seed(42)
 //!     .build();
 //! ```
@@ -282,11 +282,14 @@ pub struct GeneralNoiseModel {
     /// The distribution is stored as pre-computed, cached sampler instead of the `HashMap` that is the input.
     p2_pauli_model: TwoQubitWeightedSampler,
 
-    /// Idle noise after each two-qubit gate where noise will be applied stochastically based on
-    /// `p2_idle`.
+    /// Duration of the idle-noise site applied to each qubit after a two-qubit gate.
     ///
-    /// This may be useful for memory sweeping.
-    p2_idle: f64,
+    /// A value of `0.0` disables these sites. For a nonzero duration, the sites receive the same
+    /// configured idle mechanisms as a real [`GateType::Idle`] operation: linear stochastic noise
+    /// from `p_idle_linear_rate` and `p_idle_linear_model`, plus quadratic dephasing from
+    /// `p_idle_quadratic_rate` honoring `p_idle_coherent`. The duration is not itself an error
+    /// probability.
+    idle_after_2q: f64,
 
     /// Probability of flipping a 0 measurement to 1
     ///
@@ -820,25 +823,30 @@ impl GeneralNoiseModel {
         quadratic_rate: f64,
         builder: &mut ByteMessageBuilder,
     ) {
+        let qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
+        self.apply_idle_faults_for_duration(
+            linear_rate,
+            quadratic_rate,
+            gate.idle_duration(),
+            &qubits,
+            builder,
+        );
+    }
+
+    fn apply_idle_faults_for_duration(
+        &mut self,
+        linear_rate: f64,
+        quadratic_rate: f64,
+        duration: f64,
+        qubits: &[usize],
+        builder: &mut ByteMessageBuilder,
+    ) {
         if linear_rate > f64::EPSILON {
-            let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
-            self.apply_idle_linear_stochastic_noise(
-                linear_rate,
-                gate.idle_duration(),
-                &qubits_usize,
-                builder,
-            );
+            self.apply_idle_linear_stochastic_noise(linear_rate, duration, qubits, builder);
         }
 
         if quadratic_rate.abs() > f64::EPSILON {
-            // TODO: add test
-            let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
-            self.apply_idle_quadratic_dephasing(
-                quadratic_rate,
-                gate.idle_duration(),
-                &qubits_usize,
-                builder,
-            );
+            self.apply_idle_quadratic_dephasing(quadratic_rate, duration, qubits, builder);
         }
     }
 
@@ -1243,11 +1251,17 @@ impl GeneralNoiseModel {
 
         builder.add_gate_commands(&noise);
 
-        if self.p2_idle > f64::EPSILON {
-            self.apply_idle_linear_stochastic_noise(
-                self.p2_idle,
-                1.0,
-                &original_gate_qubits,
+        if self.idle_after_2q > f64::EPSILON {
+            let gate_qubits = gate
+                .qubits
+                .iter()
+                .map(|q| usize::from(*q))
+                .collect::<Vec<_>>();
+            self.apply_idle_faults_for_duration(
+                self.p_idle_linear_rate,
+                self.p_idle_quadratic_rate,
+                self.idle_after_2q,
+                &gate_qubits,
                 builder,
             );
         }
@@ -1532,11 +1546,11 @@ mod tests {
     fn test_builder() {
         // Create a noise model with the builder
         let noise = GeneralNoiseModel::builder()
-            .with_prep_probability(0.1)
-            .with_meas_0_probability(0.2)
-            .with_meas_1_probability(0.3)
-            .with_average_p1_probability(0.4)
-            .with_average_p2_probability(0.5)
+            .with_p_prep(0.1)
+            .with_p_meas_0(0.2)
+            .with_p_meas_1(0.3)
+            .with_average_p1(0.4)
+            .with_average_p2(0.5)
             .with_prep_leak_ratio(0.6)
             .build();
 
@@ -1691,7 +1705,7 @@ mod tests {
         // Create a noise model with 100% prep error probability and 100% leakage ratio
         // using the builder pattern
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(1.0)
+            .with_p_prep(1.0)
             .with_prep_leak_ratio(1.0)
             .build();
         let noise = model
@@ -1721,7 +1735,7 @@ mod tests {
 
         // Now, create a noise model with 100% prep error probability but 0% leakage ratio
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(1.0)
+            .with_p_prep(1.0)
             .with_prep_leak_ratio(0.0)
             .build();
         let noise = model
@@ -1744,11 +1758,11 @@ mod tests {
 
         // Test builder configuration
         let noise = GeneralNoiseModel::builder()
-            .with_prep_probability(0.1)
-            .with_meas_0_probability(0.1)
-            .with_meas_1_probability(0.1)
-            .with_p1_probability(0.1)
-            .with_p2_probability(0.1)
+            .with_p_prep(0.1)
+            .with_p_meas_0(0.1)
+            .with_p_meas_1(0.1)
+            .with_p1(0.1)
+            .with_p2(0.1)
             .with_prep_leak_ratio(0.7)
             .build();
 
@@ -1765,11 +1779,11 @@ mod tests {
     fn test_leaked_qubit_measurement_behavior() {
         // Create a noise model with no spontaneous errors
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         // Manually mark qubit 0 as leaked
@@ -1800,11 +1814,11 @@ mod tests {
     fn test_repeated_measurement_of_leaked_qubit() {
         // Create a noise model with no spontaneous errors
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         // Manually mark qubit 0 as leaked
@@ -1847,11 +1861,11 @@ mod tests {
 
         // Create a noise model with no spontaneous errors
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
         let noise = model
             .as_any_mut()
@@ -1914,8 +1928,8 @@ mod tests {
 
         // Create a noise model with biased measurement probabilities
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.3) // 30% chance of flipping 0 to 1
-            .with_meas_1_probability(0.2) // 20% chance of flipping 1 to 0
+            .with_p_meas_0(0.3) // 30% chance of flipping 0 to 1
+            .with_p_meas_1(0.2) // 20% chance of flipping 1 to 0
             .with_seed(42) // Use fixed seed for deterministic test
             .build();
         let noise = model
@@ -1982,8 +1996,8 @@ mod tests {
 
         // Create a noise model with no measurement errors
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
             .build();
         let noise = model
             .as_any_mut()
@@ -2041,8 +2055,8 @@ mod tests {
         // Create a noise model with strong asymmetric bias
         // 80% chance of flipping 0->1, only 10% chance of flipping 1->0
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.8) // Strong bias: 0 -> 1
-            .with_meas_1_probability(0.1) // Weak bias: 1 -> 0
+            .with_p_meas_0(0.8) // Strong bias: 0 -> 1
+            .with_p_meas_1(0.1) // Weak bias: 1 -> 0
             .with_seed(12345) // Fixed seed for reproducibility
             .build();
         let noise = model
@@ -2135,8 +2149,8 @@ mod tests {
         // Test with extreme biases to make the effect very clear
         // Case 1: Always flip 0->1, never flip 1->0
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(1.0) // Always flip 0->1
-            .with_meas_1_probability(0.0) // Never flip 1->0
+            .with_p_meas_0(1.0) // Always flip 0->1
+            .with_p_meas_1(0.0) // Never flip 1->0
             .build();
         let noise = model
             .as_any_mut()
@@ -2172,8 +2186,8 @@ mod tests {
 
         // Case 2: Never flip 0->1, always flip 1->0
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.0) // Never flip 0->1
-            .with_meas_1_probability(1.0) // Always flip 1->0
+            .with_p_meas_0(0.0) // Never flip 0->1
+            .with_p_meas_1(1.0) // Always flip 1->0
             .build();
         let noise = model
             .as_any_mut()
@@ -2216,11 +2230,11 @@ mod tests {
 
         // Create a noise model with no errors (deterministic)
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         let noise = model
@@ -2283,11 +2297,11 @@ mod tests {
 
         // Create a noise model with no measurement errors (deterministic)
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         let noise = model
@@ -2336,11 +2350,11 @@ mod tests {
 
         // Create a noise model with no measurement errors (deterministic)
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         let noise = model
@@ -2396,8 +2410,8 @@ mod tests {
 
         // Test that leaked qubits are forced to 1, then bias is applied
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.0) // No 0->1 flips
-            .with_meas_1_probability(0.5) // 50% chance to flip 1->0
+            .with_p_meas_0(0.0) // No 0->1 flips
+            .with_p_meas_1(0.5) // 50% chance to flip 1->0
             .with_seed(42)
             .build();
         let noise = model
@@ -2612,11 +2626,11 @@ mod tests {
     fn test_parameter_scaling() {
         // Test that scaling factors are applied correctly - use builder pattern
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.01)
-            .with_meas_0_probability(0.01)
-            .with_meas_1_probability(0.01)
-            .with_average_p1_probability(0.01)
-            .with_average_p2_probability(0.01)
+            .with_p_prep(0.01)
+            .with_p_meas_0(0.01)
+            .with_p_meas_1(0.01)
+            .with_average_p1(0.01)
+            .with_average_p2(0.01)
             .with_scale(2.0)
             .with_p1_scale(3.0)
             .with_p2_scale(4.0)
@@ -2686,11 +2700,11 @@ mod tests {
     fn test_builder_with_scaling() {
         // Test that builder applies scaling factors correctly
         let noise = GeneralNoiseModel::builder()
-            .with_prep_probability(0.01)
-            .with_meas_0_probability(0.01)
-            .with_meas_1_probability(0.01)
-            .with_average_p1_probability(0.01)
-            .with_average_p2_probability(0.01)
+            .with_p_prep(0.01)
+            .with_p_meas_0(0.01)
+            .with_p_meas_1(0.01)
+            .with_average_p1(0.01)
+            .with_average_p2(0.01)
             .with_prep_leak_ratio(0.01)
             .with_scale(2.0)
             .with_p1_scale(3.0)
@@ -2796,6 +2810,93 @@ mod tests {
         // Expected values: 0.1 * 3.0 (emission) * 2.0 (overall) = 0.6
         assert!((noise.p1_emission_ratio - 0.6).abs() < 1e-6);
         assert!((noise.p2_emission_ratio - 0.6).abs() < 1e-6);
+    }
+
+    fn after_2q_outputs(
+        duration: f64,
+        linear_rate: f64,
+        quadratic_rate: f64,
+        coherent: bool,
+        seed: u64,
+        shots: usize,
+    ) -> Vec<Vec<Gate>> {
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.cx(&[(0, 1)]);
+        let input = input_builder.build();
+
+        let mut model = GeneralNoiseModel::builder()
+            .with_p2(0.0)
+            .with_p_idle_linear_rate(linear_rate)
+            .with_p_idle_quadratic_rate(quadratic_rate)
+            .with_p_idle_coherent(coherent)
+            .with_idle_after_2q(duration)
+            .with_seed(seed)
+            .build();
+
+        (0..shots)
+            .map(|_| {
+                model
+                    .apply_noise_on_start(&input)
+                    .unwrap()
+                    .quantum_ops()
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    fn emitted_after_2q_noise_count(outputs: &[Vec<Gate>]) -> usize {
+        outputs
+            .iter()
+            .flatten()
+            .filter(|gate| gate.gate_type != GateType::CX)
+            .count()
+    }
+
+    #[test]
+    fn idle_after_2q_duration_scales_linear_noise() {
+        let smaller = after_2q_outputs(0.1, 1.0, 0.0, false, 42, 1_000);
+        let larger = after_2q_outputs(1.0, 1.0, 0.0, false, 42, 1_000);
+
+        assert!(
+            emitted_after_2q_noise_count(&larger) > emitted_after_2q_noise_count(&smaller),
+            "a larger after-2q idle duration should emit strictly more idle-noise gates"
+        );
+    }
+
+    #[test]
+    fn idle_after_2q_applies_quadratic_dephasing() {
+        let outputs = after_2q_outputs(0.5, 0.0, 0.25, true, 42, 1);
+        let rz_gate = outputs
+            .iter()
+            .flatten()
+            .find(|gate| gate.gate_type == GateType::RZ)
+            .expect("quadratic coherent dephasing should emit an RZ gate");
+
+        assert_eq!(rz_gate.qubits.len(), 2);
+        assert!(rz_gate.qubits.contains(&QubitId(0)));
+        assert!(rz_gate.qubits.contains(&QubitId(1)));
+    }
+
+    #[test]
+    fn zero_idle_after_2q_duration_emits_no_idle_noise() {
+        let outputs = after_2q_outputs(0.0, 1.0, 0.0, false, 42, 100);
+
+        assert_eq!(emitted_after_2q_noise_count(&outputs), 0);
+    }
+
+    #[test]
+    fn zero_idle_rates_emit_no_after_2q_idle_noise() {
+        let outputs = after_2q_outputs(1.0, 0.0, 0.0, false, 42, 100);
+
+        assert_eq!(emitted_after_2q_noise_count(&outputs), 0);
+    }
+
+    #[test]
+    fn idle_after_2q_is_deterministic_for_same_seed() {
+        let first = after_2q_outputs(0.5, 0.4, 0.0, false, 42, 100);
+        let second = after_2q_outputs(0.5, 0.4, 0.0, false, 42, 100);
+
+        assert_eq!(first, second);
     }
 
     #[test]
@@ -2910,7 +3011,7 @@ mod tests {
     #[allow(clippy::unreadable_literal)]
     fn test_rzz_error_rate() {
         let mut model = GeneralNoiseModel::builder()
-            .with_average_p2_probability(0.1)
+            .with_average_p2(0.1)
             .with_p2_angle_params(0.1, 0.0, 0.25, 0.0)
             .with_p2_angle_power(1.0)
             .build();
@@ -2939,7 +3040,7 @@ mod tests {
 
         // Test quadratic scaling
         let mut model = GeneralNoiseModel::builder()
-            .with_average_p2_probability(0.1)
+            .with_average_p2(0.1)
             .with_p2_angle_params(0.1, 0.0, 0.25, 0.0)
             .with_p2_angle_power(2.0)
             .build();
@@ -2960,7 +3061,7 @@ mod tests {
     fn test_noiseless_gates() {
         // Create a noise model and mark RZ as a noiseless gate
         let mut model = GeneralNoiseModel::builder()
-            .with_p1_probability(0.5) // Use a moderate valid probability
+            .with_p1(0.5) // Use a moderate valid probability
             .with_noiseless_gate(GateType::RZ)
             .build();
         let noise = model
@@ -3065,7 +3166,7 @@ mod tests {
     #[test]
     fn test_rzz_error_rate_debug() {
         let mut model = GeneralNoiseModel::builder()
-            .with_average_p2_probability(0.1)
+            .with_average_p2(0.1)
             .with_p2_angle_params(0.1, 0.0, 0.25, 0.0)
             .build();
         let noise = model
@@ -3090,7 +3191,7 @@ mod tests {
 
         // Check scaled przz error rate
         let mut model = GeneralNoiseModel::builder()
-            .with_average_p2_probability(0.1)
+            .with_average_p2(0.1)
             .with_p2_angle_params(0.1, 0.0, 0.25, 0.0)
             .with_scale(2.0)
             .build();
@@ -3140,11 +3241,11 @@ mod tests {
 
         // Create a noise model with custom Pauli and emission models using the builder
         let model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.01)
-            .with_meas_0_probability(0.01)
-            .with_meas_1_probability(0.01)
-            .with_p1_probability(0.1)
-            .with_p2_probability(0.2)
+            .with_p_prep(0.01)
+            .with_p_meas_0(0.01)
+            .with_p_meas_1(0.01)
+            .with_p1(0.1)
+            .with_p2(0.2)
             .with_p1_pauli_model(&custom_p1_pauli)
             .with_p1_emission_model(&custom_p1_emission)
             .with_p2_pauli_model(&custom_p2_pauli)

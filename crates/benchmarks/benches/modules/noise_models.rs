@@ -97,8 +97,8 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
         // Benchmark mixed gate set (more realistic)
         group.bench_with_input(BenchmarkId::new("mixed", num_gates), &num_gates, |b, &n| {
             let mut noise = DepolarizingNoiseModel::builder()
-                .with_prep_probability(0.001)
-                .with_meas_probability(0.001)
+                .with_p_prep(0.001)
+                .with_p_meas(0.001)
                 .with_single_qubit_probability(0.0005)
                 .with_two_qubit_probability(0.002)
                 .with_seed(42)
@@ -130,8 +130,8 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
             b.iter(|| {
                 // Recreate with seed for reproducibility
                 noise = DepolarizingNoiseModel::builder()
-                    .with_prep_probability(0.001)
-                    .with_meas_probability(0.001)
+                    .with_p_prep(0.001)
+                    .with_p_meas(0.001)
                     .with_single_qubit_probability(0.0005)
                     .with_two_qubit_probability(0.002)
                     .with_seed(42)

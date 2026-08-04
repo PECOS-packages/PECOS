@@ -10,10 +10,10 @@ fn run_basic_noise_example(qasm: &str) -> Result<(), Box<dyn std::error::Error>>
     println!("Example 1: Basic noise configuration");
     let basic_noise = GeneralNoiseModel::builder()
         .with_seed(42)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.002);
+        .with_p1(0.001)
+        .with_p2(0.01)
+        .with_p_meas_0(0.002)
+        .with_p_meas_1(0.002);
 
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
@@ -68,11 +68,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let complex_noise = GeneralNoiseModel::builder()
         .with_seed(123)
         .with_scale(1.5) // Scale all error rates by 1.5x
-        .with_average_p1_probability(0.001)
+        .with_average_p1(0.001)
         .with_p1_pauli_model(&p1_pauli)
-        .with_average_p2_probability(0.01)
+        .with_average_p2(0.01)
         .with_p2_pauli_model(&p2_pauli)
-        .with_prep_probability(0.001)
+        .with_p_prep(0.001)
         .with_leakage_scale(0.1)
         .with_emission_scale(0.8);
 
@@ -89,8 +89,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let selective_noise = GeneralNoiseModel::builder()
         .with_seed(42)
-        .with_p1_probability(0.1) // High single-qubit error
-        .with_p2_probability(0.1) // High two-qubit error
+        .with_p1(0.1) // High single-qubit error
+        .with_p2(0.1) // High two-qubit error
         .with_noiseless_gate(pecos_core::prelude::GateType::H) // H gates have no noise
         .with_noiseless_gate(pecos_core::prelude::GateType::MZ); // Measurements have no noise
 
@@ -110,13 +110,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_scale(1.2)
         .with_leakage_scale(0.2)
         .with_emission_scale(0.7)
-        .with_prep_probability(0.0005)
-        .with_p1_probability(0.001)
-        .with_average_p1_probability(0.0008)
-        .with_p2_probability(0.01)
-        .with_average_p2_probability(0.008)
-        .with_meas_0_probability(0.001)
-        .with_meas_1_probability(0.003)
+        .with_p_prep(0.0005)
+        .with_p1(0.001)
+        .with_average_p1(0.0008)
+        .with_p2(0.01)
+        .with_average_p2(0.008)
+        .with_p_meas_0(0.001)
+        .with_p_meas_1(0.003)
         .with_p_idle_coherent(false)
         .with_p_idle_linear_rate(0.0001)
         .with_noiseless_gate(GateType::H)

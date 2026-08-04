@@ -163,11 +163,11 @@ fn test_single_qubit_depolarizing_comparison() {
 
     // GeneralNoiseModel setup
     let general_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0)
-        .with_average_p1_probability(average_p1)
-        .with_average_p2_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0)
+        .with_average_p1(average_p1)
+        .with_average_p2(0.0)
         .with_p1_emission_ratio(0.0) // No leakage
         .with_seed(42)
         .build();
@@ -227,11 +227,11 @@ fn test_two_qubit_depolarizing_comparison() {
 
     // GeneralNoiseModel setup
     let general_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0)
-        .with_average_p1_probability(0.0)
-        .with_average_p2_probability(average_p2)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0)
+        .with_average_p1(0.0)
+        .with_average_p2(average_p2)
         .with_p2_emission_ratio(0.0) // No leakage
         .with_seed(42)
         .build();
@@ -296,11 +296,11 @@ fn test_measurement_error_comparison() {
 
     // GeneralNoiseModel setup
     let general_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(p_meas_0)
-        .with_meas_1_probability(0.0)
-        .with_average_p1_probability(0.0)
-        .with_average_p2_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(p_meas_0)
+        .with_p_meas_1(0.0)
+        .with_average_p1(0.0)
+        .with_average_p2(0.0)
         .with_seed(42)
         .build();
 
@@ -361,12 +361,12 @@ fn test_preparation_error_comparison() {
 
     // GeneralNoiseModel setup
     let general_model = GeneralNoiseModel::builder()
-        .with_prep_probability(p_prep)
+        .with_p_prep(p_prep)
         .with_prep_leak_ratio(0.0) // No leakage
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0)
-        .with_average_p1_probability(0.0)
-        .with_average_p2_probability(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0)
+        .with_average_p1(0.0)
+        .with_average_p2(0.0)
         .with_seed(42)
         .build();
 
@@ -418,12 +418,12 @@ fn test_combined_noise_comparison() {
 
     // GeneralNoiseModel setup
     let general_model = GeneralNoiseModel::builder()
-        .with_prep_probability(p_prep)
+        .with_p_prep(p_prep)
         .with_prep_leak_ratio(0.0)
-        .with_meas_0_probability(p_meas)
-        .with_meas_1_probability(p_meas)
-        .with_average_p1_probability(p1 / 1.5)
-        .with_average_p2_probability(p2 / 1.25)
+        .with_p_meas_0(p_meas)
+        .with_p_meas_1(p_meas)
+        .with_average_p1(p1 / 1.5)
+        .with_average_p2(p2 / 1.25)
         .with_p1_emission_ratio(0.0)
         .with_p2_emission_ratio(0.0)
         .with_seed(42)
@@ -503,12 +503,12 @@ fn test_general_noise_model_builder_comparison() {
 
     // Original GeneralNoiseModel from pecos-engines
     let general_model = GeneralNoiseModel::builder()
-        .with_prep_probability(p_prep)
+        .with_p_prep(p_prep)
         .with_prep_leak_ratio(0.0)
-        .with_meas_0_probability(p_meas_0)
-        .with_meas_1_probability(p_meas_1)
-        .with_average_p1_probability(p1 / 1.5)
-        .with_average_p2_probability(p2 / 1.25)
+        .with_p_meas_0(p_meas_0)
+        .with_p_meas_1(p_meas_1)
+        .with_average_p1(p1 / 1.5)
+        .with_average_p2(p2 / 1.25)
         .with_p1_emission_ratio(0.0)
         .with_p2_emission_ratio(0.0)
         .with_seed(42)

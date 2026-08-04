@@ -103,7 +103,7 @@ impl Default for GeneralNoiseModel {
             p2_angle_c: 0.0,
             p2_angle_d: 1.0,
             p2_angle_power: 1.0,
-            p2_idle: 0.0,
+            idle_after_2q: 0.0,
             leaked_qubits: BTreeSet::new(),
             rng: NoiseRng::default(),
             prepared_qubits: BTreeSet::new(),

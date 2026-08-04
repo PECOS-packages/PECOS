@@ -49,11 +49,11 @@ fn create_noise_model() -> GeneralNoiseModel {
 
     // Use builder to construct the model with all parameters set
     let mut model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.1)
-        .with_meas_0_probability(0.1)
-        .with_meas_1_probability(0.1)
-        .with_p1_probability(0.1)
-        .with_p2_probability(0.1)
+        .with_p_prep(0.1)
+        .with_p_meas_0(0.1)
+        .with_p_meas_1(0.1)
+        .with_p1(0.1)
+        .with_p2(0.1)
         .with_p1_pauli_model(&single_qubit_weights)
         .with_p2_pauli_model(&two_qubit_weights)
         .with_p1_emission_ratio(0.5)
@@ -472,11 +472,11 @@ fn test_deterministic_measurement() {
 
     // Create a noise model with significant measurement error
     let model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.2)
-        .with_meas_1_probability(0.2)
-        .with_average_p1_probability(0.1)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.2)
+        .with_p_meas_1(0.2)
+        .with_average_p1(0.1)
+        .with_average_p2(0.1)
         .build();
 
     // Box the model for use with the NoiseModel trait
@@ -600,14 +600,14 @@ fn test_comprehensive_noise_determinism() {
     // Create a noise model with all types of noise
     let model = GeneralNoiseModel::builder()
         // Preparation errors
-        .with_prep_probability(0.05)
+        .with_p_prep(0.05)
         .with_prep_leak_ratio(0.2)
         // Measurement errors
-        .with_meas_0_probability(0.1)
-        .with_meas_1_probability(0.15)
+        .with_p_meas_0(0.1)
+        .with_p_meas_1(0.15)
         // Gate errors
-        .with_average_p1_probability(0.2)
-        .with_average_p2_probability(0.1)
+        .with_average_p1(0.2)
+        .with_average_p2(0.1)
         // Leakage and emission errors
         .with_p1_emission_ratio(0.3)
         .with_p2_emission_ratio(0.3)
@@ -736,11 +736,11 @@ fn test_long_running_determinism() {
 
     // Create a noise model with moderate error rates
     let model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.02)
-        .with_meas_1_probability(0.02)
-        .with_average_p1_probability(0.1)
-        .with_average_p2_probability(0.05)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.02)
+        .with_p_meas_1(0.02)
+        .with_average_p1(0.1)
+        .with_average_p2(0.05)
         .build();
 
     // Box the model

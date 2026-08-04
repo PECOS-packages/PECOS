@@ -29,10 +29,10 @@ class TestDirectBuilder:
         builder = (
             GeneralNoiseModelBuilder()
             .with_seed(42)
-            .with_p1_probability(0.001)
-            .with_p2_probability(0.01)
-            .with_meas_0_probability(0.002)
-            .with_meas_1_probability(0.002)
+            .with_p1(0.001)
+            .with_p2(0.01)
+            .with_p_meas_0(0.002)
+            .with_p_meas_1(0.002)
         )
 
         # Use sim() with noise builder
@@ -59,7 +59,7 @@ class TestDirectBuilder:
         builder = (
             GeneralNoiseModelBuilder()
             .with_seed(42)
-            .with_p1_probability(0.1)  # High error rate for testing
+            .with_p1(0.1)  # High error rate for testing
             .with_p1_pauli_model({"X": 0.5, "Y": 0.3, "Z": 0.2})
         )
 
@@ -90,7 +90,7 @@ class TestDirectBuilder:
         prog = Qasm.from_string(qasm)
 
         # Create builder with fluent API
-        builder = GeneralNoiseModelBuilder().with_seed(42).with_p2_probability(0.01)
+        builder = GeneralNoiseModelBuilder().with_seed(42).with_p2(0.01)
 
         # Use sim() with direct method chaining
         results = sim(prog).seed(42).noise(builder).run(100).to_dict()
@@ -103,7 +103,7 @@ class TestDirectBuilder:
         """Test that builder methods validate parameters."""
         # Test validation - Rust panics raise BaseException with "PanicException" in the name
         with pytest.raises(BaseException, match="Probability must be between 0 and 1"):
-            GeneralNoiseModelBuilder().with_p1_probability(1.5)
+            GeneralNoiseModelBuilder().with_p1(1.5)
 
         # Scale validation happens at build time, not when setting the value
         # So we need to build and use the noise model to trigger validation
@@ -133,8 +133,8 @@ class TestDirectBuilder:
         # Create builder
         builder = GeneralNoiseModelBuilder()
         builder.with_seed(42)
-        builder.with_p1_probability(0.001)
-        builder.with_p2_probability(0.01)
+        builder.with_p1(0.001)
+        builder.with_p2(0.01)
 
         # Test that builder can be used directly in .noise() method
         results = sim(prog).noise(builder).seed(42).run(100).to_dict()

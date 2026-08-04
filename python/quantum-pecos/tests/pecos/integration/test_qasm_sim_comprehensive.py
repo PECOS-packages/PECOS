@@ -258,11 +258,7 @@ class TestQasmSimComprehensive:
             GeneralNoiseModelBuilder(),
             depolarizing_noise().with_uniform_probability(0.1),
             biased_depolarizing_noise().with_uniform_probability(0.033),
-            depolarizing_noise()
-            .with_prep_probability(0.1)
-            .with_meas_probability(0.1)
-            .with_p1_probability(0.1)
-            .with_p2_probability(0.1),
+            depolarizing_noise().with_p_prep(0.1).with_p_meas(0.1).with_p1(0.1).with_p2(0.1),
         ]
 
         for noise_builder in noise_builders:

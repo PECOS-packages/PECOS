@@ -957,10 +957,10 @@ def _run_gate_backend_result_dict(
             use_coherent_idle = False
             noise_model = (
                 pecos.general_noise()
-                .with_prep_probability(physical_error_rate * p_prep_scale)
-                .with_meas_probability(physical_error_rate * p_meas_scale)
-                .with_p1_probability(physical_error_rate * p1_scale)
-                .with_p2_probability(physical_error_rate)
+                .with_p_prep(physical_error_rate * p_prep_scale)
+                .with_p_meas(physical_error_rate * p_meas_scale)
+                .with_p1(physical_error_rate * p1_scale)
+                .with_p2(physical_error_rate)
                 .with_leakage_scale(0.0)
                 .with_p_idle_coherent(use_coherent_idle)
                 .with_seed(seed)

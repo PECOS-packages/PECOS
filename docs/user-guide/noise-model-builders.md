@@ -28,8 +28,8 @@ measure q -> c;
 noise = (
     GeneralNoiseModelBuilder()
     .with_seed(42)  # Reproducible randomness
-    .with_p1_probability(0.001)  # Single-qubit gate error
-    .with_p2_probability(0.01)
+    .with_p1(0.001)  # Single-qubit gate error
+    .with_p2(0.01)
 )  # Two-qubit gate error
 
 # Use with sim()
@@ -46,12 +46,12 @@ The `GeneralNoiseModelBuilder` provides methods to configure all aspects of quan
 noise = (
     GeneralNoiseModelBuilder()
     # Gate errors
-    .with_p1_probability(0.001)  # Single-qubit gate error
-    .with_p2_probability(0.01)  # Two-qubit gate error
+    .with_p1(0.001)  # Single-qubit gate error
+    .with_p2(0.01)  # Two-qubit gate error
     # State preparation and measurement
-    .with_prep_probability(0.0005)  # State preparation error
-    .with_meas_0_probability(0.002)  # Measurement 0→1 flip
-    .with_meas_1_probability(0.003)
+    .with_p_prep(0.0005)  # State preparation error
+    .with_p_meas_0(0.002)  # Measurement 0→1 flip
+    .with_p_meas_1(0.003)
 )  # Measurement 1→0 flip
 ```
 
@@ -61,16 +61,10 @@ The builder supports both "total" and "average" error probabilities:
 
 ```python
 # Average probability (recommended for physical intuition)
-noise = (
-    GeneralNoiseModelBuilder()
-    .with_average_p1_probability(0.001)  # Converted to total internally
-    .with_average_p2_probability(0.01)
-)
+noise = GeneralNoiseModelBuilder().with_average_p1(0.001).with_average_p2(0.01)  # Converted to total internally
 
 # Total probability (used internally by the engine)
-noise = (
-    GeneralNoiseModelBuilder().with_p1_probability(0.00133).with_p2_probability(0.0133)  # Total for single-qubit
-)  # Total for two-qubit
+noise = GeneralNoiseModelBuilder().with_p1(0.00133).with_p2(0.0133)  # Total for single-qubit  # Total for two-qubit
 ```
 
 **Note**: Average probabilities are more intuitive as they represent the actual error rate per gate. Total probabilities include a conversion factor based on the number of Pauli operators.
@@ -120,8 +114,8 @@ Make specific gates ideal (no noise):
 ```python
 noise = (
     GeneralNoiseModelBuilder()
-    .with_p1_probability(0.001)
-    .with_p2_probability(0.01)
+    .with_p1(0.001)
+    .with_p2(0.01)
     # Single gate
     .with_noiseless_gate("H")
     # Multiple gates
@@ -134,13 +128,27 @@ noise = (
 ### Idle Locations
 
 `Idle` gates are timing markers by default. They do not silently inherit
-single-qubit gate noise from `p1` or `with_p1_probability(...)`.
+single-qubit gate noise from `p1` or `with_p1(...)`.
 
-This is intentional: adding an idle location changes circuit timing, while
-adding idle noise changes the physical noise model. To model idle decoherence,
-use an API that explicitly attaches idle noise or an explicit channel to idle
-locations. This keeps scheduling changes from accidentally changing the noise
-model.
+Configure idle decoherence with `with_p_idle_linear_rate(...)` and optionally
+`with_p_idle_linear_model(...)`, or with `with_p_idle_quadratic_rate(...)` and
+`with_p_idle_coherent(...)`. The rates are combined with each `Idle` gate's
+duration.
+
+To add the same kind of idle-noise site to both qubits after every two-qubit
+gate, set its duration with `with_idle_after_2q(...)`:
+
+```python
+noise = GeneralNoiseModelBuilder().with_p_idle_linear_rate(0.01).with_idle_after_2q(1.0)
+```
+
+The duration only chooses where and how long idling occurs. It is not a
+standalone probability: all configured linear and quadratic idle mechanisms
+apply at these sites just as they do at a scheduled `Idle` gate. A duration of
+`0.0` disables the after-two-qubit sites. Consequently, code that previously
+used `with_p2_idle(0.01)` without a linear idle rate now produces no after-2q
+idle noise; the equivalent configuration is
+`with_p_idle_linear_rate(0.01).with_idle_after_2q(1.0)`.
 
 ## Common Noise Model Examples
 
@@ -151,12 +159,7 @@ Simple uniform noise on all operations:
 ```python
 # Uniform depolarizing noise
 noise = (
-    GeneralNoiseModelBuilder()
-    .with_p1_probability(0.001)
-    .with_p2_probability(0.01)
-    .with_prep_probability(0.001)
-    .with_meas_0_probability(0.001)
-    .with_meas_1_probability(0.001)
+    GeneralNoiseModelBuilder().with_p1(0.001).with_p2(0.01).with_p_prep(0.001).with_p_meas_0(0.001).with_p_meas_1(0.001)
 )
 ```
 
@@ -169,12 +172,12 @@ noise = (
     GeneralNoiseModelBuilder()
     .with_seed(42)
     # Gate errors (two-qubit gates are typically 10x worse)
-    .with_average_p1_probability(0.0001)  # 0.01% single-qubit error
-    .with_average_p2_probability(0.001)  # 0.1% two-qubit error
+    .with_average_p1(0.0001)  # 0.01% single-qubit error
+    .with_average_p2(0.001)  # 0.1% two-qubit error
     # State prep and measurement (often dominant errors)
-    .with_prep_probability(0.001)  # 0.1% prep error
-    .with_meas_0_probability(0.01)  # 1% false positive
-    .with_meas_1_probability(0.005)
+    .with_p_prep(0.001)  # 0.1% prep error
+    .with_p_meas_0(0.01)  # 1% false positive
+    .with_p_meas_1(0.005)
 )  # 0.5% false negative
 ```
 
@@ -187,14 +190,14 @@ noise = (
     GeneralNoiseModelBuilder()
     .with_seed(42)
     # Excellent single-qubit gates
-    .with_average_p1_probability(0.00001)  # 0.001% error
+    .with_average_p1(0.00001)  # 0.001% error
     # Two-qubit gates are the limiting factor
-    .with_average_p2_probability(0.003)  # 0.3% error
+    .with_average_p2(0.003)  # 0.3% error
     # State preparation
-    .with_prep_probability(0.001)  # 0.1% error
+    .with_p_prep(0.001)  # 0.1% error
     # Asymmetric measurement (bright/dark state detection)
-    .with_meas_0_probability(0.001)  # Dark state error
-    .with_meas_1_probability(0.005)
+    .with_p_meas_0(0.001)  # Dark state error
+    .with_p_meas_1(0.005)
 )  # Bright state error (higher)
 ```
 
@@ -206,7 +209,7 @@ Model with biased errors (e.g., more phase errors than bit flips):
 noise = (
     GeneralNoiseModelBuilder()
     # Biased single-qubit errors
-    .with_average_p1_probability(0.001)
+    .with_average_p1(0.001)
     .with_p1_pauli_model(
         {
             "X": 0.1,  # 10% bit flips
@@ -215,7 +218,7 @@ noise = (
         }
     )
     # Biased two-qubit errors
-    .with_average_p2_probability(0.01)
+    .with_average_p2(0.01)
     .with_p2_pauli_model(
         {
             "IZ": 0.3,  # 30% phase on second qubit
@@ -259,9 +262,9 @@ noise = (
     # Make Hadamard gates perfect
     .with_noiseless_gate("H")
     # State preparation
-    .with_prep_probability(0.001)
+    .with_p_prep(0.001)
     # Single-qubit gates with biased errors
-    .with_average_p1_probability(0.0001)
+    .with_average_p1(0.0001)
     .with_p1_pauli_model(
         {
             "X": 0.2,
@@ -270,10 +273,10 @@ noise = (
         }
     )
     # Two-qubit gates
-    .with_average_p2_probability(0.001)
+    .with_average_p2(0.001)
     # Asymmetric measurement
-    .with_meas_0_probability(0.002)
-    .with_meas_1_probability(0.005)
+    .with_p_meas_0(0.002)
+    .with_p_meas_1(0.005)
 )
 
 # Run simulation
@@ -314,11 +317,11 @@ simple = depolarizing_noise().with_uniform_probability(0.001)
 # Equivalent with GeneralNoiseModelBuilder
 builder = (
     GeneralNoiseModelBuilder()
-    .with_p1_probability(0.001)
-    .with_p2_probability(0.001)
-    .with_prep_probability(0.001)
-    .with_meas_0_probability(0.001)
-    .with_meas_1_probability(0.001)
+    .with_p1(0.001)
+    .with_p2(0.001)
+    .with_p_prep(0.001)
+    .with_p_meas_0(0.001)
+    .with_p_meas_1(0.001)
 )
 
 # Builder advantages:

@@ -507,11 +507,7 @@ def test_tiny_syndrome_memory_p2_only_matches_between_selene_backends_statistica
         .quantum(pecos.stabilizer())
         .qubits(2)
         .noise(
-            pecos.depolarizing_noise()
-            .with_p1_probability(0.0)
-            .with_p2_probability(p2)
-            .with_meas_probability(0.0)
-            .with_prep_probability(0.0),
+            pecos.depolarizing_noise().with_p1(0.0).with_p2(p2).with_p_meas(0.0).with_p_prep(0.0),
         )
         .seed(123)
         .run(shots)

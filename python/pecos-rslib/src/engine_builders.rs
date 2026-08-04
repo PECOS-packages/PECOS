@@ -887,37 +887,37 @@ impl PyGeneralNoiseModelBuilder {
     }
 
     /// Set single-qubit gate error probability
-    fn with_p1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p1_probability(p),
+            inner: self.inner.clone().with_p1(p),
         })
     }
 
     /// Set two-qubit gate error probability
-    fn with_p2_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p2(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p2_probability(p),
+            inner: self.inner.clone().with_p2(p),
         })
     }
 
     /// Set preparation error probability
-    fn with_prep_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_prep(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_prep_probability(p),
+            inner: self.inner.clone().with_p_prep(p),
         })
     }
 
     /// Set measurement error probability for |0⟩ state
-    fn with_meas_0_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas_0(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_0_probability(p),
+            inner: self.inner.clone().with_p_meas_0(p),
         })
     }
 
     /// Set measurement error probability for |1⟩ state
-    fn with_meas_1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas_1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_1_probability(p),
+            inner: self.inner.clone().with_p_meas_1(p),
         })
     }
 
@@ -974,41 +974,37 @@ impl PyGeneralNoiseModelBuilder {
     }
 
     /// Set average single-qubit gate error probability
-    fn with_average_p1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_average_p1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_average_p1_probability(p),
+            inner: self.inner.clone().with_average_p1(p),
         })
     }
 
     /// Set average two-qubit gate error probability
-    fn with_average_p2_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_average_p2(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_average_p2_probability(p),
+            inner: self.inner.clone().with_average_p2(p),
         })
     }
 
     /// Set measurement error probability (symmetric)
-    fn with_meas_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_probability(p),
+            inner: self.inner.clone().with_p_meas(p),
         })
     }
 
     /// Set preparation error probability
     fn with_preparation_probability(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_prep_probability(p),
+            inner: self.inner.clone().with_p_prep(p),
         })
     }
 
     /// Set measurement error probability (asymmetric)
     fn with_measurement_probability(&self, p0: f64, p1: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self
-                .inner
-                .clone()
-                .with_meas_0_probability(p0)
-                .with_meas_1_probability(p1),
+            inner: self.inner.clone().with_p_meas_0(p0).with_p_meas_1(p1),
         })
     }
 
@@ -1220,10 +1216,19 @@ impl PyGeneralNoiseModelBuilder {
         })
     }
 
-    /// Set idle probability for two-qubit gates
-    fn with_p2_idle(&self, probability: f64) -> PyResult<Self> {
+    /// Set the duration of the idle-noise site applied to each qubit after a two-qubit gate.
+    ///
+    /// A duration of `0.0` disables these sites. Nonzero sites receive all configured idle
+    /// mechanisms over the given duration: linear stochastic noise from `p_idle_linear_rate` and
+    /// `p_idle_linear_model`, and quadratic dephasing from `p_idle_quadratic_rate`, honoring
+    /// `p_idle_coherent`.
+    ///
+    /// Anyone who previously wrote `with_p2_idle(0.01)` and no linear rate now gets no after-2q
+    /// idle noise; the equivalent is
+    /// `with_p_idle_linear_rate(0.01).with_idle_after_2q(1.0)`.
+    fn with_idle_after_2q(&self, duration: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p2_idle(probability),
+            inner: self.inner.clone().with_idle_after_2q(duration),
         })
     }
 
@@ -1299,30 +1304,30 @@ impl PyDepolarizingNoiseModelBuilder {
     }
 
     /// Set preparation error probability
-    fn with_prep_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_prep(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_prep_probability(p),
+            inner: self.inner.clone().with_p_prep(p),
         })
     }
 
     /// Set measurement error probability
-    fn with_meas_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_probability(p),
+            inner: self.inner.clone().with_p_meas(p),
         })
     }
 
     /// Set single-qubit gate error probability
-    fn with_p1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p1_probability(p),
+            inner: self.inner.clone().with_p1(p),
         })
     }
 
     /// Set two-qubit gate error probability
-    fn with_p2_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p2(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p2_probability(p),
+            inner: self.inner.clone().with_p2(p),
         })
     }
 
@@ -1340,9 +1345,9 @@ impl PyDepolarizingNoiseModelBuilder {
         })
     }
 
-    /// Set preparation error probability (alias for `with_prep_probability`)
+    /// Set preparation error probability (alias for `with_p_prep`)
     fn with_preparation_probability(&self, p: f64) -> PyResult<Self> {
-        self.with_prep_probability(p)
+        self.with_p_prep(p)
     }
 }
 
@@ -1363,37 +1368,37 @@ impl PyBiasedDepolarizingNoiseModelBuilder {
     }
 
     /// Set preparation error probability
-    fn with_prep_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_prep(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_prep_probability(p),
+            inner: self.inner.clone().with_p_prep(p),
         })
     }
 
     /// Set measurement 0->1 flip probability
-    fn with_meas_0_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas_0(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_0_probability(p),
+            inner: self.inner.clone().with_p_meas_0(p),
         })
     }
 
     /// Set measurement 1->0 flip probability
-    fn with_meas_1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas_1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_1_probability(p),
+            inner: self.inner.clone().with_p_meas_1(p),
         })
     }
 
     /// Set single-qubit gate error probability
-    fn with_p1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p1_probability(p),
+            inner: self.inner.clone().with_p1(p),
         })
     }
 
     /// Set two-qubit gate error probability
-    fn with_p2_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p2(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p2_probability(p),
+            inner: self.inner.clone().with_p2(p),
         })
     }
 

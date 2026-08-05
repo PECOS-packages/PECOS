@@ -446,11 +446,13 @@ class _DetectorErrorModelMixin:
                 point's defaults. In particular, ``NoiseParameters`` defaults such
                 as ``p1=0.0`` apply instead of this function's ``p1=0.001``.
                 Mixing ``noise`` with any flat noise keyword is rejected.
-            p1: Single-qubit gate Pauli error rate.
+            p1: Single-qubit gate Pauli error rate. The categorical Pauli
+                channel is converted after equal propagated signatures merge.
             p1_weights: Optional relative probabilities over single-qubit
                 Pauli error labels ``"X"``, ``"Y"``, and ``"Z"``. Values must
                 sum to 1.0; ``p1`` remains the total single-qubit error rate.
-            p2: Two-qubit gate depolarizing rate.
+            p2: Two-qubit gate depolarizing rate. Its 15 categorical branches
+                are converted together after propagation.
             p2_weights: Optional relative probabilities over two-qubit Pauli
                 error labels. Plain labels such as ``"XX"`` are post-gate
                 Pauli branches; labels prefixed by ``"*"`` such as ``"*XX"``
@@ -1272,7 +1274,7 @@ class GuppyDemBuilder:
                 named_result_binding = "compiler_direct_scalar_partial"
             else:
                 named_result_binding = "compiler_direct_scalar_complete"
-        _warn_on_idle_noise_residuals(dem)
+        _warn_on_noise_channel_residuals(dem)
         return GuppyDemBuild(
             dem=dem,
             circuit=circuit,
@@ -1287,24 +1289,22 @@ class GuppyDemBuilder:
         )
 
 
-def _warn_on_idle_noise_residuals(dem: DetectorErrorModel) -> None:
-    """Warn when an idle channel could not be represented exactly.
-
-    A mutually exclusive Pauli channel is exactly representable as independent DEM
-    mechanisms only when each Pauli is at least as likely as the product of the other
-    two. Below that, independence forces a both-fire contribution the channel does not
-    have, and the builder emits the closest non-negative fit instead. The shortfall is
-    recorded on ``dem.idle_noise_residuals``; warn so it is not shipped unnoticed.
-    """
+def _warn_on_noise_channel_residuals(dem: DetectorErrorModel) -> None:
+    """Warn when a categorical Pauli channel could not be represented exactly."""
     residuals = dem.idle_noise_residuals
     if not residuals:
         return
-    largest = max(entry["magnitude"] for entry in residuals)
+    by_kind: dict[str, list[float]] = {}
+    for entry in residuals:
+        kind = str(entry["channel_kind"])
+        by_kind.setdefault(kind, []).append(float(entry["magnitude"]))
+    kinds = ", ".join(
+        f"{len(magnitudes)} {kind} (largest {max(magnitudes):.3e})" for kind, magnitudes in sorted(by_kind.items())
+    )
     warnings.warn(
-        f"{len(residuals)} idle noise channel(s) were approximated: a mutually exclusive "
-        f"channel is not exactly representable as independent DEM mechanisms unless each "
-        f"Pauli is at least the product of the other two. The closest non-negative fit was "
-        f"used; largest residual {largest:.3e}. See dem.idle_noise_residuals for details.",
+        f"{len(residuals)} categorical noise channel(s) were approximated: {kinds}. "
+        "A non-negative boundary fit was emitted; magnitudes are total-variation "
+        "distances from the requested channels. See dem.idle_noise_residuals for details.",
         UserWarning,
         stacklevel=3,
     )
@@ -1382,10 +1382,12 @@ def build_dem_from_guppy(
             defaults. In particular, ``NoiseParameters`` defaults such as
             ``p1=0.0`` apply instead of this function's ``p1=0.001``. Mixing
             ``noise`` with any flat noise keyword is rejected.
-        p1: Single-qubit gate Pauli error rate.
+        p1: Single-qubit gate Pauli error rate. The categorical Pauli channel
+            is converted after equal propagated signatures merge.
         p1_weights: Optional relative probabilities over single-qubit Pauli
             error labels ``"X"``, ``"Y"``, and ``"Z"``.
-        p2: Two-qubit gate depolarizing rate.
+        p2: Two-qubit gate depolarizing rate. Its 15 categorical branches are
+            converted together after propagation.
         p2_weights: Optional relative probabilities over two-qubit Pauli error
             labels, including starred replacement branches.
         p2_replacement_approximation: Approximation used for starred

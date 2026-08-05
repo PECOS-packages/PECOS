@@ -625,17 +625,17 @@ fn linear_and_sine_idle_families_emit_separate_contributions() {
 }
 
 #[test]
-fn nonpositive_signature_channel_eigenvalue_returns_specific_error() {
+fn nonpositive_signature_channel_character_returns_specific_error() {
     let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
     let error = build_synthetic_idle_dem(
         &influence,
         NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.25),
     )
-    .expect_err("zero signature-channel eigenvalues are broken input");
+    .expect_err("zero signature-channel characters are broken input");
 
     assert!(error.contains("DEM builder configuration error"));
     assert!(error.contains("location"));
-    assert!(error.contains("eigenvalues"));
+    assert!(error.contains("characters"));
     assert!(error.contains("must all be positive"));
 }
 
@@ -681,24 +681,35 @@ fn negative_idle_duration_is_rejected_instead_of_clamped() {
 
 #[test]
 fn identical_idle_configuration_produces_byte_identical_dem_text() {
-    let dag = build_idle_then_measure(3);
-    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
-    let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
-        .set_idle_pauli_linear_rates(1.0e-5, 2.0e-5, 3.0e-5)
-        .set_idle_pauli_quadratic_sine_rates(0.001, 0.002, 0.003);
+    let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
+    let noise =
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.002, 0.003, 0.005);
     let build = || {
-        DemBuilder::new(&influence)
-            .with_noise_config(noise.clone())
-            .with_detectors_json(
-                r#"[{"id": 0, "records": [-3]}, {"id": 1, "records": [-2]}, {"id": 2, "records": [-1]}]"#,
-            )
-            .expect("valid detector metadata")
-            .try_build()
+        build_synthetic_idle_dem(&influence, noise.clone())
             .expect("valid deterministic DEM")
             .to_string()
     };
 
     let expected = build();
+    assert_eq!(
+        expected,
+        "detector D0\ndetector D1\nerror(0.002001) D0\nerror(0.003011) D0 D1\nerror(0.005019) D1",
+        "this full dimension-two DEM text is pinned to commit 79e8aa833",
+    );
+    let dem = build_synthetic_idle_dem(&influence, noise.clone()).expect("valid pinned DEM");
+    let probabilities = idle_signature_contributions(&dem)
+        .into_iter()
+        .map(|(_, probability)| probability.to_bits())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        probabilities,
+        [
+            0.002_000_955_040_586_616_f64.to_bits(),
+            0.003_011_095_091_214_222_f64.to_bits(),
+            0.005_019_131_070_643_723_f64.to_bits(),
+        ],
+        "dimension-two idle mechanism bits are pinned to commit 79e8aa833",
+    );
     for _ in 0..16 {
         assert_eq!(build().as_bytes(), expected.as_bytes());
     }

@@ -72,9 +72,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use wide::u64x4;
 
 use super::types::{
-    FaultMechanism, IdleChannelFamilies, IdleNoiseResidual, NoiseConfig, PauliProbs, PauliWeights,
-    PerGateTypeNoise, ReplacementBranchApproximation, combine_probabilities,
-    fit_exclusive_idle_signatures, validate_idle_probabilities,
+    FaultMechanism, IdleChannelFamilies, NoiseChannelKind, NoiseChannelResidual, NoiseConfig,
+    PauliProbs, PauliWeights, PerGateTypeNoise, ReplacementBranchApproximation,
+    combine_probabilities, fit_exclusive_signatures, validate_exclusive_probabilities,
+    validate_idle_probabilities,
 };
 
 // ============================================================================
@@ -268,8 +269,8 @@ pub struct SamplingEngine {
     num_detectors: usize,
     /// Number of DEM `L<n>` outputs.
     num_dem_outputs: usize,
-    /// Quantified approximations introduced by idle signature conversion.
-    idle_noise_residuals: Vec<IdleNoiseResidual>,
+    /// Quantified approximations introduced by categorical signature conversion.
+    idle_noise_residuals: Vec<NoiseChannelResidual>,
 }
 
 const U32_BASE_AS_F64: f64 = 4_294_967_296.0;
@@ -310,9 +311,9 @@ impl SamplingEngine {
         self.num_dem_outputs
     }
 
-    /// Returns quantified idle-channel approximations made while building.
+    /// Returns quantified categorical-channel approximations made while building.
     #[must_use]
-    pub fn idle_noise_residuals(&self) -> &[IdleNoiseResidual] {
+    pub fn idle_noise_residuals(&self) -> &[NoiseChannelResidual] {
         &self.idle_noise_residuals
     }
 
@@ -448,8 +449,8 @@ impl SamplingEngine {
     ///
     /// # Panics
     ///
-    /// Panics if an idle-noise input or signature channel is invalid, or if an
-    /// idle gate event has no corresponding fault location.
+    /// Panics if a noise input or signature channel is invalid, or if a gate
+    /// event has no corresponding fault location.
     #[must_use]
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
@@ -469,7 +470,7 @@ impl SamplingEngine {
                 per_location_probs,
                 &influence_map.locations,
             );
-            if p <= 0.0 {
+            if p == 0.0 {
                 continue;
             }
 
@@ -542,7 +543,7 @@ impl SamplingEngine {
                         *exclusive.entry(mechanism).or_insert(0.0) += probability;
                     }
                     let context = format!("location {loc_idx} exclusive family {family_index}");
-                    let fit = fit_exclusive_idle_signatures(exclusive, DemMechanism::xor, &context)
+                    let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &context)
                         .unwrap_or_else(|error| {
                             panic!("invalid DEM idle-noise configuration: {error}")
                         });
@@ -555,9 +556,10 @@ impl SamplingEngine {
                             .or_insert(probability);
                     }
                     if let Some((mechanism, magnitude)) = fit.residual {
-                        idle_noise_residuals.push(IdleNoiseResidual {
+                        idle_noise_residuals.push(NoiseChannelResidual {
                             location_index: u32::try_from(loc_idx)
                                 .expect("fault-location index must fit in residual metadata"),
+                            channel_kind: NoiseChannelKind::Idle,
                             effect: mechanism.as_fault_mechanism(),
                             magnitude,
                         });
@@ -616,6 +618,24 @@ impl SamplingEngine {
                 vec![per_event; events.len()]
             };
 
+            let loc_idx = influence_map
+                .locations
+                .iter()
+                .position(|candidate| candidate.node == loc.node && candidate.before == loc.before)
+                .expect("gate event must have a fault location");
+            let channel_kind = if n_qubits == 2 {
+                NoiseChannelKind::TwoQubitGate
+            } else {
+                NoiseChannelKind::SingleQubitGate
+            };
+            let context = format!(
+                "{} {} channel at location {loc_idx}",
+                channel_kind.as_str(),
+                loc.gate_type
+            );
+            validate_exclusive_probabilities(&event_weights, &context)
+                .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            let mut exclusive = BTreeMap::new();
             for (event, &event_prob) in events.iter().zip(&event_weights) {
                 let det_indices: SmallVec<[u32; 4]> = event.detectors.iter().copied().collect();
                 let dem_output_indices: SmallVec<[u32; 2]> = event
@@ -625,10 +645,26 @@ impl SamplingEngine {
                     .collect();
 
                 let mech = DemMechanism::new(det_indices, dem_output_indices);
-                if !mech.is_empty() {
-                    let entry = aggregated.entry(mech).or_insert(0.0);
-                    *entry = combine_probabilities(*entry, event_prob);
+                if !mech.is_empty() && event_prob != 0.0 {
+                    *exclusive.entry(mech).or_insert(0.0) += event_prob;
                 }
+            }
+            let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &context)
+                .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            for (mechanism, probability) in fit.mechanisms {
+                aggregated
+                    .entry(mechanism)
+                    .and_modify(|held| *held = combine_probabilities(*held, probability))
+                    .or_insert(probability);
+            }
+            if let Some((mechanism, magnitude)) = fit.residual {
+                idle_noise_residuals.push(NoiseChannelResidual {
+                    location_index: u32::try_from(loc_idx)
+                        .expect("fault-location index must fit in residual metadata"),
+                    channel_kind,
+                    effect: mechanism.as_fault_mechanism(),
+                    magnitude,
+                });
             }
         }
 
@@ -2246,12 +2282,13 @@ impl<'a> SamplingEngineBuilder<'a> {
                     if !loc.before =>
                 {
                     let rates = self.rates_1q(loc.gate_type, &loc.qubits);
-                    if rates.iter().any(|r| *r > 0.0) {
+                    if rates.iter().any(|r| *r != 0.0) {
                         self.process_depolarizing_fault_rates(
                             loc_idx,
                             rates,
                             &mechanism_context,
                             &mut aggregated,
+                            &mut idle_noise_residuals,
                         );
                     }
                 }
@@ -2278,8 +2315,8 @@ impl<'a> SamplingEngineBuilder<'a> {
 
         // Process two-qubit gates as pairs
         let has_any_2q_noise = self.per_gate.is_some()
-            || self.p2 > 0.0
-            || self.p2_gate_rates.values().any(|rate| *rate > 0.0);
+            || self.p2 != 0.0
+            || self.p2_gate_rates.values().any(|rate| *rate != 0.0);
         if has_any_2q_noise {
             for loc_indices in cx_groups.values() {
                 for pair in loc_indices.chunks(2) {
@@ -2299,13 +2336,14 @@ impl<'a> SamplingEngineBuilder<'a> {
                         .copied()
                         .collect();
                     let rates = self.rates_2q(gate_type, &pair_qubits);
-                    if rates.iter().any(|r| *r > 0.0) {
+                    if rates.iter().any(|r| *r != 0.0) {
                         self.process_two_qubit_fault_rates(
                             pair[0],
                             pair[1],
                             rates,
                             &mechanism_context,
                             &mut aggregated,
+                            &mut idle_noise_residuals,
                         );
                     }
                 }
@@ -2566,11 +2604,14 @@ impl<'a> SamplingEngineBuilder<'a> {
         rates: [f64; 3],
         context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
+        residuals: &mut Vec<NoiseChannelResidual>,
     ) {
+        let gate_type = self.influence_map.locations[loc_idx].gate_type;
+        let fit_context = format!("one-qubit {gate_type} gate at location {loc_idx}");
+        validate_exclusive_probabilities(&rates, &fit_context)
+            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        let mut exclusive = BTreeMap::new();
         for (pauli, &per_pauli_prob) in [Pauli::X, Pauli::Y, Pauli::Z].iter().zip(rates.iter()) {
-            if per_pauli_prob == 0.0 {
-                continue;
-            }
             let mechanism = self.compute_mechanism(
                 loc_idx,
                 *pauli,
@@ -2578,10 +2619,27 @@ impl<'a> SamplingEngineBuilder<'a> {
                 context.influence_observable_ids,
                 context.num_tc_measurements,
             );
-            if !mechanism.is_empty() {
-                let entry = aggregated.entry(mechanism).or_insert(0.0);
-                *entry = combine_probabilities(*entry, per_pauli_prob);
+            if mechanism.is_empty() || per_pauli_prob == 0.0 {
+                continue;
             }
+            *exclusive.entry(mechanism).or_insert(0.0) += per_pauli_prob;
+        }
+        let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
+            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        for (mechanism, probability) in fit.mechanisms {
+            aggregated
+                .entry(mechanism)
+                .and_modify(|held| *held = combine_probabilities(*held, probability))
+                .or_insert(probability);
+        }
+        if let Some((mechanism, magnitude)) = fit.residual {
+            residuals.push(NoiseChannelResidual {
+                location_index: u32::try_from(loc_idx)
+                    .expect("fault-location index must fit in residual metadata"),
+                channel_kind: NoiseChannelKind::SingleQubitGate,
+                effect: mechanism.as_fault_mechanism(),
+                magnitude,
+            });
         }
     }
 
@@ -2591,7 +2649,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         families: IdleChannelFamilies,
         context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
-        residuals: &mut Vec<IdleNoiseResidual>,
+        residuals: &mut Vec<NoiseChannelResidual>,
     ) {
         let x_mechanism = self.compute_mechanism(
             loc_idx,
@@ -2641,15 +2699,16 @@ impl<'a> SamplingEngineBuilder<'a> {
                 *exclusive.entry(mechanism).or_insert(0.0) += probability;
             }
             let fit_context = format!("location {loc_idx} exclusive family {family_index}");
-            let fit = fit_exclusive_idle_signatures(exclusive, DemMechanism::xor, &fit_context)
+            let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
                 .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"));
             for (mechanism, probability) in fit.mechanisms {
                 add(mechanism, probability, aggregated);
             }
             if let Some((mechanism, magnitude)) = fit.residual {
-                residuals.push(IdleNoiseResidual {
+                residuals.push(NoiseChannelResidual {
                     location_index: u32::try_from(loc_idx)
                         .expect("fault-location index must fit in residual metadata"),
+                    channel_kind: NoiseChannelKind::Idle,
                     effect: mechanism.as_fault_mechanism(),
                     magnitude,
                 });
@@ -2675,7 +2734,12 @@ impl<'a> SamplingEngineBuilder<'a> {
         rates: [f64; 15],
         context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
+        residuals: &mut Vec<NoiseChannelResidual>,
     ) {
+        let gate_type = self.influence_map.locations[loc1].gate_type;
+        let fit_context = format!("two-qubit {gate_type} gate at locations {loc1} and {loc2}");
+        validate_exclusive_probabilities(&rates, &fit_context)
+            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
         let paulis = [Pauli::I, Pauli::X, Pauli::Y, Pauli::Z];
 
         let mut effects1: [Option<DemMechanism>; 4] = [None, None, None, None];
@@ -2698,7 +2762,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             ));
         }
 
-        // Iterate (p1, p2) with global index = 4*p1 + p2 (skipping II at idx 0).
+        let mut exclusive = BTreeMap::new();
         for &p1 in &paulis {
             for &p2 in &paulis {
                 if p1 == Pauli::I && p2 == Pauli::I {
@@ -2724,10 +2788,26 @@ impl<'a> SamplingEngineBuilder<'a> {
                     xor_mechanisms(e1, e2)
                 };
                 if !mechanism.is_empty() {
-                    let entry = aggregated.entry(mechanism).or_insert(0.0);
-                    *entry = combine_probabilities(*entry, prob);
+                    *exclusive.entry(mechanism).or_insert(0.0) += prob;
                 }
             }
+        }
+        let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
+            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        for (mechanism, probability) in fit.mechanisms {
+            aggregated
+                .entry(mechanism)
+                .and_modify(|held| *held = combine_probabilities(*held, probability))
+                .or_insert(probability);
+        }
+        if let Some((mechanism, magnitude)) = fit.residual {
+            residuals.push(NoiseChannelResidual {
+                location_index: u32::try_from(loc1)
+                    .expect("fault-location index must fit in residual metadata"),
+                channel_kind: NoiseChannelKind::TwoQubitGate,
+                effect: mechanism.as_fault_mechanism(),
+                magnitude,
+            });
         }
     }
 

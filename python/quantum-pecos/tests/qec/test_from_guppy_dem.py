@@ -276,10 +276,17 @@ def test_noise_model_matches_flat_pauli_weights(entrypoint: str) -> None:
         "p_prep": 0.013,
     }
 
-    grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(**noise_kwargs))
-    flat = _noise_model_entrypoint_dem(entrypoint, **noise_kwargs)
+    with pytest.warns(UserWarning, match=r"two-qubit gate \(largest 1\.184e-05\)"):
+        grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(**noise_kwargs))
+    with pytest.warns(UserWarning, match=r"two-qubit gate \(largest 1\.184e-05\)"):
+        flat = _noise_model_entrypoint_dem(entrypoint, **noise_kwargs)
 
     assert grouped.to_string() == flat.to_string()
+    assert grouped.idle_noise_residuals == flat.idle_noise_residuals
+    assert len(grouped.idle_noise_residuals) == 1
+    residual = grouped.idle_noise_residuals[0]
+    assert residual["channel_kind"] == "two-qubit gate"
+    assert residual["magnitude"] == pytest.approx(1.1843041548472428e-05)
 
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
@@ -2196,37 +2203,114 @@ def test_surface_module_cache_collapses_unconstrained_budget_forms() -> None:
     assert constrained["ancilla_budget"] == 2
 
 
-def test_idle_noise_residual_warning_fires_only_when_approximated() -> None:
-    """An approximated idle channel warns; an exact one stays silent.
+def test_noise_channel_residual_warning_names_kinds_and_magnitudes() -> None:
+    """Approximated idle and gate channels warn; exact channels stay silent.
 
     The residual is queryable on the DEM, but a field alone is easy to miss, so the
-    build also warns when it had to fall back to the closest non-negative fit.
+    build also warns when it emits the non-negative boundary fit.
     """
     import warnings
     from typing import ClassVar
 
-    from pecos.qec.dem import _warn_on_idle_noise_residuals
+    from pecos.qec.dem import _warn_on_noise_channel_residuals
 
     class _Exact:
         idle_noise_residuals: ClassVar[list[dict[str, object]]] = []
 
     class _Approximated:
         idle_noise_residuals: ClassVar[list[dict[str, object]]] = [
-            {"location_index": 3, "magnitude": 1.894e-05},
-            {"location_index": 7, "magnitude": 2.1e-05},
+            {"location_index": 3, "channel_kind": "idle", "magnitude": 1.894e-05},
+            {
+                "location_index": 7,
+                "channel_kind": "one-qubit gate",
+                "magnitude": 2.1e-05,
+            },
         ]
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        _warn_on_idle_noise_residuals(_Exact())
+        _warn_on_noise_channel_residuals(_Exact())
     assert caught == []
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        _warn_on_idle_noise_residuals(_Approximated())
+        _warn_on_noise_channel_residuals(_Approximated())
     assert len(caught) == 1
     message = str(caught[0].message)
-    assert "2 idle noise channel(s) were approximated" in message
-    # The largest magnitude, not the first one encountered.
+    assert "2 categorical noise channel(s) were approximated" in message
+    assert "1 idle (largest 1.894e-05)" in message
+    assert "1 one-qubit gate (largest 2.100e-05)" in message
     assert "2.100e-05" in message
+    assert "total-variation distances" in message
     assert "dem.idle_noise_residuals" in message
+
+
+@guppy
+def _two_qubit_gate_channel_program() -> None:
+    """One CX with a detector on each measurement, for gate-channel conversion checks."""
+    a, b = qubit(), qubit()
+    cx(a, b)
+    result("m0", measure(a))
+    result("m1", measure(b))
+
+
+def test_two_qubit_gate_channel_is_converted_not_emitted_naively() -> None:
+    """The p2 channel is mutually exclusive, so its DEM mechanisms need conversion.
+
+    Fifteen two-qubit Paulis land on three distinct flip signatures here: the three
+    Z-type Paulis are invisible to Z-basis measurement and drop out, and the other
+    twelve merge four-to-one. Within a group the probabilities ADD (the channel picks
+    one Pauli), giving 4 * p2/15 = 5.333e-3 per signature. Emitting that directly would
+    be wrong, because independent mechanisms also fire together; the converted value is
+    5.362e-3, computed independently from the Pauli-channel characters.
+    """
+    build = (
+        DetectorErrorModel.builder()
+        .with_program(_two_qubit_gate_channel_program)
+        .with_qubits(2)
+        .with_detectors([Detector("m0")])
+        .with_observables([Observable("m1")])
+        .with_noise(NoiseParameters().with_p2(0.02))
+        .build()
+    )
+    text = build.dem.to_string()
+
+    # The converted probability, not the summed-but-unconverted 0.005333.
+    assert text.count("error(0.005362)") == 3, text
+    assert "0.005333" not in text, text
+
+    # Fifteen Paulis, three surviving signatures: the Z-type ones are undetectable.
+    assert text.count("error(") == 3, text
+
+    # An exactly representable channel takes no approximation.
+    assert build.dem.idle_noise_residuals == []
+
+
+@guppy
+def _prep_and_measure_program() -> None:
+    """Prepare and measure one qubit, for the prep/measurement exactness check."""
+    q = qubit()
+    result("m0", measure(q))
+
+
+def test_prep_and_measurement_channels_stay_exact() -> None:
+    """Prep and measurement are single Bernoulli events, so they need no conversion.
+
+    Each emits one Pauli at the full probability rather than a set of mutually
+    exclusive ones, so there is nothing to compose and nothing to approximate. This
+    pins that the gate/idle conversion work did not sweep them in.
+    """
+    for setter, probability in (("with_p_prep", 0.02), ("with_p_meas", 0.02)):
+        noise = getattr(NoiseParameters(), setter)(probability)
+        build = (
+            DetectorErrorModel.builder()
+            .with_program(_prep_and_measure_program)
+            .with_qubits(1)
+            .with_detectors([Detector("m0")])
+            .with_observables([])
+            .with_noise(noise)
+            .build()
+        )
+        text = build.dem.to_string()
+        assert f"error({probability})" in text, f"{setter}: {text}"
+        assert build.dem.idle_noise_residuals == [], setter

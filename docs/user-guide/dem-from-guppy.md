@@ -324,12 +324,15 @@ incoherent-conversion factor, and cycles-to-radians), so builder inputs are
 not directly interchangeable with these parameters.
 
 Every residual is readable from `dem.idle_noise_residuals` as a dictionary
-containing `location_index`, the concrete `detectors`/`dem_outputs`/
-`tracked_paulis` signature, and `magnitude`. The magnitude is the unavoidable
-both-fire excess on that signature and the equal deficit on the identity
-outcome. Audited Guppy builds also copy this list to
-`dem_build.audit["idle_noise_residuals"]`. An empty list certifies that all idle
-signature conversions were exact.
+containing `channel_kind`, `location_index`, the concrete
+`detectors`/`dem_outputs`/`tracked_paulis` signature, and `magnitude`. Gate and
+idle categorical Pauli channels share this list. The magnitude is the
+total-variation distance between the requested categorical channel and the
+emitted independent mechanisms; in the two-dimensional boundary case it is
+also the excess on the reported signature and the matching identity deficit.
+Audited Guppy builds copy this list to
+`dem_build.audit["idle_noise_residuals"]`. An empty list certifies that all
+categorical signature conversions were exact.
 
 The per-axis `p_idle_{x,y,z}_linear_rate`,
 `p_idle_{x,y,z}_quadratic_rate`, and

@@ -85,39 +85,6 @@ def singleton_l0_edges(direct_targets: set[tuple[tuple[int, ...], tuple[int, ...
     return {dets[0] for dets, logs in direct_targets if len(dets) == 1 and len(logs) == 1}
 
 
-def xor_lists(left: list[int], right: list[int]) -> list[int]:
-    """XOR two integer lists interpreted as parity sets."""
-    out = set(left)
-    for value in right:
-        if value in out:
-            out.remove(value)
-        else:
-            out.add(value)
-    return sorted(out)
-
-
-def xor_effect_rows(left: dict[str, list[int]], right: dict[str, list[int]]) -> tuple[list[int], list[int]]:
-    """XOR two structured detector/DEM-output rows."""
-    return (
-        xor_lists(left["detectors"], right["detectors"]),
-        xor_lists(left["dem_outputs"], right["dem_outputs"]),
-    )
-
-
-def xor_source_components(row: dict[str, object]) -> tuple[list[int], list[int]]:
-    """XOR a structured row's source component effects."""
-    dets: list[int] = []
-    outputs: list[int] = []
-    for part_dets, part_outputs in zip(
-        row["source_component_detectors"],
-        row["source_component_dem_outputs"],
-        strict=True,
-    ):
-        dets = xor_lists(dets, list(part_dets))
-        outputs = xor_lists(outputs, list(part_outputs))
-    return dets, outputs
-
-
 def parse_dem_error_probabilities(dem_str: str) -> dict[str, float]:
     """Map DEM target strings to their stated error probabilities."""
     out: dict[str, float] = {}
@@ -490,11 +457,18 @@ def test_structured_source_tracking_bindings_are_self_consistent(basis: str) -> 
     total_probability = sum(float(row["probability"]) for row in contributions)
     direct_rows = [row for row in contributions if row["source_type"] in DIRECT_SOURCE_TYPES]
     y_rows = [row for row in contributions if row["source_type"] == "YDecomposed"]
+    signature_rows = [row for row in contributions if row["direct_source_family"] == "ExclusiveSignature"]
     assert all(row["location_indices"] for row in contributions)
-    assert all(row["pauli_labels"] for row in contributions)
+    assert signature_rows
+    assert all(not row["pauli_labels"] for row in signature_rows)
+    assert all(row["pauli_labels"] or row["direct_source_family"] == "ExclusiveSignature" for row in contributions)
     assert all("gate_type_labels" in row for row in contributions)
     assert all("before_flags" in row for row in contributions)
-    assert all(len(row["location_indices"]) == len(row["pauli_labels"]) for row in contributions)
+    assert all(
+        len(row["location_indices"]) == len(row["pauli_labels"])
+        or (not row["pauli_labels"] and row["direct_source_family"] == "ExclusiveSignature")
+        for row in contributions
+    )
     assert all(len(row["location_indices"]) == len(row["gate_type_labels"]) for row in contributions)
     assert all(len(row["location_indices"]) == len(row["before_flags"]) for row in contributions)
     assert all(all(label in {"I", "X", "Y", "Z"} for label in row["pauli_labels"]) for row in contributions)
@@ -511,75 +485,54 @@ def test_structured_source_tracking_bindings_are_self_consistent(basis: str) -> 
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
-def test_structured_source_component_rows_xor_back_to_effect(basis: str) -> None:
-    """Source component rows should XOR back to their parent effect."""
+def test_exclusive_signature_rows_do_not_claim_source_frame_components(basis: str) -> None:
+    """Converted signature mechanisms must not claim an original Pauli decomposition."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     rows = []
     for summary in dem.contribution_effect_summaries():
         for row in dem.contributions_for_effect(summary["detectors"], summary["dem_outputs"]):
-            if "source_component_detectors" not in row:
+            if row.get("direct_source_family") != "ExclusiveSignature":
                 continue
             rows.append((summary, row))
 
     assert rows
-
-    for summary, row in rows[:100]:
-        dets, outputs = xor_source_components(row)
-        assert dets == summary["detectors"]
-        assert outputs == summary["dem_outputs"]
+    assert all("source_component_detectors" not in row for _, row in rows)
+    assert all("source_component_dem_outputs" not in row for _, row in rows)
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
-def test_structured_direct_component_rows_xor_back_to_effect(basis: str) -> None:
-    """Stored direct components should reconstruct the parent effect via XOR."""
+def test_exclusive_signature_rows_do_not_claim_legacy_direct_components(basis: str) -> None:
+    """Converted signature mechanisms must not expose fabricated two-location components."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     rows = []
     for summary in dem.contribution_effect_summaries():
         for row in dem.contributions_for_effect(summary["detectors"], summary["dem_outputs"]):
-            if row["source_type"] not in DIRECT_SOURCE_TYPES:
-                continue
-            if "component_1_detectors" not in row or "component_2_detectors" not in row:
+            if row.get("direct_source_family") != "ExclusiveSignature":
                 continue
             rows.append((summary, row))
 
     assert rows
-
-    for summary, row in rows[:100]:
-        left = {
-            "detectors": row["component_1_detectors"],
-            "dem_outputs": row["component_1_dem_outputs"],
-        }
-        right = {
-            "detectors": row["component_2_detectors"],
-            "dem_outputs": row["component_2_dem_outputs"],
-        }
-        dets, logs = xor_effect_rows(left, right)
-        assert dets == summary["detectors"]
-        assert logs == summary["dem_outputs"]
+    assert all("component_1_detectors" not in row for _, row in rows)
+    assert all("component_2_detectors" not in row for _, row in rows)
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
-def test_structured_one_sided_direct_component_rows_are_exposed(basis: str) -> None:
-    """One-sided direct components should remain visible in the structured bindings."""
+def test_exclusive_signature_rows_stay_direct_without_one_sided_subtypes(basis: str) -> None:
+    """Converted gate signatures are direct mechanisms, including aliased effects."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     rows = []
     for summary in dem.contribution_effect_summaries():
         for row in dem.contributions_for_effect(summary["detectors"], summary["dem_outputs"]):
-            if row["source_type"] != "DirectOneSidedComponent":
+            if row.get("direct_source_family") != "ExclusiveSignature":
                 continue
             rows.append((summary, row))
 
     assert rows
-
-    for summary, row in rows[:100]:
-        assert "source_component_detectors" in row
-        assert "source_component_dem_outputs" in row
-        direct_dets, direct_logs = xor_source_components(row)
-        assert direct_dets == summary["detectors"]
-        assert direct_logs == summary["dem_outputs"]
+    assert all(row["source_type"] == "Direct" for _, row in rows)
+    assert all(len(row["location_indices"]) in {1, 2} for _, row in rows)
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
@@ -597,9 +550,9 @@ def test_structured_direct_source_families_are_exposed_for_direct_rows(basis: st
 
     assert rows
     assert all("direct_source_family" in row for row in rows)
-    assert any(row["direct_source_family"] == "SingleLocationY" for row in rows)
-    assert any(row["direct_source_family"] == "TwoLocationComponent" for row in rows)
-    assert any(row["source_type"] == "DirectOneSidedComponent" for row in rows)
+    assert any(row["direct_source_family"] == "ExclusiveSignature" for row in rows)
+    assert {row["direct_source_family"] for row in rows} <= {"ExclusiveSignature", "SingleLocation"}
+    assert all(row["source_type"] == "Direct" for row in rows)
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
@@ -649,7 +602,8 @@ def test_structured_render_summaries_reproduce_decomposed_regrouping(basis: str)
         assert probability == pytest.approx(decomposed_by_targets[targets], abs=5e-7)
 
     assert all("source_type_counts" in row for row in render_summaries)
-    assert any("DirectOneSidedComponent" in row["source_type_counts"] for row in render_summaries)
+    assert any("ExclusiveSignature" in row["direct_source_family_counts"] for row in render_summaries)
+    assert all("DirectOneSidedComponent" not in row["source_type_counts"] for row in render_summaries)
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
@@ -664,7 +618,8 @@ def test_structured_render_records_reproduce_render_summaries(basis: str) -> Non
     assert len(render_records) == dem.num_contributions
     assert all("rendered_targets" in row for row in render_records)
     assert all("render_strategy" in row for row in render_records)
-    assert any("recorded_component_targets" in row for row in render_records)
+    assert any(row.get("direct_source_family") == "ExclusiveSignature" for row in render_records)
+    assert all("recorded_component_targets" not in row for row in render_records)
 
     regrouped: dict[tuple[tuple[int, ...], tuple[int, ...], str], dict[str, object]] = {}
     for row in render_records:
@@ -747,8 +702,8 @@ def test_structured_keep_direct_policy_matches_default_render_outputs(basis: str
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
-def test_structured_recorded_component_policy_exposes_alternative_records(basis: str) -> None:
-    """Recorded-component policy should expose alternate render strategies and targets."""
+def test_structured_recorded_component_policy_leaves_signature_rows_direct(basis: str) -> None:
+    """Recorded-component policy cannot invent components for converted signatures."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
     default_records = dem.contribution_render_records()
@@ -757,8 +712,5 @@ def test_structured_recorded_component_policy_exposes_alternative_records(basis:
     )
 
     assert len(policy_records) == len(default_records)
-    assert any(row["render_strategy"] == "RecordedComponents" for row in policy_records)
-    assert any(
-        policy_row["rendered_targets"] != default_row["rendered_targets"]
-        for default_row, policy_row in zip(default_records, policy_records, strict=False)
-    )
+    assert policy_records == default_records
+    assert all(row["render_strategy"] != "RecordedComponents" for row in policy_records)

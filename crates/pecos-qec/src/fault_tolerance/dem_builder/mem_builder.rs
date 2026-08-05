@@ -18,8 +18,9 @@
 //! sampling.
 
 use super::types::{
-    IdleChannelFamilies, MeasurementIdleNoiseResidual, MeasurementMechanism, MeasurementNoiseModel,
-    NoiseConfig, fit_exclusive_idle_signatures,
+    IdleChannelFamilies, MeasurementMechanism, MeasurementNoiseChannelResidual,
+    MeasurementNoiseModel, NoiseChannelKind, NoiseConfig, fit_exclusive_signatures,
+    validate_exclusive_probabilities,
 };
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
@@ -71,7 +72,7 @@ impl<'a> MemBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// Panics if an idle-noise input or signature channel is invalid.
+    /// Panics if a noise input or signature channel is invalid.
     #[must_use]
     pub fn build(&self) -> MeasurementNoiseModel {
         let num_measurements = self.influence_map.measurements.len();
@@ -131,7 +132,7 @@ impl<'a> MemBuilder<'a> {
                 | GateType::RZ
                 | GateType::U
                 | GateType::R1XY
-                    if self.noise.p1 > 0.0 && !loc.before =>
+                    if self.noise.p1 != 0.0 && !loc.before =>
                 {
                     self.process_single_qubit_fault(loc_idx, &mut mem);
                 }
@@ -145,7 +146,7 @@ impl<'a> MemBuilder<'a> {
                                 panic!("invalid DEM idle-noise configuration: {error}")
                             });
                         self.process_idle_fault(loc_idx, families, &mut mem);
-                    } else if self.noise.p1 > 0.0 {
+                    } else if self.noise.p1 != 0.0 {
                         self.process_single_qubit_fault(loc_idx, &mut mem);
                     }
                 }
@@ -153,7 +154,7 @@ impl<'a> MemBuilder<'a> {
             }
         }
 
-        if self.noise.p2 > 0.0 {
+        if self.noise.p2 != 0.0 {
             for loc_indices in two_qubit_groups.values() {
                 for pair in loc_indices.chunks(2) {
                     if pair.len() == 2 {
@@ -208,9 +209,28 @@ impl<'a> MemBuilder<'a> {
 
     fn process_single_qubit_fault(&self, loc_idx: usize, mem: &mut MeasurementNoiseModel) {
         let prob = self.noise.p1 / 3.0;
-        for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
-            self.process_single_pauli_fault(loc_idx, pauli, prob, mem);
+        let probabilities = [prob; 3];
+        let context = format!("one-qubit gate at location {loc_idx}");
+        validate_exclusive_probabilities(&probabilities, &context)
+            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        let mut exclusive = std::collections::BTreeMap::new();
+        for (pauli, probability) in [Pauli::X, Pauli::Y, Pauli::Z]
+            .into_iter()
+            .zip(probabilities)
+        {
+            let mechanism = self.compute_mechanism(loc_idx, pauli);
+            if mechanism.is_empty() || probability == 0.0 {
+                continue;
+            }
+            *exclusive.entry(mechanism).or_insert(0.0) += probability;
         }
+        Self::add_exclusive_signatures(
+            loc_idx,
+            NoiseChannelKind::SingleQubitGate,
+            exclusive,
+            &context,
+            mem,
+        );
     }
 
     fn process_idle_fault(
@@ -241,7 +261,7 @@ impl<'a> MemBuilder<'a> {
             }
 
             let context = format!("location {loc_idx} exclusive family {family_index}");
-            let fit = fit_exclusive_idle_signatures(
+            let fit = fit_exclusive_signatures(
                 exclusive,
                 |left, right| xor_measurement_mechanisms(Some(left), Some(right)),
                 &context,
@@ -251,9 +271,10 @@ impl<'a> MemBuilder<'a> {
                 mem.add_mechanism(mechanism, probability);
             }
             if let Some((mechanism, magnitude)) = fit.residual {
-                mem.add_idle_noise_residual(MeasurementIdleNoiseResidual {
+                mem.add_idle_noise_residual(MeasurementNoiseChannelResidual {
                     location_index: u32::try_from(loc_idx)
                         .expect("fault-location index must fit in residual metadata"),
+                    channel_kind: NoiseChannelKind::Idle,
                     mechanism,
                     magnitude,
                 });
@@ -274,6 +295,10 @@ impl<'a> MemBuilder<'a> {
 
     fn process_two_qubit_fault(&self, loc1: usize, loc2: usize, mem: &mut MeasurementNoiseModel) {
         let prob = self.noise.p2 / 15.0;
+        let probabilities = [prob; 15];
+        let context = format!("two-qubit gate at locations {loc1} and {loc2}");
+        validate_exclusive_probabilities(&probabilities, &context)
+            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
         let paulis = [Pauli::I, Pauli::X, Pauli::Y, Pauli::Z];
 
         let mut effects1: [Option<MeasurementMechanism>; 4] = [None, None, None, None];
@@ -284,6 +309,7 @@ impl<'a> MemBuilder<'a> {
             effects2[p.as_u8() as usize] = Some(self.compute_mechanism(loc2, p));
         }
 
+        let mut exclusive = std::collections::BTreeMap::new();
         for &p1 in &paulis {
             for &p2 in &paulis {
                 if p1 == Pauli::I && p2 == Pauli::I {
@@ -301,10 +327,44 @@ impl<'a> MemBuilder<'a> {
                     )
                 };
 
-                if !mechanism.is_empty() {
-                    mem.add_mechanism(mechanism, prob);
+                if !mechanism.is_empty() && prob != 0.0 {
+                    *exclusive.entry(mechanism).or_insert(0.0) += prob;
                 }
             }
+        }
+        Self::add_exclusive_signatures(
+            loc1,
+            NoiseChannelKind::TwoQubitGate,
+            exclusive,
+            &context,
+            mem,
+        );
+    }
+
+    fn add_exclusive_signatures(
+        loc_idx: usize,
+        channel_kind: NoiseChannelKind,
+        exclusive: std::collections::BTreeMap<MeasurementMechanism, f64>,
+        context: &str,
+        mem: &mut MeasurementNoiseModel,
+    ) {
+        let fit = fit_exclusive_signatures(
+            exclusive,
+            |left, right| xor_measurement_mechanisms(Some(left), Some(right)),
+            context,
+        )
+        .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        for (mechanism, probability) in fit.mechanisms {
+            mem.add_mechanism(mechanism, probability);
+        }
+        if let Some((mechanism, magnitude)) = fit.residual {
+            mem.add_idle_noise_residual(MeasurementNoiseChannelResidual {
+                location_index: u32::try_from(loc_idx)
+                    .expect("fault-location index must fit in residual metadata"),
+                channel_kind,
+                mechanism,
+                magnitude,
+            });
         }
     }
 

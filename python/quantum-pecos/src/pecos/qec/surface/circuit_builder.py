@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 # `_batched_stabilizers` and `_normalize_ancilla_budget` are imported from
 # the shared `_ancilla_batching` helper so this builder and the Guppy
-# emitter (`pecos.guppy.surface`) compute identical batches by
+# emitter (`pecos.guppy_gen.surface`) compute identical batches by
 # construction. The local aliases preserve existing call sites; do not
 # fork the partitioning logic.
 from pecos.qec.surface._ancilla_batching import (
@@ -1957,7 +1957,7 @@ class GuppyRenderer(CircuitRenderer):
     """Render circuit operations to Guppy source code.
 
     This renderer produces the same modular Guppy code structure as
-    pecos.guppy.surface.generate_guppy_source(), ensuring consistency.
+    pecos.guppy_gen.surface.generate_guppy_source(), ensuring consistency.
     """
 
     def render(
@@ -1980,7 +1980,7 @@ class GuppyRenderer(CircuitRenderer):
         - Logical operator functions
         - Memory experiment factories (make_memory_z, make_memory_x)
         """
-        from pecos.guppy.surface import generate_guppy_source
+        from pecos.guppy_gen.surface import generate_guppy_source
 
         # Use the canonical Guppy generator to ensure identical output
         return generate_guppy_source(patch, interaction_basis=interaction_basis)
@@ -2881,7 +2881,7 @@ def generate_guppy_from_patch(
     Returns:
         Guppy source code string (full module)
     """
-    from pecos.guppy.surface import generate_guppy_source
+    from pecos.guppy_gen.surface import generate_guppy_source
 
     return generate_guppy_source(
         patch,

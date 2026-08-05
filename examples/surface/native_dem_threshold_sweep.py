@@ -3,7 +3,7 @@ r"""Surface-code X/Z memory threshold sweep with native PECOS DEMs.
 
 This example runs rotated surface-code memory experiments using:
 
-- Guppy surface-memory programs from ``pecos.guppy.surface.make_surface_code``
+- Guppy surface-memory programs from ``pecos.guppy_gen.surface.make_surface_code``
 - ``sim(...).classical(selene_engine())`` for end-to-end execution
 - direct ``selene_sim`` execution with either Selene ``Stim`` or the PECOS
   Selene stabilizer plugin
@@ -837,7 +837,7 @@ def _sim_reference_trajectory(
 def _compiled_guppy_hugr(distance: int, total_rounds: int, basis: str, interaction_basis: str = "cx") -> bytes:
     """Cache compiled HUGR bytes for the direct selene_sim backend."""
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy import make_surface_code
+    from pecos.guppy_gen import make_surface_code
 
     program = make_surface_code(
         distance=distance,
@@ -883,7 +883,7 @@ def _run_gate_backend_result_dict(
     from collections import defaultdict
 
     import pecos
-    from pecos.guppy import get_num_qubits, make_surface_code
+    from pecos.guppy_gen import get_num_qubits, make_surface_code
 
     def run_direct_selene_backend(*, simulator: object) -> dict[str, list[list[int]]]:
         from selene_sim import DepolarizingErrorModel, SimpleRuntime

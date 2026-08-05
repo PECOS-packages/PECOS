@@ -1,6 +1,6 @@
 # QEC with Guppy
 
-This guide covers PECOS's Guppy QEC code generation module (`pecos.guppy`), which generates executable Guppy quantum programs directly from QEC geometry.
+This guide covers PECOS's Guppy QEC code generation module (`pecos.guppy_gen`), which generates executable Guppy quantum programs directly from QEC geometry.
 
 ## What You'll Learn
 
@@ -12,10 +12,10 @@ This guide covers PECOS's Guppy QEC code generation module (`pecos.guppy`), whic
 
 ## Overview
 
-The `pecos.guppy` module provides **direct Guppy code generation** for QEC circuits, bypassing intermediate representations for faster compilation:
+The `pecos.guppy_gen` module provides **direct Guppy code generation** for QEC circuits, bypassing intermediate representations for faster compilation:
 
 ```python
-from pecos.guppy import (
+from pecos.guppy_gen import (
     # Surface codes
     make_surface_code,
     get_num_qubits,
@@ -36,7 +36,7 @@ A memory experiment initializes a logical state, performs syndrome extraction ro
 
 ```python
 from pecos import sim, state_vector
-from pecos.guppy import make_surface_code, get_num_qubits
+from pecos.guppy_gen import make_surface_code, get_num_qubits
 
 # Create a distance-3 Z-basis memory experiment with 3 rounds
 prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
@@ -53,7 +53,7 @@ print(results.to_dict())
 ### X-Basis vs Z-Basis
 
 ```python
-from pecos.guppy import make_surface_code
+from pecos.guppy_gen import make_surface_code
 
 # Z-basis: Initialize |0_L>, measure in Z basis
 z_prog = make_surface_code(distance=3, num_rounds=2, basis="Z")
@@ -80,7 +80,7 @@ should continue reading the aggregate keys above for ordinary analysis.
 
 ```python
 from pecos import sim, state_vector
-from pecos.guppy import make_surface_code
+from pecos.guppy_gen import make_surface_code
 
 prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
 results = sim(prog).qubits(17).quantum(state_vector()).run(10)
@@ -202,7 +202,7 @@ unrolled in the HUGR. Use the public typed specification helper rather than
 reconstructing private surface metadata:
 
 ```python
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import build_dem_from_guppy, surface_memory_dem_spec
 
 surface_program = make_surface_code(3, 2, "Z")
@@ -247,7 +247,7 @@ The 4.8.8 triangular color code supports transversal Clifford gates.
 ### Quick Start
 
 ```python
-from pecos.guppy import make_color_code, get_num_qubits_color
+from pecos.guppy_gen import make_color_code, get_num_qubits_color
 
 # Create a distance-3 color code memory experiment
 prog = make_color_code(distance=3, num_rounds=2, basis="Z")
@@ -260,7 +260,7 @@ print(f"Color code d=3 uses {num_qubits} qubits")
 ### Comparing Surface and Color Codes
 
 ```python
-from pecos.guppy import (
+from pecos.guppy_gen import (
     make_surface_code,
     get_num_qubits,
     make_color_code,
@@ -290,7 +290,7 @@ Transversal CNOT applies `CX(ctrl[i], tgt[i])` for all data qubits between two c
 <!--mark.slow-->
 ```python
 from pecos import sim, state_vector
-from pecos.guppy import make_css_transversal_cnot, get_transversal_num_qubits
+from pecos.guppy_gen import make_css_transversal_cnot, get_transversal_num_qubits
 
 # Create transversal CNOT for color codes
 prog = make_css_transversal_cnot(
@@ -313,7 +313,7 @@ Test the logical CNOT by preparing `|1_L>|0_L>` and verifying it becomes `|1_L>|
 <!--mark.slow-->
 ```python
 from pecos import sim, state_vector
-from pecos.guppy import make_css_transversal_cnot_with_x, get_transversal_num_qubits
+from pecos.guppy_gen import make_css_transversal_cnot_with_x, get_transversal_num_qubits
 
 # |1_L>|0_L> -> |1_L>|1_L>
 prog = make_css_transversal_cnot_with_x(
@@ -337,7 +337,7 @@ For common cases, use the convenience functions:
 
 <!--mark.slow-->
 ```python
-from pecos.guppy import (
+from pecos.guppy_gen import (
     # Color code transversal CNOT
     make_color_transversal_cnot,
     make_color_transversal_cnot_with_x,
@@ -418,7 +418,7 @@ from guppylang.std.builtins import array
 from guppylang.std.quantum import qubit, cx, h, measure
 ```
 
-The `pecos.guppy` module generates Guppy source code with these components:
+The `pecos.guppy_gen` module generates Guppy source code with these components:
 
 ### Struct Definitions
 
@@ -464,7 +464,7 @@ def measure_z_stab_0(az: qubit, data: array[qubit, 9]) -> bool:
 The generated module includes a `syndrome_extraction` function that applies all stabilizer measurements in a parallelized CNOT schedule and returns the syndrome:
 
 ```python
-from pecos.guppy import generate_surface_code_module
+from pecos.guppy_gen import generate_surface_code_module
 
 source = generate_surface_code_module(d=3)
 
@@ -480,7 +480,7 @@ To see the full generated code, see [Viewing Generated Source](#viewing-generate
 To see the generated Guppy source code:
 
 ```python
-from pecos.guppy import generate_surface_code_module, generate_color_code_module
+from pecos.guppy_gen import generate_surface_code_module, generate_color_code_module
 
 # Surface code source
 source = generate_surface_code_module(d=3)
@@ -502,7 +502,7 @@ This is useful for:
 For more control, access the generated module directly:
 
 ```python
-from pecos.guppy import get_surface_code_module
+from pecos.guppy_gen import get_surface_code_module
 
 # Get the loaded module
 module = get_surface_code_module(d=3)
@@ -526,7 +526,7 @@ Add noise to QEC simulations:
 
 ```python,skip
 from pecos import sim, state_vector, depolarizing_noise
-from pecos.guppy import make_surface_code, get_num_qubits
+from pecos.guppy_gen import make_surface_code, get_num_qubits
 
 prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
 num_qubits = get_num_qubits(3)
@@ -548,7 +548,7 @@ Here's a complete example estimating the logical error rate:
 
 ```python
 from pecos import sim, state_vector, depolarizing_noise
-from pecos.guppy import make_surface_code, get_num_qubits
+from pecos.guppy_gen import make_surface_code, get_num_qubits
 from pecos.qec import logical_z_from_data
 
 

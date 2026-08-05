@@ -822,7 +822,7 @@ class TestDemGeneration:
     def test_guppy_module_cache_keys_on_full_patch_identity(self) -> None:
         """Rotated and non-rotated patches of the same dx/dz/budget must NOT
         share a cached Guppy module (they generate different circuits)."""
-        from pecos.guppy.surface import _load_guppy_module
+        from pecos.guppy_gen.surface import _load_guppy_module
 
         rotated = _load_guppy_module(SurfacePatch.create(distance=3, rotated=True), ancilla_budget=2)
         non_rotated = _load_guppy_module(SurfacePatch.create(distance=3, rotated=False), ancilla_budget=2)
@@ -832,7 +832,7 @@ class TestDemGeneration:
         """All distance-based Guppy entry points enforce the documented
         'odd >= 3' contract (previously make_surface_code/get_surface_code_module
         accepted even/<3 and get_num_qubits(0) returned -1)."""
-        from pecos.guppy.surface import (
+        from pecos.guppy_gen.surface import (
             generate_surface_code_module,
             get_num_qubits,
             get_surface_code_module,
@@ -851,7 +851,7 @@ class TestDemGeneration:
         assert get_num_qubits(3) == 2 * 9 - 1  # valid distance still works
 
     def test_get_num_qubits_requires_exactly_one_of_d_or_patch(self) -> None:
-        from pecos.guppy.surface import get_num_qubits
+        from pecos.guppy_gen.surface import get_num_qubits
 
         with pytest.raises(ValueError, match=r"exactly one of"):
             get_num_qubits()
@@ -1202,7 +1202,7 @@ class TestNoisySimulation:
     def test_noiseless_simulation(self) -> None:
         """Noiseless simulation should have zero logical error rate."""
         from pecos.compilation_pipeline import compile_guppy_to_hugr
-        from pecos.guppy.surface import get_num_qubits, make_surface_code
+        from pecos.guppy_gen.surface import get_num_qubits, make_surface_code
         from pecos.qec.surface import SurfacePatch
         from selene_sim import IdealErrorModel, SimpleRuntime, Stim, build
 

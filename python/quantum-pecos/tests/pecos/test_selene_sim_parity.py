@@ -25,7 +25,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, comptime, result
 from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
-from pecos.guppy import variant_scoped
+from pecos.guppy_gen import variant_scoped
 
 
 @guppy
@@ -326,7 +326,7 @@ def _run_surface_memory_via_sim(
     seed: int,
 ) -> dict[str, list[list[int]]]:
     import pecos
-    from pecos.guppy import get_num_qubits, make_surface_code
+    from pecos.guppy_gen import get_num_qubits, make_surface_code
 
     _require_selene_runtime()
 
@@ -355,7 +355,7 @@ def _run_surface_memory_via_selene_sim(
     seed: int,
 ) -> dict[str, list[int] | list[list[int]]]:
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy import get_num_qubits, make_surface_code
+    from pecos.guppy_gen import get_num_qubits, make_surface_code
     from selene_sim import build
 
     _configure_selene_caches()

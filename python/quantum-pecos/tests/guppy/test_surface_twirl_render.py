@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("guppylang")
 
-from pecos.guppy.surface import (
+from pecos.guppy_gen.surface import (
     _guppy_module_cache_key,
     generate_guppy_source,
     generate_memory_experiment,

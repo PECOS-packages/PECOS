@@ -1224,6 +1224,13 @@ impl<'a> DemBuilder<'a> {
                 require(1)?;
                 sim.mz(qubits);
             }
+            GateType::MPZ => {
+                require(1)?;
+                sim.mz(qubits);
+                for &qubit in qubits {
+                    sim.pz(qubit);
+                }
+            }
             GateType::PZ | GateType::QAlloc => {
                 require(1)?;
                 for &qubit in qubits {
@@ -1421,7 +1428,10 @@ impl<'a> DemBuilder<'a> {
                         meas_to_observables,
                     );
                 }
-                GateType::MZ | GateType::MeasureFree
+                // MPZ takes its measurement-half fault here; the prepare-half
+                // needs an after-location the location model does not yet give
+                // measurements (tracked on the MP* issue).
+                GateType::MZ | GateType::MeasureFree | GateType::MPZ
                     if loc.before && self.measurement_rate_for_loc(loc) > 0.0 =>
                 {
                     self.process_meas_fault_source_tracked(

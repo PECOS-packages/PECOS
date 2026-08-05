@@ -237,6 +237,54 @@ fn measurement_ids_to_aux_bitmask(
 mod tests {
     use super::*;
 
+    fn prep_free_noise() -> NoiseModel {
+        let mut noise = NoiseModel::depolarizing(0.01);
+        noise.p_prep = 0.0;
+        noise
+    }
+
+    /// `mpz` is the fused `mz; pz`: the two spellings of a measured-then-reset
+    /// ancilla must produce byte-identical DEMs.
+    #[test]
+    fn mpz_builds_the_same_dem_as_mz_then_pz() {
+        let build = |fused: bool| {
+            let mut tc = TickCircuit::new();
+            tc.tick().pz(&[0, 1, 2]);
+            tc.tick().cx(&[(0, 2)]);
+            tc.tick().cx(&[(1, 2)]);
+            let ancilla = if fused {
+                tc.tick().mpz(&[2])
+            } else {
+                let m = tc.tick().mz(&[2]);
+                tc.tick().pz(&[2]);
+                m
+            };
+            tc.tick().cx(&[(0, 2)]);
+            tc.tick().cx(&[(1, 2)]);
+            let ancilla2 = tc.tick().mz(&[2]);
+            tc.detector(&[ancilla[0]])
+                .expect("refs are from this circuit");
+            tc.detector(&[ancilla[0], ancilla2[0]])
+                .expect("refs are from this circuit");
+            EegDemBuilder::from_tick_circuit(&tc)
+                // p_prep = 0: the split spelling's explicit reset draws its
+                // own preparation noise, the fused gate's built-in reset does
+                // not (the measure-prepare noise channel is a separate,
+                // tracked addition). Propagation equivalence is what this
+                // pins.
+                .noise(prep_free_noise())
+                .build_dem_string()
+                .expect("both spellings are supported")
+        };
+        let fused = build(true);
+        let split = build(false);
+        assert!(
+            fused.contains("error("),
+            "the comparison is vacuous without error mechanisms:\n{fused}"
+        );
+        assert_eq!(fused, split);
+    }
+
     /// Two measurements carrying the same supplied id would make id
     /// resolution last-wins -- a silently wrong DEM. `TickCircuit` permits the
     /// duplicate; the expansion must refuse it.

@@ -248,3 +248,86 @@ fn a_measure_free_stops_propagation_where_a_plain_mz_does_not() {
         "through a MeasureFree it does not -- the qubit was discarded"
     );
 }
+
+/// `MPZ` stops propagation exactly where `MeasureFree` does -- its built-in
+/// reset absorbs the error -- but records a real measurement whose flip the
+/// fault still causes, and leaves the wire usable.
+#[test]
+fn an_mpz_records_its_flip_and_stops_propagation() {
+    use pecos_qec::fault_tolerance::propagator::types::Pauli;
+
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    let m1 = dag.mpz(&[0]);
+    let m2 = dag.mz(&[0]);
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+
+    let i1 = u32::try_from(
+        map.meas_index_of(m1[0].meas_id)
+            .expect("the MPZ measurement is in the map"),
+    )
+    .expect("fits");
+    let i2 = u32::try_from(
+        map.meas_index_of(m2[0].meas_id)
+            .expect("the second measurement is in the map"),
+    )
+    .expect("fits");
+
+    // X after the prep flips the MPZ readout and nothing after the reset.
+    assert_eq!(
+        detector_hits(&map, 0, false, Pauli::X),
+        vec![i1],
+        "the flip is recorded; the reset stops it from reaching {i2}"
+    );
+    // Between the MPZ and the final MZ: only the final measurement flips.
+    assert_eq!(detector_hits(&map, m2[0].node, true, Pauli::X), vec![i2]);
+}
+
+/// The tick-based analyzer extracts MPZ measurements like its DAG sibling --
+/// the sweep that added MPZ to one previously missed the other, silently
+/// thinning the influence map.
+#[test]
+fn the_tick_analyzer_extracts_mpz_measurements() {
+    use pecos_qec::fault_tolerance::TickFaultAnalyzer;
+    use pecos_quantum::TickCircuit;
+
+    let mut tc = TickCircuit::new();
+    tc.tick().pz(&[0]);
+    tc.tick().mpz(&[0]);
+    tc.tick().mz(&[0]);
+    let map = TickFaultAnalyzer::new(&tc).build_influence_map();
+    assert_eq!(
+        map.measurements.len(),
+        2,
+        "the MPZ record must not vanish from the tick analyzer"
+    );
+}
+
+/// An MPZ record takes measurement noise in the sampler lane: with `p_meas`
+/// alone, its detector must carry a flip mechanism. The lane previously fell
+/// through to the 1q-depolarizing bucket (or nothing), leaving MPZ records
+/// silently noiseless.
+#[test]
+fn an_mpz_record_takes_measurement_noise_in_the_sampler_lane() {
+    use pecos_qec::fault_tolerance::InfluenceBuilder;
+    use pecos_qec::fault_tolerance::dem_builder::DemSamplerBuilder;
+
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    let m = dag.mpz(&[0]);
+    dag.detector(&[m[0]]).expect("refs are from this circuit");
+    let map = InfluenceBuilder::new(&dag)
+        .with_circuit_annotations()
+        .expect("annotations resolve")
+        .build()
+        .expect("circuit is replayable");
+    let sampler = DemSamplerBuilder::new(&map)
+        .with_noise(0.0, 0.0, 0.2, 0.0)
+        .raw_measurements()
+        .build()
+        .expect("sampler builds");
+    assert!(
+        sampler.average_error_probability() > 0.0,
+        "p_meas must produce a mechanism on the MPZ record"
+    );
+}

@@ -217,9 +217,7 @@ minimum = spec.min_weight_logicals()
 spectrum = spec.shortest_logicals(delta=2)
 
 assert len(minimum) == 30
-assert [info.operator for info in spectrum[: len(minimum)]] == [
-    info.operator for info in minimum
-]
+assert [info.operator for info in spectrum[: len(minimum)]] == [info.operator for info in minimum]
 assert {info.weight for info in spectrum} == {3, 5}
 assert sum(info.weight == 5 for info in spectrum) == 18
 assert len(spectrum) == 48

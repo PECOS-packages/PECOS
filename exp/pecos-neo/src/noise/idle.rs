@@ -42,6 +42,9 @@
 //! - **Quadratic noise**: Can be coherent (RZ rotations) or incoherent (stochastic Z).
 //!   Models T2-like dephasing.
 //!
+//! - **Sine-squared noise**: Independent stochastic X, Y, Z, or leakage events with
+//!   per-axis probability `sin(rate * multiplier * duration)^2`.
+//!
 //! ## Coherent vs Incoherent Dephasing
 //!
 //! - **Coherent**: Deterministic RZ rotation with angle = rate * duration.
@@ -56,6 +59,7 @@ use pecos_core::{Angle64, TimeUnits};
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
+use std::collections::BTreeMap;
 
 /// Noise channel for idle time (memory errors).
 ///
@@ -73,6 +77,12 @@ pub struct IdleChannel {
     /// By default, uses Z-only errors. Can be set to uniform for depolarizing
     /// or any custom distribution.
     pub linear_weights: PauliWeights,
+
+    /// DEM-style stochastic sine-squared idle rate in radians per time unit.
+    pub sin_squared_rate: f64,
+
+    /// Unnormalized per-axis relative multipliers for the sine-squared idle family.
+    pub sin_squared_model: BTreeMap<String, f64>,
 
     /// Error rate per time unit for quadratic (dephasing) noise.
     ///
@@ -101,8 +111,8 @@ pub struct IdleChannel {
     /// Duration of the idle-noise site applied after a two-qubit gate.
     ///
     /// A duration of zero disables after-two-qubit idle sites. When enabled,
-    /// the same linear and quadratic mechanisms used for explicit idle events
-    /// are applied to every distinct gate operand.
+    /// the same linear, quadratic, and sine-squared mechanisms used for
+    /// explicit idle events are applied to every distinct gate operand.
     pub idle_after_2q: f64,
 }
 
@@ -111,6 +121,8 @@ impl Default for IdleChannel {
         Self {
             linear_rate: 0.0,
             linear_weights: PauliWeights::custom(0.0, 0.0, 1.0), // Z-only by default
+            sin_squared_rate: 0.0,
+            sin_squared_model: BTreeMap::new(),
             quadratic_rate: 0.0,
             coherent_dephasing: false,
             coherent_to_incoherent_factor: 1.0,
@@ -217,6 +229,11 @@ impl IdleChannel {
         self.quadratic_rate * duration
     }
 
+    /// Calculate one axis's DEM-style sine-squared error probability.
+    fn sin_squared_probability(rate: f64, multiplier: f64, duration: f64) -> f64 {
+        (rate * multiplier * duration).sin().powi(2)
+    }
+
     /// Apply every configured idle mechanism for one duration.
     fn apply_for_duration(
         &self,
@@ -225,7 +242,11 @@ impl IdleChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        if duration <= 0.0 || (self.linear_rate <= 0.0 && self.quadratic_rate <= 0.0) {
+        if duration <= 0.0
+            || (self.linear_rate <= 0.0
+                && self.quadratic_rate <= 0.0
+                && self.sin_squared_rate <= 0.0)
+        {
             return NoiseResponse::None;
         }
 
@@ -239,6 +260,7 @@ impl IdleChannel {
         }
 
         let mut gates = SmallVec::new();
+        let mut leaked = SmallVec::new();
 
         // Fast path: check if any leakage exists at all
         let has_any_leakage = ctx.leaked_count() > 0;
@@ -285,17 +307,53 @@ impl IdleChannel {
             }
         }
 
-        if gates.is_empty() {
+        // Apply the DEM-style stochastic sine-squared family independently per axis.
+        if self.sin_squared_rate > 0.0 {
+            for axis in ["X", "Y", "Z", "L"] {
+                let Some(multiplier) = self.sin_squared_model.get(axis).copied() else {
+                    continue;
+                };
+                let probability =
+                    Self::sin_squared_probability(self.sin_squared_rate, multiplier, duration);
+                if probability <= f64::EPSILON {
+                    continue;
+                }
+
+                for &qubit in &unique_qubits {
+                    if (!has_any_leakage || !ctx.is_leaked(qubit))
+                        && rng.random::<f64>() < probability
+                    {
+                        match axis {
+                            "X" => gates
+                                .push(GateCommand::new(GateType::X, smallvec::smallvec![qubit])),
+                            "Y" => gates
+                                .push(GateCommand::new(GateType::Y, smallvec::smallvec![qubit])),
+                            "Z" => gates
+                                .push(GateCommand::new(GateType::Z, smallvec::smallvec![qubit])),
+                            "L" => leaked.push(qubit),
+                            _ => unreachable!("sine-family model was validated by the builder"),
+                        }
+                    }
+                }
+            }
+        }
+
+        let response = if gates.is_empty() {
             NoiseResponse::None
         } else {
             NoiseResponse::inject_gates(gates)
+        };
+        if leaked.is_empty() {
+            response
+        } else {
+            response.combine(NoiseResponse::MarkLeaked(leaked))
         }
     }
 }
 
 impl NoiseChannel for IdleChannel {
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
-        if self.linear_rate <= 0.0 && self.quadratic_rate <= 0.0 {
+        if self.linear_rate <= 0.0 && self.quadratic_rate <= 0.0 && self.sin_squared_rate <= 0.0 {
             return false;
         }
         match event {
@@ -345,6 +403,16 @@ mod tests {
             NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
             NoiseResponse::Multiple(responses) => {
                 responses.into_iter().flat_map(collect_gates).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn collect_leaked(response: NoiseResponse) -> Vec<QubitId> {
+        match response {
+            NoiseResponse::MarkLeaked(qubits) => qubits.into_vec(),
+            NoiseResponse::Multiple(responses) => {
+                responses.into_iter().flat_map(collect_leaked).collect()
             }
             _ => Vec::new(),
         }
@@ -538,6 +606,104 @@ mod tests {
     }
 
     #[test]
+    fn sine_probability_matches_engines_numeric_value() {
+        let probability = IdleChannel::sin_squared_probability(0.03, 1.0, 10.0);
+        assert!((probability - 0.087_332_192_545_160_84).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn sine_application_uses_rate_multiplier_and_duration() {
+        let channel = IdleChannel {
+            sin_squared_rate: 0.03,
+            sin_squared_model: BTreeMap::from([("X".to_string(), 2.0)]),
+            ..Default::default()
+        };
+        let qubits = std::array::from_fn::<_, 32, _>(QubitId);
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: TimeUnits::new(5),
+        };
+        let expected_probability = 0.087_332_192_545_160_84;
+        let mut expected_rng = PecosRng::seed_from_u64(3);
+        let expected_qubits = qubits
+            .iter()
+            .copied()
+            .filter(|_| expected_rng.random::<f64>() < expected_probability)
+            .collect::<Vec<_>>();
+        let expected_next = expected_rng.random::<u64>();
+
+        let mut actual_rng = PecosRng::seed_from_u64(3);
+        let actual_gates =
+            collect_gates(channel.apply(&event, &mut NoiseContext::new(), &mut actual_rng));
+        assert_eq!(
+            actual_gates
+                .iter()
+                .map(|gate| gate.qubits[0])
+                .collect::<Vec<_>>(),
+            expected_qubits
+        );
+        assert!(
+            actual_gates
+                .iter()
+                .all(|gate| gate.gate_type == GateType::X)
+        );
+        assert_eq!(actual_rng.random::<u64>(), expected_next);
+    }
+
+    #[test]
+    fn x_weighted_sine_model_emits_x_not_z() {
+        let channel = IdleChannel {
+            sin_squared_rate: std::f64::consts::FRAC_PI_2,
+            sin_squared_model: BTreeMap::from([("X".to_string(), 1.0)]),
+            ..Default::default()
+        };
+        let qubits = [QubitId(0)];
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: TimeUnits::new(1),
+        };
+        let gates = collect_gates(channel.apply(
+            &event,
+            &mut NoiseContext::new(),
+            &mut PecosRng::seed_from_u64(5),
+        ));
+
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::X);
+    }
+
+    #[test]
+    fn sine_model_axes_are_independent_in_xyzl_order() {
+        let channel = IdleChannel {
+            sin_squared_rate: std::f64::consts::FRAC_PI_2,
+            sin_squared_model: BTreeMap::from([
+                ("X".to_string(), 1.0),
+                ("Y".to_string(), 1.0),
+                ("Z".to_string(), 1.0),
+                ("L".to_string(), 1.0),
+            ]),
+            ..Default::default()
+        };
+        let qubits = [QubitId(0)];
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: TimeUnits::new(1),
+        };
+        let response = channel.apply(
+            &event,
+            &mut NoiseContext::new(),
+            &mut PecosRng::seed_from_u64(7),
+        );
+        let gates = collect_gates(response.clone());
+
+        assert_eq!(
+            gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
+            [GateType::X, GateType::Y, GateType::Z]
+        );
+        assert_eq!(collect_leaked(response), [QubitId(0)]);
+    }
+
+    #[test]
     fn after_2q_duration_scales_linear_noise() {
         let qubits = std::array::from_fn::<_, 64, _>(QubitId);
         let short = IdleChannel::linear(0.25).with_idle_after_2q(1.0);
@@ -672,6 +838,42 @@ mod tests {
         );
         let mut expected_rng = PecosRng::seed_from_u64(41);
         assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
+
+        let zero_sine_rate = IdleChannel {
+            sin_squared_model: BTreeMap::from([("X".to_string(), 1.0)]),
+            ..Default::default()
+        };
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: TimeUnits::new(1),
+        };
+        assert!(!zero_sine_rate.responds_to(&event));
+        let mut actual_rng = PecosRng::seed_from_u64(43);
+        assert!(
+            zero_sine_rate
+                .apply(&event, &mut NoiseContext::new(), &mut actual_rng)
+                .is_none()
+        );
+        let mut expected_rng = PecosRng::seed_from_u64(43);
+        assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
+
+        let nonzero_sine_rate = IdleChannel {
+            sin_squared_rate: std::f64::consts::FRAC_PI_2,
+            sin_squared_model: BTreeMap::from([("X".to_string(), 1.0)]),
+            ..Default::default()
+        };
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: TimeUnits::ZERO,
+        };
+        let mut actual_rng = PecosRng::seed_from_u64(47);
+        assert!(
+            nonzero_sine_rate
+                .apply(&event, &mut NoiseContext::new(), &mut actual_rng)
+                .is_none()
+        );
+        let mut expected_rng = PecosRng::seed_from_u64(47);
+        assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
     }
 
     #[test]
@@ -687,6 +889,36 @@ mod tests {
         };
 
         assert_eq!(sample(), sample());
+    }
+
+    #[test]
+    fn sine_noise_reproduces_exactly_for_the_same_seed() {
+        let channel = IdleChannel {
+            sin_squared_rate: 0.6,
+            sin_squared_model: BTreeMap::from([
+                ("X".to_string(), 0.5),
+                ("Y".to_string(), 0.75),
+                ("Z".to_string(), 1.0),
+            ]),
+            ..Default::default()
+        };
+        let qubits = std::array::from_fn::<_, 16, _>(QubitId);
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: TimeUnits::new(1),
+        };
+
+        let sample = || {
+            collect_gates(channel.apply(
+                &event,
+                &mut NoiseContext::new(),
+                &mut PecosRng::seed_from_u64(53),
+            ))
+        };
+
+        let first = sample();
+        assert!(!first.is_empty());
+        assert_eq!(first, sample());
     }
 
     #[test]
@@ -715,5 +947,68 @@ mod tests {
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].gate_type, GateType::RZ);
         assert!((gates[0].angles[0].to_radians() - theta).abs() < 1e-15);
+    }
+
+    #[test]
+    fn legacy_quadratic_paths_keep_their_pre_change_output_exactly() {
+        let qubits = std::array::from_fn::<_, 8, _>(QubitId);
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: TimeUnits::new(2),
+        };
+        let incoherent = IdleChannel {
+            quadratic_rate: 0.7,
+            coherent_to_incoherent_factor: 1.3,
+            ..Default::default()
+        };
+        let mut incoherent_rng = PecosRng::seed_from_u64(424);
+        let incoherent_outputs = (0..4)
+            .map(|_| {
+                collect_gates(incoherent.apply(
+                    &event,
+                    &mut NoiseContext::new(),
+                    &mut incoherent_rng,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let expected_incoherent_qubits: [&[usize]; 4] = [
+            &[1, 3, 4, 5, 7],
+            &[0, 1, 3, 4, 5, 7],
+            &[0, 1, 4, 6, 7],
+            &[0, 1, 2, 4, 6, 7],
+        ];
+        let expected_incoherent = expected_incoherent_qubits
+            .iter()
+            .map(|qubits| {
+                qubits
+                    .iter()
+                    .map(|&qubit| {
+                        GateCommand::new(GateType::Z, smallvec::smallvec![QubitId(qubit)])
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            incoherent_outputs, expected_incoherent,
+            "the complete incoherent gate payload changed"
+        );
+        assert_eq!(incoherent_rng.random::<u64>(), 13_820_570_602_603_389_690);
+
+        let coherent = IdleChannel {
+            coherent_dephasing: true,
+            ..incoherent
+        };
+        let mut coherent_rng = PecosRng::seed_from_u64(424);
+        let coherent_output =
+            collect_gates(coherent.apply(&event, &mut NoiseContext::new(), &mut coherent_rng));
+        let expected_coherent = qubits
+            .iter()
+            .map(|&qubit| GateCommand::rz(qubit, Angle64::from_radians(1.4)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            coherent_output, expected_coherent,
+            "the complete coherent gate payload changed"
+        );
+        assert_eq!(coherent_rng.random::<u64>(), 15_629_358_259_572_395_946);
     }
 }

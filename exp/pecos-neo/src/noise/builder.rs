@@ -589,6 +589,8 @@ impl NoiseModelBuilder {
             let channel = IdleChannel {
                 linear_rate: self.p_idle_linear_rate,
                 linear_weights: self.p_idle_linear_weights,
+                sin_squared_rate: 0.0,
+                sin_squared_model: std::collections::BTreeMap::new(),
                 quadratic_rate: self.p_idle_quadratic_rate,
                 coherent_dephasing: self.p_idle_coherent,
                 coherent_to_incoherent_factor: self.p_idle_coherent_factor,

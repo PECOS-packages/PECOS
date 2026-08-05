@@ -34,7 +34,8 @@ use super::action::PauliWeights;
 use super::response::CompositeResponse;
 use crate::command::{GateCommand, GateType};
 use crate::noise::{
-    NoiseContext, SingleQubitEmissionWeights, TwoQubitEmissionWeights, TwoQubitPauliWeights,
+    NoiseContext, NoiseGateRequirement, SingleQubitEmissionWeights, TwoQubitEmissionWeights,
+    TwoQubitPauliWeights,
 };
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
@@ -84,6 +85,16 @@ pub enum CompiledAction {
 }
 
 impl CompiledAction {
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        match self {
+            Self::Inject(gate_type) => {
+                super::action::injected_gate_requirement(*gate_type, "CompiledAction::Inject(..)")
+            }
+            Self::Custom(primitive) => primitive.gate_requirements(),
+            _ => smallvec::SmallVec::new(),
+        }
+    }
+
     /// Apply this action.
     #[inline]
     pub fn apply(
@@ -206,6 +217,32 @@ pub enum CompiledPrimitive {
 }
 
 impl CompiledPrimitive {
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        match self {
+            Self::Action(action) => action.gate_requirements(),
+            Self::Prob { inner, .. } => inner.gate_requirements(),
+            Self::When {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let mut requirements = then_branch.gate_requirements();
+                requirements.extend(else_branch.gate_requirements());
+                requirements
+            }
+            Self::Sample { branches, .. } => branches
+                .iter()
+                .flat_map(|(_, primitive)| primitive.gate_requirements())
+                .collect(),
+            Self::Seq(primitives) => primitives
+                .iter()
+                .flat_map(CompiledPrimitive::gate_requirements)
+                .collect(),
+            Self::Custom(primitive) => primitive.gate_requirements(),
+            Self::SkipIf(_) => smallvec::SmallVec::new(),
+        }
+    }
+
     /// Apply this primitive.
     #[allow(clippy::missing_panics_doc)] // internal invariant: Sample always has branches
     #[inline]
@@ -301,6 +338,10 @@ impl Primitive for CompiledPrimitive {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        CompiledPrimitive::gate_requirements(self)
     }
 }
 

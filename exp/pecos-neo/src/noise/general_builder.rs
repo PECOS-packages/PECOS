@@ -771,7 +771,12 @@ impl GeneralNoiseModelBuilder {
                 coherent_to_incoherent_factor: self.p_idle_coherent_to_incoherent_factor,
                 idle_after_2q: self.idle_after_2q,
             };
-            model = model.add_channel(channel);
+            model = model.add_channel_configured_by(
+                channel,
+                "GeneralNoiseModelBuilder::with_p_idle_coherent(true)",
+                "supply a rotation executor with CircuitRunner::rotations(), or switch to the \
+                 stochastic idle family with with_p_idle_coherent(false)",
+            );
         }
 
         // Custom channels (composite or traditional)

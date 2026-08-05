@@ -390,6 +390,11 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
     ///
     /// This executes the program normally (with random measurement outcomes)
     /// while recording which outcomes occurred.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit contains a gate the Clifford simulator cannot
+    /// execute.
     pub fn run_and_record(&mut self, commands: &CommandQueue) -> PathRecordedResult {
         self.simulator.reset();
         let mut outcomes = MeasurementOutcomes::new();
@@ -410,6 +415,11 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
     ///
     /// Returns the outcomes and the actual path taken (which may differ
     /// from the input if some measurements were deterministic).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit contains a gate the Clifford simulator cannot
+    /// execute.
     pub fn run_with_path(
         &mut self,
         commands: &CommandQueue,
@@ -609,7 +619,9 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
                     qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
                 self.simulator.swap(&pairs);
             }
-            _ => {}
+            unsupported => panic!(
+                "PathExplorer cannot execute circuit gate {unsupported:?}; use a Clifford gate"
+            ),
         }
     }
 }
@@ -683,6 +695,20 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use pecos_simulators::SparseStab;
+
+    #[test]
+    #[should_panic(expected = "PathExplorer cannot execute circuit gate T")]
+    fn unsupported_gate_is_not_silently_dropped() {
+        let commands = CommandBuilder::new()
+            .gate(GateCommand::new(
+                GateType::T,
+                smallvec::smallvec![QubitId(0)],
+            ))
+            .build();
+        let mut explorer = PathExplorer::new(SparseStab::new(1));
+
+        let _ = explorer.run_and_record(&commands);
+    }
 
     #[test]
     fn test_measurement_path_basic() {

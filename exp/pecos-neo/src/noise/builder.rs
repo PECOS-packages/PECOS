@@ -596,7 +596,12 @@ impl NoiseModelBuilder {
                 coherent_to_incoherent_factor: self.p_idle_coherent_factor,
                 idle_after_2q: self.idle_after_2q,
             };
-            model = model.add_channel(channel);
+            model = model.add_channel_configured_by(
+                channel,
+                "NoiseModelBuilder::with_coherent_idle(..)",
+                "supply a rotation executor with CircuitRunner::rotations(), or switch to a \
+                 stochastic idle family by removing with_coherent_idle(..)",
+            );
         }
 
         // Add leakage channel (if scale differs from default of 1.0)

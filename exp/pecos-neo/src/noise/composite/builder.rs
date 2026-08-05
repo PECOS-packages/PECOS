@@ -879,7 +879,12 @@ impl CompositeNoiseModelBuilder {
                 coherent_to_incoherent_factor: self.p_idle_coherent_to_incoherent_factor,
                 idle_after_2q: self.idle_after_2q,
             };
-            model = model.add_channel(channel);
+            model = model.add_channel_configured_by(
+                channel,
+                "CompositeNoiseModelBuilder::with_p_idle_coherent(true)",
+                "supply a rotation executor with CircuitRunner::rotations(), or switch to the \
+                 stochastic idle family with with_p_idle_coherent(false)",
+            );
         }
 
         // Before-gate channel for skip logic (if leakage is enabled)

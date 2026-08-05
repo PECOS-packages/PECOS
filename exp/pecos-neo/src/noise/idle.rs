@@ -53,7 +53,9 @@
 //! - **Incoherent**: Stochastic Z error with probability = sin(rate * duration / 2)^2.
 //!   This is the exact Pauli twirl of the coherent RZ rotation.
 
-use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights};
+use super::{
+    NoiseChannel, NoiseContext, NoiseEvent, NoiseGateRequirement, NoiseResponse, PauliWeights,
+};
 use crate::command::{GateCommand, GateType};
 use pecos_core::{Angle64, TimeUnits};
 use pecos_random::PecosRng;
@@ -386,6 +388,19 @@ impl NoiseChannel for IdleChannel {
 
     fn name(&self) -> &'static str {
         "IdleChannel"
+    }
+
+    fn gate_requirements(&self) -> SmallVec<[NoiseGateRequirement; 2]> {
+        if self.coherent_dephasing && self.quadratic_rate > 0.0 {
+            smallvec::smallvec![NoiseGateRequirement::new(
+                GateType::RZ,
+                "IdleChannel::with_coherent_dephasing(true)",
+                "supply a rotation executor with CircuitRunner::rotations(), or switch to the \
+                 stochastic idle family with IdleChannel::with_coherent_dephasing(false)",
+            )]
+        } else {
+            SmallVec::new()
+        }
     }
 
     fn clone_box(&self) -> Box<dyn NoiseChannel> {

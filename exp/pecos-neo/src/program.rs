@@ -161,6 +161,11 @@ impl<S: CliffordGateable> ProgramRunner<S> {
     }
 
     /// Set the noise model.
+    ///
+    /// # Panics
+    ///
+    /// Panics during configuration if the model can inject rotations but the
+    /// underlying [`CircuitRunner`] has no rotation executor.
     #[must_use]
     pub fn with_noise(mut self, noise: ComposableNoiseModel) -> Self {
         self.runner = self.runner.with_noise(noise);

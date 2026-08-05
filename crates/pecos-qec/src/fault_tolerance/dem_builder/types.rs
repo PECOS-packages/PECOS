@@ -113,6 +113,10 @@ pub enum FaultSourceType {
 /// rendered DEM behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DirectSourceFamily {
+    /// Independent mechanism obtained from an idle location's flip signature.
+    /// No Pauli label is attached because signature aliases are merged first.
+    IdleSignature,
+
     /// Single-location direct source without a Y Pauli label.
     SingleLocation,
 
@@ -162,6 +166,9 @@ pub struct FaultContribution {
     pub location_indices: SmallVec<[u32; 2]>,
 
     /// Original Pauli channel at each tracked location.
+    ///
+    /// This is empty for idle-signature mechanisms, which are defined only
+    /// after equal Pauli effects have been merged.
     pub paulis: SmallVec<[Pauli; 2]>,
 
     /// Gate type at each tracked source location.
@@ -317,7 +324,12 @@ impl FaultContribution {
         probability: f64,
         source: SourceMetadata<'_, u32>,
     ) -> Self {
-        debug_assert_eq!(source.location_indices.len(), source.paulis.len());
+        debug_assert!(
+            source.location_indices.len() == source.paulis.len()
+                || (source.paulis.is_empty()
+                    && source.direct_source_family_override
+                        == Some(DirectSourceFamily::IdleSignature))
+        );
         debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
         debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
         Self {
@@ -2473,8 +2485,9 @@ pub struct NoiseConfig {
     pub p_prep: f64,
     /// Idle gate error rate per time unit.
     ///
-    /// The actual error probability for an idle gate is `p_idle * duration`
-    /// (clamped to [0, 1]), where `duration` is the gate's `TimeUnits` value.
+    /// The actual error probability for an idle gate is `p_idle * duration`,
+    /// where `duration` is the gate's `TimeUnits` value. Values outside the
+    /// probability range are rejected during model construction.
     /// Default is 0.0 (no idle noise).
     pub p_idle: f64,
     /// Optional T1 relaxation time (in the same time units as idle duration).
@@ -2531,6 +2544,10 @@ pub struct NoiseConfig {
     /// This is the legacy Z-axis alias for `p_idle_z_quadratic_sine_rate`.
     pub p_idle_quadratic_sine_rate: f64,
     /// Stochastic X-memory error rate linear in idle duration.
+    ///
+    /// Together with the Y and Z rates, this defines one categorical Pauli
+    /// channel. DEM construction converts that channel only after propagating
+    /// the Paulis to concrete detector/observable flip signatures.
     pub p_idle_x_linear_rate: f64,
     /// Stochastic Y-memory error rate linear in idle duration.
     pub p_idle_y_linear_rate: f64,
@@ -2642,7 +2659,7 @@ impl Default for MeasurementCrosstalkTransitionModel {
 }
 
 /// Per-Pauli error probabilities for a single qubit.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct PauliProbs {
     /// Probability of X error.
     pub px: f64,
@@ -2650,6 +2667,228 @@ pub struct PauliProbs {
     pub py: f64,
     /// Probability of Z error.
     pub pz: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct IdleChannelFamilies {
+    /// Categorical Pauli channels whose equal signatures must be summed.
+    pub(crate) exclusive: SmallVec<[PauliProbs; 2]>,
+    /// Independent per-axis mechanism triples.
+    pub(crate) independent: SmallVec<[PauliProbs; 2]>,
+}
+
+/// An invalid dedicated idle-noise configuration for DEM construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdleNoiseError {
+    message: String,
+}
+
+impl IdleNoiseError {
+    fn new(message: String) -> Self {
+        Self { message }
+    }
+}
+
+impl fmt::Display for IdleNoiseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for IdleNoiseError {}
+
+/// The non-negative boundary fit used for an infeasible idle signature channel.
+///
+/// The fitted independent mechanisms preserve the two unaffected exclusive
+/// signature probabilities exactly. `magnitude` is the unavoidable excess on
+/// `effect` (and the equal deficit on the identity outcome) caused when both
+/// retained mechanisms fire.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IdleNoiseResidual {
+    /// Fault-location index whose idle channel required approximation.
+    pub location_index: u32,
+    /// Flip signature receiving the unavoidable excess probability.
+    pub effect: FaultMechanism,
+    /// Absolute probability transferred from identity to `effect`.
+    pub magnitude: f64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct IndependentSignatureFit<Signature> {
+    pub(crate) mechanisms: BTreeMap<Signature, f64>,
+    pub(crate) residual: Option<(Signature, f64)>,
+}
+
+pub(crate) fn validate_idle_probabilities(
+    probabilities: PauliProbs,
+    context: &str,
+) -> Result<(), IdleNoiseError> {
+    let identity = 1.0 - probabilities.total();
+    if !probabilities.px.is_finite()
+        || !probabilities.py.is_finite()
+        || !probabilities.pz.is_finite()
+        || !identity.is_finite()
+        || !(0.0..=1.0).contains(&probabilities.px)
+        || !(0.0..=1.0).contains(&probabilities.py)
+        || !(0.0..=1.0).contains(&probabilities.pz)
+        || !(0.0..=1.0).contains(&identity)
+    {
+        return Err(IdleNoiseError::new(format!(
+            "invalid {context} idle channel probabilities [I={identity}, X={}, Y={}, Z={}]; every probability must be finite and lie in [0, 1]",
+            probabilities.px, probabilities.py, probabilities.pz
+        )));
+    }
+    Ok(())
+}
+
+fn validate_independent_idle_probabilities(
+    probabilities: PauliProbs,
+    context: &str,
+) -> Result<(), IdleNoiseError> {
+    if [probabilities.px, probabilities.py, probabilities.pz]
+        .into_iter()
+        .any(|probability| !probability.is_finite() || !(0.0..=1.0).contains(&probability))
+    {
+        return Err(IdleNoiseError::new(format!(
+            "invalid {context} idle mechanism probabilities [X={}, Y={}, Z={}]; every probability must be finite and lie in [0, 1]",
+            probabilities.px, probabilities.py, probabilities.pz
+        )));
+    }
+    Ok(())
+}
+
+/// Fit one categorical channel over distinct non-empty XOR signatures with
+/// independent Bernoulli mechanisms.
+///
+/// With zero or one signature the categorical channel is already an exact DEM.
+/// Otherwise the Pauli-channel eigenvalue formula gives the exact independent
+/// rates. If exactly one rate is negative, its non-negative boundary is used:
+/// that mechanism is omitted and the other two rates are uniquely chosen to
+/// preserve their target signature probabilities. The only remaining error is
+/// the both-fire probability transferred from identity to the omitted XOR
+/// signature, returned as `residual`.
+pub(crate) fn fit_exclusive_idle_signatures<Signature, Xor>(
+    exclusive: BTreeMap<Signature, f64>,
+    xor: Xor,
+    context: &str,
+) -> Result<IndependentSignatureFit<Signature>, IdleNoiseError>
+where
+    Signature: Clone + Ord,
+    Xor: Fn(&Signature, &Signature) -> Signature,
+{
+    let total: f64 = exclusive.values().sum();
+    if exclusive
+        .values()
+        .any(|probability| !probability.is_finite() || !(0.0..=1.0).contains(probability))
+        || !total.is_finite()
+        || !(0.0..=1.0).contains(&total)
+    {
+        return Err(IdleNoiseError::new(format!(
+            "invalid {context} idle signature probabilities with total {total}; every probability and their total must be finite and lie in [0, 1]"
+        )));
+    }
+
+    if exclusive.len() <= 1 {
+        return Ok(IndependentSignatureFit {
+            mechanisms: exclusive,
+            residual: None,
+        });
+    }
+
+    debug_assert!(exclusive.len() <= 3);
+    let mut signatures: Vec<Signature> = exclusive.keys().cloned().collect();
+    let mut target: Vec<f64> = exclusive.values().copied().collect();
+    if signatures.len() == 2 {
+        signatures.push(xor(&signatures[0], &signatures[1]));
+        target.push(0.0);
+    } else {
+        debug_assert!(xor(&signatures[0], &signatures[1]) == signatures[2]);
+    }
+
+    let identity = 1.0 - total;
+    let eigenvalues = [
+        identity + target[0] - target[1] - target[2],
+        identity - target[0] + target[1] - target[2],
+        identity - target[0] - target[1] + target[2],
+    ];
+    if eigenvalues
+        .iter()
+        .any(|eigenvalue| !eigenvalue.is_finite() || *eigenvalue <= 0.0)
+    {
+        return Err(IdleNoiseError::new(format!(
+            "invalid {context} idle signature channel: eigenvalues [{}, {}, {}] must all be positive",
+            eigenvalues[0], eigenvalues[1], eigenvalues[2]
+        )));
+    }
+
+    let exact = [
+        (1.0 - (eigenvalues[1] * eigenvalues[2] / eigenvalues[0]).sqrt()) / 2.0,
+        (1.0 - (eigenvalues[0] * eigenvalues[2] / eigenvalues[1]).sqrt()) / 2.0,
+        (1.0 - (eigenvalues[0] * eigenvalues[1] / eigenvalues[2]).sqrt()) / 2.0,
+    ];
+    if exact
+        .iter()
+        .any(|probability| !probability.is_finite() || *probability > 0.5)
+    {
+        return Err(IdleNoiseError::new(format!(
+            "invalid {context} idle signature conversion probabilities [{}, {}, {}]",
+            exact[0], exact[1], exact[2]
+        )));
+    }
+
+    let negative: Vec<usize> = exact
+        .iter()
+        .enumerate()
+        .filter_map(|(index, probability)| (*probability < 0.0).then_some(index))
+        .collect();
+    if negative.is_empty() {
+        let mechanisms = signatures
+            .into_iter()
+            .zip(exact)
+            .filter(|(_, probability)| *probability > 0.0)
+            .collect();
+        return Ok(IndependentSignatureFit {
+            mechanisms,
+            residual: None,
+        });
+    }
+
+    debug_assert_eq!(negative.len(), 1);
+    let omitted = negative[0];
+    let retained: Vec<usize> = (0..3).filter(|index| *index != omitted).collect();
+    let [first, second] = retained.as_slice() else {
+        unreachable!("one omitted signature leaves exactly two retained signatures")
+    };
+    let discriminant =
+        (1.0 - target[*first] - target[*second]).powi(2) - 4.0 * target[*first] * target[*second];
+    debug_assert!(discriminant >= 0.0);
+    let root = discriminant.sqrt();
+    let first_denominator = 1.0 + target[*first] - target[*second] + root;
+    let second_denominator = 1.0 + target[*second] - target[*first] + root;
+    let first_probability = if target[*first] == 0.0 {
+        0.0
+    } else {
+        2.0 * target[*first] / first_denominator
+    };
+    let second_probability = if target[*second] == 0.0 {
+        0.0
+    } else {
+        2.0 * target[*second] / second_denominator
+    };
+    let residual = first_probability * second_probability - target[omitted];
+    debug_assert!(residual > 0.0);
+
+    let mut mechanisms = BTreeMap::new();
+    if first_probability > 0.0 {
+        mechanisms.insert(signatures[*first].clone(), first_probability);
+    }
+    if second_probability > 0.0 {
+        mechanisms.insert(signatures[*second].clone(), second_probability);
+    }
+    Ok(IndependentSignatureFit {
+        mechanisms,
+        residual: Some((signatures[omitted].clone(), residual)),
+    })
 }
 
 impl PauliProbs {
@@ -2685,7 +2924,7 @@ impl PauliProbs {
 
         let px = gamma / 4.0;
         let py = gamma / 4.0;
-        let pz = (lambda_t2 / 2.0 - gamma / 4.0).max(0.0);
+        let pz = lambda_t2 / 2.0 - gamma / 4.0;
 
         Self { px, py, pz }
     }
@@ -2834,30 +3073,30 @@ impl NoiseConfig {
     /// Sets the linear stochastic Z-memory rate for explicit idle gates.
     #[must_use]
     pub fn set_idle_linear_rate(mut self, rate: f64) -> Self {
-        self.p_idle_linear_rate = rate.max(0.0);
+        self.p_idle_linear_rate = rate;
         self
     }
 
     /// Sets the quadratic stochastic Z-memory rate for explicit idle gates.
     #[must_use]
     pub fn set_idle_quadratic_rate(mut self, rate: f64) -> Self {
-        self.p_idle_quadratic_rate = rate.max(0.0);
+        self.p_idle_quadratic_rate = rate;
         self
     }
 
     /// Sets the sine-law quadratic stochastic Z-memory rate for explicit idle gates.
     #[must_use]
     pub fn set_idle_quadratic_sine_rate(mut self, rate: f64) -> Self {
-        self.p_idle_quadratic_sine_rate = rate.max(0.0);
+        self.p_idle_quadratic_sine_rate = rate;
         self
     }
 
     /// Sets the linear stochastic Pauli-memory rates for explicit idle gates.
     #[must_use]
     pub fn set_idle_pauli_linear_rates(mut self, px_rate: f64, py_rate: f64, pz_rate: f64) -> Self {
-        self.p_idle_x_linear_rate = px_rate.max(0.0);
-        self.p_idle_y_linear_rate = py_rate.max(0.0);
-        self.p_idle_linear_rate = pz_rate.max(0.0);
+        self.p_idle_x_linear_rate = px_rate;
+        self.p_idle_y_linear_rate = py_rate;
+        self.p_idle_linear_rate = pz_rate;
         self
     }
 
@@ -2869,9 +3108,9 @@ impl NoiseConfig {
         py_rate: f64,
         pz_rate: f64,
     ) -> Self {
-        self.p_idle_x_quadratic_rate = px_rate.max(0.0);
-        self.p_idle_y_quadratic_rate = py_rate.max(0.0);
-        self.p_idle_quadratic_rate = pz_rate.max(0.0);
+        self.p_idle_x_quadratic_rate = px_rate;
+        self.p_idle_y_quadratic_rate = py_rate;
+        self.p_idle_quadratic_rate = pz_rate;
         self
     }
 
@@ -2883,9 +3122,9 @@ impl NoiseConfig {
         py_rate: f64,
         pz_rate: f64,
     ) -> Self {
-        self.p_idle_x_quadratic_sine_rate = px_rate.max(0.0);
-        self.p_idle_y_quadratic_sine_rate = py_rate.max(0.0);
-        self.p_idle_quadratic_sine_rate = pz_rate.max(0.0);
+        self.p_idle_x_quadratic_sine_rate = px_rate;
+        self.p_idle_y_quadratic_sine_rate = py_rate;
+        self.p_idle_quadratic_sine_rate = pz_rate;
         self
     }
 
@@ -3054,59 +3293,156 @@ impl NoiseConfig {
         self
     }
 
-    fn idle_memory_probability(
-        linear_rate: f64,
-        quadratic_rate: f64,
-        quadratic_sine_rate: f64,
-        duration: f64,
-    ) -> f64 {
-        let duration = duration.max(0.0);
-        let sine_angle = quadratic_sine_rate.max(0.0) * duration;
-        (linear_rate.max(0.0) * duration
-            + quadratic_rate.max(0.0) * duration * duration
-            + sine_angle.sin().powi(2))
-        .clamp(0.0, 1.0)
+    fn validate_idle_rates(family: &str, rates: PauliProbs) -> Result<(), IdleNoiseError> {
+        if !rates.px.is_finite()
+            || !rates.py.is_finite()
+            || !rates.pz.is_finite()
+            || rates.px < 0.0
+            || rates.py < 0.0
+            || rates.pz < 0.0
+        {
+            return Err(IdleNoiseError::new(format!(
+                "invalid {family} idle rate/model [X={}, Y={}, Z={}]; rates must be finite and non-negative",
+                rates.px, rates.py, rates.pz
+            )));
+        }
+        Ok(())
     }
 
-    /// Dedicated idle-memory Pauli probabilities for `Idle(duration, q)`.
+    fn base_idle_pauli_probs(&self, duration: f64) -> Result<PauliProbs, IdleNoiseError> {
+        if !duration.is_finite() || duration < 0.0 {
+            return Err(IdleNoiseError::new(format!(
+                "invalid idle duration {duration}; duration must be finite and non-negative"
+            )));
+        }
+        if !self.p_idle.is_finite() || self.p_idle < 0.0 {
+            return Err(IdleNoiseError::new(format!(
+                "invalid uniform idle rate {}; rates must be finite and non-negative",
+                self.p_idle
+            )));
+        }
+        let probabilities = if let (Some(t1), Some(t2)) = (self.t1, self.t2) {
+            if !t1.is_finite() || !t2.is_finite() || t1 <= 0.0 || t2 <= 0.0 || t2 > 2.0 * t1 {
+                return Err(IdleNoiseError::new(format!(
+                    "invalid idle T1/T2 values [T1={t1}, T2={t2}]; both must be finite and positive, with T2 <= 2*T1"
+                )));
+            }
+            PauliProbs::from_t1_t2(duration, t1, t2)
+        } else {
+            if self.t1.is_some() || self.t2.is_some() {
+                return Err(IdleNoiseError::new(
+                    "invalid idle T1/T2 configuration; T1 and T2 must be supplied together"
+                        .to_string(),
+                ));
+            }
+            PauliProbs::depolarizing(self.p_idle * duration)
+        };
+        validate_idle_probabilities(probabilities, "base")?;
+        Ok(probabilities)
+    }
+
+    pub(crate) fn try_idle_channel_families(
+        &self,
+        duration: f64,
+    ) -> Result<IdleChannelFamilies, IdleNoiseError> {
+        let base = self.base_idle_pauli_probs(duration)?;
+        let linear_rates = PauliProbs {
+            px: self.p_idle_x_linear_rate,
+            py: self.p_idle_y_linear_rate,
+            pz: self.p_idle_linear_rate,
+        };
+        let quadratic_rates = PauliProbs {
+            px: self.p_idle_x_quadratic_rate,
+            py: self.p_idle_y_quadratic_rate,
+            pz: self.p_idle_quadratic_rate,
+        };
+        let sine_rates = PauliProbs {
+            px: self.p_idle_x_quadratic_sine_rate,
+            py: self.p_idle_y_quadratic_sine_rate,
+            pz: self.p_idle_quadratic_sine_rate,
+        };
+        Self::validate_idle_rates("linear", linear_rates)?;
+        Self::validate_idle_rates("coefficient-quadratic", quadratic_rates)?;
+        Self::validate_idle_rates("sine-squared", sine_rates)?;
+
+        let duration_squared = duration * duration;
+        let linear = PauliProbs {
+            px: linear_rates.px * duration,
+            py: linear_rates.py * duration,
+            pz: linear_rates.pz * duration,
+        };
+        validate_idle_probabilities(linear, "linear")?;
+        let quadratic = PauliProbs {
+            px: quadratic_rates.px * duration_squared,
+            py: quadratic_rates.py * duration_squared,
+            pz: quadratic_rates.pz * duration_squared,
+        };
+        validate_independent_idle_probabilities(quadratic, "coefficient-quadratic")?;
+        let sine = PauliProbs {
+            px: (sine_rates.px * duration).sin().powi(2),
+            py: (sine_rates.py * duration).sin().powi(2),
+            pz: (sine_rates.pz * duration).sin().powi(2),
+        };
+        validate_independent_idle_probabilities(sine, "sine-squared")?;
+
+        let mut families = IdleChannelFamilies::default();
+        if base.total() > 0.0 {
+            families.exclusive.push(base);
+        }
+        if linear.total() > 0.0 {
+            families.exclusive.push(linear);
+        }
+        if quadratic.total() > 0.0 {
+            families.independent.push(quadratic);
+        }
+        if sine.total() > 0.0 {
+            families.independent.push(sine);
+        }
+        Ok(families)
+    }
+
+    /// Try to compute the effective Pauli channel of all dedicated
+    /// idle-memory terms.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a negative/non-finite rate or duration, or when a
+    /// configured family produces an out-of-range probability.
+    pub fn try_idle_memory_pauli_probs(&self, duration: f64) -> Result<PauliProbs, IdleNoiseError> {
+        let families = self.try_idle_channel_families(duration)?;
+        let mut channel = PauliProbs::default();
+        let base_is_present = self.base_idle_pauli_probs(duration)?.total() > 0.0;
+        for exclusive in families
+            .exclusive
+            .into_iter()
+            .skip(usize::from(base_is_present))
+        {
+            channel = Self::compose_pauli_channel(channel, exclusive);
+        }
+        for independent in families.independent {
+            channel = Self::compose_independent_pauli_mechanisms(channel, independent);
+        }
+        Ok(channel)
+    }
+
+    /// Dedicated idle-memory effective Pauli channel for `Idle(duration, q)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an idle input is invalid or produces an out-of-range channel.
     #[must_use]
     pub fn idle_memory_pauli_probs(&self, duration: f64) -> PauliProbs {
-        let mut probs = PauliProbs {
-            px: Self::idle_memory_probability(
-                self.p_idle_x_linear_rate,
-                self.p_idle_x_quadratic_rate,
-                self.p_idle_x_quadratic_sine_rate,
-                duration,
-            ),
-            py: Self::idle_memory_probability(
-                self.p_idle_y_linear_rate,
-                self.p_idle_y_quadratic_rate,
-                self.p_idle_y_quadratic_sine_rate,
-                duration,
-            ),
-            pz: Self::idle_memory_probability(
-                self.p_idle_linear_rate,
-                self.p_idle_quadratic_rate,
-                self.p_idle_quadratic_sine_rate,
-                duration,
-            ),
-        };
-        let total = probs.total();
-        if total > 1.0 {
-            probs.px /= total;
-            probs.py /= total;
-            probs.pz /= total;
-        }
-        probs
+        self.try_idle_memory_pauli_probs(duration)
+            .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"))
     }
 
     fn compose_pauli_channel(probs: PauliProbs, channel: PauliProbs) -> PauliProbs {
-        if channel.total() <= f64::EPSILON {
+        if channel.total() == 0.0 {
             return probs;
         }
 
-        let p_identity = (1.0 - probs.total()).max(0.0);
-        let c_identity = (1.0 - channel.total()).max(0.0);
+        let p_identity = 1.0 - probs.total();
+        let c_identity = 1.0 - channel.total();
         PauliProbs {
             px: p_identity * channel.px
                 + probs.px * c_identity
@@ -3123,18 +3459,63 @@ impl NoiseConfig {
         }
     }
 
+    fn compose_independent_pauli_mechanisms(
+        mut channel: PauliProbs,
+        mechanisms: PauliProbs,
+    ) -> PauliProbs {
+        for mechanism in [
+            PauliProbs {
+                px: mechanisms.px,
+                py: 0.0,
+                pz: 0.0,
+            },
+            PauliProbs {
+                px: 0.0,
+                py: mechanisms.py,
+                pz: 0.0,
+            },
+            PauliProbs {
+                px: 0.0,
+                py: 0.0,
+                pz: mechanisms.pz,
+            },
+        ] {
+            channel = Self::compose_pauli_channel(channel, mechanism);
+        }
+        channel
+    }
+
     /// Compute per-Pauli idle noise probabilities for a given duration.
     ///
     /// If T1/T2 are set, uses the Pauli-twirled model (biased noise).
     /// Otherwise, uses uniform depolarizing with `p_idle * duration`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an idle input is invalid or produces an out-of-range channel.
     #[must_use]
     pub fn idle_pauli_probs(&self, duration: f64) -> PauliProbs {
-        let probs = if let (Some(t1), Some(t2)) = (self.t1, self.t2) {
-            PauliProbs::from_t1_t2(duration, t1, t2)
-        } else {
-            PauliProbs::depolarizing((self.p_idle * duration).min(1.0))
-        };
-        Self::compose_pauli_channel(probs, self.idle_memory_pauli_probs(duration))
+        self.try_idle_pauli_probs(duration)
+            .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"))
+    }
+
+    /// Try to compute the effective Pauli idle channel for a given duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a negative/non-finite rate or duration, an invalid
+    /// T1/T2 pair, or an out-of-range categorical probability.
+    pub fn try_idle_pauli_probs(&self, duration: f64) -> Result<PauliProbs, IdleNoiseError> {
+        let families = self.try_idle_channel_families(duration)?;
+        let mut channel = PauliProbs::default();
+        for exclusive in families.exclusive {
+            channel = Self::compose_pauli_channel(channel, exclusive);
+        }
+        for independent in families.independent {
+            channel = Self::compose_independent_pauli_mechanisms(channel, independent);
+        }
+        validate_idle_probabilities(channel, "composed")?;
+        Ok(channel)
     }
 
     /// Returns true when idle locations use the dedicated idle-noise model.
@@ -3142,17 +3523,18 @@ impl NoiseConfig {
     /// Otherwise `Idle` is a no-op for noise.
     #[must_use]
     pub fn uses_dedicated_idle_noise(&self) -> bool {
-        self.p_idle > 0.0
-            || matches!((self.t1, self.t2), (Some(_), Some(_)))
-            || self.p_idle_linear_rate > 0.0
-            || self.p_idle_quadratic_rate.abs() > f64::EPSILON
-            || self.p_idle_quadratic_sine_rate > 0.0
-            || self.p_idle_x_linear_rate > 0.0
-            || self.p_idle_y_linear_rate > 0.0
-            || self.p_idle_x_quadratic_rate > 0.0
-            || self.p_idle_y_quadratic_rate > 0.0
-            || self.p_idle_x_quadratic_sine_rate > 0.0
-            || self.p_idle_y_quadratic_sine_rate > 0.0
+        self.p_idle != 0.0
+            || self.t1.is_some()
+            || self.t2.is_some()
+            || self.p_idle_linear_rate != 0.0
+            || self.p_idle_quadratic_rate != 0.0
+            || self.p_idle_quadratic_sine_rate != 0.0
+            || self.p_idle_x_linear_rate != 0.0
+            || self.p_idle_y_linear_rate != 0.0
+            || self.p_idle_x_quadratic_rate != 0.0
+            || self.p_idle_y_quadratic_rate != 0.0
+            || self.p_idle_x_quadratic_sine_rate != 0.0
+            || self.p_idle_y_quadratic_sine_rate != 0.0
     }
 }
 
@@ -3899,6 +4281,17 @@ impl fmt::Debug for MeasurementMechanism {
     }
 }
 
+/// A quantified idle-channel approximation in raw-measurement space.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasurementIdleNoiseResidual {
+    /// Fault-location index whose idle channel required approximation.
+    pub location_index: u32,
+    /// Raw-measurement flip signature receiving the excess probability.
+    pub mechanism: MeasurementMechanism,
+    /// Absolute probability transferred from identity to `mechanism`.
+    pub magnitude: f64,
+}
+
 /// A measurement noise model for fast approximate raw-measurement sampling.
 #[derive(Debug, Clone, Default)]
 pub struct MeasurementNoiseModel {
@@ -3908,6 +4301,8 @@ pub struct MeasurementNoiseModel {
     pub num_measurements: usize,
     /// Optional mapping from influence-map index to original circuit order.
     pub im_to_tc_order: Option<Vec<usize>>,
+    /// Quantified approximations introduced by idle signature conversion.
+    pub idle_noise_residuals: Vec<MeasurementIdleNoiseResidual>,
 }
 
 impl MeasurementNoiseModel {
@@ -3918,6 +4313,7 @@ impl MeasurementNoiseModel {
             mechanisms: BTreeMap::new(),
             num_measurements,
             im_to_tc_order: None,
+            idle_noise_residuals: Vec::new(),
         }
     }
 
@@ -3950,6 +4346,10 @@ impl MeasurementNoiseModel {
             .entry(mechanism)
             .and_modify(|p| *p = combine_probabilities(*p, probability))
             .or_insert(probability);
+    }
+
+    pub(crate) fn add_idle_noise_residual(&mut self, residual: MeasurementIdleNoiseResidual) {
+        self.idle_noise_residuals.push(residual);
     }
 
     /// Samples measurement outcomes into a pre-sized buffer.
@@ -4132,6 +4532,8 @@ pub struct DetectorErrorModel {
     /// component effects are non-empty and graphlike (≤2 detectors).
     /// Used to determine output format: ≥2 → 3 forms, 1 → 2 forms, 0 → 1 form.
     graphlike_decomposable_counts: BTreeMap<(u32, u32), u32>,
+    /// Quantified approximations introduced by infeasible idle signature channels.
+    idle_noise_residuals: Vec<IdleNoiseResidual>,
 }
 
 /// Structured DEM mechanism tuple: `(probability, detector_ids, observable_ids)`.
@@ -4150,6 +4552,7 @@ impl DetectorErrorModel {
             tracked_paulis: Vec::new(),
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
+            idle_noise_residuals: Vec::new(),
         }
     }
 
@@ -4162,6 +4565,7 @@ impl DetectorErrorModel {
             tracked_paulis: Vec::new(),
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
+            idle_noise_residuals: Vec::new(),
         }
     }
 
@@ -4245,6 +4649,21 @@ impl DetectorErrorModel {
     #[must_use]
     pub fn num_contributions(&self) -> usize {
         self.contributions.len()
+    }
+
+    /// Returns every quantified idle-channel approximation made during build.
+    ///
+    /// Each record identifies the concrete flip signature that receives the
+    /// unavoidable both-fire excess and its matching probability magnitude.
+    /// An empty slice means idle conversion was exact at every location.
+    #[inline]
+    #[must_use]
+    pub fn idle_noise_residuals(&self) -> &[IdleNoiseResidual] {
+        &self.idle_noise_residuals
+    }
+
+    pub(crate) fn add_idle_noise_residual(&mut self, residual: IdleNoiseResidual) {
+        self.idle_noise_residuals.push(residual);
     }
 
     /// Exports PECOS-only metadata that is not representable in standard DEM syntax.
@@ -4679,6 +5098,7 @@ impl DetectorErrorModel {
 
         fn direct_source_family_label(family: DirectSourceFamily) -> &'static str {
             match family {
+                DirectSourceFamily::IdleSignature => "IdleSignature",
                 DirectSourceFamily::SingleLocation => "SingleLocation",
                 DirectSourceFamily::SingleLocationY => "SingleLocationY",
                 DirectSourceFamily::TwoLocationPlainY => "TwoLocationPlainY",

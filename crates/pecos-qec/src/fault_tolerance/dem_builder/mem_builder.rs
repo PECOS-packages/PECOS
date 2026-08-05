@@ -17,7 +17,10 @@
 //! the MNM maps faults directly to raw measurement flips for fast approximate
 //! sampling.
 
-use super::types::{MeasurementMechanism, MeasurementNoiseModel, NoiseConfig};
+use super::types::{
+    IdleChannelFamilies, MeasurementIdleNoiseResidual, MeasurementMechanism, MeasurementNoiseModel,
+    NoiseConfig, fit_exclusive_idle_signatures,
+};
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
 use smallvec::SmallVec;
@@ -65,6 +68,10 @@ impl<'a> MemBuilder<'a> {
     }
 
     /// Builds the Measurement Noise Model.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an idle-noise input or signature channel is invalid.
     #[must_use]
     pub fn build(&self) -> MeasurementNoiseModel {
         let num_measurements = self.influence_map.measurements.len();
@@ -130,17 +137,14 @@ impl<'a> MemBuilder<'a> {
                 }
                 GateType::Idle if !loc.before => {
                     if self.noise.uses_dedicated_idle_noise() {
-                        let duration = loc.idle_duration.max(0.0);
-                        let probs = self.noise.idle_pauli_probs(duration);
-                        if probs.px > 0.0 {
-                            self.process_single_pauli_fault(loc_idx, Pauli::X, probs.px, &mut mem);
-                        }
-                        if probs.py > 0.0 {
-                            self.process_single_pauli_fault(loc_idx, Pauli::Y, probs.py, &mut mem);
-                        }
-                        if probs.pz > 0.0 {
-                            self.process_single_pauli_fault(loc_idx, Pauli::Z, probs.pz, &mut mem);
-                        }
+                        let duration = loc.idle_duration;
+                        let families = self
+                            .noise
+                            .try_idle_channel_families(duration)
+                            .unwrap_or_else(|error| {
+                                panic!("invalid DEM idle-noise configuration: {error}")
+                            });
+                        self.process_idle_fault(loc_idx, families, &mut mem);
                     } else if self.noise.p1 > 0.0 {
                         self.process_single_qubit_fault(loc_idx, &mut mem);
                     }
@@ -206,6 +210,65 @@ impl<'a> MemBuilder<'a> {
         let prob = self.noise.p1 / 3.0;
         for pauli in [Pauli::X, Pauli::Y, Pauli::Z] {
             self.process_single_pauli_fault(loc_idx, pauli, prob, mem);
+        }
+    }
+
+    fn process_idle_fault(
+        &self,
+        loc_idx: usize,
+        families: IdleChannelFamilies,
+        mem: &mut MeasurementNoiseModel,
+    ) {
+        let x_mechanism = self.compute_mechanism(loc_idx, Pauli::X);
+        let y_mechanism = self.compute_mechanism(loc_idx, Pauli::Y);
+        let z_mechanism = self.compute_mechanism(loc_idx, Pauli::Z);
+        debug_assert_eq!(
+            y_mechanism,
+            xor_measurement_mechanisms(Some(&x_mechanism), Some(&z_mechanism))
+        );
+
+        for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
+            let mut exclusive = std::collections::BTreeMap::new();
+            for (mechanism, probability) in [
+                (x_mechanism.clone(), probabilities.px),
+                (y_mechanism.clone(), probabilities.py),
+                (z_mechanism.clone(), probabilities.pz),
+            ] {
+                if mechanism.is_empty() || probability == 0.0 {
+                    continue;
+                }
+                *exclusive.entry(mechanism).or_insert(0.0) += probability;
+            }
+
+            let context = format!("location {loc_idx} exclusive family {family_index}");
+            let fit = fit_exclusive_idle_signatures(
+                exclusive,
+                |left, right| xor_measurement_mechanisms(Some(left), Some(right)),
+                &context,
+            )
+            .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"));
+            for (mechanism, probability) in fit.mechanisms {
+                mem.add_mechanism(mechanism, probability);
+            }
+            if let Some((mechanism, magnitude)) = fit.residual {
+                mem.add_idle_noise_residual(MeasurementIdleNoiseResidual {
+                    location_index: u32::try_from(loc_idx)
+                        .expect("fault-location index must fit in residual metadata"),
+                    mechanism,
+                    magnitude,
+                });
+            }
+        }
+        for probabilities in families.independent {
+            for (mechanism, probability) in [
+                (x_mechanism.clone(), probabilities.px),
+                (y_mechanism.clone(), probabilities.py),
+                (z_mechanism.clone(), probabilities.pz),
+            ] {
+                if !mechanism.is_empty() && probability != 0.0 {
+                    mem.add_mechanism(mechanism, probability);
+                }
+            }
         }
     }
 

@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -1271,6 +1272,7 @@ class GuppyDemBuilder:
                 named_result_binding = "compiler_direct_scalar_partial"
             else:
                 named_result_binding = "compiler_direct_scalar_complete"
+        _warn_on_idle_noise_residuals(dem)
         return GuppyDemBuild(
             dem=dem,
             circuit=circuit,
@@ -1283,6 +1285,29 @@ class GuppyDemBuilder:
             _observable_meas_ids=schema.observable_meas_ids,
             _result_ids_by_tag=schema.result_ids_by_tag,
         )
+
+
+def _warn_on_idle_noise_residuals(dem: DetectorErrorModel) -> None:
+    """Warn when an idle channel could not be represented exactly.
+
+    A mutually exclusive Pauli channel is exactly representable as independent DEM
+    mechanisms only when each Pauli is at least as likely as the product of the other
+    two. Below that, independence forces a both-fire contribution the channel does not
+    have, and the builder emits the closest non-negative fit instead. The shortfall is
+    recorded on ``dem.idle_noise_residuals``; warn so it is not shipped unnoticed.
+    """
+    residuals = dem.idle_noise_residuals
+    if not residuals:
+        return
+    largest = max(entry["magnitude"] for entry in residuals)
+    warnings.warn(
+        f"{len(residuals)} idle noise channel(s) were approximated: a mutually exclusive "
+        f"channel is not exactly representable as independent DEM mechanisms unless each "
+        f"Pauli is at least the product of the other two. The closest non-negative fit was "
+        f"used; largest residual {largest:.3e}. See dem.idle_noise_residuals for details.",
+        UserWarning,
+        stacklevel=3,
+    )
 
 
 def build_dem_from_guppy(
@@ -1368,7 +1393,13 @@ def build_dem_from_guppy(
         p_meas: Measurement flip rate.
         p_prep: Preparation (reset) error rate.
         p_idle_linear: Optional total stochastic idle-noise rate linear in
-            duration. Uses the engines ``GeneralNoiseModel`` convention.
+            duration. Uses the engines ``GeneralNoiseModel`` categorical-Pauli
+            convention. The DEM groups non-empty propagated flip signatures
+            before converting distinct signatures to independent mechanisms.
+            If exact conversion would require a negative mechanism, the build
+            uses a non-negative boundary fit and reports its quantified
+            both-fire residual through ``dem.idle_noise_residuals`` and the
+            audited build's ``audit["idle_noise_residuals"]`` entry.
         p_idle_linear_model: Optional relative weights over ``"X"``, ``"Y"``,
             ``"Z"``, and ``"L"`` for ``p_idle_linear``. Weights must be finite,
             non-negative, and sum to 1.0 within ``1e-5``, including any
@@ -1378,7 +1409,8 @@ def build_dem_from_guppy(
         p_idle_sin_squared: Optional stochastic sine-law idle rate. An
             axis multiplier ``m`` gives probability
             ``sin((p_idle_sin_squared * m) * t)^2``. By default X, Y, and Z
-            each use the full family rate.
+            each use the full family rate. These axis mechanisms remain
+            separate from the linear family.
         p_idle_sin_squared_model: Optional finite, non-negative relative-rate
             multipliers over ``"X"``, ``"Y"``, ``"Z"``, and ``"L"``. There is
             no sum constraint; the default is

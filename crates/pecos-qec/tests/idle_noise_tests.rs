@@ -14,12 +14,17 @@
 //! noise is explicitly attached to idle locations via dedicated idle noise or
 //! per-gate idle rates.
 
+use pecos_core::pauli::{X, Y, Z};
 use pecos_core::{QubitId, TimeUnits};
 use pecos_qec::fault_tolerance::dem_builder::{
-    DemBuilder, DemSamplerBuilder, NoiseConfig, PerGateTypeNoise,
+    DemBuilder, DemSamplerBuilder, DetectorErrorModel, FaultMechanism, MemBuilder, NoiseConfig,
+    PauliProbs, PerGateTypeNoise, combine_probabilities,
 };
-use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
+use pecos_qec::fault_tolerance::propagator::{
+    DagFaultAnalyzer, DagFaultInfluenceMap, DagSpacetimeLocation, Pauli,
+};
 use pecos_quantum::{DagCircuit, GateType};
+use std::collections::BTreeMap;
 
 fn build_idle_then_measure(num_idles: usize) -> DagCircuit {
     // Prep N qubits, idle each once, measure each. Very simple fixture
@@ -45,6 +50,158 @@ fn build_nanosecond_idle_x_basis_measure() -> DagCircuit {
     dag.h(&[0]);
     dag.mz(&[0]);
     dag
+}
+
+fn build_unit_idle_with_pauli_tracking() -> DagCircuit {
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    dag.idle(TimeUnits::new(1), &[0]);
+    dag.tracked_pauli_labeled("tracked_x", X(0));
+    dag.tracked_pauli_labeled("tracked_y", Y(0));
+    dag.tracked_pauli_labeled("tracked_z", Z(0));
+    dag.mz(&[0]);
+    dag
+}
+
+fn build_unit_idle_tracking_x() -> DagCircuit {
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    dag.idle(TimeUnits::new(1), &[0]);
+    dag.tracked_pauli_labeled("tracked_x", X(0));
+    dag.mz(&[0]);
+    dag
+}
+
+fn build_unit_idle_tracking_y() -> DagCircuit {
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    dag.idle(TimeUnits::new(1), &[0]);
+    dag.tracked_pauli_labeled("tracked_y", Y(0));
+    dag.mz(&[0]);
+    dag
+}
+
+fn build_tracked_idle_dem(noise: NoiseConfig) -> Result<DetectorErrorModel, String> {
+    let dag = build_unit_idle_with_pauli_tracking();
+    DemBuilder::try_from_circuit_with_noise_config(&dag, noise).map_err(|error| error.to_string())
+}
+
+fn synthetic_idle_influence(
+    x_signature: &[u32],
+    y_signature: &[u32],
+    z_signature: &[u32],
+) -> DagFaultInfluenceMap {
+    let mut influence = DagFaultInfluenceMap::with_capacity(1);
+    influence.locations.push(DagSpacetimeLocation {
+        node: 0,
+        qubits: vec![QubitId::from(0usize)],
+        before: false,
+        gate_type: GateType::Idle,
+        idle_duration: 1.0,
+    });
+    influence
+        .influences
+        .detectors_x
+        .extend(x_signature.iter().copied());
+    influence
+        .influences
+        .detectors_y
+        .extend(y_signature.iter().copied());
+    influence
+        .influences
+        .detectors_z
+        .extend(z_signature.iter().copied());
+    influence.influences.finish_location();
+    influence.measurements = vec![(0, 0, 0), (1, 0, 0)];
+    influence
+}
+
+fn build_synthetic_idle_dem(
+    influence: &DagFaultInfluenceMap,
+    noise: NoiseConfig,
+) -> Result<DetectorErrorModel, String> {
+    DemBuilder::new(influence)
+        .with_noise_config(noise)
+        .with_detectors_json(r#"[{"id": 0, "records": [-2]}, {"id": 1, "records": [-1]}]"#)
+        .map_err(|error| error.to_string())?
+        .try_build()
+        .map_err(|error| error.to_string())
+}
+
+fn compose_xyz_mechanisms(mechanisms: PauliProbs) -> [f64; 4] {
+    let PauliProbs { px, py, pz } = mechanisms;
+    [
+        (1.0 - px) * (1.0 - py) * (1.0 - pz) + px * py * pz,
+        px * (1.0 - py) * (1.0 - pz) + (1.0 - px) * py * pz,
+        (1.0 - px) * py * (1.0 - pz) + px * (1.0 - py) * pz,
+        (1.0 - px) * (1.0 - py) * pz + px * py * (1.0 - pz),
+    ]
+}
+
+fn compose_pauli_channels(left: [f64; 4], right: [f64; 4]) -> [f64; 4] {
+    let [li, lx, ly, lz] = left;
+    let [ri, rx, ry, rz] = right;
+    [
+        li * ri + lx * rx + ly * ry + lz * rz,
+        li * rx + lx * ri + ly * rz + lz * ry,
+        li * ry + ly * ri + lx * rz + lz * rx,
+        li * rz + lz * ri + lx * ry + ly * rx,
+    ]
+}
+
+fn idle_signature_contributions(dem: &DetectorErrorModel) -> Vec<(FaultMechanism, f64)> {
+    let mut mechanisms = Vec::new();
+    for record in dem.contribution_render_records() {
+        let contribution = record.contribution;
+        assert_eq!(contribution.source_gate_types.as_slice(), [GateType::Idle]);
+        assert!(contribution.paulis.is_empty());
+        mechanisms.push((contribution.effect, contribution.probability));
+    }
+    mechanisms
+}
+
+fn raw_idle_signature(
+    influence: &DagFaultInfluenceMap,
+    loc_idx: usize,
+    pauli: Pauli,
+) -> FaultMechanism {
+    FaultMechanism::from_unsorted_with_tracked_paulis(
+        influence
+            .get_detector_indices(loc_idx, pauli.as_u8())
+            .iter()
+            .copied(),
+        influence
+            .get_observable_indices(loc_idx, pauli.as_u8())
+            .iter()
+            .copied(),
+        influence
+            .get_tracked_pauli_indices(loc_idx, pauli.as_u8())
+            .iter()
+            .copied(),
+    )
+}
+
+fn idle_location(influence: &DagFaultInfluenceMap) -> usize {
+    influence
+        .locations
+        .iter()
+        .position(|location| location.gate_type == GateType::Idle && !location.before)
+        .expect("after-idle fault location")
+}
+
+fn independent_signature_distribution(
+    mechanisms: &[(FaultMechanism, f64)],
+) -> BTreeMap<FaultMechanism, f64> {
+    let mut distribution = BTreeMap::from([(FaultMechanism::new(), 1.0)]);
+    for (mechanism, probability) in mechanisms {
+        let mut next = BTreeMap::new();
+        for (effect, mass) in distribution {
+            *next.entry(effect.clone()).or_insert(0.0) += mass * (1.0 - probability);
+            *next.entry(effect.xor(mechanism)).or_insert(0.0) += mass * probability;
+        }
+        distribution = next;
+    }
+    distribution
 }
 
 #[test]
@@ -241,9 +398,17 @@ fn idle_memory_pauli_probabilities_match_linear_and_quadratic_model() {
         .set_idle_pauli_linear_rates(1.0e-3, 2.0e-3, 3.0e-3)
         .set_idle_pauli_quadratic_rates(1.0e-4, 2.0e-4, 3.0e-4)
         .idle_memory_pauli_probs(10.0);
-    assert!((pauli.px - 0.02).abs() < 1e-15);
-    assert!((pauli.py - 0.04).abs() < 1e-15);
-    assert!((pauli.pz - 0.06).abs() < 1e-15);
+    let expected = compose_pauli_channels(
+        [0.94, 0.01, 0.02, 0.03],
+        compose_xyz_mechanisms(PauliProbs {
+            px: 0.01,
+            py: 0.02,
+            pz: 0.03,
+        }),
+    );
+    assert!((pauli.px - expected[1]).abs() < 1e-15);
+    assert!((pauli.py - expected[2]).abs() < 1e-15);
+    assert!((pauli.pz - expected[3]).abs() < 1e-15);
 }
 
 #[test]
@@ -258,9 +423,285 @@ fn idle_memory_pauli_probabilities_support_quadratic_sine_model() {
     let pauli_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
         .set_idle_pauli_quadratic_sine_rates(0.1, 0.2, 0.3)
         .idle_memory_pauli_probs(2.0);
-    assert!((pauli_sine.px - 0.2_f64.sin().powi(2)).abs() < 1e-15);
-    assert!((pauli_sine.py - 0.4_f64.sin().powi(2)).abs() < 1e-15);
-    assert!((pauli_sine.pz - 0.6_f64.sin().powi(2)).abs() < 1e-15);
+    let expected = compose_xyz_mechanisms(PauliProbs {
+        px: 0.2_f64.sin().powi(2),
+        py: 0.4_f64.sin().powi(2),
+        pz: 0.6_f64.sin().powi(2),
+    });
+    assert!((pauli_sine.px - expected[1]).abs() < 1e-15);
+    assert!((pauli_sine.py - expected[2]).abs() < 1e-15);
+    assert!((pauli_sine.pz - expected[3]).abs() < 1e-15);
+}
+
+#[test]
+fn equal_idle_signatures_sum_exclusive_probabilities_before_dem_merging() {
+    let influence = synthetic_idle_influence(&[0], &[], &[0]);
+    let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.75);
+    let dem = build_synthetic_idle_dem(&influence, noise)
+        .expect("equal signatures need no independent conversion");
+    let contributions = idle_signature_contributions(&dem);
+
+    assert_eq!(contributions.len(), 1);
+    assert_eq!(contributions[0].1.to_bits(), 1.0_f64.to_bits());
+    assert_ne!(
+        contributions[0].1.to_bits(),
+        combine_probabilities(0.25, 0.75).to_bits(),
+        "exclusive aliases must sum, not use the independent XOR rule",
+    );
+    assert!(dem.idle_noise_residuals().is_empty());
+
+    let measurement_model = MemBuilder::new(&influence)
+        .with_noise_config(
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.75),
+        )
+        .build();
+    assert_eq!(measurement_model.mechanisms.len(), 1);
+    let measurement_probability = *measurement_model
+        .mechanisms
+        .values()
+        .next()
+        .expect("equal raw-measurement signatures must emit one mechanism");
+    assert_eq!(measurement_probability.to_bits(), 1.0_f64.to_bits());
+    assert_ne!(
+        measurement_probability.to_bits(),
+        combine_probabilities(0.25, 0.75).to_bits()
+    );
+}
+
+#[test]
+fn empty_idle_signature_is_dropped_before_conversion() {
+    let influence = synthetic_idle_influence(&[], &[0], &[0]);
+    let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.75);
+    let dem = build_synthetic_idle_dem(&influence, noise)
+        .expect("an undetectable X branch cannot obstruct the surviving Z branch");
+    let contributions = idle_signature_contributions(&dem);
+
+    assert_eq!(contributions.len(), 1);
+    assert_eq!(contributions[0].1.to_bits(), 0.75_f64.to_bits());
+    assert!(dem.idle_noise_residuals().is_empty());
+
+    let measurement_model = MemBuilder::new(&influence)
+        .with_noise_config(
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.75),
+        )
+        .build();
+    assert_eq!(measurement_model.mechanisms.len(), 1);
+    assert_eq!(
+        measurement_model
+            .mechanisms
+            .values()
+            .next()
+            .expect("surviving Z measurement signature")
+            .to_bits(),
+        0.75_f64.to_bits()
+    );
+    assert!(measurement_model.idle_noise_residuals.is_empty());
+}
+
+#[test]
+fn biased_xz_idle_channel_builds_with_quantified_boundary_residual() {
+    let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
+    let loc_idx = idle_location(&influence);
+    let noise =
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.0075, 0.0, 0.0225);
+    let dem = build_synthetic_idle_dem(&influence, noise)
+        .expect("ordinary biased X/Z idle noise must produce a usable DEM");
+    let mechanisms = idle_signature_contributions(&dem);
+    let distribution = independent_signature_distribution(&mechanisms);
+    let x_effect = raw_idle_signature(&influence, loc_idx, Pauli::X);
+    let y_effect = raw_idle_signature(&influence, loc_idx, Pauli::Y);
+    let z_effect = raw_idle_signature(&influence, loc_idx, Pauli::Z);
+
+    assert!(
+        (distribution[&x_effect] - 0.0075).abs() < 1e-12,
+        "distribution={distribution:?}, mechanisms={mechanisms:?}"
+    );
+    assert!((distribution[&z_effect] - 0.0225).abs() < 1e-12);
+    let [residual] = dem.idle_noise_residuals() else {
+        panic!("the infeasible two-signature channel must report one residual")
+    };
+    assert_eq!(residual.effect, y_effect);
+    assert!((distribution[&y_effect] - residual.magnitude).abs() < 1e-12);
+    let qx = mechanisms
+        .iter()
+        .find_map(|(effect, probability)| (effect == &x_effect).then_some(*probability))
+        .expect("X signature mechanism");
+    let qz = mechanisms
+        .iter()
+        .find_map(|(effect, probability)| (effect == &z_effect).then_some(*probability))
+        .expect("Z signature mechanism");
+    assert!((residual.magnitude - qx * qz).abs() < 1e-15);
+}
+
+#[test]
+fn three_distinct_idle_signatures_match_engines_pauli_channel() {
+    // pecos-engines samples one event with probability 0.01, then selects
+    // X/Y/Z categorically with the configured relative weights. Include both
+    // the documented 0.25/0.25/0.50 model and an asymmetric model so every
+    // eigenvalue denominator is independently exercised.
+    let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
+    let loc_idx = idle_location(&influence);
+    let x_effect = raw_idle_signature(&influence, loc_idx, Pauli::X);
+    let y_effect = raw_idle_signature(&influence, loc_idx, Pauli::Y);
+    let z_effect = raw_idle_signature(&influence, loc_idx, Pauli::Z);
+
+    for [px, py, pz] in [[0.0025, 0.0025, 0.005], [0.002, 0.003, 0.005]] {
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(px, py, pz);
+        let dem = build_synthetic_idle_dem(&influence, noise)
+            .expect("three-signature engines channel is exactly representable");
+        let distribution = independent_signature_distribution(&idle_signature_contributions(&dem));
+
+        assert!(
+            (distribution[&FaultMechanism::new()] - (1.0 - px - py - pz)).abs() < 1e-12,
+            "distribution={distribution:?}"
+        );
+        assert!((distribution[&x_effect] - px).abs() < 1e-12);
+        assert!((distribution[&y_effect] - py).abs() < 1e-12);
+        assert!((distribution[&z_effect] - pz).abs() < 1e-12);
+        assert!(dem.idle_noise_residuals().is_empty());
+    }
+}
+
+#[test]
+fn idle_y_signature_is_xor_of_x_and_z_at_every_tested_location() {
+    let synthetic = synthetic_idle_influence(&[0], &[0, 1], &[1]);
+    let synthetic_loc = idle_location(&synthetic);
+    assert_eq!(
+        raw_idle_signature(&synthetic, synthetic_loc, Pauli::Y),
+        raw_idle_signature(&synthetic, synthetic_loc, Pauli::X).xor(&raw_idle_signature(
+            &synthetic,
+            synthetic_loc,
+            Pauli::Z
+        )),
+        "synthetic non-empty signatures",
+    );
+
+    for dag in [
+        build_unit_idle_with_pauli_tracking(),
+        build_unit_idle_tracking_x(),
+        build_unit_idle_tracking_y(),
+        build_idle_then_measure(3),
+    ] {
+        let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+        for (loc_idx, location) in influence.locations.iter().enumerate() {
+            if location.gate_type != GateType::Idle || location.before {
+                continue;
+            }
+            let x_effect = raw_idle_signature(&influence, loc_idx, Pauli::X);
+            let y_effect = raw_idle_signature(&influence, loc_idx, Pauli::Y);
+            let z_effect = raw_idle_signature(&influence, loc_idx, Pauli::Z);
+            assert_eq!(y_effect, x_effect.xor(&z_effect), "idle location {loc_idx}");
+        }
+    }
+}
+
+#[test]
+fn linear_and_sine_idle_families_emit_separate_contributions() {
+    let linear_probability = 0.01;
+    let sine_rate: f64 = 0.2;
+    let sine_probability = sine_rate.sin().powi(2);
+    let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_linear_rate(linear_probability)
+        .set_idle_quadratic_sine_rate(sine_rate);
+    let dem = build_tracked_idle_dem(noise).expect("valid composed-family DEM");
+
+    let mut z_probabilities = dem
+        .contribution_render_records()
+        .into_iter()
+        .filter_map(|record| {
+            (record.contribution.source_gate_types.as_slice() == [GateType::Idle])
+                .then_some(record.contribution.probability)
+        })
+        .collect::<Vec<_>>();
+    z_probabilities.sort_by(f64::total_cmp);
+
+    assert_eq!(z_probabilities.len(), 2);
+    assert!((z_probabilities[0] - linear_probability).abs() < 1e-15);
+    assert!((z_probabilities[1] - sine_probability).abs() < 1e-15);
+    assert!(
+        (z_probabilities.iter().sum::<f64>() - (linear_probability + sine_probability)).abs()
+            < 1e-15
+    );
+}
+
+#[test]
+fn nonpositive_signature_channel_eigenvalue_returns_specific_error() {
+    let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
+    let error = build_synthetic_idle_dem(
+        &influence,
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.25),
+    )
+    .expect_err("zero signature-channel eigenvalues are broken input");
+
+    assert!(error.contains("DEM builder configuration error"));
+    assert!(error.contains("location"));
+    assert!(error.contains("eigenvalues"));
+    assert!(error.contains("must all be positive"));
+}
+
+#[test]
+fn oversized_coefficient_quadratic_mechanism_returns_specific_error() {
+    let error =
+        build_tracked_idle_dem(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_quadratic_rate(1.1))
+            .expect_err("probabilities above one must not be clamped");
+
+    assert!(error.contains("coefficient-quadratic idle mechanism probabilities"));
+    assert!(error.contains("Z=1.1"));
+    assert!(error.contains("must be finite and lie in [0, 1]"));
+}
+
+#[test]
+fn negative_idle_rate_is_rejected_instead_of_clamped() {
+    let error =
+        build_tracked_idle_dem(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear_rate(-0.01))
+            .expect_err("negative rates must not be clamped");
+
+    assert!(error.contains("invalid linear idle rate/model [X=0, Y=0, Z=-0.01]"));
+    assert!(error.contains("rates must be finite and non-negative"));
+}
+
+#[test]
+fn negative_idle_duration_is_rejected_instead_of_clamped() {
+    let dag = build_unit_idle_tracking_x();
+    let mut influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let loc_idx = idle_location(&influence);
+    influence.locations[loc_idx].idle_duration = -1.0;
+    let error = DemBuilder::new(&influence)
+        .with_noise_config(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear_rate(0.01))
+        .try_build()
+        .expect_err("negative idle durations must not be clamped");
+
+    assert!(error.to_string().contains("invalid idle duration -1"));
+    assert!(
+        error
+            .to_string()
+            .contains("duration must be finite and non-negative")
+    );
+}
+
+#[test]
+fn identical_idle_configuration_produces_byte_identical_dem_text() {
+    let dag = build_idle_then_measure(3);
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_pauli_linear_rates(1.0e-5, 2.0e-5, 3.0e-5)
+        .set_idle_pauli_quadratic_sine_rates(0.001, 0.002, 0.003);
+    let build = || {
+        DemBuilder::new(&influence)
+            .with_noise_config(noise.clone())
+            .with_detectors_json(
+                r#"[{"id": 0, "records": [-3]}, {"id": 1, "records": [-2]}, {"id": 2, "records": [-1]}]"#,
+            )
+            .expect("valid detector metadata")
+            .try_build()
+            .expect("valid deterministic DEM")
+            .to_string()
+    };
+
+    let expected = build();
+    for _ in 0..16 {
+        assert_eq!(build().as_bytes(), expected.as_bytes());
+    }
 }
 
 #[test]

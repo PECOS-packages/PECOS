@@ -304,6 +304,27 @@ def test_noise_model_structured_idle_family_matches_flat_axis_rates(entrypoint: 
     )
 
     assert grouped.to_string() == flat.to_string()
+    assert grouped.idle_noise_residuals == []
+    assert flat.idle_noise_residuals == []
+
+
+def test_guppy_build_audit_surfaces_idle_conversion_residuals() -> None:
+    build = build_dem_from_guppy(
+        _structured_idle_noise_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        p_idle_linear=0.03,
+        p_idle_linear_model={"X": 0.25, "Z": 0.75},
+        idle_after_2q_duration=2.0,
+    )
+
+    assert build.audit["idle_noise_residuals"] == build.dem.idle_noise_residuals
+    assert build.audit["idle_noise_residuals"] == []
 
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
@@ -466,6 +487,7 @@ def test_structured_idle_pauli_models_accept_zero_leakage_weight(
     )
 
     assert dem.num_contributions > 0
+    assert dem.idle_noise_residuals == []
 
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
@@ -2172,3 +2194,39 @@ def test_surface_module_cache_collapses_unconstrained_budget_forms() -> None:
     # A genuinely-constrained budget is a separate cache entry.
     assert constrained is not unconstrained_none
     assert constrained["ancilla_budget"] == 2
+
+
+def test_idle_noise_residual_warning_fires_only_when_approximated() -> None:
+    """An approximated idle channel warns; an exact one stays silent.
+
+    The residual is queryable on the DEM, but a field alone is easy to miss, so the
+    build also warns when it had to fall back to the closest non-negative fit.
+    """
+    import warnings
+    from typing import ClassVar
+
+    from pecos.qec.dem import _warn_on_idle_noise_residuals
+
+    class _Exact:
+        idle_noise_residuals: ClassVar[list[dict[str, object]]] = []
+
+    class _Approximated:
+        idle_noise_residuals: ClassVar[list[dict[str, object]]] = [
+            {"location_index": 3, "magnitude": 1.894e-05},
+            {"location_index": 7, "magnitude": 2.1e-05},
+        ]
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _warn_on_idle_noise_residuals(_Exact())
+    assert caught == []
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _warn_on_idle_noise_residuals(_Approximated())
+    assert len(caught) == 1
+    message = str(caught[0].message)
+    assert "2 idle noise channel(s) were approximated" in message
+    # The largest magnitude, not the first one encountered.
+    assert "2.100e-05" in message
+    assert "dem.idle_noise_residuals" in message

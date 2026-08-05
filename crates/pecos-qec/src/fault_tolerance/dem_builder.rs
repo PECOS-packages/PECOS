@@ -100,10 +100,11 @@ pub use sampler::{
 pub use types::{
     ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,
     ContributionRenderSummary, DecomposedFault, DemOutput, DetectorDef, DetectorErrorModel,
-    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType,
-    MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, MeasurementMechanism,
-    MeasurementNoiseModel, NoiseConfig, PAULI_1Q_ORDER, PAULI_2Q_ORDER, PauliProbs, PauliWeights,
-    PecosDemMetadataError, PerGateTypeNoise, ReplacementBranchApproximation,
-    ReplacementBranchImpact, TwoDetectorDirectRenderPolicy, combine_probabilities,
-    omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
+    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType, IdleNoiseError,
+    IdleNoiseResidual, MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel,
+    MeasurementIdleNoiseResidual, MeasurementMechanism, MeasurementNoiseModel, NoiseConfig,
+    PAULI_1Q_ORDER, PAULI_2Q_ORDER, PauliProbs, PauliWeights, PecosDemMetadataError,
+    PerGateTypeNoise, ReplacementBranchApproximation, ReplacementBranchImpact,
+    TwoDetectorDirectRenderPolicy, combine_probabilities, omitted_two_qubit_gate_pauli_twirl,
+    record_offset_to_absolute_index,
 };

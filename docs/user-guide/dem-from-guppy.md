@@ -285,7 +285,12 @@ non-negative multipliers have no sum constraint.
   probability `(p_idle_linear * m_axis) * t`. The model keys are `X`, `Y`, and
   `Z`, plus the engines leakage key `L`. The default is the uniform
   `{X: 1/3, Y: 1/3, Z: 1/3}` engines model. An explicit `L` weight participates
-  in the sum-to-1 requirement.
+  in the sum-to-1 requirement. This is a categorical Pauli channel. DEM
+  construction first propagates its Pauli branches to detector/observable flip
+  signatures, discards empty signatures, and adds probabilities for aliases.
+  Two or more distinct signatures are converted to independent mechanisms; a
+  non-negative boundary fit and its quantified residual are reported when the
+  exact conversion would require a negative mechanism.
 - Sine-squared: `p_idle_sin_squared` with `p_idle_sin_squared_model`. A Pauli
   fault has probability `sin((p_idle_sin_squared * m_axis) * t) ** 2`. The
   model keys are `X`, `Y`, `Z`, and `L`; there is no sum constraint. The
@@ -317,6 +322,14 @@ These rates match the engines *runtime* application semantics
 additionally rescales its public inputs (square-root scaling, an
 incoherent-conversion factor, and cycles-to-radians), so builder inputs are
 not directly interchangeable with these parameters.
+
+Every residual is readable from `dem.idle_noise_residuals` as a dictionary
+containing `location_index`, the concrete `detectors`/`dem_outputs`/
+`tracked_paulis` signature, and `magnitude`. The magnitude is the unavoidable
+both-fire excess on that signature and the equal deficit on the identity
+outcome. Audited Guppy builds also copy this list to
+`dem_build.audit["idle_noise_residuals"]`. An empty list certifies that all idle
+signature conversions were exact.
 
 The per-axis `p_idle_{x,y,z}_linear_rate`,
 `p_idle_{x,y,z}_quadratic_rate`, and

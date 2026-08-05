@@ -178,7 +178,10 @@ class NoiseParameters:
         t2: T2 dephasing time (must satisfy t2 <= 2*t1).
         p_idle_linear: Optional total stochastic idle-noise rate linear in idle
             duration. By default, the total rate is split equally over X, Y,
-            and Z errors.
+            and Z errors. DEM construction groups non-empty propagated flip
+            signatures before converting distinct signatures to independent
+            mechanisms. Infeasible exact conversions use a non-negative fit
+            and expose their quantified residual on the DEM.
         p_idle_linear_model: Optional relative weights over ``"X"``, ``"Y"``,
             ``"Z"``, and ``"L"`` for ``p_idle_linear``. Weights must be finite,
             non-negative, and sum to 1.0; ``"L"`` must have zero weight because
@@ -186,7 +189,8 @@ class NoiseParameters:
         p_idle_sin_squared: Optional stochastic sine-law idle rate. An axis
             multiplier ``m`` produces probability
             ``sin((p_idle_sin_squared * m) * duration)^2``. By default X, Y,
-            and Z each use multiplier 1.0.
+            and Z each use multiplier 1.0. These mechanisms remain separate
+            from the linear family.
         p_idle_sin_squared_model: Optional relative-rate multipliers over
             ``"X"``, ``"Y"``, ``"Z"``, and ``"L"`` for
             ``p_idle_sin_squared``. Values must be finite and non-negative;

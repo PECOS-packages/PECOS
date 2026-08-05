@@ -390,34 +390,34 @@ fn apply_noise_options(
         noise = noise.set_idle_quadratic_rate(rate);
     }
     if let Some(rate) = p_idle_x_linear_rate {
-        noise.p_idle_x_linear_rate = rate.max(0.0);
+        noise.p_idle_x_linear_rate = rate;
     }
     if let Some(rate) = p_idle_y_linear_rate {
-        noise.p_idle_y_linear_rate = rate.max(0.0);
+        noise.p_idle_y_linear_rate = rate;
     }
     if let Some(rate) = p_idle_z_linear_rate {
-        noise.p_idle_linear_rate = rate.max(0.0);
+        noise.p_idle_linear_rate = rate;
     }
     if let Some(rate) = p_idle_x_quadratic_rate {
-        noise.p_idle_x_quadratic_rate = rate.max(0.0);
+        noise.p_idle_x_quadratic_rate = rate;
     }
     if let Some(rate) = p_idle_y_quadratic_rate {
-        noise.p_idle_y_quadratic_rate = rate.max(0.0);
+        noise.p_idle_y_quadratic_rate = rate;
     }
     if let Some(rate) = p_idle_z_quadratic_rate {
-        noise.p_idle_quadratic_rate = rate.max(0.0);
+        noise.p_idle_quadratic_rate = rate;
     }
     if let Some(rate) = p_idle_quadratic_sine_rate {
         noise = noise.set_idle_quadratic_sine_rate(rate);
     }
     if let Some(rate) = p_idle_x_quadratic_sine_rate {
-        noise.p_idle_x_quadratic_sine_rate = rate.max(0.0);
+        noise.p_idle_x_quadratic_sine_rate = rate;
     }
     if let Some(rate) = p_idle_y_quadratic_sine_rate {
-        noise.p_idle_y_quadratic_sine_rate = rate.max(0.0);
+        noise.p_idle_y_quadratic_sine_rate = rate;
     }
     if let Some(rate) = p_idle_z_quadratic_sine_rate {
-        noise.p_idle_quadratic_sine_rate = rate.max(0.0);
+        noise.p_idle_quadratic_sine_rate = rate;
     }
     if let Some(weights) = p1_weights {
         noise = noise.set_p1_weights(parse_p1_weights(weights)?);
@@ -1468,6 +1468,7 @@ fn contribution_record_to_pydict(
     dict.set_item("before_flags", contribution.source_before_flags.to_vec())?;
     if let Some(family) = contribution.direct_source_family {
         let family_label = match family {
+            RustDirectSourceFamily::IdleSignature => "IdleSignature",
             RustDirectSourceFamily::SingleLocation => "SingleLocation",
             RustDirectSourceFamily::SingleLocationY => "SingleLocationY",
             RustDirectSourceFamily::TwoLocationPlainY => "TwoLocationPlainY",
@@ -1756,6 +1757,28 @@ impl PyDetectorErrorModel {
     #[getter]
     fn num_contributions(&self) -> usize {
         self.inner.num_contributions()
+    }
+
+    /// Quantified residuals from infeasible idle exclusive-to-independent conversions.
+    ///
+    /// Each dictionary reports the idle fault location, the concrete flip
+    /// signature receiving excess probability, and the unavoidable both-fire
+    /// magnitude. An empty list means every idle conversion was exact.
+    #[getter]
+    fn idle_noise_residuals(&self, py: Python<'_>) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        self.inner
+            .idle_noise_residuals()
+            .iter()
+            .map(|residual| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("location_index", residual.location_index)?;
+                dict.set_item("detectors", residual.effect.detectors.to_vec())?;
+                dict.set_item("dem_outputs", residual.effect.dem_outputs.to_vec())?;
+                dict.set_item("tracked_paulis", residual.effect.tracked_paulis.to_vec())?;
+                dict.set_item("magnitude", residual.magnitude)?;
+                Ok(dict.unbind())
+            })
+            .collect()
     }
 
     /// Returns debug info about contributions for a specific mechanism.

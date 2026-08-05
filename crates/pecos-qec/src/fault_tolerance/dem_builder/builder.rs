@@ -17,8 +17,9 @@
 
 use super::types::{
     DemOutput, DetectorDef, DetectorErrorModel, DirectSourceComponents, DirectSourceFamily,
-    FaultMechanism, MeasurementCrosstalkDemMode, NoiseConfig, PerGateTypeNoise,
-    ReplacementBranchApproximation, SourceMetadata, record_offset_to_absolute_index,
+    FaultMechanism, IdleChannelFamilies, IdleNoiseResidual, MeasurementCrosstalkDemMode,
+    NoiseConfig, PauliProbs, PerGateTypeNoise, ReplacementBranchApproximation, SourceMetadata,
+    fit_exclusive_idle_signatures, record_offset_to_absolute_index, validate_idle_probabilities,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Direction, Pauli, apply_gate};
@@ -432,8 +433,11 @@ impl<'a> DemBuilder<'a> {
         [per, per, per]
     }
 
-    /// Resolve `[rate_X, rate_Y, rate_Z]` for an explicit idle location.
-    fn idle_rates_for_loc(&self, loc: &DagSpacetimeLocation) -> [f64; 3] {
+    /// Resolve the categorical Pauli channel for an explicit idle location.
+    fn idle_probabilities_for_loc(
+        &self,
+        loc: &DagSpacetimeLocation,
+    ) -> Result<IdleChannelFamilies, DemBuilderError> {
         if let Some(pg) = &self.per_gate {
             let explicit_rates = loc
                 .qubits
@@ -441,22 +445,34 @@ impl<'a> DemBuilder<'a> {
                 .and_then(|q| pg.explicit_1q_rates_on(GateType::Idle, *q))
                 .or_else(|| pg.explicit_1q_rates(GateType::Idle));
             if let Some(rates) = explicit_rates {
-                return rates;
+                let probabilities = PauliProbs {
+                    px: rates[0],
+                    py: rates[1],
+                    pz: rates[2],
+                };
+                validate_idle_probabilities(probabilities, "per-gate")
+                    .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+                return Ok(IdleChannelFamilies {
+                    exclusive: smallvec::smallvec![probabilities],
+                    independent: SmallVec::new(),
+                });
             }
             if pg.base.uses_dedicated_idle_noise() {
-                let duration = loc.idle_duration.max(0.0);
-                let probs = pg.base.idle_pauli_probs(duration);
-                return [probs.px, probs.py, probs.pz];
+                return pg
+                    .base
+                    .try_idle_channel_families(loc.idle_duration)
+                    .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()));
             }
-            return [0.0; 3];
+            return Ok(IdleChannelFamilies::default());
         }
 
         if self.noise.uses_dedicated_idle_noise() {
-            let duration = loc.idle_duration.max(0.0);
-            let probs = self.noise.idle_pauli_probs(duration);
-            return [probs.px, probs.py, probs.pz];
+            return self
+                .noise
+                .try_idle_channel_families(loc.idle_duration)
+                .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()));
         }
-        [0.0; 3]
+        Ok(IdleChannelFamilies::default())
     }
 
     /// Resolve the 15-entry 2Q per-Pauli-pair rate array for a gate
@@ -795,13 +811,16 @@ impl<'a> DemBuilder<'a> {
     /// with a non-empty influence map, a used record offset is out of range,
     /// a used `meas_id` is not present in the circuit (resolved against the
     /// stable stamped ids when available, else positionally), or a
-    /// both-present entry's `records` and `meas_ids` are not redundant.
+    /// both-present entry's `records` and `meas_ids` are not redundant. Returns
+    /// [`DemBuilderError::ConfigurationError`] for an invalid idle input or a
+    /// non-positive idle signature-channel eigenvalue.
     pub fn try_build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
         self.validate_measurement_count()?;
         self.validate_metadata_refs()?;
         self.validate_replacement_branch_approximation()?;
         self.validate_measurement_crosstalk_dem_mode()?;
-        Ok(self.build())
+        self.validate_idle_noise()?;
+        self.build_inner()
     }
 
     /// Builds the Detector Error Model with source tracking.
@@ -815,14 +834,22 @@ impl<'a> DemBuilder<'a> {
     /// circuit-derived metadata must use [`Self::try_build`] instead.
     /// # Panics
     ///
-    /// Panics if the configured replacement-branch approximation is invalid;
-    /// validity is established by construction-time validation.
+    /// Panics if the configured replacement-branch approximation is invalid,
+    /// or if an idle input or signature channel is invalid. Use
+    /// [`Self::try_build`] to receive those failures as errors.
     #[must_use]
     pub fn build(&self) -> DetectorErrorModel {
         self.validate_replacement_branch_approximation()
             .expect("invalid DEM replacement branch approximation");
         self.validate_measurement_crosstalk_dem_mode()
             .expect("invalid DEM measurement crosstalk configuration");
+        self.validate_idle_noise()
+            .expect("invalid DEM idle-noise configuration");
+        self.build_inner()
+            .expect("invalid DEM idle signature conversion")
+    }
+
+    fn build_inner(&self) -> Result<DetectorErrorModel, DemBuilderError> {
         let num_influence_dem_outputs = self
             .num_influence_dem_outputs()
             .max(self.influence_map.dem_output_metadata.len());
@@ -887,9 +914,9 @@ impl<'a> DemBuilder<'a> {
             &mut dem,
             &meas_to_detectors,
             &meas_to_observables,
-        );
+        )?;
 
-        dem
+        Ok(dem)
     }
 
     fn validate_replacement_branch_approximation(&self) -> Result<(), DemBuilderError> {
@@ -1023,6 +1050,15 @@ impl<'a> DemBuilder<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    fn validate_idle_noise(&self) -> Result<(), DemBuilderError> {
+        for loc in &self.influence_map.locations {
+            if loc.gate_type == GateType::Idle && !loc.before {
+                let _ = self.idle_probabilities_for_loc(loc)?;
+            }
+        }
         Ok(())
     }
 
@@ -1413,7 +1449,7 @@ impl<'a> DemBuilder<'a> {
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) {
+    ) -> Result<(), DemBuilderError> {
         let locations = &self.influence_map.locations;
 
         for (loc_idx, loc) in locations.iter().enumerate() {
@@ -1511,15 +1547,15 @@ impl<'a> DemBuilder<'a> {
                     }
                 }
                 GateType::Idle if !loc.before => {
-                    let rates = self.idle_rates_for_loc(loc);
-                    if rates.iter().any(|r| *r > 0.0) {
-                        self.process_single_qubit_fault_source_tracked(
+                    let families = self.idle_probabilities_for_loc(loc)?;
+                    if !families.exclusive.is_empty() || !families.independent.is_empty() {
+                        self.process_idle_fault_source_tracked(
                             loc_idx,
-                            rates,
+                            families,
                             dem,
                             meas_to_detectors,
                             meas_to_observables,
-                        );
+                        )?;
                     }
                 }
                 _ => {}
@@ -1560,6 +1596,7 @@ impl<'a> DemBuilder<'a> {
                 );
             }
         }
+        Ok(())
     }
 
     /// Processes a prep fault with source tracking.
@@ -1846,6 +1883,83 @@ impl<'a> DemBuilder<'a> {
                 );
             }
         }
+    }
+
+    /// Converts one categorical idle Pauli channel after propagation has
+    /// produced its concrete detector/observable flip signatures.
+    fn process_idle_fault_source_tracked(
+        &self,
+        loc_idx: usize,
+        families: IdleChannelFamilies,
+        dem: &mut DetectorErrorModel,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) -> Result<(), DemBuilderError> {
+        let x_effect =
+            self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
+        let y_effect =
+            self.compute_mechanism(loc_idx, Pauli::Y, meas_to_detectors, meas_to_observables);
+        let z_effect =
+            self.compute_mechanism(loc_idx, Pauli::Z, meas_to_detectors, meas_to_observables);
+        debug_assert_eq!(y_effect, x_effect.xor(&z_effect));
+
+        let loc = &self.influence_map.locations[loc_idx];
+        for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
+            let mut exclusive = BTreeMap::new();
+            for (effect, probability) in [
+                (x_effect.clone(), probabilities.px),
+                (y_effect.clone(), probabilities.py),
+                (z_effect.clone(), probabilities.pz),
+            ] {
+                if effect.is_empty() || probability == 0.0 {
+                    continue;
+                }
+                *exclusive.entry(effect).or_insert(0.0) += probability;
+            }
+
+            let context = format!("location {loc_idx} exclusive family {family_index}");
+            let fit = fit_exclusive_idle_signatures(exclusive, FaultMechanism::xor, &context)
+                .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+            for (effect, probability) in fit.mechanisms {
+                Self::add_idle_signature_contribution(loc_idx, loc, effect, probability, dem);
+            }
+            if let Some((effect, magnitude)) = fit.residual {
+                dem.add_idle_noise_residual(IdleNoiseResidual {
+                    location_index: u32::try_from(loc_idx)
+                        .expect("fault-location index must fit in residual metadata"),
+                    effect,
+                    magnitude,
+                });
+            }
+        }
+        for probabilities in families.independent {
+            for (effect, probability) in [
+                (x_effect.clone(), probabilities.px),
+                (y_effect.clone(), probabilities.py),
+                (z_effect.clone(), probabilities.pz),
+            ] {
+                Self::add_idle_signature_contribution(loc_idx, loc, effect, probability, dem);
+            }
+        }
+        Ok(())
+    }
+
+    fn add_idle_signature_contribution(
+        loc_idx: usize,
+        loc: &DagSpacetimeLocation,
+        effect: FaultMechanism,
+        probability: f64,
+        dem: &mut DetectorErrorModel,
+    ) {
+        if effect.is_empty() || probability == 0.0 {
+            return;
+        }
+        dem.add_direct_contribution_with_source(
+            effect,
+            probability,
+            SourceMetadata::new(&[loc_idx], &[], &[loc.gate_type], &[loc.before])
+                .with_direct_source_family(DirectSourceFamily::IdleSignature),
+        );
     }
 
     /// Processes a single-qubit gate fault with source tracking.

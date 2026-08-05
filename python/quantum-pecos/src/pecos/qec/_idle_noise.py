@@ -1,7 +1,15 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Shared translation of structured idle-noise families to DEM primitives."""
+"""Shared translation of structured idle-noise families to DEM primitives.
+
+The linear family is a categorical Pauli channel. The Rust DEM builder first
+groups its non-empty propagated flip signatures and only then converts distinct
+signatures to independent mechanisms. An infeasible exact conversion uses a
+non-negative boundary fit and exposes its quantified both-fire residual on the
+DEM. Sine-squared axes are independent already and remain separate mechanisms
+from the linear family.
+"""
 
 from __future__ import annotations
 

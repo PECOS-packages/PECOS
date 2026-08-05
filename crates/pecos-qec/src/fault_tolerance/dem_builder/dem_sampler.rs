@@ -72,8 +72,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use wide::u64x4;
 
 use super::types::{
-    NoiseConfig, PauliWeights, PerGateTypeNoise, ReplacementBranchApproximation,
-    combine_probabilities,
+    FaultMechanism, IdleChannelFamilies, IdleNoiseResidual, NoiseConfig, PauliProbs, PauliWeights,
+    PerGateTypeNoise, ReplacementBranchApproximation, combine_probabilities,
+    fit_exclusive_idle_signatures, validate_idle_probabilities,
 };
 
 // ============================================================================
@@ -109,6 +110,47 @@ impl DemMechanism {
 
     fn is_empty(&self) -> bool {
         self.detectors.is_empty() && self.dem_outputs.is_empty()
+    }
+
+    fn xor(&self, other: &Self) -> Self {
+        fn symmetric_difference<const N: usize>(
+            left: &SmallVec<[u32; N]>,
+            right: &SmallVec<[u32; N]>,
+        ) -> SmallVec<[u32; N]>
+        where
+            [u32; N]: smallvec::Array<Item = u32>,
+        {
+            let mut result = SmallVec::new();
+            let (mut i, mut j) = (0, 0);
+            while i < left.len() && j < right.len() {
+                match left[i].cmp(&right[j]) {
+                    std::cmp::Ordering::Less => {
+                        result.push(left[i]);
+                        i += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        result.push(right[j]);
+                        j += 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+            result.extend_from_slice(&left[i..]);
+            result.extend_from_slice(&right[j..]);
+            result
+        }
+
+        Self {
+            detectors: symmetric_difference(&self.detectors, &other.detectors),
+            dem_outputs: symmetric_difference(&self.dem_outputs, &other.dem_outputs),
+        }
+    }
+
+    fn as_fault_mechanism(&self) -> FaultMechanism {
+        FaultMechanism::from_sorted(self.detectors.clone(), self.dem_outputs.clone())
     }
 }
 
@@ -226,6 +268,8 @@ pub struct SamplingEngine {
     num_detectors: usize,
     /// Number of DEM `L<n>` outputs.
     num_dem_outputs: usize,
+    /// Quantified approximations introduced by idle signature conversion.
+    idle_noise_residuals: Vec<IdleNoiseResidual>,
 }
 
 const U32_BASE_AS_F64: f64 = 4_294_967_296.0;
@@ -266,6 +310,12 @@ impl SamplingEngine {
         self.num_dem_outputs
     }
 
+    /// Returns quantified idle-channel approximations made while building.
+    #[must_use]
+    pub fn idle_noise_residuals(&self) -> &[IdleNoiseResidual] {
+        &self.idle_noise_residuals
+    }
+
     /// Reconstruct a [`DetectorErrorModel`] from the aggregated `SoA`
     /// mechanism state for text output (e.g. Stim-format via
     /// [`DetectorErrorModel::to_string`]).
@@ -292,6 +342,9 @@ impl SamplingEngine {
                 self.dem_output_data[obs_start..obs_end].iter().copied(),
             );
             dem.add_direct_contribution(mechanism, prob);
+        }
+        for residual in &self.idle_noise_residuals {
+            dem.add_idle_noise_residual(residual.clone());
         }
         dem
     }
@@ -366,6 +419,7 @@ impl SamplingEngine {
             dem_output_data,
             num_detectors,
             num_dem_outputs,
+            idle_noise_residuals: Vec::new(),
         }
     }
 
@@ -391,6 +445,11 @@ impl SamplingEngine {
     /// and each non-identity Pauli is equally likely (p/3 for 1-qubit,
     /// p/15 for 2-qubit). For idle gates with T1/T2 noise, the Pauli
     /// distribution is biased (more Z than X/Y).
+    ///
+    /// # Panics
+    ///
+    /// Panics if an idle-noise input or signature channel is invalid, or if an
+    /// idle gate event has no corresponding fault location.
     #[must_use]
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
@@ -400,6 +459,7 @@ impl SamplingEngine {
         use pecos_core::gate_type::GateType;
 
         let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
+        let mut idle_noise_residuals = Vec::new();
 
         let gate_locs = influence_map.gate_fault_locations();
 
@@ -418,49 +478,120 @@ impl SamplingEngine {
                 continue;
             }
 
-            // For idle gates with T1/T2 noise, use per-Pauli probabilities.
-            // For all other gates, divide equally among events.
             let is_idle = loc.gate_type == GateType::Idle;
-            let idle_pauli_probs = if is_idle {
+            if is_idle {
                 let duration = influence_map
                     .locations
                     .iter()
                     .find(|l| l.node == loc.node && l.before == loc.before)
-                    .map_or(0.0, |l| l.idle_duration.max(0.0));
-                Some(noise.idle_pauli_probs(duration))
-            } else {
-                None
-            };
+                    .map_or(0.0, |l| l.idle_duration);
+                let families = noise
+                    .try_idle_channel_families(duration)
+                    .unwrap_or_else(|error| {
+                        panic!("invalid DEM idle-noise configuration: {error}")
+                    });
+                let mut effects: [Option<DemMechanism>; 4] = [None, None, None, None];
+                for event in &events {
+                    let pauli = event
+                        .pauli
+                        .paulis()
+                        .first()
+                        .map_or(pecos_core::Pauli::I, |&(pauli, _)| pauli);
+                    let detectors = event.detectors.iter().copied().collect();
+                    let dem_outputs = event
+                        .dem_outputs
+                        .iter()
+                        .filter_map(|&idx| influence_map.observable_id_for_internal_dem_output(idx))
+                        .collect();
+                    let pauli_index = match pauli {
+                        pecos_core::Pauli::I => 0,
+                        pecos_core::Pauli::X => 1,
+                        pecos_core::Pauli::Y => 2,
+                        pecos_core::Pauli::Z => 3,
+                    };
+                    effects[pauli_index] = Some(DemMechanism::new(detectors, dem_outputs));
+                }
+                let x = effects[Pauli::X.as_u8() as usize]
+                    .clone()
+                    .unwrap_or_else(DemMechanism::empty);
+                let y = effects[Pauli::Y.as_u8() as usize]
+                    .clone()
+                    .unwrap_or_else(DemMechanism::empty);
+                let z = effects[Pauli::Z.as_u8() as usize]
+                    .clone()
+                    .unwrap_or_else(DemMechanism::empty);
+                debug_assert_eq!(y, x.xor(&z));
+                let loc_idx = influence_map
+                    .locations
+                    .iter()
+                    .position(|candidate| {
+                        candidate.node == loc.node && candidate.before == loc.before
+                    })
+                    .expect("idle gate location must have a fault location");
+
+                for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
+                    let mut exclusive = BTreeMap::new();
+                    for (mechanism, probability) in [
+                        (x.clone(), probabilities.px),
+                        (y.clone(), probabilities.py),
+                        (z.clone(), probabilities.pz),
+                    ] {
+                        if mechanism.is_empty() || probability == 0.0 {
+                            continue;
+                        }
+                        *exclusive.entry(mechanism).or_insert(0.0) += probability;
+                    }
+                    let context = format!("location {loc_idx} exclusive family {family_index}");
+                    let fit = fit_exclusive_idle_signatures(exclusive, DemMechanism::xor, &context)
+                        .unwrap_or_else(|error| {
+                            panic!("invalid DEM idle-noise configuration: {error}")
+                        });
+                    for (mechanism, probability) in fit.mechanisms {
+                        aggregated
+                            .entry(mechanism)
+                            .and_modify(|held| {
+                                *held = combine_probabilities(*held, probability);
+                            })
+                            .or_insert(probability);
+                    }
+                    if let Some((mechanism, magnitude)) = fit.residual {
+                        idle_noise_residuals.push(IdleNoiseResidual {
+                            location_index: u32::try_from(loc_idx)
+                                .expect("fault-location index must fit in residual metadata"),
+                            effect: mechanism.as_fault_mechanism(),
+                            magnitude,
+                        });
+                    }
+                }
+                for probabilities in families.independent {
+                    for (mechanism, probability) in [
+                        (x.clone(), probabilities.px),
+                        (y.clone(), probabilities.py),
+                        (z.clone(), probabilities.pz),
+                    ] {
+                        if mechanism.is_empty() || probability == 0.0 {
+                            continue;
+                        }
+                        aggregated
+                            .entry(mechanism)
+                            .and_modify(|held| {
+                                *held = combine_probabilities(*held, probability);
+                            })
+                            .or_insert(probability);
+                    }
+                }
+                continue;
+            }
 
             // Get per-event probabilities based on gate type and noise config
             let n_qubits = loc.num_qubits();
-            let custom_weights = if idle_pauli_probs.is_some() {
-                None
-            } else if n_qubits == 1 {
+            let custom_weights = if n_qubits == 1 {
                 noise.p1_weights.as_ref()
             } else {
                 noise.p2_weights.as_ref()
             };
 
-            let event_weights: Vec<f64> = if let Some(pp) = &idle_pauli_probs {
-                // T1/T2 idle: absolute per-Pauli probabilities
-                events
-                    .iter()
-                    .map(|event| {
-                        let pauli = event
-                            .pauli
-                            .paulis()
-                            .first()
-                            .map_or(pecos_core::Pauli::I, |&(pa, _)| pa);
-                        match pauli {
-                            pecos_core::Pauli::X => pp.px,
-                            pecos_core::Pauli::Y => pp.py,
-                            pecos_core::Pauli::Z => pp.pz,
-                            pecos_core::Pauli::I => 0.0,
-                        }
-                    })
-                    .collect()
-            } else if let Some(weights) = custom_weights {
+            let event_weights: Vec<f64> = if let Some(weights) = custom_weights {
                 // Custom per-Pauli weights: p * weight_for(pauli)
                 events
                     .iter()
@@ -508,7 +639,9 @@ impl SamplingEngine {
             .into_iter()
             .map(|(mech, prob)| (prob, mech.detectors.to_vec(), mech.dem_outputs.to_vec()));
 
-        Self::from_mechanisms(mechanisms, num_detectors, num_dem_outputs)
+        let mut engine = Self::from_mechanisms(mechanisms, num_detectors, num_dem_outputs);
+        engine.idle_noise_residuals = idle_noise_residuals;
+        engine
     }
 
     /// Sample a single shot.
@@ -2035,6 +2168,7 @@ impl<'a> SamplingEngineBuilder<'a> {
 
         // Aggregation map: mechanism -> probability
         let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
+        let mut idle_noise_residuals = Vec::new();
 
         // Group two-qubit gate locations by node for paired processing
         let mut cx_groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
@@ -2127,13 +2261,14 @@ impl<'a> SamplingEngineBuilder<'a> {
                     // explicitly configured.
                     if !loc.before =>
                 {
-                    let rates = self.idle_rates(loc);
-                    if rates.iter().any(|r| *r > 0.0) {
-                        self.process_depolarizing_fault_rates(
+                    let families = self.idle_families(loc);
+                    if !families.exclusive.is_empty() || !families.independent.is_empty() {
+                        self.process_idle_fault_families(
                             loc_idx,
-                            rates,
+                            families,
                             &mechanism_context,
                             &mut aggregated,
+                            &mut idle_noise_residuals,
                         );
                     }
                 }
@@ -2229,6 +2364,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             dem_output_data,
             num_detectors,
             num_dem_outputs,
+            idle_noise_residuals,
         }
     }
 
@@ -2348,11 +2484,11 @@ impl<'a> SamplingEngineBuilder<'a> {
         }
     }
 
-    /// Resolve per-Pauli rates for an explicit idle location.
-    fn idle_rates(
+    /// Resolve categorical and independent families for an explicit idle location.
+    fn idle_families(
         &self,
         loc: &crate::fault_tolerance::propagator::dag::DagSpacetimeLocation,
-    ) -> [f64; 3] {
+    ) -> IdleChannelFamilies {
         if let Some(pg) = &self.per_gate {
             let explicit_rates = loc
                 .qubits
@@ -2360,24 +2496,38 @@ impl<'a> SamplingEngineBuilder<'a> {
                 .and_then(|q| pg.explicit_1q_rates_on(GateType::Idle, *q))
                 .or_else(|| pg.explicit_1q_rates(GateType::Idle));
             if let Some(rates) = explicit_rates {
-                return rates;
+                let probabilities = PauliProbs {
+                    px: rates[0],
+                    py: rates[1],
+                    pz: rates[2],
+                };
+                validate_idle_probabilities(probabilities, "per-gate").unwrap_or_else(|error| {
+                    panic!("invalid DEM idle-noise configuration: {error}")
+                });
+                return IdleChannelFamilies {
+                    exclusive: smallvec::smallvec![probabilities],
+                    independent: SmallVec::new(),
+                };
             }
             if pg.base.uses_dedicated_idle_noise() {
-                let duration = loc.idle_duration.max(0.0);
-                let probs = pg.base.idle_pauli_probs(duration);
-                return [probs.px, probs.py, probs.pz];
+                return pg
+                    .base
+                    .try_idle_channel_families(loc.idle_duration)
+                    .unwrap_or_else(|error| {
+                        panic!("invalid DEM idle-noise configuration: {error}")
+                    });
             }
-            return [0.0; 3];
+            return IdleChannelFamilies::default();
         }
 
         if let Some(noise) = &self.idle_noise
             && noise.uses_dedicated_idle_noise()
         {
-            let duration = loc.idle_duration.max(0.0);
-            let probs = noise.idle_pauli_probs(duration);
-            return [probs.px, probs.py, probs.pz];
+            return noise
+                .try_idle_channel_families(loc.idle_duration)
+                .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"));
         }
-        [0.0; 3]
+        IdleChannelFamilies::default()
     }
 
     /// Resolve per-Pauli-pair rates for a 2Q gate (15 non-II pairs) on a
@@ -2431,6 +2581,87 @@ impl<'a> SamplingEngineBuilder<'a> {
             if !mechanism.is_empty() {
                 let entry = aggregated.entry(mechanism).or_insert(0.0);
                 *entry = combine_probabilities(*entry, per_pauli_prob);
+            }
+        }
+    }
+
+    fn process_idle_fault_families(
+        &self,
+        loc_idx: usize,
+        families: IdleChannelFamilies,
+        context: &FaultMechanismContext<'_>,
+        aggregated: &mut BTreeMap<DemMechanism, f64>,
+        residuals: &mut Vec<IdleNoiseResidual>,
+    ) {
+        let x_mechanism = self.compute_mechanism(
+            loc_idx,
+            Pauli::X,
+            context.im_to_tc,
+            context.influence_observable_ids,
+            context.num_tc_measurements,
+        );
+        let y_mechanism = self.compute_mechanism(
+            loc_idx,
+            Pauli::Y,
+            context.im_to_tc,
+            context.influence_observable_ids,
+            context.num_tc_measurements,
+        );
+        let z_mechanism = self.compute_mechanism(
+            loc_idx,
+            Pauli::Z,
+            context.im_to_tc,
+            context.influence_observable_ids,
+            context.num_tc_measurements,
+        );
+        debug_assert_eq!(y_mechanism, x_mechanism.xor(&z_mechanism));
+
+        let add = |mechanism: DemMechanism,
+                   probability: f64,
+                   aggregated: &mut BTreeMap<DemMechanism, f64>| {
+            if mechanism.is_empty() || probability == 0.0 {
+                return;
+            }
+            aggregated
+                .entry(mechanism)
+                .and_modify(|held| *held = combine_probabilities(*held, probability))
+                .or_insert(probability);
+        };
+
+        for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
+            let mut exclusive = BTreeMap::new();
+            for (mechanism, probability) in [
+                (x_mechanism.clone(), probabilities.px),
+                (y_mechanism.clone(), probabilities.py),
+                (z_mechanism.clone(), probabilities.pz),
+            ] {
+                if mechanism.is_empty() || probability == 0.0 {
+                    continue;
+                }
+                *exclusive.entry(mechanism).or_insert(0.0) += probability;
+            }
+            let fit_context = format!("location {loc_idx} exclusive family {family_index}");
+            let fit = fit_exclusive_idle_signatures(exclusive, DemMechanism::xor, &fit_context)
+                .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"));
+            for (mechanism, probability) in fit.mechanisms {
+                add(mechanism, probability, aggregated);
+            }
+            if let Some((mechanism, magnitude)) = fit.residual {
+                residuals.push(IdleNoiseResidual {
+                    location_index: u32::try_from(loc_idx)
+                        .expect("fault-location index must fit in residual metadata"),
+                    effect: mechanism.as_fault_mechanism(),
+                    magnitude,
+                });
+            }
+        }
+        for probabilities in families.independent {
+            for (mechanism, probability) in [
+                (x_mechanism.clone(), probabilities.px),
+                (y_mechanism.clone(), probabilities.py),
+                (z_mechanism.clone(), probabilities.pz),
+            ] {
+                add(mechanism, probability, aggregated);
             }
         }
     }

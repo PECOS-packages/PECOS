@@ -271,6 +271,7 @@ class GuppyDemBuild:
             "runtime_order_is_canonical": runtime_order == list(range(len(runtime_order))),
             "runtime_order_mismatch_count": sum(index != meas_id for index, meas_id in enumerate(runtime_order)),
             "measurement_ledger": [entry.to_dict() for entry in self.measurement_ledger],
+            "idle_noise_residuals": self.dem.idle_noise_residuals,
         }
 
     def evaluate_runtime_record(self, values: Sequence[int | bool]) -> tuple[list[int], int]:

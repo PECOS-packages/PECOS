@@ -202,22 +202,35 @@ class NoiseParameters:
         p_idle_coherent_model: Optional relative-rate multipliers over ``"RX"``,
             ``"RY"``, and ``"RZ"`` for ``p_idle_coherent``. Values must be
             finite and non-negative.
-        p_idle_linear_rate: Legacy alias for stochastic Z-memory rate linear in idle duration.
-        p_idle_quadratic_rate: Legacy alias for stochastic Z-memory rate quadratic in idle duration.
-        p_idle_x_linear_rate: Stochastic X-memory rate linear in idle duration.
-        p_idle_y_linear_rate: Stochastic Y-memory rate linear in idle duration.
-        p_idle_z_linear_rate: Stochastic Z-memory rate linear in idle duration.
-        p_idle_x_quadratic_rate: Stochastic X-memory rate quadratic in idle duration.
-        p_idle_y_quadratic_rate: Stochastic Y-memory rate quadratic in idle duration.
-        p_idle_z_quadratic_rate: Stochastic Z-memory rate quadratic in idle duration.
-        p_idle_quadratic_sine_rate: Legacy alias for stochastic Z-memory rate
-            with probability ``sin(rate * duration)^2``.
-        p_idle_x_quadratic_sine_rate: Stochastic X-memory sine-law rate.
-        p_idle_y_quadratic_sine_rate: Stochastic Y-memory sine-law rate.
-        p_idle_z_quadratic_sine_rate: Stochastic Z-memory sine-law rate.
+        _p_idle_linear_rate: Internal legacy canonical scalar for stochastic
+            Z-memory noise linear in idle duration.
+        _p_idle_quadratic_rate: Internal legacy canonical scalar for stochastic
+            Z-memory noise quadratic in idle duration.
+        _p_idle_x_linear_rate: Internal canonical X-memory rate linear in idle duration.
+        _p_idle_y_linear_rate: Internal canonical Y-memory rate linear in idle duration.
+        _p_idle_z_linear_rate: Internal canonical Z-memory rate linear in idle duration.
+        _p_idle_x_quadratic_rate: Internal canonical X-memory rate quadratic in idle duration.
+        _p_idle_y_quadratic_rate: Internal canonical Y-memory rate quadratic in idle duration.
+        _p_idle_z_quadratic_rate: Internal canonical Z-memory rate quadratic in idle duration.
+        _p_idle_quadratic_sine_rate: Internal legacy canonical scalar for stochastic
+            Z-memory noise with probability ``sin(rate * duration)^2``.
+        _p_idle_x_quadratic_sine_rate: Internal canonical X-memory sine-law rate.
+        _p_idle_y_quadratic_sine_rate: Internal canonical Y-memory sine-law rate.
+        _p_idle_z_quadratic_sine_rate: Internal canonical Z-memory sine-law rate.
 
-        Structured family inputs are normalized to the corresponding per-axis
-        fields during construction; the family fields are then cleared.
+        The internal canonical scalar fields are not user configuration. The
+        three structured family setters normalize into them during construction,
+        then clear the family fields. Migrate removed setters mechanically:
+
+        - ``with_p_idle_z_linear_rate(r)`` becomes
+          ``with_p_idle_linear(r, {"Z": 1.0})``.
+        - ``with_p_idle_x_quadratic_sine_rate(r)`` becomes
+          ``with_p_idle_sin_squared(r, {"X": 1.0})``.
+        - ``with_p_idle_linear_rate(r)`` becomes
+          ``with_p_idle_linear(r, {"Z": 1.0})``. Despite its axis-free name,
+          the removed setter was Z-only. The identically named
+          ``general_noise()`` setter instead configures a total rate split by a
+          model, so values must not be copied between the two interfaces.
 
     Runtime idle units:
         For ``traced_qis`` DEMs, runtime idles are replayed as nanosecond
@@ -237,18 +250,18 @@ class NoiseParameters:
     p_idle: float | None = None
     t1: float | None = None
     t2: float | None = None
-    p_idle_linear_rate: float | None = None
-    p_idle_quadratic_rate: float | None = None
-    p_idle_x_linear_rate: float | None = None
-    p_idle_y_linear_rate: float | None = None
-    p_idle_z_linear_rate: float | None = None
-    p_idle_x_quadratic_rate: float | None = None
-    p_idle_y_quadratic_rate: float | None = None
-    p_idle_z_quadratic_rate: float | None = None
-    p_idle_quadratic_sine_rate: float | None = None
-    p_idle_x_quadratic_sine_rate: float | None = None
-    p_idle_y_quadratic_sine_rate: float | None = None
-    p_idle_z_quadratic_sine_rate: float | None = None
+    _p_idle_linear_rate: float | None = None
+    _p_idle_quadratic_rate: float | None = None
+    _p_idle_x_linear_rate: float | None = None
+    _p_idle_y_linear_rate: float | None = None
+    _p_idle_z_linear_rate: float | None = None
+    _p_idle_x_quadratic_rate: float | None = None
+    _p_idle_y_quadratic_rate: float | None = None
+    _p_idle_z_quadratic_rate: float | None = None
+    _p_idle_quadratic_sine_rate: float | None = None
+    _p_idle_x_quadratic_sine_rate: float | None = None
+    _p_idle_y_quadratic_sine_rate: float | None = None
+    _p_idle_z_quadratic_sine_rate: float | None = None
     p_idle_linear: float | None = None
     p_idle_linear_model: Mapping[str, float] | None = None
     p_idle_sin_squared: float | None = None
@@ -265,12 +278,12 @@ class NoiseParameters:
         if self.p2_szzdg is not None:
             self.p2_szzdg = _validate_probability("p2_szzdg", self.p2_szzdg)
         (
-            self.p_idle_x_linear_rate,
-            self.p_idle_y_linear_rate,
-            self.p_idle_z_linear_rate,
-            self.p_idle_x_quadratic_sine_rate,
-            self.p_idle_y_quadratic_sine_rate,
-            self.p_idle_z_quadratic_sine_rate,
+            self._p_idle_x_linear_rate,
+            self._p_idle_y_linear_rate,
+            self._p_idle_z_linear_rate,
+            self._p_idle_x_quadratic_sine_rate,
+            self._p_idle_y_quadratic_sine_rate,
+            self._p_idle_z_quadratic_sine_rate,
         ) = _translate_structured_idle_noise(
             p_idle_linear=self.p_idle_linear,
             p_idle_linear_model=self.p_idle_linear_model,
@@ -278,15 +291,15 @@ class NoiseParameters:
             p_idle_sin_squared_model=self.p_idle_sin_squared_model,
             p_idle_coherent=self.p_idle_coherent,
             p_idle_coherent_model=self.p_idle_coherent_model,
-            p_idle_linear_rate=self.p_idle_linear_rate,
-            p_idle_quadratic_rate=self.p_idle_quadratic_rate,
-            p_idle_x_linear_rate=self.p_idle_x_linear_rate,
-            p_idle_y_linear_rate=self.p_idle_y_linear_rate,
-            p_idle_z_linear_rate=self.p_idle_z_linear_rate,
-            p_idle_quadratic_sine_rate=self.p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate=self.p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate=self.p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate=self.p_idle_z_quadratic_sine_rate,
+            p_idle_linear_rate=self._p_idle_linear_rate,
+            p_idle_quadratic_rate=self._p_idle_quadratic_rate,
+            p_idle_x_linear_rate=self._p_idle_x_linear_rate,
+            p_idle_y_linear_rate=self._p_idle_y_linear_rate,
+            p_idle_z_linear_rate=self._p_idle_z_linear_rate,
+            p_idle_quadratic_sine_rate=self._p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate=self._p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate=self._p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate=self._p_idle_z_quadratic_sine_rate,
         )
         self.p_idle_linear = None
         self.p_idle_linear_model = None
@@ -346,66 +359,6 @@ class NoiseParameters:
         """Return a copy with ``t2`` set to the given value."""
         return replace(self, t2=t2)
 
-    def with_p_idle_linear_rate(self, p_idle_linear_rate: float | None) -> NoiseParameters:
-        """Return a copy with ``p_idle_linear_rate`` set to the given value."""
-        return replace(self, p_idle_linear_rate=p_idle_linear_rate)
-
-    def with_p_idle_quadratic_rate(self, p_idle_quadratic_rate: float | None) -> NoiseParameters:
-        """Return a copy with ``p_idle_quadratic_rate`` set to the given value."""
-        return replace(self, p_idle_quadratic_rate=p_idle_quadratic_rate)
-
-    def with_p_idle_x_linear_rate(self, p_idle_x_linear_rate: float | None) -> NoiseParameters:
-        """Return a copy with ``p_idle_x_linear_rate`` set to the given value."""
-        return replace(self, p_idle_x_linear_rate=p_idle_x_linear_rate)
-
-    def with_p_idle_y_linear_rate(self, p_idle_y_linear_rate: float | None) -> NoiseParameters:
-        """Return a copy with ``p_idle_y_linear_rate`` set to the given value."""
-        return replace(self, p_idle_y_linear_rate=p_idle_y_linear_rate)
-
-    def with_p_idle_z_linear_rate(self, p_idle_z_linear_rate: float | None) -> NoiseParameters:
-        """Return a copy with ``p_idle_z_linear_rate`` set to the given value."""
-        return replace(self, p_idle_z_linear_rate=p_idle_z_linear_rate)
-
-    def with_p_idle_x_quadratic_rate(self, p_idle_x_quadratic_rate: float | None) -> NoiseParameters:
-        """Return a copy with ``p_idle_x_quadratic_rate`` set to the given value."""
-        return replace(self, p_idle_x_quadratic_rate=p_idle_x_quadratic_rate)
-
-    def with_p_idle_y_quadratic_rate(self, p_idle_y_quadratic_rate: float | None) -> NoiseParameters:
-        """Return a copy with ``p_idle_y_quadratic_rate`` set to the given value."""
-        return replace(self, p_idle_y_quadratic_rate=p_idle_y_quadratic_rate)
-
-    def with_p_idle_z_quadratic_rate(self, p_idle_z_quadratic_rate: float | None) -> NoiseParameters:
-        """Return a copy with ``p_idle_z_quadratic_rate`` set to the given value."""
-        return replace(self, p_idle_z_quadratic_rate=p_idle_z_quadratic_rate)
-
-    def with_p_idle_quadratic_sine_rate(
-        self,
-        p_idle_quadratic_sine_rate: float | None,
-    ) -> NoiseParameters:
-        """Return a copy with ``p_idle_quadratic_sine_rate`` set to the given value."""
-        return replace(self, p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate)
-
-    def with_p_idle_x_quadratic_sine_rate(
-        self,
-        p_idle_x_quadratic_sine_rate: float | None,
-    ) -> NoiseParameters:
-        """Return a copy with ``p_idle_x_quadratic_sine_rate`` set to the given value."""
-        return replace(self, p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate)
-
-    def with_p_idle_y_quadratic_sine_rate(
-        self,
-        p_idle_y_quadratic_sine_rate: float | None,
-    ) -> NoiseParameters:
-        """Return a copy with ``p_idle_y_quadratic_sine_rate`` set to the given value."""
-        return replace(self, p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate)
-
-    def with_p_idle_z_quadratic_sine_rate(
-        self,
-        p_idle_z_quadratic_sine_rate: float | None,
-    ) -> NoiseParameters:
-        """Return a copy with ``p_idle_z_quadratic_sine_rate`` set to the given value."""
-        return replace(self, p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate)
-
     # The idle families take their rate and model together: a model without a
     # rate is inert and rejected, and __post_init__ translates a family into the
     # canonical per-axis fields and then clears it -- so setting the two halves
@@ -437,33 +390,35 @@ class NoiseParameters:
 
     @property
     def effective_p_idle_z_linear_rate(self) -> float | None:
-        """Z-axis linear idle rate, accepting the legacy alias."""
-        return self.p_idle_z_linear_rate if self.p_idle_z_linear_rate is not None else self.p_idle_linear_rate
+        """Return the internal Z-axis linear idle rate, accepting the legacy scalar."""
+        return self._p_idle_z_linear_rate if self._p_idle_z_linear_rate is not None else self._p_idle_linear_rate
 
     @property
     def effective_p_idle_z_quadratic_rate(self) -> float | None:
-        """Z-axis quadratic idle rate, accepting the legacy alias."""
-        return self.p_idle_z_quadratic_rate if self.p_idle_z_quadratic_rate is not None else self.p_idle_quadratic_rate
+        """Return the internal Z-axis quadratic idle rate, accepting the legacy scalar."""
+        return (
+            self._p_idle_z_quadratic_rate if self._p_idle_z_quadratic_rate is not None else self._p_idle_quadratic_rate
+        )
 
     @property
     def effective_p_idle_z_quadratic_sine_rate(self) -> float | None:
-        """Z-axis sine-law quadratic idle rate, accepting the legacy alias."""
-        if self.p_idle_z_quadratic_sine_rate is not None:
-            return self.p_idle_z_quadratic_sine_rate
-        return self.p_idle_quadratic_sine_rate
+        """Return the internal Z-axis sine-law rate, accepting the legacy scalar."""
+        if self._p_idle_z_quadratic_sine_rate is not None:
+            return self._p_idle_z_quadratic_sine_rate
+        return self._p_idle_quadratic_sine_rate
 
     @property
     def idle_memory_rates(self) -> tuple[float | None, ...]:
         """All dedicated Pauli idle-memory rates that require explicit idles."""
         return (
-            self.p_idle_x_linear_rate,
-            self.p_idle_y_linear_rate,
+            self._p_idle_x_linear_rate,
+            self._p_idle_y_linear_rate,
             self.effective_p_idle_z_linear_rate,
-            self.p_idle_x_quadratic_rate,
-            self.p_idle_y_quadratic_rate,
+            self._p_idle_x_quadratic_rate,
+            self._p_idle_y_quadratic_rate,
             self.effective_p_idle_z_quadratic_rate,
-            self.p_idle_x_quadratic_sine_rate,
-            self.p_idle_y_quadratic_sine_rate,
+            self._p_idle_x_quadratic_sine_rate,
+            self._p_idle_y_quadratic_sine_rate,
             self.effective_p_idle_z_quadratic_sine_rate,
         )
 
@@ -500,18 +455,18 @@ class NoiseParameters:
             p_idle=_convert_optional_rate(self.p_idle, units),
             t1=_convert_optional_time(self.t1, units),
             t2=_convert_optional_time(self.t2, units),
-            p_idle_linear_rate=_convert_optional_rate(self.p_idle_linear_rate, units),
-            p_idle_x_linear_rate=_convert_optional_rate(self.p_idle_x_linear_rate, units),
-            p_idle_y_linear_rate=_convert_optional_rate(self.p_idle_y_linear_rate, units),
-            p_idle_z_linear_rate=_convert_optional_rate(self.p_idle_z_linear_rate, units),
-            p_idle_quadratic_rate=_convert_optional_rate(self.p_idle_quadratic_rate, units_squared),
-            p_idle_x_quadratic_rate=_convert_optional_rate(self.p_idle_x_quadratic_rate, units_squared),
-            p_idle_y_quadratic_rate=_convert_optional_rate(self.p_idle_y_quadratic_rate, units_squared),
-            p_idle_z_quadratic_rate=_convert_optional_rate(self.p_idle_z_quadratic_rate, units_squared),
-            p_idle_quadratic_sine_rate=_convert_optional_rate(self.p_idle_quadratic_sine_rate, units),
-            p_idle_x_quadratic_sine_rate=_convert_optional_rate(self.p_idle_x_quadratic_sine_rate, units),
-            p_idle_y_quadratic_sine_rate=_convert_optional_rate(self.p_idle_y_quadratic_sine_rate, units),
-            p_idle_z_quadratic_sine_rate=_convert_optional_rate(self.p_idle_z_quadratic_sine_rate, units),
+            _p_idle_linear_rate=_convert_optional_rate(self._p_idle_linear_rate, units),
+            _p_idle_x_linear_rate=_convert_optional_rate(self._p_idle_x_linear_rate, units),
+            _p_idle_y_linear_rate=_convert_optional_rate(self._p_idle_y_linear_rate, units),
+            _p_idle_z_linear_rate=_convert_optional_rate(self._p_idle_z_linear_rate, units),
+            _p_idle_quadratic_rate=_convert_optional_rate(self._p_idle_quadratic_rate, units_squared),
+            _p_idle_x_quadratic_rate=_convert_optional_rate(self._p_idle_x_quadratic_rate, units_squared),
+            _p_idle_y_quadratic_rate=_convert_optional_rate(self._p_idle_y_quadratic_rate, units_squared),
+            _p_idle_z_quadratic_rate=_convert_optional_rate(self._p_idle_z_quadratic_rate, units_squared),
+            _p_idle_quadratic_sine_rate=_convert_optional_rate(self._p_idle_quadratic_sine_rate, units),
+            _p_idle_x_quadratic_sine_rate=_convert_optional_rate(self._p_idle_x_quadratic_sine_rate, units),
+            _p_idle_y_quadratic_sine_rate=_convert_optional_rate(self._p_idle_y_quadratic_sine_rate, units),
+            _p_idle_z_quadratic_sine_rate=_convert_optional_rate(self._p_idle_z_quadratic_sine_rate, units),
         )
 
     @staticmethod
@@ -1523,18 +1478,18 @@ def _noise_uses_dedicated_idle_noise(noise: NoiseParameters) -> bool:
         p_idle=noise.p_idle,
         t1=noise.t1,
         t2=noise.t2,
-        p_idle_linear_rate=noise.p_idle_linear_rate,
-        p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-        p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-        p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-        p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-        p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-        p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-        p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-        p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
-        p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
-        p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
-        p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+        p_idle_linear_rate=noise._p_idle_linear_rate,
+        p_idle_quadratic_rate=noise._p_idle_quadratic_rate,
+        p_idle_x_linear_rate=noise._p_idle_x_linear_rate,
+        p_idle_y_linear_rate=noise._p_idle_y_linear_rate,
+        p_idle_z_linear_rate=noise._p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate=noise._p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate=noise._p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate=noise._p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate=noise._p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=noise._p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=noise._p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=noise._p_idle_z_quadratic_sine_rate,
     )
 
 
@@ -1597,18 +1552,18 @@ def _with_noise_compat(
         "p_idle": noise.p_idle,
         "t1": noise.t1,
         "t2": noise.t2,
-        "p_idle_linear_rate": noise.p_idle_linear_rate,
-        "p_idle_quadratic_rate": noise.p_idle_quadratic_rate,
-        "p_idle_x_linear_rate": noise.p_idle_x_linear_rate,
-        "p_idle_y_linear_rate": noise.p_idle_y_linear_rate,
-        "p_idle_z_linear_rate": noise.p_idle_z_linear_rate,
-        "p_idle_x_quadratic_rate": noise.p_idle_x_quadratic_rate,
-        "p_idle_y_quadratic_rate": noise.p_idle_y_quadratic_rate,
-        "p_idle_z_quadratic_rate": noise.p_idle_z_quadratic_rate,
-        "p_idle_quadratic_sine_rate": noise.p_idle_quadratic_sine_rate,
-        "p_idle_x_quadratic_sine_rate": noise.p_idle_x_quadratic_sine_rate,
-        "p_idle_y_quadratic_sine_rate": noise.p_idle_y_quadratic_sine_rate,
-        "p_idle_z_quadratic_sine_rate": noise.p_idle_z_quadratic_sine_rate,
+        "p_idle_linear_rate": noise._p_idle_linear_rate,
+        "p_idle_quadratic_rate": noise._p_idle_quadratic_rate,
+        "p_idle_x_linear_rate": noise._p_idle_x_linear_rate,
+        "p_idle_y_linear_rate": noise._p_idle_y_linear_rate,
+        "p_idle_z_linear_rate": noise._p_idle_z_linear_rate,
+        "p_idle_x_quadratic_rate": noise._p_idle_x_quadratic_rate,
+        "p_idle_y_quadratic_rate": noise._p_idle_y_quadratic_rate,
+        "p_idle_z_quadratic_rate": noise._p_idle_z_quadratic_rate,
+        "p_idle_quadratic_sine_rate": noise._p_idle_quadratic_sine_rate,
+        "p_idle_x_quadratic_sine_rate": noise._p_idle_x_quadratic_sine_rate,
+        "p_idle_y_quadratic_sine_rate": noise._p_idle_y_quadratic_sine_rate,
+        "p_idle_z_quadratic_sine_rate": noise._p_idle_z_quadratic_sine_rate,
         "p1_weights": _p1_weights_dict(noise.p1_weights),
         "p2_weights": _p2_weights_dict(noise.p2_weights),
     }
@@ -1943,18 +1898,18 @@ def _cached_surface_native_dem_string(
             p_idle=p_idle,
             t1=t1,
             t2=t2,
-            p_idle_linear_rate=p_idle_linear_rate,
-            p_idle_quadratic_rate=p_idle_quadratic_rate,
-            p_idle_x_linear_rate=p_idle_x_linear_rate,
-            p_idle_y_linear_rate=p_idle_y_linear_rate,
-            p_idle_z_linear_rate=p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
-            p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+            _p_idle_linear_rate=p_idle_linear_rate,
+            _p_idle_quadratic_rate=p_idle_quadratic_rate,
+            _p_idle_x_linear_rate=p_idle_x_linear_rate,
+            _p_idle_y_linear_rate=p_idle_y_linear_rate,
+            _p_idle_z_linear_rate=p_idle_z_linear_rate,
+            _p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+            _p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+            _p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+            _p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+            _p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+            _p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+            _p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
         ),
         decompose_errors=decompose_errors,
         dem_decomposition=dem_decomposition,
@@ -2160,18 +2115,18 @@ def generate_circuit_level_dem_from_builder(
         "p_idle": noise.p_idle,
         "t1": noise.t1,
         "t2": noise.t2,
-        "p_idle_linear_rate": noise.p_idle_linear_rate,
-        "p_idle_quadratic_rate": noise.p_idle_quadratic_rate,
-        "p_idle_x_linear_rate": noise.p_idle_x_linear_rate,
-        "p_idle_y_linear_rate": noise.p_idle_y_linear_rate,
-        "p_idle_z_linear_rate": noise.p_idle_z_linear_rate,
-        "p_idle_x_quadratic_rate": noise.p_idle_x_quadratic_rate,
-        "p_idle_y_quadratic_rate": noise.p_idle_y_quadratic_rate,
-        "p_idle_z_quadratic_rate": noise.p_idle_z_quadratic_rate,
-        "p_idle_quadratic_sine_rate": noise.p_idle_quadratic_sine_rate,
-        "p_idle_x_quadratic_sine_rate": noise.p_idle_x_quadratic_sine_rate,
-        "p_idle_y_quadratic_sine_rate": noise.p_idle_y_quadratic_sine_rate,
-        "p_idle_z_quadratic_sine_rate": noise.p_idle_z_quadratic_sine_rate,
+        "p_idle_linear_rate": noise._p_idle_linear_rate,
+        "p_idle_quadratic_rate": noise._p_idle_quadratic_rate,
+        "p_idle_x_linear_rate": noise._p_idle_x_linear_rate,
+        "p_idle_y_linear_rate": noise._p_idle_y_linear_rate,
+        "p_idle_z_linear_rate": noise._p_idle_z_linear_rate,
+        "p_idle_x_quadratic_rate": noise._p_idle_x_quadratic_rate,
+        "p_idle_y_quadratic_rate": noise._p_idle_y_quadratic_rate,
+        "p_idle_z_quadratic_rate": noise._p_idle_z_quadratic_rate,
+        "p_idle_quadratic_sine_rate": noise._p_idle_quadratic_sine_rate,
+        "p_idle_x_quadratic_sine_rate": noise._p_idle_x_quadratic_sine_rate,
+        "p_idle_y_quadratic_sine_rate": noise._p_idle_y_quadratic_sine_rate,
+        "p_idle_z_quadratic_sine_rate": noise._p_idle_z_quadratic_sine_rate,
         "twirl": twirl,
         "interaction_basis": interaction_basis,
         "check_plan": resolved_plan.plan_id,
@@ -4142,18 +4097,18 @@ def build_native_sampler(
                 p_idle=noise.p_idle,
                 t1=noise.t1,
                 t2=noise.t2,
-                p_idle_linear_rate=noise.p_idle_linear_rate,
-                p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-                p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-                p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-                p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-                p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-                p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-                p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-                p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
-                p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
-                p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
-                p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+                p_idle_linear_rate=noise._p_idle_linear_rate,
+                p_idle_quadratic_rate=noise._p_idle_quadratic_rate,
+                p_idle_x_linear_rate=noise._p_idle_x_linear_rate,
+                p_idle_y_linear_rate=noise._p_idle_y_linear_rate,
+                p_idle_z_linear_rate=noise._p_idle_z_linear_rate,
+                p_idle_x_quadratic_rate=noise._p_idle_x_quadratic_rate,
+                p_idle_y_quadratic_rate=noise._p_idle_y_quadratic_rate,
+                p_idle_z_quadratic_rate=noise._p_idle_z_quadratic_rate,
+                p_idle_quadratic_sine_rate=noise._p_idle_quadratic_sine_rate,
+                p_idle_x_quadratic_sine_rate=noise._p_idle_x_quadratic_sine_rate,
+                p_idle_y_quadratic_sine_rate=noise._p_idle_y_quadratic_sine_rate,
+                p_idle_z_quadratic_sine_rate=noise._p_idle_z_quadratic_sine_rate,
                 twirl=twirl,
                 interaction_basis=interaction_basis,
                 check_plan=resolved_plan.plan_id,

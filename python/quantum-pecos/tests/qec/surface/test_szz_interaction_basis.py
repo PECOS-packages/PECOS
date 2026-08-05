@@ -1096,7 +1096,7 @@ def test_szz_native_dem_accepts_idle_with_physical_prefix_lowering() -> None:
 def test_szz_idle_dem_uses_lowered_prefix_topology(basis: str) -> None:
     patch = SurfacePatch.create(distance=3)
     patch_key = _surface_patch_cache_key(patch)
-    noise = NoiseParameters(p_idle_z_linear_rate=0.01)
+    noise = NoiseParameters().with_p_idle_linear(0.01, {"Z": 1.0})
 
     actual = generate_circuit_level_dem_from_builder(
         patch,
@@ -1178,7 +1178,7 @@ def test_szz_virtual_prefix_ticks_do_not_contribute_idle_dem() -> None:
             patch,
             num_rounds=1,
             basis="Z",
-            noise=NoiseParameters(p_idle_z_linear_rate=0.01),
+            noise=NoiseParameters().with_p_idle_linear(0.01, {"Z": 1.0}),
             interaction_basis="szz",
             decompose_errors=False,
         )

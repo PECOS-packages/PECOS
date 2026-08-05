@@ -187,6 +187,23 @@ def test_idle_family_setters_are_chainable() -> None:
     assert builder.with_p_idle_quadratic_coherent(False) is not None
 
 
+def test_general_noise_linear_rate_setter_keeps_total_rate_family_semantics() -> None:
+    """The live engines spelling remains a total rate split by its model."""
+
+    uniform_model = {"X": 1.0 / 3.0, "Y": 1.0 / 3.0, "Z": 1.0 / 3.0}
+    otherwise_noiseless = (
+        general_noise().with_p_prep(0.0).with_p1(0.0).with_p2(0.0).with_p_meas(0.0).with_idle_after_2q(1.0)
+    )
+    legacy_spelling = otherwise_noiseless.with_p_idle_linear_rate(1.0)
+    total_rate_family = otherwise_noiseless.with_p_idle_linear(1.0, uniform_model)
+    z_only_family = otherwise_noiseless.with_p_idle_linear(1.0, {"Z": 1.0})
+
+    legacy_results = _run_after_2q_noise(legacy_spelling, shots=64, seed=1234)
+    assert legacy_results == _run_after_2q_noise(total_rate_family, shots=64, seed=1234)
+    assert _run_after_2q_noise(z_only_family, shots=64, seed=1234) == [0] * 64
+    assert legacy_results != [0] * 64
+
+
 def test_retired_coherent_bool_switch_is_not_an_alias() -> None:
     """The old one-bool call cannot silently become a zero/one coherent-family rate."""
     with pytest.raises(TypeError, match=r"coherent idling rate.*not bool"):

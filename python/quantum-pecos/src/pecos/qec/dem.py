@@ -97,6 +97,22 @@ _GUPPY_NOISE_KEYWORDS = (
     "p_idle_y_quadratic_sine_rate",
     "p_idle_z_quadratic_sine_rate",
 )
+_NOISE_PARAMETER_INTERNAL_IDLE_FIELDS = frozenset(
+    {
+        "p_idle_linear_rate",
+        "p_idle_quadratic_rate",
+        "p_idle_x_linear_rate",
+        "p_idle_y_linear_rate",
+        "p_idle_z_linear_rate",
+        "p_idle_x_quadratic_rate",
+        "p_idle_y_quadratic_rate",
+        "p_idle_z_quadratic_rate",
+        "p_idle_quadratic_sine_rate",
+        "p_idle_x_quadratic_sine_rate",
+        "p_idle_y_quadratic_sine_rate",
+        "p_idle_z_quadratic_sine_rate",
+    },
+)
 
 
 class _NoiseKeywordDefault:
@@ -154,7 +170,10 @@ def _resolve_guppy_noise(noise: NoiseParameters | None, call_arguments: Mapping[
             msg = f"NoiseParameters.{field} is not supported by the Guppy DEM entry points; {guidance}"
             raise ValueError(msg)
 
-    expanded = {name: getattr(noise, name) for name in _GUPPY_NOISE_KEYWORDS}
+    expanded = {
+        name: getattr(noise, f"_{name}" if name in _NOISE_PARAMETER_INTERNAL_IDLE_FIELDS else name)
+        for name in _GUPPY_NOISE_KEYWORDS
+    }
     for weights_name in ("p1_weights", "p2_weights"):
         if expanded[weights_name] is not None:
             expanded[weights_name] = dict(expanded[weights_name])

@@ -200,7 +200,7 @@ different DEM.
 Both Guppy DEM entry points accept either the existing flat noise keywords or
 one `NoiseParameters` instance containing the complete noise configuration.
 `NoiseParameters` is available from the `pecos` top level, and supports both
-its original dataclass constructor and immutable `with_<field_name>` chaining.
+its dataclass constructor and immutable family/setter chaining.
 The grouped and flat forms below are equivalent. Do not mix them in one call:
 even explicitly passing a flat parameter at its default value conflicts with
 `noise`. When `noise` is present, its defaults fully replace the entry point's
@@ -221,10 +221,6 @@ noise = (
     .with_p_idle_linear(0.01, {"X": 0.25, "Y": 0.25, "Z": 0.5})
     .with_p_idle_sin_squared(0.03, {"Z": 1.0})
 )
-
-# The families translate into canonical per-axis rates.
-assert noise.p_idle_z_linear_rate == 0.005
-assert noise.p_idle_z_quadratic_sine_rate == 0.03
 ```
 
 <!--test-name: dem_from_guppy_grouped_noise-->
@@ -334,12 +330,24 @@ Audited Guppy builds copy this list to
 `dem_build.audit["idle_noise_residuals"]`. An empty list certifies that all
 categorical signature conversions were exact.
 
-The per-axis `p_idle_{x,y,z}_linear_rate`,
-`p_idle_{x,y,z}_quadratic_rate`, and
-`p_idle_{x,y,z}_quadratic_sine_rate` parameters remain available as low-level
-knobs. The bare Z-only aliases `p_idle_linear_rate`,
-`p_idle_quadratic_rate`, and `p_idle_quadratic_sine_rate` are deprecated; use
-the structured interface or the explicitly named `p_idle_z_*` equivalent.
+The families are the only public way to configure these idle channels on
+`NoiseParameters`. They translate into underscore-prefixed canonical per-axis
+fields internally; those fields are implementation details consumed by the
+Rust DEM boundary, not public constructor arguments or fluent setters.
+
+Migration from the removed setters is mechanical:
+
+| Removed | Replacement |
+|---|---|
+| `with_p_idle_z_linear_rate(r)` | `with_p_idle_linear(r, {"Z": 1.0})` |
+| `with_p_idle_x_quadratic_sine_rate(r)` | `with_p_idle_sin_squared(r, {"X": 1.0})` |
+| `with_p_idle_linear_rate(r)` | `with_p_idle_linear(r, {"Z": 1.0})` |
+
+The last row is intentionally Z-only: despite its axis-free name,
+`NoiseParameters.with_p_idle_linear_rate` configured only the Z channel. The
+identically named setter on `general_noise()` is different and remains live: it
+configures a total linear rate split according to its model. Copying a numeric
+value between those old interfaces therefore did not preserve the channel.
 
 The default Selene runtime does not emit idle gates. These parameters and
 `t1`/`t2` therefore have no locations to attach to unless the runtime supplies

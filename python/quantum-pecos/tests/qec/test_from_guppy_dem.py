@@ -1021,17 +1021,19 @@ def test_lowered_replay_converts_runtime_idle_seconds_to_nanosecond_time_units()
 
 
 def test_noise_model_converts_runtime_idle_rates_from_seconds_to_dem_time_units() -> None:
-    noise = NoiseParameters(
-        p1=0.001,
-        p2=0.002,
-        p_meas=0.003,
-        p_prep=0.004,
-        p_idle=9.0,
-        t1=1.5,
-        t2=2.5,
-        p_idle_z_linear_rate=3.0,
-        p_idle_x_quadratic_rate=4.0,
-        p_idle_z_quadratic_sine_rate=5.0,
+    noise = (
+        NoiseParameters(
+            p1=0.001,
+            p2=0.002,
+            p_meas=0.003,
+            p_prep=0.004,
+            p_idle=9.0,
+            t1=1.5,
+            t2=2.5,
+            _p_idle_x_quadratic_rate=4.0,
+        )
+        .with_p_idle_linear(3.0, {"Z": 1.0})
+        .with_p_idle_sin_squared(5.0, {"Z": 1.0})
     )
 
     converted = noise.for_runtime_idle_time_units()
@@ -1043,14 +1045,16 @@ def test_noise_model_converts_runtime_idle_rates_from_seconds_to_dem_time_units(
     assert converted.p_idle == pytest.approx(9.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
     assert converted.t1 == pytest.approx(1.5 * RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
     assert converted.t2 == pytest.approx(2.5 * RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
-    assert converted.p_idle_z_linear_rate == pytest.approx(3.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
-    assert converted.p_idle_x_quadratic_rate == pytest.approx(4.0 / (RUNTIME_IDLE_TIME_UNITS_PER_SECOND**2))
-    assert converted.p_idle_z_quadratic_sine_rate == pytest.approx(5.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.idle_memory_rates[2] == pytest.approx(3.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.idle_memory_rates[3] == pytest.approx(4.0 / (RUNTIME_IDLE_TIME_UNITS_PER_SECOND**2))
+    assert converted.idle_memory_rates[8] == pytest.approx(5.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
 
 
 def test_noise_model_rejects_invalid_runtime_idle_time_unit_scale() -> None:
     with pytest.raises(ValueError, match="time_units_per_second"):
-        NoiseParameters(p_idle_z_linear_rate=1.0).for_runtime_idle_time_units(time_units_per_second=0.0)
+        NoiseParameters().with_p_idle_linear(1.0, {"Z": 1.0}).for_runtime_idle_time_units(
+            time_units_per_second=0.0,
+        )
 
 
 def test_lowered_replay_preserves_gate_metadata() -> None:

@@ -315,7 +315,7 @@ def test_abstract_twirl_builders_reject_unsupported_config(
 
 def test_twirl_sine_law_idle_noise_builds_dem_and_sampler() -> None:
     patch = SurfacePatch.create(distance=3)
-    noise = NoiseParameters(p_idle_x_quadratic_sine_rate=0.03)
+    noise = NoiseParameters().with_p_idle_sin_squared(0.03, {"X": 1.0})
     twirl = TwirlConfig()
 
     dem = generate_circuit_level_dem_from_builder(
@@ -348,9 +348,9 @@ def test_twirl_sine_law_idle_noise_builds_dem_and_sampler() -> None:
         ("depolarizing", NoiseParameters(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)),
         ("uniform_idle", NoiseParameters(p_idle=0.002)),
         ("t1_t2", NoiseParameters(t1=1000.0, t2=800.0)),
-        ("linear_idle", NoiseParameters(p_idle_z_linear_rate=0.001)),
-        ("quadratic_idle", NoiseParameters(p_idle_z_quadratic_rate=0.01)),
-        ("sine_law_idle", NoiseParameters(p_idle_x_quadratic_sine_rate=0.03)),
+        ("linear_idle", NoiseParameters().with_p_idle_linear(0.001, {"Z": 1.0})),
+        ("z_sine_law_idle", NoiseParameters().with_p_idle_sin_squared(0.01, {"Z": 1.0})),
+        ("x_sine_law_idle", NoiseParameters().with_p_idle_sin_squared(0.03, {"X": 1.0})),
     ],
 )
 def test_twirling_does_not_change_canonical_dem(

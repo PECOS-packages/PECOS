@@ -473,21 +473,11 @@ impl<'a> StabilizerFlipChecker<'a> {
     /// Returns early on first failure, more efficient than full analysis.
     #[must_use]
     pub fn has_undetectable_logical(&self, weight: usize) -> bool {
-        let n = self.code.num_qubits();
-        let pauli_types = [1u8, 2, 3]; // X, Y, Z
-
-        for positions in combinations(n, weight) {
-            for paulis in pauli_product(&pauli_types, weight) {
-                let error = build_pauli_string(&positions, &paulis);
-                let flips = self.compute_flips(&error);
-
-                if flips.is_undetectable() && flips.has_logical_error() {
-                    return true;
-                }
-            }
-        }
-
-        false
+        crate::distance::has_logical_error_at_weight(
+            self.code,
+            weight,
+            &crate::DistanceSearchConfig::default(),
+        )
     }
 
     /// Compute the distance of the code.
@@ -496,7 +486,11 @@ impl<'a> StabilizerFlipChecker<'a> {
     /// Returns None if no undetectable logical error is found up to `max_weight`.
     #[must_use]
     pub fn compute_distance(&self, max_weight: usize) -> Option<usize> {
-        (1..=max_weight).find(|&w| self.has_undetectable_logical(w))
+        crate::calculate_distance(
+            self.code,
+            &crate::DistanceSearchConfig::with_max_weight(max_weight),
+        )
+        .map(|result| result.distance)
     }
 }
 
@@ -955,6 +949,17 @@ mod tests {
 
         let distance = checker.compute_distance(5);
         assert_eq!(distance, Some(3), "Steane code distance should be 3");
+    }
+
+    #[test]
+    fn test_compute_distance_matches_calculate_distance() {
+        let code = steane_code();
+        let checker_distance = StabilizerFlipChecker::new(&code).compute_distance(5);
+        let engine_distance =
+            crate::calculate_distance(&code, &crate::DistanceSearchConfig::with_max_weight(5))
+                .map(|result| result.distance);
+
+        assert_eq!(checker_distance, engine_distance);
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub mod circuit_runner;
 pub mod correlation;
 pub mod decoder_integration;
 pub mod dem_builder;
+pub mod fault_distance;
 pub mod fault_sampler;
 pub mod gadget_checker;
 pub mod influence_builder;
@@ -42,6 +43,9 @@ pub use circuit_runner::{
 pub use decoder_integration::{
     CorrectionResult, ErrorCorrectionChecker, ErrorCorrectionConfig, ErrorCorrectionResult,
     LookupTableDecoder, apply_recovery, extract_syndrome, run_correction_cycle,
+};
+pub use fault_distance::{
+    FaultDistanceError, FaultDistanceResult, exhaustive_fault_distance, graphlike_fault_distance,
 };
 pub use gadget_checker::{
     GadgetAnalysis, GadgetChecker, GadgetConfig, GadgetDecoderAnalysis, GadgetFaultClass,

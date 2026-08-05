@@ -62,6 +62,11 @@ use pecos_qec::fault_tolerance::dem_builder::{
     compare_dems_statistical as rust_compare_dems_statistical,
     verify_dem_equivalence as rust_verify_dem_equivalence,
 };
+use pecos_qec::fault_tolerance::fault_distance::{
+    FaultDistanceResult as RustFaultDistanceResult,
+    exhaustive_fault_distance as rust_exhaustive_fault_distance,
+    graphlike_fault_distance as rust_graphlike_fault_distance,
+};
 use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
 use pecos_qec::fault_tolerance::propagator::{
     DagFaultAnalyzer as RustDagFaultAnalyzer, DagFaultInfluenceMap as RustDagFaultInfluenceMap,
@@ -1250,6 +1255,39 @@ where
 // Detector Error Model
 // =============================================================================
 
+/// Result of a detector-error-model fault-distance search.
+#[pyclass(
+    name = "FaultDistanceResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFaultDistanceResult {
+    #[pyo3(get)]
+    distance: usize,
+    #[pyo3(get)]
+    mechanism_indices: Vec<usize>,
+}
+
+impl From<RustFaultDistanceResult> for PyFaultDistanceResult {
+    fn from(result: RustFaultDistanceResult) -> Self {
+        Self {
+            distance: result.distance,
+            mechanism_indices: result.mechanism_indices,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFaultDistanceResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "FaultDistanceResult(distance={}, mechanism_indices={:?})",
+            self.distance, self.mechanism_indices
+        )
+    }
+}
+
 /// A Detector Error Model (DEM) in standard DEM text format.
 ///
 /// This represents the error model of a quantum circuit, mapping error
@@ -1640,6 +1678,23 @@ impl PyDetectorErrorModel {
     #[getter]
     fn num_tracked_paulis(&self) -> usize {
         self.inner.num_tracked_paulis()
+    }
+
+    /// Compute exact fault distance when every mechanism is graphlike.
+    ///
+    /// Raises:
+    ///     `ValueError`: If any mechanism flips more than two detectors.
+    fn graphlike_fault_distance(&self) -> PyResult<Option<PyFaultDistanceResult>> {
+        rust_graphlike_fault_distance(&self.inner)
+            .map(|result| result.map(PyFaultDistanceResult::from))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Exhaustively compute fault distance up to an explicit mechanism-count budget.
+    ///
+    /// This supports hyperedges but has combinatorial cost in the number of mechanisms.
+    fn exhaustive_fault_distance(&self, max_weight: usize) -> Option<PyFaultDistanceResult> {
+        rust_exhaustive_fault_distance(&self.inner, max_weight).map(PyFaultDistanceResult::from)
     }
 
     /// Convert the DEM to a string in standard DEM format.
@@ -6937,6 +6992,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDagFaultAnalyzer>()?;
     qec.add_class::<PyInfluenceBuilder>()?;
     qec.add_class::<PyPauliFrameLookup>()?;
+    qec.add_class::<PyFaultDistanceResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;

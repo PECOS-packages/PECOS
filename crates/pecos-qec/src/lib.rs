@@ -87,14 +87,15 @@ pub use fault_tolerance::dem_builder::{
 pub use fault_tolerance::{
     CorrectionResult, DecoderAnalysis, DemOutputKind, DemOutputMetadata, ErrorClass,
     ErrorCorrectionChecker, ErrorCorrectionConfig, ErrorCorrectionResult, FaultCheckConfig,
-    FaultCheckResult, FaultChecker, FaultClass, FaultConfiguration, FaultToleranceAnalysis,
-    FaultToleranceFailure, LookupTableDecoder, MeasurementRound, PauliFault, PauliFaultIterator,
-    PauliPropChecker, PropagationResult, SpacetimeLocation, StabilizerFlipAnalysis,
-    StabilizerFlipChecker, StabilizerFlips, SyndromeAnalysis, SyndromeClass, SyndromeHistory,
-    SyndromeHistoryAnalysis, SyndromeHistoryResult, anticommutes_with_logical, apply_recovery,
-    classify_fault, extract_measurement_rounds, extract_spacetime_locations, extract_syndrome,
-    get_syndrome_flips, has_syndrome, propagate_fault, propagate_faults, run_circuit_with_faults,
-    run_correction_cycle,
+    FaultCheckResult, FaultChecker, FaultClass, FaultConfiguration, FaultDistanceError,
+    FaultDistanceResult, FaultToleranceAnalysis, FaultToleranceFailure, LookupTableDecoder,
+    MeasurementRound, PauliFault, PauliFaultIterator, PauliPropChecker, PropagationResult,
+    SpacetimeLocation, StabilizerFlipAnalysis, StabilizerFlipChecker, StabilizerFlips,
+    SyndromeAnalysis, SyndromeClass, SyndromeHistory, SyndromeHistoryAnalysis,
+    SyndromeHistoryResult, anticommutes_with_logical, apply_recovery, classify_fault,
+    exhaustive_fault_distance, extract_measurement_rounds, extract_spacetime_locations,
+    extract_syndrome, get_syndrome_flips, graphlike_fault_distance, has_syndrome, propagate_fault,
+    propagate_faults, run_circuit_with_faults, run_correction_cycle,
 };
 pub use geometry::{CheckSchedule, LogicalOperator, PauliOp, StabilizerCheck, StabilizerColor};
 pub use logical_discovery::{

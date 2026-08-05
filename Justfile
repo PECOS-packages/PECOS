@@ -20,6 +20,10 @@ default:
     @echo "  just security-check # Check dependency/security policy"
     @echo "  just doctor         # Diagnose environment problems"
     @echo ""
+    @echo "Recipe arguments are positional. Entries like 'build profile=\"debug\"' below are"
+    @echo "signatures (parameter name + default), so run 'just build release', not"
+    @echo "'just build profile=release' -- the latter passes the literal text 'profile=release'."
+    @echo ""
     @echo "All commands:"
     @just --list --list-heading ''
 

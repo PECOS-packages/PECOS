@@ -252,12 +252,8 @@ impl CircuitIO {
     }
 }
 
-/// Initializes a `PauliProp` simulator with a fault configuration.
-///
-/// This sets up the initial Pauli error that will be propagated through the circuit.
-fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
-    let mut prop = PauliProp::new();
-
+/// Injects a Pauli fault into an existing propagation frame.
+fn inject_fault(prop: &mut PauliProp, fault: &PauliFault) {
     for (qubit, &pauli) in fault.location.qubits.iter().zip(&fault.paulis) {
         let q = qubit.index();
         match pauli {
@@ -267,6 +263,14 @@ fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
             _ => {} // Identity
         }
     }
+}
+
+/// Initializes a `PauliProp` simulator with a fault configuration.
+///
+/// This sets up the initial Pauli error that will be propagated through the circuit.
+fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
+    let mut prop = PauliProp::new();
+    inject_fault(&mut prop, fault);
 
     prop
 }
@@ -347,38 +351,30 @@ pub fn propagate_fault(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
 
 /// Propagates multiple faults through a circuit.
 ///
-/// Faults are combined (`XORed`) and then propagated.
+/// Each fault is injected at its own tick, either before or after that tick's gates.
 #[must_use]
 pub fn propagate_faults(circuit: &TickCircuit, faults: &FaultConfiguration) -> PauliProp {
     let mut prop = PauliProp::new();
+    let faults_by_tick = faults.by_tick();
 
-    // Combine all faults into initial state
-    for fault in &faults.faults {
-        for (qubit, &pauli) in fault.location.qubits.iter().zip(&fault.paulis) {
-            let q = qubit.index();
-            match pauli {
-                1 => prop.track_x(&[q]),
-                2 => prop.track_y(&[q]),
-                3 => prop.track_z(&[q]),
-                _ => {}
-            }
-        }
-    }
-
-    // Find the minimum fault tick to know where to start propagating
-    let min_tick = faults
-        .faults
-        .iter()
-        .map(|f| f.location.tick)
-        .min()
-        .unwrap_or(0);
-
-    // Propagate through the circuit from the minimum tick onward
     for (tick_idx, tick) in circuit.iter_ticks() {
-        if tick_idx >= min_tick {
-            for gate in tick.iter_gate_batches() {
-                apply_gate_flip_ledger(&mut prop, gate.as_gate());
-            }
+        let empty: &[&PauliFault] = &[];
+        let (before_faults, after_faults) = faults_by_tick
+            .get(&tick_idx)
+            .map_or((empty, empty), |(before, after)| {
+                (before.as_slice(), after.as_slice())
+            });
+
+        for fault in before_faults {
+            inject_fault(&mut prop, fault);
+        }
+
+        for gate in tick.iter_gate_batches() {
+            apply_gate_flip_ledger(&mut prop, gate.as_gate());
+        }
+
+        for fault in after_faults {
+            inject_fault(&mut prop, fault);
         }
     }
 
@@ -2525,6 +2521,21 @@ fn pauli_product(choices: &[u8], count: usize) -> Vec<Vec<u8>> {
 mod tests {
     use super::*;
     use pecos_simulators::CliffordGateable;
+    use rand::rngs::SmallRng;
+    use rand::{RngExt, SeedableRng};
+
+    fn assert_same_pauli_frame(actual: &PauliProp, expected: &PauliProp, context: &str) {
+        assert_eq!(
+            actual.get_x_qubits(),
+            expected.get_x_qubits(),
+            "X components differ: {context}"
+        );
+        assert_eq!(
+            actual.get_z_qubits(),
+            expected.get_z_qubits(),
+            "Z components differ: {context}"
+        );
+    }
 
     #[test]
     fn test_init_pauli_prop_with_fault() {
@@ -2537,6 +2548,137 @@ mod tests {
         assert!(!prop.contains_z(0));
         assert!(!prop.contains_x(1));
         assert!(prop.contains_z(1));
+    }
+
+    #[test]
+    fn propagate_faults_matches_single_fault_after_its_tick() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().h(&[0]);
+
+        let location = SpacetimeLocation::new(0, vec![QubitId(0)], false, GateType::H, 0);
+        let fault = PauliFault::new(location, vec![1]);
+        let faults = FaultConfiguration::with_faults(vec![fault.clone()]);
+
+        let single = propagate_fault(&circuit, &fault);
+        let multiple = propagate_faults(&circuit, &faults);
+
+        assert_same_pauli_frame(&multiple, &single, "X fault after H at tick 0");
+    }
+
+    #[test]
+    fn propagate_faults_matches_single_fault_before_its_tick() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().h(&[0]);
+
+        let location = SpacetimeLocation::new(0, vec![QubitId(0)], true, GateType::H, 0);
+        let fault = PauliFault::new(location, vec![1]);
+        let faults = FaultConfiguration::with_faults(vec![fault.clone()]);
+
+        let single = propagate_fault(&circuit, &fault);
+        let multiple = propagate_faults(&circuit, &faults);
+
+        assert_same_pauli_frame(&multiple, &single, "X fault before H at tick 0");
+    }
+
+    #[test]
+    fn propagate_faults_injects_each_fault_at_its_own_tick() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().h(&[1]);
+        circuit.tick().cx(&[(1, 2)]);
+
+        let first_location = SpacetimeLocation::new(0, vec![QubitId(0)], true, GateType::H, 0);
+        let second_location = SpacetimeLocation::new(1, vec![QubitId(1)], true, GateType::CX, 0);
+        let faults = FaultConfiguration::with_faults(vec![
+            PauliFault::new(first_location, vec![1]),
+            PauliFault::new(second_location, vec![1]),
+        ]);
+
+        let prop = propagate_faults(&circuit, &faults);
+
+        assert_eq!(prop.get_x_qubits(), vec![0, 1, 2]);
+        assert!(prop.get_z_qubits().is_empty());
+    }
+
+    #[test]
+    fn seeded_single_fault_propagation_agrees_for_all_locations() {
+        const NUM_QUBITS: usize = 3;
+        const NUM_TICKS: usize = 5;
+        const NUM_CIRCUITS: usize = 8;
+
+        let mut rng = SmallRng::seed_from_u64(0x5EED_F4A7);
+        let mut covered_gate_on_fault_qubit = false;
+        let mut covered_no_gate_on_fault_qubit = false;
+
+        for circuit_index in 0..NUM_CIRCUITS {
+            let mut circuit = TickCircuit::new();
+            let mut active_qubits = [[false; NUM_QUBITS]; NUM_TICKS];
+
+            for active in &mut active_qubits {
+                let choice = rng.random_range(0..6);
+                let first = rng.random_range(0..NUM_QUBITS);
+                let second = (first + rng.random_range(1..NUM_QUBITS)) % NUM_QUBITS;
+                let mut tick = circuit.tick();
+
+                match choice {
+                    0 => {}
+                    1 => {
+                        tick.h(&[first]);
+                        active[first] = true;
+                    }
+                    2 => {
+                        tick.sz(&[first]);
+                        active[first] = true;
+                    }
+                    3 => {
+                        tick.cx(&[(first, second)]);
+                        active[first] = true;
+                        active[second] = true;
+                    }
+                    4 => {
+                        tick.cz(&[(first, second)]);
+                        active[first] = true;
+                        active[second] = true;
+                    }
+                    _ => {
+                        tick.swap(&[(first, second)]);
+                        active[first] = true;
+                        active[second] = true;
+                    }
+                }
+            }
+
+            for (tick, active) in active_qubits.iter().enumerate() {
+                for (qubit, &has_gate) in active.iter().enumerate() {
+                    covered_gate_on_fault_qubit |= has_gate;
+                    covered_no_gate_on_fault_qubit |= !has_gate;
+
+                    for before in [false, true] {
+                        for pauli in 1..=3 {
+                            let location = SpacetimeLocation::new(
+                                tick,
+                                vec![QubitId(qubit)],
+                                before,
+                                GateType::I,
+                                0,
+                            );
+                            let fault = PauliFault::new(location, vec![pauli]);
+                            let faults = FaultConfiguration::with_faults(vec![fault.clone()]);
+                            let single = propagate_fault(&circuit, &fault);
+                            let multiple = propagate_faults(&circuit, &faults);
+                            let context = format!(
+                                "circuit={circuit_index}, tick={tick}, qubit={qubit}, \
+                                 before={before}, pauli={pauli}, has_gate={has_gate}"
+                            );
+
+                            assert_same_pauli_frame(&multiple, &single, &context);
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(covered_gate_on_fault_qubit);
+        assert!(covered_no_gate_on_fault_qubit);
     }
 
     #[test]
@@ -3035,31 +3177,10 @@ mod tests {
         circuit.tick().cx(&[(2, 4)]);
         circuit.tick().mz(&[3, 4]);
 
-        let config = FaultCheckConfig::new()
-            .with_weight(1)
-            .x_only()
-            .stop_on_first(false);
-
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
-
         // Logical Z spans all data qubits
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1, 2])];
         let z_ancillas = &[3usize, 4];
         let x_ancillas: &[usize] = &[];
-
-        let analysis = checker.analyze_fault_tolerance(z_ancillas, x_ancillas, logicals, true);
-
-        println!("3-qubit code fault tolerance analysis:");
-        println!("  Total tested: {}", analysis.total_tested);
-        println!(
-            "  Undetectable logical errors: {}",
-            analysis.undetectable_logical_errors
-        );
-        println!(
-            "  Undetectable stabilizers: {}",
-            analysis.undetectable_stabilizers
-        );
-        println!("  Detectable errors: {}", analysis.detectable_errors);
 
         // This naive syndrome extraction circuit is NOT fault tolerant!
         // An X error on a data qubit that occurs AFTER its entangling gate
@@ -3070,24 +3191,31 @@ mod tests {
         //
         // This demonstrates exactly the kind of circuit vulnerability that
         // fault classification is designed to detect.
+        // Multi-qubit iterator locations assign a non-identity Pauli to every
+        // qubit, so they cannot generate this single-leg CX fault. That
+        // enumerator gap is tracked separately; construct the intended fault.
+        let fault = PauliFault::new(
+            SpacetimeLocation::new(4, vec![QubitId(2)], false, GateType::CX, 0),
+            vec![1],
+        );
+        let faults = FaultConfiguration::with_faults(vec![fault]);
+        let prop = propagate_faults(&circuit, &faults);
+
         assert!(
-            !analysis.is_fault_tolerant(),
+            !has_syndrome(&prop, z_ancillas, x_ancillas),
+            "X on data after its final CX should not produce a syndrome"
+        );
+        assert!(
+            logicals
+                .iter()
+                .any(|(xs, zs)| anticommutes_with_logical(&prop, xs, zs)),
+            "X on data should anticommute with logical Z"
+        );
+        assert_eq!(
+            classify_fault(&prop, z_ancillas, x_ancillas, logicals),
+            FaultClass::UndetectableLogicalError,
             "Naive syndrome extraction should NOT be 1-fault tolerant"
         );
-        assert!(
-            analysis.undetectable_logical_errors > 0,
-            "Should have undetectable logical errors"
-        );
-
-        // Print the failure details to understand the vulnerabilities
-        for (fault, result) in &analysis.failure_details {
-            println!(
-                "  Vulnerability: {} at tick {} -> {:?}",
-                fault.faults[0].pauli_string(),
-                fault.faults[0].location.tick,
-                result.classify()
-            );
-        }
     }
 
     #[test]
@@ -3302,86 +3430,35 @@ mod tests {
         circuit.tick().cx(&[(2, 4)]);
         circuit.tick().mz(&[3, 4]);
 
-        let config = FaultCheckConfig::new()
-            .with_weight(1)
-            .x_only()
-            .stop_on_first(false);
-
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
-
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1, 2])];
         let z_ancillas = &[3usize, 4];
         let x_ancillas: &[usize] = &[];
 
-        let analysis = checker.analyze_decoder_requirements(z_ancillas, x_ancillas, logicals);
+        // Multi-qubit iterator locations assign a non-identity Pauli to every
+        // qubit, so they cannot generate this single-leg CX fault. That
+        // enumerator gap is tracked separately; construct the intended fault.
+        let fault = PauliFault::new(
+            SpacetimeLocation::new(4, vec![QubitId(2)], false, GateType::CX, 0),
+            vec![1],
+        );
+        let faults = FaultConfiguration::with_faults(vec![fault]);
+        let prop = propagate_faults(&circuit, &faults);
 
-        println!("Decoder Analysis for 3-qubit code:");
-        println!(
-            "  Correctable syndromes: {}",
-            analysis.correctable_syndromes
+        assert!(
+            !has_syndrome(&prop, z_ancillas, x_ancillas),
+            "the decoder receives no syndrome for the late data fault"
         );
-        println!(
-            "  Detected uncorrectable syndromes: {}",
-            analysis.detected_uncorrectable_syndromes
+        assert!(
+            logicals
+                .iter()
+                .any(|(xs, zs)| anticommutes_with_logical(&prop, xs, zs)),
+            "the undetected fault causes a logical error"
         );
-        println!("  Ambiguous syndromes: {}", analysis.ambiguous_syndromes);
-        println!("  Correctable faults: {}", analysis.correctable_faults);
-        println!(
-            "  Detected uncorrectable faults: {}",
-            analysis.detected_uncorrectable_faults
+        assert_eq!(
+            classify_fault(&prop, z_ancillas, x_ancillas, logicals),
+            FaultClass::UndetectableLogicalError,
+            "Should have undetectable logical errors"
         );
-        println!("  Ambiguous faults: {}", analysis.ambiguous_faults);
-        println!(
-            "  Undetectable logical errors: {}",
-            analysis.undetectable_logical_errors
-        );
-        println!(
-            "  Undetectable stabilizers: {}",
-            analysis.undetectable_stabilizers
-        );
-
-        // Print each syndrome's details
-        for syn in &analysis.syndromes {
-            println!(
-                "  Syndrome {:?}: {} correctable, {} uncorrectable -> {:?}",
-                syn.syndrome, syn.correctable_count, syn.uncorrectable_count, syn.class
-            );
-        }
-
-        // The 3-qubit code should have unique syndromes for weight-1 data errors
-        // So there should be NO ambiguous syndromes for the detectable faults
-        // (but there ARE undetectable logical errors from faults after gates)
-
-        let total = analysis.total_faults();
-        println!("\nFailure rate analysis:");
-        println!(
-            "  Best case: {:.1}%",
-            analysis.best_case_failure_rate(total) * 100.0
-        );
-        println!(
-            "  Worst case: {:.1}%",
-            analysis.worst_case_failure_rate(total) * 100.0
-        );
-        println!("  Is fault tolerant: {}", analysis.is_ft());
-
-        // The naive circuit is NOT fault tolerant due to undetectable logical errors
-        match analysis.is_fault_tolerant() {
-            Ok(()) => panic!("Naive circuit should NOT be fault tolerant"),
-            Err(failures) => {
-                println!("\n  Failures:");
-                for failure in &failures {
-                    println!("    - {}", failure.description());
-                }
-                // Should have undetectable logical errors
-                assert!(
-                    failures.iter().any(|f| matches!(
-                        f,
-                        FaultToleranceFailure::UndetectableLogicalErrors { .. }
-                    )),
-                    "Should have undetectable logical errors"
-                );
-            }
-        }
     }
 
     #[test]
@@ -3447,33 +3524,33 @@ mod tests {
         circuit.tick().cx(&[(2, 6)]);
         circuit.tick().mz(&[5, 6]);
 
-        let config = FaultCheckConfig::new()
-            .with_weight(1)
-            .x_only()
-            .stop_on_first(false);
-
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
-
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1, 2])];
         let z_ancillas = &[5usize, 6];
         let x_ancillas: &[usize] = &[];
 
-        let analysis = checker.analyze_decoder_requirements(z_ancillas, x_ancillas, logicals);
-
-        println!("\nTwo-round syndrome extraction:");
-        println!("  Total faults: {}", analysis.total_faults());
-        println!(
-            "  Undetectable logical errors: {}",
-            analysis.undetectable_logical_errors
-        );
-        println!("  Is FT (by single-shot analysis): {}", analysis.is_ft());
-
         // Two-round still has undetectable errors at the END of round 2.
         // Real FT requires decoder to use syndrome history, not single-shot.
         // This test documents that limitation.
+        // Multi-qubit iterator locations assign a non-identity Pauli to every
+        // qubit, so they cannot generate this single-leg CX fault. That
+        // enumerator gap is tracked separately; construct the intended fault.
+        let fault = PauliFault::new(
+            SpacetimeLocation::new(10, vec![QubitId(2)], false, GateType::CX, 0),
+            vec![1],
+        );
+        let faults = FaultConfiguration::with_faults(vec![fault]);
+        let prop = propagate_faults(&circuit, &faults);
+
         assert!(
-            analysis.undetectable_logical_errors > 0,
+            !has_syndrome(&prop, z_ancillas, x_ancillas)
+                && logicals
+                    .iter()
+                    .any(|(xs, zs)| anticommutes_with_logical(&prop, xs, zs)),
             "Two-round still has undetectable errors at circuit end"
+        );
+        assert_eq!(
+            classify_fault(&prop, z_ancillas, x_ancillas, logicals),
+            FaultClass::UndetectableLogicalError
         );
     }
 

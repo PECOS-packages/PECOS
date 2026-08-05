@@ -68,7 +68,7 @@ libc = "0.2"
 libloading = "0.9"
 
 # --- LLVM ---
-inkwell = { version = "0.9", features = ["llvm21-1-prefer-dynamic"] }
+inkwell = { version = "0.9", features = ["llvm21-1-force-static"] }
 
 # --- HUGR / tket ---
 tket = { version = "0.19", default-features = false }

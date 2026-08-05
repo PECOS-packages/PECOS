@@ -234,7 +234,7 @@ noise = (
     .with_p_prep(0.02)
     .with_p_idle_linear_rate(0.01)
     .with_p_idle_linear_model({"X": 0.25, "Y": 0.25, "Z": 0.5})
-    .with_p_idle_coherent(False)
+    .with_p_idle_quadratic_coherent(False)
     .with_p_idle_quadratic_rate(0.03 / math.pi)
     .with_idle_after_2q(1.0)
 )

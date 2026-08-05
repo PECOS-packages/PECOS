@@ -130,10 +130,32 @@ noise = (
 `Idle` gates are timing markers by default. They do not silently inherit
 single-qubit gate noise from `p1` or `with_p1(...)`.
 
-Configure idle decoherence with `with_p_idle_linear_rate(...)` and optionally
-`with_p_idle_linear_model(...)`, or with `with_p_idle_quadratic_rate(...)` and
-`with_p_idle_coherent(...)`. The rates are combined with each `Idle` gate's
-duration.
+Configure idle decoherence with any combination of these independent families:
+
+- `with_p_idle_linear(rate, model)` samples one linear-rate event from a
+  normalized X/Y/Z/L distribution.
+- `with_p_idle_sin_squared(rate, model)` independently samples each X/Y/Z/L
+  mechanism with `sin²(rate * multiplier * duration)`. Its rate is radians per
+  time unit and its multipliers are intentionally unnormalized because each
+  axis has its own rate.
+- `with_p_idle_coherent(rate, model)` deterministically applies RX/RY/RZ with
+  angle `rate * multiplier * duration`. Its rate is radians per time unit, with
+  no `2*pi` or coherent-to-incoherent conversion. Its model is also
+  intentionally unnormalized: the values are relative generator-rate
+  multipliers, not probabilities. Omitting the Python model uses
+  `{"RX": 1.0, "RY": 1.0, "RZ": 1.0}`.
+
+The legacy `with_p_idle_quadratic_rate(...)` path remains available.
+`with_p_idle_quadratic_coherent(...)` selects whether that one legacy rate emits
+coherent RZ rotations or a stochastic sine-squared Z twirl; it does not control
+the independent coherent family. Combining that switch set to `True` with the
+coherent family is rejected because both would emit idle rotations.
+
+Coherent evolution is not sampled and consumes no RNG draws. Whether it can be
+consumed depends on the downstream consumer: the standard DEM builder rejects
+coherent idle noise, the EEG route in `exp/pecos-eeg` represents it with an RZ
+generator, and a simulator applies it only when it has a rotation executor.
+PECOS #437 tracks the case where a missing executor silently dropped rotations.
 
 To add the same kind of idle-noise site to both qubits after every two-qubit
 gate, set its duration with `with_idle_after_2q(...)`:
@@ -143,11 +165,11 @@ noise = GeneralNoiseModelBuilder().with_p_idle_linear_rate(0.01).with_idle_after
 ```
 
 The duration only chooses where and how long idling occurs. It is not a
-standalone probability: all configured linear and quadratic idle mechanisms
-apply at these sites just as they do at a scheduled `Idle` gate. A duration of
-`0.0` disables the after-two-qubit sites. Consequently, code that previously
-used `with_p2_idle(0.01)` without a linear idle rate now produces no after-2q
-idle noise; the equivalent configuration is
+standalone probability: all configured linear, sine-squared, coherent, and
+legacy quadratic idle mechanisms apply at these sites just as they do at a
+scheduled `Idle` gate. A duration of `0.0` disables the after-two-qubit sites.
+Consequently, code that previously used `with_p2_idle(0.01)` without a linear
+idle rate now produces no after-2q idle noise; the equivalent configuration is
 `with_p_idle_linear_rate(0.01).with_idle_after_2q(1.0)`.
 
 ## Common Noise Model Examples

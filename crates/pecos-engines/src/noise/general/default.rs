@@ -72,15 +72,23 @@ impl Default for GeneralNoiseModel {
         p_meas_crosstalk_model.insert("0->0".to_string(), 1.0);
         p_meas_crosstalk_model.insert("1->1".to_string(), 1.0);
 
+        let p_idle_coherent_model = BTreeMap::from([
+            ("RX".to_string(), 1.0),
+            ("RY".to_string(), 1.0),
+            ("RZ".to_string(), 1.0),
+        ]);
+
         // No-effect defaults
         Self {
             p_prep: 0.0,
-            p_idle_coherent: false,
+            p_idle_quadratic_coherent: false,
             p_idle_linear_rate: 0.0,
             p_idle_linear_model: SingleQubitWeightedSampler::new(&p1_pauli_model),
             p_idle_quadratic_rate: 0.0,
             p_idle_sin_squared_rate: 0.0,
             p_idle_sin_squared_model: BTreeMap::new(),
+            p_idle_coherent_rate: 0.0,
+            p_idle_coherent_model,
             p_meas_0,
             p_meas_1,
             p1: 0.0,

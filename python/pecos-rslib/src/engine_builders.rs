@@ -24,6 +24,7 @@ type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyBool;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -1087,10 +1088,16 @@ impl PyGeneralNoiseModelBuilder {
         })
     }
 
-    /// Set whether to use coherent dephasing for idle errors
-    fn with_p_idle_coherent(&self, use_coherent: bool) -> PyResult<Self> {
+    /// Set whether the legacy quadratic idle rate uses coherent dephasing.
+    ///
+    /// This switch affects only ``with_p_idle_quadratic_rate``. Use
+    /// ``with_p_idle_coherent`` to configure the independent coherent family.
+    fn with_p_idle_quadratic_coherent(&self, use_coherent: bool) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p_idle_coherent(use_coherent),
+            inner: self
+                .inner
+                .clone()
+                .with_p_idle_quadratic_coherent(use_coherent),
         })
     }
 
@@ -1165,6 +1172,50 @@ impl PyGeneralNoiseModelBuilder {
     ) -> PyResult<Self> {
         Ok(Self {
             inner: self.inner.clone().with_p_idle_sin_squared(rate, &model),
+        })
+    }
+
+    /// Set the DEM-style coherent idle-noise family.
+    ///
+    /// ``rate`` is radians per time unit. No ``2*pi`` conversion and no
+    /// ``coherent_to_incoherent_factor`` is applied. For each RX/RY/RZ generator P, multiplier
+    /// ``n_P``, and duration ``d``, engines deterministically applies a rotation with angle
+    /// ``rate * n_P * d``. Coherent evolution is not sampled and consumes no random draw.
+    ///
+    /// The model is intentionally unnormalized because its values are relative rate multipliers,
+    /// not probabilities to be split from one total event rate. It defaults to
+    /// ``{"RX": 1.0, "RY": 1.0, "RZ": 1.0}``. Leakage and all other keys are rejected because
+    /// leakage is not a rotation.
+    ///
+    /// Consumption is consumer-dependent: the standard DEM builder rejects coherent idle noise;
+    /// the EEG route in ``exp/pecos-eeg`` represents it with an RZ generator; and a simulator
+    /// applies it only when its rotation executor is installed. PECOS #437 documents how a
+    /// missing executor could otherwise silently drop it.
+    #[pyo3(signature = (rate, model=None))]
+    fn with_p_idle_coherent(
+        &self,
+        rate: &Bound<'_, PyAny>,
+        model: Option<std::collections::BTreeMap<String, f64>>,
+    ) -> PyResult<Self> {
+        if rate.is_instance_of::<PyBool>() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "coherent idling rate must be a finite, non-negative float, not bool",
+            ));
+        }
+        let rate = rate.extract::<f64>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err(
+                "coherent idling rate must be a finite, non-negative float",
+            )
+        })?;
+        let model = model.unwrap_or_else(|| {
+            std::collections::BTreeMap::from([
+                ("RX".to_string(), 1.0),
+                ("RY".to_string(), 1.0),
+                ("RZ".to_string(), 1.0),
+            ])
+        });
+        Ok(Self {
+            inner: self.inner.clone().with_p_idle_coherent(rate, &model),
         })
     }
 
@@ -1317,7 +1368,8 @@ impl PyGeneralNoiseModelBuilder {
     /// A duration of `0.0` disables these sites. Nonzero sites receive all configured idle
     /// mechanisms over the given duration: linear stochastic noise from `p_idle_linear_rate` and
     /// `p_idle_linear_model`, quadratic dephasing from `p_idle_quadratic_rate` honoring
-    /// `p_idle_coherent`, and the independent per-axis sine-squared family.
+    /// `p_idle_quadratic_coherent`, plus the independent per-axis sine-squared and coherent
+    /// families.
     ///
     /// Anyone who previously wrote `with_p2_idle(0.01)` and no linear rate now gets no after-2q
     /// idle noise; the equivalent is

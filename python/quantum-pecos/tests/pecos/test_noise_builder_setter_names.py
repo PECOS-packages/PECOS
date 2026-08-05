@@ -79,6 +79,21 @@ def _idle_family_noise(*, sine_rate: float, sine_model: dict[str, float], seed: 
     )
 
 
+def _coherent_idle_noise(*, rate: float, model: dict[str, float] | None = None):
+    noise = (
+        general_noise()
+        .with_p_prep(0.0)
+        .with_p1(0.0)
+        .with_p2(0.0)
+        .with_p_meas(0.0)
+        .with_p_idle_linear(0.0, {"Z": 1.0})
+        .with_idle_after_2q(1.0)
+    )
+    if model is None:
+        return noise.with_p_idle_coherent(rate)
+    return noise.with_p_idle_coherent(rate, model)
+
+
 @pytest.mark.parametrize(("factory", "setters"), BUILDER_SETTERS)
 def test_field_name_setters_are_chainable(factory, setters) -> None:
     """Every field-name setter exists and returns a builder that keeps chaining."""
@@ -165,9 +180,31 @@ def test_auto_matches_explicit_legacy_preset_at_python_surface() -> None:
 
 
 def test_idle_family_setters_are_chainable() -> None:
-    """The structured linear and sine families are present on the pyo3 fluent builder."""
+    """All structured idle families and the renamed quadratic switch are fluent."""
     builder = general_noise().with_p_idle_linear(0.01, {"X": 0.5, "L": 0.5})
-    assert builder.with_p_idle_sin_squared(0.02, {"X": 1.0, "Z": 2.0, "L": 0.25}) is not None
+    builder = builder.with_p_idle_sin_squared(0.02, {"X": 1.0, "Z": 2.0, "L": 0.25})
+    builder = builder.with_p_idle_coherent(0.03, {"RX": 1.0, "RZ": 2.0})
+    assert builder.with_p_idle_quadratic_coherent(False) is not None
+
+
+def test_retired_coherent_bool_switch_is_not_an_alias() -> None:
+    """The old one-bool call cannot silently become a zero/one coherent-family rate."""
+    with pytest.raises(TypeError, match=r"coherent idling rate.*not bool"):
+        general_noise().with_p_idle_coherent(False)
+
+
+def test_coherent_idle_default_model_is_available() -> None:
+    """Omitting the pyo3 model selects the documented symmetric RX/RY/RZ multipliers."""
+    implicit = _coherent_idle_noise(rate=math.pi)
+    explicit = _coherent_idle_noise(rate=math.pi, model={"RX": 1.0, "RY": 1.0, "RZ": 1.0})
+    assert _run_after_2q_noise(implicit, 64, seed=424) == _run_after_2q_noise(explicit, 64, seed=424)
+
+
+def test_coherent_idle_rx_reaches_runtime_deterministically() -> None:
+    """A pi RX idle rotation after CX flips both measured qubits for every seed."""
+    noise = _coherent_idle_noise(rate=math.pi, model={"RX": 1.0})
+    assert _run_after_2q_noise(noise, 10, seed=1) == [3] * 10
+    assert _run_after_2q_noise(noise, 10, seed=999) == [3] * 10
 
 
 def test_linear_idle_family_rejects_unnormalized_model() -> None:
@@ -197,9 +234,23 @@ def test_legacy_quadratic_and_sine_family_conflict_at_build() -> None:
 
 def test_sine_family_and_coherent_legacy_path_conflict_at_build() -> None:
     """The stochastic family cannot silently ignore the legacy coherent switch."""
-    noise = general_noise().with_p_idle_sin_squared(0.02, {"Z": 1.0}).with_p_idle_coherent(True)
-    with pytest.raises(ValueError, match=r"with_p_idle_coherent\(true\).*stochastic by definition"):
+    noise = general_noise().with_p_idle_sin_squared(0.02, {"Z": 1.0}).with_p_idle_quadratic_coherent(True)
+    with pytest.raises(ValueError, match=r"with_p_idle_quadratic_coherent\(true\).*stochastic by definition"):
         _run_after_2q_noise(noise)
+
+
+def test_coherent_family_and_quadratic_coherent_path_conflict_at_build() -> None:
+    """The independent and legacy coherent paths cannot both emit rotations."""
+    noise = general_noise().with_p_idle_coherent(0.02, {"RZ": 1.0}).with_p_idle_quadratic_coherent(True)
+    with pytest.raises(ValueError, match=r"with_p_idle_coherent.*with_p_idle_quadratic_coherent\(true\)"):
+        _run_after_2q_noise(noise)
+
+
+@pytest.mark.parametrize("model", [{"L": 1.0}, {"A": 1.0}])
+def test_coherent_idle_family_rejects_non_rotation_keys(model: dict[str, float]) -> None:
+    """Leakage and unknown generators are rejected instead of being treated as rotations."""
+    with pytest.raises(BaseException, match=r"invalid key.*expected RX, RY, or RZ"):
+        general_noise().with_p_idle_coherent(0.02, model)
 
 
 def test_sine_idle_family_is_deterministic_for_same_seed() -> None:

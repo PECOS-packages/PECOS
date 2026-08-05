@@ -61,7 +61,7 @@ pub struct GeneralNoiseFields {
 
     // Idle noise parameters
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub p_idle_coherent: Option<bool>,
+    pub p_idle_quadratic_coherent: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p_idle_linear_rate: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -208,8 +208,8 @@ impl GeneralNoiseFields {
 
     /// Apply idle noise parameters to the builder
     fn apply_idle_params(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
-        if let Some(v) = self.p_idle_coherent {
-            builder = builder.with_p_idle_coherent(v);
+        if let Some(v) = self.p_idle_quadratic_coherent {
+            builder = builder.with_p_idle_quadratic_coherent(v);
         }
         if let Some(v) = self.p_idle_linear_rate {
             builder = builder.with_p_idle_linear_rate(v);

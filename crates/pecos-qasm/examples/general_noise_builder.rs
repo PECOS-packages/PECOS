@@ -117,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_average_p2(0.008)
         .with_p_meas_0(0.001)
         .with_p_meas_1(0.003)
-        .with_p_idle_coherent(false)
+        .with_p_idle_quadratic_coherent(false)
         .with_p_idle_linear_rate(0.0001)
         .with_noiseless_gate(GateType::H)
         .with_noiseless_gate(GateType::CX);

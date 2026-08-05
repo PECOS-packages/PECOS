@@ -210,19 +210,16 @@ simulator does not need the runtime to emit idle gates: `with_idle_after_2q`
 adds an idle site on each two-qubit gate operand, the same placement the DEM
 pass uses.
 
-The two sides express the idle families in different units, so the sine-law
-rate has to be converted rather than copied. `NoiseParameters` takes it in
-radians per time unit, while the simulator takes cycles per time unit and folds
-in `coherent_to_incoherent_factor / 2`. Dividing by `factor / 2 * 2 * pi` --
-that is, `pi` at the default factor of one -- makes the two agree. At one, the
-stochastic branch is the exact Pauli twirl of the coherent rotation. The linear
-family needs no conversion, and its model dictionary is a normalized distribution
-on both sides.
+The idle families take the same rates and the same model dictionaries on both
+sides, so stage 3's settings carry over verbatim -- no unit conversion. Each
+family is named for its own law, so there is no mode flag to set either.
+
+The simulator still samples one linear event and then picks an axis, while the
+DEM emits independent per-axis mechanisms; the DEM builder converts between the
+two so both describe the same Pauli channel.
 
 <!--continuation-->
 ```python
-import math
-
 from pecos import general_noise, selene_engine, sim, stabilizer
 
 # The same gate and idle noise the DEM was built with.
@@ -232,15 +229,10 @@ noise = (
     .with_p2(0.02)
     .with_p_meas(0.02)
     .with_p_prep(0.02)
-    .with_p_idle_linear_rate(0.01)
-    .with_p_idle_linear_model({"X": 0.25, "Y": 0.25, "Z": 0.5})
-    .with_p_idle_quadratic_coherent(False)
-    .with_p_idle_quadratic_rate(0.03 / math.pi)
+    .with_p_idle_linear(0.01, {"X": 0.25, "Y": 0.25, "Z": 0.5})
+    .with_p_idle_sin_squared(0.03, {"Z": 1.0})
     .with_idle_after_2q(1.0)
 )
-
-# The conversion above reproduces the DEM's sine-law probability exactly.
-assert math.isclose(math.sin(0.03 / math.pi * math.pi) ** 2, math.sin(0.03) ** 2)
 
 results = sim(rep_code_memory).classical(selene_engine()).quantum(stabilizer()).qubits(7).noise(noise).seed(42).run(500)
 

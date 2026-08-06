@@ -19,7 +19,17 @@ use std::path::Path;
 
 const MAGIC: &[u8; 12] = b"PECOSCORPUS\0";
 pub(super) const FORMAT_VERSION: u32 = 1;
-const PREFIX_LEN: usize = MAGIC.len() + size_of::<u32>();
+const SHA256_LEN: usize = 32;
+const HEADER_LEN_END: usize = MAGIC.len() + size_of::<u32>();
+const PREFIX_LEN: usize = HEADER_LEN_END + SHA256_LEN;
+
+// These limits cover the full verified Jeffreys comparison regime and corpora
+// far larger than typical research workloads. Capping each column family at one
+// million also bounds degenerate zero-width column vectors to tens of MiB of
+// descriptors, rather than allowing attacker-selected multi-gigabyte allocations.
+pub(super) const MAX_SHOTS: usize = 100_000_000;
+pub(super) const MAX_DETECTORS: usize = 1_000_000;
+pub(super) const MAX_OBSERVABLES: usize = 1_000_000;
 
 #[derive(Debug)]
 pub(super) enum CorpusError {
@@ -50,6 +60,7 @@ pub(super) struct LoadedCorpus {
     pub seed: Option<u64>,
     pub dem: String,
     pub metadata_json: Option<String>,
+    pub generator: String,
     pub format_version: u32,
 }
 
@@ -57,15 +68,45 @@ fn invalid(message: impl Into<String>) -> CorpusError {
     CorpusError::Invalid(message.into())
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+fn sha256(bytes: &[u8]) -> [u8; SHA256_LEN] {
+    Sha256::digest(bytes).into()
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity(digest.len() * 2);
-    for byte in digest {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
         output.push(char::from(HEX[usize::from(byte >> 4)]));
         output.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     output
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex_encode(&sha256(bytes))
+}
+
+fn validate_dimensions(
+    num_shots: usize,
+    num_detectors: usize,
+    num_observables: usize,
+) -> Result<(), CorpusError> {
+    if num_shots > MAX_SHOTS {
+        return Err(invalid(format!(
+            "corpus num_shots={num_shots} exceeds the format limit MAX_SHOTS={MAX_SHOTS}"
+        )));
+    }
+    if num_detectors > MAX_DETECTORS {
+        return Err(invalid(format!(
+            "corpus num_detectors={num_detectors} exceeds the format limit MAX_DETECTORS={MAX_DETECTORS}"
+        )));
+    }
+    if num_observables > MAX_OBSERVABLES {
+        return Err(invalid(format!(
+            "corpus num_observables={num_observables} exceeds the format limit MAX_OBSERVABLES={MAX_OBSERVABLES}"
+        )));
+    }
+    Ok(())
 }
 
 fn checked_payload_len(
@@ -94,7 +135,24 @@ fn validate_columns(columns: &[Vec<u64>], words_per_column: usize) -> Result<(),
     Ok(())
 }
 
+/// Mask selecting the meaningful low bits in a column's final word.
+///
+/// The format requires every unused high padding bit to be zero.
+fn final_word_mask(num_shots: usize) -> u64 {
+    let used_bits = num_shots % 64;
+    if used_bits == 0 {
+        u64::MAX
+    } else {
+        (1_u64 << used_bits) - 1
+    }
+}
+
 pub(super) fn save(path: &Path, corpus: CorpusToSave<'_>) -> Result<(), CorpusError> {
+    validate_dimensions(
+        corpus.num_shots,
+        corpus.det_columns.len(),
+        corpus.obs_columns.len(),
+    )?;
     let parsed_dem = SparseDem::from_dem_str(corpus.dem)
         .map_err(|error| invalid(format!("invalid DEM supplied to SampleBatch.save: {error}")))?;
     if parsed_dem.num_detectors != corpus.det_columns.len()
@@ -124,7 +182,12 @@ pub(super) fn save(path: &Path, corpus: CorpusToSave<'_>) -> Result<(), CorpusEr
     )?;
     let mut payload = Vec::with_capacity(payload_len);
     for column in corpus.det_columns.iter().chain(corpus.obs_columns) {
-        for word in column {
+        for (word_index, &word) in column.iter().enumerate() {
+            let word = if word_index + 1 == words_per_column {
+                word & final_word_mask(corpus.num_shots)
+            } else {
+                word
+            };
             payload.extend_from_slice(&word.to_le_bytes());
         }
     }
@@ -138,7 +201,6 @@ pub(super) fn save(path: &Path, corpus: CorpusToSave<'_>) -> Result<(), CorpusEr
         "seed": corpus.seed,
         "dem": corpus.dem,
         "dem_sha256": sha256_hex(corpus.dem.as_bytes()),
-        "payload_sha256": sha256_hex(&payload),
         "metadata_json": corpus.metadata_json,
         "generator": concat!("pecos-rslib ", env!("CARGO_PKG_VERSION")),
     });
@@ -146,6 +208,10 @@ pub(super) fn save(path: &Path, corpus: CorpusToSave<'_>) -> Result<(), CorpusEr
         .map_err(|error| invalid(format!("could not serialize corpus header: {error}")))?;
     let header_len = u32::try_from(header_bytes.len())
         .map_err(|_| invalid("corpus JSON header is too large to encode"))?;
+    let mut content_hasher = Sha256::new();
+    content_hasher.update(&header_bytes);
+    content_hasher.update(&payload);
+    let content_sha256: [u8; SHA256_LEN] = content_hasher.finalize().into();
     let file_len = PREFIX_LEN
         .checked_add(header_bytes.len())
         .and_then(|len| len.checked_add(payload.len()))
@@ -153,6 +219,7 @@ pub(super) fn save(path: &Path, corpus: CorpusToSave<'_>) -> Result<(), CorpusEr
     let mut bytes = Vec::with_capacity(file_len);
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&header_len.to_le_bytes());
+    bytes.extend_from_slice(&content_sha256);
     bytes.extend_from_slice(&header_bytes);
     bytes.extend_from_slice(&payload);
     std::fs::write(path, bytes)?;
@@ -222,11 +289,16 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
             "bad shot-corpus magic: expected PECOSCORPUS followed by a NUL byte",
         ));
     }
-    if bytes.len() < PREFIX_LEN {
+    if bytes.len() < HEADER_LEN_END {
         return Err(invalid("shot corpus is missing its 4-byte header length"));
     }
+    if bytes.len() < PREFIX_LEN {
+        return Err(invalid(
+            "shot corpus is missing its 32-byte content SHA-256",
+        ));
+    }
     let mut header_len_bytes = [0_u8; size_of::<u32>()];
-    header_len_bytes.copy_from_slice(&bytes[MAGIC.len()..PREFIX_LEN]);
+    header_len_bytes.copy_from_slice(&bytes[MAGIC.len()..HEADER_LEN_END]);
     let header_len = usize::try_from(u32::from_le_bytes(header_len_bytes))
         .map_err(|_| invalid("corpus header length is too large for this platform"))?;
     let header_end = PREFIX_LEN
@@ -238,6 +310,19 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
             bytes.len() - PREFIX_LEN
         )));
     }
+
+    let expected_content_sha = &bytes[HEADER_LEN_END..PREFIX_LEN];
+    let actual_content_sha = sha256(&bytes[PREFIX_LEN..]);
+    if expected_content_sha != actual_content_sha {
+        return Err(invalid(format!(
+            "corpus content SHA-256 mismatch: expected {}, computed {}",
+            hex_encode(expected_content_sha),
+            hex_encode(&actual_content_sha)
+        )));
+    }
+
+    // The digest covers the exact header bytes, so a duplicate JSON key cannot
+    // be injected into an existing corpus without breaking content integrity.
     let header_value: Value = serde_json::from_slice(&bytes[PREFIX_LEN..header_end])
         .map_err(|error| invalid(format!("invalid corpus header JSON: {error}")))?;
     let header = header_value
@@ -254,6 +339,7 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
     let num_shots = required_usize(header, "num_shots")?;
     let num_detectors = required_usize(header, "num_detectors")?;
     let num_observables = required_usize(header, "num_observables")?;
+    validate_dimensions(num_shots, num_detectors, num_observables)?;
     let words_per_column = required_usize(header, "words_per_column")?;
     let expected_words = num_shots.div_ceil(64);
     if words_per_column != expected_words {
@@ -264,9 +350,8 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
     let seed = nullable_u64(header, "seed")?;
     let dem = required_string(header, "dem")?.to_owned();
     let expected_dem_sha = required_string(header, "dem_sha256")?;
-    let expected_payload_sha = required_string(header, "payload_sha256")?;
     let metadata_json = nullable_string(header, "metadata_json")?;
-    required_string(header, "generator")?;
+    let generator = required_string(header, "generator")?.to_owned();
 
     let payload = &bytes[header_end..];
     let expected_payload_len =
@@ -275,12 +360,6 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
         return Err(invalid(format!(
             "corpus payload length is {} byte(s), but declared dimensions require {expected_payload_len} byte(s)",
             payload.len()
-        )));
-    }
-    let actual_payload_sha = sha256_hex(payload);
-    if expected_payload_sha != actual_payload_sha {
-        return Err(invalid(format!(
-            "corpus payload SHA-256 mismatch: expected {expected_payload_sha}, computed {actual_payload_sha}"
         )));
     }
     let actual_dem_sha = sha256_hex(dem.as_bytes());
@@ -300,6 +379,24 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
             "corpus DEM dimensions disagree with its header: DEM has {} detector(s) and {} observable(s), header declares {num_detectors} detector(s) and {num_observables} observable(s)",
             parsed_dem.num_detectors, parsed_dem.num_observables
         )));
+    }
+
+    if words_per_column != 0 {
+        let padding_mask = !final_word_mask(num_shots);
+        for (column_index, final_word) in payload
+            .chunks_exact(size_of::<u64>())
+            .skip(words_per_column - 1)
+            .step_by(words_per_column)
+            .enumerate()
+        {
+            let mut word_bytes = [0_u8; size_of::<u64>()];
+            word_bytes.copy_from_slice(final_word);
+            if u64::from_le_bytes(word_bytes) & padding_mask != 0 {
+                return Err(invalid(format!(
+                    "corpus payload column {column_index} has nonzero padding bits above num_shots={num_shots}; unused high bits in the final word must be zero"
+                )));
+            }
+        }
     }
 
     let mut words = Vec::with_capacity(payload.len() / size_of::<u64>());
@@ -328,6 +425,7 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
         seed,
         dem,
         metadata_json,
+        generator,
         format_version: FORMAT_VERSION,
     })
 }
@@ -369,8 +467,14 @@ mod tests {
 
     fn header_end(bytes: &[u8]) -> usize {
         let mut length = [0_u8; 4];
-        length.copy_from_slice(&bytes[MAGIC.len()..PREFIX_LEN]);
+        length.copy_from_slice(&bytes[MAGIC.len()..HEADER_LEN_END]);
         PREFIX_LEN + usize::try_from(u32::from_le_bytes(length)).unwrap()
+    }
+
+    fn with_valid_content_sha(mut bytes: Vec<u8>) -> Vec<u8> {
+        let digest = sha256(&bytes[PREFIX_LEN..]);
+        bytes[HEADER_LEN_END..PREFIX_LEN].copy_from_slice(&digest);
+        bytes
     }
 
     fn replace_header(bytes: &[u8], update: impl FnOnce(&mut Map<String, Value>)) -> Vec<u8> {
@@ -382,6 +486,7 @@ mod tests {
         let mut updated = Vec::new();
         updated.extend_from_slice(MAGIC);
         updated.extend_from_slice(&new_header_len.to_le_bytes());
+        updated.extend_from_slice(&bytes[HEADER_LEN_END..PREFIX_LEN]);
         updated.extend_from_slice(&new_header);
         updated.extend_from_slice(&bytes[old_header_end..]);
         updated
@@ -402,7 +507,12 @@ mod tests {
             loaded.metadata_json.as_deref(),
             Some(r#"{ "decoder": "pymatching" }"#)
         );
+        assert!(loaded.generator.starts_with("pecos-rslib "));
         assert_eq!(loaded.format_version, FORMAT_VERSION);
+
+        let bytes = std::fs::read(path).unwrap();
+        let header: Value = serde_json::from_slice(&bytes[PREFIX_LEN..header_end(&bytes)]).unwrap();
+        assert!(header.get("payload_sha256").is_none());
     }
 
     #[test]
@@ -430,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn corrupted_payload_fails_payload_checksum() {
+    fn corrupted_payload_fails_content_checksum() {
         let (_directory, path) = corpus_path();
         save_test_corpus(&path);
         let mut bytes = std::fs::read(&path).unwrap();
@@ -439,11 +549,11 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
 
         let message = invalid_message(load(&path));
-        assert!(message.contains("payload SHA-256 mismatch"), "{message}");
+        assert!(message.contains("content SHA-256 mismatch"), "{message}");
     }
 
     #[test]
-    fn truncated_payload_fails_length_check_before_checksum() {
+    fn truncated_payload_fails_content_checksum() {
         let (_directory, path) = corpus_path();
         save_test_corpus(&path);
         let mut bytes = std::fs::read(&path).unwrap();
@@ -451,7 +561,48 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
 
         let message = invalid_message(load(&path));
+        assert!(message.contains("content SHA-256 mismatch"), "{message}");
+    }
+
+    #[test]
+    fn authenticated_truncated_payload_fails_length_check() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.pop();
+        let bytes = with_valid_content_sha(bytes);
+        std::fs::write(&path, bytes).unwrap();
+
+        let message = invalid_message(load(&path));
         assert!(message.contains("payload length"), "{message}");
+    }
+
+    #[test]
+    fn changing_num_shots_and_header_len_breaks_content_checksum() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let bytes = std::fs::read(&path).unwrap();
+        let updated = replace_header(&bytes, |header| {
+            header.insert("num_shots".to_owned(), Value::from(3));
+        });
+        std::fs::write(&path, updated).unwrap();
+
+        let message = invalid_message(load(&path));
+        assert!(message.contains("content SHA-256 mismatch"), "{message}");
+    }
+
+    #[test]
+    fn changing_seed_and_header_len_breaks_content_checksum() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let bytes = std::fs::read(&path).unwrap();
+        let updated = replace_header(&bytes, |header| {
+            header.insert("seed".to_owned(), Value::from(43));
+        });
+        std::fs::write(&path, updated).unwrap();
+
+        let message = invalid_message(load(&path));
+        assert!(message.contains("content SHA-256 mismatch"), "{message}");
     }
 
     #[test]
@@ -471,9 +622,9 @@ mod tests {
         let (_directory, path) = corpus_path();
         save_test_corpus(&path);
         let bytes = std::fs::read(&path).unwrap();
-        let updated = replace_header(&bytes, |header| {
+        let updated = with_valid_content_sha(replace_header(&bytes, |header| {
             header.insert("format_version".to_owned(), Value::from(999));
-        });
+        }));
         std::fs::write(&path, updated).unwrap();
 
         let message = invalid_message(load(&path));
@@ -488,7 +639,9 @@ mod tests {
         let (_directory, path) = corpus_path();
         let mut bytes = Vec::from(MAGIC.as_slice());
         bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&[0_u8; SHA256_LEN]);
         bytes.push(b'{');
+        let bytes = with_valid_content_sha(bytes);
         std::fs::write(&path, bytes).unwrap();
 
         let message = invalid_message(load(&path));
@@ -496,13 +649,13 @@ mod tests {
     }
 
     #[test]
-    fn dem_checksum_is_verified_after_payload_checksum() {
+    fn dem_checksum_is_verified_after_content_checksum() {
         let (_directory, path) = corpus_path();
         save_test_corpus(&path);
         let bytes = std::fs::read(&path).unwrap();
-        let updated = replace_header(&bytes, |header| {
+        let updated = with_valid_content_sha(replace_header(&bytes, |header| {
             header.insert("dem".to_owned(), Value::from("error(0.25) D0 L0\n"));
-        });
+        }));
         std::fs::write(&path, updated).unwrap();
 
         let message = invalid_message(load(&path));
@@ -515,13 +668,13 @@ mod tests {
         save_test_corpus(&path);
         let bytes = std::fs::read(&path).unwrap();
         let replacement_dem = "error(0.25) D1 L0\n";
-        let updated = replace_header(&bytes, |header| {
+        let updated = with_valid_content_sha(replace_header(&bytes, |header| {
             header.insert("dem".to_owned(), Value::from(replacement_dem));
             header.insert(
                 "dem_sha256".to_owned(),
                 Value::from(sha256_hex(replacement_dem.as_bytes())),
             );
-        });
+        }));
         std::fs::write(&path, updated).unwrap();
 
         let message = invalid_message(load(&path));
@@ -536,9 +689,9 @@ mod tests {
         let (_directory, path) = corpus_path();
         save_test_corpus(&path);
         let bytes = std::fs::read(&path).unwrap();
-        let updated = replace_header(&bytes, |header| {
+        let updated = with_valid_content_sha(replace_header(&bytes, |header| {
             header.insert("metadata_json".to_owned(), Value::from("{"));
-        });
+        }));
         std::fs::write(&path, updated).unwrap();
 
         let message = invalid_message(load(&path));
@@ -546,6 +699,107 @@ mod tests {
             message.contains("corpus metadata_json is not valid JSON"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn declared_shots_above_limit_are_rejected_with_zero_columns() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let bytes = std::fs::read(&path).unwrap();
+        let updated = with_valid_content_sha(replace_header(&bytes, |header| {
+            header.insert("num_shots".to_owned(), Value::from(MAX_SHOTS + 1));
+            header.insert("num_detectors".to_owned(), Value::from(0));
+            header.insert("num_observables".to_owned(), Value::from(0));
+            header.insert(
+                "words_per_column".to_owned(),
+                Value::from((MAX_SHOTS + 1).div_ceil(64)),
+            );
+        }));
+        std::fs::write(&path, updated).unwrap();
+
+        let message = invalid_message(load(&path));
+        assert!(
+            message.contains(&format!("MAX_SHOTS={MAX_SHOTS}")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn declared_detectors_above_limit_are_rejected_with_zero_shots() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let bytes = std::fs::read(&path).unwrap();
+        let updated = with_valid_content_sha(replace_header(&bytes, |header| {
+            header.insert("num_shots".to_owned(), Value::from(0));
+            header.insert("num_detectors".to_owned(), Value::from(MAX_DETECTORS + 1));
+            header.insert("num_observables".to_owned(), Value::from(0));
+            header.insert("words_per_column".to_owned(), Value::from(0));
+        }));
+        std::fs::write(&path, updated).unwrap();
+
+        let message = invalid_message(load(&path));
+        assert!(
+            message.contains(&format!("MAX_DETECTORS={MAX_DETECTORS}")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn declared_observables_above_limit_are_rejected_with_zero_shots() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let bytes = std::fs::read(&path).unwrap();
+        let updated = with_valid_content_sha(replace_header(&bytes, |header| {
+            header.insert("num_shots".to_owned(), Value::from(0));
+            header.insert("num_detectors".to_owned(), Value::from(0));
+            header.insert(
+                "num_observables".to_owned(),
+                Value::from(MAX_OBSERVABLES + 1),
+            );
+            header.insert("words_per_column".to_owned(), Value::from(0));
+        }));
+        std::fs::write(&path, updated).unwrap();
+
+        let message = invalid_message(load(&path));
+        assert!(
+            message.contains(&format!("MAX_OBSERVABLES={MAX_OBSERVABLES}")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn save_masks_unused_high_padding_bits() {
+        let (_directory, path) = corpus_path();
+        save(
+            &path,
+            CorpusToSave {
+                det_columns: &[vec![u64::MAX]],
+                obs_columns: &[vec![u64::MAX]],
+                num_shots: 1,
+                seed: None,
+                dem: DEM,
+                metadata_json: None,
+            },
+        )
+        .unwrap();
+
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.det_columns, vec![vec![1]]);
+        assert_eq!(loaded.obs_columns, vec![vec![1]]);
+    }
+
+    #[test]
+    fn nonzero_payload_padding_is_rejected() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let mut bytes = std::fs::read(&path).unwrap();
+        let payload_start = header_end(&bytes);
+        bytes[payload_start + size_of::<u64>() - 1] |= 0x80;
+        let bytes = with_valid_content_sha(bytes);
+        std::fs::write(&path, bytes).unwrap();
+
+        let message = invalid_message(load(&path));
+        assert!(message.contains("nonzero padding bits"), "{message}");
     }
 
     #[test]

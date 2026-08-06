@@ -77,7 +77,9 @@ use std::str::FromStr;
 mod decoder_comparison;
 mod sample_corpus;
 
-use decoder_comparison::{PyDecoderComparisonResult, compare_decoder_outcomes};
+use decoder_comparison::{
+    PyDecoderComparisonResult, compare_decoder_outcomes, validate_comparison_arguments,
+};
 use sample_corpus::{CorpusError, CorpusToSave, LoadedCorpus};
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
@@ -3377,6 +3379,7 @@ pub struct PySampleBatch {
     seed: Option<u64>,
     dem: Option<String>,
     metadata_json: Option<String>,
+    generator: Option<String>,
     format_version: Option<u32>,
 }
 
@@ -3461,6 +3464,7 @@ impl PySampleBatch {
             seed,
             dem: None,
             metadata_json: None,
+            generator: None,
             format_version: None,
         }
     }
@@ -3511,6 +3515,7 @@ impl PySampleBatch {
             seed: None,
             dem: None,
             metadata_json: None,
+            generator: None,
             format_version: None,
         }
     }
@@ -3524,13 +3529,36 @@ impl PySampleBatch {
             seed: corpus.seed,
             dem: Some(corpus.dem),
             metadata_json: corpus.metadata_json,
+            generator: Some(corpus.generator),
             format_version: Some(corpus.format_version),
         }
     }
 
-    fn map_corpus_error(error: CorpusError) -> PyErr {
+    fn ensure_dem_matches(&self, dem: &str, allow_dem_mismatch: bool) -> PyResult<()> {
+        if allow_dem_mismatch {
+            return Ok(());
+        }
+        if let Some(embedded_dem) = &self.dem
+            && embedded_dem != dem
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "supplied DEM differs from the DEM embedded in this loaded SampleBatch; pass \
+                 allow_dem_mismatch=True to use a different model deliberately",
+            ));
+        }
+        Ok(())
+    }
+
+    fn map_corpus_error(error: CorpusError, path: &std::path::Path) -> PyErr {
         match error {
-            CorpusError::Io(error) => pyo3::exceptions::PyIOError::new_err(error.to_string()),
+            CorpusError::Io(error) => match error.raw_os_error() {
+                Some(errno) => pyo3::exceptions::PyOSError::new_err((
+                    errno,
+                    error.to_string(),
+                    path.as_os_str().to_os_string(),
+                )),
+                None => error.into(),
+            },
             CorpusError::Invalid(message) => pyo3::exceptions::PyValueError::new_err(message),
         }
     }
@@ -3599,6 +3627,12 @@ impl PySampleBatch {
         self.metadata_json.as_deref()
     }
 
+    /// PECOS writer identity stored with a loaded corpus, if any.
+    #[getter]
+    fn generator(&self) -> Option<&str> {
+        self.generator.as_deref()
+    }
+
     /// Corpus format version for a loaded batch, if any.
     #[getter]
     const fn format_version(&self) -> Option<u32> {
@@ -3609,22 +3643,43 @@ impl PySampleBatch {
     ///
     /// Args:
     ///     path: Destination file path.
-    ///     dem: Required exact DEM text used to produce the samples. Its detector
-    ///         and observable dimensions must match this batch.
-    ///     `metadata_json`: Optional syntactically valid JSON string. It is stored
-    ///         opaquely and may record decoder identities, configurations, and
-    ///         decoder-side seeds; those run specifications are not corpus fields.
+    ///     dem: DEM text associated with the samples. For a generated or
+    ///         Python-constructed batch, only detector and observable dimensions
+    ///         can be checked. This catches gross mismatches, but cannot prove DEM
+    ///         identity or detect a different model with the same dimensions. For
+    ///         a loaded corpus, the text must exactly match its embedded DEM unless
+    ///         `allow_dem_mismatch` is true.
+    ///     `metadata_json`: Optional syntactically valid JSON string. ``None``
+    ///         preserves metadata already carried by a loaded batch. A supplied
+    ///         value replaces it.
+    ///     `clear_metadata`: Explicitly omit metadata when true. Cannot be combined
+    ///         with a supplied `metadata_json` value.
+    ///     `allow_dem_mismatch`: Permit deliberately saving a loaded batch with a
+    ///         DEM different from its embedded model.
     ///
     /// Corpora contain shots captured by the serial ``generate_samples`` path.
     /// Parallel sample-and-decode paths discard individual shots and cannot be
     /// captured by this API.
-    #[pyo3(signature = (path, *, dem, metadata_json=None))]
+    #[pyo3(signature = (path, *, dem, metadata_json=None, clear_metadata=false, allow_dem_mismatch=false))]
     fn save(
         &self,
         path: std::path::PathBuf,
         dem: &str,
         metadata_json: Option<&str>,
+        clear_metadata: bool,
+        allow_dem_mismatch: bool,
     ) -> PyResult<()> {
+        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
+        if clear_metadata && metadata_json.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "metadata_json and clear_metadata=True are mutually exclusive",
+            ));
+        }
+        let metadata_json = if clear_metadata {
+            None
+        } else {
+            metadata_json.or(self.metadata_json.as_deref())
+        };
         sample_corpus::save(
             &path,
             CorpusToSave {
@@ -3636,7 +3691,7 @@ impl PySampleBatch {
                 metadata_json,
             },
         )
-        .map_err(Self::map_corpus_error)
+        .map_err(|error| Self::map_corpus_error(error, &path))
     }
 
     /// Load and validate a self-describing shot corpus.
@@ -3644,7 +3699,7 @@ impl PySampleBatch {
     fn load(path: std::path::PathBuf) -> PyResult<Self> {
         sample_corpus::load(&path)
             .map(Self::from_corpus)
-            .map_err(Self::map_corpus_error)
+            .map_err(|error| Self::map_corpus_error(error, &path))
     }
 
     /// Get the syndrome for shot `i` as a list of u8 values.
@@ -3693,11 +3748,19 @@ impl PySampleBatch {
     ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
     ///                   "`pymatching_uncorrelated`", "tesseract", "`bp_osd`",
     ///                   "`bp_lsd`", "`union_find`", "`relay_bp`", or "`min_sum_bp`".
+    ///     `allow_dem_mismatch`: Permit a DEM different from the one embedded in
+    ///         a loaded corpus.
     ///
     /// Returns:
     ///     Number of logical errors.
-    #[pyo3(signature = (dem, decoder_type="pymatching"))]
-    fn decode_count(&self, dem: &str, decoder_type: &str) -> PyResult<usize> {
+    #[pyo3(signature = (dem, decoder_type="pymatching", *, allow_dem_mismatch=false))]
+    fn decode_count(
+        &self,
+        dem: &str,
+        decoder_type: &str,
+        allow_dem_mismatch: bool,
+    ) -> PyResult<usize> {
+        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut errors = 0usize;
         let mut syndrome = vec![0u8; self.num_detectors];
@@ -3725,17 +3788,21 @@ impl PySampleBatch {
     /// Args:
     ///     dem: DEM string for the decoder.
     ///     `decoder_type`: Decoder type string.
+    ///     `allow_dem_mismatch`: Permit a DEM different from the one embedded in
+    ///         a loaded corpus.
     ///
     /// Returns:
     ///     List of predicted observable masks (Python ints; arbitrary precision,
     ///     so more than 64 observables are not truncated), one per shot.
-    #[pyo3(signature = (dem, decoder_type="pymatching"))]
+    #[pyo3(signature = (dem, decoder_type="pymatching", *, allow_dem_mismatch=false))]
     fn decode_each(
         &self,
         py: Python<'_>,
         dem: &str,
         decoder_type: &str,
+        allow_dem_mismatch: bool,
     ) -> PyResult<Vec<Py<pyo3::PyAny>>> {
+        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut predictions = Vec::with_capacity(self.num_shots);
         let mut syndrome = vec![0u8; self.num_detectors];
@@ -3764,18 +3831,24 @@ impl PySampleBatch {
     ///     `dut_decoder_type`: Decoder type string for the decoder under test.
     ///     `reference_decoder_type`: Decoder type string for the reference.
     ///     alpha: Tail probability for equal-tailed Jeffreys intervals.
+    ///     `allow_dem_mismatch`: Permit deliberate cross-model comparison of a
+    ///         loaded corpus.
     ///
     /// Returns:
     ///     A `DecoderComparisonResult` containing the raw 3x3 counts and
     ///     headline DUT-only-failure and both-failed proportions.
-    #[pyo3(signature = (dem, dut_decoder_type, reference_decoder_type, alpha=0.05))]
+    #[pyo3(signature = (dem, dut_decoder_type, reference_decoder_type, alpha=0.05, *, allow_dem_mismatch=false))]
     fn compare_decoders(
         &self,
         dem: &str,
         dut_decoder_type: &str,
         reference_decoder_type: &str,
         alpha: f64,
+        allow_dem_mismatch: bool,
     ) -> PyResult<PyDecoderComparisonResult> {
+        validate_comparison_arguments(self.num_shots, alpha)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         let mut dut = create_observable_decoder(dem, dut_decoder_type)?;
         let mut reference = create_observable_decoder(dem, reference_decoder_type)?;
         let mut syndrome = vec![0u8; self.num_detectors];
@@ -3801,18 +3874,25 @@ impl PySampleBatch {
     ///     dem: DEM string for the decoder.
     ///     `decoder_type`: Decoder type string.
     ///     `num_workers`: Number of parallel workers (default: number of CPUs).
+    ///     `allow_dem_mismatch`: Permit a DEM different from the one embedded in
+    ///         a loaded corpus.
     ///
     /// Returns:
     ///     Number of logical errors.
-    #[pyo3(signature = (dem, decoder_type="pymatching", num_workers=None))]
+    ///
+    /// Set `allow_dem_mismatch` to true to use a DEM different from the one
+    /// embedded in a loaded corpus.
+    #[pyo3(signature = (dem, decoder_type="pymatching", num_workers=None, *, allow_dem_mismatch=false))]
     fn decode_count_parallel(
         &self,
         dem: &str,
         decoder_type: &str,
         num_workers: Option<usize>,
+        allow_dem_mismatch: bool,
     ) -> PyResult<usize> {
         use rayon::prelude::*;
 
+        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
@@ -3862,10 +3942,11 @@ impl PySampleBatch {
     ///
     /// Returns:
     ///     Number of logical errors.
-    #[pyo3(signature = (dem))]
-    fn decode_count_batch(&self, dem: &str) -> PyResult<usize> {
+    #[pyo3(signature = (dem, *, allow_dem_mismatch=false))]
+    fn decode_count_batch(&self, dem: &str, allow_dem_mismatch: bool) -> PyResult<usize> {
         use pecos_decoders::{BatchConfig, PyMatchingDecoder};
 
+        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         let mut decoder = PyMatchingDecoder::from_dem(dem)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
@@ -3921,13 +4002,21 @@ impl PySampleBatch {
     /// Args:
     ///     dem: DEM string for the decoder.
     ///     `decoder_type`: Decoder type string.
+    ///     `allow_dem_mismatch`: Permit a DEM different from the one embedded in
+    ///         a loaded corpus.
     ///
     /// Returns:
     ///     `DecodeStats` with timing breakdown.
-    #[pyo3(signature = (dem, decoder_type="pymatching"))]
-    fn decode_stats(&self, dem: &str, decoder_type: &str) -> PyResult<PyDecodeStats> {
+    #[pyo3(signature = (dem, decoder_type="pymatching", *, allow_dem_mismatch=false))]
+    fn decode_stats(
+        &self,
+        dem: &str,
+        decoder_type: &str,
+        allow_dem_mismatch: bool,
+    ) -> PyResult<PyDecodeStats> {
         use std::time::Instant;
 
+        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut num_errors = 0usize;
         let mut per_shot_seconds: Vec<f64> = Vec::with_capacity(self.num_shots);
@@ -3964,15 +4053,19 @@ impl PySampleBatch {
     ///     dem: DEM string for the decoder.
     ///     `decoder_type`: Decoder type string.
     ///     `num_workers`: Number of parallel workers (default: number of CPUs).
-    #[pyo3(signature = (dem, decoder_type="mwpf", num_workers=None))]
+    ///     `allow_dem_mismatch`: Permit a DEM different from the one embedded in
+    ///         a loaded corpus.
+    #[pyo3(signature = (dem, decoder_type="mwpf", num_workers=None, *, allow_dem_mismatch=false))]
     fn decode_stats_parallel(
         &self,
         dem: &str,
         decoder_type: &str,
         num_workers: Option<usize>,
+        allow_dem_mismatch: bool,
     ) -> PyResult<PyDecodeStats> {
         use rayon::prelude::*;
 
+        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
 
         // Validate decoder type early.

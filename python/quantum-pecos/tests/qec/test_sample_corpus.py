@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import errno
+
 import pytest
 
 pytest.importorskip("pecos_rslib")
@@ -25,6 +27,7 @@ def test_generated_batch_round_trip_preserves_shots_and_provenance(tmp_path) -> 
     assert loaded.seed == batch.seed == 42
     assert loaded.dem == dem
     assert loaded.metadata_json == metadata
+    assert loaded.generator.startswith("pecos-rslib ")
     assert loaded.format_version == 1
     assert [loaded.get_syndrome(i) for i in range(loaded.num_shots)] == [
         batch.get_syndrome(i) for i in range(batch.num_shots)
@@ -73,8 +76,54 @@ def test_load_maps_malformed_files_to_value_error(tmp_path) -> None:
 
 
 def test_load_maps_filesystem_failures_to_io_error(tmp_path) -> None:
-    with pytest.raises(OSError, match="No such file or directory"):
-        SampleBatch.load(tmp_path / "missing.pecos")
+    path = tmp_path / "missing.pecos"
+
+    with pytest.raises(FileNotFoundError, match="No such file or directory") as exc_info:
+        SampleBatch.load(path)
+
+    assert exc_info.value.errno == errno.ENOENT
+    assert exc_info.value.filename == str(path)
+
+
+def test_resave_preserves_metadata_unless_explicitly_cleared(tmp_path) -> None:
+    dem = "error(0.125) D0 L0\n"
+    metadata = '{"source": "original"}'
+    original_path = tmp_path / "original.pecos"
+    preserved_path = tmp_path / "preserved.pecos"
+    cleared_path = tmp_path / "cleared.pecos"
+    batch = SampleBatch([[1]], [1])
+    batch.save(original_path, dem=dem, metadata_json=metadata)
+    loaded = SampleBatch.load(original_path)
+
+    loaded.save(preserved_path, dem=dem)
+    loaded.save(cleared_path, dem=dem, clear_metadata=True)
+
+    assert SampleBatch.load(preserved_path).metadata_json == metadata
+    assert SampleBatch.load(cleared_path).metadata_json is None
+
+
+def test_loaded_batch_requires_its_embedded_dem_unless_opted_out(tmp_path) -> None:
+    embedded_dem = "error(0.125) D0 L0\n"
+    different_dem = "error(0.25) D0 L0\n"
+    path = tmp_path / "dem-bound.pecos"
+    batch = SampleBatch([[1]], [1])
+    batch.save(path, dem=embedded_dem)
+    loaded = SampleBatch.load(path)
+
+    with pytest.raises(ValueError, match="differs from the DEM embedded"):
+        loaded.compare_decoders(
+            different_dem,
+            "pymatching",
+            "pymatching",
+        )
+
+    result = loaded.compare_decoders(
+        different_dem,
+        "pymatching",
+        "pymatching",
+        allow_dem_mismatch=True,
+    )
+    assert result.total_shots == 1
 
 
 def test_generate_samples_records_resolved_and_explicit_seeds() -> None:

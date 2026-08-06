@@ -310,14 +310,17 @@ impl ComposableNoiseModel {
 
     /// Add an idle channel with T1/T2 times in physical units.
     ///
-    /// Requires `with_time_scale()` to be called first.
+    /// Requires `with_time_scale()` to be called first. T2 is total transverse coherence time,
+    /// not pure-dephasing Tphi. The first-order Pauli-twirl mapping, physical bound, validity
+    /// domain, and numerical compatibility note are documented by [`IdleChannel::from_t1_t2`].
     ///
     /// # Arguments
     /// * `t1_seconds` - T1 relaxation time in seconds
-    /// * `t2_seconds` - T2 dephasing time in seconds
+    /// * `t2_seconds` - Total T2 transverse coherence time in seconds
     ///
     /// # Panics
-    /// Panics if `with_time_scale()` has not been called.
+    /// Panics if `with_time_scale()` has not been called, if either time is non-finite or not
+    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
     ///
     /// # Example
     /// ```
@@ -333,10 +336,7 @@ impl ComposableNoiseModel {
         let scale = self
             .time_scale
             .expect("with_time_scale() must be called before with_idle_t1_t2()");
-        // Convert physical times to time units
-        let t1_units = scale.from_seconds(t1_seconds).as_f64();
-        let t2_units = scale.from_seconds(t2_seconds).as_f64();
-        let channel = IdleChannel::from_t1_t2(t1_units, t2_units);
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
         self.add_channel(channel)
     }
 

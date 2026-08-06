@@ -566,11 +566,11 @@ fn test_idle_noise_with_time_scale() {
     // Test that idle noise with TimeScale produces expected decoherence.
     //
     // Circuit: prep |0> → X (to get |1>) → H → idle → H → measure
-    // The H gates convert Z errors (dephasing) to bit flip errors for detection.
+    // The H gates convert Y/Z transverse-coherence errors to bit flips for detection.
     // With T1=10us, T2=5us, and 1us idle, we expect ~10% error rate.
     //
-    // Note: IdleChannel by default produces Z-only errors (dephasing model),
-    // so we use H-basis measurement to detect them.
+    // The Pauli twirl produces X, Y, and Z errors. H-basis measurement detects the transverse
+    // coherence errors Y and Z while X leaves |+> unchanged.
 
     use pecos_core::TimeScale;
 
@@ -585,13 +585,13 @@ fn test_idle_noise_with_time_scale() {
     assert!(model.time_scale().is_some());
     assert_eq!(model.channel_count(), 1);
 
-    // Circuit with idle - use H gates to make Z errors detectable
-    // H|+> = |0>, H|-> = |1>, so Z|+> = |-> gives different outcome after H
+    // Circuit with idle - use H gates to make the Y/Z phase-changing errors detectable.
+    // H|+> = |0>, H|-> = |1>, so Y|+> and Z|+> give |-> up to phase.
     let commands = CommandBuilder::new()
         .pz(&[0])
         .h(&[0]) // Prepare |+> state
-        .idle(&[0], 1000) // 1000 ns idle = 1 us (Z errors here)
-        .h(&[0]) // Convert Z errors to bit flips
+        .idle(&[0], 1000) // 1000 ns idle = 1 us (Pauli-twirled errors here)
+        .h(&[0]) // Convert Y/Z phase changes to measurement flips
         .mz(&[0])
         .build();
 
@@ -609,7 +609,7 @@ fn test_idle_noise_with_time_scale() {
         if let Some(bits) = outcomes.bitstring(&qubits)
             && bits[0]
         {
-            error_count += 1; // Z error during idle will cause |1> outcome
+            error_count += 1; // Y/Z error during idle will cause |1> outcome
         }
     }
 
@@ -617,13 +617,13 @@ fn test_idle_noise_with_time_scale() {
 
     println!("Idle noise with TimeScale:");
     println!("  T1=10us, T2=5us, idle=1us");
-    println!("  Error rate: {error_rate:.1}% (expected ~10% from linear/T1 dephasing)");
+    println!("  Error rate: {error_rate:.1}% (expected ~10% from total-T2 coherence)");
 
-    // Analytic expectation: linear_rate = 1/T1 = 1e-4/ns, so 1000 ns idle
-    // gives p = 0.1 exactly (Z-only weights, detected via H basis). The
-    // quadratic T2 term contributes sin^2(4e-5) ~ 1.6e-9, negligible.
+    // Analytic first-order Pauli twirl: the total linear rate is 1.25e-4/ns with weights
+    // (0.2, 0.2, 0.6), and the quadratic rate is zero. In the H basis, Y and Z are detected, so
+    // 1000 ns gives 1000 * 1.25e-4 * (0.2 + 0.6) = 0.1.
     assert!(
         rate_matches_expected(error_rate, 10.0),
-        "Error rate {error_rate:.1}% should be within {K_SIGMA} sigma of the analytic 10% T1 dephasing rate"
+        "Error rate {error_rate:.1}% should be within {K_SIGMA} sigma of the analytic 10% total-T2 coherence rate"
     );
 }

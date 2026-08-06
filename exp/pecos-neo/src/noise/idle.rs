@@ -19,7 +19,7 @@
 //! ## When to use this vs `CompositeChannel`
 //!
 //! **Use `IdleChannel` when:**
-//! - You want standard T1/T2 decay with linear/quadratic scaling
+//! - You want the first-order T1/T2 Pauli-twirl convenience or other batched idle noise
 //! - Performance is critical (batched processing)
 //!
 //! **Use `CompositeChannel` when:**
@@ -37,10 +37,10 @@
 //! ## Noise Components
 //!
 //! - **Linear noise**: Stochastic errors with probability proportional to time.
-//!   Models T1-like relaxation.
+//!   Can model a first-order Pauli twirl of relaxation and dephasing.
 //!
 //! - **Quadratic noise**: Can be coherent (RZ rotations) or incoherent (stochastic Z).
-//!   Models T2-like dephasing.
+//!   Models phase rotation with an angle proportional to time.
 //!
 //! - **Sine-squared noise**: Independent stochastic X, Y, Z, or leakage events with
 //!   per-axis probability `sin(rate * multiplier * duration)^2`.
@@ -57,7 +57,7 @@ use super::{
     NoiseChannel, NoiseContext, NoiseEvent, NoiseGateRequirement, NoiseResponse, PauliWeights,
 };
 use crate::command::{GateCommand, GateType};
-use pecos_core::{Angle64, TimeUnits};
+use pecos_core::{Angle64, TimeScale, TimeUnits};
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
@@ -145,23 +145,90 @@ impl IdleChannel {
         }
     }
 
-    /// Create an idle noise channel with T1/T2 parameters in abstract time units.
+    /// Create an idle noise channel from T1/T2 parameters in abstract time units.
+    ///
+    /// `t2` is the total transverse coherence time reported by device datasheets, not the pure
+    /// dephasing time Tphi. This convenience applies the first-order Pauli twirl of combined
+    /// amplitude damping and dephasing:
+    ///
+    /// ```text
+    /// rX = rY = 1 / (4 * T1)
+    /// rZ      = 1 / (2 * T2) - 1 / (4 * T1)
+    /// ```
+    ///
+    /// The channel's linear rate is `rX + rY + rZ`, with normalized X/Y/Z weights derived from
+    /// those rates. Its quadratic rate is zero: total-T2 dephasing is linear in duration to first
+    /// order and does not use the quadratic family. Equivalently, callers can configure the same
+    /// channel with [`Self::linear`] and [`Self::with_linear_weights`].
+    ///
+    /// This approximation retains terms through first order in the idle duration `t`; it is valid
+    /// for `t` much smaller than both T1 and T2, where the resulting linear error probability is
+    /// also much smaller than one. Physical total T2 must satisfy `T2 <= 2 * T1` so that `rZ` is
+    /// non-negative.
+    ///
+    /// This mapping changes the numerical rates and Pauli weights produced by this convenience
+    /// from earlier PECOS versions, which used a Z-only `1/T1` linear rate and a `1/T2^2`
+    /// quadratic rate.
     ///
     /// # Arguments
-    /// * `t1` - T1 relaxation time in time units
-    /// * `t2` - T2 dephasing time in time units
+    /// * `t1` - T1 relaxation time in abstract time units
+    /// * `t2` - Total T2 transverse coherence time in the same units
+    ///
+    /// # Panics
+    ///
+    /// Panics if either time is non-finite or not greater than zero, or if `t2 > 2 * t1`.
     #[must_use]
     pub fn from_t1_t2(t1: f64, t2: f64) -> Self {
-        // Approximate error rate from T1/T2
-        // This is a simplified model
-        let linear_rate = 1.0 / t1.max(1.0);
-        let quadratic_rate = 1.0 / (t2 * t2).max(1.0);
+        Self::validate_t1_t2(t1, t2);
+
+        let rate_x = 1.0 / (4.0 * t1);
+        let rate_y = rate_x;
+        let rate_z = 1.0 / (2.0 * t2) - rate_x;
+        let linear_rate = rate_x + rate_y + rate_z;
 
         Self {
             linear_rate,
-            quadratic_rate,
+            linear_weights: PauliWeights::custom(
+                rate_x / linear_rate,
+                rate_y / linear_rate,
+                rate_z / linear_rate,
+            ),
+            quadratic_rate: 0.0,
             ..Default::default()
         }
+    }
+
+    /// Convert physical seconds with a time scale, preserving the constructor's validation.
+    pub(crate) fn from_t1_t2_seconds(t1_seconds: f64, t2_seconds: f64, scale: TimeScale) -> Self {
+        // Validate before TimeScale rounds into its unsigned integer representation, which would
+        // otherwise erase the sign and non-finite state of some invalid inputs.
+        Self::validate_t1_t2(t1_seconds, t2_seconds);
+        let t1 = scale.from_seconds(t1_seconds).as_f64();
+        let t2 = scale.from_seconds(t2_seconds).as_f64();
+        Self::from_t1_t2(t1, t2)
+    }
+
+    fn validate_t1_t2(t1: f64, t2: f64) {
+        assert!(
+            t1.is_finite(),
+            "t1 must be finite and greater than zero, got {t1}"
+        );
+        assert!(
+            t1 > 0.0,
+            "t1 must be finite and greater than zero, got {t1}"
+        );
+        assert!(
+            t2.is_finite(),
+            "t2 must be finite and greater than zero, got {t2}"
+        );
+        assert!(
+            t2 > 0.0,
+            "t2 must be finite and greater than zero, got {t2}"
+        );
+        assert!(
+            t2 <= 2.0 * t1,
+            "total transverse coherence time must satisfy t2 <= 2 * t1, got t1={t1} and t2={t2}"
+        );
     }
 
     /// Set whether to use coherent dephasing.
@@ -413,6 +480,39 @@ mod tests {
     use super::*;
     use pecos_core::QubitId;
 
+    fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+        if let Some(message) = panic.downcast_ref::<String>() {
+            message.clone()
+        } else if let Some(message) = panic.downcast_ref::<&str>() {
+            (*message).to_string()
+        } else {
+            "non-string panic".to_string()
+        }
+    }
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < f64::EPSILON,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    fn assert_same_configuration(actual: &IdleChannel, expected: &IdleChannel) {
+        assert_close(actual.linear_rate, expected.linear_rate);
+        assert_close(actual.linear_weights.x, expected.linear_weights.x);
+        assert_close(actual.linear_weights.y, expected.linear_weights.y);
+        assert_close(actual.linear_weights.z, expected.linear_weights.z);
+        assert_close(actual.sin_squared_rate, expected.sin_squared_rate);
+        assert_eq!(actual.sin_squared_model, expected.sin_squared_model);
+        assert_close(actual.quadratic_rate, expected.quadratic_rate);
+        assert_eq!(actual.coherent_dephasing, expected.coherent_dephasing);
+        assert_close(
+            actual.coherent_to_incoherent_factor,
+            expected.coherent_to_incoherent_factor,
+        );
+        assert_close(actual.idle_after_2q, expected.idle_after_2q);
+    }
+
     fn collect_gates(response: NoiseResponse) -> Vec<GateCommand> {
         match response {
             NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
@@ -489,6 +589,100 @@ mod tests {
         // At 10ns: p = 0.001 * 10 = 0.01
         let p = channel.linear_probability(TimeUnits::new(10).as_f64());
         assert!((p - 0.01).abs() < 1e-10);
+    }
+
+    #[test]
+    fn t1_t2_short_times_are_not_clamped() {
+        let half_unit_t1 = IdleChannel::from_t1_t2(0.5, 1.0);
+        let one_unit_t1 = IdleChannel::from_t1_t2(1.0, 2.0);
+
+        assert_close(half_unit_t1.linear_rate, 1.0);
+        assert_close(one_unit_t1.linear_rate, 0.5);
+        assert_close(half_unit_t1.linear_rate, 2.0 * one_unit_t1.linear_rate);
+        assert_close(half_unit_t1.linear_weights.x, 0.5);
+        assert_close(half_unit_t1.linear_weights.y, 0.5);
+        assert_close(half_unit_t1.linear_weights.z, 0.0);
+    }
+
+    #[test]
+    fn t1_t2_rejects_non_positive_and_non_finite_times_by_parameter() {
+        for t1 in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let panic = std::panic::catch_unwind(|| IdleChannel::from_t1_t2(t1, 1.0))
+                .expect_err("invalid t1 must panic");
+            let message = panic_message(panic.as_ref());
+            assert!(message.contains("t1"), "unexpected panic: {message}");
+            assert!(
+                message.contains("finite and greater than zero"),
+                "unexpected panic: {message}"
+            );
+        }
+
+        for t2 in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let panic = std::panic::catch_unwind(|| IdleChannel::from_t1_t2(1.0, t2))
+                .expect_err("invalid t2 must panic");
+            let message = panic_message(panic.as_ref());
+            assert!(message.contains("t2"), "unexpected panic: {message}");
+            assert!(
+                message.contains("finite and greater than zero"),
+                "unexpected panic: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn total_t2_physical_bound_is_enforced_and_inclusive() {
+        let boundary = IdleChannel::from_t1_t2(1.0, 2.0);
+        assert_close(boundary.linear_weights.z, 0.0);
+
+        let panic = std::panic::catch_unwind(|| IdleChannel::from_t1_t2(1.0, 2.1))
+            .expect_err("T2 above the physical bound must panic");
+        let message = panic_message(panic.as_ref());
+        assert!(
+            message.contains("t2 <= 2 * t1"),
+            "unexpected panic: {message}"
+        );
+        assert!(message.contains("t1=1"), "unexpected panic: {message}");
+        assert!(message.contains("t2=2.1"), "unexpected panic: {message}");
+    }
+
+    #[test]
+    fn t1_t2_sanity_values_match_first_order_pauli_twirl() {
+        let channel = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+
+        assert!((channel.linear_rate - 2.166_666_666_666_666_7e-5).abs() < f64::EPSILON);
+        assert!((channel.linear_weights.x - 3.0 / 13.0).abs() < f64::EPSILON);
+        assert!((channel.linear_weights.y - 3.0 / 13.0).abs() < f64::EPSILON);
+        assert!((channel.linear_weights.z - 7.0 / 13.0).abs() < f64::EPSILON);
+        assert_close(channel.quadratic_rate, 0.0);
+    }
+
+    #[test]
+    fn t1_t2_uses_linear_t2_scaling_and_zero_quadratic_angle() {
+        let t2_30 = IdleChannel::from_t1_t2(50.0, 30.0);
+        let t2_60 = IdleChannel::from_t1_t2(50.0, 60.0);
+
+        // theta_quadratic(t; T2) = 0. The first-order transverse Pauli error instead follows
+        // pY(t) + pZ(t) = t / (2 * T2).
+        assert_close(t2_30.quadratic_angle(3.0), 0.0);
+        assert_close(t2_30.quadratic_angle(6.0), 0.0);
+        assert_close(t2_60.quadratic_angle(3.0), 0.0);
+
+        let transverse_probability = |channel: &IdleChannel, duration| {
+            channel.linear_probability(duration)
+                * (channel.linear_weights.y + channel.linear_weights.z)
+        };
+        assert!((transverse_probability(&t2_30, 3.0) - 0.05).abs() < f64::EPSILON);
+        assert!((transverse_probability(&t2_30, 6.0) - 0.1).abs() < f64::EPSILON);
+        assert!((transverse_probability(&t2_60, 3.0) - 0.025).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn t1_t2_convenience_equals_hand_written_linear_family() {
+        let convenience = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+        let hand_written = IdleChannel::linear(2.166_666_666_666_666_7e-5)
+            .with_linear_weights(PauliWeights::custom(3.0 / 13.0, 3.0 / 13.0, 7.0 / 13.0));
+
+        assert_same_configuration(&convenience, &hand_written);
     }
 
     #[test]

@@ -707,15 +707,16 @@ impl CompositeNoiseModelBuilder {
 
     /// Set T1/T2 relaxation times in physical units (seconds).
     ///
-    /// This is a convenience method that converts physical T1/T2 times to
-    /// the internal rate parameters based on the configured time scale.
-    ///
-    /// - T1 (amplitude damping): Sets linear idle noise rate = 1/T1
-    /// - T2 (dephasing): Sets quadratic idle noise rate = 1/T2^2
+    /// This is a convenience method that converts physical T1/T2 times to the internal rate
+    /// parameters based on the configured time scale. T2 is total transverse coherence time, not
+    /// pure-dephasing Tphi. The first-order Pauli-twirl mapping, physical bound, validity domain,
+    /// and numerical compatibility note are documented by [`IdleChannel::from_t1_t2`]. The
+    /// convenience configures the linear family and leaves the quadratic family unused.
     ///
     /// # Panics
     ///
-    /// Panics if `with_time_scale()` has not been called first.
+    /// Panics if `with_time_scale()` has not been called first, if either time is non-finite or not
+    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
     ///
     /// # Example
     ///
@@ -734,13 +735,14 @@ impl CompositeNoiseModelBuilder {
             .time_scale
             .expect("with_time_scale() must be called before with_idle_t1_t2()");
 
-        // Convert physical times to time units
-        let t1_units = scale.from_seconds(t1_seconds).as_f64();
-        let t2_units = scale.from_seconds(t2_seconds).as_f64();
-
-        // Set rates: linear_rate = 1/T1, quadratic_rate = 1/T2^2
-        self.p_idle_linear_rate = 1.0 / t1_units.max(1.0);
-        self.p_idle_quadratic_rate = 1.0 / (t2_units * t2_units).max(1.0);
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
+        self.p_idle_linear_rate = channel.linear_rate;
+        self.p_idle_linear_pauli_weights = Some(PauliWeights::custom(
+            channel.linear_weights.x,
+            channel.linear_weights.y,
+            channel.linear_weights.z,
+        ));
+        self.p_idle_quadratic_rate = channel.quadratic_rate;
         self
     }
 
@@ -2038,12 +2040,22 @@ mod tests {
     #[test]
     fn test_idle_t1_t2_configuration() {
         // T1=50us, T2=30us with nanosecond time units
-        let model = CompositeNoiseModelBuilder::new()
+        let builder = CompositeNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
-            .with_idle_t1_t2(50e-6, 30e-6)
-            .build();
+            .with_idle_t1_t2(50e-6, 30e-6);
+        let expected = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+        let actual_weights = builder
+            .p_idle_linear_pauli_weights
+            .expect("T1/T2 convenience must set linear Pauli weights");
+
+        assert!((builder.p_idle_linear_rate - expected.linear_rate).abs() < f64::EPSILON);
+        assert!((actual_weights.x - expected.linear_weights.x).abs() < f64::EPSILON);
+        assert!((actual_weights.y - expected.linear_weights.y).abs() < f64::EPSILON);
+        assert!((actual_weights.z - expected.linear_weights.z).abs() < f64::EPSILON);
+        assert!((builder.p_idle_quadratic_rate - expected.quadratic_rate).abs() < f64::EPSILON);
 
         // Should have created an idle channel
+        let model = builder.build();
         assert_eq!(model.channel_count(), 1);
         // Should have time scale set
         assert!(model.time_scale().is_some());

@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from pecos.decoders import (
     MWPM2D,
@@ -33,6 +35,9 @@ from pecos.decoders import (
 )
 from pecos_rslib.qec import decoder_dem_requirement
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 _DEM = """error(0.1) D0 D1 L0
 error(0.1) D1 L0
 detector D0
@@ -48,6 +53,7 @@ error(0.1) D1 L0
 
 _SYNDROMES = ([0, 0], [1, 0], [0, 1], [1, 1])
 _OBSERVABLE_MASKS_BEFORE = [0, 0, 1, 1]
+_FAMILY_RESULTS_BEFORE = [(0, True, 1), (0, True, 1), (1, True, 1), (1, True, 1)]
 _FAMILY_DECODERS = [
     (BpOsdDecoder, "bp_osd"),
     (BpLsdDecoder, "bp_lsd"),
@@ -55,6 +61,7 @@ _FAMILY_DECODERS = [
     (RelayBpDecoder, "relay_bp"),
     (MinSumBpDecoder, "min_sum_bp"),
 ]
+_ITERATIVE_FAMILY_DECODERS = [BpOsdDecoder, BpLsdDecoder, RelayBpDecoder, MinSumBpDecoder]
 
 
 def test_dem_aware_result_is_importable() -> None:
@@ -129,6 +136,9 @@ def test_family_from_dem_matches_existing_wrapper(decoder_class: type, decoder_t
     named_masks = [result.observables_mask for result in named_results]
     existing_masks = [result.observables_mask for result in existing_results]
     assert named_masks == existing_masks == _OBSERVABLE_MASKS_BEFORE
+    assert [(result.observables_mask, result.converged, result.iterations) for result in named_results] == (
+        _FAMILY_RESULTS_BEFORE
+    )
     assert isinstance(named_decoder, DemAwareDecoder)
     assert named_decoder.num_detectors == existing_decoder.num_detectors == 2
     assert named_decoder.num_mechanisms == existing_decoder.num_mechanisms == 2
@@ -137,27 +147,77 @@ def test_family_from_dem_matches_existing_wrapper(decoder_class: type, decoder_t
     assert not hasattr(named_decoder, "decode")
 
 
-@pytest.mark.parametrize(("decoder_class", "decoder_type"), _FAMILY_DECODERS)
-def test_family_from_dem_forwards_configuration(decoder_class: type, decoder_type: str) -> None:
-    named_decoder = decoder_class.from_dem(_ENCODING_DEM, error_rate=0.2, max_iter=0)
-    existing_decoder = DemAwareDecoder.from_dem(
-        _ENCODING_DEM,
-        decoder_type=decoder_type,
-        error_rate=0.2,
-        max_iter=0,
-    )
-
+@pytest.mark.parametrize("decoder_class", _ITERATIVE_FAMILY_DECODERS)
+def test_iterative_family_from_dem_accepts_tuning(decoder_class: type) -> None:
+    named_decoder = decoder_class.from_dem(_ENCODING_DEM, error_rate=0.2, max_iter=1)
     named_result = named_decoder.decode_syndrome([0, 1])
-    existing_result = existing_decoder.decode_syndrome([0, 1])
-    assert (
-        named_result.observables_mask,
-        named_result.converged,
-        named_result.iterations,
-    ) == (
-        existing_result.observables_mask,
-        existing_result.converged,
-        existing_result.iterations,
+    assert named_result.observables_mask == 1
+
+
+def test_each_family_accepts_only_its_real_tuning_surface() -> None:
+    assert BpOsdDecoder.from_dem(
+        _ENCODING_DEM,
+        max_iter=5,
+        bp_schedule="serial",
+        ms_scaling_factor=0.75,
+        osd_order=1,
+        random_schedule_seed=42,
     )
+    assert BpLsdDecoder.from_dem(
+        _ENCODING_DEM,
+        max_iter=5,
+        bp_schedule="serial_relative",
+        ms_scaling_factor=0.625,
+        random_schedule_seed=43,
+    )
+    assert UnionFindDecoder.from_dem(_ENCODING_DEM, method="peeling")
+    assert RelayBpDecoder.from_dem(_ENCODING_DEM, max_iter=5, alpha=0.8, seed=44)
+    assert MinSumBpDecoder.from_dem(_ENCODING_DEM, max_iter=5, alpha=0.7)
+
+
+@pytest.mark.parametrize(
+    ("build", "parameter"),
+    [
+        (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, preset="quick"), "preset"),
+        (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, det_beam=0), "det_beam"),
+        (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, det_beam=2**16), "det_beam"),
+        (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, pqlimit=-1), "pqlimit"),
+        (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, pqlimit=0), "pqlimit"),
+        (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, det_penalty=-0.1), "det_penalty"),
+        (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, det_penalty=float("nan")), "det_penalty"),
+        (lambda: BpOsdDecoder.from_dem(_ENCODING_DEM, max_iter=-1), "max_iter"),
+        (lambda: BpOsdDecoder.from_dem(_ENCODING_DEM, max_iter=2**31), "max_iter"),
+        (lambda: BpOsdDecoder.from_dem(_ENCODING_DEM, bp_schedule="random"), "bp_schedule"),
+        (lambda: BpOsdDecoder.from_dem(_ENCODING_DEM, ms_scaling_factor=-0.1), "ms_scaling_factor"),
+        (lambda: BpOsdDecoder.from_dem(_ENCODING_DEM, ms_scaling_factor=float("nan")), "ms_scaling_factor"),
+        (lambda: BpOsdDecoder.from_dem(_ENCODING_DEM, osd_order=-1), "osd_order"),
+        (lambda: BpOsdDecoder.from_dem(_ENCODING_DEM, osd_order=2**31), "osd_order"),
+        (
+            lambda: BpOsdDecoder.from_dem(_ENCODING_DEM, random_schedule_seed=2**31),
+            "random_schedule_seed",
+        ),
+        (lambda: BpLsdDecoder.from_dem(_ENCODING_DEM, max_iter=-1), "max_iter"),
+        (
+            lambda: BpLsdDecoder.from_dem(_ENCODING_DEM, random_schedule_seed=-(2**31) - 1),
+            "random_schedule_seed",
+        ),
+        (lambda: UnionFindDecoder.from_dem(_ENCODING_DEM, method="fast"), "method"),
+        (lambda: RelayBpDecoder.from_dem(_ENCODING_DEM, max_iter=-1), "max_iter"),
+        (lambda: RelayBpDecoder.from_dem(_ENCODING_DEM, alpha=-0.1), "alpha"),
+        (lambda: RelayBpDecoder.from_dem(_ENCODING_DEM, alpha=float("nan")), "alpha"),
+        (lambda: RelayBpDecoder.from_dem(_ENCODING_DEM, seed=-1), "seed"),
+        (lambda: MinSumBpDecoder.from_dem(_ENCODING_DEM, max_iter=-1), "max_iter"),
+        (lambda: MinSumBpDecoder.from_dem(_ENCODING_DEM, alpha=-0.1), "alpha"),
+        (lambda: PyMatchingDecoder.from_dem(_ENCODING_DEM, error_probability=0.0), "error_probability"),
+        (lambda: PyMatchingDecoder.from_dem(_ENCODING_DEM, error_probability=1.0), "error_probability"),
+        (lambda: PyMatchingDecoder.from_dem(_ENCODING_DEM, error_probability=1.1), "error_probability"),
+        (lambda: FusionBlossomDecoder.from_dem(_ENCODING_DEM, solver_type="parallel"), "solver_type"),
+        (lambda: FusionBlossomDecoder.from_dem(_ENCODING_DEM, solver_type="fast"), "solver_type"),
+    ],
+)
+def test_invalid_dem_tuning_names_parameter(build: Callable[[], object], parameter: str) -> None:
+    with pytest.raises((ValueError, RuntimeError), match=parameter):
+        build()
 
 
 @pytest.mark.parametrize("decoder_type", [decoder_type for _, decoder_type in _FAMILY_DECODERS])

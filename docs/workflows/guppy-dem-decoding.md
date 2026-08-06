@@ -304,8 +304,8 @@ an `observables_mask` bitmask.
 from pecos.decoders import BpOsdDecoder, PyMatchingDecoder, TesseractDecoder
 
 pymatching = PyMatchingDecoder.from_dem(terminal_graphlike_text)
-tesseract = TesseractDecoder.from_dem(source_graphlike_text, preset="fast")
-bp_osd = BpOsdDecoder.from_dem(raw_text)
+tesseract = TesseractDecoder.from_dem(source_graphlike_text, preset="fast", pqlimit=50_000)
+bp_osd = BpOsdDecoder.from_dem(raw_text, max_iter=10, osd_order=1)
 
 pymatching_errors = 0
 tesseract_errors = 0

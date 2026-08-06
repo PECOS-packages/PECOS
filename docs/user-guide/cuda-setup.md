@@ -40,7 +40,14 @@ PECOS's built-in multiprocessing engine already uses `spawn`. Host programs that
 embed PECOS in their own process pools must also select `spawn` if the parent may
 initialize CUDA before creating workers. The Rust cuQuantum bindings load their CUDA
 libraries with local symbol visibility so they do not disturb other CUDA-using
-libraries in the same process.
+libraries in the same process. Availability checks only load those libraries; they
+do not create CUDA handles or contexts or initialize the CUDA driver.
+
+PECOS records when its CUDA simulator wrappers begin CUDA initialization. If one of
+those simulators is later constructed in a child forked from that process, PECOS
+fails fast with the spawn guidance above. PECOS cannot detect CUDA initialization by
+another library in the parent; those cases still surface the guided error from the
+CUDA or cuQuantum layer.
 
 ## System Requirements
 

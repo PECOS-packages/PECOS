@@ -19,6 +19,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.simulators._cuda_fork_guard import (
+    CUDA_FORK_ERROR_MESSAGE,
+    check_fork_poison,
+    mark_cuda_initialized,
+)
 from pecos.simulators.custatevec import bindings
 from pecos.simulators.custatevec._cuquantum_compat import (
     ComputeType,
@@ -61,6 +66,7 @@ class CuStateVec(StateVector):
             num_qubits (int): Number of qubits being represented.
             _seed (int): Seed for randomness (kept for API compatibility, not used in GPU-based simulator).
         """
+        check_fork_poison()
         # Fail loudly (and only here, at construction) if CuPy / bindings-era cuQuantum
         # is unavailable -- importing pecos must stay non-fatal without CUDA installed.
         require_custatevec()
@@ -84,12 +90,7 @@ class CuStateVec(StateVector):
                 isinstance(exc, cp.cuda.driver.CUDADriverError) and exc.status == _CUDA_DRIVER_ERROR_NOT_INITIALIZED
             )
             if runtime_initialization_error or driver_not_initialized_error:
-                msg = (
-                    "CUDA could not initialize in this process; a common cause is running in a forked child of a "
-                    "process that already initialized CUDA (CUDA contexts do not survive fork) — use the "
-                    'multiprocessing "spawn" start method.'
-                )
-                raise RuntimeError(msg) from exc
+                raise RuntimeError(CUDA_FORK_ERROR_MESSAGE) from exc
             raise
 
     def _initialize_cuda(self) -> None:
@@ -101,6 +102,7 @@ class CuStateVec(StateVector):
 
         # Allocate the statevector in GPU and initialize it to |0>
         self.cupy_vector = None
+        mark_cuda_initialized()
         self.reset()
 
         ####################################################

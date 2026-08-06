@@ -23,6 +23,7 @@ import types
 from unittest.mock import Mock
 
 import pytest
+from pecos.simulators import _cuda_fork_guard as guard
 from pecos.simulators.custatevec import state as custatevec_state
 
 
@@ -40,6 +41,14 @@ class _StubRuntimeError(_StubCudaStatusError):
 
 class _StubDriverError(_StubCudaStatusError):
     """Stand-in for ``cupy.cuda.driver.CUDADriverError``."""
+
+
+@pytest.fixture(autouse=True)
+def _reset_guard_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep synthetic failed initialization from marking later tests."""
+    monkeypatch.setattr(guard, "_cuda_initialized", False)
+    monkeypatch.setattr(guard, "_forked_after_cuda_init", False)
+    monkeypatch.setattr(guard, "_fork_warning_emitted", False)
 
 
 def _inject_optional_dependency_stubs(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:

@@ -179,11 +179,17 @@ unsafe impl Sync for CuQuantumBackend {}
 static BACKEND: OnceLock<Result<CuQuantumBackend, CuQuantumLoadError>> = OnceLock::new();
 
 /// Load cuQuantum libraries. Thread-safe, loads only once.
+///
+/// Availability probing must only open libraries; it must never create CUDA handles or contexts,
+/// because initializing the driver in a parent process poisons every later forked child.
 pub fn try_load() -> Result<&'static CuQuantumBackend, &'static CuQuantumLoadError> {
     BACKEND.get_or_init(load_all).as_ref()
 }
 
 /// Check if cuQuantum is available at runtime.
+///
+/// This probe only opens libraries and must not create CUDA handles, contexts, or otherwise
+/// initialize the driver before a caller may fork worker processes.
 pub fn is_available() -> bool {
     try_load().is_ok()
 }

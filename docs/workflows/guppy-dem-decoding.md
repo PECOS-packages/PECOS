@@ -254,8 +254,9 @@ from pecos.tracing import trace_program_to_tick_circuit
 # a Selene runtime plugin, which may schedule idles of its own.
 tick_circuit = trace_program_to_tick_circuit(rep_code_memory, 7)
 
-# Drop runtime-emitted idles so only one convention survives. Insertion is then
-# either this pass OR the noise model's with_idle_after_2q -- never both.
+# remove_identity() drops everything that is identity by effect: I, Idle, and
+# zero-angle rotations. That clears runtime-emitted idles so only one convention
+# survives -- insertion is then this pass OR with_idle_after_2q, never both.
 tick_circuit.remove_identity()
 ```
 

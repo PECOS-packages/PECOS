@@ -91,6 +91,11 @@ fn detect_cargo_llvm_link_mode() -> Option<(PathBuf, LlvmLinkMode)> {
 }
 
 fn reject_static_llvm_workspace_test() -> Result<()> {
+    // This guard inspects the installed LLVM's link mode (`llvm-config --shared-mode`),
+    // not the cargo feature selection: it protects the development workspace test path,
+    // which links many LLVM-using test binaries, from a static-only LLVM install.
+    // Release wheels intentionally build static via a release-lane manifest patch and
+    // are not visible to (or blocked by) this check.
     let Some((llvm_path, link_mode)) = detect_cargo_llvm_link_mode() else {
         return Ok(());
     };

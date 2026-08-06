@@ -36,7 +36,8 @@ Note: For Python wrappers that accept pecos.programs types, use:
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-# Re-export Rust engines from pecos_rslib
+from importlib import import_module
+
 from pecos_rslib import (
     ByteMessage,
     ByteMessageBuilder,
@@ -53,36 +54,6 @@ from pecos_rslib import (
     qis_selene_helios_interface,
     sim_builder,
 )
-
-# HUGR -> QIS (LLVM IR) compilation lives in the optional pecos-rslib-llvm
-# wheel (the base wheel does not link LLVM). Capability introspection stays
-# callable either way; compilation fails loudly when the wheel is absent.
-try:
-    from pecos_rslib_llvm import compile_hugr_to_qis, get_compilation_backends
-except ImportError:
-
-    def compile_hugr_to_qis(*_args: object, **_kwargs: object) -> str:
-        """Raise: HUGR -> QIS compilation requires pecos-rslib-llvm."""
-        msg = (
-            "HUGR -> QIS compilation requires the pecos-rslib-llvm package "
-            "(the base pecos-rslib wheel does not link LLVM)."
-        )
-        raise RuntimeError(msg)
-
-    def get_compilation_backends() -> dict:
-        """Report available compilation backends (LLVM wheel absent)."""
-        return {
-            "default_backend": None,
-            "backends": {
-                "hugr-llvm": {
-                    "available": False,
-                    "description": "HUGR-LLVM pipeline: install pecos-rslib-llvm to enable",
-                },
-            },
-            "qsystem_platforms": [],
-        }
-
-
 from pecos_rslib.engines import (
     PhirEngineBuilder,
     PhirJsonEngine,
@@ -100,6 +71,61 @@ from pecos_rslib.engines import (
 )
 
 from pecos.engines.hybrid_engine import HybridEngine
+
+
+# HUGR -> QIS (LLVM IR) compilation lives in the optional pecos-rslib-llvm
+# wheel (the base wheel does not link LLVM). Import it only when one of these
+# public capabilities is requested so importing PECOS does not load LLVM.
+def _missing_compile_hugr_to_qis(*_args: object, **_kwargs: object) -> str:
+    """Raise: HUGR -> QIS compilation requires pecos-rslib-llvm."""
+    msg = (
+        "HUGR -> QIS compilation requires the pecos-rslib-llvm package "
+        "(the base pecos-rslib wheel does not link LLVM)."
+    )
+    raise RuntimeError(msg)
+
+
+def _missing_get_compilation_backends() -> dict:
+    """Report available compilation backends (LLVM wheel absent)."""
+    return {
+        "default_backend": None,
+        "backends": {
+            "hugr-llvm": {
+                "available": False,
+                "description": "HUGR-LLVM pipeline: install pecos-rslib-llvm to enable",
+            },
+        },
+        "qsystem_platforms": [],
+    }
+
+
+def _load_llvm_compilation() -> None:
+    """Populate the public LLVM compilation capabilities on first access."""
+    try:
+        llvm_module = import_module("pecos_rslib_llvm")
+        compile_hugr_to_qis = llvm_module.compile_hugr_to_qis
+        get_compilation_backends = llvm_module.get_compilation_backends
+    except ImportError:
+        compile_hugr_to_qis = _missing_compile_hugr_to_qis
+        get_compilation_backends = _missing_get_compilation_backends
+
+    globals().update(
+        compile_hugr_to_qis=compile_hugr_to_qis,
+        get_compilation_backends=get_compilation_backends,
+    )
+
+
+def __getattr__(name: str) -> object:
+    if name in {"compile_hugr_to_qis", "get_compilation_backends"}:
+        _load_llvm_compilation()
+        return globals()[name]
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), "compile_hugr_to_qis", "get_compilation_backends"})
+
 
 __all__ = [
     "ByteMessage",

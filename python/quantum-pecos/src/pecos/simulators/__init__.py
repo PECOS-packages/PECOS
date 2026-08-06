@@ -16,6 +16,8 @@ and fault propagation simulators.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from importlib import import_module
+
 # Rust simulators (direct exports without Python wrappers)
 # Simulator engine builder factory functions
 from pecos_rslib import (
@@ -56,16 +58,34 @@ try:
 except ImportError:
     MPS = None
 
-# Rust cuQuantum bindings (pecos-rslib-cuda)
-# Import always succeeds if the package is installed -- GPU availability is
-# checked at construction time, not import time. This lets users reference
-# the classes and get clear error messages when they try to use them.
-try:
-    from pecos.simulators.cuda_stabilizer import CudaStabilizer
-    from pecos.simulators.cuda_statevec import CudaStateVec
-except ImportError:
-    CudaStateVec = None
-    CudaStabilizer = None
+
+# Rust cuQuantum bindings (pecos-rslib-cuda). Resolve these public classes only
+# when requested; GPU availability is still checked at construction time.
+def _load_cuda_simulators() -> None:
+    """Populate the public Rust CUDA simulator classes on first access."""
+    try:
+        cuda_stabilizer = import_module("pecos.simulators.cuda_stabilizer")
+        cuda_statevec = import_module("pecos.simulators.cuda_statevec")
+        cuda_stabilizer_class = cuda_stabilizer.CudaStabilizer
+        cuda_statevec_class = cuda_statevec.CudaStateVec
+    except ImportError:
+        cuda_statevec_class = None
+        cuda_stabilizer_class = None
+
+    globals().update(CudaStabilizer=cuda_stabilizer_class, CudaStateVec=cuda_statevec_class)
+
+
+def __getattr__(name: str) -> object:
+    if name in {"CudaStabilizer", "CudaStateVec"}:
+        _load_cuda_simulators()
+        return globals()[name]
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), "CudaStabilizer", "CudaStateVec"})
+
 
 __all__ = [
     "MPS",

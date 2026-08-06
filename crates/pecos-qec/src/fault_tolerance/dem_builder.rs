@@ -100,7 +100,7 @@ pub use sampler::{
 pub use types::{
     ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,
     ContributionRenderSummary, DecomposedFault, DemOutput, DetectorDef, DetectorErrorModel,
-    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType,
+    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType, IdleNoiseFamily,
     MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, MeasurementMechanism,
     MeasurementNoiseChannelResidual, MeasurementNoiseModel, NoiseChannelError, NoiseChannelKind,
     NoiseChannelResidual, NoiseConfig, PAULI_1Q_ORDER, PAULI_2Q_ORDER, PauliProbs, PauliWeights,

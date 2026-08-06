@@ -54,7 +54,7 @@ use pecos_qec::fault_tolerance::dem_builder::{
     DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
     DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
     EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
-    FaultSourceType as RustFaultSourceType, MeasurementCrosstalkDemMode,
+    FaultSourceType as RustFaultSourceType, IdleNoiseFamily, MeasurementCrosstalkDemMode,
     MeasurementCrosstalkTransitionModel, NoiseConfig, PAULI_2Q_ORDER, ParsedDem as RustParsedDem,
     PauliWeights, ReplacementBranchApproximation,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
@@ -82,6 +82,20 @@ type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
 /// Per-shot detector rows paired with per-shot observable/DEM-output rows.
 type PyDetectorObservableRows = (Vec<Vec<bool>>, Vec<Vec<bool>>);
+
+fn idle_family_from_axis_rates(px: f64, py: f64, pz: f64) -> IdleNoiseFamily {
+    if px == 0.0 && py == 0.0 && pz == 0.0 {
+        return IdleNoiseFamily::default();
+    }
+    IdleNoiseFamily::new(
+        1.0,
+        BTreeMap::from([
+            ("X".to_string(), px),
+            ("Y".to_string(), py),
+            ("Z".to_string(), pz),
+        ]),
+    )
+}
 
 fn parse_p1_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
     use pecos_core::pauli::{X, Y, Z};
@@ -383,42 +397,25 @@ fn apply_noise_options(
     if let Some(rz) = idle_rz {
         noise = noise.set_idle_rz(rz);
     }
-    if let Some(rate) = p_idle_linear_rate {
-        noise = noise.set_idle_linear_rate(rate);
-    }
-    if let Some(rate) = p_idle_quadratic_rate {
-        noise = noise.set_idle_quadratic_rate(rate);
-    }
-    if let Some(rate) = p_idle_x_linear_rate {
-        noise.p_idle_x_linear_rate = rate;
-    }
-    if let Some(rate) = p_idle_y_linear_rate {
-        noise.p_idle_y_linear_rate = rate;
-    }
-    if let Some(rate) = p_idle_z_linear_rate {
-        noise.p_idle_linear_rate = rate;
-    }
-    if let Some(rate) = p_idle_x_quadratic_rate {
-        noise.p_idle_x_quadratic_rate = rate;
-    }
-    if let Some(rate) = p_idle_y_quadratic_rate {
-        noise.p_idle_y_quadratic_rate = rate;
-    }
-    if let Some(rate) = p_idle_z_quadratic_rate {
-        noise.p_idle_quadratic_rate = rate;
-    }
-    if let Some(rate) = p_idle_quadratic_sine_rate {
-        noise = noise.set_idle_quadratic_sine_rate(rate);
-    }
-    if let Some(rate) = p_idle_x_quadratic_sine_rate {
-        noise.p_idle_x_quadratic_sine_rate = rate;
-    }
-    if let Some(rate) = p_idle_y_quadratic_sine_rate {
-        noise.p_idle_y_quadratic_sine_rate = rate;
-    }
-    if let Some(rate) = p_idle_z_quadratic_sine_rate {
-        noise.p_idle_quadratic_sine_rate = rate;
-    }
+    noise.p_idle_linear = idle_family_from_axis_rates(
+        p_idle_x_linear_rate.unwrap_or(0.0),
+        p_idle_y_linear_rate.unwrap_or(0.0),
+        p_idle_z_linear_rate.or(p_idle_linear_rate).unwrap_or(0.0),
+    );
+    noise.p_idle_quadratic = idle_family_from_axis_rates(
+        p_idle_x_quadratic_rate.unwrap_or(0.0),
+        p_idle_y_quadratic_rate.unwrap_or(0.0),
+        p_idle_z_quadratic_rate
+            .or(p_idle_quadratic_rate)
+            .unwrap_or(0.0),
+    );
+    noise.p_idle_quadratic_sine = idle_family_from_axis_rates(
+        p_idle_x_quadratic_sine_rate.unwrap_or(0.0),
+        p_idle_y_quadratic_sine_rate.unwrap_or(0.0),
+        p_idle_z_quadratic_sine_rate
+            .or(p_idle_quadratic_sine_rate)
+            .unwrap_or(0.0),
+    );
     if let Some(weights) = p1_weights {
         noise = noise.set_p1_weights(parse_p1_weights(weights)?);
     }

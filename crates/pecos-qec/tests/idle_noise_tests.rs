@@ -17,14 +17,35 @@
 use pecos_core::pauli::{X, Y, Z};
 use pecos_core::{QubitId, TimeUnits};
 use pecos_qec::fault_tolerance::dem_builder::{
-    DemBuilder, DemSamplerBuilder, DetectorErrorModel, FaultMechanism, MemBuilder, NoiseConfig,
-    PauliProbs, PerGateTypeNoise, combine_probabilities,
+    DemBuilder, DemSamplerBuilder, DetectorErrorModel, FaultMechanism, IdleNoiseFamily, MemBuilder,
+    NoiseConfig, PauliProbs, PerGateTypeNoise, combine_probabilities,
 };
 use pecos_qec::fault_tolerance::propagator::{
     DagFaultAnalyzer, DagFaultInfluenceMap, DagSpacetimeLocation, Pauli,
 };
 use pecos_quantum::{DagCircuit, GateType};
 use std::collections::BTreeMap;
+
+fn idle_family(
+    rate: f64,
+    weights: impl IntoIterator<Item = (&'static str, f64)>,
+) -> IdleNoiseFamily {
+    IdleNoiseFamily::new(
+        rate,
+        weights
+            .into_iter()
+            .map(|(axis, weight)| (axis.to_string(), weight))
+            .collect(),
+    )
+}
+
+fn z_idle_family(rate: f64) -> IdleNoiseFamily {
+    idle_family(rate, [("Z", 1.0)])
+}
+
+fn axis_rate_family(px: f64, py: f64, pz: f64) -> IdleNoiseFamily {
+    idle_family(1.0, [("X", px), ("Y", py), ("Z", pz)])
+}
 
 fn build_idle_then_measure(num_idles: usize) -> DagCircuit {
     // Prep N qubits, idle each once, measure each. Very simple fixture
@@ -367,7 +388,9 @@ fn linear_memory_z_noise_uses_idle_duration_in_dem() {
     let influence = analyzer.build_influence_map();
 
     let dem = DemBuilder::new(&influence)
-        .with_noise_config(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear_rate(1.0e-3))
+        .with_noise_config(
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(z_idle_family(1.0e-3)),
+        )
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
         .build();
@@ -381,22 +404,22 @@ fn linear_memory_z_noise_uses_idle_duration_in_dem() {
 #[test]
 fn idle_memory_pauli_probabilities_match_linear_and_quadratic_model() {
     let linear = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
-        .set_idle_linear_rate(1.0e-3)
+        .set_idle_linear(z_idle_family(1.0e-3))
         .idle_pauli_probs(20.0);
     assert_eq!(linear.px.to_bits(), 0.0_f64.to_bits());
     assert_eq!(linear.py.to_bits(), 0.0_f64.to_bits());
     assert!((linear.pz - 0.02).abs() < 1e-15);
 
     let quadratic = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
-        .set_idle_quadratic_rate(0.1)
+        .set_idle_quadratic(z_idle_family(0.1))
         .idle_pauli_probs(2.0);
     assert_eq!(quadratic.px.to_bits(), 0.0_f64.to_bits());
     assert_eq!(quadratic.py.to_bits(), 0.0_f64.to_bits());
     assert!((quadratic.pz - 0.4).abs() < 1e-15);
 
     let pauli = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
-        .set_idle_pauli_linear_rates(1.0e-3, 2.0e-3, 3.0e-3)
-        .set_idle_pauli_quadratic_rates(1.0e-4, 2.0e-4, 3.0e-4)
+        .set_idle_linear(axis_rate_family(1.0e-3, 2.0e-3, 3.0e-3))
+        .set_idle_quadratic(axis_rate_family(1.0e-4, 2.0e-4, 3.0e-4))
         .idle_memory_pauli_probs(10.0);
     let expected = compose_pauli_channels(
         [0.94, 0.01, 0.02, 0.03],
@@ -414,14 +437,14 @@ fn idle_memory_pauli_probabilities_match_linear_and_quadratic_model() {
 #[test]
 fn idle_memory_pauli_probabilities_support_quadratic_sine_model() {
     let z_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
-        .set_idle_quadratic_sine_rate(0.2)
+        .set_idle_quadratic_sine(z_idle_family(0.2))
         .idle_memory_pauli_probs(3.0);
     assert_eq!(z_sine.px.to_bits(), 0.0_f64.to_bits());
     assert_eq!(z_sine.py.to_bits(), 0.0_f64.to_bits());
     assert!((z_sine.pz - 0.6_f64.sin().powi(2)).abs() < 1e-15);
 
     let pauli_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
-        .set_idle_pauli_quadratic_sine_rates(0.1, 0.2, 0.3)
+        .set_idle_quadratic_sine(axis_rate_family(0.1, 0.2, 0.3))
         .idle_memory_pauli_probs(2.0);
     let expected = compose_xyz_mechanisms(PauliProbs {
         px: 0.2_f64.sin().powi(2),
@@ -434,9 +457,151 @@ fn idle_memory_pauli_probabilities_support_quadratic_sine_model() {
 }
 
 #[test]
+fn unset_idle_weight_map_is_symmetric() {
+    let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
+    let implicit = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_linear(IdleNoiseFamily::new(0.005, BTreeMap::new()));
+    let explicit = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_linear(idle_family(0.005, [("X", 1.0), ("Y", 1.0), ("Z", 1.0)]));
+
+    assert_eq!(
+        build_synthetic_idle_dem(&influence, implicit)
+            .expect("implicit symmetric family")
+            .to_string(),
+        build_synthetic_idle_dem(&influence, explicit)
+            .expect("explicit symmetric family")
+            .to_string(),
+    );
+}
+
+#[test]
+fn single_axis_idle_map_matches_pinned_z_linear_dem() {
+    let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
+    let noise =
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(idle_family(0.005, [("Z", 1.0)]));
+
+    assert_eq!(
+        build_synthetic_idle_dem(&influence, noise)
+            .expect("single-axis Z family")
+            .to_string(),
+        "detector D0\ndetector D1\nerror(0.005) D1",
+    );
+}
+
+#[test]
+fn zero_idle_family_rate_is_inactive_regardless_of_weights() {
+    let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
+    let omitted = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
+    let configured = NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(IdleNoiseFamily::new(
+        0.0,
+        BTreeMap::from([("invalid".to_string(), f64::NAN), ("X".to_string(), -1.0)]),
+    ));
+
+    assert!(!configured.uses_dedicated_idle_noise());
+    let probabilities = configured
+        .try_idle_memory_pauli_probs(1.0)
+        .expect("zero-rate family bypasses its map");
+    assert_eq!(probabilities.px.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(probabilities.py.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(probabilities.pz.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(
+        build_synthetic_idle_dem(&influence, configured)
+            .expect("zero-rate family is inactive")
+            .to_string(),
+        build_synthetic_idle_dem(&influence, omitted)
+            .expect("omitted family")
+            .to_string(),
+    );
+}
+
+#[test]
+fn idle_weight_map_insertion_order_does_not_affect_dem_text() {
+    let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
+    let xyz = idle_family(0.005, [("X", 0.4), ("Y", 0.6), ("Z", 1.0)]);
+    let zyx = idle_family(0.005, [("Z", 1.0), ("Y", 0.6), ("X", 0.4)]);
+
+    assert!(std::any::type_name_of_val(&xyz.weights).contains("BTreeMap"));
+
+    assert_eq!(
+        build_synthetic_idle_dem(
+            &influence,
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(xyz),
+        )
+        .expect("XYZ insertion order")
+        .to_string(),
+        build_synthetic_idle_dem(
+            &influence,
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(zyx),
+        )
+        .expect("ZYX insertion order")
+        .to_string(),
+    );
+}
+
+#[test]
+fn invalid_idle_family_rates_and_weights_keep_existing_errors() {
+    let cases = [
+        (
+            IdleNoiseFamily::new(-0.01, BTreeMap::from([("Z".to_string(), 1.0)])),
+            "invalid linear idle rate/model [X=0, Y=0, Z=-0.01]",
+        ),
+        (
+            IdleNoiseFamily::new(f64::INFINITY, BTreeMap::from([("Z".to_string(), 1.0)])),
+            "invalid linear idle rate/model [X=0, Y=0, Z=inf]",
+        ),
+        (
+            IdleNoiseFamily::new(0.01, BTreeMap::from([("X".to_string(), -1.0)])),
+            "invalid linear idle rate/model [X=-0.01, Y=0, Z=0]",
+        ),
+        (
+            IdleNoiseFamily::new(0.01, BTreeMap::from([("X".to_string(), f64::NAN)])),
+            "invalid linear idle rate/model [X=NaN, Y=0, Z=0]",
+        ),
+        (
+            IdleNoiseFamily::new(
+                -f64::MIN_POSITIVE,
+                BTreeMap::from([("X".to_string(), f64::MIN_POSITIVE)]),
+            ),
+            "invalid linear idle rate/model [X=-0, Y=0, Z=0]",
+        ),
+        (
+            IdleNoiseFamily::new(f64::INFINITY, BTreeMap::from([("X".to_string(), 0.0)])),
+            "invalid linear idle rate/model [X=0, Y=0, Z=0]",
+        ),
+        (
+            IdleNoiseFamily::new(
+                f64::MIN_POSITIVE,
+                BTreeMap::from([("X".to_string(), -f64::MIN_POSITIVE)]),
+            ),
+            "invalid linear idle rate/model [X=-0, Y=0, Z=0]",
+        ),
+    ];
+
+    for (family, expected) in cases {
+        let error =
+            build_tracked_idle_dem(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(family))
+                .expect_err("invalid family inputs must be rejected");
+        assert!(error.contains(expected), "error={error:?}");
+        assert!(error.contains("rates must be finite and non-negative"));
+    }
+}
+
+#[test]
+fn invalid_idle_weight_map_key_is_rejected() {
+    let family = IdleNoiseFamily::new(0.01, BTreeMap::from([("not-a-pauli".to_string(), 1.0)]));
+    let error =
+        build_tracked_idle_dem(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(family))
+            .expect_err("invalid family key must be rejected");
+
+    assert!(error.contains("invalid linear idle rate/model key \"not-a-pauli\""));
+    assert!(error.contains("weights must use only X, Y, and Z"));
+}
+
+#[test]
 fn equal_idle_signatures_sum_exclusive_probabilities_before_dem_merging() {
     let influence = synthetic_idle_influence(&[0], &[], &[0]);
-    let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.75);
+    let noise =
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.25, 0.0, 0.75));
     let dem = build_synthetic_idle_dem(&influence, noise)
         .expect("equal signatures need no independent conversion");
     let contributions = idle_signature_contributions(&dem);
@@ -452,7 +617,7 @@ fn equal_idle_signatures_sum_exclusive_probabilities_before_dem_merging() {
 
     let measurement_model = MemBuilder::new(&influence)
         .with_noise_config(
-            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.75),
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.25, 0.0, 0.75)),
         )
         .build();
     assert_eq!(measurement_model.mechanisms.len(), 1);
@@ -471,7 +636,8 @@ fn equal_idle_signatures_sum_exclusive_probabilities_before_dem_merging() {
 #[test]
 fn empty_idle_signature_is_dropped_before_conversion() {
     let influence = synthetic_idle_influence(&[], &[0], &[0]);
-    let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.75);
+    let noise =
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.25, 0.0, 0.75));
     let dem = build_synthetic_idle_dem(&influence, noise)
         .expect("an undetectable X branch cannot obstruct the surviving Z branch");
     let contributions = idle_signature_contributions(&dem);
@@ -482,7 +648,7 @@ fn empty_idle_signature_is_dropped_before_conversion() {
 
     let measurement_model = MemBuilder::new(&influence)
         .with_noise_config(
-            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.75),
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.25, 0.0, 0.75)),
         )
         .build();
     assert_eq!(measurement_model.mechanisms.len(), 1);
@@ -503,7 +669,7 @@ fn biased_xz_idle_channel_builds_with_quantified_boundary_residual() {
     let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
     let loc_idx = idle_location(&influence);
     let noise =
-        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.0075, 0.0, 0.0225);
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.0075, 0.0, 0.0225));
     let dem = build_synthetic_idle_dem(&influence, noise)
         .expect("ordinary biased X/Z idle noise must produce a usable DEM");
     let mechanisms = idle_signature_contributions(&dem);
@@ -546,7 +712,8 @@ fn three_distinct_idle_signatures_match_engines_pauli_channel() {
     let z_effect = raw_idle_signature(&influence, loc_idx, Pauli::Z);
 
     for [px, py, pz] in [[0.0025, 0.0025, 0.005], [0.002, 0.003, 0.005]] {
-        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(px, py, pz);
+        let noise =
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(px, py, pz));
         let dem = build_synthetic_idle_dem(&influence, noise)
             .expect("three-signature engines channel is exactly representable");
         let distribution = independent_signature_distribution(&idle_signature_contributions(&dem));
@@ -601,8 +768,8 @@ fn linear_and_sine_idle_families_emit_separate_contributions() {
     let sine_rate: f64 = 0.2;
     let sine_probability = sine_rate.sin().powi(2);
     let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
-        .set_idle_linear_rate(linear_probability)
-        .set_idle_quadratic_sine_rate(sine_rate);
+        .set_idle_linear(z_idle_family(linear_probability))
+        .set_idle_quadratic_sine(z_idle_family(sine_rate));
     let dem = build_tracked_idle_dem(noise).expect("valid composed-family DEM");
 
     let mut z_probabilities = dem
@@ -629,7 +796,7 @@ fn nonpositive_signature_channel_character_returns_specific_error() {
     let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
     let error = build_synthetic_idle_dem(
         &influence,
-        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.25, 0.0, 0.25),
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.25, 0.0, 0.25)),
     )
     .expect_err("zero signature-channel characters are broken input");
 
@@ -641,9 +808,10 @@ fn nonpositive_signature_channel_character_returns_specific_error() {
 
 #[test]
 fn oversized_coefficient_quadratic_mechanism_returns_specific_error() {
-    let error =
-        build_tracked_idle_dem(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_quadratic_rate(1.1))
-            .expect_err("probabilities above one must not be clamped");
+    let error = build_tracked_idle_dem(
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_quadratic(z_idle_family(1.1)),
+    )
+    .expect_err("probabilities above one must not be clamped");
 
     assert!(error.contains("coefficient-quadratic idle mechanism probabilities"));
     assert!(error.contains("Z=1.1"));
@@ -652,9 +820,10 @@ fn oversized_coefficient_quadratic_mechanism_returns_specific_error() {
 
 #[test]
 fn negative_idle_rate_is_rejected_instead_of_clamped() {
-    let error =
-        build_tracked_idle_dem(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear_rate(-0.01))
-            .expect_err("negative rates must not be clamped");
+    let error = build_tracked_idle_dem(
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(z_idle_family(-0.01)),
+    )
+    .expect_err("negative rates must not be clamped");
 
     assert!(error.contains("invalid linear idle rate/model [X=0, Y=0, Z=-0.01]"));
     assert!(error.contains("rates must be finite and non-negative"));
@@ -667,7 +836,9 @@ fn negative_idle_duration_is_rejected_instead_of_clamped() {
     let loc_idx = idle_location(&influence);
     influence.locations[loc_idx].idle_duration = -1.0;
     let error = DemBuilder::new(&influence)
-        .with_noise_config(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear_rate(0.01))
+        .with_noise_config(
+            NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(z_idle_family(0.01)),
+        )
         .try_build()
         .expect_err("negative idle durations must not be clamped");
 
@@ -683,7 +854,7 @@ fn negative_idle_duration_is_rejected_instead_of_clamped() {
 fn identical_idle_configuration_produces_byte_identical_dem_text() {
     let influence = synthetic_idle_influence(&[0], &[0, 1], &[1]);
     let noise =
-        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_pauli_linear_rates(0.002, 0.003, 0.005);
+        NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.002, 0.003, 0.005));
     let build = || {
         build_synthetic_idle_dem(&influence, noise.clone())
             .expect("valid deterministic DEM")

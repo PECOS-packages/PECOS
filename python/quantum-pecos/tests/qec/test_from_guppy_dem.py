@@ -231,6 +231,34 @@ def _structured_idle_dem(entrypoint: str, **kwargs):
     ).dem
 
 
+def test_all_idle_laws_match_pre_rust_family_dem_bytes() -> None:
+    actual = _structured_idle_dem(
+        "from_guppy",
+        idle_after_2q_duration=2.0,
+        p_idle_x_linear_rate=0.002,
+        p_idle_y_linear_rate=0.003,
+        p_idle_z_linear_rate=0.005,
+        p_idle_x_quadratic_rate=0.0001,
+        p_idle_y_quadratic_rate=0.0002,
+        p_idle_z_quadratic_rate=0.0003,
+        p_idle_x_quadratic_sine_rate=0.01,
+        p_idle_y_quadratic_sine_rate=0.02,
+        p_idle_z_quadratic_sine_rate=0.03,
+    ).to_string()
+
+    assert actual == "detector D0\nlogical_observable L0\nerror(0.013129) L0\nerror(0.019423) D0"
+
+
+def test_z_linear_family_matches_pre_removed_axis_dem_bytes() -> None:
+    actual = _structured_idle_dem(
+        "from_guppy",
+        idle_after_2q_duration=2.0,
+        p_idle_z_linear_rate=0.005,
+    ).to_string()
+
+    assert actual == "detector D0\nlogical_observable L0\nerror(0.01) D0"
+
+
 def test_guppy_dem_entrypoints_do_not_expose_p_idle_shorthand() -> None:
     assert "p_idle" not in inspect.signature(DetectorErrorModel.from_guppy).parameters
     assert "p_idle" not in inspect.signature(build_dem_from_guppy).parameters

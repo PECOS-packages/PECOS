@@ -1066,7 +1066,29 @@ class GuppyDemBuilder:
         return self
 
     def with_runtime(self, runtime: object | None) -> Self:
-        """Set the Selene runtime used for the trace."""
+        """Set the Selene runtime that lowers the program into the traced QIS stream.
+
+        The runtime produces the trace rather than annotating it: the Guppy
+        program is lowered and unrolled through it, and the ``TickCircuit`` this
+        DEM is built from comes out the far side. A runtime that models timing
+        therefore emits its own ``Idle`` gates, which is why
+        :meth:`with_idle_after_2q` strips traced idles first by default rather
+        than stacking a second convention on top.
+
+        Accepts four forms:
+
+        - ``None`` selects the default runtime, preferring a freshly built
+          artifact and falling back to the installed plugin package.
+        - A name without path separators is treated as a built runtime library.
+        - A path-like value is loaded as a shared library.
+        - A runtime plugin object is duck-typed. It must expose
+          ``library_file``; ``get_init_args()`` and ``library_search_dirs`` are
+          used when present and default to empty otherwise. An object without
+          ``library_file`` raises :class:`TypeError` at configuration time.
+
+        See ``pecos._engine_builders._configure_selene_runtime`` for the
+        dispatch.
+        """
         self._set_once("_runtime", runtime, "with_runtime")
         return self
 

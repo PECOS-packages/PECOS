@@ -63,6 +63,21 @@ Most development tasks are managed through the Justfile. Make sure you have `jus
 cargo install just
 ```
 
+### Passing arguments to a recipe
+
+`just --list` (and `just` with no arguments) prints each recipe as a signature, such as
+`build profile="debug"`. That names the parameter and its default; it is not the syntax for
+calling the recipe. Recipe arguments are positional:
+
+```bash
+just build release             # correct
+just build profile=release     # wrong: passes the literal text "profile=release"
+```
+
+The `name=value` form is reserved for overriding top-level variables, and only works before the
+recipe name (`just pecos="..." build`). After a recipe name, `name=value` is consumed as an ordinary
+positional argument.
+
 ### Quick Reference
 
 ```bash

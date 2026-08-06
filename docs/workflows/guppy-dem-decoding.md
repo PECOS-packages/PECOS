@@ -217,8 +217,8 @@ under a noisy simulator and score those shots against the same DEM.
 the same (detector events, observable flips) pairs a DEM sample carries, so
 either source can feed the decoders.
 
-The gate noise below mirrors stage 3, including the idle families. The
-simulator does not need the runtime to emit idle gates: `with_idle_after_2q`
+The gate noise below mirrors stage 3, including the idle families. With the
+default runtime, which emits no idle gates of its own, `with_idle_after_2q`
 adds an idle site on each two-qubit gate operand, the same placement the DEM
 pass uses.
 
@@ -229,6 +229,32 @@ family is named for its own law, so there is no mode flag to set either.
 The simulator still samples one linear event and then picks an axis, while the
 DEM emits independent per-axis mechanisms; the DEM builder converts between the
 two so both describe the same Pauli channel.
+
+A caveat if you supply a runtime plugin via `with_runtime(...)`. Unlike the DEM
+builder, a noise model cannot remove gates -- it decorates a gate stream. So a
+runtime that emits its own `Idle` gates gets idle noise applied to those *and*
+at the after-2q sites, double-counting where the DEM counts once. To control the
+idle convention explicitly, lower the program to a `TickCircuit` yourself and run
+the passes before simulating:
+
+<!--continuation-->
+```python
+from pecos.tracing import trace_program_to_tick_circuit
+
+# The QIS trace lowers and unrolls the Guppy program; pass runtime=... to select
+# a Selene runtime plugin, which may schedule idles of its own.
+tick_circuit = trace_program_to_tick_circuit(rep_code_memory, 7)
+
+tick_circuit.remove_identity()  # drop runtime-emitted idles
+tick_circuit.insert_idle_after_two_qubit_gates(1.0)  # apply one uniform convention
+
+# Same strip-then-insert order the DEM builder uses, so both surfaces see the
+# same idle placement.
+```
+
+`sim()` does not yet accept a `TickCircuit` (PECOS #444), so for now this pass
+pipeline is how you inspect and control the idle placement, while the run below
+uses the default runtime -- which emits no idles, so nothing is double-counted.
 
 <!--continuation-->
 ```python

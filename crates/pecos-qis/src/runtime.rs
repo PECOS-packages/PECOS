@@ -146,6 +146,24 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     /// Returns an error if the measurements cannot be provided.
     fn provide_measurements(&mut self, measurements: BTreeMap<usize, bool>) -> Result<()>;
 
+    /// Provide integer-valued measurement outcomes back to the runtime.
+    ///
+    /// The default keeps existing Boolean runtimes compatible and rejects a
+    /// leakage outcome instead of silently converting 2 to true.
+    fn provide_measurement_outcomes(&mut self, outcomes: BTreeMap<usize, u32>) -> Result<()> {
+        let measurements = outcomes
+            .into_iter()
+            .map(|(result_id, value)| match value {
+                0 => Ok((result_id, false)),
+                1 => Ok((result_id, true)),
+                _ => Err(RuntimeError::ExecutionError(format!(
+                    "runtime does not support leakage outcome {value} for result {result_id}"
+                ))),
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        self.provide_measurements(measurements)
+    }
+
     /// Get the current classical state (for debugging/inspection)
     fn get_classical_state(&self) -> &ClassicalState;
 

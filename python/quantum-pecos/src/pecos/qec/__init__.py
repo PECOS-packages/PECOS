@@ -93,6 +93,10 @@ from pecos.qec.generic import (
     PauliType,
     StabilizerCheck,
 )
+from pecos.qec.guppy_output_dem import (
+    InferredGuppyDemAnnotations,
+    infer_guppy_dem_annotations,
+)
 from pecos.qec.protocols import (
     InnerCodeGeometry,
     MSDProtocol,
@@ -139,12 +143,14 @@ __all__ = [
     "ParsedDem",
     "GuppyDemBuild",
     "GuppyDemBuilder",
+    "InferredGuppyDemAnnotations",
     "Observable",
     "assert_dems_equivalent",
     "compare_dems_exact",
     "compare_dems_statistical",
     "verify_dem_equivalence",
     "build_dem_from_guppy",
+    "infer_guppy_dem_annotations",
     "rec",
     "result_ref",
     "surface_memory_dem_spec",

@@ -37,6 +37,32 @@ _RESULT_TRACE_COLLECTOR: ContextVar[list[dict[str, Any]] | None] = ContextVar(
 )
 
 
+def _capture_qis_operation_traces(
+    program: object,
+    num_qubits: int,
+    *,
+    shots: int,
+    seed: int = 0,
+    runtime: object | None = None,
+) -> list[dict[str, Any]]:
+    """Capture one or more QIS trace shots for internal certification."""
+    if shots <= 0:
+        msg = "trace shots must be greater than zero"
+        raise ValueError(msg)
+    import pecos_rslib  # noqa: PLC0415
+
+    import pecos  # noqa: PLC0415
+
+    sim_builder = (
+        pecos.sim(program)
+        .classical(pecos.selene_engine(runtime))
+        .quantum(pecos_rslib.coin_toss())
+        .qubits(num_qubits)
+        .seed(seed)
+    )
+    return list(sim_builder.capture_operation_trace(shots))
+
+
 def capture_qis_operation_trace(
     program: object,
     num_qubits: int,
@@ -63,20 +89,13 @@ def capture_qis_operation_trace(
     Returns:
         The structured operation-trace chunks for one completed shot.
     """
-    import pecos_rslib  # noqa: PLC0415
-
-    import pecos  # noqa: PLC0415
-
-    # Trace capture records runtime-lowered operations and provenance. Use a
-    # permissive backend because no quantum-state evolution is needed here.
-    sim_builder = (
-        pecos.sim(program)
-        .classical(pecos.selene_engine(runtime))
-        .quantum(pecos_rslib.coin_toss())
-        .qubits(num_qubits)
-        .seed(seed)
+    return _capture_qis_operation_traces(
+        program,
+        num_qubits,
+        shots=1,
+        seed=seed,
+        runtime=runtime,
     )
-    return list(sim_builder.capture_operation_trace())
 
 
 def _qis_operation_trace_to_tick_circuit(

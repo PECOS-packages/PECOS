@@ -654,7 +654,8 @@ impl PySimBuilder {
     /// This is the preferred programmatic tracing path for QIS-control simulations.
     /// It collects the structured trace in memory first, and any JSON dumping
     /// configured via `trace_operations(...)` becomes an optional mirror/export.
-    fn capture_operation_trace(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (shots=1))]
+    fn capture_operation_trace(&self, py: Python<'_>, shots: usize) -> PyResult<Py<PyAny>> {
         use crate::engine_builders::{
             PyBiasedDepolarizingNoiseModelBuilder, PyDepolarizingNoiseModelBuilder,
             PyGeneralNoiseModelBuilder,
@@ -778,7 +779,12 @@ impl PySimBuilder {
                         };
                 }
 
-                sim_builder.run(1).map_err(|e| {
+                if shots == 0 {
+                    return Err(PyValueError::new_err(
+                        "capture_operation_trace shots must be greater than zero",
+                    ));
+                }
+                sim_builder.run(shots).map_err(|e| {
                     PyRuntimeError::new_err(format!("Trace capture simulation failed: {e}"))
                 })?;
 

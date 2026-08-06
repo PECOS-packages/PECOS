@@ -101,7 +101,8 @@ pub enum QuantumOp {
     RZZ(f64, usize, usize),
 
     // Measurement
-    Measure(usize, usize), // qubit, result_id
+    Measure(usize, usize),       // qubit, result_id
+    MeasureLeaked(usize, usize), // qubit, result_id; outcome is 0, 1, or 2
 
     // Reset
     Reset(usize),

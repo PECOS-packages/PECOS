@@ -24,6 +24,7 @@ pub mod dem_builder;
 pub mod fault_distance;
 pub mod fault_sampler;
 pub mod gadget_checker;
+pub mod hook_errors;
 pub mod influence_builder;
 pub mod lookup_decoder;
 pub mod pauli_frame;
@@ -52,6 +53,7 @@ pub use gadget_checker::{
     GadgetFaultResult, GadgetFollowUpConfig, GadgetHistoryAnalysis, GadgetHistoryPattern,
     GadgetSyndromeAnalysis,
 };
+pub use hook_errors::{HookError, HookErrorReport};
 pub use influence_builder::InfluenceBuilder;
 pub use pauli_frame::{PauliFrameLookup, PauliFrameLookupError};
 pub use pauli_prop_checker::{

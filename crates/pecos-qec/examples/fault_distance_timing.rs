@@ -6,9 +6,7 @@
 //     https://www.apache.org/licenses/LICENSE-2.0
 
 use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
-use pecos_qec::{
-    SurfaceCode, connected_cluster_fault_distance, exhaustive_fault_distance,
-};
+use pecos_qec::{SurfaceCode, connected_cluster_fault_distance, exhaustive_fault_distance};
 use pecos_quantum::{Attribute, DagCircuit, TickCircuit, TickMeasRef};
 use std::time::Instant;
 
@@ -125,7 +123,11 @@ fn annotations_json(annotations: &[Vec<usize>]) -> String {
     let entries = annotations
         .iter()
         .map(|ids| {
-            let ids = ids.iter().map(usize::to_string).collect::<Vec<_>>().join(",");
+            let ids = ids
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
             format!(r#"{{"meas_ids":[{ids}]}}"#)
         })
         .collect::<Vec<_>>()

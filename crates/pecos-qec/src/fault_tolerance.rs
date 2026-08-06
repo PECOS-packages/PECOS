@@ -23,6 +23,7 @@ pub mod decoder_integration;
 pub mod dem_builder;
 pub mod fault_distance;
 pub mod fault_sampler;
+pub mod flag_verification;
 pub mod gadget_checker;
 pub mod hook_errors;
 pub mod influence_builder;
@@ -50,6 +51,7 @@ pub use fault_distance::{
     FaultDistanceError, FaultDistanceResult, connected_cluster_fault_distance,
     exhaustive_fault_distance, graphlike_fault_distance,
 };
+pub use flag_verification::{FlagFaultToleranceReport, FlagViolation};
 pub use gadget_checker::{
     GadgetAnalysis, GadgetChecker, GadgetConfig, GadgetDecoderAnalysis, GadgetFaultClass,
     GadgetFaultResult, GadgetFollowUpConfig, GadgetHistoryAnalysis, GadgetHistoryPattern,

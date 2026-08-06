@@ -69,10 +69,7 @@ fn detector_incidence(mechanisms: &[FaultMechanism]) -> BTreeMap<u32, Vec<usize>
     let mut incidence: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
     for (mechanism_index, mechanism) in mechanisms.iter().enumerate() {
         for &detector in &mechanism.detectors {
-            incidence
-                .entry(detector)
-                .or_default()
-                .push(mechanism_index);
+            incidence.entry(detector).or_default().push(mechanism_index);
         }
     }
     incidence
@@ -221,7 +218,11 @@ impl ConnectedClusterSearch<'_> {
         }
         let mut candidate = cluster.to_vec();
         candidate.sort_unstable();
-        if self.best.as_ref().is_none_or(|current| candidate < *current) {
+        if self
+            .best
+            .as_ref()
+            .is_none_or(|current| candidate < *current)
+        {
             self.best = Some(candidate);
         }
     }
@@ -689,9 +690,12 @@ mod tests {
         let connected = connected_cluster_fault_distance(&dem, mechanisms.len());
         assert_eq!(connected, exhaustive);
         let witness = connected.expect("the shared D10 pair is a logical witness");
-        assert!(witness.mechanism_indices.iter().all(|&index| {
-            mechanisms[index].detectors.as_slice() == [10]
-        }));
+        assert!(
+            witness
+                .mechanism_indices
+                .iter()
+                .all(|&index| { mechanisms[index].detectors.as_slice() == [10] })
+        );
     }
 
     #[test]

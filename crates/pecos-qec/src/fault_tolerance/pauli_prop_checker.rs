@@ -1370,6 +1370,16 @@ impl<'a> PauliPropChecker<'a> {
         &self.locations
     }
 
+    pub(crate) fn fault_iterator_for_weight(&self, weight: usize) -> PauliFaultIterator {
+        let mut config = self.config.clone();
+        config.max_weight = weight;
+        PauliFaultIterator::new(self.locations.clone(), weight, config)
+    }
+
+    pub(crate) fn propagate_fault_configuration(&self, faults: &FaultConfiguration) -> PauliProp {
+        propagate_faults(self.circuit, faults)
+    }
+
     /// Returns the detected input qubits.
     ///
     /// These are qubits used by the circuit but never prepared, meaning they

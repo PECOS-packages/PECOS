@@ -39,7 +39,8 @@ use pecos_core::gate_type::GateType;
 use std::collections::BTreeSet;
 
 pub use circuit_runner::{
-    FaultCategoryAnalysis, FaultChecker, extract_spacetime_locations, run_circuit_with_faults,
+    CircuitDistanceResult, FaultCategoryAnalysis, FaultChecker, extract_spacetime_locations,
+    run_circuit_with_faults,
 };
 pub use decoder_integration::{
     CorrectionResult, ErrorCorrectionChecker, ErrorCorrectionConfig, ErrorCorrectionResult,

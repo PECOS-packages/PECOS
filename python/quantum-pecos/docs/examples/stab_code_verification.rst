@@ -1,6 +1,15 @@
 Verifying a Stabilizer Code
 ===========================
 
+.. note::
+
+   This example uses the deprecated ``VerifyStabilizers`` workflow. The
+   supported replacement is ``pecos.quantum.StabilizerCodeSpec`` — see the
+   "Stabilizer-Code Verification" page in the current user guide
+   (``docs/user-guide/stabilizer-code-verification.md``), which retells this
+   example on the maintained API.
+
+
 In this example we will see how ``VerifyStabilizers`` can be used to develop a simple, distance-three code. We begin by
 considering the generators in:
 

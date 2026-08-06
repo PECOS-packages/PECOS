@@ -3191,9 +3191,8 @@ mod tests {
         //
         // This demonstrates exactly the kind of circuit vulnerability that
         // fault classification is designed to detect.
-        // Multi-qubit iterator locations assign a non-identity Pauli to every
-        // qubit, so they cannot generate this single-leg CX fault. That
-        // enumerator gap is tracked separately; construct the intended fault.
+        // The iterator can generate this single-leg CX fault; construct it
+        // directly here to keep the propagation example focused and clear.
         let fault = PauliFault::new(
             SpacetimeLocation::new(4, vec![QubitId(2)], false, GateType::CX, 0),
             vec![1],
@@ -3216,6 +3215,33 @@ mod tests {
             FaultClass::UndetectableLogicalError,
             "Naive syndrome extraction should NOT be 1-fault tolerant"
         );
+    }
+
+    #[test]
+    fn test_iterator_generates_single_leg_fault_at_cx_location() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[3, 4]);
+        circuit.tick().cx(&[(0, 3)]);
+        circuit.tick().cx(&[(1, 3)]);
+        circuit.tick().cx(&[(1, 4)]);
+        circuit.tick().cx(&[(2, 4)]);
+        circuit.tick().mz(&[3, 4]);
+
+        let checker = PauliPropChecker::new(&circuit);
+        let expected_location =
+            SpacetimeLocation::new(4, vec![QubitId(2), QubitId(4)], false, GateType::CX, 0);
+        let generated = PauliFaultIterator::new(
+            checker.locations().to_vec(),
+            1,
+            FaultCheckConfig::new().all_paulis(),
+        )
+        .any(|configuration| {
+            configuration.faults.len() == 1
+                && configuration.faults[0].location == expected_location
+                && configuration.faults[0].paulis == [1, 0]
+        });
+
+        assert!(generated, "iterator should generate X on only the data leg");
     }
 
     #[test]
@@ -3434,9 +3460,8 @@ mod tests {
         let z_ancillas = &[3usize, 4];
         let x_ancillas: &[usize] = &[];
 
-        // Multi-qubit iterator locations assign a non-identity Pauli to every
-        // qubit, so they cannot generate this single-leg CX fault. That
-        // enumerator gap is tracked separately; construct the intended fault.
+        // The iterator can generate this single-leg CX fault; construct it
+        // directly here to keep the propagation example focused and clear.
         let fault = PauliFault::new(
             SpacetimeLocation::new(4, vec![QubitId(2)], false, GateType::CX, 0),
             vec![1],
@@ -3531,9 +3556,8 @@ mod tests {
         // Two-round still has undetectable errors at the END of round 2.
         // Real FT requires decoder to use syndrome history, not single-shot.
         // This test documents that limitation.
-        // Multi-qubit iterator locations assign a non-identity Pauli to every
-        // qubit, so they cannot generate this single-leg CX fault. That
-        // enumerator gap is tracked separately; construct the intended fault.
+        // The iterator can generate this single-leg CX fault; construct it
+        // directly here to keep the propagation example focused and clear.
         let fault = PauliFault::new(
             SpacetimeLocation::new(10, vec![QubitId(2)], false, GateType::CX, 0),
             vec![1],

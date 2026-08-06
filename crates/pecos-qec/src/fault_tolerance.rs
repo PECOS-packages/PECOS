@@ -381,8 +381,8 @@ pub struct PauliFaultIterator {
     pauli_indices: Vec<Vec<usize>>,
     /// Whether we've finished iterating.
     done: bool,
-    /// Available Pauli types based on config.
-    pauli_types: Vec<u8>,
+    /// Available per-qubit Pauli choices (identity plus configured Pauli types).
+    pauli_choices: Vec<u8>,
 }
 
 impl PauliFaultIterator {
@@ -404,20 +404,25 @@ impl PauliFaultIterator {
                 location_indices: Vec::new(),
                 pauli_indices: Vec::new(),
                 done: true,
-                pauli_types,
+                pauli_choices: pauli_types,
             };
         }
+
+        let mut pauli_choices = Vec::with_capacity(pauli_types.len() + 1);
+        pauli_choices.push(0);
+        pauli_choices.extend(pauli_types);
 
         // Initialize with first `weight` locations
         let location_indices: Vec<usize> = (0..weight.min(locations.len())).collect();
 
         // Initialize Pauli indices for each location
-        // For each qubit at each location, start with the first non-identity Pauli
+        // For each qubit at each location, start with identity. The all-identity
+        // assignment for each selected location is skipped by `is_nontrivial`.
         let pauli_indices: Vec<Vec<usize>> = location_indices
             .iter()
             .map(|&loc_idx| {
                 let num_qubits = locations[loc_idx].num_qubits();
-                vec![0; num_qubits] // Start with first Pauli type for each qubit
+                vec![0; num_qubits] // Start with identity on each qubit
             })
             .collect();
 
@@ -429,7 +434,7 @@ impl PauliFaultIterator {
             location_indices,
             pauli_indices,
             done,
-            pauli_types,
+            pauli_choices,
         }
     }
 
@@ -441,7 +446,7 @@ impl PauliFaultIterator {
             let num_qubits = self.pauli_indices[loc_idx].len();
             for qubit_idx in (0..num_qubits).rev() {
                 self.pauli_indices[loc_idx][qubit_idx] += 1;
-                if self.pauli_indices[loc_idx][qubit_idx] < self.pauli_types.len() {
+                if self.pauli_indices[loc_idx][qubit_idx] < self.pauli_choices.len() {
                     return true;
                 }
                 self.pauli_indices[loc_idx][qubit_idx] = 0;
@@ -487,7 +492,10 @@ impl PauliFaultIterator {
             .zip(&self.pauli_indices)
             .map(|(&loc_idx, pauli_idx)| {
                 let location = self.locations[loc_idx].clone();
-                let paulis: Vec<u8> = pauli_idx.iter().map(|&idx| self.pauli_types[idx]).collect();
+                let paulis: Vec<u8> = pauli_idx
+                    .iter()
+                    .map(|&idx| self.pauli_choices[idx])
+                    .collect();
                 PauliFault::new(location, paulis)
             })
             .collect();
@@ -496,15 +504,11 @@ impl PauliFaultIterator {
 
     /// Checks if current configuration is non-trivial (not all identity on any location).
     fn is_nontrivial(&self) -> bool {
-        // For weight > 0, we always have at least one non-I Pauli since we only
-        // iterate over non-identity Paulis. But we should check that each
-        // location has at least one non-identity Pauli.
-        for pauli_idx in &self.pauli_indices {
-            if pauli_idx.iter().all(|&idx| self.pauli_types[idx] == 0) {
-                return false;
-            }
-        }
-        true
+        self.pauli_indices.iter().all(|pauli_indices| {
+            pauli_indices
+                .iter()
+                .any(|&idx| self.pauli_choices[idx] != 0)
+        })
     }
 }
 
@@ -650,6 +654,97 @@ mod tests {
         let configs: Vec<_> = iter.collect();
         // Should generate X, Y, Z faults (3 total)
         assert_eq!(configs.len(), 3);
+    }
+
+    #[test]
+    fn test_pauli_fault_iterator_two_qubit_location() {
+        let locations = vec![SpacetimeLocation::new(
+            0,
+            vec![QubitId(0), QubitId(1)],
+            false,
+            GateType::CX,
+            0,
+        )];
+
+        let configs: Vec<_> =
+            PauliFaultIterator::new(locations, 1, FaultCheckConfig::new().all_paulis()).collect();
+        let paulis: BTreeSet<_> = configs
+            .iter()
+            .map(|config| config.faults[0].pauli_string())
+            .collect();
+
+        assert_eq!(configs.len(), 15);
+        assert_eq!(paulis.len(), 15);
+        assert!(paulis.contains("IX"));
+        assert!(paulis.contains("XI"));
+        assert!(paulis.contains("XX"));
+    }
+
+    #[test]
+    fn test_pauli_fault_iterator_two_qubit_x_only() {
+        let locations = vec![SpacetimeLocation::new(
+            0,
+            vec![QubitId(0), QubitId(1)],
+            false,
+            GateType::CX,
+            0,
+        )];
+
+        let configs = PauliFaultIterator::new(locations, 1, FaultCheckConfig::new().x_only());
+        let paulis: BTreeSet<_> = configs
+            .map(|config| config.faults[0].pauli_string())
+            .collect();
+
+        assert_eq!(
+            paulis,
+            BTreeSet::from(["IX".to_string(), "XI".to_string(), "XX".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_pauli_fault_iterator_never_selects_an_identity_location() {
+        let locations = vec![
+            SpacetimeLocation::new(0, vec![QubitId(0), QubitId(1)], false, GateType::CX, 0),
+            SpacetimeLocation::new(1, vec![QubitId(1), QubitId(2)], false, GateType::CX, 0),
+        ];
+
+        for weight in [1, 2] {
+            for config in PauliFaultIterator::new(
+                locations.clone(),
+                weight,
+                FaultCheckConfig::new().all_paulis(),
+            ) {
+                assert_eq!(config.len(), weight);
+                assert!(config.faults.iter().all(PauliFault::is_nontrivial));
+            }
+        }
+    }
+
+    #[test]
+    fn test_pauli_fault_iterator_preserves_location_weight_convention() {
+        let locations = vec![SpacetimeLocation::new(
+            0,
+            vec![QubitId(0), QubitId(1)],
+            false,
+            GateType::CX,
+            0,
+        )];
+        let configs: Vec<_> =
+            PauliFaultIterator::new(locations, 1, FaultCheckConfig::new().all_paulis()).collect();
+
+        let xi = configs
+            .iter()
+            .find(|config| config.faults[0].pauli_string() == "XI")
+            .expect("iterator should generate XI");
+        assert_eq!(xi.len(), 1);
+        assert_eq!(xi.total_weight(), 1);
+
+        let xx = configs
+            .iter()
+            .find(|config| config.faults[0].pauli_string() == "XX")
+            .expect("iterator should generate XX");
+        assert_eq!(xx.len(), 1);
+        assert_eq!(xx.total_weight(), 2);
     }
 
     #[test]

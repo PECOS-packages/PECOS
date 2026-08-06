@@ -124,6 +124,7 @@ struct ConnectedClusterSearch<'a> {
     mechanisms: &'a [FaultMechanism],
     incidence: &'a BTreeMap<u32, Vec<usize>>,
     active: &'a [bool],
+    observable: u32,
     target_weight: usize,
     best: Option<Vec<usize>>,
 }
@@ -213,7 +214,9 @@ impl ConnectedClusterSearch<'_> {
     }
 
     fn consider_witness(&mut self, cluster: &[usize], effect: &FaultMechanism) {
-        if !effect.detectors.is_empty() || effect.dem_outputs.is_empty() {
+        if !effect.detectors.is_empty()
+            || effect.dem_outputs.binary_search(&self.observable).is_err()
+        {
             return;
         }
         let mut candidate = cluster.to_vec();
@@ -435,7 +438,8 @@ pub fn exhaustive_fault_distance(
     None
 }
 
-/// Computes exact fault distance up to `max_weight` using connected-cluster pruning.
+/// Computes per-observable exact fault distances up to `max_weight` using connected-cluster
+/// pruning.
 ///
 /// This is the preferred general-purpose search for real detector error models. It supports
 /// hyperedges and ignores mechanism probabilities. Before searching, it repeatedly peels every
@@ -447,41 +451,76 @@ pub fn exhaustive_fault_distance(
 /// indices, and a candidate skipped at one recursion level is excluded from later sibling
 /// branches. Thus every connected set has exactly one seed and one construction branch. Search is
 /// by increasing weight, with the lexicographically smallest original-index witness retained at
-/// each weight, matching [`exhaustive_fault_distance`].
+/// each weight. Entry `i` is restricted to witnesses that flip observable `i`, and is `None` when
+/// no such witness is found through `max_weight`.
+#[must_use]
+pub fn per_observable_fault_distances(
+    dem: &DetectorErrorModel,
+    max_weight: usize,
+) -> Vec<Option<FaultDistanceResult>> {
+    let mechanisms = mechanisms_from_dem(dem);
+    let incidence = detector_incidence(&mechanisms);
+    let active = peel_unique_detector_mechanisms(&mechanisms, &incidence);
+
+    (0..dem.num_observables())
+        .map(|observable| {
+            for weight in 1..=max_weight.min(mechanisms.len()) {
+                let mechanism_indices = ConnectedClusterSearch {
+                    mechanisms: &mechanisms,
+                    incidence: &incidence,
+                    active: &active,
+                    observable: observable as u32,
+                    target_weight: weight,
+                    best: None,
+                }
+                .run();
+                if let Some(mechanism_indices) = mechanism_indices {
+                    return Some(FaultDistanceResult {
+                        distance: weight,
+                        mechanism_indices,
+                    });
+                }
+            }
+            None
+        })
+        .collect()
+}
+
+/// Computes exact fault distance up to `max_weight` using connected-cluster pruning.
+///
+/// The result is the minimum of [`per_observable_fault_distances`], ordered first by distance and
+/// then by the lexicographic mechanism-index witness. It is `None` only when no observable has a
+/// witness through `max_weight`.
 #[must_use]
 pub fn connected_cluster_fault_distance(
     dem: &DetectorErrorModel,
     max_weight: usize,
 ) -> Option<FaultDistanceResult> {
-    let mechanisms = mechanisms_from_dem(dem);
-    let incidence = detector_incidence(&mechanisms);
-    let active = peel_unique_detector_mechanisms(&mechanisms, &incidence);
-
-    for weight in 1..=max_weight.min(mechanisms.len()) {
-        let mechanism_indices = ConnectedClusterSearch {
-            mechanisms: &mechanisms,
-            incidence: &incidence,
-            active: &active,
-            target_weight: weight,
-            best: None,
-        }
-        .run();
-        if let Some(mechanism_indices) = mechanism_indices {
-            return Some(FaultDistanceResult {
-                distance: weight,
-                mechanism_indices,
-            });
-        }
-    }
-    None
+    per_observable_fault_distances(dem, max_weight)
+        .into_iter()
+        .flatten()
+        .min_by(|left, right| {
+            (left.distance, &left.mechanism_indices)
+                .cmp(&(right.distance, &right.mechanism_indices))
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DemOutput;
 
     fn dem_from_effects(effects: &[(Vec<u32>, Vec<u32>)]) -> DetectorErrorModel {
         let mut dem = DetectorErrorModel::new();
+        let num_observables = effects
+            .iter()
+            .flat_map(|(_, observables)| observables)
+            .map(|&observable| observable as usize + 1)
+            .max()
+            .unwrap_or(0);
+        for observable in 0..num_observables {
+            dem.add_observable(DemOutput::new(observable as u32));
+        }
         for (detectors, observables) in effects {
             dem.add_direct_contribution(
                 FaultMechanism::from_unsorted(
@@ -492,6 +531,65 @@ mod tests {
             );
         }
         dem
+    }
+
+    fn observable_slice(dem: &DetectorErrorModel, observable: u32) -> DetectorErrorModel {
+        let (mechanisms, _coordinates) = dem.to_mechanisms();
+        let mut sliced = DetectorErrorModel::new();
+        sliced.add_observable(DemOutput::new(0));
+        for (probability, detectors, observables) in mechanisms {
+            let outputs = observables
+                .binary_search(&observable)
+                .is_ok()
+                .then_some(0)
+                .into_iter();
+            sliced.add_direct_contribution(
+                FaultMechanism::from_unsorted(detectors, outputs),
+                probability,
+            );
+        }
+        sliced
+    }
+
+    #[test]
+    fn per_observable_distances_differ_and_minimize_to_overall() {
+        let dem = dem_from_effects(&[
+            (vec![0, 1], vec![0]),
+            (vec![0], vec![]),
+            (vec![1], vec![]),
+            (vec![2], vec![1]),
+            (vec![2], vec![]),
+        ]);
+
+        let per_observable = per_observable_fault_distances(&dem, 3);
+        assert_eq!(
+            per_observable,
+            vec![
+                Some(FaultDistanceResult {
+                    distance: 3,
+                    mechanism_indices: vec![0, 1, 2],
+                }),
+                Some(FaultDistanceResult {
+                    distance: 2,
+                    mechanism_indices: vec![3, 4],
+                }),
+            ]
+        );
+        assert_eq!(
+            connected_cluster_fault_distance(&dem, 3),
+            per_observable
+                .into_iter()
+                .flatten()
+                .min_by_key(|result| result.distance)
+        );
+
+        for observable in 0..2 {
+            let sliced = observable_slice(&dem, observable);
+            assert_eq!(
+                per_observable_fault_distances(&sliced, 3)[0],
+                exhaustive_fault_distance(&sliced, 3),
+            );
+        }
     }
 
     #[test]

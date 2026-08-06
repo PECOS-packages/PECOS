@@ -49,7 +49,7 @@ pub use decoder_integration::{
 };
 pub use fault_distance::{
     FaultDistanceError, FaultDistanceResult, connected_cluster_fault_distance,
-    exhaustive_fault_distance, graphlike_fault_distance,
+    exhaustive_fault_distance, graphlike_fault_distance, per_observable_fault_distances,
 };
 pub use flag_verification::{FlagFaultToleranceReport, FlagViolation};
 pub use gadget_checker::{

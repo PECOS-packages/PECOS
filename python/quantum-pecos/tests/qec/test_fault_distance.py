@@ -15,6 +15,58 @@
 import pytest
 
 
+def _two_observable_dem():
+    from pecos.qec import DetectorErrorModel
+    from pecos.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().mz([0, 1, 2, 3, 4])
+    circuit.add_detector(records=[-5, -4])
+    circuit.add_detector(records=[-5, -3])
+    circuit.add_detector(records=[-2, -1])
+    circuit.add_observable(records=[-5])
+    circuit.add_observable(records=[-2])
+    return DetectorErrorModel.from_circuit(
+        circuit,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.01,
+        p_prep=0.0,
+    )
+
+
+def _triad_dem():
+    from pecos.qec import DetectorErrorModel
+    from pecos.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().mz([0, 1, 2])
+    circuit.add_detector(records=[-3, -2])
+    circuit.add_detector(records=[-3, -1])
+    circuit.add_observable(records=[-3])
+    return DetectorErrorModel.from_circuit(
+        circuit,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.01,
+        p_prep=0.0,
+    )
+
+
+def test_repetition_triad_agrees_across_all_fault_distance_methods() -> None:
+    dem = _triad_dem()
+
+    graphlike = dem.graphlike_fault_distance()
+    connected = dem.connected_cluster_fault_distance(3)
+    exhaustive = dem.exhaustive_fault_distance(3)
+    assert graphlike is not None
+    assert connected is not None
+    assert exhaustive is not None
+    assert graphlike.distance == connected.distance == exhaustive.distance == 3
+    assert graphlike.mechanism_indices == connected.mechanism_indices
+    assert connected.mechanism_indices == exhaustive.mechanism_indices
+
+
 def test_distance_three_rotated_surface_memory_cross_method_agreement() -> None:
     from pecos.qec import DetectorErrorModel, FaultDistanceResult
     from pecos.qec.surface import build_memory_circuit
@@ -29,14 +81,28 @@ def test_distance_three_rotated_surface_memory_cross_method_agreement() -> None:
     )
 
     graphlike = dem.graphlike_fault_distance()
+    connected = dem.connected_cluster_fault_distance(3)
     exhaustive = dem.exhaustive_fault_distance(3)
 
     assert isinstance(graphlike, FaultDistanceResult)
+    assert isinstance(connected, FaultDistanceResult)
     assert isinstance(exhaustive, FaultDistanceResult)
-    assert graphlike.distance == exhaustive.distance == 3
+    assert graphlike.distance == connected.distance == exhaustive.distance == 3
     assert graphlike.mechanism_indices == exhaustive.mechanism_indices
+    assert connected.mechanism_indices == exhaustive.mechanism_indices
     assert graphlike.mechanism_indices == sorted(graphlike.mechanism_indices)
     assert repr(graphlike).startswith("FaultDistanceResult(distance=3, mechanism_indices=[")
+
+
+def test_two_observable_connected_cluster_distances_differ() -> None:
+    dem = _two_observable_dem()
+
+    per_observable = dem.per_observable_fault_distances(3)
+    assert [result.distance if result is not None else None for result in per_observable] == [3, 2]
+
+    overall = dem.connected_cluster_fault_distance(3)
+    assert overall is not None
+    assert overall.distance == 2
 
 
 def test_graphlike_fault_distance_reports_hyperedge_count() -> None:

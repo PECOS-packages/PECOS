@@ -362,6 +362,7 @@ Distance calculations serve different objects and regimes:
 | `StabilizerCodeSpec.distance()` | Enumerates Paulis by increasing weight | Codes whose distance is small relative to their length |
 | [`DistanceProblem.certified_distance()`](fault-tolerance-analysis.md#certified-exact-distance) | SAT search with a natively checked witness | Exact CSS-code or DEM distance with an auditable SAT witness |
 | [`DetectorErrorModel.graphlike_fault_distance()`](fault-tolerance-analysis.md#detector-error-model-fault-distance) | Shortest path through graphlike mechanisms | Fast DEM distance when every mechanism touches at most two detectors |
+| [`DetectorErrorModel.connected_cluster_fault_distance()`](fault-tolerance-analysis.md#detector-error-model-fault-distance) | Enumerates connected mechanism clusters by weight | General DEMs with hyperedges where exhaustive subset search is too costly |
 | [`DetectorErrorModel.exhaustive_fault_distance()`](fault-tolerance-analysis.md#detector-error-model-fault-distance) | Enumerates mechanism combinations by weight | Small DEMs with hyperedges or a tight search bound |
 
 The coset method is a useful oracle for tiny built-in codes. The spec method

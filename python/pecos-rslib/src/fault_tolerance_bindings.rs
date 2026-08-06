@@ -66,8 +66,10 @@ use pecos_qec::fault_tolerance::dem_builder::{
 };
 use pecos_qec::fault_tolerance::fault_distance::{
     FaultDistanceResult as RustFaultDistanceResult,
+    connected_cluster_fault_distance as rust_connected_cluster_fault_distance,
     exhaustive_fault_distance as rust_exhaustive_fault_distance,
     graphlike_fault_distance as rust_graphlike_fault_distance,
+    per_observable_fault_distances as rust_per_observable_fault_distances,
 };
 use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
 use pecos_qec::fault_tolerance::propagator::{
@@ -1701,6 +1703,24 @@ impl PyDetectorErrorModel {
         rust_graphlike_fault_distance(&self.inner)
             .map(|result| result.map(PyFaultDistanceResult::from))
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Compute exact fault distance up to an explicit mechanism-count budget using
+    /// connected-cluster pruning.
+    fn connected_cluster_fault_distance(&self, max_weight: usize) -> Option<PyFaultDistanceResult> {
+        rust_connected_cluster_fault_distance(&self.inner, max_weight)
+            .map(PyFaultDistanceResult::from)
+    }
+
+    /// Compute one connected-cluster fault distance per observable.
+    fn per_observable_fault_distances(
+        &self,
+        max_weight: usize,
+    ) -> Vec<Option<PyFaultDistanceResult>> {
+        rust_per_observable_fault_distances(&self.inner, max_weight)
+            .into_iter()
+            .map(|result| result.map(PyFaultDistanceResult::from))
+            .collect()
     }
 
     /// Exhaustively compute fault distance up to an explicit mechanism-count budget.

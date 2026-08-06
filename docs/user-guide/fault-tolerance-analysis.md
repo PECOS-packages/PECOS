@@ -124,12 +124,15 @@ observable.
 ```python
 dem = repetition_triad_dem()
 graphlike = dem.graphlike_fault_distance()
+connected = dem.connected_cluster_fault_distance(3)
 exhaustive = dem.exhaustive_fault_distance(3)
 
 assert graphlike is not None
+assert connected is not None
 assert exhaustive is not None
-assert graphlike.distance == exhaustive.distance == 3
+assert graphlike.distance == connected.distance == exhaustive.distance == 3
 assert graphlike.mechanism_indices == exhaustive.mechanism_indices
+assert connected.mechanism_indices == exhaustive.mechanism_indices
 assert len(graphlike.mechanism_indices) == 3
 assert graphlike.mechanism_indices == sorted(graphlike.mechanism_indices)
 ```
@@ -137,6 +140,10 @@ assert graphlike.mechanism_indices == sorted(graphlike.mechanism_indices)
 `mechanism_indices` is a witness: selecting those DEM mechanisms produces an
 undetectable logical failure. `graphlike_fault_distance()` is specialized to
 models in which every mechanism touches at most two detectors.
+`connected_cluster_fault_distance(max_weight)` supports hyperedges and prunes
+the search to connected mechanism clusters. Its companion
+`per_observable_fault_distances(max_weight)` returns one result per observable,
+which is useful when logical observables have different effective distances.
 `exhaustive_fault_distance(max_weight)` handles general mechanisms and returns
 `None` when it finds no logical failure through the requested weight.
 

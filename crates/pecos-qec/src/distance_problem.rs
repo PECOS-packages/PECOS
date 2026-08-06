@@ -38,6 +38,13 @@ pub struct DistanceProblem {
     h: F2Matrix,
     l: F2Matrix,
     num_vars: usize,
+    weight_mode: WeightMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WeightMode {
+    Bit,
+    QubitSupport { num_qubits: usize },
 }
 
 /// Errors constructing a [`DistanceProblem`].
@@ -170,6 +177,7 @@ struct Encoding {
     num_vars: usize,
     aux_ranges: Vec<(usize, usize, &'static str)>,
     groups: Vec<ClauseGroup>,
+    objective_variables: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -178,6 +186,7 @@ struct EncodingBuilder {
     aux_ranges: Vec<(usize, usize, &'static str)>,
     parity_clauses: Vec<Vec<i32>>,
     nontriviality_clauses: Vec<Vec<i32>>,
+    support_clauses: Vec<Vec<i32>>,
     cardinality_clauses: Vec<Vec<i32>>,
 }
 
@@ -188,6 +197,7 @@ impl EncodingBuilder {
             aux_ranges: Vec::new(),
             parity_clauses: Vec::new(),
             nontriviality_clauses: Vec::new(),
+            support_clauses: Vec::new(),
             cardinality_clauses: Vec::new(),
         }
     }
@@ -203,7 +213,7 @@ impl EncodingBuilder {
         (start..=end).collect()
     }
 
-    fn finish(self, include_cardinality: bool) -> Encoding {
+    fn finish(self, include_cardinality: bool, objective_variables: Vec<usize>) -> Encoding {
         let mut groups = vec![ClauseGroup {
             description: "parity constraints (Tseitin XOR chains)",
             clauses: self.parity_clauses,
@@ -212,6 +222,12 @@ impl EncodingBuilder {
             description: "logical nontriviality",
             clauses: self.nontriviality_clauses,
         });
+        if !self.support_clauses.is_empty() {
+            groups.push(ClauseGroup {
+                description: "qubit-support indicators (Tseitin OR gates)",
+                clauses: self.support_clauses,
+            });
+        }
         if include_cardinality {
             groups.push(ClauseGroup {
                 description: "weight bound (Sinz sequential counter)",
@@ -222,6 +238,7 @@ impl EncodingBuilder {
             num_vars: self.next_var - 1,
             aux_ranges: self.aux_ranges,
             groups,
+            objective_variables,
         }
     }
 }
@@ -247,6 +264,7 @@ impl DistanceProblem {
             h: h.matrix().clone(),
             l: l.matrix().clone(),
             num_vars: h.num_qubits(),
+            weight_mode: WeightMode::Bit,
         })
     }
 
@@ -314,7 +332,74 @@ impl DistanceProblem {
             h: Self::matrix_from_rows(checks, num_qubits),
             l: Self::matrix_from_rows(logicals, num_qubits),
             num_vars: num_qubits,
+            weight_mode: WeightMode::Bit,
         })
+    }
+
+    /// Constructs the full symplectic distance problem for an arbitrary stabilizer code spec.
+    ///
+    /// The `2n` primary variables use `[X|Z]` order. Each `H` row is the symplectic product with
+    /// one stabilizer, and the `L` rows are the symplectic products with every logical Z followed
+    /// by every logical X. Weight is physical-qubit support: a qubit contributes once when either
+    /// or both of its X and Z variables are selected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DistanceProblemError::QubitOutOfRange`] if a stabilizer or logical operator acts
+    /// outside the code width.
+    pub fn from_stabilizer_spec(code: &StabilizerCodeSpec) -> Result<Self, DistanceProblemError> {
+        let num_qubits = code.num_qubits();
+        let checks = code
+            .stabilizers()
+            .iter()
+            .enumerate()
+            .map(|(index, operator)| {
+                Self::symplectic_commutation_row(operator, "stabilizer", index, num_qubits)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let logicals = code
+            .logical_zs()
+            .iter()
+            .enumerate()
+            .map(|(index, operator)| {
+                Self::symplectic_commutation_row(operator, "logical Z", index, num_qubits)
+            })
+            .chain(
+                code.logical_xs()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, operator)| {
+                        Self::symplectic_commutation_row(operator, "logical X", index, num_qubits)
+                    }),
+            )
+            .collect::<Result<Vec<_>, _>>()?;
+        let num_vars = 2 * num_qubits;
+        Ok(Self {
+            h: Self::matrix_from_rows(checks, num_vars),
+            l: Self::matrix_from_rows(logicals, num_vars),
+            num_vars,
+            weight_mode: WeightMode::QubitSupport { num_qubits },
+        })
+    }
+
+    fn symplectic_commutation_row(
+        operator: &pecos_core::PauliString,
+        component: &'static str,
+        index: usize,
+        num_qubits: usize,
+    ) -> Result<Vec<u8>, DistanceProblemError> {
+        let x = operator.x_positions();
+        let z = operator.z_positions();
+        Self::validate_positions(&x, component, index, num_qubits)?;
+        Self::validate_positions(&z, component, index, num_qubits)?;
+        let mut row = vec![0; 2 * num_qubits];
+        for qubit in z {
+            row[qubit] = 1;
+        }
+        for qubit in x {
+            row[num_qubits + qubit] = 1;
+        }
+        Ok(row)
     }
 
     fn css_logical_rows(
@@ -415,7 +500,12 @@ impl DistanceProblem {
                 l.set(observable as usize, column, 1);
             }
         }
-        Self { h, l, num_vars }
+        Self {
+            h,
+            l,
+            num_vars,
+            weight_mode: WeightMode::Bit,
+        }
     }
 
     /// Returns the number of original decision variables.
@@ -465,7 +555,7 @@ impl DistanceProblem {
             .iter()
             .map(|group| group.clauses.len())
             .sum();
-        let clause_count = hard_count + self.num_vars;
+        let clause_count = hard_count + encoding.objective_variables.len();
         let mut output = String::new();
         writeln!(
             output,
@@ -488,7 +578,7 @@ impl DistanceProblem {
             "c soft clause group: unit penalties for selected variables"
         )
         .expect("writing to String cannot fail");
-        for variable in 1..=self.num_vars {
+        for &variable in &encoding.objective_variables {
             writeln!(output, "1 -{variable} 0").expect("writing to String cannot fail");
         }
         output
@@ -519,10 +609,38 @@ impl DistanceProblem {
         let mut builder = EncodingBuilder::new(self.num_vars);
         self.encode_checks(&mut builder);
         self.encode_logical_nontriviality(&mut builder);
+        let objective_variables = self.encode_weight_variables(&mut builder);
         if let Some(max_weight) = max_weight {
-            self.encode_sequential_counter(&mut builder, max_weight);
+            Self::encode_sequential_counter(&mut builder, max_weight, &objective_variables);
         }
-        builder.finish(max_weight.is_some())
+        builder.finish(max_weight.is_some(), objective_variables)
+    }
+
+    fn encode_weight_variables(&self, builder: &mut EncodingBuilder) -> Vec<usize> {
+        match self.weight_mode {
+            WeightMode::Bit => (1..=self.num_vars).collect(),
+            WeightMode::QubitSupport { num_qubits } => {
+                let indicators =
+                    builder.allocate_range(num_qubits, "physical-qubit support indicators");
+                for (qubit, &indicator) in indicators.iter().enumerate() {
+                    let x = qubit + 1;
+                    let z = num_qubits + qubit + 1;
+                    let indicator = Self::literal(indicator);
+                    builder
+                        .support_clauses
+                        .push(vec![-Self::literal(x), indicator]);
+                    builder
+                        .support_clauses
+                        .push(vec![-Self::literal(z), indicator]);
+                    builder.support_clauses.push(vec![
+                        Self::literal(x),
+                        Self::literal(z),
+                        -indicator,
+                    ]);
+                }
+                indicators
+            }
+        }
     }
 
     fn row_support(matrix: &F2Matrix, row: usize) -> Vec<usize> {
@@ -618,12 +736,16 @@ impl DistanceProblem {
         clauses.push(vec![-left, right, output]);
     }
 
-    fn encode_sequential_counter(&self, builder: &mut EncodingBuilder, max_weight: usize) {
-        if max_weight >= self.num_vars {
+    fn encode_sequential_counter(
+        builder: &mut EncodingBuilder,
+        max_weight: usize,
+        inputs: &[usize],
+    ) {
+        if max_weight >= inputs.len() {
             return;
         }
         if max_weight == 0 {
-            for variable in 1..=self.num_vars {
+            for &variable in inputs {
                 builder
                     .cardinality_clauses
                     .push(vec![-Self::literal(variable)]);
@@ -636,27 +758,28 @@ impl DistanceProblem {
         // every auxiliary functionally determined by the primary variables.
         let threshold = max_weight + 1;
         let variables = builder.allocate_range(
-            self.num_vars * threshold,
+            inputs.len() * threshold,
             "Sinz sequential-counter prefix thresholds",
         );
         let counter = |i: usize, j: usize| variables[(i - 1) * threshold + (j - 1)];
 
         // First prefix: s[1,1] <-> x_1; all unreachable higher thresholds are false.
         let first = counter(1, 1);
+        let first_input = Self::literal(inputs[0]);
         builder
             .cardinality_clauses
-            .push(vec![-1, Self::literal(first)]);
+            .push(vec![-first_input, Self::literal(first)]);
         builder
             .cardinality_clauses
-            .push(vec![1, -Self::literal(first)]);
+            .push(vec![first_input, -Self::literal(first)]);
         for j in 2..=threshold {
             builder
                 .cardinality_clauses
                 .push(vec![-Self::literal(counter(1, j))]);
         }
 
-        for i in 2..=self.num_vars {
-            let x = Self::literal(i);
+        for i in 2..=inputs.len() {
+            let x = Self::literal(inputs[i - 1]);
             // s[i,1] <-> (s[i-1,1] OR x_i).
             let previous = Self::literal(counter(i - 1, 1));
             let current = Self::literal(counter(i, 1));
@@ -681,7 +804,7 @@ impl DistanceProblem {
         }
         builder
             .cardinality_clauses
-            .push(vec![-Self::literal(counter(self.num_vars, threshold))]);
+            .push(vec![-Self::literal(counter(inputs.len(), threshold))]);
     }
 
     /// Checks a candidate witness with native GF(2) arithmetic and returns its Hamming weight.
@@ -723,7 +846,12 @@ impl DistanceProblem {
         if !logical_nonzero {
             return Err(WitnessError::ZeroLogicalEffect);
         }
-        Ok(assignment.iter().filter(|&&selected| selected).count())
+        Ok(match self.weight_mode {
+            WeightMode::Bit => assignment.iter().filter(|&&selected| selected).count(),
+            WeightMode::QubitSupport { num_qubits } => (0..num_qubits)
+                .filter(|&qubit| assignment[qubit] || assignment[num_qubits + qubit])
+                .count(),
+        })
     }
 
     /// Incrementally certifies distance through `max_weight` using a pluggable SAT solver.
@@ -848,10 +976,11 @@ fn solve_with_batsat(encoding: &Encoding, num_primary_vars: usize) -> SolverAnsw
 mod tests {
     use super::*;
     use crate::{
-        DistanceSearchConfig, FaultMechanism, StabilizerCode, calculate_distance,
+        DemOutput, DistanceSearchConfig, FaultMechanism, StabilizerCode, calculate_distance,
         connected_cluster_fault_distance, exhaustive_fault_distance,
     };
-    use pecos_core::pauli::{Xs, Zs};
+    use pecos_core::pauli::{X, Xs, Ys, Z, Zs};
+    use pecos_quantum::SymplecticMatrix;
     use std::time::Instant;
 
     #[derive(Debug)]
@@ -985,6 +1114,7 @@ mod tests {
 
     fn repetition_triad_dem() -> DetectorErrorModel {
         let mut dem = DetectorErrorModel::new();
+        dem.add_observable(DemOutput::new(0));
         for (detectors, observables) in
             [(vec![0, 1], vec![0]), (vec![0], vec![]), (vec![1], vec![])]
         {
@@ -1009,6 +1139,15 @@ mod tests {
         let h = steane_hamming_matrix();
         let logical = ParityCheckMatrix::from_dense(vec![vec![1; 7]]).unwrap();
         DistanceProblem::from_css_checks(&h, &logical).unwrap()
+    }
+
+    fn tiny_non_css_spec() -> StabilizerCodeSpec {
+        StabilizerCodeSpec::builder(2)
+            .check(Ys([0, 1]))
+            .logical_z(Zs([0, 1]))
+            .logical_x(X(0) & Z(1))
+            .build_verified()
+            .unwrap()
     }
 
     #[test]
@@ -1052,6 +1191,38 @@ mod tests {
     }
 
     #[test]
+    fn symplectic_dimacs_encoding_matches_qubit_support_predicate() {
+        let problem = DistanceProblem::from_stabilizer_spec(&tiny_non_css_spec()).unwrap();
+        assert_eq!(problem.num_vars(), 4);
+
+        for bound in 0..=2 {
+            let cnf = parse_dimacs(&problem.to_dimacs(bound));
+            for mask in 0..1 << problem.num_vars() {
+                let candidate = assignment(mask, problem.num_vars());
+                let direct = problem
+                    .verify_witness(&candidate)
+                    .is_ok_and(|weight| weight <= bound);
+                assert_eq!(
+                    cnf_satisfied_with_primary(&cnf, &candidate),
+                    direct,
+                    "assignment {mask:#b} at qubit-support bound {bound}"
+                );
+            }
+        }
+
+        // Y on qubit 0 selects both symplectic bits but has physical support weight one.
+        assert_eq!(problem.verify_witness(&[true, false, true, false]), Ok(1));
+        assert_eq!(
+            problem
+                .to_wcnf()
+                .lines()
+                .filter(|line| line.starts_with("1 -"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
     fn steane_hamming_problem_matches_existing_distance_search() {
         let h = steane_hamming_matrix();
         let spec = StabilizerCodeSpec::builder(7)
@@ -1078,8 +1249,10 @@ mod tests {
     }
 
     #[test]
-    fn non_css_spec_is_rejected_without_projection() {
+    fn css_projection_constructors_reject_non_css_spec() {
         let spec = StabilizerCodeSpec::from_stabilizer_code(&StabilizerCode::five_qubit()).unwrap();
+        // Full non-CSS codes are supported by `from_stabilizer_spec`; only the CSS projections
+        // reject mixed operators instead of silently dropping half of their support.
         assert!(matches!(
             DistanceProblem::from_css_code_x_distance(&spec),
             Err(DistanceProblemError::NonCssOperator { .. })
@@ -1088,6 +1261,40 @@ mod tests {
             DistanceProblem::from_css_code_z_distance(&spec),
             Err(DistanceProblemError::NonCssOperator { .. })
         ));
+    }
+
+    #[test]
+    fn batsat_certifies_five_qubit_symplectic_distance_and_logical_witness() {
+        let mut spec =
+            StabilizerCodeSpec::from_stabilizer_code(&StabilizerCode::five_qubit()).unwrap();
+        let calculated = spec.calculate_distance().unwrap().distance;
+        let oracle = spec.distance().unwrap();
+        assert_eq!(calculated, oracle);
+        assert_eq!(oracle, 3);
+
+        let problem = DistanceProblem::from_stabilizer_spec(&spec).unwrap();
+        let certified = certified_distance(&problem, oracle).unwrap().unwrap();
+        assert_eq!(certified.distance, oracle);
+        assert_eq!(problem.verify_witness(&certified.witness), Ok(oracle));
+
+        let mut witness_paulis = SymplecticMatrix::from_dense(vec![
+            certified.witness.iter().map(|&bit| u8::from(bit)).collect(),
+        ])
+        .unwrap()
+        .to_positive_paulis();
+        let witness = witness_paulis.pop().unwrap();
+        assert!(
+            spec.stabilizers()
+                .iter()
+                .all(|stabilizer| witness.commutes_with(stabilizer))
+        );
+        assert!(
+            spec.logical_zs()
+                .iter()
+                .chain(spec.logical_xs())
+                .any(|logical| !witness.commutes_with(logical))
+        );
+        assert!(spec.is_logical_error(&witness));
     }
 
     #[test]

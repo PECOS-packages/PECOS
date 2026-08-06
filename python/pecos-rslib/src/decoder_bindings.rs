@@ -196,6 +196,19 @@ use pecos_decoders::{
     PyMatchingConfig as RustPyMatchingConfig, PyMatchingDecoder as RustPyMatchingDecoder,
 };
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct PyMatchingDemConfig {
+    error_probability: Option<f64>,
+}
+
+fn pymatching_config(error_probability: Option<f64>) -> PyMatchingDemConfig {
+    let mut config = PyMatchingDemConfig::default();
+    if let Some(error_probability) = error_probability {
+        config.error_probability = Some(error_probability);
+    }
+    config
+}
+
 /// Sparse check matrix for MWPM decoders.
 ///
 /// Represents a parity check matrix H where each column corresponds to an error
@@ -452,7 +465,8 @@ impl PyPyMatchingDecoder {
     #[staticmethod]
     #[pyo3(signature = (dem, error_probability=None))]
     fn from_dem(dem: &str, error_probability: Option<f64>) -> PyResult<Self> {
-        let inner = if let Some(error_probability) = error_probability {
+        let config = pymatching_config(error_probability);
+        let inner = if let Some(error_probability) = config.error_probability {
             RustPyMatchingDecoder::from_dem_with_error_probability(dem, error_probability)
         } else {
             RustPyMatchingDecoder::from_dem(dem)
@@ -644,6 +658,34 @@ use pecos_decoders::{
     StandardCode as RustStandardCode, SyndromeData as RustSyndromeData,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FusionBlossomDemConfig {
+    correlated: bool,
+    solver_type: RustSolverType,
+}
+
+fn fusion_blossom_config(
+    correlated: bool,
+    solver_type: Option<&str>,
+) -> Result<FusionBlossomDemConfig, String> {
+    let mut config = FusionBlossomDemConfig {
+        correlated,
+        solver_type: RustSolverType::Serial,
+    };
+    match solver_type.unwrap_or("serial") {
+        "legacy" => config.solver_type = RustSolverType::Legacy,
+        "serial" => {}
+        "parallel" => {
+            return Err(
+                "solver_type 'parallel' requires a partition configuration, which from_dem does not accept"
+                    .to_string(),
+            );
+        }
+        _ => return Err("solver_type must be 'legacy' or 'serial'".to_string()),
+    }
+    Ok(config)
+}
+
 /// Fusion Blossom MWPM decoder.
 ///
 /// Pure Rust implementation of minimum-weight perfect matching.
@@ -744,24 +786,12 @@ impl PyFusionBlossomDecoder {
     #[staticmethod]
     #[pyo3(signature = (dem, correlated=false, solver_type=None))]
     fn from_dem(dem: &str, correlated: bool, solver_type: Option<&str>) -> PyResult<Self> {
-        let solver_type = match solver_type.unwrap_or("serial") {
-            "legacy" => RustSolverType::Legacy,
-            "serial" => RustSolverType::Serial,
-            "parallel" => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "solver_type 'parallel' requires a partition configuration, which from_dem does not accept",
-                ));
-            }
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "solver_type must be 'legacy' or 'serial'",
-                ));
-            }
-        };
-        let inner = if correlated {
-            RustFusionBlossomDecoder::from_dem_correlated_with_solver_type(dem, solver_type)
+        let config = fusion_blossom_config(correlated, solver_type)
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+        let inner = if config.correlated {
+            RustFusionBlossomDecoder::from_dem_correlated_with_solver_type(dem, config.solver_type)
         } else {
-            RustFusionBlossomDecoder::from_dem_with_solver_type(dem, solver_type)
+            RustFusionBlossomDecoder::from_dem_with_solver_type(dem, config.solver_type)
         };
         inner
             .map(|inner| Self { inner })
@@ -1092,23 +1122,23 @@ fn parse_bp_method(s: &str) -> PyResult<RustBpMethod> {
 
 /// Parse a BP schedule string into the Rust enum.
 fn parse_bp_schedule(s: &str) -> PyResult<RustBpSchedule> {
+    bp_schedule(s).map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+}
+
+fn bp_schedule(s: &str) -> Result<RustBpSchedule, String> {
     match s {
         "parallel" => Ok(RustBpSchedule::Parallel),
         "serial" => Ok(RustBpSchedule::Serial),
         "serial_relative" => Ok(RustBpSchedule::SerialRelative),
-        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "bp_schedule must be 'parallel', 'serial', or 'serial_relative'",
-        )),
+        _ => Err("bp_schedule must be 'parallel', 'serial', or 'serial_relative'".to_string()),
     }
 }
 
-fn parse_uf_method(s: &str) -> PyResult<RustUfMethod> {
+fn uf_method(s: &str) -> Result<RustUfMethod, String> {
     match s {
         "inversion" => Ok(RustUfMethod::Inversion),
         "peeling" => Ok(RustUfMethod::Peeling),
-        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "method must be 'inversion' or 'peeling'",
-        )),
+        _ => Err("method must be 'inversion' or 'peeling'".to_string()),
     }
 }
 
@@ -1163,6 +1193,216 @@ fn optional_u64(value: Option<i128>, parameter: &str) -> PyResult<Option<u64>> {
             })
         })
         .transpose()
+}
+
+const DEFAULT_DEM_MAX_ITER: usize = 100;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BpOsdDemConfig {
+    error_rate: Option<f64>,
+    max_iter: usize,
+    bp_method: RustBpMethod,
+    bp_schedule: RustBpSchedule,
+    ms_scaling_factor: f64,
+    osd_method: RustOsdMethod,
+    osd_order: usize,
+    random_schedule_seed: Option<i32>,
+}
+
+impl Default for BpOsdDemConfig {
+    fn default() -> Self {
+        Self {
+            error_rate: None,
+            max_iter: DEFAULT_DEM_MAX_ITER,
+            bp_method: RustBpMethod::ProductSum,
+            bp_schedule: RustBpSchedule::Parallel,
+            ms_scaling_factor: 1.0,
+            osd_method: RustOsdMethod::Osd0,
+            osd_order: 0,
+            random_schedule_seed: None,
+        }
+    }
+}
+
+fn bp_osd_config(
+    error_rate: Option<f64>,
+    max_iter: Option<usize>,
+    bp_schedule: Option<&str>,
+    ms_scaling_factor: Option<f64>,
+    osd_order: Option<usize>,
+    random_schedule_seed: Option<i32>,
+) -> Result<BpOsdDemConfig, String> {
+    let mut config = BpOsdDemConfig::default();
+    if let Some(error_rate) = error_rate {
+        config.error_rate = Some(error_rate);
+    }
+    if let Some(max_iter) = max_iter {
+        config.max_iter = max_iter;
+    }
+    if let Some(bp_schedule) = bp_schedule {
+        config.bp_schedule = self::bp_schedule(bp_schedule)?;
+    }
+    if let Some(ms_scaling_factor) = ms_scaling_factor {
+        config.bp_method = RustBpMethod::MinimumSum;
+        config.ms_scaling_factor = ms_scaling_factor;
+    }
+    if let Some(osd_order) = osd_order {
+        if osd_order > 0 {
+            config.osd_method = RustOsdMethod::OsdCs;
+        }
+        config.osd_order = osd_order;
+    }
+    if let Some(random_schedule_seed) = random_schedule_seed {
+        config.random_schedule_seed = Some(random_schedule_seed);
+    }
+    Ok(config)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BpLsdDemConfig {
+    error_rate: Option<f64>,
+    max_iter: usize,
+    bp_method: RustBpMethod,
+    bp_schedule: RustBpSchedule,
+    ms_scaling_factor: f64,
+    random_schedule_seed: Option<i32>,
+}
+
+impl Default for BpLsdDemConfig {
+    fn default() -> Self {
+        Self {
+            error_rate: None,
+            max_iter: DEFAULT_DEM_MAX_ITER,
+            bp_method: RustBpMethod::ProductSum,
+            bp_schedule: RustBpSchedule::Parallel,
+            ms_scaling_factor: 1.0,
+            random_schedule_seed: None,
+        }
+    }
+}
+
+fn bp_lsd_config(
+    error_rate: Option<f64>,
+    max_iter: Option<usize>,
+    bp_schedule: Option<&str>,
+    ms_scaling_factor: Option<f64>,
+    random_schedule_seed: Option<i32>,
+) -> Result<BpLsdDemConfig, String> {
+    let mut config = BpLsdDemConfig::default();
+    if let Some(error_rate) = error_rate {
+        config.error_rate = Some(error_rate);
+    }
+    if let Some(max_iter) = max_iter {
+        config.max_iter = max_iter;
+    }
+    if let Some(bp_schedule) = bp_schedule {
+        config.bp_schedule = self::bp_schedule(bp_schedule)?;
+    }
+    if let Some(ms_scaling_factor) = ms_scaling_factor {
+        config.bp_method = RustBpMethod::MinimumSum;
+        config.ms_scaling_factor = ms_scaling_factor;
+    }
+    if let Some(random_schedule_seed) = random_schedule_seed {
+        config.random_schedule_seed = Some(random_schedule_seed);
+    }
+    Ok(config)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct UnionFindDemConfig {
+    method: RustUfMethod,
+}
+
+impl Default for UnionFindDemConfig {
+    fn default() -> Self {
+        Self {
+            method: RustUfMethod::Inversion,
+        }
+    }
+}
+
+fn union_find_config(method: Option<&str>) -> Result<UnionFindDemConfig, String> {
+    let mut config = UnionFindDemConfig::default();
+    if let Some(method) = method {
+        config.method = uf_method(method)?;
+    }
+    Ok(config)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RelayBpDemConfig {
+    error_rate: Option<f64>,
+    max_iter: usize,
+    alpha: Option<f64>,
+    seed: u64,
+}
+
+impl Default for RelayBpDemConfig {
+    fn default() -> Self {
+        Self {
+            error_rate: None,
+            max_iter: DEFAULT_DEM_MAX_ITER,
+            alpha: None,
+            seed: 0,
+        }
+    }
+}
+
+fn relay_bp_config(
+    error_rate: Option<f64>,
+    max_iter: Option<usize>,
+    alpha: Option<f64>,
+    seed: Option<u64>,
+) -> RelayBpDemConfig {
+    let mut config = RelayBpDemConfig::default();
+    if let Some(error_rate) = error_rate {
+        config.error_rate = Some(error_rate);
+    }
+    if let Some(max_iter) = max_iter {
+        config.max_iter = max_iter;
+    }
+    if let Some(alpha) = alpha {
+        config.alpha = Some(alpha);
+    }
+    if let Some(seed) = seed {
+        config.seed = seed;
+    }
+    config
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MinSumBpDemConfig {
+    error_rate: Option<f64>,
+    max_iter: usize,
+    alpha: Option<f64>,
+}
+
+impl Default for MinSumBpDemConfig {
+    fn default() -> Self {
+        Self {
+            error_rate: None,
+            max_iter: DEFAULT_DEM_MAX_ITER,
+            alpha: None,
+        }
+    }
+}
+
+fn min_sum_bp_config(
+    error_rate: Option<f64>,
+    max_iter: Option<usize>,
+    alpha: Option<f64>,
+) -> MinSumBpDemConfig {
+    let mut config = MinSumBpDemConfig::default();
+    if let Some(error_rate) = error_rate {
+        config.error_rate = Some(error_rate);
+    }
+    if let Some(max_iter) = max_iter {
+        config.max_iter = max_iter;
+    }
+    if let Some(alpha) = alpha {
+        config.alpha = Some(alpha);
+    }
+    config
 }
 
 /// Parse an OSD method string into the Rust enum.
@@ -1317,19 +1557,16 @@ impl PyBpOsdDecoder {
         osd_order: Option<i128>,
         random_schedule_seed: Option<i64>,
     ) -> PyResult<PyDemAwareDecoder> {
-        PyDemAwareDecoder::from_dem_with_overrides(
-            dem,
-            "bp_osd",
+        let config = bp_osd_config(
             error_rate,
-            DemDecoderOverrides {
-                max_iter: optional_usize(max_iter, "max_iter")?,
-                bp_schedule: bp_schedule.map(parse_bp_schedule).transpose()?,
-                ms_scaling_factor,
-                osd_order: optional_usize(osd_order, "osd_order")?,
-                random_schedule_seed: optional_i32(random_schedule_seed, "random_schedule_seed")?,
-                ..Default::default()
-            },
+            optional_usize(max_iter, "max_iter")?,
+            bp_schedule,
+            ms_scaling_factor,
+            optional_usize(osd_order, "osd_order")?,
+            optional_i32(random_schedule_seed, "random_schedule_seed")?,
         )
+        .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+        PyDemAwareDecoder::from_dem_with_config(dem, DemDecoderConfig::BpOsd(config))
     }
 
     /// Decode a syndrome.
@@ -1493,18 +1730,15 @@ impl PyBpLsdDecoder {
         ms_scaling_factor: Option<f64>,
         random_schedule_seed: Option<i64>,
     ) -> PyResult<PyDemAwareDecoder> {
-        PyDemAwareDecoder::from_dem_with_overrides(
-            dem,
-            "bp_lsd",
+        let config = bp_lsd_config(
             error_rate,
-            DemDecoderOverrides {
-                max_iter: optional_usize(max_iter, "max_iter")?,
-                bp_schedule: bp_schedule.map(parse_bp_schedule).transpose()?,
-                ms_scaling_factor,
-                random_schedule_seed: optional_i32(random_schedule_seed, "random_schedule_seed")?,
-                ..Default::default()
-            },
+            optional_usize(max_iter, "max_iter")?,
+            bp_schedule,
+            ms_scaling_factor,
+            optional_i32(random_schedule_seed, "random_schedule_seed")?,
         )
+        .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+        PyDemAwareDecoder::from_dem_with_config(dem, DemDecoderConfig::BpLsd(config))
     }
 
     /// Decode a syndrome.
@@ -1609,15 +1843,9 @@ impl PyUnionFindDecoder {
     #[staticmethod]
     #[pyo3(signature = (dem, method=None))]
     fn from_dem(dem: &str, method: Option<&str>) -> PyResult<PyDemAwareDecoder> {
-        PyDemAwareDecoder::from_dem_with_overrides(
-            dem,
-            "union_find",
-            None,
-            DemDecoderOverrides {
-                uf_method: method.map(parse_uf_method).transpose()?,
-                ..Default::default()
-            },
-        )
+        let config =
+            union_find_config(method).map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+        PyDemAwareDecoder::from_dem_with_config(dem, DemDecoderConfig::UnionFind(config))
     }
 
     /// Decode a syndrome.
@@ -1664,6 +1892,44 @@ impl PyUnionFindDecoder {
 use pecos_decoders::{
     TesseractConfig as RustTesseractConfig, TesseractDecoder as RustTesseractDecoder,
 };
+
+fn tesseract_config(
+    preset: &str,
+    det_beam: Option<u16>,
+    beam_climbing: Option<bool>,
+    verbose: Option<bool>,
+    no_revisit_dets: Option<bool>,
+    pqlimit: Option<usize>,
+    det_penalty: Option<f64>,
+) -> Result<RustTesseractConfig, String> {
+    let mut config = match preset {
+        "fast" => RustTesseractConfig::fast(),
+        "accurate" => RustTesseractConfig::accurate(),
+        "default" => RustTesseractConfig::default(),
+        _ => return Err("preset must be 'default', 'fast', or 'accurate'".to_string()),
+    };
+
+    if let Some(det_beam) = det_beam {
+        config.det_beam = det_beam;
+    }
+    if let Some(beam_climbing) = beam_climbing {
+        config.beam_climbing = beam_climbing;
+    }
+    if let Some(verbose) = verbose {
+        config.verbose = verbose;
+    }
+    if let Some(no_revisit_dets) = no_revisit_dets {
+        config.no_revisit_dets = no_revisit_dets;
+    }
+    if let Some(pqlimit) = pqlimit {
+        config.pqlimit = pqlimit;
+    }
+    if let Some(det_penalty) = det_penalty {
+        config.det_penalty = det_penalty;
+    }
+
+    Ok(config)
+}
 
 /// Result from Tesseract decoder.
 ///
@@ -1778,36 +2044,16 @@ impl PyTesseractDecoder {
     ) -> PyResult<Self> {
         let det_beam = optional_u16(det_beam, "det_beam")?;
         let pqlimit = optional_usize(pqlimit, "pqlimit")?;
-        let mut config = match preset {
-            "fast" => RustTesseractConfig::fast(),
-            "accurate" => RustTesseractConfig::accurate(),
-            "default" => RustTesseractConfig::default(),
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "preset must be 'default', 'fast', or 'accurate'",
-                ));
-            }
-        };
-
-        // Override with explicit parameters
-        if let Some(beam) = det_beam {
-            config.det_beam = beam;
-        }
-        if let Some(climbing) = beam_climbing {
-            config.beam_climbing = climbing;
-        }
-        if let Some(verbose) = verbose {
-            config.verbose = verbose;
-        }
-        if let Some(no_revisit_dets) = no_revisit_dets {
-            config.no_revisit_dets = no_revisit_dets;
-        }
-        if let Some(pqlimit) = pqlimit {
-            config.pqlimit = pqlimit;
-        }
-        if let Some(det_penalty) = det_penalty {
-            config.det_penalty = det_penalty;
-        }
+        let config = tesseract_config(
+            preset,
+            det_beam,
+            beam_climbing,
+            verbose,
+            no_revisit_dets,
+            pqlimit,
+            det_penalty,
+        )
+        .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
 
         let dem_string = dem.to_string();
         RustTesseractDecoder::new(dem, config.clone())
@@ -2242,17 +2488,13 @@ impl PyRelayBpDecoder {
         alpha: Option<f64>,
         seed: Option<i128>,
     ) -> PyResult<PyDemAwareDecoder> {
-        PyDemAwareDecoder::from_dem_with_overrides(
-            dem,
-            "relay_bp",
+        let config = relay_bp_config(
             error_rate,
-            DemDecoderOverrides {
-                max_iter: optional_usize(max_iter, "max_iter")?,
-                alpha,
-                relay_seed: optional_u64(seed, "seed")?,
-                ..Default::default()
-            },
-        )
+            optional_usize(max_iter, "max_iter")?,
+            alpha,
+            optional_u64(seed, "seed")?,
+        );
+        PyDemAwareDecoder::from_dem_with_config(dem, DemDecoderConfig::RelayBp(config))
     }
 
     /// Decode a syndrome.
@@ -2431,16 +2673,8 @@ impl PyMinSumBpDecoder {
         max_iter: Option<i128>,
         alpha: Option<f64>,
     ) -> PyResult<PyDemAwareDecoder> {
-        PyDemAwareDecoder::from_dem_with_overrides(
-            dem,
-            "min_sum_bp",
-            error_rate,
-            DemDecoderOverrides {
-                max_iter: optional_usize(max_iter, "max_iter")?,
-                alpha,
-                ..Default::default()
-            },
-        )
+        let config = min_sum_bp_config(error_rate, optional_usize(max_iter, "max_iter")?, alpha);
+        PyDemAwareDecoder::from_dem_with_config(dem, DemDecoderConfig::MinSumBp(config))
     }
 
     /// Decode a syndrome.
@@ -2500,16 +2734,25 @@ enum InnerDecoder {
     MinSumBp(Box<RustMinSumBpDecoder>),
 }
 
-#[derive(Clone, Copy, Default)]
-struct DemDecoderOverrides {
-    max_iter: Option<usize>,
-    bp_schedule: Option<RustBpSchedule>,
-    ms_scaling_factor: Option<f64>,
-    osd_order: Option<usize>,
-    random_schedule_seed: Option<i32>,
-    uf_method: Option<RustUfMethod>,
-    alpha: Option<f64>,
-    relay_seed: Option<u64>,
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DemDecoderConfig {
+    BpOsd(BpOsdDemConfig),
+    BpLsd(BpLsdDemConfig),
+    UnionFind(UnionFindDemConfig),
+    RelayBp(RelayBpDemConfig),
+    MinSumBp(MinSumBpDemConfig),
+}
+
+impl DemDecoderConfig {
+    fn error_rate(self) -> Option<f64> {
+        match self {
+            Self::BpOsd(config) => config.error_rate,
+            Self::BpLsd(config) => config.error_rate,
+            Self::UnionFind(_) => None,
+            Self::RelayBp(config) => config.error_rate,
+            Self::MinSumBp(config) => config.error_rate,
+        }
+    }
 }
 
 /// DEM-aware decoder that wraps a check-matrix decoder.
@@ -2534,14 +2777,7 @@ pub struct PyDemAwareDecoder {
 }
 
 impl PyDemAwareDecoder {
-    fn from_dem_with_overrides(
-        dem: &str,
-        decoder_type: &str,
-        error_rate: Option<f64>,
-        overrides: DemDecoderOverrides,
-    ) -> PyResult<Self> {
-        const DEFAULT_MAX_ITER: usize = 100;
-
+    fn parse_dem(dem: &str) -> PyResult<DemCheckMatrix> {
         let dcm = DemCheckMatrix::from_dem_str(dem)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
@@ -2551,117 +2787,101 @@ impl PyDemAwareDecoder {
             ));
         }
 
+        Ok(dcm)
+    }
+
+    fn from_dem_with_config(dem: &str, config: DemDecoderConfig) -> PyResult<Self> {
+        let dcm = Self::parse_dem(dem)?;
+        Self::from_dem_check_matrix_with_config(dcm, config)
+    }
+
+    fn from_dem_check_matrix_with_config(
+        dcm: DemCheckMatrix,
+        config: DemDecoderConfig,
+    ) -> PyResult<Self> {
         // Error priors: use per-mechanism probabilities from DEM, or uniform override.
-        let priors: Vec<f64> = if let Some(p) = error_rate {
+        let priors: Vec<f64> = if let Some(p) = config.error_rate() {
             vec![p; dcm.num_mechanisms]
         } else {
             dcm.error_priors.clone()
         };
-        let max_iter = overrides.max_iter.unwrap_or(DEFAULT_MAX_ITER);
 
         // The check matrix shape and observable map are structural properties of
         // the DEM and are deliberately never accepted as caller overrides.
         let sparse_h = RustSparseMatrix::from_dense(&dcm.check_matrix.view());
 
-        let inner = match decoder_type {
-            "bp_osd" => {
-                let osd_order = overrides.osd_order.unwrap_or(0);
-                let osd_method = if overrides.osd_order.is_some_and(|order| order > 0) {
-                    RustOsdMethod::OsdCs
-                } else {
-                    RustOsdMethod::Osd0
-                };
-                let bp_method = if overrides.ms_scaling_factor.is_some() {
-                    RustBpMethod::MinimumSum
-                } else {
-                    RustBpMethod::ProductSum
-                };
+        let inner = match config {
+            DemDecoderConfig::BpOsd(config) => {
                 let decoder = RustBpOsdDecoder::new(
                     &sparse_h,
                     None,
                     Some(&priors),
-                    max_iter,
-                    bp_method,
-                    overrides.bp_schedule.unwrap_or(RustBpSchedule::Parallel),
-                    overrides.ms_scaling_factor.unwrap_or(1.0),
-                    osd_method,
-                    osd_order,
+                    config.max_iter,
+                    config.bp_method,
+                    config.bp_schedule,
+                    config.ms_scaling_factor,
+                    config.osd_method,
+                    config.osd_order,
                     RustInputVectorType::Syndrome,
                     None,
                     None,
-                    overrides.random_schedule_seed,
+                    config.random_schedule_seed,
                 )
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
                 InnerDecoder::BpOsd(decoder)
             }
-            "bp_lsd" => {
-                let bp_method = if overrides.ms_scaling_factor.is_some() {
-                    RustBpMethod::MinimumSum
-                } else {
-                    RustBpMethod::ProductSum
-                };
+            DemDecoderConfig::BpLsd(config) => {
                 let decoder = RustBpLsdDecoder::new(
                     &sparse_h,
                     None,
                     Some(&priors),
-                    max_iter,
-                    bp_method,
-                    overrides.bp_schedule.unwrap_or(RustBpSchedule::Parallel),
-                    overrides.ms_scaling_factor.unwrap_or(1.0),
+                    config.max_iter,
+                    config.bp_method,
+                    config.bp_schedule,
+                    config.ms_scaling_factor,
                     RustOsdMethod::Off,
                     0,
                     0,
                     RustInputVectorType::Syndrome,
                     None,
                     None,
-                    overrides.random_schedule_seed,
+                    config.random_schedule_seed,
                 )
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
                 InnerDecoder::BpLsd(decoder)
             }
-            "union_find" => {
-                let decoder = RustUnionFindDecoder::new(
-                    &sparse_h,
-                    overrides.uf_method.unwrap_or(RustUfMethod::Inversion),
-                )
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            DemDecoderConfig::UnionFind(config) => {
+                let decoder = RustUnionFindDecoder::new(&sparse_h, config.method).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                })?;
                 InnerDecoder::UnionFind(decoder)
             }
-            "relay_bp" => {
+            DemDecoderConfig::RelayBp(config) => {
                 use pecos_decoders::RelayBpBuilder as RustRelayBpBuilderT;
                 let h_view = dcm.check_matrix.view();
-                let mut builder = RustRelayBpBuilderT::new(&h_view)
+                let decoder = RustRelayBpBuilderT::new(&h_view)
                     .error_priors(&priors)
-                    .max_iter(max_iter);
-                if let Some(alpha) = overrides.alpha {
-                    builder = builder.alpha(Some(alpha));
-                }
-                if let Some(seed) = overrides.relay_seed {
-                    builder = builder.seed(seed);
-                }
-                let decoder = builder.build().map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
+                    .max_iter(config.max_iter)
+                    .alpha(config.alpha)
+                    .seed(config.seed)
+                    .build()
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                    })?;
                 InnerDecoder::RelayBp(Box::new(decoder))
             }
-            "min_sum_bp" => {
+            DemDecoderConfig::MinSumBp(config) => {
                 use pecos_decoders::MinSumBpBuilder as RustMinSumBpBuilderT;
                 let h_view = dcm.check_matrix.view();
-                let mut builder = RustMinSumBpBuilderT::new(&h_view)
+                let decoder = RustMinSumBpBuilderT::new(&h_view)
                     .error_priors(&priors)
-                    .max_iter(max_iter);
-                if let Some(alpha) = overrides.alpha {
-                    builder = builder.alpha(Some(alpha));
-                }
-                let decoder = builder.build().map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
+                    .max_iter(config.max_iter)
+                    .alpha(config.alpha)
+                    .build()
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                    })?;
                 InnerDecoder::MinSumBp(Box::new(decoder))
-            }
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Unknown decoder type: {decoder_type}. Supported: bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp"
-                )));
             }
         };
 
@@ -2753,15 +2973,30 @@ impl PyDemAwareDecoder {
         error_rate: Option<f64>,
         max_iter: usize,
     ) -> PyResult<Self> {
-        Self::from_dem_with_overrides(
-            dem,
-            decoder_type,
-            error_rate,
-            DemDecoderOverrides {
-                max_iter: Some(max_iter),
-                ..Default::default()
-            },
-        )
+        let dcm = Self::parse_dem(dem)?;
+        let config = match decoder_type {
+            "bp_osd" => DemDecoderConfig::BpOsd(
+                bp_osd_config(error_rate, Some(max_iter), None, None, None, None)
+                    .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?,
+            ),
+            "bp_lsd" => DemDecoderConfig::BpLsd(
+                bp_lsd_config(error_rate, Some(max_iter), None, None, None)
+                    .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?,
+            ),
+            "union_find" => DemDecoderConfig::UnionFind(UnionFindDemConfig::default()),
+            "relay_bp" => {
+                DemDecoderConfig::RelayBp(relay_bp_config(error_rate, Some(max_iter), None, None))
+            }
+            "min_sum_bp" => {
+                DemDecoderConfig::MinSumBp(min_sum_bp_config(error_rate, Some(max_iter), None))
+            }
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Unknown decoder type: {decoder_type}. Supported: bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp"
+                )));
+            }
+        };
+        Self::from_dem_check_matrix_with_config(dcm, config)
     }
 
     /// Decode a dense syndrome vector.
@@ -2921,6 +3156,366 @@ mod dem_tuning_tests {
 
     const DEM: &str =
         "detector D0\ndetector D1\nlogical_observable L0\nerror(0.1) D0\nerror(0.1) D1 L0\n";
+
+    #[test]
+    fn pymatching_error_probability_override_reaches_config() {
+        let config = pymatching_config(Some(0.123));
+
+        assert_eq!(config.error_probability, Some(0.123));
+    }
+
+    #[test]
+    fn pymatching_omitted_override_preserves_default() {
+        let config = pymatching_config(None);
+
+        assert_eq!(config.error_probability, None);
+    }
+
+    #[test]
+    fn fusion_blossom_solver_type_override_reaches_config() {
+        let config = fusion_blossom_config(true, Some("legacy")).unwrap();
+
+        assert!(config.correlated);
+        assert_eq!(config.solver_type, RustSolverType::Legacy);
+    }
+
+    #[test]
+    fn fusion_blossom_omitted_override_preserves_default() {
+        let config = fusion_blossom_config(false, None).unwrap();
+
+        assert!(!config.correlated);
+        assert_eq!(config.solver_type, RustSolverType::Serial);
+    }
+
+    #[test]
+    fn fusion_blossom_parallel_solver_names_parameter() {
+        let error = fusion_blossom_config(false, Some("parallel")).unwrap_err();
+
+        assert!(error.contains("solver_type"));
+        assert!(error.contains("partition configuration"));
+    }
+
+    #[test]
+    fn fusion_blossom_unknown_solver_names_parameter() {
+        let error = fusion_blossom_config(false, Some("fast")).unwrap_err();
+
+        assert!(error.contains("solver_type"));
+    }
+
+    #[test]
+    fn tesseract_default_preset_has_documented_fields() {
+        let config = tesseract_config("default", None, None, None, None, None, None).unwrap();
+
+        assert_eq!(config.det_beam, u16::MAX);
+        assert!(!config.beam_climbing);
+        assert!(config.no_revisit_dets);
+        assert!(!config.verbose);
+        assert_eq!(config.pqlimit, 200_000);
+        assert_eq!(config.det_penalty.to_bits(), 0.0_f64.to_bits());
+    }
+
+    #[test]
+    fn tesseract_fast_preset_has_documented_fields() {
+        let config = tesseract_config("fast", None, None, None, None, None, None).unwrap();
+
+        assert_eq!(config.det_beam, 5);
+        assert!(config.beam_climbing);
+        assert!(config.no_revisit_dets);
+        assert!(!config.verbose);
+        assert_eq!(config.pqlimit, 200_000);
+        assert_eq!(config.det_penalty.to_bits(), 0.1_f64.to_bits());
+    }
+
+    #[test]
+    fn tesseract_accurate_preset_has_documented_fields() {
+        let config = tesseract_config("accurate", None, None, None, None, None, None).unwrap();
+
+        assert_eq!(config.det_beam, u16::MAX);
+        assert!(!config.beam_climbing);
+        assert!(!config.no_revisit_dets);
+        assert!(!config.verbose);
+        assert_eq!(config.pqlimit, 1_000_000);
+        assert_eq!(config.det_penalty.to_bits(), 0.0_f64.to_bits());
+    }
+
+    #[test]
+    fn tesseract_det_beam_override_reaches_config() {
+        let config = tesseract_config("default", Some(17), None, None, None, None, None).unwrap();
+
+        assert_eq!(config.det_beam, 17);
+    }
+
+    #[test]
+    fn tesseract_beam_climbing_override_reaches_config() {
+        let config =
+            tesseract_config("accurate", None, Some(true), None, None, None, None).unwrap();
+
+        assert!(config.beam_climbing);
+    }
+
+    #[test]
+    fn tesseract_verbose_override_reaches_config() {
+        let config = tesseract_config("default", None, None, Some(true), None, None, None).unwrap();
+
+        assert!(config.verbose);
+    }
+
+    #[test]
+    fn tesseract_no_revisit_dets_override_reaches_config() {
+        let config = tesseract_config("fast", None, None, None, Some(false), None, None).unwrap();
+
+        assert!(!config.no_revisit_dets);
+    }
+
+    #[test]
+    fn tesseract_pqlimit_override_reaches_config() {
+        let config = tesseract_config("fast", None, None, None, None, Some(345_678), None).unwrap();
+
+        assert_eq!(config.pqlimit, 345_678);
+    }
+
+    #[test]
+    fn tesseract_det_penalty_override_reaches_config() {
+        let config = tesseract_config("fast", None, None, None, None, None, Some(0.25)).unwrap();
+
+        assert_eq!(config.det_penalty.to_bits(), 0.25_f64.to_bits());
+    }
+
+    #[test]
+    fn tesseract_override_wins_over_preset() {
+        let config = tesseract_config("fast", Some(19), None, None, None, None, None).unwrap();
+
+        assert_eq!(config.det_beam, 19);
+        assert!(config.beam_climbing);
+    }
+
+    #[test]
+    fn tesseract_omitted_override_preserves_preset() {
+        let config = tesseract_config("fast", None, None, None, None, None, None).unwrap();
+
+        assert_eq!(config.det_beam, 5);
+        assert!(config.beam_climbing);
+        assert!(config.no_revisit_dets);
+        assert!(!config.verbose);
+        assert_eq!(config.pqlimit, 200_000);
+        assert_eq!(config.det_penalty.to_bits(), 0.1_f64.to_bits());
+    }
+
+    #[test]
+    fn tesseract_unknown_preset_names_parameter() {
+        let error = tesseract_config("quick", None, None, None, None, None, None).unwrap_err();
+
+        assert!(error.contains("preset"));
+    }
+
+    #[test]
+    fn bp_osd_error_rate_override_reaches_config() {
+        let config = bp_osd_config(Some(0.123), None, None, None, None, None).unwrap();
+
+        assert_eq!(config.error_rate, Some(0.123));
+    }
+
+    #[test]
+    fn bp_osd_max_iter_override_reaches_config() {
+        let config = bp_osd_config(None, Some(17), None, None, None, None).unwrap();
+
+        assert_eq!(config.max_iter, 17);
+    }
+
+    #[test]
+    fn bp_osd_bp_schedule_override_reaches_config() {
+        let config = bp_osd_config(None, None, Some("serial_relative"), None, None, None).unwrap();
+
+        assert_eq!(config.bp_schedule, RustBpSchedule::SerialRelative);
+    }
+
+    #[test]
+    fn bp_osd_ms_scaling_factor_override_reaches_config() {
+        let config = bp_osd_config(None, None, None, Some(0.625), None, None).unwrap();
+
+        assert_eq!(config.bp_method, RustBpMethod::MinimumSum);
+        assert_eq!(config.ms_scaling_factor.to_bits(), 0.625_f64.to_bits());
+    }
+
+    #[test]
+    fn bp_osd_osd_order_override_reaches_config() {
+        let config = bp_osd_config(None, None, None, None, Some(2), None).unwrap();
+
+        assert_eq!(config.osd_method, RustOsdMethod::OsdCs);
+        assert_eq!(config.osd_order, 2);
+    }
+
+    #[test]
+    fn bp_osd_random_schedule_seed_override_reaches_config() {
+        let config = bp_osd_config(None, None, None, None, None, Some(42)).unwrap();
+
+        assert_eq!(config.random_schedule_seed, Some(42));
+    }
+
+    #[test]
+    fn bp_osd_omitted_overrides_preserve_defaults() {
+        let config = bp_osd_config(None, None, None, None, None, None).unwrap();
+
+        assert_eq!(config.error_rate, None);
+        assert_eq!(config.max_iter, 100);
+        assert_eq!(config.bp_method, RustBpMethod::ProductSum);
+        assert_eq!(config.bp_schedule, RustBpSchedule::Parallel);
+        assert_eq!(config.ms_scaling_factor.to_bits(), 1.0_f64.to_bits());
+        assert_eq!(config.osd_method, RustOsdMethod::Osd0);
+        assert_eq!(config.osd_order, 0);
+        assert_eq!(config.random_schedule_seed, None);
+    }
+
+    #[test]
+    fn bp_osd_unknown_schedule_names_parameter() {
+        let error = bp_osd_config(None, None, Some("random"), None, None, None).unwrap_err();
+
+        assert!(error.contains("bp_schedule"));
+    }
+
+    #[test]
+    fn bp_lsd_error_rate_override_reaches_config() {
+        let config = bp_lsd_config(Some(0.234), None, None, None, None).unwrap();
+
+        assert_eq!(config.error_rate, Some(0.234));
+    }
+
+    #[test]
+    fn bp_lsd_max_iter_override_reaches_config() {
+        let config = bp_lsd_config(None, Some(19), None, None, None).unwrap();
+
+        assert_eq!(config.max_iter, 19);
+    }
+
+    #[test]
+    fn bp_lsd_bp_schedule_override_reaches_config() {
+        let config = bp_lsd_config(None, None, Some("serial_relative"), None, None).unwrap();
+
+        assert_eq!(config.bp_schedule, RustBpSchedule::SerialRelative);
+    }
+
+    #[test]
+    fn bp_lsd_ms_scaling_factor_override_reaches_config() {
+        let config = bp_lsd_config(None, None, None, Some(0.75), None).unwrap();
+
+        assert_eq!(config.bp_method, RustBpMethod::MinimumSum);
+        assert_eq!(config.ms_scaling_factor.to_bits(), 0.75_f64.to_bits());
+    }
+
+    #[test]
+    fn bp_lsd_random_schedule_seed_override_reaches_config() {
+        let config = bp_lsd_config(None, None, None, None, Some(24)).unwrap();
+
+        assert_eq!(config.random_schedule_seed, Some(24));
+    }
+
+    #[test]
+    fn bp_lsd_omitted_overrides_preserve_defaults() {
+        let config = bp_lsd_config(None, None, None, None, None).unwrap();
+
+        assert_eq!(config.error_rate, None);
+        assert_eq!(config.max_iter, 100);
+        assert_eq!(config.bp_method, RustBpMethod::ProductSum);
+        assert_eq!(config.bp_schedule, RustBpSchedule::Parallel);
+        assert_eq!(config.ms_scaling_factor.to_bits(), 1.0_f64.to_bits());
+        assert_eq!(config.random_schedule_seed, None);
+    }
+
+    #[test]
+    fn bp_lsd_unknown_schedule_names_parameter() {
+        let error = bp_lsd_config(None, None, Some("random"), None, None).unwrap_err();
+
+        assert!(error.contains("bp_schedule"));
+    }
+
+    #[test]
+    fn union_find_method_override_reaches_config() {
+        let config = union_find_config(Some("peeling")).unwrap();
+
+        assert_eq!(config.method, RustUfMethod::Peeling);
+    }
+
+    #[test]
+    fn union_find_omitted_override_preserves_default() {
+        let config = union_find_config(None).unwrap();
+
+        assert_eq!(config.method, RustUfMethod::Inversion);
+    }
+
+    #[test]
+    fn union_find_unknown_method_names_parameter() {
+        let error = union_find_config(Some("fast")).unwrap_err();
+
+        assert!(error.contains("method"));
+    }
+
+    #[test]
+    fn relay_bp_error_rate_override_reaches_config() {
+        let config = relay_bp_config(Some(0.345), None, None, None);
+
+        assert_eq!(config.error_rate, Some(0.345));
+    }
+
+    #[test]
+    fn relay_bp_max_iter_override_reaches_config() {
+        let config = relay_bp_config(None, Some(23), None, None);
+
+        assert_eq!(config.max_iter, 23);
+    }
+
+    #[test]
+    fn relay_bp_alpha_override_reaches_config() {
+        let config = relay_bp_config(None, None, Some(0.8), None);
+
+        assert_eq!(config.alpha, Some(0.8));
+    }
+
+    #[test]
+    fn relay_bp_seed_override_reaches_config() {
+        let config = relay_bp_config(None, None, None, Some(91));
+
+        assert_eq!(config.seed, 91);
+    }
+
+    #[test]
+    fn relay_bp_omitted_overrides_preserve_defaults() {
+        let config = relay_bp_config(None, None, None, None);
+
+        assert_eq!(config.error_rate, None);
+        assert_eq!(config.max_iter, 100);
+        assert_eq!(config.alpha, None);
+        assert_eq!(config.seed, 0);
+    }
+
+    #[test]
+    fn min_sum_bp_error_rate_override_reaches_config() {
+        let config = min_sum_bp_config(Some(0.456), None, None);
+
+        assert_eq!(config.error_rate, Some(0.456));
+    }
+
+    #[test]
+    fn min_sum_bp_max_iter_override_reaches_config() {
+        let config = min_sum_bp_config(None, Some(29), None);
+
+        assert_eq!(config.max_iter, 29);
+    }
+
+    #[test]
+    fn min_sum_bp_alpha_override_reaches_config() {
+        let config = min_sum_bp_config(None, None, Some(0.7));
+
+        assert_eq!(config.alpha, Some(0.7));
+    }
+
+    #[test]
+    fn min_sum_bp_omitted_overrides_preserve_defaults() {
+        let config = min_sum_bp_config(None, None, None);
+
+        assert_eq!(config.error_rate, None);
+        assert_eq!(config.max_iter, 100);
+        assert_eq!(config.alpha, None);
+    }
 
     #[test]
     fn tesseract_overrides_reach_config_and_win_over_preset() {

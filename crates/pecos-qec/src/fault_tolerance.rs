@@ -97,7 +97,10 @@ pub struct SpacetimeLocation {
     pub before: bool,
     /// The type of gate at this location.
     pub gate_type: GateType,
-    /// Index of the gate within the tick (for circuits with multiple gates per tick).
+    /// Index of this individual gate application within the tick.
+    ///
+    /// Stored gate batches are expanded first, so this is the flattened per-tick
+    /// instance ordinal rather than the parent batch index.
     pub gate_index: usize,
 }
 

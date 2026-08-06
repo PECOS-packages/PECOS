@@ -3003,8 +3003,12 @@ mod tests {
     }
 
     #[test]
-    fn test_syndrome_detection_three_qubit_code() {
-        // 3-qubit bit-flip code: X errors on data qubits should produce syndromes
+    fn test_single_round_misses_exactly_post_final_cx_data_faults() {
+        // A single 3-qubit bit-flip extraction round misses an X fault placed on
+        // a data qubit after that qubit's final CX: the completed round has no
+        // later interaction through which the fault could reach an ancilla.
+        // `test_repeated_syndrome_measurement_concept` documents how a second
+        // extraction round catches these persistent data errors.
         // Data qubits: 0, 1, 2
         // Ancilla qubits: 3, 4 (Z-basis measurement)
         // Stabilizers: Z0Z1 (ancilla 3), Z1Z2 (ancilla 4)
@@ -3027,13 +3031,30 @@ mod tests {
         // Check that weight-1 X errors produce syndromes
         let result = checker.check_syndrome_detection(&[3, 4], &[], true);
 
-        println!(
-            "3-qubit code syndrome detection: {} faults don't produce syndrome (should be 0)",
-            result.num_failures()
-        );
+        let missing_faults: Vec<_> = result
+            .failures
+            .iter()
+            .map(|configuration| {
+                let [fault] = configuration.faults.as_slice() else {
+                    panic!("weight-one iteration must select exactly one location");
+                };
+                (
+                    fault.location.tick,
+                    fault.location.gate_type,
+                    fault.location.qubits.clone(),
+                    fault.paulis.clone(),
+                )
+            })
+            .collect();
 
-        // All weight-1 X errors on data qubits should produce a syndrome
-        // (faults on ancillas might not, but data qubit errors should)
+        assert_eq!(
+            missing_faults,
+            vec![
+                (1, GateType::CX, vec![QubitId(0), QubitId(3)], vec![1, 0],),
+                (3, GateType::CX, vec![QubitId(1), QubitId(4)], vec![1, 0],),
+                (4, GateType::CX, vec![QubitId(2), QubitId(4)], vec![1, 0],),
+            ]
+        );
     }
 
     #[test]
@@ -3273,7 +3294,8 @@ mod tests {
 
     #[test]
     fn test_is_fault_tolerant_method() {
-        // Simple circuit that IS fault tolerant for weight-1 X errors
+        // This circuit is not fault tolerant for weight-1 X errors: an X on data
+        // qubit 0 after the CX is invisible when only qubit 1 is measured.
         let mut circuit = TickCircuit::new();
         circuit.tick().cx(&[(0, 1)]);
         circuit.tick().mz(&[1]);
@@ -3290,12 +3312,13 @@ mod tests {
         let x_ancillas: &[usize] = &[];
 
         // Logical Z = Z0 (just for testing - single qubit)
-        // X on qubit 0 -> XX after CX -> X on qubit 1 detected
+        // X on qubit 0 after CX -> undetected logical error
         // X on qubit 1 after CX -> detected
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0])];
 
         let is_ft = checker.is_fault_tolerant(z_ancillas, x_ancillas, logicals);
         println!("Simple circuit is 1-fault tolerant for X errors: {is_ft}");
+        assert!(!is_ft);
     }
 
     #[test]
@@ -3641,6 +3664,10 @@ mod tests {
         println!("  Ambiguous faults: {}", result.ambiguous_faults);
         println!("  Unique syndrome histories: {}", result.histories.len());
         println!("  Is FT: {}", result.is_ft());
+        assert!(
+            !result.is_ft(),
+            "the final extraction round still has undetectable post-CX data faults"
+        );
 
         // We should have found 2 measurement rounds
         assert_eq!(result.rounds.len(), 2, "Should find 2 measurement rounds");
@@ -4188,9 +4215,12 @@ mod tests {
             analysis_with_follow_up.ambiguous_syndromes
         );
 
-        // With follow-up, the output error provides additional syndrome information
-        // This should help disambiguate (or at least not make things worse)
-        // The key insight: different output errors produce different follow-up syndromes
+        assert!(
+            analysis_no_follow_up.ambiguous_syndromes > 0,
+            "without follow-up, the gadget syndrome alone must be ambiguous"
+        );
+        assert_eq!(analysis_with_follow_up.ambiguous_syndromes, 0);
+        assert_eq!(analysis_with_follow_up.undetectable_logical_errors, 0);
     }
 
     #[test]
@@ -4218,6 +4248,7 @@ mod tests {
 
         let is_ft = checker.is_gadget_fault_tolerant(z_ancillas, x_ancillas, logicals, &follow_up);
         println!("Gadget is fault tolerant with follow-up: {is_ft}");
+        assert!(is_ft);
     }
 
     #[test]

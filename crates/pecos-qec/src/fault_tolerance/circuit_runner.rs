@@ -63,10 +63,10 @@ pub fn extract_spacetime_locations(
 
     // Iterate through all ticks
     for (tick_idx, tick) in circuit.iter_ticks() {
-        for gate in tick.iter_gate_batches() {
-            let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
+        for (gate_index, gate) in tick.iter_gate_instances().enumerate() {
+            let qubits: Vec<QubitId> = gate.qubits().to_vec();
             let is_measurement = matches!(
-                gate.gate_type,
+                gate.gate_type(),
                 GateType::MZ | GateType::MeasureFree | GateType::MPZ
             );
 
@@ -74,8 +74,8 @@ pub fn extract_spacetime_locations(
                 tick_idx,
                 qubits,
                 is_measurement, // Measurements get "before" errors
-                gate.gate_type,
-                gate.batch_index(),
+                gate.gate_type(),
+                gate_index,
             ));
         }
     }
@@ -1083,6 +1083,7 @@ impl<'a> FaultChecker<'a> {
 #[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
+    use crate::fault_tolerance::PauliFaultIterator;
     use pecos_simulators::SparseStab;
 
     #[test]
@@ -1110,6 +1111,93 @@ mod tests {
         assert_eq!(locations[1].tick, 1);
         assert_eq!(locations[1].qubits, vec![QubitId(0), QubitId(1)]);
         assert_eq!(locations[1].gate_type, GateType::CX);
+    }
+
+    #[test]
+    fn test_extract_spacetime_locations_uses_gate_instance_granularity() {
+        let mut single_qubit_batch = TickCircuit::new();
+        single_qubit_batch.tick().pz(&[0, 1, 2]);
+
+        let locations = extract_spacetime_locations(&single_qubit_batch, false);
+        assert_eq!(locations.len(), 3);
+        assert_eq!(
+            locations
+                .iter()
+                .map(|location| location.qubits.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![QubitId(0)], vec![QubitId(1)], vec![QubitId(2)]]
+        );
+        assert_eq!(
+            locations
+                .iter()
+                .map(|location| location.gate_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+
+        let mut two_qubit_batch = TickCircuit::new();
+        two_qubit_batch.tick().cx(&[(0, 1), (2, 3)]);
+
+        let locations = extract_spacetime_locations(&two_qubit_batch, false);
+        assert_eq!(locations.len(), 2);
+        assert_eq!(
+            locations
+                .iter()
+                .map(|location| location.qubits.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![QubitId(0), QubitId(1)], vec![QubitId(2), QubitId(3)],]
+        );
+
+        let mut mixed_tick = TickCircuit::new();
+        mixed_tick.tick().h(&[0, 1]).x(&[2]).cx(&[(3, 4), (5, 6)]);
+
+        let locations = extract_spacetime_locations(&mixed_tick, false);
+        assert_eq!(locations.len(), 5);
+        assert_eq!(
+            locations
+                .iter()
+                .map(|location| location.qubits.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                vec![QubitId(0)],
+                vec![QubitId(1)],
+                vec![QubitId(2)],
+                vec![QubitId(3), QubitId(4)],
+                vec![QubitId(5), QubitId(6)],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_weight_one_fault_cannot_span_parallel_cx_instances() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().cx(&[(0, 1), (2, 3)]);
+
+        let locations = extract_spacetime_locations(&circuit, false);
+        let fault_iter = PauliFaultIterator::new(locations, 1, FaultCheckConfig::new().x_only());
+
+        for configuration in fault_iter {
+            let [fault] = configuration.faults.as_slice() else {
+                panic!("weight-one iteration must select exactly one location");
+            };
+            let touches_first_pair = fault
+                .location
+                .qubits
+                .iter()
+                .zip(&fault.paulis)
+                .any(|(qubit, pauli)| qubit.index() < 2 && *pauli != 0);
+            let touches_second_pair = fault
+                .location
+                .qubits
+                .iter()
+                .zip(&fault.paulis)
+                .any(|(qubit, pauli)| qubit.index() >= 2 && *pauli != 0);
+
+            assert!(
+                !(touches_first_pair && touches_second_pair),
+                "a weight-one fault crossed CX instances: {configuration:?}"
+            );
+        }
     }
 
     #[test]
@@ -1235,16 +1323,18 @@ mod tests {
         // Check we have the expected number of locations
         let locations = extract_spacetime_locations(&circuit, false);
 
-        // 1 prep (2 qubits) + 4 CX gates + 1 measure (2 qubits) = 6 gate operations
-        assert_eq!(locations.len(), 6);
+        // 2 preparations + 4 CX gates + 2 measurements = 8 gate applications
+        assert_eq!(locations.len(), 8);
 
         // Verify gate types
         assert_eq!(locations[0].gate_type, GateType::PZ);
-        assert_eq!(locations[1].gate_type, GateType::CX);
+        assert_eq!(locations[1].gate_type, GateType::PZ);
         assert_eq!(locations[2].gate_type, GateType::CX);
         assert_eq!(locations[3].gate_type, GateType::CX);
         assert_eq!(locations[4].gate_type, GateType::CX);
-        assert_eq!(locations[5].gate_type, GateType::MZ);
+        assert_eq!(locations[5].gate_type, GateType::CX);
+        assert_eq!(locations[6].gate_type, GateType::MZ);
+        assert_eq!(locations[7].gate_type, GateType::MZ);
     }
 
     #[test]
@@ -1431,10 +1521,10 @@ mod tests {
             .filter(|l| l.gate_type == GateType::MZ)
             .count();
 
-        assert_eq!(preps, 1); // One bulk prep
-        assert_eq!(hadamards, 2); // Two bulk H operations
+        assert_eq!(preps, 3); // Three ancilla preparations
+        assert_eq!(hadamards, 6); // Three initial and three final H gates
         assert_eq!(cnots, 12); // 12 individual CX gates
-        assert_eq!(measures, 1); // One bulk measure
+        assert_eq!(measures, 3); // Three ancilla measurements
     }
 
     #[test]

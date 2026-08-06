@@ -219,8 +219,8 @@ impl NoiseCell {
                         .with_p_prep(0.0)
                         .with_p_meas_0(p_meas_0)
                         .with_p_meas_1(p_meas_1)
-                        .with_single_qubit_probability(0.0)
-                        .with_two_qubit_probability(0.0),
+                        .with_p1(0.0)
+                        .with_p2(0.0),
                 )
                 .shots(SHOTS)
                 .run(),

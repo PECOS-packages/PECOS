@@ -197,8 +197,8 @@ fn test_asymmetric_measurements() {
     let depolarizing_noise = DepolarizingNoiseModel::builder()
         .with_p_prep(p_prep)
         .with_p_meas(p_depolarizing)
-        .with_single_qubit_probability(p1)
-        .with_two_qubit_probability(0.0)
+        .with_p1(p1)
+        .with_p2(0.0)
         .with_seed(seed)
         .build();
     let mut depolarizing_system =

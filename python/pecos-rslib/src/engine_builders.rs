@@ -1029,13 +1029,6 @@ impl PyGeneralNoiseModelBuilder {
         })
     }
 
-    /// Set preparation error probability
-    fn with_preparation_probability(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_prep(p),
-        })
-    }
-
     /// Set measurement error probability (asymmetric)
     fn with_measurement_probability(&self, p0: f64, p1: f64) -> PyResult<Self> {
         Ok(Self {
@@ -1420,11 +1413,6 @@ impl PyDepolarizingNoiseModelBuilder {
         Ok(Self {
             inner: self.inner.clone().with_seed(seed),
         })
-    }
-
-    /// Set preparation error probability (alias for `with_p_prep`)
-    fn with_preparation_probability(&self, p: f64) -> PyResult<Self> {
-        self.with_p_prep(p)
     }
 }
 

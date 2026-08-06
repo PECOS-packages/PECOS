@@ -44,8 +44,8 @@ use std::any::Any;
 ///     .with_p_prep(0.01)
 ///     .with_p_meas_0(0.02)
 ///     .with_p_meas_1(0.03)
-///     .with_single_qubit_probability(0.04)
-///     .with_two_qubit_probability(0.05)
+///     .with_p1(0.04)
+///     .with_p2(0.05)
 ///     .with_seed(42)
 ///     .build();
 ///
@@ -512,7 +512,19 @@ impl RngManageable for BiasedDepolarizingNoiseModel {
     }
 }
 
-/// Builder for creating biased depolarizing noise models
+/// Builder for creating biased depolarizing noise models.
+///
+/// The retired descriptive probability setters are intentionally unavailable:
+///
+/// ```compile_fail
+/// use pecos_engines::noise::BiasedDepolarizingNoiseModel;
+/// let _ = BiasedDepolarizingNoiseModel::builder().with_single_qubit_probability(0.01);
+/// ```
+///
+/// ```compile_fail
+/// use pecos_engines::noise::BiasedDepolarizingNoiseModel;
+/// let _ = BiasedDepolarizingNoiseModel::builder().with_two_qubit_probability(0.01);
+/// ```
 #[derive(Debug, Clone)]
 pub struct BiasedDepolarizingNoiseModelBuilder {
     p_prep: Option<f64>,
@@ -587,27 +599,11 @@ impl BiasedDepolarizingNoiseModelBuilder {
         self
     }
 
-    /// Set the probability of error after single-qubit gates
-    ///
-    /// This is an alias for `with_p1` for API consistency.
-    #[must_use]
-    pub fn with_single_qubit_probability(self, probability: f64) -> Self {
-        self.with_p1(probability)
-    }
-
     /// Set the probability of error after two-qubit gates
     #[must_use]
     pub fn with_p2(mut self, probability: f64) -> Self {
         self.p2 = Some(probability);
         self
-    }
-
-    /// Set the probability of error after two-qubit gates
-    ///
-    /// This is an alias for `with_p2` for API consistency.
-    #[must_use]
-    pub fn with_two_qubit_probability(self, probability: f64) -> Self {
-        self.with_p2(probability)
     }
 
     /// Set the seed for the random number generator

@@ -152,7 +152,7 @@ class TestNoiseModels:
         # Custom noise: high prep error, low measurement error
         noise = (
             general_noise()
-            .with_preparation_probability(0.2)  # 20% preparation error
+            .with_p_prep(0.2)  # 20% preparation error
             .with_measurement_probability(
                 0.01,
                 0.01,

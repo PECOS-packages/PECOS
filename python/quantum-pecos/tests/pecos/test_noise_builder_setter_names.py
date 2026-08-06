@@ -40,6 +40,9 @@ BUILDER_SETTERS = [
 ]
 
 REMOVED_SETTERS = (
+    "with_single_qubit_probability",
+    "with_two_qubit_probability",
+    "with_preparation_probability",
     "with_p1_probability",
     "with_p2_probability",
     "with_prep_probability",
@@ -121,6 +124,25 @@ def test_suffixed_setters_are_gone(factory, _setters) -> None:
     builder = factory()
     for removed in REMOVED_SETTERS:
         assert not hasattr(builder, removed), f"{removed} should have been renamed away"
+
+
+def test_asymmetric_measurement_probability_sets_both_rates() -> None:
+    """The surviving two-argument helper preserves distinct 0→1 and 1→0 rates."""
+    qasm = """
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+x q[1];
+measure q -> c;
+"""
+    program = Qasm.from_string(qasm)
+
+    zero_only = sim(program).noise(general_noise().with_measurement_probability(1.0, 0.0)).run(8).to_dict()
+    one_only = sim(program).noise(general_noise().with_measurement_probability(0.0, 1.0)).run(8).to_dict()
+
+    assert zero_only["c"] == [3] * 8
+    assert one_only["c"] == [0] * 8
 
 
 def test_retired_idle_setters_are_gone() -> None:

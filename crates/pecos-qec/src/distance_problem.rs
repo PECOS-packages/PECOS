@@ -23,7 +23,7 @@
 //! the returned distance.
 
 use crate::{DetectorErrorModel, ParityCheckMatrix, StabilizerCodeSpec};
-use batsat::{BasicSolver, Lit, SolverInterface, lbool};
+use batsat::{BasicSolver, Lit, SolverInterface, Var, lbool};
 use pecos_core::PauliOperator;
 use pecos_quantum::F2Matrix;
 use std::fmt::Write as _;
@@ -170,6 +170,27 @@ struct Encoding {
     num_vars: usize,
     aux_ranges: Vec<(usize, usize, &'static str)>,
     groups: Vec<ClauseGroup>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CounterOutput {
+    FixedBound,
+    Assumptions,
+}
+
+#[derive(Debug, Default)]
+struct FinalCounterRow {
+    /// Positive literals for s[n,1], s[n,2], ... in threshold order.
+    threshold_literals: Vec<i32>,
+}
+
+impl FinalCounterRow {
+    fn assumption_for_bound(&self, max_weight: usize) -> Option<i32> {
+        // Index max_weight is s[n,max_weight+1], meaning the count exceeds max_weight.
+        self.threshold_literals
+            .get(max_weight)
+            .map(|&literal| -literal)
+    }
 }
 
 #[derive(Debug)]
@@ -520,9 +541,18 @@ impl DistanceProblem {
         self.encode_checks(&mut builder);
         self.encode_logical_nontriviality(&mut builder);
         if let Some(max_weight) = max_weight {
-            self.encode_sequential_counter(&mut builder, max_weight);
+            self.encode_sequential_counter(&mut builder, max_weight, CounterOutput::FixedBound);
         }
         builder.finish(max_weight.is_some())
+    }
+
+    fn encode_for_assumptions(&self, max_weight: usize) -> (Encoding, FinalCounterRow) {
+        let mut builder = EncodingBuilder::new(self.num_vars);
+        self.encode_checks(&mut builder);
+        self.encode_logical_nontriviality(&mut builder);
+        let final_row =
+            self.encode_sequential_counter(&mut builder, max_weight, CounterOutput::Assumptions);
+        (builder.finish(true), final_row)
     }
 
     fn row_support(matrix: &F2Matrix, row: usize) -> Vec<usize> {
@@ -618,23 +648,35 @@ impl DistanceProblem {
         clauses.push(vec![-left, right, output]);
     }
 
-    fn encode_sequential_counter(&self, builder: &mut EncodingBuilder, max_weight: usize) {
-        if max_weight >= self.num_vars {
-            return;
-        }
-        if max_weight == 0 {
-            for variable in 1..=self.num_vars {
-                builder
-                    .cardinality_clauses
-                    .push(vec![-Self::literal(variable)]);
+    fn encode_sequential_counter(
+        &self,
+        builder: &mut EncodingBuilder,
+        max_weight: usize,
+        output: CounterOutput,
+    ) -> FinalCounterRow {
+        match output {
+            CounterOutput::FixedBound if max_weight >= self.num_vars => {
+                return FinalCounterRow::default();
             }
-            return;
+            CounterOutput::FixedBound if max_weight == 0 => {
+                for variable in 1..=self.num_vars {
+                    builder
+                        .cardinality_clauses
+                        .push(vec![-Self::literal(variable)]);
+                }
+                return FinalCounterRow::default();
+            }
+            CounterOutput::Assumptions if max_weight == 0 || self.num_vars <= 1 => {
+                return FinalCounterRow::default();
+            }
+            CounterOutput::FixedBound | CounterOutput::Assumptions => {}
         }
 
         // s[i, j] means that at least j of x_1..=x_i are true. These are the sequential unary
         // counter variables of Sinz (2005). Both directions of each recurrence are emitted, making
-        // every auxiliary functionally determined by the primary variables.
-        let threshold = max_weight + 1;
+        // every auxiliary functionally determined by the primary variables. Assumption mode needs
+        // s[n,w+1] for every queried w, including max_weight, but thresholds above n are impossible.
+        let threshold = max_weight.saturating_add(1).min(self.num_vars);
         let variables = builder.allocate_range(
             self.num_vars * threshold,
             "Sinz sequential-counter prefix thresholds",
@@ -679,9 +721,17 @@ impl DistanceProblem {
                     .push(vec![-current, same, lower]);
             }
         }
-        builder
-            .cardinality_clauses
-            .push(vec![-Self::literal(counter(self.num_vars, threshold))]);
+        let final_row = FinalCounterRow {
+            threshold_literals: (1..=threshold)
+                .map(|j| Self::literal(counter(self.num_vars, j)))
+                .collect(),
+        };
+        if matches!(output, CounterOutput::FixedBound) {
+            builder
+                .cardinality_clauses
+                .push(vec![-final_row.threshold_literals[threshold - 1]]);
+        }
+        final_row
     }
 
     /// Checks a candidate witness with native GF(2) arithmetic and returns its Hamming weight.
@@ -790,13 +840,12 @@ impl DistanceProblem {
 
 /// Certifies distance through `max_weight` using the in-process batsat SAT solver.
 ///
-/// A fresh deterministic solver instance is built for each weight from the internal clause
-/// encoding. SAT answers are certified natively with [`DistanceProblem::verify_witness`] before
-/// they are accepted. UNSAT answers, and therefore the exactness of a returned distance, rest on
-/// trusting the solver. `Ok(None)` means batsat reported every weight through `max_weight` UNSAT.
-///
-/// Incremental assumptions could avoid rebuilding the solver in a future implementation, but are
-/// deliberately not used here.
+/// One deterministic solver instance contains the parity, nontriviality, and sequential-counter
+/// clauses. Each weight is selected by an assumption on the counter's final row, retaining learned
+/// clauses between bounds. SAT answers are certified natively with
+/// [`DistanceProblem::verify_witness`] before they are accepted. UNSAT answers, and therefore the
+/// exactness of a returned distance, rest on trusting the solver. `Ok(None)` means batsat reported
+/// every weight through `max_weight` UNSAT.
 ///
 /// # Errors
 ///
@@ -805,42 +854,78 @@ pub fn certified_distance(
     problem: &DistanceProblem,
     max_weight: usize,
 ) -> Result<Option<CertifiedDistance>, DistanceCertificationError> {
-    problem.certify_distance_by(max_weight, |problem, weight| {
-        solve_with_batsat(&problem.encode(Some(weight)), problem.num_vars)
+    let (encoding, final_row) = problem.encode_for_assumptions(max_weight);
+    let mut solver = BatsatDistanceSolver::new(&encoding, problem.num_vars);
+    problem.certify_distance_by(max_weight, |_, weight| {
+        solver.solve(final_row.assumption_for_bound(weight))
     })
 }
 
+#[cfg(test)] // reference fresh-per-weight path, retained for cross-path tests and probes
 fn solve_with_batsat(encoding: &Encoding, num_primary_vars: usize) -> SolverAnswer {
-    let mut solver = BasicSolver::default();
-    let variables: Vec<_> = (0..encoding.num_vars)
-        .map(|_| solver.new_var_default())
-        .collect();
+    BatsatDistanceSolver::new(encoding, num_primary_vars).solve(None)
+}
 
-    for clause in encoding.groups.iter().flat_map(|group| &group.clauses) {
-        let mut literals: Vec<_> = clause
-            .iter()
-            .map(|&literal| {
-                let index = literal.unsigned_abs() as usize - 1;
-                Lit::new(variables[index], literal > 0)
-            })
+struct BatsatDistanceSolver {
+    solver: BasicSolver,
+    variables: Vec<Var>,
+    num_primary_vars: usize,
+    clauses_consistent: bool,
+}
+
+impl BatsatDistanceSolver {
+    fn new(encoding: &Encoding, num_primary_vars: usize) -> Self {
+        let mut solver = BasicSolver::default();
+        let variables: Vec<_> = (0..encoding.num_vars)
+            .map(|_| solver.new_var_default())
             .collect();
-        if !solver.add_clause_reuse(&mut literals) {
-            return SolverAnswer::Unsat;
+        let mut clauses_consistent = true;
+
+        for clause in encoding.groups.iter().flat_map(|group| &group.clauses) {
+            let mut literals: Vec<_> = clause
+                .iter()
+                .map(|&literal| Self::to_batsat_literal(&variables, literal))
+                .collect();
+            if !solver.add_clause_reuse(&mut literals) {
+                clauses_consistent = false;
+                break;
+            }
+        }
+
+        Self {
+            solver,
+            variables,
+            num_primary_vars,
+            clauses_consistent,
         }
     }
 
-    let answer = solver.solve_limited(&[]);
-    if answer == lbool::TRUE {
-        SolverAnswer::Sat(
-            variables[..num_primary_vars]
-                .iter()
-                .map(|&variable| solver.value_var(variable) == lbool::TRUE)
-                .collect(),
-        )
-    } else if answer == lbool::FALSE {
-        SolverAnswer::Unsat
-    } else {
-        SolverAnswer::Unknown
+    fn to_batsat_literal(variables: &[Var], literal: i32) -> Lit {
+        let index = literal.unsigned_abs() as usize - 1;
+        Lit::new(variables[index], literal > 0)
+    }
+
+    fn solve(&mut self, assumption: Option<i32>) -> SolverAnswer {
+        if !self.clauses_consistent {
+            return SolverAnswer::Unsat;
+        }
+        let assumptions: Vec<_> = assumption
+            .map(|literal| Self::to_batsat_literal(&self.variables, literal))
+            .into_iter()
+            .collect();
+        let answer = self.solver.solve_limited(&assumptions);
+        if answer == lbool::TRUE {
+            SolverAnswer::Sat(
+                self.variables[..self.num_primary_vars]
+                    .iter()
+                    .map(|&variable| self.solver.value_var(variable) == lbool::TRUE)
+                    .collect(),
+            )
+        } else if answer == lbool::FALSE {
+            SolverAnswer::Unsat
+        } else {
+            SolverAnswer::Unknown
+        }
     }
 }
 
@@ -1222,6 +1307,60 @@ mod tests {
         assert_eq!(problem.verify_witness(&second.witness), Ok(3));
     }
 
+    #[test]
+    fn incremental_matches_reference_path_on_seeded_small_problems() {
+        use rand::rngs::SmallRng;
+        use rand::{RngExt, SeedableRng};
+
+        const NUM_CASES: usize = 128;
+        const NUM_VARS: usize = 8;
+
+        let mut rng = SmallRng::seed_from_u64(0x19C0_5EED);
+        for case_index in 0..NUM_CASES {
+            let random_rows = |rng: &mut SmallRng, count: usize| -> Vec<Vec<u8>> {
+                (0..count)
+                    .map(|_| {
+                        (0..NUM_VARS)
+                            .map(|_| u8::from(rng.random_bool(0.4)))
+                            .collect()
+                    })
+                    .collect()
+            };
+            let h_count = rng.random_range(1..=3);
+            let l_count = rng.random_range(1..=2);
+            let h_rows = random_rows(&mut rng, h_count);
+            let l_rows = random_rows(&mut rng, l_count);
+            let (Ok(h), Ok(l)) = (
+                ParityCheckMatrix::from_dense(h_rows.clone()),
+                ParityCheckMatrix::from_dense(l_rows.clone()),
+            ) else {
+                continue;
+            };
+            let problem = DistanceProblem::from_css_checks(&h, &l).unwrap();
+
+            for max_weight in [2usize, NUM_VARS] {
+                let incremental = certified_distance(&problem, max_weight).unwrap();
+                let reference = problem
+                    .certify_distance_with(max_weight, |dimacs, _| {
+                        exhaustive_dimacs_answer(&problem, dimacs)
+                    })
+                    .unwrap();
+                assert_eq!(
+                    incremental.as_ref().map(|c| c.distance),
+                    reference.as_ref().map(|c| c.distance),
+                    "distance diverged for seeded case {case_index} at max_weight {max_weight}: H {h_rows:?} L {l_rows:?}"
+                );
+                if let Some(certified) = &incremental {
+                    assert_eq!(
+                        problem.verify_witness(&certified.witness),
+                        Ok(certified.distance),
+                        "incremental witness failed native verification for case {case_index}"
+                    );
+                }
+            }
+        }
+    }
+
     fn bb_circulant(l: usize, m: usize, terms: &[(usize, usize)]) -> F2Matrix {
         let size = l * m;
         let mut matrix = F2Matrix::zeros(size, size);
@@ -1300,9 +1439,21 @@ mod tests {
             })
             .unwrap()
             .unwrap();
-        println!("BB [[72,12,6]] total: {:?}", total_started.elapsed());
+        println!(
+            "BB [[72,12,6]] fresh-path total: {:?}",
+            total_started.elapsed()
+        );
         assert_eq!(certified.distance, 6);
         assert_eq!(problem.verify_witness(&certified.witness), Ok(6));
+
+        let incremental_started = Instant::now();
+        let incremental = certified_distance(&problem, 6).unwrap().unwrap();
+        println!(
+            "BB [[72,12,6]] incremental total: {:?}",
+            incremental_started.elapsed()
+        );
+        assert_eq!(incremental.distance, 6);
+        assert_eq!(problem.verify_witness(&incremental.witness), Ok(6));
     }
 
     #[test]

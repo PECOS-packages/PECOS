@@ -42,9 +42,11 @@
 //! has_syndrome, causes_logical = influence_map.classify_fault(0, 1)  # loc 0, X fault
 //! ```
 
+use crate::code_matrix_bindings::PyParityCheckMatrix;
+use crate::dag_circuit_bindings::PyTickCircuit;
 use crate::pecos_array::{Array, ArrayData};
+use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
 use pecos_core::gate_type::GateType;
-use pecos_qec::fault_tolerance::PauliFrameLookup as RustPauliFrameLookup;
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
     ContributionEffectSummary as RustContributionEffectSummary,
@@ -71,6 +73,17 @@ use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInflu
 use pecos_qec::fault_tolerance::propagator::{
     DagFaultAnalyzer as RustDagFaultAnalyzer, DagFaultInfluenceMap as RustDagFaultInfluenceMap,
     DagSpacetimeLocation, Pauli,
+};
+use pecos_qec::fault_tolerance::{
+    CircuitDistanceResult as RustCircuitDistanceResult, FaultCheckConfig, FaultChecker,
+    FaultConfiguration, FlagFaultToleranceReport as RustFlagFaultToleranceReport,
+    FlagViolation as RustFlagViolation, HookError as RustHookError,
+    HookErrorReport as RustHookErrorReport, PauliFrameLookup as RustPauliFrameLookup,
+    PauliPropChecker, SpacetimeLocation,
+};
+use pecos_qec::{
+    CertifiedDistance as RustCertifiedDistance, DistanceProblem as RustDistanceProblem,
+    certified_distance as rust_certified_distance,
 };
 use pecos_quantum::DagCircuit;
 use pecos_quantum::QubitId;
@@ -6980,6 +6993,684 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
 }
 
 // =============================================================================
+// Circuit fault-tolerance diagnosis and distance certification
+// =============================================================================
+
+/// A gate location in a tick circuit where a Pauli fault is injected.
+#[pyclass(
+    name = "CircuitFaultLocation",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyCircuitFaultLocation {
+    tick: usize,
+    gate_type: String,
+    qubits: Vec<usize>,
+    gate_index: usize,
+    before: bool,
+}
+
+impl From<&SpacetimeLocation> for PyCircuitFaultLocation {
+    fn from(location: &SpacetimeLocation) -> Self {
+        Self {
+            tick: location.tick,
+            gate_type: format!("{:?}", location.gate_type),
+            qubits: location.qubits.iter().map(QubitId::index).collect(),
+            gate_index: location.gate_index,
+            before: location.before,
+        }
+    }
+}
+
+#[pymethods]
+impl PyCircuitFaultLocation {
+    #[getter]
+    fn tick(&self) -> usize {
+        self.tick
+    }
+
+    #[getter]
+    fn gate_type(&self) -> String {
+        self.gate_type.clone()
+    }
+
+    #[getter]
+    fn qubits(&self) -> Vec<usize> {
+        self.qubits.clone()
+    }
+
+    #[getter]
+    fn gate_index(&self) -> usize {
+        self.gate_index
+    }
+
+    #[getter]
+    fn before(&self) -> bool {
+        self.before
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CircuitFaultLocation(tick={}, gate_type={:?}, qubits={:?}, gate_index={}, before={})",
+            self.tick, self.gate_type, self.qubits, self.gate_index, self.before
+        )
+    }
+}
+
+type PyCircuitFault = (PyCircuitFaultLocation, Vec<usize>);
+
+fn python_faults(configuration: &FaultConfiguration) -> Vec<PyCircuitFault> {
+    configuration
+        .faults
+        .iter()
+        .map(|fault| {
+            (
+                PyCircuitFaultLocation::from(&fault.location),
+                fault.paulis.iter().copied().map(usize::from).collect(),
+            )
+        })
+        .collect()
+}
+
+/// A single-location fault that amplifies into a multi-qubit data error.
+#[pyclass(name = "HookError", module = "pecos_rslib.qec", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyHookError {
+    location: PyCircuitFaultLocation,
+    fault_paulis: Vec<usize>,
+    data_support: Vec<usize>,
+    data_weight: usize,
+    detected: bool,
+    causes_logical_error: bool,
+}
+
+impl From<RustHookError> for PyHookError {
+    fn from(error: RustHookError) -> Self {
+        Self {
+            location: PyCircuitFaultLocation::from(&error.location),
+            fault_paulis: error.fault_paulis.into_iter().map(usize::from).collect(),
+            data_support: error.data_support,
+            data_weight: error.data_weight,
+            detected: error.detected,
+            causes_logical_error: error.causes_logical_error,
+        }
+    }
+}
+
+#[pymethods]
+impl PyHookError {
+    #[getter]
+    fn location(&self) -> PyCircuitFaultLocation {
+        self.location.clone()
+    }
+
+    #[getter]
+    fn fault_paulis(&self) -> Vec<usize> {
+        self.fault_paulis.clone()
+    }
+
+    #[getter]
+    fn data_support(&self) -> Vec<usize> {
+        self.data_support.clone()
+    }
+
+    #[getter]
+    fn data_weight(&self) -> usize {
+        self.data_weight
+    }
+
+    #[getter]
+    fn detected(&self) -> bool {
+        self.detected
+    }
+
+    #[getter]
+    fn causes_logical_error(&self) -> bool {
+        self.causes_logical_error
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HookError(location={}, fault_paulis={:?}, data_support={:?}, data_weight={}, detected={}, causes_logical_error={})",
+            self.location.__repr__(),
+            self.fault_paulis,
+            self.data_support,
+            self.data_weight,
+            self.detected,
+            self.causes_logical_error
+        )
+    }
+}
+
+/// Summary of hook-error diagnosis over the selected Pauli fault set.
+#[pyclass(
+    name = "HookErrorReport",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyHookErrorReport {
+    hook_errors: Vec<PyHookError>,
+    total_faults_examined: usize,
+    max_data_weight: usize,
+}
+
+impl From<RustHookErrorReport> for PyHookErrorReport {
+    fn from(report: RustHookErrorReport) -> Self {
+        Self {
+            hook_errors: report
+                .hook_errors
+                .into_iter()
+                .map(PyHookError::from)
+                .collect(),
+            total_faults_examined: report.total_faults_examined,
+            max_data_weight: report.max_data_weight,
+        }
+    }
+}
+
+#[pymethods]
+impl PyHookErrorReport {
+    #[getter]
+    fn hook_errors(&self) -> Vec<PyHookError> {
+        self.hook_errors.clone()
+    }
+
+    #[getter]
+    fn total_faults_examined(&self) -> usize {
+        self.total_faults_examined
+    }
+
+    #[getter]
+    fn max_data_weight(&self) -> usize {
+        self.max_data_weight
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HookErrorReport(hook_errors={}, total_faults_examined={}, max_data_weight={})",
+            self.hook_errors.len(),
+            self.total_faults_examined,
+            self.max_data_weight
+        )
+    }
+}
+
+/// A counterexample to the propagated-fault condition for a flag circuit.
+#[pyclass(
+    name = "FlagViolation",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFlagViolation {
+    faults: Vec<PyCircuitFault>,
+    num_faults: usize,
+    error_weight: usize,
+}
+
+impl From<RustFlagViolation> for PyFlagViolation {
+    fn from(violation: RustFlagViolation) -> Self {
+        Self {
+            faults: python_faults(&violation.faults),
+            num_faults: violation.num_faults,
+            error_weight: violation.error_weight,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFlagViolation {
+    #[getter]
+    fn faults(&self) -> Vec<PyCircuitFault> {
+        self.faults.clone()
+    }
+
+    #[getter]
+    fn num_faults(&self) -> usize {
+        self.num_faults
+    }
+
+    #[getter]
+    fn error_weight(&self) -> usize {
+        self.error_weight
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FlagViolation(num_faults={}, error_weight={}, faults={})",
+            self.num_faults,
+            self.error_weight,
+            self.faults.len()
+        )
+    }
+}
+
+/// Result of checking the propagated-fault condition through fault weight ``t``.
+#[pyclass(
+    name = "FlagFaultToleranceReport",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFlagFaultToleranceReport {
+    fault_condition_satisfied: bool,
+    t: usize,
+    violations: Vec<PyFlagViolation>,
+    total_configurations_tested: usize,
+}
+
+impl From<RustFlagFaultToleranceReport> for PyFlagFaultToleranceReport {
+    fn from(report: RustFlagFaultToleranceReport) -> Self {
+        Self {
+            fault_condition_satisfied: report.fault_condition_satisfied,
+            t: report.t,
+            violations: report
+                .violations
+                .into_iter()
+                .map(PyFlagViolation::from)
+                .collect(),
+            total_configurations_tested: report.total_configurations_tested,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFlagFaultToleranceReport {
+    #[getter]
+    fn fault_condition_satisfied(&self) -> bool {
+        self.fault_condition_satisfied
+    }
+
+    #[getter]
+    fn t(&self) -> usize {
+        self.t
+    }
+
+    #[getter]
+    fn violations(&self) -> Vec<PyFlagViolation> {
+        self.violations.clone()
+    }
+
+    #[getter]
+    fn total_configurations_tested(&self) -> usize {
+        self.total_configurations_tested
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FlagFaultToleranceReport(fault_condition_satisfied={}, t={}, violations={}, total_configurations_tested={})",
+            self.fault_condition_satisfied,
+            self.t,
+            self.violations.len(),
+            self.total_configurations_tested
+        )
+    }
+}
+
+/// A minimum circuit fault distance and its first iterator-ordered witness.
+#[pyclass(
+    name = "CircuitDistanceResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyCircuitDistanceResult {
+    distance: usize,
+    witness: Vec<PyCircuitFault>,
+    logical_index: usize,
+}
+
+impl From<RustCircuitDistanceResult> for PyCircuitDistanceResult {
+    fn from(result: RustCircuitDistanceResult) -> Self {
+        Self {
+            distance: result.distance,
+            witness: python_faults(&result.witness),
+            logical_index: result.logical_index,
+        }
+    }
+}
+
+#[pymethods]
+impl PyCircuitDistanceResult {
+    #[getter]
+    fn distance(&self) -> usize {
+        self.distance
+    }
+
+    #[getter]
+    fn witness(&self) -> Vec<PyCircuitFault> {
+        self.witness.clone()
+    }
+
+    #[getter]
+    fn logical_index(&self) -> usize {
+        self.logical_index
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CircuitDistanceResult(distance={}, logical_index={}, witness_faults={})",
+            self.distance,
+            self.logical_index,
+            self.witness.len()
+        )
+    }
+}
+
+fn selected_fault_config(x_only: bool, y_only: bool, z_only: bool) -> FaultCheckConfig {
+    let restricted = x_only || y_only || z_only;
+    FaultCheckConfig {
+        include_x: !restricted || x_only,
+        include_y: !restricted || y_only,
+        include_z: !restricted || z_only,
+        ..FaultCheckConfig::default()
+    }
+}
+
+fn logical_slices(logicals: &[(Vec<usize>, Vec<usize>)]) -> Vec<(&[usize], &[usize])> {
+    logicals
+        .iter()
+        .map(|(xs, zs)| (xs.as_slice(), zs.as_slice()))
+        .collect()
+}
+
+/// Fault-tolerance diagnostics and circuit distance searches for a tick circuit.
+///
+/// The analyzer owns a clone of the supplied circuit. Rust's ``PauliPropChecker`` and
+/// ``FaultChecker`` intentionally borrow a circuit, so each method constructs a fresh checker;
+/// checker construction only extracts circuit locations and is cheap at these analysis scales.
+#[pyclass(name = "CircuitFaultAnalyzer", module = "pecos_rslib.qec")]
+pub struct PyCircuitFaultAnalyzer {
+    circuit: pecos_quantum::TickCircuit,
+}
+
+#[pymethods]
+impl PyCircuitFaultAnalyzer {
+    #[new]
+    fn new(circuit: &PyTickCircuit) -> Self {
+        Self {
+            circuit: circuit.inner.clone(),
+        }
+    }
+
+    /// Diagnose single-location faults that amplify across the data block.
+    ///
+    /// With no Pauli-selection keyword, X, Y, and Z faults are all included. Setting any of
+    /// ``x_only``, ``y_only``, or ``z_only`` restricts enumeration to the selected union.
+    #[pyo3(signature = (data_qubits, z_ancillas, x_ancillas, logicals, min_data_weight, *, x_only=false, y_only=false, z_only=false))]
+    fn hook_errors(
+        &self,
+        data_qubits: Vec<usize>,
+        z_ancillas: Vec<usize>,
+        x_ancillas: Vec<usize>,
+        logicals: Vec<(Vec<usize>, Vec<usize>)>,
+        min_data_weight: usize,
+        x_only: bool,
+        y_only: bool,
+        z_only: bool,
+    ) -> PyHookErrorReport {
+        // Checkers borrow TickCircuit by design. The Python owner retains a clone and checker
+        // construction (location extraction) is cheap enough to repeat for each method call.
+        let checker = PauliPropChecker::new(&self.circuit)
+            .with_config(selected_fault_config(x_only, y_only, z_only));
+        let logicals = logical_slices(&logicals);
+        checker
+            .diagnose_hook_errors(
+                &data_qubits,
+                &z_ancillas,
+                &x_ancillas,
+                &logicals,
+                min_data_weight,
+            )
+            .into()
+    }
+
+    /// Verify the propagated-fault part of the Chao-Reichardt t-flag condition.
+    #[pyo3(signature = (data_qubits, flag_qubits, measured_stabilizer, t, *, x_only=false, y_only=false, z_only=false))]
+    fn flag_fault_condition(
+        &self,
+        data_qubits: Vec<usize>,
+        flag_qubits: Vec<usize>,
+        measured_stabilizer: (Vec<usize>, Vec<usize>),
+        t: usize,
+        x_only: bool,
+        y_only: bool,
+        z_only: bool,
+    ) -> PyFlagFaultToleranceReport {
+        let checker = PauliPropChecker::new(&self.circuit)
+            .with_config(selected_fault_config(x_only, y_only, z_only));
+        checker
+            .verify_flag_fault_tolerance(
+                &data_qubits,
+                &flag_qubits,
+                (&measured_stabilizer.0, &measured_stabilizer.1),
+                t,
+            )
+            .into()
+    }
+
+    /// Find the minimum undetectable logical fault weight through ``max_weight``.
+    #[pyo3(signature = (z_ancillas, x_ancillas, logicals, max_weight, *, x_only=false, y_only=false, z_only=false))]
+    fn fault_distance(
+        &self,
+        z_ancillas: Vec<usize>,
+        x_ancillas: Vec<usize>,
+        logicals: Vec<(Vec<usize>, Vec<usize>)>,
+        max_weight: usize,
+        x_only: bool,
+        y_only: bool,
+        z_only: bool,
+    ) -> Option<PyCircuitDistanceResult> {
+        let checker = FaultChecker::new(&self.circuit)
+            .with_config(selected_fault_config(x_only, y_only, z_only));
+        let logicals = logical_slices(&logicals);
+        checker
+            .circuit_fault_distance(&z_ancillas, &x_ancillas, &logicals, max_weight)
+            .map(PyCircuitDistanceResult::from)
+    }
+
+    /// Find one fault distance result for each supplied logical operator.
+    #[pyo3(signature = (z_ancillas, x_ancillas, logicals, max_weight, *, x_only=false, y_only=false, z_only=false))]
+    fn per_logical_fault_distances(
+        &self,
+        z_ancillas: Vec<usize>,
+        x_ancillas: Vec<usize>,
+        logicals: Vec<(Vec<usize>, Vec<usize>)>,
+        max_weight: usize,
+        x_only: bool,
+        y_only: bool,
+        z_only: bool,
+    ) -> Vec<Option<PyCircuitDistanceResult>> {
+        let checker = FaultChecker::new(&self.circuit)
+            .with_config(selected_fault_config(x_only, y_only, z_only));
+        let logicals = logical_slices(&logicals);
+        checker
+            .per_logical_circuit_fault_distances(&z_ancillas, &x_ancillas, &logicals, max_weight)
+            .into_iter()
+            .map(|result| result.map(PyCircuitDistanceResult::from))
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CircuitFaultAnalyzer(ticks={}, gates={})",
+            self.circuit.num_ticks(),
+            self.circuit.gate_count()
+        )
+    }
+}
+
+/// A natively checked SAT witness and the solver-trusted UNSAT prefix below it.
+#[pyclass(
+    name = "CertifiedDistance",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyCertifiedDistance {
+    distance: usize,
+    witness: Vec<bool>,
+    sat_certified: bool,
+    unsat_trusted_below: usize,
+}
+
+impl From<RustCertifiedDistance> for PyCertifiedDistance {
+    fn from(result: RustCertifiedDistance) -> Self {
+        Self {
+            distance: result.distance,
+            witness: result.witness,
+            sat_certified: result.sat_certified,
+            unsat_trusted_below: result.unsat_trusted_below,
+        }
+    }
+}
+
+#[pymethods]
+impl PyCertifiedDistance {
+    #[getter]
+    fn distance(&self) -> usize {
+        self.distance
+    }
+
+    #[getter]
+    fn witness(&self) -> Vec<bool> {
+        self.witness.clone()
+    }
+
+    #[getter]
+    fn sat_certified(&self) -> bool {
+        self.sat_certified
+    }
+
+    #[getter]
+    fn unsat_trusted_below(&self) -> usize {
+        self.unsat_trusted_below
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CertifiedDistance(distance={}, witness_weight={}, sat_certified={}, unsat_trusted_below={})",
+            self.distance,
+            self.witness.iter().filter(|&&selected| selected).count(),
+            self.sat_certified,
+            self.unsat_trusted_below
+        )
+    }
+}
+
+fn certify_python_problem(
+    problem: &RustDistanceProblem,
+    max_weight: usize,
+) -> PyResult<Option<PyCertifiedDistance>> {
+    rust_certified_distance(problem, max_weight)
+        .map(|result| result.map(PyCertifiedDistance::from))
+        .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
+}
+
+/// A binary problem whose solutions are undetectable with nonzero logical effect.
+#[pyclass(
+    name = "DistanceProblem",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyDistanceProblem {
+    inner: RustDistanceProblem,
+}
+
+#[pymethods]
+impl PyDistanceProblem {
+    #[classmethod]
+    fn from_css_checks(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        hx: &PyParityCheckMatrix,
+        lx: &PyParityCheckMatrix,
+    ) -> PyResult<Self> {
+        RustDistanceProblem::from_css_checks(&hx.inner, &lx.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    #[classmethod]
+    fn from_css_code_x_distance(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        spec: &PyStabilizerCodeSpec,
+    ) -> PyResult<Self> {
+        RustDistanceProblem::from_css_code_x_distance(&spec.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    #[classmethod]
+    fn from_css_code_z_distance(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        spec: &PyStabilizerCodeSpec,
+    ) -> PyResult<Self> {
+        RustDistanceProblem::from_css_code_z_distance(&spec.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    #[classmethod]
+    fn from_dem(_cls: &Bound<'_, pyo3::types::PyType>, dem: &PyDetectorErrorModel) -> Self {
+        Self {
+            inner: RustDistanceProblem::from_dem(&dem.inner),
+        }
+    }
+
+    #[getter]
+    fn num_vars(&self) -> usize {
+        self.inner.num_vars()
+    }
+
+    fn to_dimacs(&self, max_weight: usize) -> String {
+        self.inner.to_dimacs(max_weight)
+    }
+
+    fn to_wcnf(&self) -> String {
+        self.inner.to_wcnf()
+    }
+
+    fn verify_witness(&self, witness: Vec<bool>) -> PyResult<usize> {
+        self.inner
+            .verify_witness(&witness)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Certifies distance through ``max_weight`` using the in-process batsat SAT solver.
+    ///
+    /// A fresh deterministic solver instance is built for each weight from the internal clause
+    /// encoding. SAT answers are certified natively with ``DistanceProblem.verify_witness`` before
+    /// they are accepted. UNSAT answers, and therefore the exactness of a returned distance, rest
+    /// on trusting the solver. ``None`` means batsat reported every weight through ``max_weight``
+    /// UNSAT.
+    fn certified_distance(&self, max_weight: usize) -> PyResult<Option<PyCertifiedDistance>> {
+        certify_python_problem(&self.inner, max_weight)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("DistanceProblem(num_vars={})", self.inner.num_vars())
+    }
+}
+
+/// Certifies distance through ``max_weight`` using the in-process batsat SAT solver.
+///
+/// A fresh deterministic solver instance is built for each weight from the internal clause
+/// encoding. SAT answers are certified natively with ``DistanceProblem.verify_witness`` before
+/// they are accepted. UNSAT answers, and therefore the exactness of a returned distance, rest
+/// on trusting the solver. ``None`` means batsat reported every weight through ``max_weight``
+/// UNSAT.
+#[pyfunction]
+fn certified_distance(
+    problem: &PyDistanceProblem,
+    max_weight: usize,
+) -> PyResult<Option<PyCertifiedDistance>> {
+    certify_python_problem(&problem.inner, max_weight)
+}
+
+// =============================================================================
 // Module Registration
 // =============================================================================
 
@@ -7006,6 +7697,15 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDemSamplerBuilder>()?;
     qec.add_class::<PyEquivalenceResult>()?;
     qec.add_class::<PyParsedDem>()?;
+    qec.add_class::<PyCircuitFaultLocation>()?;
+    qec.add_class::<PyHookError>()?;
+    qec.add_class::<PyHookErrorReport>()?;
+    qec.add_class::<PyFlagViolation>()?;
+    qec.add_class::<PyFlagFaultToleranceReport>()?;
+    qec.add_class::<PyCircuitDistanceResult>()?;
+    qec.add_class::<PyCircuitFaultAnalyzer>()?;
+    qec.add_class::<PyCertifiedDistance>()?;
+    qec.add_class::<PyDistanceProblem>()?;
 
     // Add DEM equivalence functions
     qec.add_function(wrap_pyfunction!(compare_dems_exact, &qec)?)?;
@@ -7023,6 +7723,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(fit_dem_to_marginals, &qec)?)?;
     qec.add_function(wrap_pyfunction!(mechanisms_to_dem_string, &qec)?)?;
     qec.add_function(wrap_pyfunction!(decoder_dem_requirement, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(certified_distance, &qec)?)?;
 
     // Add Pauli constants
     qec.add("PAULI_I", 0u8)?;

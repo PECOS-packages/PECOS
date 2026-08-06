@@ -1,0 +1,191 @@
+# Copyright 2026 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the
+# License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+# either express or implied. See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Discriminating Python cases for circuit fault tooling and distance certification."""
+
+import pytest
+from pecos.qec import (
+    CircuitFaultAnalyzer,
+    DetectorErrorModel,
+    DistanceProblem,
+    HookError,
+)
+from pecos.quantum import ParityCheckMatrix, StabilizerCode, StabilizerCodeSpec, TickCircuit
+
+
+def _hook_ladder() -> TickCircuit:
+    circuit = TickCircuit()
+    circuit.tick().pz([3])
+    circuit.tick().cx([(3, 0)])
+    circuit.tick().cx([(3, 1)])
+    circuit.tick().cx([(3, 2)])
+    circuit.tick().mz([3])
+    return circuit
+
+
+def _weight_four_x_measurement(*, with_flag: bool) -> TickCircuit:
+    circuit = TickCircuit()
+    circuit.tick().pz([4])
+    circuit.tick().h([4])
+    if with_flag:
+        circuit.tick().pz([5])
+    circuit.tick().cx([(4, 0)])
+    if with_flag:
+        circuit.tick().cx([(4, 5)])
+    circuit.tick().cx([(4, 1)])
+    circuit.tick().cx([(4, 2)])
+    if with_flag:
+        circuit.tick().cx([(4, 5)])
+    circuit.tick().cx([(4, 3)])
+    circuit.tick().h([4])
+    circuit.tick().mz([4])
+    if with_flag:
+        circuit.tick().mz([5])
+    return circuit
+
+
+def _three_qubit_extraction() -> TickCircuit:
+    circuit = TickCircuit()
+    circuit.tick().pz([3, 4])
+    circuit.tick().cx([(0, 3)])
+    circuit.tick().cx([(1, 3)])
+    circuit.tick().cx([(1, 4)])
+    circuit.tick().cx([(2, 4)])
+    circuit.tick().mz([3, 4])
+    return circuit
+
+
+def _unequal_logical_distance_circuit() -> TickCircuit:
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().pz([1])
+    circuit.tick().h([0, 1])
+    circuit.tick().cx([(1, 0)])
+    circuit.tick().pz([2])
+    circuit.tick().h([2])
+    return circuit
+
+
+def _steane_problem() -> DistanceProblem:
+    hamming = ParityCheckMatrix(
+        [
+            [1, 0, 1, 0, 1, 0, 1],
+            [0, 1, 1, 0, 0, 1, 1],
+            [0, 0, 0, 1, 1, 1, 1],
+        ],
+    )
+    logical = ParityCheckMatrix([[1, 1, 1, 1, 1, 1, 1]])
+    return DistanceProblem.from_css_checks(hamming, logical)
+
+
+def _triad_dem() -> DetectorErrorModel:
+    circuit = TickCircuit()
+    circuit.tick().mz([0, 1, 2])
+    circuit.add_detector(records=[-3, -2])
+    circuit.add_detector(records=[-3, -1])
+    circuit.add_observable(records=[-3])
+    return DetectorErrorModel.from_circuit(
+        circuit,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.01,
+        p_prep=0.0,
+    )
+
+
+def test_hook_ladder_reports_only_single_qubit_amplifying_faults() -> None:
+    report = CircuitFaultAnalyzer(_hook_ladder()).hook_errors([0, 1, 2], [3], [], [], 2)
+
+    hook = next(error for error in report.hook_errors if error.location.tick == 1 and error.fault_paulis == [1, 0])
+    assert isinstance(hook, HookError)
+    assert hook.location.gate_type == "CX"
+    assert hook.location.gate_index == 0
+    assert hook.location.qubits == [3, 0]
+    assert "tick=1" in repr(hook)
+    assert 'gate_type="CX"' in repr(hook)
+    assert not any(error.location.tick == 3 and error.fault_paulis == [1, 0] for error in report.hook_errors)
+    assert not any(error.location.tick == 2 and error.fault_paulis == [1, 1] for error in report.hook_errors)
+
+
+def test_flagged_pair_satisfies_condition_and_unflagged_pair_exposes_hook() -> None:
+    flagged = CircuitFaultAnalyzer(_weight_four_x_measurement(with_flag=True))
+    flagged_report = flagged.flag_fault_condition([0, 1, 2, 3], [5], ([0, 1, 2, 3], []), 1)
+    assert flagged_report.fault_condition_satisfied
+    assert flagged_report.violations == []
+
+    unflagged = CircuitFaultAnalyzer(_weight_four_x_measurement(with_flag=False))
+    unflagged_report = unflagged.flag_fault_condition([0, 1, 2, 3], [], ([0, 1, 2, 3], []), 1)
+    assert not unflagged_report.fault_condition_satisfied
+    assert any(violation.num_faults == 1 and violation.error_weight == 2 for violation in unflagged_report.violations)
+
+
+def test_circuit_distance_and_per_logical_distances() -> None:
+    extraction_result = CircuitFaultAnalyzer(_three_qubit_extraction()).fault_distance([3, 4], [], [([], [0, 1, 2])], 1)
+    assert extraction_result is not None
+    assert extraction_result.distance == 1
+
+    analyzer = CircuitFaultAnalyzer(_unequal_logical_distance_circuit())
+    logicals = [([2], []), ([0], [])]
+    per_logical = analyzer.per_logical_fault_distances([], [1], logicals, 2, x_only=True)
+    assert [result.distance if result is not None else None for result in per_logical] == [1, 2]
+
+    overall = analyzer.fault_distance([], [1], logicals, 2, x_only=True)
+    assert overall is not None
+    assert overall.distance == min(result.distance for result in per_logical if result is not None)
+
+
+def test_steane_certification_from_checks_and_code_spec() -> None:
+    from_checks = _steane_problem()
+    spec = StabilizerCodeSpec.from_stabilizer_code(StabilizerCode.steane())
+    from_spec = DistanceProblem.from_css_code_x_distance(spec)
+
+    for problem in (from_checks, from_spec):
+        certified = problem.certified_distance(3)
+        assert certified is not None
+        assert certified.distance == 3
+        assert certified.sat_certified
+        assert certified.unsat_trusted_below == 3
+        assert problem.verify_witness(certified.witness) == 3
+
+    assert from_checks.certified_distance(2) is None
+
+    certified = from_checks.certified_distance(3)
+    assert certified is not None
+    corrupted = certified.witness.copy()
+    corrupted[0] = not corrupted[0]
+    with pytest.raises(ValueError, match="witness violates H row 0"):
+        from_checks.verify_witness(corrupted)
+
+
+def test_triad_dem_certification_agrees_with_exhaustive_distance() -> None:
+    dem = _triad_dem()
+    problem = DistanceProblem.from_dem(dem)
+    certified = problem.certified_distance(3)
+    exhaustive = dem.exhaustive_fault_distance(3)
+
+    assert certified is not None
+    assert exhaustive is not None
+    assert certified.distance == exhaustive.distance == 3
+    assert problem.verify_witness(certified.witness) == 3
+    assert problem.certified_distance(2) is None
+
+
+def test_distance_problem_text_formats_have_expected_headers_and_soft_clauses() -> None:
+    problem = _steane_problem()
+    dimacs = problem.to_dimacs(3)
+    dimacs_header = next(line for line in dimacs.splitlines() if not line.startswith("c "))
+    assert dimacs_header.startswith("p cnf ")
+
+    wcnf = problem.to_wcnf()
+    wcnf_header = next(line for line in wcnf.splitlines() if not line.startswith("c "))
+    assert wcnf_header.startswith("p wcnf ")
+    assert sum(line.startswith("1 -") for line in wcnf.splitlines()) == problem.num_vars

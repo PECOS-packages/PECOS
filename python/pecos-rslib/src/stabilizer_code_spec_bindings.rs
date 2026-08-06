@@ -226,7 +226,7 @@ impl PyStabilizerCodeSpecBuilder {
 #[pyclass(name = "StabilizerCodeSpec", module = "pecos_rslib", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyStabilizerCodeSpec {
-    inner: RustCodeSpec,
+    pub(crate) inner: RustCodeSpec,
 }
 
 #[pymethods]

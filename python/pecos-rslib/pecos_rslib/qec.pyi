@@ -12,7 +12,11 @@
 
 """Typed surface for the dynamically registered ``pecos_rslib.qec`` module."""
 
+from __future__ import annotations
+
 from typing import Any
+
+from pecos_rslib import ParityCheckMatrix, StabilizerCodeSpec, TickCircuit
 
 class FaultDistanceResult:
     """A fault distance and one witnessing set of DEM mechanism indices."""
@@ -29,6 +33,173 @@ class DetectorErrorModel:
     def graphlike_fault_distance(self) -> FaultDistanceResult | None: ...
     def exhaustive_fault_distance(self, max_weight: int) -> FaultDistanceResult | None: ...
     def __getattr__(self, name: str) -> Any: ...
+
+class CircuitFaultLocation:
+    """A Pauli-fault location in a tick circuit."""
+
+    @property
+    def tick(self) -> int: ...
+    @property
+    def gate_type(self) -> str: ...
+    @property
+    def qubits(self) -> list[int]: ...
+    @property
+    def gate_index(self) -> int: ...
+    @property
+    def before(self) -> bool: ...
+    def __repr__(self) -> str: ...
+
+class HookError:
+    """A single-location fault that amplifies across the data block."""
+
+    @property
+    def location(self) -> CircuitFaultLocation: ...
+    @property
+    def fault_paulis(self) -> list[int]: ...
+    @property
+    def data_support(self) -> list[int]: ...
+    @property
+    def data_weight(self) -> int: ...
+    @property
+    def detected(self) -> bool: ...
+    @property
+    def causes_logical_error(self) -> bool: ...
+    def __repr__(self) -> str: ...
+
+class HookErrorReport:
+    """Summary of hook-error diagnosis over a selected Pauli fault set."""
+
+    @property
+    def hook_errors(self) -> list[HookError]: ...
+    @property
+    def total_faults_examined(self) -> int: ...
+    @property
+    def max_data_weight(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+class FlagViolation:
+    """A counterexample to the propagated-fault condition for a flag circuit."""
+
+    @property
+    def faults(self) -> list[tuple[CircuitFaultLocation, list[int]]]: ...
+    @property
+    def num_faults(self) -> int: ...
+    @property
+    def error_weight(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+class FlagFaultToleranceReport:
+    """Result of checking the propagated-fault condition through fault weight ``t``."""
+
+    @property
+    def fault_condition_satisfied(self) -> bool: ...
+    @property
+    def t(self) -> int: ...
+    @property
+    def violations(self) -> list[FlagViolation]: ...
+    @property
+    def total_configurations_tested(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+class CircuitDistanceResult:
+    """A circuit fault distance and its first iterator-ordered witness."""
+
+    @property
+    def distance(self) -> int: ...
+    @property
+    def witness(self) -> list[tuple[CircuitFaultLocation, list[int]]]: ...
+    @property
+    def logical_index(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+class CircuitFaultAnalyzer:
+    """Fault-tolerance diagnostics and distance searches for a tick circuit."""
+
+    def __init__(self, circuit: TickCircuit) -> None: ...
+    def hook_errors(
+        self,
+        data_qubits: list[int],
+        z_ancillas: list[int],
+        x_ancillas: list[int],
+        logicals: list[tuple[list[int], list[int]]],
+        min_data_weight: int,
+        *,
+        x_only: bool = False,
+        y_only: bool = False,
+        z_only: bool = False,
+    ) -> HookErrorReport: ...
+    def flag_fault_condition(
+        self,
+        data_qubits: list[int],
+        flag_qubits: list[int],
+        measured_stabilizer: tuple[list[int], list[int]],
+        t: int,
+        *,
+        x_only: bool = False,
+        y_only: bool = False,
+        z_only: bool = False,
+    ) -> FlagFaultToleranceReport: ...
+    def fault_distance(
+        self,
+        z_ancillas: list[int],
+        x_ancillas: list[int],
+        logicals: list[tuple[list[int], list[int]]],
+        max_weight: int,
+        *,
+        x_only: bool = False,
+        y_only: bool = False,
+        z_only: bool = False,
+    ) -> CircuitDistanceResult | None: ...
+    def per_logical_fault_distances(
+        self,
+        z_ancillas: list[int],
+        x_ancillas: list[int],
+        logicals: list[tuple[list[int], list[int]]],
+        max_weight: int,
+        *,
+        x_only: bool = False,
+        y_only: bool = False,
+        z_only: bool = False,
+    ) -> list[CircuitDistanceResult | None]: ...
+    def __repr__(self) -> str: ...
+
+class CertifiedDistance:
+    """A natively checked SAT witness and solver-trusted UNSAT prefix."""
+
+    @property
+    def distance(self) -> int: ...
+    @property
+    def witness(self) -> list[bool]: ...
+    @property
+    def sat_certified(self) -> bool: ...
+    @property
+    def unsat_trusted_below(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+class DistanceProblem:
+    """A binary undetectable-error problem with nonzero logical effect."""
+
+    @classmethod
+    def from_css_checks(
+        cls, hx: ParityCheckMatrix, lx: ParityCheckMatrix
+    ) -> DistanceProblem: ...
+    @classmethod
+    def from_css_code_x_distance(cls, spec: StabilizerCodeSpec) -> DistanceProblem: ...
+    @classmethod
+    def from_css_code_z_distance(cls, spec: StabilizerCodeSpec) -> DistanceProblem: ...
+    @classmethod
+    def from_dem(cls, dem: DetectorErrorModel) -> DistanceProblem: ...
+    @property
+    def num_vars(self) -> int: ...
+    def to_dimacs(self, max_weight: int) -> str: ...
+    def to_wcnf(self) -> str: ...
+    def verify_witness(self, witness: list[bool]) -> int: ...
+    def certified_distance(self, max_weight: int) -> CertifiedDistance | None: ...
+    def __repr__(self) -> str: ...
+
+def certified_distance(
+    problem: DistanceProblem, max_weight: int
+) -> CertifiedDistance | None: ...
 
 # The native QEC module predates this focused stub. Preserve the untyped behavior of its other
 # classes and functions until that complete API is migrated rather than falsely narrowing them.

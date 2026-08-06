@@ -12,7 +12,7 @@ operators.
 - Discovering logical operators and calculating code distance
 - Searching a range of low-weight logical operators
 - Importing CSS and symplectic check matrices
-- Choosing between the two exact distance methods
+- Choosing among direct, DEM, and SAT-certified distance methods
 
 ```hidden-python
 import re
@@ -354,12 +354,15 @@ As with CSS ingestion, width mismatches and anticommuting rows raise
 
 ## Choosing a Distance Method
 
-Two exact distance calculations serve different regimes:
+Distance calculations serve different objects and regimes:
 
 | Method | Search strategy | Best use |
 |--------|-----------------|----------|
 | `StabilizerCode.distance()` | Enumerates stabilizer/logical cosets | Tiny codes with small generator counts |
 | `StabilizerCodeSpec.distance()` | Enumerates Paulis by increasing weight | Codes whose distance is small relative to their length |
+| [`DistanceProblem.certified_distance()`](fault-tolerance-analysis.md#certified-exact-distance) | SAT search with a natively checked witness | Exact CSS-code or DEM distance with an auditable SAT witness |
+| [`DetectorErrorModel.graphlike_fault_distance()`](fault-tolerance-analysis.md#detector-error-model-fault-distance) | Shortest path through graphlike mechanisms | Fast DEM distance when every mechanism touches at most two detectors |
+| [`DetectorErrorModel.exhaustive_fault_distance()`](fault-tolerance-analysis.md#detector-error-model-fault-distance) | Enumerates mechanism combinations by weight | Small DEMs with hyperedges or a tight search bound |
 
 The coset method is a useful oracle for tiny built-in codes. The spec method
 supports `max_weight` as a search budget and `verbose=True` to print

@@ -75,8 +75,10 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 
 mod decoder_comparison;
+mod sample_corpus;
 
 use decoder_comparison::{PyDecoderComparisonResult, compare_decoder_outcomes};
+use sample_corpus::{CorpusError, CorpusToSave, LoadedCorpus};
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
@@ -3372,6 +3374,10 @@ pub struct PySampleBatch {
     obs_columns: Vec<Vec<u64>>,
     num_detectors: usize,
     num_shots: usize,
+    seed: Option<u64>,
+    dem: Option<String>,
+    metadata_json: Option<String>,
+    format_version: Option<u32>,
 }
 
 impl PySampleBatch {
@@ -3444,6 +3450,7 @@ impl PySampleBatch {
         det_columns: Vec<Vec<u64>>,
         obs_columns: Vec<Vec<u64>>,
         num_shots: usize,
+        seed: Option<u64>,
     ) -> Self {
         let num_detectors = det_columns.len();
         Self {
@@ -3451,6 +3458,10 @@ impl PySampleBatch {
             obs_columns,
             num_detectors,
             num_shots,
+            seed,
+            dem: None,
+            metadata_json: None,
+            format_version: None,
         }
     }
 
@@ -3497,6 +3508,30 @@ impl PySampleBatch {
             obs_columns,
             num_detectors,
             num_shots,
+            seed: None,
+            dem: None,
+            metadata_json: None,
+            format_version: None,
+        }
+    }
+
+    fn from_corpus(corpus: LoadedCorpus) -> Self {
+        Self {
+            num_detectors: corpus.det_columns.len(),
+            det_columns: corpus.det_columns,
+            obs_columns: corpus.obs_columns,
+            num_shots: corpus.num_shots,
+            seed: corpus.seed,
+            dem: Some(corpus.dem),
+            metadata_json: corpus.metadata_json,
+            format_version: Some(corpus.format_version),
+        }
+    }
+
+    fn map_corpus_error(error: CorpusError) -> PyErr {
+        match error {
+            CorpusError::Io(error) => pyo3::exceptions::PyIOError::new_err(error.to_string()),
+            CorpusError::Invalid(message) => pyo3::exceptions::PyValueError::new_err(message),
         }
     }
 }
@@ -3544,6 +3579,72 @@ impl PySampleBatch {
     #[getter]
     fn num_shots(&self) -> usize {
         self.num_shots
+    }
+
+    /// Resolved random seed used to generate this batch, if known.
+    #[getter]
+    const fn seed(&self) -> Option<u64> {
+        self.seed
+    }
+
+    /// Exact detector error model stored with a loaded corpus, if any.
+    #[getter]
+    fn dem(&self) -> Option<&str> {
+        self.dem.as_deref()
+    }
+
+    /// Opaque caller metadata JSON stored with a loaded corpus, if any.
+    #[getter]
+    fn metadata_json(&self) -> Option<&str> {
+        self.metadata_json.as_deref()
+    }
+
+    /// Corpus format version for a loaded batch, if any.
+    #[getter]
+    const fn format_version(&self) -> Option<u32> {
+        self.format_version
+    }
+
+    /// Save this serially captured shot batch as a self-describing corpus.
+    ///
+    /// Args:
+    ///     path: Destination file path.
+    ///     dem: Required exact DEM text used to produce the samples. Its detector
+    ///         and observable dimensions must match this batch.
+    ///     `metadata_json`: Optional syntactically valid JSON string. It is stored
+    ///         opaquely and may record decoder identities, configurations, and
+    ///         decoder-side seeds; those run specifications are not corpus fields.
+    ///
+    /// Corpora contain shots captured by the serial ``generate_samples`` path.
+    /// Parallel sample-and-decode paths discard individual shots and cannot be
+    /// captured by this API.
+    #[pyo3(signature = (path, *, dem, metadata_json=None))]
+    fn save(
+        &self,
+        path: std::path::PathBuf,
+        dem: &str,
+        metadata_json: Option<&str>,
+    ) -> PyResult<()> {
+        sample_corpus::save(
+            &path,
+            CorpusToSave {
+                det_columns: &self.det_columns,
+                obs_columns: &self.obs_columns,
+                num_shots: self.num_shots,
+                seed: self.seed,
+                dem,
+                metadata_json,
+            },
+        )
+        .map_err(Self::map_corpus_error)
+    }
+
+    /// Load and validate a self-describing shot corpus.
+    #[staticmethod]
+    fn load(path: std::path::PathBuf) -> PyResult<Self> {
+        sample_corpus::load(&path)
+            .map(Self::from_corpus)
+            .map_err(Self::map_corpus_error)
     }
 
     /// Get the syndrome for shot `i` as a list of u8 values.
@@ -4534,15 +4635,13 @@ impl PyDemSampler {
         use pecos_random::PecosRng;
         use rand::RngExt;
 
-        let mut rng = match seed {
-            Some(s) => PecosRng::seed_from_u64(s),
-            None => PecosRng::seed_from_u64(rand::rng().random()),
-        };
+        let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
+        let mut rng = PecosRng::seed_from_u64(actual_seed);
 
         // Use geometric columnar sampler via DemSampler.
         let (det_columns, obs_columns) = self.inner.sample_batch_geometric(num_shots, &mut rng);
 
-        PySampleBatch::from_columnar(det_columns, obs_columns, num_shots)
+        PySampleBatch::from_columnar(det_columns, obs_columns, num_shots, Some(actual_seed))
     }
 
     /// Compute statistics without storing individual shots.

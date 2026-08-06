@@ -2097,7 +2097,7 @@ class decoders:
         ) -> decoders.PyMatchingDecoder: ...
         @staticmethod
         def from_check_matrix(check_matrix: decoders.CheckMatrix) -> decoders.PyMatchingDecoder: ...
-        def decode(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.MwpmResult: ...
         def decode_batch(
             self,
             detection_events: list[list[int]],
@@ -2113,7 +2113,14 @@ class decoders:
             check_matrix: decoders.CheckMatrix,
             weights: list[float] | None = ...,
         ) -> None: ...
-        def decode(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        @staticmethod
+        def from_dem(dem: str, correlated: bool = ...) -> decoders.FusionBlossomDecoder: ...
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        def decode_from_defects(
+            self,
+            defects: list[int],
+            erasures: list[int] | None = ...,
+        ) -> decoders.MwpmResult: ...
         def __repr__(self) -> str: ...
 
     class BpOsdBuilder:
@@ -2129,7 +2136,7 @@ class decoders:
             >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
             >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
             >>> decoder = BpOsdBuilder(H, error_rate=0.01).osd_method("osd_cs").osd_order(7).build()
-            >>> result = decoder.decode([0, 0, 0])
+            >>> result = decoder.decode_syndrome([0, 0, 0])
         """
 
         def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
@@ -2165,7 +2172,13 @@ class decoders:
         Created via ``BpOsdBuilder(...).build()``.
         """
 
-        def decode(self, syndrome: list[int]) -> decoders.BpResult: ...
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int = ...,
+        ) -> decoders.DemAwareDecoder: ...
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.BpResult: ...
         def __repr__(self) -> str: ...
 
     class BpLsdBuilder:
@@ -2213,6 +2226,12 @@ class decoders:
         Created via ``BpLsdBuilder(...).build()``.
         """
 
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int = ...,
+        ) -> decoders.DemAwareDecoder: ...
         def decode(self, syndrome: list[int]) -> decoders.BpResult: ...
         def __repr__(self) -> str: ...
 
@@ -2228,7 +2247,7 @@ class decoders:
             >>> from pecos_rslib.decoders import UnionFindBuilder, SparseMatrix
             >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
             >>> decoder = UnionFindBuilder(H).method("peeling").build()
-            >>> result = decoder.decode([0, 0, 0])
+            >>> result = decoder.decode_syndrome([0, 0, 0])
         """
 
         def __init__(self, pcm: decoders.SparseMatrix) -> None: ...
@@ -2248,7 +2267,13 @@ class decoders:
         Created via ``UnionFindBuilder(...).build()``.
         """
 
-        def decode(
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int = ...,
+        ) -> decoders.DemAwareDecoder: ...
+        def decode_syndrome(
             self,
             syndrome: list[int],
             llrs: list[float] | None = ...,
@@ -2279,7 +2304,7 @@ class decoders:
             beam_climbing: bool | None = ...,
             verbose: bool = ...,
         ) -> decoders.TesseractDecoder: ...
-        def decode(self, detections: list[int]) -> decoders.TesseractResult: ...
+        def decode_from_defects(self, detections: list[int]) -> decoders.TesseractResult: ...
         def decode_syndrome(self, syndrome: list[int]) -> decoders.TesseractResult: ...
         def decode_batch(
             self,
@@ -2377,6 +2402,12 @@ class decoders:
         Created via ``RelayBpBuilder(...).build()``.
         """
 
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int = ...,
+        ) -> decoders.DemAwareDecoder: ...
         def decode(self, syndrome: list[int]) -> decoders.BpResult:
             """Decode a syndrome vector.
 
@@ -2445,6 +2476,12 @@ class decoders:
         Created via ``MinSumBpBuilder(...).build()``.
         """
 
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int = ...,
+        ) -> decoders.DemAwareDecoder: ...
         def decode(self, syndrome: list[int]) -> decoders.BpResult:
             """Decode a syndrome vector.
 

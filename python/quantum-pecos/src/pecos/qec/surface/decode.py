@@ -3017,7 +3017,7 @@ class SurfaceDecoder:
             if self.decoder_type == DecoderType.TESSERACT:
                 # Tesseract takes sparse detection indices
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
-                result = decoder.decode(detection_indices)
+                result = decoder.decode_from_defects(detection_indices)
                 # Tesseract returns observables_mask, not per-qubit correction
                 # We return a dummy correction and encode logical flip in first element
                 num_data = self._get_z_check_matrix().shape[1]
@@ -3026,7 +3026,7 @@ class SurfaceDecoder:
                     correction[0] = 1  # Mark that logical was predicted flipped
                 weight = result.cost
             else:
-                result = decoder.decode(events_flat.tolist())
+                result = decoder.decode_syndrome(events_flat.tolist())
 
                 # For FusionBlossom, need to clear state for next decode
                 if self.decoder_type == DecoderType.FUSION_BLOSSOM:
@@ -3044,7 +3044,10 @@ class SurfaceDecoder:
                 else:
                     raw_syndrome = detection_events.ravel()
 
-            result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+            if self.decoder_type == DecoderType.BP_LSD:
+                result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+            else:
+                result = decoder.decode_syndrome(raw_syndrome.astype(np.uint8).tolist())
             correction = np.array(result.decoding, dtype=np.uint8)
             weight = 0.0 if result.converged else 1.0  # LDPC doesn't have weight
 
@@ -3076,7 +3079,7 @@ class SurfaceDecoder:
             if self.decoder_type == DecoderType.TESSERACT:
                 # Tesseract takes sparse detection indices
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
-                result = decoder.decode(detection_indices)
+                result = decoder.decode_from_defects(detection_indices)
                 # Tesseract returns observables_mask, not per-qubit correction
                 num_data = self._get_x_check_matrix().shape[1]
                 correction = np.zeros(num_data, dtype=np.uint8)
@@ -3084,7 +3087,7 @@ class SurfaceDecoder:
                     correction[0] = 1  # Mark that logical was predicted flipped
                 weight = result.cost
             else:
-                result = decoder.decode(events_flat.tolist())
+                result = decoder.decode_syndrome(events_flat.tolist())
 
                 # For FusionBlossom, need to clear state for next decode
                 if self.decoder_type == DecoderType.FUSION_BLOSSOM:
@@ -3102,7 +3105,10 @@ class SurfaceDecoder:
                 else:
                     raw_syndrome = detection_events.ravel()
 
-            result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+            if self.decoder_type == DecoderType.BP_LSD:
+                result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+            else:
+                result = decoder.decode_syndrome(raw_syndrome.astype(np.uint8).tolist())
             correction = np.array(result.decoding, dtype=np.uint8)
             weight = 0.0 if result.converged else 1.0  # LDPC doesn't have weight
 
@@ -3287,11 +3293,11 @@ class SurfaceDecoder:
 
             if self.decoder_type == DecoderType.TESSERACT:
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
-                result = decoder.decode(detection_indices)
+                result = decoder.decode_from_defects(detection_indices)
                 predicted_obs = result.observables_mask & 1
                 weight = result.cost
             else:
-                result = decoder.decode(events_flat.tolist())
+                result = decoder.decode_syndrome(events_flat.tolist())
                 predicted_obs = result.correction[0] if len(result.correction) > 0 else 0
                 weight = result.weight
 
@@ -3383,11 +3389,11 @@ class SurfaceDecoder:
 
             if self.decoder_type == DecoderType.TESSERACT:
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
-                result = decoder.decode(detection_indices)
+                result = decoder.decode_from_defects(detection_indices)
                 predicted_obs = result.observables_mask & 1
                 weight = result.cost
             else:
-                result = decoder.decode(events_flat.tolist())
+                result = decoder.decode_syndrome(events_flat.tolist())
                 predicted_obs = result.correction[0] if len(result.correction) > 0 else 0
                 weight = result.weight
 
@@ -4259,8 +4265,7 @@ def demask_pauli_frame_records(
         raise ValueError(msg)
     if obs_arr.ndim != 2:
         msg = (
-            f"raw_obs must be 2-D of shape (num_shots, num_observables); "
-            f"got ndim={obs_arr.ndim}, shape={obs_arr.shape}"
+            f"raw_obs must be 2-D of shape (num_shots, num_observables); got ndim={obs_arr.ndim}, shape={obs_arr.shape}"
         )
         raise ValueError(msg)
     if masks_arr.ndim != 2:

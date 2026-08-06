@@ -40,6 +40,19 @@
 use ndarray::{Array1, Array2};
 use pyo3::prelude::*;
 
+fn explicit_decode_attribute_error(class_name: &str, name: &str) -> PyErr {
+    if name == "decode" {
+        pyo3::exceptions::PyAttributeError::new_err(format!(
+            "{class_name} has no attribute 'decode'; use decode_syndrome(...) for a dense vector \
+             or decode_from_defects(...) for sparse detector indices"
+        ))
+    } else {
+        pyo3::exceptions::PyAttributeError::new_err(format!(
+            "'{class_name}' object has no attribute '{name}'"
+        ))
+    }
+}
+
 // =============================================================================
 // Common Result Types
 // =============================================================================
@@ -56,7 +69,7 @@ use pyo3::prelude::*;
 /// # Example
 ///
 /// ```python
-/// result = decoder.decode(syndrome)
+/// result = decoder.decode_syndrome(syndrome)
 /// if result.weight < threshold:
 ///     apply_correction(result.correction)
 /// ```
@@ -334,7 +347,7 @@ impl PyCheckMatrix {
 ///
 /// ```python
 /// syndrome = [1, 0]  # Detection events
-/// result = decoder.decode(syndrome)
+/// result = decoder.decode_syndrome(syndrome)
 /// print(f"Correction: {result.correction}, Weight: {result.weight}")
 /// ```
 // Note: unsendable because contains FFI pointers (cxx UniquePtr)
@@ -504,7 +517,7 @@ impl PyPyMatchingDecoder {
 
     /// Decode a syndrome to find the most likely error.
     ///
-    /// This mirrors `PyMatching`'s `Matching.decode()`.
+    /// This mirrors `PyMatching`'s `Matching.decode()` with an explicit dense encoding name.
     ///
     /// # Arguments
     ///
@@ -518,10 +531,10 @@ impl PyPyMatchingDecoder {
     ///
     /// ```python
     /// syndrome = [1, 0, 1, 0]
-    /// result = decoder.decode(syndrome)
+    /// result = decoder.decode_syndrome(syndrome)
     /// correction = result.correction  # Observable flips to apply
     /// ```
-    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<PyMwpmResult> {
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyMwpmResult> {
         self.inner
             .decode(&syndrome)
             .map(|result| PyMwpmResult {
@@ -533,7 +546,7 @@ impl PyPyMatchingDecoder {
 
     /// Decode a batch of syndromes at once.
     ///
-    /// Much faster than calling `decode()` in a Python loop -- the entire batch
+    /// Much faster than calling `decode_syndrome()` in a Python loop -- the entire batch
     /// is processed in Rust with no per-shot Python overhead.
     ///
     /// # Arguments
@@ -607,6 +620,10 @@ impl PyPyMatchingDecoder {
             self.inner.num_observables()
         )
     }
+
+    fn __getattr__(&self, name: &str) -> PyResult<()> {
+        Err(explicit_decode_attribute_error("PyMatchingDecoder", name))
+    }
 }
 
 // =============================================================================
@@ -646,7 +663,7 @@ use pecos_decoders::{
 /// # Decoding
 ///
 /// ```python
-/// result = decoder.decode(syndrome)
+/// result = decoder.decode_syndrome(syndrome)
 /// decoder.clear()  # Reset for next shot (efficient reuse)
 /// ```
 #[pyclass(name = "FusionBlossomDecoder", module = "pecos_rslib.decoders")]
@@ -865,7 +882,7 @@ impl PyFusionBlossomDecoder {
     /// # Returns
     ///
     /// `MwpmResult` with correction and weight.
-    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<PyMwpmResult> {
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyMwpmResult> {
         let arr = Array1::from_vec(syndrome);
         self.inner
             .decode(&arr.view())
@@ -928,6 +945,13 @@ impl PyFusionBlossomDecoder {
             self.inner.num_nodes(),
             self.inner.num_edges()
         )
+    }
+
+    fn __getattr__(&self, name: &str) -> PyResult<()> {
+        Err(explicit_decode_attribute_error(
+            "FusionBlossomDecoder",
+            name,
+        ))
     }
 }
 
@@ -1077,7 +1101,7 @@ fn parse_osd_method(s: &str) -> PyResult<RustOsdMethod> {
 ///
 /// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 /// decoder = BpOsdBuilder(H, error_rate=0.1).osd_method("osd_cs").osd_order(7).build()
-/// result = decoder.decode(syndrome)
+/// result = decoder.decode_syndrome(syndrome)
 /// ```
 #[pyclass(name = "BpOsdBuilder", module = "pecos_rslib.decoders")]
 pub struct PyBpOsdBuilder {
@@ -1185,6 +1209,17 @@ pub struct PyBpOsdDecoder {
 
 #[pymethods]
 impl PyBpOsdDecoder {
+    /// Create a DEM-aware BP+OSD decoder from a Detector Error Model.
+    #[staticmethod]
+    #[pyo3(signature = (dem, error_rate=None, max_iter=100))]
+    fn from_dem(
+        dem: &str,
+        error_rate: Option<f64>,
+        max_iter: usize,
+    ) -> PyResult<PyDemAwareDecoder> {
+        PyDemAwareDecoder::from_dem(dem, "bp_osd", error_rate, max_iter)
+    }
+
     /// Decode a syndrome.
     ///
     /// # Arguments
@@ -1194,7 +1229,7 @@ impl PyBpOsdDecoder {
     /// # Returns
     ///
     /// `BpResult` with decoding, convergence status, and iteration count.
-    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<PyBpResult> {
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyBpResult> {
         let arr = Array1::from_vec(syndrome);
         self.inner
             .decode(&arr.view())
@@ -1209,6 +1244,10 @@ impl PyBpOsdDecoder {
     #[allow(clippy::unused_self)] // Python instance method
     fn __repr__(&self) -> String {
         "BpOsdDecoder(...)".to_string()
+    }
+
+    fn __getattr__(&self, name: &str) -> PyResult<()> {
+        Err(explicit_decode_attribute_error("BpOsdDecoder", name))
     }
 }
 
@@ -1324,6 +1363,17 @@ pub struct PyBpLsdDecoder {
 
 #[pymethods]
 impl PyBpLsdDecoder {
+    /// Create a DEM-aware BP+LSD decoder from a Detector Error Model.
+    #[staticmethod]
+    #[pyo3(signature = (dem, error_rate=None, max_iter=100))]
+    fn from_dem(
+        dem: &str,
+        error_rate: Option<f64>,
+        max_iter: usize,
+    ) -> PyResult<PyDemAwareDecoder> {
+        PyDemAwareDecoder::from_dem(dem, "bp_lsd", error_rate, max_iter)
+    }
+
     /// Decode a syndrome.
     fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<PyBpResult> {
         let arr = Array1::from_vec(syndrome);
@@ -1355,7 +1405,7 @@ impl PyBpLsdDecoder {
 ///
 /// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 /// decoder = UnionFindBuilder(H).method("peeling").build()
-/// result = decoder.decode(syndrome)
+/// result = decoder.decode_syndrome(syndrome)
 /// ```
 #[pyclass(name = "UnionFindBuilder", module = "pecos_rslib.decoders")]
 pub struct PyUnionFindBuilder {
@@ -1420,6 +1470,17 @@ pub struct PyUnionFindDecoder {
 
 #[pymethods]
 impl PyUnionFindDecoder {
+    /// Create a DEM-aware Union-Find decoder from a Detector Error Model.
+    #[staticmethod]
+    #[pyo3(signature = (dem, error_rate=None, max_iter=100))]
+    fn from_dem(
+        dem: &str,
+        error_rate: Option<f64>,
+        max_iter: usize,
+    ) -> PyResult<PyDemAwareDecoder> {
+        PyDemAwareDecoder::from_dem(dem, "union_find", error_rate, max_iter)
+    }
+
     /// Decode a syndrome.
     ///
     /// # Arguments
@@ -1428,7 +1489,7 @@ impl PyUnionFindDecoder {
     /// * `llrs` - Optional log-likelihood ratios for soft information
     /// * `bits_per_step` - Bits to grow per step (0 = all at once)
     #[pyo3(signature = (syndrome, llrs=None, bits_per_step=0))]
-    fn decode(
+    fn decode_syndrome(
         &mut self,
         syndrome: Vec<u8>,
         llrs: Option<Vec<f64>>,
@@ -1450,6 +1511,10 @@ impl PyUnionFindDecoder {
     #[allow(clippy::unused_self)] // Python instance method
     fn __repr__(&self) -> String {
         "UnionFindDecoder(...)".to_string()
+    }
+
+    fn __getattr__(&self, name: &str) -> PyResult<()> {
+        Err(explicit_decode_attribute_error("UnionFindDecoder", name))
     }
 }
 
@@ -1527,7 +1592,7 @@ impl PyTesseractResult {
 /// ```python
 /// # Detection events as list of detector indices that fired
 /// detection_indices = [0, 2]
-/// result = decoder.decode(detection_indices)
+/// result = decoder.decode_from_defects(detection_indices)
 /// print(f"Observable mask: {result.observables_mask}, Cost: {result.cost}")
 /// ```
 #[pyclass(name = "TesseractDecoder", module = "pecos_rslib.decoders", unsendable)]
@@ -1605,10 +1670,10 @@ impl PyTesseractDecoder {
     ///
     /// ```python
     /// # Detectors 0 and 2 fired
-    /// result = decoder.decode([0, 2])
+    /// result = decoder.decode_from_defects([0, 2])
     /// print(f"Observable prediction: {result.observable_bits(1)}")
     /// ```
-    fn decode(&mut self, detections: Vec<u64>) -> PyResult<PyTesseractResult> {
+    fn decode_from_defects(&mut self, detections: Vec<u64>) -> PyResult<PyTesseractResult> {
         let detections_arr = ndarray::Array1::from_vec(detections);
 
         self.inner
@@ -1638,7 +1703,7 @@ impl PyTesseractDecoder {
             .filter_map(|(i, &val)| if val != 0 { Some(i as u64) } else { None })
             .collect();
 
-        self.decode(detections)
+        self.decode_from_defects(detections)
     }
 
     /// Decode a batch of syndromes in parallel using multiple decoder instances.
@@ -1742,6 +1807,10 @@ impl PyTesseractDecoder {
             self.inner.num_errors(),
             self.inner.num_observables()
         )
+    }
+
+    fn __getattr__(&self, name: &str) -> PyResult<()> {
+        Err(explicit_decode_attribute_error("TesseractDecoder", name))
     }
 }
 
@@ -1995,6 +2064,17 @@ pub struct PyRelayBpDecoder {
 
 #[pymethods]
 impl PyRelayBpDecoder {
+    /// Create a DEM-aware Relay BP decoder from a Detector Error Model.
+    #[staticmethod]
+    #[pyo3(signature = (dem, error_rate=None, max_iter=100))]
+    fn from_dem(
+        dem: &str,
+        error_rate: Option<f64>,
+        max_iter: usize,
+    ) -> PyResult<PyDemAwareDecoder> {
+        PyDemAwareDecoder::from_dem(dem, "relay_bp", error_rate, max_iter)
+    }
+
     /// Decode a syndrome.
     ///
     /// # Arguments
@@ -2158,6 +2238,17 @@ pub struct PyMinSumBpDecoder {
 
 #[pymethods]
 impl PyMinSumBpDecoder {
+    /// Create a DEM-aware min-sum BP decoder from a Detector Error Model.
+    #[staticmethod]
+    #[pyo3(signature = (dem, error_rate=None, max_iter=100))]
+    fn from_dem(
+        dem: &str,
+        error_rate: Option<f64>,
+        max_iter: usize,
+    ) -> PyResult<PyDemAwareDecoder> {
+        PyDemAwareDecoder::from_dem(dem, "min_sum_bp", error_rate, max_iter)
+    }
+
     /// Decode a syndrome.
     ///
     /// # Arguments
@@ -2512,6 +2603,10 @@ impl PyDemAwareDecoder {
             self.dem_check_matrix.num_mechanisms,
             self.dem_check_matrix.num_observables,
         )
+    }
+
+    fn __getattr__(&self, name: &str) -> PyResult<()> {
+        Err(explicit_decode_attribute_error("DemAwareDecoder", name))
     }
 }
 

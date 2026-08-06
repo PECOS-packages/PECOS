@@ -41,13 +41,19 @@ The following decoder APIs and supporting types are publicly re-exported from
 | `FusionBlossomDecoder` | Check matrix, standard-code parameters, or a manual graph | Pure-Rust minimum-weight perfect matching. |
 | `TesseractDecoder` | DEM text | Search-based decoder that accepts raw hyperedges. |
 | `DemAwareDecoder` | DEM text | Maps DEM mechanisms and observables onto BP-OSD and other check-matrix decoders. |
-| `BpOsdBuilder` / `BpOsdDecoder` | `SparseMatrix` check matrix | Belief propagation with ordered-statistics post-processing. |
-| `BpLsdBuilder` / `BpLsdDecoder` | `SparseMatrix` check matrix | Belief propagation with localized-statistics post-processing. |
-| `MinSumBpBuilder` / `MinSumBpDecoder` | Dense check matrix and error priors | Min-sum belief propagation. |
-| `RelayBpBuilder` / `RelayBpDecoder` | Dense check matrix and error priors | Relay belief propagation. |
-| `UnionFindBuilder` / `UnionFindDecoder` | `SparseMatrix` check matrix | Union-find decoding with inversion or peeling. |
+| `BpOsdBuilder` / `BpOsdDecoder` | `SparseMatrix` check matrix or DEM text | Belief propagation with ordered-statistics post-processing. |
+| `BpLsdBuilder` / `BpLsdDecoder` | `SparseMatrix` check matrix or DEM text | Belief propagation with localized-statistics post-processing. |
+| `MinSumBpBuilder` / `MinSumBpDecoder` | Dense check matrix and error priors, or DEM text | Min-sum belief propagation. |
+| `RelayBpBuilder` / `RelayBpDecoder` | Dense check matrix and error priors, or DEM text | Relay belief propagation. |
+| `UnionFindBuilder` / `UnionFindDecoder` | `SparseMatrix` check matrix or DEM text | Union-find decoding with inversion or peeling. |
 | `CheckMatrix` / `SparseMatrix` | Dense or coordinate-form matrix data | Matrix containers used by matching and LDPC decoder constructors. |
 | `MwpmResult` / `BpResult` / `TesseractResult` | Decoder output | Result objects for matching, belief-propagation, and Tesseract decoders. |
+
+Python decoder inputs name their encoding explicitly: use
+`decode_syndrome(...)` for a dense detector vector and
+`decode_from_defects(...)` for sparse detector indices. The BP/LDPC classes'
+`from_dem(...)` constructors return a `DemAwareDecoder` wrapper so their results
+include `observables_mask` and their instances retain the DEM dimensions.
 
 ### Rust Decoders
 

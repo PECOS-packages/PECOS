@@ -33,7 +33,7 @@ class TestMwpmResult:
 
         matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(matrix)
-        result = decoder.decode([0, 0])
+        result = decoder.decode_syndrome([0, 0])
 
         # Check attributes exist
         assert hasattr(result, "correction")
@@ -49,7 +49,7 @@ class TestMwpmResult:
 
         matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(matrix)
-        result = decoder.decode([0, 0])
+        result = decoder.decode_syndrome([0, 0])
 
         assert result.to_list() == result.correction
 
@@ -59,7 +59,7 @@ class TestMwpmResult:
 
         matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(matrix)
-        result = decoder.decode([0, 0])
+        result = decoder.decode_syndrome([0, 0])
 
         assert len(result) == len(result.correction)
         if len(result) > 0:
@@ -127,7 +127,7 @@ class TestPyMatchingDecoder:
         H = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(H)
 
-        result = decoder.decode([0, 0])
+        result = decoder.decode_syndrome([0, 0])
 
         # No errors - should have zero weight
         assert result.weight == 0.0
@@ -140,7 +140,7 @@ class TestPyMatchingDecoder:
         H = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(H)
 
-        result = decoder.decode([1, 1])
+        result = decoder.decode_syndrome([1, 1])
         assert result is not None
         assert result.weight > 0
 
@@ -164,7 +164,7 @@ class TestPyMatchingDecoder:
         dem = "error(0.1) D0 D1 ^ D2 L0"
         decoder = PyMatchingDecoder.from_dem_with_correlations(dem)
 
-        result = decoder.decode([0, 0, 0])
+        result = decoder.decode_syndrome([0, 0, 0])
         assert result.correction == [0]
 
 
@@ -192,7 +192,7 @@ class TestFusionBlossomDecoder:
         from pecos_rslib.decoders import FusionBlossomDecoder
 
         decoder = FusionBlossomDecoder.from_check_matrix([[1, 1, 0], [0, 1, 1]])
-        result = decoder.decode([0, 0])
+        result = decoder.decode_syndrome([0, 0])
 
         assert result.weight == 0.0
 
@@ -216,7 +216,7 @@ class TestFusionBlossomDecoder:
 
         # Decode multiple syndromes with clear
         for _ in range(3):
-            result = decoder.decode([0, 0])
+            result = decoder.decode_syndrome([0, 0])
             assert result is not None
             decoder.clear()
 
@@ -230,7 +230,7 @@ class TestBpResult:
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = BpOsdBuilder(H, error_rate=0.01).build()
-        result = decoder.decode([0, 0, 0])
+        result = decoder.decode_syndrome([0, 0, 0])
 
         assert hasattr(result, "decoding")
         assert hasattr(result, "converged")
@@ -289,7 +289,7 @@ class TestBpOsdDecoder:
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = BpOsdBuilder(H, error_rate=0.01).build()
 
-        result = decoder.decode([0, 0, 0])
+        result = decoder.decode_syndrome([0, 0, 0])
         assert result.converged
 
     def test_bp_methods(self) -> None:
@@ -300,12 +300,12 @@ class TestBpOsdDecoder:
 
         # product_sum
         decoder1 = BpOsdBuilder(H, error_rate=0.01).bp_method("product_sum").build()
-        result1 = decoder1.decode([0, 0, 0])
+        result1 = decoder1.decode_syndrome([0, 0, 0])
         assert result1 is not None
 
         # minimum_sum
         decoder2 = BpOsdBuilder(H, error_rate=0.01).bp_method("minimum_sum").build()
-        result2 = decoder2.decode([0, 0, 0])
+        result2 = decoder2.decode_syndrome([0, 0, 0])
         assert result2 is not None
 
 
@@ -351,7 +351,7 @@ class TestUnionFindDecoder:
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = UnionFindBuilder(H).build()
 
-        result = decoder.decode([0, 0, 0])
+        result = decoder.decode_syndrome([0, 0, 0])
         assert result is not None
 
     def test_methods(self) -> None:
@@ -361,11 +361,11 @@ class TestUnionFindDecoder:
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
 
         decoder_inv = UnionFindBuilder(H).method("inversion").build()
-        result_inv = decoder_inv.decode([0, 0, 0])
+        result_inv = decoder_inv.decode_syndrome([0, 0, 0])
         assert result_inv is not None
 
         decoder_peel = UnionFindBuilder(H).method("peeling").build()
-        result_peel = decoder_peel.decode([0, 0, 0])
+        result_peel = decoder_peel.decode_syndrome([0, 0, 0])
         assert result_peel is not None
 
 

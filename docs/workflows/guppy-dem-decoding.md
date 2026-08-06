@@ -301,11 +301,11 @@ an `observables_mask` bitmask.
 
 <!--continuation-->
 ```python
-from pecos.decoders import DemAwareDecoder, PyMatchingDecoder, TesseractDecoder
+from pecos.decoders import BpOsdDecoder, PyMatchingDecoder, TesseractDecoder
 
 pymatching = PyMatchingDecoder.from_dem(terminal_graphlike_text)
 tesseract = TesseractDecoder.from_dem(source_graphlike_text, preset="fast")
-bp_osd = DemAwareDecoder.from_dem(raw_text, decoder_type="bp_osd")
+bp_osd = BpOsdDecoder.from_dem(raw_text)
 
 pymatching_errors = 0
 tesseract_errors = 0
@@ -315,7 +315,7 @@ for shot in range(batch.num_shots):
     syndrome = batch.get_syndrome(shot)
     actual = batch.get_observable_mask(shot) & 1
 
-    pymatching_errors += pymatching.decode(syndrome).correction[0] != actual
+    pymatching_errors += pymatching.decode_syndrome(syndrome).correction[0] != actual
     tesseract_errors += (tesseract.decode_syndrome(syndrome).observables_mask & 1) != actual
     bp_osd_errors += (bp_osd.decode_syndrome(syndrome).observables_mask & 1) != actual
 
@@ -336,7 +336,7 @@ The simulated shots decode the same way, against the same decoders:
 ```python
 sim_errors = 0
 for syndrome, observable_mask in sim_shots:
-    predicted = pymatching.decode(syndrome).correction[0]
+    predicted = pymatching.decode_syndrome(syndrome).correction[0]
     sim_errors += predicted != (observable_mask & 1)
 
 print(f"simulated shots, pymatching: {sim_errors}/{len(sim_shots)}")

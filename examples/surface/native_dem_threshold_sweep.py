@@ -588,15 +588,9 @@ def _create_dem_decoder(decoder_type: str, dem_str: str, *, tesseract_beam: int 
     return PyMatchingDecoder.from_dem(dem_str)
 
 
-def _decode_one_shot(dem_decoder: object, events_flat: list[int]) -> object:
-    """Decode one shot using whichever DEM decoder was created.
-
-    Tesseract.decode() wants sparse indices; decode_syndrome() accepts dense vectors.
-    PyMatching.decode() accepts dense vectors directly.
-    """
-    if hasattr(dem_decoder, "decode_syndrome"):
-        return dem_decoder.decode_syndrome(events_flat)
-    return dem_decoder.decode(events_flat)
+def _decode_one_shot(dem_decoder: Any, events_flat: list[int]) -> object:
+    """Decode one dense syndrome using whichever DEM decoder was created."""
+    return dem_decoder.decode_syndrome(events_flat)
 
 
 def _decode_all_shots(

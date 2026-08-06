@@ -61,15 +61,17 @@ pub struct GeneralNoiseFields {
 
     // Idle noise parameters
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub p_idle_quadratic_coherent: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub p_idle_linear_rate: Option<f64>,
+    pub p_idle_linear: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p_idle_linear_model: Option<BTreeMap<String, f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub p_idle_quadratic_rate: Option<f64>,
+    pub p_idle_sin_squared: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub p_idle_coherent_to_incoherent_factor: Option<f64>,
+    pub p_idle_sin_squared_model: Option<BTreeMap<String, f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_idle_coherent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_idle_coherent_model: Option<BTreeMap<String, f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idle_scale: Option<f64>,
 
@@ -116,7 +118,7 @@ pub struct GeneralNoiseFields {
     pub p2_pauli_model: Option<BTreeMap<String, f64>>,
     /// Duration of the idle-noise sites applied to both qubits after a two-qubit gate.
     ///
-    /// The configured linear and quadratic idle mechanisms determine the noise at these sites.
+    /// The configured idle families determine the noise at these sites.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idle_after_2q: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -208,20 +210,42 @@ impl GeneralNoiseFields {
 
     /// Apply idle noise parameters to the builder
     fn apply_idle_params(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
-        if let Some(v) = self.p_idle_quadratic_coherent {
-            builder = builder.with_p_idle_quadratic_coherent(v);
+        if let Some(rate) = self.p_idle_linear {
+            let default_model = BTreeMap::from([
+                ("X".to_string(), 1.0 / 3.0),
+                ("Y".to_string(), 1.0 / 3.0),
+                ("Z".to_string(), 1.0 / 3.0),
+            ]);
+            builder = builder.with_p_idle_linear(
+                rate,
+                self.p_idle_linear_model.as_ref().unwrap_or(&default_model),
+            );
         }
-        if let Some(v) = self.p_idle_linear_rate {
-            builder = builder.with_p_idle_linear_rate(v);
+        if let Some(rate) = self.p_idle_sin_squared {
+            let default_model = BTreeMap::from([
+                ("X".to_string(), 1.0),
+                ("Y".to_string(), 1.0),
+                ("Z".to_string(), 1.0),
+            ]);
+            builder = builder.with_p_idle_sin_squared(
+                rate,
+                self.p_idle_sin_squared_model
+                    .as_ref()
+                    .unwrap_or(&default_model),
+            );
         }
-        if let Some(model) = self.p_idle_linear_model.as_ref() {
-            builder = builder.with_p_idle_linear_model(model);
-        }
-        if let Some(v) = self.p_idle_quadratic_rate {
-            builder = builder.with_p_idle_quadratic_rate(v);
-        }
-        if let Some(v) = self.p_idle_coherent_to_incoherent_factor {
-            builder = builder.with_p_idle_coherent_to_incoherent_factor(v);
+        if let Some(rate) = self.p_idle_coherent {
+            let default_model = BTreeMap::from([
+                ("RX".to_string(), 1.0),
+                ("RY".to_string(), 1.0),
+                ("RZ".to_string(), 1.0),
+            ]);
+            builder = builder.with_p_idle_coherent(
+                rate,
+                self.p_idle_coherent_model
+                    .as_ref()
+                    .unwrap_or(&default_model),
+            );
         }
         if let Some(v) = self.idle_scale {
             builder = builder.with_idle_scale(v);

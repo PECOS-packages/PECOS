@@ -109,9 +109,21 @@ observables = [Observable("m0")]
 
 ## 3. Generate the DEM with gate and idle noise
 
-`idle_after_2q_duration=1.0` inserts an idle of that duration on both qubits
-after every two-qubit gate; traced identity-like gates are stripped first by
-default, so runtime-emitted idles are not double-counted.
+`with_idle_after_2q(1.0)` inserts an idle of that duration on both qubits after
+every two-qubit gate; traced identity-like gates are stripped first by default,
+so runtime-emitted idles are not double-counted.
+
+That default matters because the trace need not be idle-free. `with_runtime(...)`
+selects the Selene runtime plugin that lowers and unrolls the Guppy program into
+the QIS trace this TickCircuit is built from — so the runtime does not decorate
+the trace, it produces it. A runtime that models timing emits its own idle gates
+as part of that lowering, reflecting real scheduling rather than the uniform
+convention inserted here. Setting `with_idle_after_2q(...)` therefore
+implies stripping first, so the two conventions cannot stack. To keep a runtime's
+own idle placement instead, simply omit `with_idle_after_2q(...)` — stripping is
+off unless insertion asked for it — and the idle-noise families apply to whatever
+idles the runtime emitted. `with_strip_traced_idles(...)` overrides that pairing
+in either direction when you want it stated explicitly.
 
 The linear family uses a custom Z-biased distribution, keeping smaller X and Y
 memory errors while making dephasing dominant; its weights are an additive
@@ -205,8 +217,8 @@ under a noisy simulator and score those shots against the same DEM.
 the same (detector events, observable flips) pairs a DEM sample carries, so
 either source can feed the decoders.
 
-The gate noise below mirrors stage 3, including the idle families. The
-simulator does not need the runtime to emit idle gates: `with_idle_after_2q`
+The gate noise below mirrors stage 3, including the idle families. With the
+default runtime, which emits no idle gates of its own, `with_idle_after_2q`
 adds an idle site on each two-qubit gate operand, the same placement the DEM
 pass uses.
 
@@ -217,6 +229,41 @@ family is named for its own law, so there is no mode flag to set either.
 The simulator still samples one linear event and then picks an axis, while the
 DEM emits independent per-axis mechanisms; the DEM builder converts between the
 two so both describe the same Pauli channel.
+
+There are two ways to place idle sites after two-qubit gates, and they are
+**alternatives, not steps**. Using both double-counts:
+
+- `general_noise().with_idle_after_2q(d)` -- the noise model applies idle faults
+  at each two-qubit gate's operands as it decorates the stream. This is what the
+  run below uses.
+- `TickCircuit.insert_idle_after_two_qubit_gates(d)` -- a circuit pass that
+  inserts real `Idle` gates, which the noise model then treats like any other
+  idle.
+
+A caveat if you supply a runtime plugin via `with_runtime(...)`. Unlike the DEM
+builder, a noise model cannot remove gates -- it only decorates a gate stream. So
+a runtime that emits its own `Idle` gates gets idle noise applied to those *and*
+at the after-2q sites, double-counting where the DEM counts once. Lowering the
+program yourself lets you strip first, exactly as the DEM builder does:
+
+<!--continuation-->
+```python
+from pecos.tracing import trace_program_to_tick_circuit
+
+# The QIS trace lowers and unrolls the Guppy program; pass runtime=... to select
+# a Selene runtime plugin, which may schedule idles of its own.
+tick_circuit = trace_program_to_tick_circuit(rep_code_memory, 7)
+
+# remove_identity() drops everything that is identity by effect: I, Idle, and
+# zero-angle rotations. That clears runtime-emitted idles so only one convention
+# survives -- insertion is then this pass OR with_idle_after_2q, never both.
+tick_circuit.remove_identity()
+```
+
+`sim()` does not yet accept a `TickCircuit` (PECOS #444), so today this is how to
+inspect the lowered circuit rather than a path into the simulator. The run below
+uses the default runtime, which emits no idles, so `with_idle_after_2q` is the
+only convention in play and nothing is double-counted.
 
 <!--continuation-->
 ```python
@@ -254,11 +301,11 @@ an `observables_mask` bitmask.
 
 <!--continuation-->
 ```python
-from pecos.decoders import DemAwareDecoder, PyMatchingDecoder, TesseractDecoder
+from pecos.decoders import BpOsdDecoder, PyMatchingDecoder, TesseractDecoder
 
 pymatching = PyMatchingDecoder.from_dem(terminal_graphlike_text)
-tesseract = TesseractDecoder.from_dem(source_graphlike_text, preset="fast")
-bp_osd = DemAwareDecoder.from_dem(raw_text, decoder_type="bp_osd")
+tesseract = TesseractDecoder.from_dem(source_graphlike_text, preset="fast", pqlimit=50_000)
+bp_osd = BpOsdDecoder.from_dem(raw_text, max_iter=10, osd_order=1)
 
 pymatching_errors = 0
 tesseract_errors = 0
@@ -268,7 +315,7 @@ for shot in range(batch.num_shots):
     syndrome = batch.get_syndrome(shot)
     actual = batch.get_observable_mask(shot) & 1
 
-    pymatching_errors += pymatching.decode(syndrome).correction[0] != actual
+    pymatching_errors += pymatching.decode_syndrome(syndrome).correction[0] != actual
     tesseract_errors += (tesseract.decode_syndrome(syndrome).observables_mask & 1) != actual
     bp_osd_errors += (bp_osd.decode_syndrome(syndrome).observables_mask & 1) != actual
 
@@ -289,7 +336,7 @@ The simulated shots decode the same way, against the same decoders:
 ```python
 sim_errors = 0
 for syndrome, observable_mask in sim_shots:
-    predicted = pymatching.decode(syndrome).correction[0]
+    predicted = pymatching.decode_syndrome(syndrome).correction[0]
     sim_errors += predicted != (observable_mask & 1)
 
 print(f"simulated shots, pymatching: {sim_errors}/{len(sim_shots)}")

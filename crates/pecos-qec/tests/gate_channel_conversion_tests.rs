@@ -304,7 +304,12 @@ fn infeasible_gate_channel_reports_kind_and_queryable_magnitude() {
     };
     assert_eq!(residual.channel_kind, NoiseChannelKind::SingleQubitGate);
     assert_eq!(fault_mechanism_mask(&residual.effect), 0b11);
+    assert_eq!(residual.channel_weight.to_bits(), 0.03_f64.to_bits());
     assert!(residual.magnitude > 0.0);
+    assert_eq!(
+        residual.relative_magnitude().to_bits(),
+        (residual.magnitude / 0.03).to_bits()
+    );
     let mechanisms = gate_signature_mechanisms(&dem);
     let distribution = compose_independent_mechanisms(
         mechanisms

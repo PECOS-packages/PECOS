@@ -256,13 +256,13 @@ fn example_builder_api() {
 fn example_idle_noise() {
     println!("--- Idle Noise (T1/T2 Decoherence) ---");
 
-    // Circuit: prep |+⟩, idle, then H to detect Z errors, measure
-    // Z errors during idle will flip the measurement outcome
+    // Circuit: prep |+⟩, idle, then H to detect Pauli-twirled Y/Z errors, measure
+    // Y/Z errors during idle will flip the measurement outcome
     let commands = CommandBuilder::new()
         .pz(&[0])
         .h(&[0]) // Prepare |+⟩
         .idle(&[0], 1000) // Idle for 1000 time units
-        .h(&[0]) // Convert Z errors to bit flips
+        .h(&[0]) // Convert Y/Z phase changes to measurement flips
         .mz(&[0])
         .build();
 
@@ -285,7 +285,7 @@ fn example_idle_noise() {
         state.reset();
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         if outcomes.get_bit(QubitId(0)).unwrap_or(false) {
-            errors += 1; // Z error during idle caused bit flip
+            errors += 1; // Y/Z error during idle caused bit flip
         }
     }
 
@@ -295,7 +295,7 @@ fn example_idle_noise() {
         "  Measured decoherence error rate: {:.1}%",
         error_rate * 100.0
     );
-    println!("  (Linear/T1 contribution expected: ~10%)");
+    println!("  (First-order total-T2 coherence error expected: ~10%)");
     println!();
 }
 

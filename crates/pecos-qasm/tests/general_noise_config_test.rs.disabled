@@ -68,8 +68,7 @@ fn test_general_noise_json_complex() {
             "ZY": 0.06,
             "ZZ": 0.04
         },
-        "p_idle_quadratic_coherent": false,
-        "p_idle_linear_rate": 0.0001,
+        "p_idle_linear": 0.0001,
         "leakage_scale": 0.5,
         "emission_scale": 0.8,
         "p2_angle_params": [1.0, 0.5, 1.2, 0.3],
@@ -89,8 +88,7 @@ fn test_general_noise_json_complex() {
             );
             assert!(fields.p1_pauli_model.is_some());
             assert!(fields.p2_pauli_model.is_some());
-            assert_eq!(fields.p_idle_quadratic_coherent, Some(false));
-            assert_eq!(fields.p_idle_linear_rate, Some(0.0001));
+            assert_eq!(fields.p_idle_linear, Some(0.0001));
             assert_eq!(fields.leakage_scale, Some(0.5));
             assert_eq!(fields.emission_scale, Some(0.8));
             assert_eq!(fields.p2_angle_params, Some((1.0, 0.5, 1.2, 0.3)));

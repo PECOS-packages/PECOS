@@ -40,6 +40,9 @@ BUILDER_SETTERS = [
 ]
 
 REMOVED_SETTERS = (
+    "with_single_qubit_probability",
+    "with_two_qubit_probability",
+    "with_preparation_probability",
     "with_p1_probability",
     "with_p2_probability",
     "with_prep_probability",
@@ -49,6 +52,18 @@ REMOVED_SETTERS = (
     "with_average_p1_probability",
     "with_average_p2_probability",
 )
+
+RETIRED_IDLE_SETTERS = (
+    "with_p_idle_linear_rate",
+    "with_p_idle_linear_model",
+    "with_p_idle_quadratic_rate",
+    "with_p_idle_quadratic_coherent",
+    "with_p_idle_coherent_to_incoherent_factor",
+    "with_average_p_idle_linear_rate",
+    "with_average_p_idle_quadratic_rate",
+)
+
+SYMMETRIC_LINEAR_MODEL = {"X": 1.0 / 3.0, "Y": 1.0 / 3.0, "Z": 1.0 / 3.0}
 
 _AFTER_2Q_QASM = """
 OPENQASM 2.0;
@@ -111,6 +126,32 @@ def test_suffixed_setters_are_gone(factory, _setters) -> None:
         assert not hasattr(builder, removed), f"{removed} should have been renamed away"
 
 
+def test_asymmetric_measurement_probability_sets_both_rates() -> None:
+    """The surviving two-argument helper preserves distinct 0→1 and 1→0 rates."""
+    qasm = """
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+x q[1];
+measure q -> c;
+"""
+    program = Qasm.from_string(qasm)
+
+    zero_only = sim(program).noise(general_noise().with_measurement_probability(1.0, 0.0)).run(8).to_dict()
+    one_only = sim(program).noise(general_noise().with_measurement_probability(0.0, 1.0)).run(8).to_dict()
+
+    assert zero_only["c"] == [3] * 8
+    assert one_only["c"] == [0] * 8
+
+
+def test_retired_idle_setters_are_gone() -> None:
+    """The unpaired and unit-converting idle spellings are absent from pyo3."""
+    builder = general_noise()
+    for removed in RETIRED_IDLE_SETTERS:
+        assert not hasattr(builder, removed), f"{removed} should have been retired"
+
+
 def test_average_setters_keep_their_conversion() -> None:
     """``with_average_p*`` survives the rename; it converts from average gate error."""
     builder = general_noise()
@@ -129,10 +170,22 @@ def test_auto_is_chainable_and_explicit_zeros_win_in_both_orders() -> None:
         return measure(q)
 
     auto_then_zeros = (
-        general_noise().auto().with_p_prep(0.0).with_p1(0.0).with_p2(0.0).with_p_meas(0.0).with_p_idle_linear_rate(0.0)
+        general_noise()
+        .auto()
+        .with_p_prep(0.0)
+        .with_p1(0.0)
+        .with_p2(0.0)
+        .with_p_meas(0.0)
+        .with_p_idle_linear(0.0, SYMMETRIC_LINEAR_MODEL)
     )
     zeros_then_auto = (
-        general_noise().with_p_prep(0.0).with_p1(0.0).with_p2(0.0).with_p_meas(0.0).with_p_idle_linear_rate(0.0).auto()
+        general_noise()
+        .with_p_prep(0.0)
+        .with_p1(0.0)
+        .with_p2(0.0)
+        .with_p_meas(0.0)
+        .with_p_idle_linear(0.0, SYMMETRIC_LINEAR_MODEL)
+        .auto()
     )
 
     for noise in (auto_then_zeros, zeros_then_auto):
@@ -158,13 +211,12 @@ def test_auto_matches_explicit_legacy_preset_at_python_surface() -> None:
         .with_p_meas_1(0.01)
         .with_p1(0.001)
         .with_p2(0.01)
-        .with_p_idle_linear_rate(0.001)
+        .with_p_idle_linear(0.001, SYMMETRIC_LINEAR_MODEL)
         .with_p1_emission_ratio(0.5)
         .with_p2_emission_ratio(0.5)
         .with_prep_leak_ratio(0.5)
         .with_p1_seepage_prob(0.5)
         .with_p2_seepage_prob(0.5)
-        .with_p_idle_coherent_to_incoherent_factor(1.5)
     )
 
     def run(noise) -> list[bool]:
@@ -180,11 +232,11 @@ def test_auto_matches_explicit_legacy_preset_at_python_surface() -> None:
 
 
 def test_idle_family_setters_are_chainable() -> None:
-    """All structured idle families and the renamed quadratic switch are fluent."""
+    """All structured idle families are fluent."""
     builder = general_noise().with_p_idle_linear(0.01, {"X": 0.5, "L": 0.5})
     builder = builder.with_p_idle_sin_squared(0.02, {"X": 1.0, "Z": 2.0, "L": 0.25})
     builder = builder.with_p_idle_coherent(0.03, {"RX": 1.0, "RZ": 2.0})
-    assert builder.with_p_idle_quadratic_coherent(False) is not None
+    assert builder is not None
 
 
 def test_retired_coherent_bool_switch_is_not_an_alias() -> None:
@@ -223,27 +275,6 @@ def test_sine_idle_multipliers_are_not_normalized() -> None:
     """X=Z=1 keeps a certain X event at rate pi/2 instead of reducing it to probability 1/2."""
     noise = _idle_family_noise(sine_rate=math.pi / 2, sine_model={"X": 1.0, "Z": 1.0})
     assert _run_after_2q_noise(noise, 32) == [3] * 32
-
-
-def test_legacy_quadratic_and_sine_family_conflict_at_build() -> None:
-    """The pyo3 build route names both incompatible rate spellings and their units."""
-    noise = general_noise().with_p_idle_quadratic_rate(0.01).with_p_idle_sin_squared(0.02, {"Z": 1.0})
-    with pytest.raises(ValueError, match=r"with_p_idle_quadratic_rate.*radians.*cycles"):
-        _run_after_2q_noise(noise)
-
-
-def test_sine_family_and_coherent_legacy_path_conflict_at_build() -> None:
-    """The stochastic family cannot silently ignore the legacy coherent switch."""
-    noise = general_noise().with_p_idle_sin_squared(0.02, {"Z": 1.0}).with_p_idle_quadratic_coherent(True)
-    with pytest.raises(ValueError, match=r"with_p_idle_quadratic_coherent\(true\).*stochastic by definition"):
-        _run_after_2q_noise(noise)
-
-
-def test_coherent_family_and_quadratic_coherent_path_conflict_at_build() -> None:
-    """The independent and legacy coherent paths cannot both emit rotations."""
-    noise = general_noise().with_p_idle_coherent(0.02, {"RZ": 1.0}).with_p_idle_quadratic_coherent(True)
-    with pytest.raises(ValueError, match=r"with_p_idle_coherent.*with_p_idle_quadratic_coherent\(true\)"):
-        _run_after_2q_noise(noise)
 
 
 @pytest.mark.parametrize("model", [{"L": 1.0}, {"A": 1.0}])

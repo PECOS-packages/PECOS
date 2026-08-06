@@ -20,6 +20,10 @@ default:
     @echo "  just security-check # Check dependency/security policy"
     @echo "  just doctor         # Diagnose environment problems"
     @echo ""
+    @echo "Recipe arguments are positional. Entries like 'build profile=\"debug\"' below are"
+    @echo "signatures (parameter name + default), so run 'just build release', not"
+    @echo "'just build profile=release' -- the latter passes the literal text 'profile=release'."
+    @echo ""
     @echo "All commands:"
     @just --list --list-heading ''
 
@@ -171,6 +175,17 @@ doctor: _msvc-bootstrap
     fi
     echo ""
 
+    echo "Developer tooling:"
+    if RG_VER=$(rg --version 2>/dev/null | head -1); then
+        ok "ripgrep" "${RG_VER:-installed}"
+    else
+        fail "ripgrep" "not found (run: pecos install ripgrep)"
+        echo "       Manual install options: cargo install ripgrep --locked, brew install ripgrep,"
+        echo "       apt install ripgrep, or winget install BurntSushi.ripgrep"
+        echo "       https://github.com/BurntSushi/ripgrep#installation"
+    fi
+    echo ""
+
     if [ "$PROBLEMS" -eq 0 ]; then
         echo "No problems found."
     else
@@ -285,7 +300,7 @@ pytest *args:
 
 # Run the substantive PR Python lane after building the test-only native bindings it needs.
 [group('test')]
-python-ci-core profile="debug": (python-ci-build-test profile)
+python-ci-core profile="debug": (validate-profile "python-ci-core" profile) (python-ci-build-test profile)
     just pytest-ci-core
 
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
@@ -297,7 +312,7 @@ pytest-ci-core:
 
 # Build and import the core Python packages on a target platform/interpreter.
 [group('test')]
-python-ci-smoke profile="debug": (python-ci-build profile)
+python-ci-smoke profile="debug": (validate-profile "python-ci-smoke" profile) (python-ci-build profile)
     uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
@@ -446,11 +461,20 @@ bench profile="release" features="" pattern="": _msvc-bootstrap (validate-bench-
     PROFILE="{{profile}}"
     FEATURES="{{features}}"
     PATTERN="{{pattern}}"
+    # A named-looking argument can land in any slot, so each slot rejects every
+    # parameter name -- otherwise 'just bench release pattern=foo' would reach
+    # cargo as '--features pattern=foo'.
     case "$FEATURES" in
         features=*)
             VALUE="${FEATURES#features=}"
             echo "Invalid features argument: $FEATURES"
-            echo "Just recipe parameters are positional. Use: just bench $PROFILE $VALUE"
+            echo "Just recipe parameters are positional. Use: just bench $PROFILE '$VALUE'"
+            exit 2
+            ;;
+        pattern=*)
+            VALUE="${FEATURES#pattern=}"
+            echo "Invalid features argument: $FEATURES"
+            echo "Just recipe parameters are positional. Use: just bench $PROFILE '' '$VALUE'"
             exit 2
             ;;
     esac
@@ -459,6 +483,12 @@ bench profile="release" features="" pattern="": _msvc-bootstrap (validate-bench-
             VALUE="${PATTERN#pattern=}"
             echo "Invalid pattern argument: $PATTERN"
             echo "Just recipe parameters are positional. Use: just bench $PROFILE '$FEATURES' '$VALUE'"
+            exit 2
+            ;;
+        features=*)
+            VALUE="${PATTERN#features=}"
+            echo "Invalid pattern argument: $PATTERN"
+            echo "Just recipe parameters are positional. Use: just bench $PROFILE '$VALUE'"
             exit 2
             ;;
     esac

@@ -2460,6 +2460,27 @@ pub fn omitted_two_qubit_gate_pauli_twirl(
     Some(entries.iter().copied().collect())
 }
 
+/// Rate and per-Pauli weights for one dedicated idle-noise family.
+///
+/// `weights` may contain only `"X"`, `"Y"`, and `"Z"`. An empty map means
+/// equal unit weight on all three axes. A zero `rate` disables the family
+/// regardless of the map contents.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct IdleNoiseFamily {
+    /// Common family rate.
+    pub rate: f64,
+    /// Per-axis relative-rate weights.
+    pub weights: BTreeMap<String, f64>,
+}
+
+impl IdleNoiseFamily {
+    /// Creates an idle-noise family from a common rate and per-axis weights.
+    #[must_use]
+    pub fn new(rate: f64, weights: BTreeMap<String, f64>) -> Self {
+        Self { rate, weights }
+    }
+}
+
 /// Noise model configuration for circuit-level fault analysis.
 #[derive(Debug, Clone)]
 pub struct NoiseConfig {
@@ -2519,46 +2540,21 @@ pub struct NoiseConfig {
     ///
     /// This is the EEG H-type noise model for idle gates. Default is 0.0.
     pub idle_rz: f64,
-    /// Stochastic Z-memory error rate linear in idle duration.
+    /// Categorical Pauli-memory family linear in idle duration.
     ///
-    /// This mirrors PECOS engine idle memory noise in a DEM-compatible Pauli
-    /// channel: each explicit `Idle(duration, q)` contributes an independent
-    /// Z fault with probability `p_idle_linear_rate * duration`.
+    /// Axis `P` has probability `rate * weights[P] * duration`. The family is
+    /// converted to independent DEM mechanisms only after equal propagated
+    /// signatures have been collected.
+    pub p_idle_linear: IdleNoiseFamily,
+    /// Independent Pauli-memory family quadratic in idle duration.
     ///
-    /// This is the legacy Z-axis alias for `p_idle_z_linear_rate`.
-    pub p_idle_linear_rate: f64,
-    /// Stochastic Z-memory error rate for the quadratic idle term.
+    /// The common rate has units of inverse time squared. Axis `P` has
+    /// probability `rate * weights[P] * duration^2`.
+    pub p_idle_quadratic: IdleNoiseFamily,
+    /// Independent sine-squared Pauli-memory family.
     ///
-    /// Each explicit `Idle(duration, q)` contributes a Z-fault probability
-    /// term `p_idle_quadratic_rate * duration^2`.
-    ///
-    /// This is the legacy Z-axis alias for `p_idle_z_quadratic_rate`.
-    pub p_idle_quadratic_rate: f64,
-    /// Stochastic Z-memory sine-law rate for the quadratic idle term.
-    ///
-    /// Each explicit `Idle(duration, q)` contributes a Z-fault probability
-    /// term `sin(p_idle_quadratic_sine_rate * duration)^2`. This preserves
-    /// the small-duration quadratic behavior of coherent dephasing models
-    /// without changing the coefficient-style `p_idle_quadratic_rate` API.
-    ///
-    /// This is the legacy Z-axis alias for `p_idle_z_quadratic_sine_rate`.
-    pub p_idle_quadratic_sine_rate: f64,
-    /// Stochastic X-memory error rate linear in idle duration.
-    ///
-    /// Together with the Y and Z rates, this defines one categorical Pauli
-    /// channel. DEM construction converts that channel only after propagating
-    /// the Paulis to concrete detector/observable flip signatures.
-    pub p_idle_x_linear_rate: f64,
-    /// Stochastic Y-memory error rate linear in idle duration.
-    pub p_idle_y_linear_rate: f64,
-    /// Stochastic X-memory error rate quadratic in idle duration.
-    pub p_idle_x_quadratic_rate: f64,
-    /// Stochastic Y-memory error rate quadratic in idle duration.
-    pub p_idle_y_quadratic_rate: f64,
-    /// Stochastic X-memory sine-law rate for the quadratic idle term.
-    pub p_idle_x_quadratic_sine_rate: f64,
-    /// Stochastic Y-memory sine-law rate for the quadratic idle term.
-    pub p_idle_y_quadratic_sine_rate: f64,
+    /// Axis `P` has probability `sin(rate * weights[P] * duration)^2`.
+    pub p_idle_quadratic_sine: IdleNoiseFamily,
     /// Per-payload local measurement-crosstalk event rate.
     ///
     /// This rate is multiplied by the selected hidden-measurement transition
@@ -2736,6 +2732,25 @@ pub struct NoiseChannelResidual {
     pub effect: FaultMechanism,
     /// Total-variation distance from the requested categorical channel.
     pub magnitude: f64,
+    /// Total non-identity probability of the requested categorical channel.
+    pub channel_weight: f64,
+}
+
+impl NoiseChannelResidual {
+    /// Returns the residual as a fraction of the requested channel's error weight.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `channel_weight` is not finite and positive. Such a channel
+    /// cannot produce a residual, so this indicates a broken construction invariant.
+    #[must_use]
+    pub fn relative_magnitude(&self) -> f64 {
+        assert!(
+            self.channel_weight.is_finite() && self.channel_weight > 0.0,
+            "noise-channel residual invariant violated: channel_weight must be finite and positive"
+        );
+        self.magnitude / self.channel_weight
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3144,15 +3159,9 @@ impl Default for NoiseConfig {
             p2_weights: None,
             p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
-            p_idle_linear_rate: 0.0,
-            p_idle_quadratic_rate: 0.0,
-            p_idle_quadratic_sine_rate: 0.0,
-            p_idle_x_linear_rate: 0.0,
-            p_idle_y_linear_rate: 0.0,
-            p_idle_x_quadratic_rate: 0.0,
-            p_idle_y_quadratic_rate: 0.0,
-            p_idle_x_quadratic_sine_rate: 0.0,
-            p_idle_y_quadratic_sine_rate: 0.0,
+            p_idle_linear: IdleNoiseFamily::default(),
+            p_idle_quadratic: IdleNoiseFamily::default(),
+            p_idle_quadratic_sine: IdleNoiseFamily::default(),
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -3179,15 +3188,9 @@ impl NoiseConfig {
             p2_weights: None,
             p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
-            p_idle_linear_rate: 0.0,
-            p_idle_quadratic_rate: 0.0,
-            p_idle_quadratic_sine_rate: 0.0,
-            p_idle_x_linear_rate: 0.0,
-            p_idle_y_linear_rate: 0.0,
-            p_idle_x_quadratic_rate: 0.0,
-            p_idle_y_quadratic_rate: 0.0,
-            p_idle_x_quadratic_sine_rate: 0.0,
-            p_idle_y_quadratic_sine_rate: 0.0,
+            p_idle_linear: IdleNoiseFamily::default(),
+            p_idle_quadratic: IdleNoiseFamily::default(),
+            p_idle_quadratic_sine: IdleNoiseFamily::default(),
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -3212,15 +3215,9 @@ impl NoiseConfig {
             p2_weights: None,
             p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
-            p_idle_linear_rate: 0.0,
-            p_idle_quadratic_rate: 0.0,
-            p_idle_quadratic_sine_rate: 0.0,
-            p_idle_x_linear_rate: 0.0,
-            p_idle_y_linear_rate: 0.0,
-            p_idle_x_quadratic_rate: 0.0,
-            p_idle_y_quadratic_rate: 0.0,
-            p_idle_x_quadratic_sine_rate: 0.0,
-            p_idle_y_quadratic_sine_rate: 0.0,
+            p_idle_linear: IdleNoiseFamily::default(),
+            p_idle_quadratic: IdleNoiseFamily::default(),
+            p_idle_quadratic_sine: IdleNoiseFamily::default(),
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -3245,15 +3242,9 @@ impl NoiseConfig {
             p2_weights: None,
             p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
-            p_idle_linear_rate: 0.0,
-            p_idle_quadratic_rate: 0.0,
-            p_idle_quadratic_sine_rate: 0.0,
-            p_idle_x_linear_rate: 0.0,
-            p_idle_y_linear_rate: 0.0,
-            p_idle_x_quadratic_rate: 0.0,
-            p_idle_y_quadratic_rate: 0.0,
-            p_idle_x_quadratic_sine_rate: 0.0,
-            p_idle_y_quadratic_sine_rate: 0.0,
+            p_idle_linear: IdleNoiseFamily::default(),
+            p_idle_quadratic: IdleNoiseFamily::default(),
+            p_idle_quadratic_sine: IdleNoiseFamily::default(),
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -3268,61 +3259,24 @@ impl NoiseConfig {
         self
     }
 
-    /// Sets the linear stochastic Z-memory rate for explicit idle gates.
+    /// Sets the categorical linear idle-noise family.
     #[must_use]
-    pub fn set_idle_linear_rate(mut self, rate: f64) -> Self {
-        self.p_idle_linear_rate = rate;
+    pub fn set_idle_linear(mut self, family: IdleNoiseFamily) -> Self {
+        self.p_idle_linear = family;
         self
     }
 
-    /// Sets the quadratic stochastic Z-memory rate for explicit idle gates.
+    /// Sets the independent coefficient-quadratic idle-noise family.
     #[must_use]
-    pub fn set_idle_quadratic_rate(mut self, rate: f64) -> Self {
-        self.p_idle_quadratic_rate = rate;
+    pub fn set_idle_quadratic(mut self, family: IdleNoiseFamily) -> Self {
+        self.p_idle_quadratic = family;
         self
     }
 
-    /// Sets the sine-law quadratic stochastic Z-memory rate for explicit idle gates.
+    /// Sets the independent sine-squared idle-noise family.
     #[must_use]
-    pub fn set_idle_quadratic_sine_rate(mut self, rate: f64) -> Self {
-        self.p_idle_quadratic_sine_rate = rate;
-        self
-    }
-
-    /// Sets the linear stochastic Pauli-memory rates for explicit idle gates.
-    #[must_use]
-    pub fn set_idle_pauli_linear_rates(mut self, px_rate: f64, py_rate: f64, pz_rate: f64) -> Self {
-        self.p_idle_x_linear_rate = px_rate;
-        self.p_idle_y_linear_rate = py_rate;
-        self.p_idle_linear_rate = pz_rate;
-        self
-    }
-
-    /// Sets the quadratic stochastic Pauli-memory rates for explicit idle gates.
-    #[must_use]
-    pub fn set_idle_pauli_quadratic_rates(
-        mut self,
-        px_rate: f64,
-        py_rate: f64,
-        pz_rate: f64,
-    ) -> Self {
-        self.p_idle_x_quadratic_rate = px_rate;
-        self.p_idle_y_quadratic_rate = py_rate;
-        self.p_idle_quadratic_rate = pz_rate;
-        self
-    }
-
-    /// Sets the sine-law quadratic stochastic Pauli-memory rates for explicit idle gates.
-    #[must_use]
-    pub fn set_idle_pauli_quadratic_sine_rates(
-        mut self,
-        px_rate: f64,
-        py_rate: f64,
-        pz_rate: f64,
-    ) -> Self {
-        self.p_idle_x_quadratic_sine_rate = px_rate;
-        self.p_idle_y_quadratic_sine_rate = py_rate;
-        self.p_idle_quadratic_sine_rate = pz_rate;
+    pub fn set_idle_quadratic_sine(mut self, family: IdleNoiseFamily) -> Self {
+        self.p_idle_quadratic_sine = family;
         self
     }
 
@@ -3507,6 +3461,64 @@ impl NoiseConfig {
         Ok(())
     }
 
+    fn idle_family_rates(
+        family_name: &str,
+        family: &IdleNoiseFamily,
+    ) -> Result<PauliProbs, NoiseChannelError> {
+        if family.rate == 0.0 {
+            return Ok(PauliProbs::default());
+        }
+
+        for key in family.weights.keys() {
+            if !matches!(key.as_str(), "X" | "Y" | "Z") {
+                return Err(NoiseChannelError::new(format!(
+                    "invalid {family_name} idle rate/model key {key:?}; weights must use only X, Y, and Z"
+                )));
+            }
+        }
+        let weights = if family.weights.is_empty() {
+            PauliProbs {
+                px: 1.0,
+                py: 1.0,
+                pz: 1.0,
+            }
+        } else {
+            PauliProbs {
+                px: family.weights.get("X").copied().unwrap_or(0.0),
+                py: family.weights.get("Y").copied().unwrap_or(0.0),
+                pz: family.weights.get("Z").copied().unwrap_or(0.0),
+            }
+        };
+        let weighted_rate = |weight: f64| {
+            if weight == 0.0 {
+                0.0
+            } else {
+                family.rate * weight
+            }
+        };
+        let rates = PauliProbs {
+            px: weighted_rate(weights.px),
+            py: weighted_rate(weights.py),
+            pz: weighted_rate(weights.pz),
+        };
+        if !family.rate.is_finite()
+            || family.rate < 0.0
+            || !weights.px.is_finite()
+            || weights.px < 0.0
+            || !weights.py.is_finite()
+            || weights.py < 0.0
+            || !weights.pz.is_finite()
+            || weights.pz < 0.0
+        {
+            return Err(NoiseChannelError::new(format!(
+                "invalid {family_name} idle rate/model [X={}, Y={}, Z={}]; rates must be finite and non-negative",
+                rates.px, rates.py, rates.pz
+            )));
+        }
+        Self::validate_idle_rates(family_name, rates)?;
+        Ok(rates)
+    }
+
     fn base_idle_pauli_probs(&self, duration: f64) -> Result<PauliProbs, NoiseChannelError> {
         if !duration.is_finite() || duration < 0.0 {
             return Err(NoiseChannelError::new(format!(
@@ -3544,24 +3556,10 @@ impl NoiseConfig {
         duration: f64,
     ) -> Result<IdleChannelFamilies, NoiseChannelError> {
         let base = self.base_idle_pauli_probs(duration)?;
-        let linear_rates = PauliProbs {
-            px: self.p_idle_x_linear_rate,
-            py: self.p_idle_y_linear_rate,
-            pz: self.p_idle_linear_rate,
-        };
-        let quadratic_rates = PauliProbs {
-            px: self.p_idle_x_quadratic_rate,
-            py: self.p_idle_y_quadratic_rate,
-            pz: self.p_idle_quadratic_rate,
-        };
-        let sine_rates = PauliProbs {
-            px: self.p_idle_x_quadratic_sine_rate,
-            py: self.p_idle_y_quadratic_sine_rate,
-            pz: self.p_idle_quadratic_sine_rate,
-        };
-        Self::validate_idle_rates("linear", linear_rates)?;
-        Self::validate_idle_rates("coefficient-quadratic", quadratic_rates)?;
-        Self::validate_idle_rates("sine-squared", sine_rates)?;
+        let linear_rates = Self::idle_family_rates("linear", &self.p_idle_linear)?;
+        let quadratic_rates =
+            Self::idle_family_rates("coefficient-quadratic", &self.p_idle_quadratic)?;
+        let sine_rates = Self::idle_family_rates("sine-squared", &self.p_idle_quadratic_sine)?;
 
         let duration_squared = duration * duration;
         let linear = PauliProbs {
@@ -3727,15 +3725,9 @@ impl NoiseConfig {
         self.p_idle != 0.0
             || self.t1.is_some()
             || self.t2.is_some()
-            || self.p_idle_linear_rate != 0.0
-            || self.p_idle_quadratic_rate != 0.0
-            || self.p_idle_quadratic_sine_rate != 0.0
-            || self.p_idle_x_linear_rate != 0.0
-            || self.p_idle_y_linear_rate != 0.0
-            || self.p_idle_x_quadratic_rate != 0.0
-            || self.p_idle_y_quadratic_rate != 0.0
-            || self.p_idle_x_quadratic_sine_rate != 0.0
-            || self.p_idle_y_quadratic_sine_rate != 0.0
+            || self.p_idle_linear.rate != 0.0
+            || self.p_idle_quadratic.rate != 0.0
+            || self.p_idle_quadratic_sine.rate != 0.0
     }
 }
 
@@ -4857,7 +4849,8 @@ impl DetectorErrorModel {
     /// Returns every quantified categorical-channel approximation made during build.
     ///
     /// Each record identifies the channel kind, a representative concrete flip
-    /// signature, and the channel's total-variation residual magnitude.
+    /// signature, the requested channel's total error weight, and the absolute
+    /// and relative total-variation residual magnitudes.
     /// An empty slice means every categorical conversion was exact.
     #[inline]
     #[must_use]
@@ -7030,6 +7023,39 @@ fn trim_trailing_zeros(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    fn residual_with_channel_weight(channel_weight: f64) -> NoiseChannelResidual {
+        NoiseChannelResidual {
+            location_index: 0,
+            channel_kind: NoiseChannelKind::Idle,
+            effect: FaultMechanism::new(),
+            magnitude: 0.002,
+            channel_weight,
+        }
+    }
+
+    #[test]
+    fn noise_channel_residual_reports_relative_magnitude() {
+        assert_eq!(
+            residual_with_channel_weight(0.02)
+                .relative_magnitude()
+                .to_bits(),
+            0.1_f64.to_bits()
+        );
+    }
+
+    #[test]
+    fn noise_channel_residual_rejects_invalid_channel_weight() {
+        for channel_weight in [0.0, -0.01, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let result = std::panic::catch_unwind(|| {
+                residual_with_channel_weight(channel_weight).relative_magnitude()
+            });
+            assert!(
+                result.is_err(),
+                "channel weight {channel_weight:?} must violate the residual invariant"
+            );
+        }
+    }
 
     /// The single-qubit gate channel needs conversion too, at its own scale.
     ///

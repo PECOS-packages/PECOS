@@ -17,6 +17,7 @@ pub fn run(
     skip_llvm: bool,
     skip_cuda: bool,
     skip_cmake: bool,
+    skip_ripgrep: bool,
     quiet: bool,
 ) -> Result<()> {
     // Check for legacy installs that should be migrated
@@ -26,11 +27,11 @@ pub fn run(
     // that fail the workspace hygiene test. Quiet unless something is removed.
     sweep_stale_selene_plugins();
 
-    let anything_missing = has_missing_deps(skip_llvm, skip_cuda, skip_cmake);
+    let anything_missing = has_missing_deps(skip_llvm, skip_cuda, skip_cmake, skip_ripgrep);
 
     // Show summary: always when not quiet, or when something needs action
     if !quiet || anything_missing {
-        print_status_summary(skip_llvm, skip_cuda, skip_cmake);
+        print_status_summary(skip_llvm, skip_cuda, skip_cmake, skip_ripgrep);
         println!();
     }
 
@@ -59,6 +60,10 @@ pub fn run(
         setup_cmake(mode)?;
     }
 
+    if !skip_ripgrep {
+        setup_ripgrep(mode);
+    }
+
     if !quiet || anything_missing {
         println!();
         println!("Setup complete. Run `just build` to build PECOS.");
@@ -66,7 +71,12 @@ pub fn run(
     Ok(())
 }
 
-fn has_missing_deps(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) -> bool {
+fn has_missing_deps(
+    skip_llvm: bool,
+    skip_cuda: bool,
+    skip_cmake: bool,
+    skip_ripgrep: bool,
+) -> bool {
     if !skip_llvm && pecos_build::llvm::find_llvm(None).is_none() {
         return true;
     }
@@ -88,10 +98,13 @@ fn has_missing_deps(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) -> bool 
     if !skip_cmake && pecos_build::cmake::find_cmake().is_none() {
         return true;
     }
+    if !skip_ripgrep && pecos_build::ripgrep::find_ripgrep().is_none() {
+        return true;
+    }
     false
 }
 
-fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) {
+fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool, skip_ripgrep: bool) {
     println!("PECOS dependency status:");
     println!();
 
@@ -146,6 +159,15 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) {
         println!("  cmake:      {}", path.display());
     } else {
         println!("  cmake:      not found (optional, enables the MWPF decoder)");
+    }
+
+    // ripgrep (required by dependency integrity checks)
+    if skip_ripgrep {
+        println!("  ripgrep:    skipped (--skip-ripgrep)");
+    } else if let Some(path) = pecos_build::ripgrep::find_ripgrep() {
+        println!("  ripgrep:    {}", path.display());
+    } else {
+        println!("  ripgrep:    not found (required by `just lint` and `just security-check`)");
     }
 }
 
@@ -449,6 +471,38 @@ fn setup_cmake(mode: PromptMode) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ── ripgrep (developer tooling) ─────────────────────────────────────────────
+
+fn setup_ripgrep(mode: PromptMode) {
+    if pecos_build::ripgrep::find_ripgrep().is_some() {
+        return;
+    }
+
+    let prompt = "Install ripgrep? (builds via `cargo install ripgrep --locked`, required by the dependency integrity checks that `just lint` runs)";
+    if !confirm(prompt, true, mode) {
+        println!(
+            "  Skipping ripgrep. `just lint` and `just security-check` will fail the dependency integrity check."
+        );
+        print_ripgrep_install_routes();
+        return;
+    }
+
+    if let Err(e) = pecos_build::ripgrep::install_ripgrep(false) {
+        eprintln!("  Warning: ripgrep install failed: {e}");
+        print_ripgrep_install_routes();
+    }
+}
+
+fn print_ripgrep_install_routes() {
+    println!("  To install later via PECOS: pecos install ripgrep");
+    println!("  Manual install options:");
+    println!("    cargo install ripgrep --locked");
+    println!("    brew install ripgrep");
+    println!("    apt install ripgrep");
+    println!("    winget install BurntSushi.ripgrep");
+    println!("  See {}", pecos_build::ripgrep::DOCS_URL);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

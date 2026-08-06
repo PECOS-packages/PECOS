@@ -342,8 +342,7 @@ fn neo_stack_rejects_nonunit_emission_scale() {
         .with_p_prep(0.0)
         .with_p_meas_0(0.0)
         .with_p_meas_1(0.0)
-        .with_prep_leak_ratio(0.0)
-        .with_p_idle_linear_rate(0.0);
+        .with_prep_leak_ratio(0.0);
     let err = sim(deterministic_conditional_qasm())
         .stack(SimStack::Neo)
         .noise(general)

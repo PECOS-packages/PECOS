@@ -196,7 +196,7 @@ def test_general_noise_idle_after_2q_api() -> None:
     builder = general_noise()
 
     assert callable(builder.with_idle_after_2q)
-    assert builder.with_p_idle_linear_rate(0.01).with_idle_after_2q(1.0) is not None
+    assert builder.with_p_idle_linear(0.01, {"X": 1 / 3, "Y": 1 / 3, "Z": 1 / 3}).with_idle_after_2q(1.0) is not None
     assert not hasattr(builder, "with_p2_idle")
 
 

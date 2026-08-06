@@ -99,8 +99,8 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
             let mut noise = DepolarizingNoiseModel::builder()
                 .with_p_prep(0.001)
                 .with_p_meas(0.001)
-                .with_single_qubit_probability(0.0005)
-                .with_two_qubit_probability(0.002)
+                .with_p1(0.0005)
+                .with_p2(0.002)
                 .with_seed(42)
                 .build();
 
@@ -132,8 +132,8 @@ fn bench_depolarizing_noise<M: Measurement>(c: &mut Criterion<M>) {
                 noise = DepolarizingNoiseModel::builder()
                     .with_p_prep(0.001)
                     .with_p_meas(0.001)
-                    .with_single_qubit_probability(0.0005)
-                    .with_two_qubit_probability(0.002)
+                    .with_p1(0.0005)
+                    .with_p2(0.002)
                     .with_seed(42)
                     .build();
                 let result = noise.start(input.clone()).unwrap();

@@ -42,7 +42,10 @@ _OBSERVABLES_JSON = '[{"id":0,"records":[-1]}]'
 
 
 def test_builder_matches_both_wrappers_with_noise_and_inserted_idles() -> None:
-    noise = NoiseParameters(p1=0.0, p2=0.01, p_meas=0.02, p_prep=0.0, p_idle_z_linear_rate=0.03)
+    noise = NoiseParameters(p1=0.0, p2=0.01, p_meas=0.02, p_prep=0.0).with_p_idle_linear(
+        0.03,
+        {"Z": 1.0},
+    )
     via_json_builder = (
         DetectorErrorModel.builder()
         .with_program(_tagged_two_qubit_program)

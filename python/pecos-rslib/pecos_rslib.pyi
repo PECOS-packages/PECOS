@@ -2089,7 +2089,19 @@ class decoders:
 
         def __init__(self, num_nodes: int, num_observables: int = ...) -> None: ...
         @staticmethod
-        def from_dem(dem: str) -> decoders.PyMatchingDecoder: ...
+        def from_dem(
+            dem: str,
+            error_probability: float | None = ...,
+        ) -> decoders.PyMatchingDecoder:
+            """Build from a detector error model.
+
+            Args:
+                dem: Detector error model text; its graph dimensions remain structural.
+                error_probability: Replaces every edge probability and its derived matching weight; better
+                    calibration can improve accuracy without changing asymptotic runtime or memory.
+            """
+            ...
+
         @staticmethod
         def from_dem_with_correlations(
             dem: str,
@@ -2097,7 +2109,7 @@ class decoders:
         ) -> decoders.PyMatchingDecoder: ...
         @staticmethod
         def from_check_matrix(check_matrix: decoders.CheckMatrix) -> decoders.PyMatchingDecoder: ...
-        def decode(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.MwpmResult: ...
         def decode_batch(
             self,
             detection_events: list[list[int]],
@@ -2113,7 +2125,28 @@ class decoders:
             check_matrix: decoders.CheckMatrix,
             weights: list[float] | None = ...,
         ) -> None: ...
-        def decode(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        @staticmethod
+        def from_dem(
+            dem: str,
+            correlated: bool = ...,
+            solver_type: str | None = ...,
+        ) -> decoders.FusionBlossomDecoder:
+            """Build from a detector error model.
+
+            Args:
+                dem: Detector error model text; node and observable counts are always derived from it.
+                correlated: Preserves decomposed correlations for accuracy at additional construction/runtime cost.
+                solver_type: ``"serial"`` is generally faster; ``"legacy"`` supports more graph shapes.
+                    ``None`` preserves the serial default. Parallel requires an unavailable partition configuration.
+            """
+            ...
+
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        def decode_from_defects(
+            self,
+            defects: list[int],
+            erasures: list[int] | None = ...,
+        ) -> decoders.MwpmResult: ...
         def __repr__(self) -> str: ...
 
     class BpOsdBuilder:
@@ -2129,7 +2162,7 @@ class decoders:
             >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
             >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
             >>> decoder = BpOsdBuilder(H, error_rate=0.01).osd_method("osd_cs").osd_order(7).build()
-            >>> result = decoder.decode([0, 0, 0])
+            >>> result = decoder.decode_syndrome([0, 0, 0])
         """
 
         def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
@@ -2165,7 +2198,31 @@ class decoders:
         Created via ``BpOsdBuilder(...).build()``.
         """
 
-        def decode(self, syndrome: list[int]) -> decoders.BpResult: ...
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int | None = ...,
+            bp_schedule: str | None = ...,
+            ms_scaling_factor: float | None = ...,
+            osd_order: int | None = ...,
+            random_schedule_seed: int | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build BP+OSD from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
+                ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
+                    accuracy at negligible runtime cost. ``None`` preserves product-sum BP.
+                osd_order: Combination-sweep order; larger values can improve accuracy at steep runtime cost.
+                random_schedule_seed: Makes randomized scheduling reproducible without changing its runtime bound.
+            """
+            ...
+
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.BpResult: ...
         def __repr__(self) -> str: ...
 
     class BpLsdBuilder:
@@ -2213,6 +2270,28 @@ class decoders:
         Created via ``BpLsdBuilder(...).build()``.
         """
 
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int | None = ...,
+            bp_schedule: str | None = ...,
+            ms_scaling_factor: float | None = ...,
+            random_schedule_seed: int | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build BP+LSD from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
+                ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
+                    accuracy at negligible runtime cost. ``None`` preserves product-sum BP.
+                random_schedule_seed: Makes randomized scheduling reproducible without changing its runtime bound.
+            """
+            ...
+
         def decode(self, syndrome: list[int]) -> decoders.BpResult: ...
         def __repr__(self) -> str: ...
 
@@ -2228,7 +2307,7 @@ class decoders:
             >>> from pecos_rslib.decoders import UnionFindBuilder, SparseMatrix
             >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
             >>> decoder = UnionFindBuilder(H).method("peeling").build()
-            >>> result = decoder.decode([0, 0, 0])
+            >>> result = decoder.decode_syndrome([0, 0, 0])
         """
 
         def __init__(self, pcm: decoders.SparseMatrix) -> None: ...
@@ -2248,7 +2327,20 @@ class decoders:
         Created via ``UnionFindBuilder(...).build()``.
         """
 
-        def decode(
+        @staticmethod
+        def from_dem(
+            dem: str,
+            method: str | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build Union-Find from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                method: ``"peeling"`` is faster on compatible LDPC matrices; ``"inversion"`` is more general.
+            """
+            ...
+
+        def decode_syndrome(
             self,
             syndrome: list[int],
             llrs: list[float] | None = ...,
@@ -2277,9 +2369,26 @@ class decoders:
             preset: str = ...,
             det_beam: int | None = ...,
             beam_climbing: bool | None = ...,
-            verbose: bool = ...,
-        ) -> decoders.TesseractDecoder: ...
-        def decode(self, detections: list[int]) -> decoders.TesseractResult: ...
+            verbose: bool | None = ...,
+            no_revisit_dets: bool | None = ...,
+            pqlimit: int | None = ...,
+            det_penalty: float | None = ...,
+        ) -> decoders.TesseractDecoder:
+            """Build Tesseract from a detector error model and optional preset overrides.
+
+            Args:
+                dem: Detector error model text; detector and observable counts are derived from it.
+                preset: Baseline accuracy/runtime profile: ``"default"``, ``"fast"``, or ``"accurate"``.
+                det_beam: Larger detector beams can improve accuracy at increased runtime and memory cost.
+                beam_climbing: Enables a faster search heuristic that can alter the accuracy/runtime balance.
+                verbose: Enables diagnostic output without changing accuracy or memory use.
+                no_revisit_dets: Avoids revisits for lower runtime, with a possible accuracy cost.
+                pqlimit: Priority-queue cap; smaller values bound memory at a possible accuracy cost.
+                det_penalty: Larger penalties prune search more aggressively for speed at possible accuracy cost.
+            """
+            ...
+
+        def decode_from_defects(self, detections: list[int]) -> decoders.TesseractResult: ...
         def decode_syndrome(self, syndrome: list[int]) -> decoders.TesseractResult: ...
         def decode_batch(
             self,
@@ -2377,6 +2486,25 @@ class decoders:
         Created via ``RelayBpBuilder(...).build()``.
         """
 
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int | None = ...,
+            alpha: float | None = ...,
+            seed: int | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build Relay BP from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
+                seed: Makes relay sampling reproducible without increasing its runtime bound.
+            """
+            ...
+
         def decode(self, syndrome: list[int]) -> decoders.BpResult:
             """Decode a syndrome vector.
 
@@ -2444,6 +2572,23 @@ class decoders:
 
         Created via ``MinSumBpBuilder(...).build()``.
         """
+
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int | None = ...,
+            alpha: float | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build min-sum BP from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
+            """
+            ...
 
         def decode(self, syndrome: list[int]) -> decoders.BpResult:
             """Decode a syndrome vector.

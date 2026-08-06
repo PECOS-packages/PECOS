@@ -183,7 +183,7 @@ assert batch.num_shots == 1000
 decoder = PyMatchingDecoder.from_dem(dem.to_string_decomposed())
 errors = 0
 for shot in range(batch.num_shots):
-    predicted = decoder.decode(batch.get_syndrome(shot)).correction[0]
+    predicted = decoder.decode_syndrome(batch.get_syndrome(shot)).correction[0]
     actual = batch.get_observable_mask(shot) & 1
     errors += predicted != actual
 print(f"logical error rate: {errors / batch.num_shots:.4f}")
@@ -213,7 +213,7 @@ different DEM.
 Both Guppy DEM entry points accept either the existing flat noise keywords or
 one `NoiseParameters` instance containing the complete noise configuration.
 `NoiseParameters` is available from the `pecos` top level, and supports both
-its original dataclass constructor and immutable `with_<field_name>` chaining.
+its dataclass constructor and immutable family/setter chaining.
 The grouped and flat forms below are equivalent. Do not mix them in one call:
 even explicitly passing a flat parameter at its default value conflicts with
 `noise`. When `noise` is present, its defaults fully replace the entry point's
@@ -234,10 +234,6 @@ noise = (
     .with_p_idle_linear(0.01, {"X": 0.25, "Y": 0.25, "Z": 0.5})
     .with_p_idle_sin_squared(0.03, {"Z": 1.0})
 )
-
-# The families translate into canonical per-axis rates.
-assert noise.p_idle_z_linear_rate == 0.005
-assert noise.p_idle_z_quadratic_sine_rate == 0.03
 ```
 
 <!--test-name: dem_from_guppy_grouped_noise-->
@@ -285,6 +281,14 @@ else:
     raise AssertionError("grouped and flat noise must not be mixed")
 ```
 
+`NoiseParameters.p2_szz` and `p2_szzdg` are gate-type total-rate overrides.
+When either is unset, that gate inherits the shared `p2` rate, so omitting both
+causes no DEM/simulator divergence. A non-default override is a documented API
+gap: it is not expressible through the engines `general_noise()` builder. Neo
+can represent the distinction with a `PerGatePauliChannel`, but the standard
+Guppy DEM entry points reject explicit `p2_szz` or `p2_szzdg` values rather than
+silently dropping them.
+
 ## Idle Noise
 
 The recommended structured interface has three rate-and-model families. Every
@@ -330,29 +334,70 @@ compatibility, but reject it at call time when its weight is nonzero. A zero
 `L` weight is silently accepted. Multi-qubit idle faults are outside the scope
 of these keyword arguments and will arrive through a typed channel interface.
 
-These rates match the engines *runtime* application semantics
-(`GeneralNoiseModel`'s internal fields); the engines `GeneralNoiseModelBuilder`
-additionally rescales its public inputs (square-root scaling, an
-incoherent-conversion factor, and cycles-to-radians), so builder inputs are
-not directly interchangeable with these parameters.
+These rates match the engines family setters and runtime application semantics.
+The removed quadratic builder spelling was the exception: its input was in
+cycles per time and was converted before the runtime saw it. Family sine rates
+are in radians per time and are not converted.
 
 Every residual is readable from `dem.idle_noise_residuals` as a dictionary
 containing `channel_kind`, `location_index`, the concrete
-`detectors`/`dem_outputs`/`tracked_paulis` signature, and `magnitude`. Gate and
-idle categorical Pauli channels share this list. The magnitude is the
-total-variation distance between the requested categorical channel and the
-emitted independent mechanisms; in the two-dimensional boundary case it is
-also the excess on the reported signature and the matching identity deficit.
-Audited Guppy builds copy this list to
+`detectors`/`dem_outputs`/`tracked_paulis` signature, `magnitude`,
+`channel_weight`, and `relative_magnitude`. Gate and idle categorical Pauli
+channels share this list. The channel weight is the sum of the requested
+channel's non-identity probabilities before conversion, including branches
+whose propagated signature is empty. The magnitude is the total-variation
+distance between the requested categorical channel and the emitted independent
+mechanisms, and `relative_magnitude = magnitude / channel_weight`; in the
+two-dimensional boundary case the absolute magnitude is also the excess on the
+reported signature and the matching identity deficit. Audited Guppy builds
+copy this list to
 `dem_build.audit["idle_noise_residuals"]`. An empty list certifies that all
 categorical signature conversions were exact.
 
-The per-axis `p_idle_{x,y,z}_linear_rate`,
-`p_idle_{x,y,z}_quadratic_rate`, and
-`p_idle_{x,y,z}_quadratic_sine_rate` parameters remain available as low-level
-knobs. The bare Z-only aliases `p_idle_linear_rate`,
-`p_idle_quadratic_rate`, and `p_idle_quadratic_sine_rate` are deprecated; use
-the structured interface or the explicitly named `p_idle_z_*` equivalent.
+`DetectorErrorModel.builder().with_residual_warning_threshold(fraction)` sets
+a relative physics tolerance. For example, `fraction=0.002` accepts an inexact
+conversion whose total-variation residual is at most 0.2% of that requested
+channel's total error weight. The default is zero, and a build warns when any
+residual is greater than the accepted fraction. The threshold gates only that
+warning: every exact figure remains in `dem.idle_noise_residuals` and the audit
+entry regardless of the tolerance. To suppress warnings wholesale, use
+`warnings.filterwarnings`; the builder setter encodes an accepted channel
+approximation, not a blanket quiet mode.
+
+The families are the only public way to configure these idle channels on
+`NoiseParameters`. They translate into underscore-prefixed canonical per-axis
+fields internally; those fields are implementation details consumed by the
+Rust DEM boundary, not public constructor arguments or fluent setters.
+
+Migration from the removed setters is mechanical:
+
+| Removed | Replacement |
+|---|---|
+| `with_p_idle_z_linear_rate(r)` | `with_p_idle_linear(r, {"Z": 1.0})` |
+| `with_p_idle_x_quadratic_sine_rate(r)` | `with_p_idle_sin_squared(r, {"X": 1.0})` |
+| `with_p_idle_linear_rate(r)` | `with_p_idle_linear(r, {"Z": 1.0})` |
+
+The last row is intentionally Z-only: despite its axis-free name,
+`NoiseParameters.with_p_idle_linear_rate` configured only the Z channel. The
+identically named setter on `general_noise()` configured a total linear rate
+split according to its model and has now also been removed. Migrate that
+engines spelling to `with_p_idle_linear(r, model)`, passing the symmetric
+`{"X": 1/3, "Y": 1/3, "Z": 1/3}` model if the old model setter was not used.
+Copying a numeric value between the two old interfaces did not preserve the
+channel.
+
+The engines quadratic migration has a unit conversion that must not be
+omitted. At the removed path's default coherent-to-incoherent factor of `1.0`:
+
+```text
+with_p_idle_quadratic_rate(r)  ==  with_p_idle_sin_squared(r * PI, {"Z": 1.0})
+```
+
+The left-hand rate was in cycles per time; the family rate is in radians per
+time. The orphaned `with_p_idle_coherent_to_incoherent_factor` setter has no
+replacement. The two `with_average_p_idle_*_rate` spellings were also removed:
+a gate-channel average-error conversion does not define a duration-independent
+idle-family rate, especially for the nonlinear sine-squared law.
 
 The default Selene runtime does not emit idle gates. These parameters and
 `t1`/`t2` therefore have no locations to attach to unless the runtime supplies
@@ -548,7 +593,7 @@ shots rather than on three independently sampled experiments.
 
 <!--test-name: dem_from_guppy_decoder_comparison-->
 ```python
-from pecos.decoders import DemAwareDecoder, TesseractDecoder
+from pecos.decoders import BpOsdDecoder, TesseractDecoder
 from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import SurfacePatch
@@ -590,7 +635,7 @@ tesseract = TesseractDecoder.from_dem(dem.to_string(), preset="fast")
 tesseract_result = tesseract.decode_syndrome(syndrome)
 assert tesseract_result.observables_mask >= 0
 
-bp_osd = DemAwareDecoder.from_dem(dem.to_string(), decoder_type="bp_osd")
+bp_osd = BpOsdDecoder.from_dem(dem.to_string())
 bp_osd_result = bp_osd.decode_syndrome(syndrome)
 assert bp_osd_result.observables_mask >= 0
 ```

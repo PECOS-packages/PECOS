@@ -543,24 +543,29 @@ impl GeneralNoiseModelBuilder {
 
     /// Set T1/T2 relaxation times in physical units (seconds).
     ///
-    /// Requires `with_time_scale()` to be called first.
+    /// Requires `with_time_scale()` to be called first. T2 is total transverse coherence time,
+    /// not pure-dephasing Tphi. This uses the first-order Pauli-twirl mapping documented by
+    /// [`IdleChannel::from_t1_t2`], including its `T2 <= 2 * T1` bound and small-duration validity
+    /// domain. It configures only the linear idle family; the quadratic rate is zero.
+    ///
+    /// This mapping changes the numerical rates and Pauli weights produced by this convenience
+    /// from earlier PECOS versions. It produces the same configuration callers can write with the
+    /// linear-family rate and weight setters.
     ///
     /// # Panics
-    /// Panics if `with_time_scale()` has not been called.
+    /// Panics if `with_time_scale()` has not been called, if either time is non-finite or not
+    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
     #[must_use]
     pub fn with_idle_t1_t2(mut self, t1_seconds: f64, t2_seconds: f64) -> Self {
         let scale = self
             .time_scale
             .expect("with_time_scale() must be called before with_idle_t1_t2()");
 
-        // Convert physical times to time units
-        let t1_units = scale.from_seconds(t1_seconds).as_f64();
-        let t2_units = scale.from_seconds(t2_seconds).as_f64();
-
-        // Set rates: linear_rate = 1/T1, quadratic_rate = 1/T2^2
-        self.p_idle_linear_rate = 1.0 / t1_units.max(1.0);
-        self.p_idle_quadratic_rate = 1.0 / (t2_units * t2_units).max(1.0);
-        self.p_idle_quadratic_configured = true;
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
+        self.p_idle_linear_rate = channel.linear_rate;
+        self.p_idle_linear_weights = channel.linear_weights;
+        self.p_idle_quadratic_rate = channel.quadratic_rate;
+        self.p_idle_quadratic_configured = false;
         self
     }
 
@@ -1186,13 +1191,46 @@ mod tests {
     #[test]
     fn test_idle_t1_t2_configuration() {
         // T1=50us, T2=30us with nanosecond time units
-        let model = GeneralNoiseModelBuilder::new()
+        let builder = GeneralNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
-            .with_idle_t1_t2(50e-6, 30e-6)
-            .build();
+            .with_idle_t1_t2(50e-6, 30e-6);
+        let expected = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+
+        assert!((builder.p_idle_linear_rate - expected.linear_rate).abs() < f64::EPSILON);
+        assert!((builder.p_idle_linear_weights.x - expected.linear_weights.x).abs() < f64::EPSILON);
+        assert!((builder.p_idle_linear_weights.y - expected.linear_weights.y).abs() < f64::EPSILON);
+        assert!((builder.p_idle_linear_weights.z - expected.linear_weights.z).abs() < f64::EPSILON);
+        assert!((builder.p_idle_quadratic_rate - expected.quadratic_rate).abs() < f64::EPSILON);
+        assert!(!builder.p_idle_quadratic_configured);
 
         // Should have created an idle channel
+        let model = builder.build();
         assert_eq!(model.channel_count(), 1);
+    }
+
+    #[test]
+    fn idle_t1_t2_rejects_non_finite_seconds_before_time_scale_conversion() {
+        for (t1, t2, parameter) in [
+            (f64::INFINITY, 1.0, "t1"),
+            (f64::NEG_INFINITY, 1.0, "t1"),
+            (f64::NAN, 1.0, "t1"),
+            (1.0, f64::INFINITY, "t2"),
+            (1.0, f64::NEG_INFINITY, "t2"),
+            (1.0, f64::NAN, "t2"),
+        ] {
+            let panic = std::panic::catch_unwind(|| {
+                let _ = GeneralNoiseModelBuilder::new()
+                    .with_time_scale(TimeScale::NANOSECONDS)
+                    .with_idle_t1_t2(t1, t2);
+            })
+            .expect_err("non-finite physical time must panic");
+            let message = panic_message(panic.as_ref());
+            assert!(message.contains(parameter), "unexpected panic: {message}");
+            assert!(
+                message.contains("finite and greater than zero"),
+                "unexpected panic: {message}"
+            );
+        }
     }
 
     // ========================================================================

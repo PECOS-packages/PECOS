@@ -281,6 +281,11 @@ fn test_general_noise_builder_chaining_all_methods() {
     "#;
 
     // Test that all builder methods can be chained
+    let idle_model = BTreeMap::from([
+        ("X".to_string(), 1.0 / 3.0),
+        ("Y".to_string(), 1.0 / 3.0),
+        ("Z".to_string(), 1.0 / 3.0),
+    ]);
     let noise_builder = GeneralNoiseModel::builder()
         .with_seed(42)
         .with_scale(1.2)
@@ -293,8 +298,7 @@ fn test_general_noise_builder_chaining_all_methods() {
         .with_average_p2(0.008)
         .with_p_meas_0(0.002)
         .with_p_meas_1(0.003)
-        .with_p_idle_quadratic_coherent(false)
-        .with_p_idle_linear_rate(0.0001)
+        .with_p_idle_linear(0.0001, &idle_model)
         .with_noiseless_gate(GateType::H)
         .with_noiseless_gate(GateType::CX);
 

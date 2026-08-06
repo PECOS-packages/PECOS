@@ -140,7 +140,7 @@ def ion_trap_noise() -> None:
         # Two-qubit gates are limiting factor
         .with_average_p2(0.003)  # 0.3% error
         # Apply configured idle noise for one time unit after each two-qubit gate
-        .with_p_idle_linear_rate(0.0001)
+        .with_p_idle_linear(0.0001, {"X": 1 / 3, "Y": 1 / 3, "Z": 1 / 3})
         .with_idle_after_2q(1.0)
         # Asymmetric measurement
         .with_p_meas_0(0.001)  # Dark state error

@@ -97,6 +97,22 @@ _GUPPY_NOISE_KEYWORDS = (
     "p_idle_y_quadratic_sine_rate",
     "p_idle_z_quadratic_sine_rate",
 )
+_NOISE_PARAMETER_INTERNAL_IDLE_FIELDS = frozenset(
+    {
+        "p_idle_linear_rate",
+        "p_idle_quadratic_rate",
+        "p_idle_x_linear_rate",
+        "p_idle_y_linear_rate",
+        "p_idle_z_linear_rate",
+        "p_idle_x_quadratic_rate",
+        "p_idle_y_quadratic_rate",
+        "p_idle_z_quadratic_rate",
+        "p_idle_quadratic_sine_rate",
+        "p_idle_x_quadratic_sine_rate",
+        "p_idle_y_quadratic_sine_rate",
+        "p_idle_z_quadratic_sine_rate",
+    },
+)
 
 
 class _NoiseKeywordDefault:
@@ -154,7 +170,10 @@ def _resolve_guppy_noise(noise: NoiseParameters | None, call_arguments: Mapping[
             msg = f"NoiseParameters.{field} is not supported by the Guppy DEM entry points; {guidance}"
             raise ValueError(msg)
 
-    expanded = {name: getattr(noise, name) for name in _GUPPY_NOISE_KEYWORDS}
+    expanded = {
+        name: getattr(noise, f"_{name}" if name in _NOISE_PARAMETER_INTERNAL_IDLE_FIELDS else name)
+        for name in _GUPPY_NOISE_KEYWORDS
+    }
     for weights_name in ("p1_weights", "p2_weights"):
         if expanded[weights_name] is not None:
             expanded[weights_name] = dict(expanded[weights_name])
@@ -931,6 +950,7 @@ class GuppyDemBuilder:
         "_program",
         "_qubits",
         "_require_hosted_operation_order",
+        "_residual_warning_threshold",
         "_runtime",
         "_seed",
         "_strip_traced_idles",
@@ -950,6 +970,7 @@ class GuppyDemBuilder:
         self._strip_traced_idles: Any = _UNSET
         self._runtime: Any = _UNSET
         self._seed: Any = _UNSET
+        self._residual_warning_threshold: Any = _UNSET
         self._require_hosted_operation_order: Any = _UNSET
         self._max_hosted_tick_separation: Any = _UNSET
 
@@ -1045,13 +1066,68 @@ class GuppyDemBuilder:
         return self
 
     def with_runtime(self, runtime: object | None) -> Self:
-        """Set the Selene runtime used for the trace."""
+        """Set the Selene runtime that lowers the program into the traced QIS stream.
+
+        The runtime produces the trace rather than annotating it: the Guppy
+        program is lowered and unrolled through it, and the ``TickCircuit`` this
+        DEM is built from comes out the far side. A runtime that models timing
+        therefore emits its own ``Idle`` gates, which is why
+        :meth:`with_idle_after_2q` strips traced idles first by default rather
+        than stacking a second convention on top.
+
+        Accepts four forms:
+
+        - ``None`` selects the default runtime, preferring a freshly built
+          artifact and falling back to the installed plugin package.
+        - A name without path separators is treated as a built runtime library.
+        - A path-like value is loaded as a shared library.
+        - A runtime plugin object is duck-typed. It must expose
+          ``library_file``; ``get_init_args()`` and ``library_search_dirs`` are
+          used when present and default to empty otherwise. An object without
+          ``library_file`` raises :class:`TypeError` at configuration time.
+
+        See ``pecos._engine_builders._configure_selene_runtime`` for the
+        dispatch.
+        """
         self._set_once("_runtime", runtime, "with_runtime")
         return self
 
     def with_seed(self, seed: int) -> Self:
         """Set the ideal trace seed."""
         self._set_once("_seed", seed, "with_seed")
+        return self
+
+    def with_residual_warning_threshold(self, fraction: float) -> Self:
+        """Accept channel-conversion residuals up to a relative physics tolerance.
+
+        ``fraction`` is a fraction of each requested channel's total error
+        weight, not an absolute probability. At or below this tolerance the
+        channel remains an accepted inexact conversion, with the exact figures
+        retained in ``dem.idle_noise_residuals`` and the build audit. The default
+        is ``0.0``, so every nonzero residual warns.
+
+        Use :func:`warnings.filterwarnings` when the intent is to silence a
+        warning category wholesale; this setter records a physics tolerance.
+        """
+        try:
+            finite = math.isfinite(fraction)
+        except (TypeError, ValueError):
+            finite = False
+        if not finite or not isinstance(fraction, (int, float)) or fraction < 0.0:
+            msg = (
+                "with_residual_warning_threshold() requires a finite fraction of "
+                "the channel's total error weight in [0.0, 1.0]; "
+                f"got {fraction!r}"
+            )
+            raise ValueError(msg)
+        if fraction > 1.0:
+            msg = (
+                "with_residual_warning_threshold() is a fraction of the channel's "
+                "total error weight in [0.0, 1.0], not an absolute probability; "
+                f"got {fraction!r}"
+            )
+            raise ValueError(msg)
+        self._set_once("_residual_warning_threshold", float(fraction), "with_residual_warning_threshold")
         return self
 
     def with_require_hosted_operation_order(self, flag: bool) -> Self:
@@ -1274,7 +1350,10 @@ class GuppyDemBuilder:
                 named_result_binding = "compiler_direct_scalar_partial"
             else:
                 named_result_binding = "compiler_direct_scalar_complete"
-        _warn_on_noise_channel_residuals(dem)
+        residual_warning_threshold = (
+            0.0 if self._residual_warning_threshold is _UNSET else self._residual_warning_threshold
+        )
+        _warn_on_noise_channel_residuals(dem, residual_warning_threshold)
         return GuppyDemBuild(
             dem=dem,
             circuit=circuit,
@@ -1289,22 +1368,27 @@ class GuppyDemBuilder:
         )
 
 
-def _warn_on_noise_channel_residuals(dem: DetectorErrorModel) -> None:
-    """Warn when a categorical Pauli channel could not be represented exactly."""
-    residuals = dem.idle_noise_residuals
+def _warn_on_noise_channel_residuals(dem: DetectorErrorModel, relative_threshold: float = 0.0) -> None:
+    """Warn about channel residuals above the accepted relative tolerance."""
+    residuals = [entry for entry in dem.idle_noise_residuals if float(entry["relative_magnitude"]) > relative_threshold]
     if not residuals:
         return
-    by_kind: dict[str, list[float]] = {}
+    by_kind: dict[str, list[tuple[float, float]]] = {}
     for entry in residuals:
         kind = str(entry["channel_kind"])
-        by_kind.setdefault(kind, []).append(float(entry["magnitude"]))
+        by_kind.setdefault(kind, []).append(
+            (float(entry["relative_magnitude"]), float(entry["magnitude"])),
+        )
     kinds = ", ".join(
-        f"{len(magnitudes)} {kind} (largest {max(magnitudes):.3e})" for kind, magnitudes in sorted(by_kind.items())
+        f"{len(magnitudes)} {kind} (largest relative {max(value[0] for value in magnitudes):.3e}; "
+        f"largest TV {max(value[1] for value in magnitudes):.3e})"
+        for kind, magnitudes in sorted(by_kind.items())
     )
     warnings.warn(
         f"{len(residuals)} categorical noise channel(s) were approximated: {kinds}. "
-        "A non-negative boundary fit was emitted; magnitudes are total-variation "
-        "distances from the requested channels. See dem.idle_noise_residuals for details.",
+        "A non-negative boundary fit was emitted; relative magnitudes are fractions "
+        "of each requested channel's total error weight, and TV magnitudes are "
+        "total-variation distances. See dem.idle_noise_residuals for details.",
         UserWarning,
         stacklevel=3,
     )

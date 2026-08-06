@@ -531,6 +531,7 @@ impl SamplingEngine {
                     .expect("idle gate location must have a fault location");
 
                 for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
+                    let channel_weight = probabilities.total();
                     let mut exclusive = BTreeMap::new();
                     for (mechanism, probability) in [
                         (x.clone(), probabilities.px),
@@ -562,6 +563,7 @@ impl SamplingEngine {
                             channel_kind: NoiseChannelKind::Idle,
                             effect: mechanism.as_fault_mechanism(),
                             magnitude,
+                            channel_weight,
                         });
                     }
                 }
@@ -635,6 +637,7 @@ impl SamplingEngine {
             );
             validate_exclusive_probabilities(&event_weights, &context)
                 .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            let channel_weight = event_weights.iter().sum();
             let mut exclusive = BTreeMap::new();
             for (event, &event_prob) in events.iter().zip(&event_weights) {
                 let det_indices: SmallVec<[u32; 4]> = event.detectors.iter().copied().collect();
@@ -664,6 +667,7 @@ impl SamplingEngine {
                     channel_kind,
                     effect: mechanism.as_fault_mechanism(),
                     magnitude,
+                    channel_weight,
                 });
             }
         }
@@ -2610,6 +2614,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         let fit_context = format!("one-qubit {gate_type} gate at location {loc_idx}");
         validate_exclusive_probabilities(&rates, &fit_context)
             .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        let channel_weight = rates.iter().sum();
         let mut exclusive = BTreeMap::new();
         for (pauli, &per_pauli_prob) in [Pauli::X, Pauli::Y, Pauli::Z].iter().zip(rates.iter()) {
             let mechanism = self.compute_mechanism(
@@ -2639,6 +2644,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 channel_kind: NoiseChannelKind::SingleQubitGate,
                 effect: mechanism.as_fault_mechanism(),
                 magnitude,
+                channel_weight,
             });
         }
     }
@@ -2687,6 +2693,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         };
 
         for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
+            let channel_weight = probabilities.total();
             let mut exclusive = BTreeMap::new();
             for (mechanism, probability) in [
                 (x_mechanism.clone(), probabilities.px),
@@ -2711,6 +2718,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                     channel_kind: NoiseChannelKind::Idle,
                     effect: mechanism.as_fault_mechanism(),
                     magnitude,
+                    channel_weight,
                 });
             }
         }
@@ -2740,6 +2748,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         let fit_context = format!("two-qubit {gate_type} gate at locations {loc1} and {loc2}");
         validate_exclusive_probabilities(&rates, &fit_context)
             .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        let channel_weight = rates.iter().sum();
         let paulis = [Pauli::I, Pauli::X, Pauli::Y, Pauli::Z];
 
         let mut effects1: [Option<DemMechanism>; 4] = [None, None, None, None];
@@ -2807,6 +2816,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 channel_kind: NoiseChannelKind::TwoQubitGate,
                 effect: mechanism.as_fault_mechanism(),
                 magnitude,
+                channel_weight,
             });
         }
     }

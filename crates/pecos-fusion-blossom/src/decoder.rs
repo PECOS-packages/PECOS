@@ -282,6 +282,20 @@ impl FusionBlossomDecoder {
     ///
     /// Returns error if the graph is empty or construction fails.
     pub fn from_matching_graph(graph: &pecos_decoder_core::dem::DemMatchingGraph) -> Result<Self> {
+        Self::from_matching_graph_with_solver_type(graph, SolverType::Serial)
+    }
+
+    /// Create decoder from a `DemMatchingGraph` with an explicit supported solver.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the graph is invalid, construction fails, or the
+    /// parallel solver is requested without its required partition configuration.
+    pub fn from_matching_graph_with_solver_type(
+        graph: &pecos_decoder_core::dem::DemMatchingGraph,
+        solver_type: SolverType,
+    ) -> Result<Self> {
+        Self::validate_dem_solver_type(solver_type)?;
         // Matching decoders pack observable flips into a u64; reject >64-observable
         // DEMs as an error rather than overflow-panicking in the `1 << o` loop below.
         graph
@@ -290,7 +304,8 @@ impl FusionBlossomDecoder {
         let config = FusionBlossomConfig {
             num_nodes: Some(graph.num_detectors),
             num_observables: graph.num_observables,
-            ..Default::default()
+            solver_type,
+            max_tree_size: None,
         };
         let mut decoder = Self::new(config)?;
         for edge in &graph.edges {
@@ -314,9 +329,19 @@ impl FusionBlossomDecoder {
     ///
     /// Returns error if the DEM is malformed.
     pub fn from_dem(dem: &str) -> Result<Self> {
+        Self::from_dem_with_solver_type(dem, SolverType::Serial)
+    }
+
+    /// Create decoder from a DEM string with an explicit supported solver.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DEM is malformed or the parallel solver is
+    /// requested without its required partition configuration.
+    pub fn from_dem_with_solver_type(dem: &str, solver_type: SolverType) -> Result<Self> {
         let graph = pecos_decoder_core::dem::DemMatchingGraph::from_dem_str(dem)
             .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
-        Self::from_matching_graph(&graph)
+        Self::from_matching_graph_with_solver_type(&graph, solver_type)
     }
 
     /// Parse a DEM string into a reusable structure for correlated FB construction.
@@ -526,8 +551,22 @@ impl FusionBlossomDecoder {
     ///
     /// Returns error if the DEM is malformed.
     pub fn from_dem_correlated(dem: &str) -> Result<Self> {
+        Self::from_dem_correlated_with_solver_type(dem, SolverType::Serial)
+    }
+
+    /// Create a correlated decoder from a DEM string with an explicit supported solver.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DEM is malformed or the parallel solver is
+    /// requested without its required partition configuration.
+    pub fn from_dem_correlated_with_solver_type(
+        dem: &str,
+        solver_type: SolverType,
+    ) -> Result<Self> {
         use pecos_decoder_core::dem::DemCheckMatrix;
 
+        Self::validate_dem_solver_type(solver_type)?;
         let dcm = DemCheckMatrix::from_dem_str(dem)
             .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
         // Matching decoders pack observable flips into a u64; reject >64-observable
@@ -538,7 +577,8 @@ impl FusionBlossomDecoder {
         let config = FusionBlossomConfig {
             num_nodes: Some(dcm.num_detectors),
             num_observables: dcm.num_observables,
-            ..Default::default()
+            solver_type,
+            max_tree_size: None,
         };
         let mut decoder = Self::new(config)?;
 
@@ -573,6 +613,16 @@ impl FusionBlossomDecoder {
 
         decoder.build_obs_masks();
         Ok(decoder)
+    }
+
+    fn validate_dem_solver_type(solver_type: SolverType) -> Result<()> {
+        if solver_type == SolverType::Parallel {
+            return Err(FusionBlossomError::Configuration(
+                "solver_type 'parallel' requires a partition configuration, which the DEM constructor does not accept"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Create decoder from a standard QEC code
@@ -1091,6 +1141,12 @@ impl FusionBlossomDecoder {
     #[must_use]
     pub fn num_nodes(&self) -> usize {
         self.num_nodes
+    }
+
+    /// Get the configured solver type.
+    #[must_use]
+    pub fn solver_type(&self) -> SolverType {
+        self.config.solver_type
     }
 
     /// Get number of edges

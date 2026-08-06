@@ -615,6 +615,8 @@ fn test_software_gates_not_affected_by_noise() {
 #[test]
 fn test_coherent_vs_incoherent_dephasing() {
     const NUM_SHOTS: usize = 2000;
+    let coherent_idle_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
+    let sine_idle_model = BTreeMap::from([("Z".to_string(), 1.0)]);
 
     // Create two noise models with different dephasing types using the builder pattern
     let coherent_model = GeneralNoiseModel::builder()
@@ -623,7 +625,7 @@ fn test_coherent_vs_incoherent_dephasing() {
         .with_p_meas_1(0.01)
         .with_average_p1(0.05)
         .with_average_p2(0.1)
-        .with_p_idle_quadratic_coherent(true)
+        .with_p_idle_coherent(0.2, &coherent_idle_model)
         .with_seed(42)
         .build();
 
@@ -636,8 +638,7 @@ fn test_coherent_vs_incoherent_dephasing() {
         .with_p_meas_1(0.01)
         .with_average_p1(0.05)
         .with_average_p2(0.1)
-        .with_p_idle_quadratic_coherent(false)
-        .with_p_idle_coherent_to_incoherent_factor(2.0)
+        .with_p_idle_sin_squared(0.1, &sine_idle_model)
         .with_seed(42)
         .build();
 
@@ -646,7 +647,7 @@ fn test_coherent_vs_incoherent_dephasing() {
 
     // Create a dephasing test circuit:
     // 1. Prepare |+⟩ state with H
-    // 2. Wait a bit (we'll use a Z gate for simplicity instead of a true idle)
+    // 2. Wait for one time unit
     // 3. Apply H to convert phase to population
     // 4. Measure
 
@@ -656,8 +657,7 @@ fn test_coherent_vs_incoherent_dephasing() {
     // Prepare |+⟩ state
     builder.h(&[0]);
 
-    // Add Z gate (as a simplified way to introduce phase)
-    builder.z(&[0]);
+    builder.idle(1.0, &[0]);
 
     // Convert phase to population
     builder.h(&[0]);

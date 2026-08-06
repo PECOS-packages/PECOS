@@ -81,10 +81,8 @@ impl Default for GeneralNoiseModel {
         // No-effect defaults
         Self {
             p_prep: 0.0,
-            p_idle_quadratic_coherent: false,
             p_idle_linear_rate: 0.0,
             p_idle_linear_model: SingleQubitWeightedSampler::new(&p1_pauli_model),
-            p_idle_quadratic_rate: 0.0,
             p_idle_sin_squared_rate: 0.0,
             p_idle_sin_squared_model: BTreeMap::new(),
             p_idle_coherent_rate: 0.0,
@@ -116,8 +114,6 @@ impl Default for GeneralNoiseModel {
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_model: CrosstalkWeightedSampler::new(&p_meas_crosstalk_model),
             p_prep_crosstalk: 0.0,
-
-            p_idle_coherent_to_incoherent_factor: 1.0,
             noiseless_gates: BTreeSet::new(),
             p_meas_max: p_meas_0.max(p_meas_1),
             leakage_scale: 1.0,

@@ -9,6 +9,7 @@
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) - Python package manager
 - [just](https://github.com/casey/just) - Command runner
 - [pecos](https://crates.io/crates/pecos) - PECOS dev tools CLI
+- [ripgrep](https://github.com/BurntSushi/ripgrep#installation) - Required by the dependency integrity checks run by `just lint` and `just security-check`. Install it with `pecos install ripgrep`, or manually with `cargo install ripgrep --locked`, `brew install ripgrep`, `apt install ripgrep`, or `winget install BurntSushi.ripgrep`.
 - **Windows**: [Git for Windows](https://git-scm.com/download/win) (provides Git Bash, required by Justfile recipes) or WSL
 
 **Pure Rust development** (Rust crates only):

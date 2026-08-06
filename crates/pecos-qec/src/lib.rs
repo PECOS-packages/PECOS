@@ -65,6 +65,7 @@
 
 pub mod dem_stab;
 pub mod distance;
+pub mod distance_problem;
 pub mod fault_tolerance;
 pub mod geometry;
 pub mod logical_discovery;
@@ -82,6 +83,10 @@ pub use distance::{
     DistanceResult, DistanceSearchConfig, LogicalOperatorInfo, WeightedPauliIterator,
     calculate_distance, find_min_weight_logicals, find_min_weight_logicals_with_info,
     find_shortest_logicals, has_logical_error_at_weight,
+};
+pub use distance_problem::{
+    CertifiedDistance, DistanceCertificationError, DistanceProblem, DistanceProblemError,
+    SolverAnswer, WitnessError,
 };
 pub use fault_tolerance::dem_builder::{
     DecomposedFault, DemBuilder, DemBuilderError, DemOutput, DetectorDef, DetectorErrorModel,

@@ -27,6 +27,21 @@ Both approaches require:
 - CUDA Toolkit (system-level installation)
 - cuQuantum SDK (for Rust bindings) or Python packages (for Python bindings)
 
+## CUDA Simulators and Multiprocessing
+
+When a parent process has initialized CUDA, its children must use the multiprocessing
+`spawn` start method rather than `fork`. A forked child cannot use the parent's CUDA
+context because CUDA contexts do not survive fork. Depending on the backend, this
+fails with `cudaErrorInitializationError`, `CUDA_ERROR_NOT_INITIALIZED`, or a
+cuQuantum `Not initialized` error from a cuStateVec, cuStabilizer, cuTensorNet, or
+cuDensityMat handle.
+
+PECOS's built-in multiprocessing engine already uses `spawn`. Host programs that
+embed PECOS in their own process pools must also select `spawn` if the parent may
+initialize CUDA before creating workers. The Rust cuQuantum bindings load their CUDA
+libraries with local symbol visibility so they do not disturb other CUDA-using
+libraries in the same process.
+
 ## System Requirements
 
 ### Hardware Requirements

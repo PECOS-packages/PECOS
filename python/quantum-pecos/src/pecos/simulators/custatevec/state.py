@@ -29,6 +29,14 @@ from pecos.simulators.custatevec._cuquantum_compat import (
 )
 from pecos.simulators.sim_class_types import StateVector
 
+# cudaErrorInitializationError from the CUDA runtime API. CuPy exposes only the
+# numeric CUDA status through CUDARuntimeError.status, not the named enum constant.
+_CUDA_ERROR_INITIALIZATION = 3
+
+# CUDA_ERROR_NOT_INITIALIZED from the CUDA driver API. CuPy exposes the numeric
+# CUDA status through CUDADriverError.status.
+_CUDA_DRIVER_ERROR_NOT_INITIALIZED = 3
+
 if TYPE_CHECKING:
     import sys
 
@@ -66,6 +74,26 @@ class CuStateVec(StateVector):
         self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
 
+        try:
+            self._initialize_cuda()
+        except (cp.cuda.runtime.CUDARuntimeError, cp.cuda.driver.CUDADriverError) as exc:
+            runtime_initialization_error = (
+                isinstance(exc, cp.cuda.runtime.CUDARuntimeError) and exc.status == _CUDA_ERROR_INITIALIZATION
+            )
+            driver_not_initialized_error = (
+                isinstance(exc, cp.cuda.driver.CUDADriverError) and exc.status == _CUDA_DRIVER_ERROR_NOT_INITIALIZED
+            )
+            if runtime_initialization_error or driver_not_initialized_error:
+                msg = (
+                    "CUDA could not initialize in this process; a common cause is running in a forked child of a "
+                    "process that already initialized CUDA (CUDA contexts do not survive fork) — use the "
+                    'multiprocessing "spawn" start method.'
+                )
+                raise RuntimeError(msg) from exc
+            raise
+
+    def _initialize_cuda(self) -> None:
+        """Allocate the state vector and initialize its CUDA resources."""
         # Set data type as double precision complex numbers
         self.cp_type = cp.complex128
         self.cuda_type = cudaDataType.CUDA_C_64F  # == cp.complex128
@@ -103,6 +131,7 @@ class CuStateVec(StateVector):
         )
 
         # CuStateVec handle initialization
+        # Errors raised directly by cusv.create() stay uncaught so cuQuantum preserves their native type.
         self.libhandle = cusv.create()
         self.stream = cp.cuda.Stream()
         cusv.set_stream(self.libhandle, self.stream.ptr)

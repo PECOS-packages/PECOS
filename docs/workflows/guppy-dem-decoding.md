@@ -109,9 +109,21 @@ observables = [Observable("m0")]
 
 ## 3. Generate the DEM with gate and idle noise
 
-`idle_after_2q_duration=1.0` inserts an idle of that duration on both qubits
-after every two-qubit gate; traced identity-like gates are stripped first by
-default, so runtime-emitted idles are not double-counted.
+`with_idle_after_2q(1.0)` inserts an idle of that duration on both qubits after
+every two-qubit gate; traced identity-like gates are stripped first by default,
+so runtime-emitted idles are not double-counted.
+
+That default matters because the trace need not be idle-free. `with_runtime(...)`
+selects the Selene runtime plugin that lowers and unrolls the Guppy program into
+the QIS trace this TickCircuit is built from — so the runtime does not decorate
+the trace, it produces it. A runtime that models timing emits its own idle gates
+as part of that lowering, reflecting real scheduling rather than the uniform
+convention inserted here. Setting `with_idle_after_2q(...)` therefore
+implies stripping first, so the two conventions cannot stack. To keep a runtime's
+own idle placement instead, simply omit `with_idle_after_2q(...)` — stripping is
+off unless insertion asked for it — and the idle-noise families apply to whatever
+idles the runtime emitted. `with_strip_traced_idles(...)` overrides that pairing
+in either direction when you want it stated explicitly.
 
 The linear family uses a custom Z-biased distribution, keeping smaller X and Y
 memory errors while making dephasing dominant; its weights are an additive

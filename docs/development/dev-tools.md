@@ -27,6 +27,7 @@ pecos python build --profile native   # Release + native-CPU codegen (Rust and C
 pecos install llvm            # Install managed LLVM 21.1 where supported
 pecos install cuda            # Install CUDA Toolkit to ~/.pecos/deps/cuda/
 pecos install cuquantum       # Install cuQuantum SDK to ~/.pecos/deps/cuquantum/
+pecos install ripgrep         # Install ripgrep with cargo install
 pecos install --all           # Install all optional dependencies
 pecos uninstall llvm          # Uninstall LLVM
 pecos upgrade llvm            # Upgrade (force reinstall) LLVM
@@ -197,6 +198,11 @@ pecos deps sync
 Syncs crate-level `pecos.toml` manifests from the workspace-level manifest.
 
 ## Dependency and Security Policy
+
+The dependency integrity check run by `just lint` and `just security-check`
+requires ripgrep. Install it with `pecos install ripgrep`, or manually with
+`cargo install ripgrep --locked`, `brew install ripgrep`, `apt install ripgrep`,
+or `winget install BurntSushi.ripgrep`.
 
 Run these recipes when changing dependencies, lockfiles, CI workflows, action references, cache behavior, or security policy:
 

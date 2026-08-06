@@ -259,7 +259,17 @@ RG_EXCLUDES=(
 
 section "Tooling"
 tooling_failures_before=$failures
-require_tool rg || true
+if ! command -v rg >/dev/null 2>&1 || ! rg --version >/dev/null 2>&1; then
+    fail "ripgrep (rg) is required for dependency integrity checks"
+    printf '%s\n' \
+        '  Install via PECOS: pecos install ripgrep' \
+        '  Manual install options:' \
+        '    cargo install ripgrep --locked' \
+        '    brew install ripgrep' \
+        '    apt install ripgrep' \
+        '    winget install BurntSushi.ripgrep' \
+        '  See https://github.com/BurntSushi/ripgrep#installation' >&2
+fi
 require_tool cargo || true
 require_tool uv || true
 require_tool python3 || true

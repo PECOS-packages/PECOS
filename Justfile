@@ -175,6 +175,17 @@ doctor: _msvc-bootstrap
     fi
     echo ""
 
+    echo "Developer tooling:"
+    if RG_VER=$(rg --version 2>/dev/null | head -1); then
+        ok "ripgrep" "${RG_VER:-installed}"
+    else
+        fail "ripgrep" "not found (run: pecos install ripgrep)"
+        echo "       Manual install options: cargo install ripgrep --locked, brew install ripgrep,"
+        echo "       apt install ripgrep, or winget install BurntSushi.ripgrep"
+        echo "       https://github.com/BurntSushi/ripgrep#installation"
+    fi
+    echo ""
+
     if [ "$PROBLEMS" -eq 0 ]; then
         echo "No problems found."
     else

@@ -230,12 +230,21 @@ The simulator still samples one linear event and then picks an axis, while the
 DEM emits independent per-axis mechanisms; the DEM builder converts between the
 two so both describe the same Pauli channel.
 
+There are two ways to place idle sites after two-qubit gates, and they are
+**alternatives, not steps**. Using both double-counts:
+
+- `general_noise().with_idle_after_2q(d)` -- the noise model applies idle faults
+  at each two-qubit gate's operands as it decorates the stream. This is what the
+  run below uses.
+- `TickCircuit.insert_idle_after_two_qubit_gates(d)` -- a circuit pass that
+  inserts real `Idle` gates, which the noise model then treats like any other
+  idle.
+
 A caveat if you supply a runtime plugin via `with_runtime(...)`. Unlike the DEM
-builder, a noise model cannot remove gates -- it decorates a gate stream. So a
-runtime that emits its own `Idle` gates gets idle noise applied to those *and*
-at the after-2q sites, double-counting where the DEM counts once. To control the
-idle convention explicitly, lower the program to a `TickCircuit` yourself and run
-the passes before simulating:
+builder, a noise model cannot remove gates -- it only decorates a gate stream. So
+a runtime that emits its own `Idle` gates gets idle noise applied to those *and*
+at the after-2q sites, double-counting where the DEM counts once. Lowering the
+program yourself lets you strip first, exactly as the DEM builder does:
 
 <!--continuation-->
 ```python
@@ -245,16 +254,15 @@ from pecos.tracing import trace_program_to_tick_circuit
 # a Selene runtime plugin, which may schedule idles of its own.
 tick_circuit = trace_program_to_tick_circuit(rep_code_memory, 7)
 
-tick_circuit.remove_identity()  # drop runtime-emitted idles
-tick_circuit.insert_idle_after_two_qubit_gates(1.0)  # apply one uniform convention
-
-# Same strip-then-insert order the DEM builder uses, so both surfaces see the
-# same idle placement.
+# Drop runtime-emitted idles so only one convention survives. Insertion is then
+# either this pass OR the noise model's with_idle_after_2q -- never both.
+tick_circuit.remove_identity()
 ```
 
-`sim()` does not yet accept a `TickCircuit` (PECOS #444), so for now this pass
-pipeline is how you inspect and control the idle placement, while the run below
-uses the default runtime -- which emits no idles, so nothing is double-counted.
+`sim()` does not yet accept a `TickCircuit` (PECOS #444), so today this is how to
+inspect the lowered circuit rather than a path into the simulator. The run below
+uses the default runtime, which emits no idles, so `with_idle_after_2q` is the
+only convention in play and nothing is double-counted.
 
 <!--continuation-->
 ```python

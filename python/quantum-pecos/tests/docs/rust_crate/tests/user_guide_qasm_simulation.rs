@@ -170,6 +170,7 @@ fn test_user_guide_qasm_simulation_rust_5() -> Result<(), Box<dyn std::error::Er
     use pecos::prelude::*;
     use pecos::noise::GeneralNoiseModelBuilder;
     use pecos::simulators::{sparse_stab, state_vector};
+    use std::collections::BTreeMap;
     let qasm_code = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -181,13 +182,18 @@ fn test_user_guide_qasm_simulation_rust_5() -> Result<(), Box<dyn std::error::Er
     "#;
     let program = Qasm::from_string(qasm_code);
 
+let idle_model = BTreeMap::from([
+    ("X".to_string(), 1.0 / 3.0),
+    ("Y".to_string(), 1.0 / 3.0),
+    ("Z".to_string(), 1.0 / 3.0),
+]);
 let noise = GeneralNoiseModelBuilder::new()
     .with_p_prep(0.001)      // State prep error
     .with_p_meas_0(0.005)    // Measurement error |0> → |1>
     .with_p_meas_1(0.01)     // Measurement error |1> → |0>
     .with_p1(0.0001)       // Single-qubit gate error
     .with_p2(0.01)         // Two-qubit gate error
-    .with_p_idle_linear_rate(0.0001)     // Idle noise rate
+    .with_p_idle_linear(0.0001, &idle_model) // Idle noise rate
     .with_idle_after_2q(1.0)             // Idle duration after two-qubit gates
     .with_seed(42);                    // Deterministic noise
 

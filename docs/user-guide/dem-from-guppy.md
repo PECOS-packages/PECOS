@@ -268,6 +268,14 @@ else:
     raise AssertionError("grouped and flat noise must not be mixed")
 ```
 
+`NoiseParameters.p2_szz` and `p2_szzdg` are gate-type total-rate overrides.
+When either is unset, that gate inherits the shared `p2` rate, so omitting both
+causes no DEM/simulator divergence. A non-default override is a documented API
+gap: it is not expressible through the engines `general_noise()` builder. Neo
+can represent the distinction with a `PerGatePauliChannel`, but the standard
+Guppy DEM entry points reject explicit `p2_szz` or `p2_szzdg` values rather than
+silently dropping them.
+
 ## Idle Noise
 
 The recommended structured interface has three rate-and-model families. Every
@@ -313,11 +321,10 @@ compatibility, but reject it at call time when its weight is nonzero. A zero
 `L` weight is silently accepted. Multi-qubit idle faults are outside the scope
 of these keyword arguments and will arrive through a typed channel interface.
 
-These rates match the engines *runtime* application semantics
-(`GeneralNoiseModel`'s internal fields); the engines `GeneralNoiseModelBuilder`
-additionally rescales its public inputs (square-root scaling, an
-incoherent-conversion factor, and cycles-to-radians), so builder inputs are
-not directly interchangeable with these parameters.
+These rates match the engines family setters and runtime application semantics.
+The removed quadratic builder spelling was the exception: its input was in
+cycles per time and was converted before the runtime saw it. Family sine rates
+are in radians per time and are not converted.
 
 Every residual is readable from `dem.idle_noise_residuals` as a dictionary
 containing `channel_kind`, `location_index`, the concrete
@@ -359,9 +366,25 @@ Migration from the removed setters is mechanical:
 
 The last row is intentionally Z-only: despite its axis-free name,
 `NoiseParameters.with_p_idle_linear_rate` configured only the Z channel. The
-identically named setter on `general_noise()` is different and remains live: it
-configures a total linear rate split according to its model. Copying a numeric
-value between those old interfaces therefore did not preserve the channel.
+identically named setter on `general_noise()` configured a total linear rate
+split according to its model and has now also been removed. Migrate that
+engines spelling to `with_p_idle_linear(r, model)`, passing the symmetric
+`{"X": 1/3, "Y": 1/3, "Z": 1/3}` model if the old model setter was not used.
+Copying a numeric value between the two old interfaces did not preserve the
+channel.
+
+The engines quadratic migration has a unit conversion that must not be
+omitted. At the removed path's default coherent-to-incoherent factor of `1.0`:
+
+```text
+with_p_idle_quadratic_rate(r)  ==  with_p_idle_sin_squared(r * PI, {"Z": 1.0})
+```
+
+The left-hand rate was in cycles per time; the family rate is in radians per
+time. The orphaned `with_p_idle_coherent_to_incoherent_factor` setter has no
+replacement. The two `with_average_p_idle_*_rate` spellings were also removed:
+a gate-channel average-error conversion does not define a duration-independent
+idle-family rate, especially for the nonlinear sine-squared law.
 
 The default Selene runtime does not emit idle gates. These parameters and
 `t1`/`t2` therefore have no locations to attach to unless the runtime supplies

@@ -184,7 +184,6 @@ impl NoiseCell {
                         .with_p1_emission_ratio(0.0)
                         .with_p2_emission_ratio(0.0)
                         .with_prep_leak_ratio(0.0)
-                        .with_p_idle_linear_rate(0.0)
                         .with_p_prep(0.0)
                         .with_p_meas_0(p_meas)
                         .with_p_meas_1(p_meas),
@@ -207,7 +206,6 @@ impl NoiseCell {
                         .with_p1_emission_ratio(0.0)
                         .with_p2_emission_ratio(0.0)
                         .with_prep_leak_ratio(0.0)
-                        .with_p_idle_linear_rate(0.0)
                         .with_p_prep(0.0)
                         .with_p_meas_0(0.0)
                         .with_p_meas_1(0.0),

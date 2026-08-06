@@ -120,15 +120,6 @@ pub struct GeneralNoiseModel {
     /// 1.0 means all leakage events remain leakage events.
     leakage_scale: f64,
 
-    /// Whether to use coherent dephasing vs incoherent (stochastic) dephasing
-    ///
-    /// If true, dephasing is modeled as coherent phase rotations using RZ gates.
-    /// If false, dephasing is modeled as stochastic Z errors with quadratic scaling.
-    ///
-    /// In physical systems, coherent dephasing represents systematic phase evolution
-    /// such as frequency offsets.
-    p_idle_quadratic_coherent: bool,
-
     /// The idle noise rate for linear dependency on time (seconds).
     ///
     /// This always applies stochastic noise
@@ -142,12 +133,6 @@ pub struct GeneralNoiseModel {
     /// the input.
     p_idle_linear_model: SingleQubitWeightedSampler,
 
-    /// The idle noise rate for quadratic dependency on time (seconds).
-    ///
-    /// This will be a coherent noise channel unless `p_idle_quadratic_coherent` is set to false.
-    /// If it is false it will apply Z to each qubit quadratic dependency on time.
-    p_idle_quadratic_rate: f64,
-
     /// DEM-style stochastic sine-squared idle rate in radians per time unit.
     p_idle_sin_squared_rate: f64,
 
@@ -159,16 +144,6 @@ pub struct GeneralNoiseModel {
 
     /// Unnormalized RX/RY/RZ relative multipliers for the coherent idle family.
     p_idle_coherent_model: BTreeMap<String, f64>,
-
-    /// Scaling factor to convert coherent dephasing rates to incoherent rates.
-    ///
-    /// A factor of one gives the exact Pauli twirl of the coherent rotation. Values above one can
-    /// be used to deliberately inflate stochastic dephasing.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the factor is not positive (less than or equal to 0.0).
-    p_idle_coherent_to_incoherent_factor: f64,
 
     /// Probability of applying a fault during preparation (initialization)
     ///
@@ -295,10 +270,9 @@ pub struct GeneralNoiseModel {
     /// Duration of the idle-noise site applied to each qubit after a two-qubit gate.
     ///
     /// A value of `0.0` disables these sites. For a nonzero duration, the sites receive the same
-    /// configured idle mechanisms as a real [`GateType::Idle`] operation: linear stochastic noise
-    /// from `p_idle_linear_rate` and `p_idle_linear_model`, quadratic dephasing from
-    /// `p_idle_quadratic_rate` honoring `p_idle_quadratic_coherent`, and the independent per-axis
-    /// sine-squared and coherent families. The duration is not itself an error probability.
+    /// configured idle families as a real [`GateType::Idle`] operation: linear stochastic noise,
+    /// independent per-axis sine-squared noise, and coherent rotations. The duration is not itself
+    /// an error probability.
     idle_after_2q: f64,
 
     /// Probability of flipping a 0 measurement to 1
@@ -599,12 +573,7 @@ impl GeneralNoiseModel {
             // decide whether to add the original gate based on error models
             match gate.gate_type {
                 GateType::Idle => {
-                    self.apply_idle_faults(
-                        &gate,
-                        self.p_idle_linear_rate,
-                        self.p_idle_quadratic_rate,
-                        &mut builder,
-                    );
+                    self.apply_idle_faults(&gate, self.p_idle_linear_rate, &mut builder);
                 }
                 GateType::PZ => {
                     for &q in &gate.qubits {
@@ -830,33 +799,21 @@ impl GeneralNoiseModel {
         &mut self,
         gate: &Gate,
         linear_rate: f64,
-        quadratic_rate: f64,
         builder: &mut ByteMessageBuilder,
     ) {
         let qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
-        self.apply_idle_faults_for_duration(
-            linear_rate,
-            quadratic_rate,
-            gate.idle_duration(),
-            &qubits,
-            builder,
-        );
+        self.apply_idle_faults_for_duration(linear_rate, gate.idle_duration(), &qubits, builder);
     }
 
     fn apply_idle_faults_for_duration(
         &mut self,
         linear_rate: f64,
-        quadratic_rate: f64,
         duration: f64,
         qubits: &[usize],
         builder: &mut ByteMessageBuilder,
     ) {
         if linear_rate > f64::EPSILON {
             self.apply_idle_linear_stochastic_noise(linear_rate, duration, qubits, builder);
-        }
-
-        if quadratic_rate.abs() > f64::EPSILON {
-            self.apply_idle_quadratic_dephasing(quadratic_rate, duration, qubits, builder);
         }
 
         if self.p_idle_sin_squared_rate > f64::EPSILON && duration.abs() > f64::EPSILON {
@@ -888,56 +845,6 @@ impl GeneralNoiseModel {
                     }
                 } else if let Some(gate) = result.gate {
                     builder.add_gate_command(&gate);
-                }
-            }
-        }
-    }
-
-    /// Apply coherent dephasing noise to a gate
-    ///
-    /// This method implements coherent phase rotation (systematic Z-rotation) noise
-    /// that occurs during idle periods or during gates with a specified duration.
-    ///
-    /// In physical systems, coherent dephasing represents:
-    /// - Systematic phase errors due to energy level shifts
-    /// - Frequency offsets in control fields
-    /// - AC Stark shifts
-    /// - Other systematic Z-rotation errors
-    ///
-    /// # Parameters
-    /// * `builder` - The `ByteMessageBuilder` to add gate operations to
-    /// * `angle` - The time duration over which idling occurs times the rate per time
-    /// * `qubits` - The qubits that are potentially affected by the idling noise
-    fn apply_idle_quadratic_dephasing(
-        &mut self,
-        rate: f64,
-        duration: f64,
-        qubits: &[usize],
-        builder: &mut ByteMessageBuilder,
-    ) {
-        let mut angle = rate * duration;
-
-        angle = if self.p_idle_quadratic_coherent {
-            angle
-        } else {
-            angle.sin().powi(2)
-        };
-
-        if angle.abs() > f64::EPSILON {
-            let mut noisy_qubits = vec![];
-
-            for qubit in qubits {
-                if !self.is_leaked(*qubit)
-                    && (self.p_idle_quadratic_coherent || self.rng.occurs(angle))
-                {
-                    noisy_qubits.push(*qubit);
-                }
-            }
-            if !noisy_qubits.is_empty() {
-                if self.p_idle_quadratic_coherent {
-                    builder.rz(Angle64::from_radians(angle), &noisy_qubits);
-                } else {
-                    builder.z(&noisy_qubits);
                 }
             }
         }
@@ -1376,7 +1283,6 @@ impl GeneralNoiseModel {
                 .collect::<Vec<_>>();
             self.apply_idle_faults_for_duration(
                 self.p_idle_linear_rate,
-                self.p_idle_quadratic_rate,
                 self.idle_after_2q,
                 &gate_qubits,
                 builder,
@@ -1628,9 +1534,7 @@ mod tests {
         assert_float_eq(model.p1, 0.0);
         assert_float_eq(model.p2, 0.0);
         assert_float_eq(model.p_idle_linear_rate, 0.0);
-        assert_float_eq(model.p_idle_quadratic_rate, 0.0);
         assert_float_eq(model.p_idle_sin_squared_rate, 0.0);
-        assert!(!model.p_idle_quadratic_coherent);
         assert_float_eq(model.p_idle_coherent_rate, 0.0);
         assert_eq!(
             model.p_idle_coherent_model,
@@ -1650,7 +1554,6 @@ mod tests {
         assert_float_eq(model.p_meas_crosstalk_global, 0.0);
         assert_float_eq(model.p_meas_crosstalk_local, 0.0);
         assert_float_eq(model.p_prep_crosstalk, 0.0);
-        assert_float_eq(model.p_idle_coherent_to_incoherent_factor, 1.0);
         assert_float_eq(model.p2_angle_a, 0.0);
         assert_float_eq(model.p2_angle_b, 1.0);
         assert_float_eq(model.p2_angle_c, 0.0);
@@ -2960,20 +2863,24 @@ mod tests {
     fn after_2q_outputs(
         duration: f64,
         linear_rate: f64,
-        quadratic_rate: f64,
-        coherent: bool,
+        coherent_rate: f64,
         seed: u64,
         shots: usize,
     ) -> Vec<Vec<Gate>> {
         let mut input_builder = ByteMessage::quantum_operations_builder();
         input_builder.cx(&[(0, 1)]);
         let input = input_builder.build();
+        let linear_model = BTreeMap::from([
+            ("X".to_string(), 1.0 / 3.0),
+            ("Y".to_string(), 1.0 / 3.0),
+            ("Z".to_string(), 1.0 / 3.0),
+        ]);
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
 
         let mut model = GeneralNoiseModel::builder()
             .with_p2(0.0)
-            .with_p_idle_linear_rate(linear_rate)
-            .with_p_idle_quadratic_rate(quadratic_rate)
-            .with_p_idle_quadratic_coherent(coherent)
+            .with_p_idle_linear(linear_rate, &linear_model)
+            .with_p_idle_coherent(coherent_rate, &coherent_model)
             .with_idle_after_2q(duration)
             .with_seed(seed)
             .build();
@@ -2999,8 +2906,8 @@ mod tests {
 
     #[test]
     fn idle_after_2q_duration_scales_linear_noise() {
-        let smaller = after_2q_outputs(0.1, 1.0, 0.0, false, 42, 1_000);
-        let larger = after_2q_outputs(1.0, 1.0, 0.0, false, 42, 1_000);
+        let smaller = after_2q_outputs(0.1, 1.0, 0.0, 42, 1_000);
+        let larger = after_2q_outputs(1.0, 1.0, 0.0, 42, 1_000);
 
         assert!(
             emitted_after_2q_noise_count(&larger) > emitted_after_2q_noise_count(&smaller),
@@ -3009,13 +2916,13 @@ mod tests {
     }
 
     #[test]
-    fn idle_after_2q_applies_quadratic_dephasing() {
-        let outputs = after_2q_outputs(0.5, 0.0, 0.25, true, 42, 1);
+    fn idle_after_2q_applies_coherent_family() {
+        let outputs = after_2q_outputs(0.5, 0.0, 0.25, 42, 1);
         let rz_gate = outputs
             .iter()
             .flatten()
             .find(|gate| gate.gate_type == GateType::RZ)
-            .expect("quadratic coherent dephasing should emit an RZ gate");
+            .expect("the coherent idle family should emit an RZ gate");
 
         assert_eq!(rz_gate.qubits.len(), 2);
         assert!(rz_gate.qubits.contains(&QubitId(0)));
@@ -3024,68 +2931,92 @@ mod tests {
 
     #[test]
     fn zero_idle_after_2q_duration_emits_no_idle_noise() {
-        let outputs = after_2q_outputs(0.0, 1.0, 0.0, false, 42, 100);
+        let outputs = after_2q_outputs(0.0, 1.0, 0.0, 42, 100);
 
         assert_eq!(emitted_after_2q_noise_count(&outputs), 0);
     }
 
     #[test]
     fn zero_idle_rates_emit_no_after_2q_idle_noise() {
-        let outputs = after_2q_outputs(1.0, 0.0, 0.0, false, 42, 100);
+        let outputs = after_2q_outputs(1.0, 0.0, 0.0, 42, 100);
 
         assert_eq!(emitted_after_2q_noise_count(&outputs), 0);
     }
 
     #[test]
     fn idle_after_2q_is_deterministic_for_same_seed() {
-        let first = after_2q_outputs(0.5, 0.4, 0.0, false, 42, 100);
-        let second = after_2q_outputs(0.5, 0.4, 0.0, false, 42, 100);
+        let first = after_2q_outputs(0.5, 0.4, 0.0, 42, 100);
+        let second = after_2q_outputs(0.5, 0.4, 0.0, 42, 100);
 
         assert_eq!(first, second);
     }
 
+    /// The documented `r * PI` migration is exact in the probability, not just in
+    /// sampled bytes.
+    ///
+    /// The byte-comparison sibling test only resolves conversion errors of a few
+    /// percent, because a seeded stochastic run can leave every draw on the same side
+    /// of its threshold. This compares the analytic probability instead, so a wrong
+    /// constant fails at machine precision rather than at 5%.
     #[test]
-    fn dem_sine_and_legacy_quadratic_have_identical_z_probability() {
-        let sine_rate = 0.03;
-        let duration = 10.0;
-        let expected_probability = 0.087_332_192_545_160_84;
-        let legacy_rate = sine_rate / std::f64::consts::PI;
-        let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+    fn quadratic_migration_r_times_pi_is_exact_in_probability() {
+        let legacy_rate = 0.2_f64;
+        let duration = 0.75_f64;
 
-        let mut sine = GeneralNoiseModel::builder()
-            .with_seed(424)
-            .with_p_idle_linear_rate(0.0)
-            .with_p_idle_sin_squared(sine_rate, &z_model)
-            .build();
-        let mut legacy = GeneralNoiseModel::builder()
-            .with_seed(424)
-            .with_p_idle_linear_rate(0.0)
-            .with_p_idle_quadratic_rate(legacy_rate)
-            .build();
+        // What the legacy path produced: the builder scaled the cycles-per-time rate by
+        // factor/2 * 2*PI, with the factor at its final default of 1.0.
+        let legacy_effective_rate = legacy_rate * std::f64::consts::PI;
+        let legacy_probability = (legacy_effective_rate * duration).sin().powi(2);
 
-        assert!((sine.p_idle_sin_squared_rate - sine_rate).abs() < f64::EPSILON);
-        assert!((legacy.p_idle_quadratic_rate - sine_rate).abs() < f64::EPSILON);
-        let coherent_angle = 2.0 * sine_rate * duration;
-        assert!(((coherent_angle / 2.0).sin().powi(2) - expected_probability).abs() < f64::EPSILON);
-        assert!(
-            (GeneralNoiseModel::sin_squared_probability(sine_rate, 1.0, duration)
-                - (coherent_angle / 2.0).sin().powi(2))
-            .abs()
-                < f64::EPSILON
+        // What the documented migration produces through the family entry point.
+        let migrated_probability = GeneralNoiseModel::sin_squared_probability(
+            legacy_rate * std::f64::consts::PI,
+            1.0,
+            duration,
         );
 
-        let mut input_builder = ByteMessage::quantum_operations_builder();
-        input_builder.idle(duration, &[0]);
-        let input = input_builder.build();
-        let sine_outputs = (0..256)
-            .map(|_| sine.apply_noise_on_start(&input).unwrap().into_bytes())
-            .collect::<Vec<_>>();
-        let legacy_outputs = (0..256)
-            .map(|_| legacy.apply_noise_on_start(&input).unwrap().into_bytes())
-            .collect::<Vec<_>>();
+        assert!(
+            (migrated_probability - legacy_probability).abs() < 1e-15,
+            "migration must be exact: got {migrated_probability}, expected {legacy_probability}",
+        );
 
-        assert_eq!(sine_outputs, legacy_outputs);
-        assert!(sine_outputs.iter().any(|output| output.len() > 16));
+        // And it is genuinely sensitive: a 0.1% error in the constant is caught here.
+        let perturbed = GeneralNoiseModel::sin_squared_probability(
+            legacy_rate * std::f64::consts::PI * 1.001,
+            1.0,
+            duration,
+        );
+        assert!(
+            (perturbed - legacy_probability).abs() > 1e-9,
+            "a perturbed constant must be distinguishable",
+        );
+    }
+
+    #[test]
+    fn quadratic_migration_r_times_pi_keeps_captured_legacy_bytes() {
+        let legacy_rate = 0.2;
+        let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_sin_squared(legacy_rate * std::f64::consts::PI, &z_model)
+            .build();
+
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        for _ in 0..8 {
+            input_builder.idle(0.75, &[0, 1, 2, 3]);
+        }
+        let output = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .into_bytes();
+        let captured_legacy_bytes = vec![
+            83, 67, 69, 80, 1, 0, 0, 0, 5, 0, 0, 0, 100, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
+            0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0,
+            0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0,
+            10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0,
+        ];
+
+        assert_eq!(output, captured_legacy_bytes);
     }
 
     #[test]
@@ -3102,13 +3033,18 @@ mod tests {
 
     #[test]
     fn same_seed_and_configuration_emit_identical_noise() {
+        let linear_model = BTreeMap::from([
+            ("X".to_string(), 1.0 / 3.0),
+            ("Y".to_string(), 1.0 / 3.0),
+            ("Z".to_string(), 1.0 / 3.0),
+        ]);
         let make_model = || {
             GeneralNoiseModel::builder()
                 .with_seed(4_242)
                 .with_p_prep(0.4)
                 .with_p1(0.4)
                 .with_p2(0.4)
-                .with_p_idle_linear_rate(0.4)
+                .with_p_idle_linear(0.4, &linear_model)
                 .with_p1_emission_ratio(0.5)
                 .with_p2_emission_ratio(0.5)
                 .with_prep_leak_ratio(0.5)
@@ -3137,7 +3073,6 @@ mod tests {
     fn x_weighted_sine_model_emits_x_not_z() {
         let x_model = BTreeMap::from([("X".to_string(), 1.0)]);
         let mut model = GeneralNoiseModel::builder()
-            .with_p_idle_linear_rate(0.0)
             .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &x_model)
             .build();
         let mut input_builder = ByteMessage::quantum_operations_builder();
@@ -3324,6 +3259,34 @@ mod tests {
     }
 
     #[test]
+    fn family_only_configuration_keeps_captured_pre_removal_bytes() {
+        let linear_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+        let sine_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 2.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear(1.0, &linear_model)
+            .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &sine_model)
+            .with_p_idle_coherent(0.25, &coherent_model)
+            .build();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(1.0, &[0, 1]);
+
+        let output = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .into_bytes();
+        let captured_pre_removal_bytes = vec![
+            83, 67, 69, 80, 1, 0, 0, 0, 4, 0, 0, 0, 96, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
+            0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0,
+            0, 1, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 20, 0, 0, 0, 32, 2, 1, 0, 0, 0, 0,
+            0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 224, 63,
+        ];
+
+        assert_eq!(output, captured_pre_removal_bytes);
+    }
+
+    #[test]
     fn coherent_idle_skips_leaked_qubits() {
         let coherent_model = BTreeMap::from([("RX".to_string(), 1.0)]);
         let mut model = GeneralNoiseModel::builder()
@@ -3351,7 +3314,6 @@ mod tests {
             ("L".to_string(), 1.0),
         ]);
         let mut model = GeneralNoiseModel::builder()
-            .with_p_idle_linear_rate(0.0)
             .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &model_map)
             .build();
 
@@ -3407,62 +3369,6 @@ mod tests {
     }
 
     #[test]
-    fn sine_family_conflicts_with_both_legacy_quadratic_spellings() {
-        let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
-        let builders = [
-            GeneralNoiseModel::builder()
-                .with_p_idle_quadratic_rate(0.1)
-                .with_p_idle_sin_squared(0.1, &z_model),
-            GeneralNoiseModel::builder()
-                .with_average_p_idle_quadratic_rate(0.1)
-                .with_p_idle_sin_squared(0.1, &z_model),
-        ];
-        for builder in builders {
-            let error = builder.validate_configuration().unwrap_err();
-            assert!(error.contains("with_p_idle_quadratic_rate"));
-            assert!(error.contains("with_average_p_idle_quadratic_rate"));
-            assert!(error.contains("radians per time unit"));
-            assert!(error.contains("cycles per time unit"));
-            assert!(
-                std::panic::catch_unwind(|| builder.build()).is_err(),
-                "the conflict must fail when the Rust model is built"
-            );
-        }
-    }
-
-    #[test]
-    fn sine_family_conflicts_with_coherent_legacy_path() {
-        let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
-        let builder = GeneralNoiseModel::builder()
-            .with_p_idle_sin_squared(0.1, &z_model)
-            .with_p_idle_quadratic_coherent(true);
-        let error = builder.validate_configuration().unwrap_err();
-        assert!(error.contains("with_p_idle_sin_squared"));
-        assert!(error.contains("with_p_idle_quadratic_coherent(true)"));
-        assert!(error.contains("stochastic by definition"));
-        assert!(
-            std::panic::catch_unwind(|| builder.build()).is_err(),
-            "the conflict must fail when the Rust model is built"
-        );
-    }
-
-    #[test]
-    fn coherent_family_conflicts_with_legacy_quadratic_coherent_switch() {
-        let coherent_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
-        let builder = GeneralNoiseModel::builder()
-            .with_p_idle_coherent(0.1, &coherent_model)
-            .with_p_idle_quadratic_coherent(true);
-        let error = builder.validate_configuration().unwrap_err();
-        assert!(error.contains("with_p_idle_coherent"));
-        assert!(error.contains("with_p_idle_quadratic_coherent(true)"));
-        assert!(error.contains("both would emit coherent idle rotations"));
-        assert!(
-            std::panic::catch_unwind(|| builder.build()).is_err(),
-            "the conflict must fail when the Rust model is built"
-        );
-    }
-
-    #[test]
     fn coherent_family_rejects_invalid_rates_axes_and_multipliers() {
         let cases = [
             (f64::INFINITY, BTreeMap::from([("RX".to_string(), 1.0)])),
@@ -3490,11 +3396,9 @@ mod tests {
         );
         let x_model = BTreeMap::from([("X".to_string(), 1.0)]);
         let mut zero_rate = GeneralNoiseModel::builder()
-            .with_p_idle_linear_rate(0.0)
             .with_p_idle_sin_squared(0.0, &x_model)
             .build();
         let mut nonzero_rate = GeneralNoiseModel::builder()
-            .with_p_idle_linear_rate(0.0)
             .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &x_model)
             .build();
         let mut duration_one = ByteMessage::quantum_operations_builder();
@@ -3562,7 +3466,6 @@ mod tests {
         let make_model = || {
             GeneralNoiseModel::builder()
                 .with_seed(424)
-                .with_p_idle_linear_rate(0.0)
                 .with_p_idle_sin_squared(0.6, &sine_model)
                 .build()
         };
@@ -3583,22 +3486,23 @@ mod tests {
     }
 
     #[test]
-    fn legacy_quadratic_stochastic_path_keeps_its_pre_change_bytes() {
+    fn linear_and_sine_families_keep_their_pre_removal_bytes() {
         let mut input_builder = ByteMessage::quantum_operations_builder();
         for _ in 0..8 {
             input_builder.idle(0.75, &[0, 1, 2, 3]);
         }
         let input = input_builder.build();
+        let linear_model = BTreeMap::from([
+            ("X".to_string(), 1.0 / 3.0),
+            ("Y".to_string(), 1.0 / 3.0),
+            ("Z".to_string(), 1.0 / 3.0),
+        ]);
+        let sine_model = BTreeMap::from([("Z".to_string(), 1.0)]);
         let mut model = GeneralNoiseModel::builder()
             .with_seed(424)
-            .with_p_idle_linear_rate(0.35)
-            .with_p_idle_coherent_to_incoherent_factor(1.5)
-            .with_p_idle_quadratic_rate(0.07)
-            .with_p_idle_quadratic_coherent(false)
+            .with_p_idle_linear(0.35, &linear_model)
+            .with_p_idle_sin_squared(0.07 * 1.5 * std::f64::consts::PI, &sine_model)
             .build();
-        assert!(
-            (model.p_idle_quadratic_rate - 0.07 * 1.5 * std::f64::consts::PI).abs() < f64::EPSILON
-        );
 
         let output = model.apply_noise_on_start(&input).unwrap().into_bytes();
         let expected = vec![
@@ -3614,22 +3518,23 @@ mod tests {
     }
 
     #[test]
-    fn legacy_quadratic_coherent_path_keeps_its_pre_change_bytes() {
+    fn linear_and_coherent_families_keep_their_pre_removal_bytes() {
         let mut input_builder = ByteMessage::quantum_operations_builder();
         for _ in 0..8 {
             input_builder.idle(0.75, &[0, 1, 2, 3]);
         }
         let input = input_builder.build();
+        let linear_model = BTreeMap::from([
+            ("X".to_string(), 1.0 / 3.0),
+            ("Y".to_string(), 1.0 / 3.0),
+            ("Z".to_string(), 1.0 / 3.0),
+        ]);
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
         let mut model = GeneralNoiseModel::builder()
             .with_seed(424)
-            .with_p_idle_linear_rate(0.35)
-            .with_p_idle_coherent_to_incoherent_factor(1.5)
-            .with_p_idle_quadratic_rate(0.07)
-            .with_p_idle_quadratic_coherent(true)
+            .with_p_idle_linear(0.35, &linear_model)
+            .with_p_idle_coherent(0.07 * 2.0 * std::f64::consts::PI, &coherent_model)
             .build();
-        assert!(
-            (model.p_idle_quadratic_rate - 0.07 * 2.0 * std::f64::consts::PI).abs() < f64::EPSILON
-        );
 
         let output = model.apply_noise_on_start(&input).unwrap().into_bytes();
         let expected = vec![
@@ -3655,14 +3560,14 @@ mod tests {
     }
 
     #[test]
-    fn test_p_idle_quadratic_coherent() {
+    fn test_coherent_and_sine_squared_idle_families() {
         // Create a circuit builder
         let mut builder = ByteMessage::quantum_operations_builder();
 
-        // Create a noise model with coherent dephasing
+        // Create a noise model with coherent dephasing.
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
         let mut model = GeneralNoiseModel::builder()
-            .with_p_idle_quadratic_coherent(true)
-            .with_p_idle_quadratic_rate(0.2)
+            .with_p_idle_coherent(0.2, &coherent_model)
             .build();
 
         // Create an idle gate
@@ -3676,7 +3581,7 @@ mod tests {
         };
 
         // Apply idle faults - should use coherent dephasing (RZ gates)
-        model.apply_idle_faults(&gate, 0.0, model.p_idle_quadratic_rate, &mut builder);
+        model.apply_idle_faults(&gate, 0.0, &mut builder);
 
         // Get the message and verify it contains RZ gates
         let message = builder.build();
@@ -3700,12 +3605,7 @@ mod tests {
             channel: None,
         };
 
-        model.apply_idle_faults(
-            &multi_qubit_gate,
-            0.0,
-            model.p_idle_quadratic_rate,
-            &mut builder,
-        );
+        model.apply_idle_faults(&multi_qubit_gate, 0.0, &mut builder);
 
         let message = builder.build();
         let gates = message.quantum_ops().unwrap();
@@ -3744,16 +3644,17 @@ mod tests {
             "RZ gates should affect qubits 0, 1, 2"
         );
 
-        // Now test with incoherent dephasing
+        // Now test with stochastic sine-squared dephasing.
         let mut builder = ByteMessage::quantum_operations_builder();
 
+        let sine_model = BTreeMap::from([("Z".to_string(), 1.0)]);
         let mut model = GeneralNoiseModel::builder()
-            .with_p_idle_quadratic_coherent(false)
+            .with_p_idle_sin_squared(0.2, &sine_model)
             .with_seed(42)
             .build();
 
-        // Apply idle faults with incoherent dephasing
-        model.apply_idle_faults(&gate, 0.0, model.p_idle_quadratic_rate, &mut builder);
+        // Apply idle faults with incoherent dephasing.
+        model.apply_idle_faults(&gate, 0.0, &mut builder);
 
         // The message may contain Z gates or be empty depending on random outcomes
         let message = builder.build();

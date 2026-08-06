@@ -145,11 +145,29 @@ Configure idle decoherence with any combination of these independent families:
   multipliers, not probabilities. Omitting the Python model uses
   `{"RX": 1.0, "RY": 1.0, "RZ": 1.0}`.
 
-The legacy `with_p_idle_quadratic_rate(...)` path remains available.
-`with_p_idle_quadratic_coherent(...)` selects whether that one legacy rate emits
-coherent RZ rotations or a stochastic sine-squared Z twirl; it does not control
-the independent coherent family. Combining that switch set to `True` with the
-coherent family is rejected because both would emit idle rotations.
+The unpaired legacy idle setters have been removed. Migrate them as follows:
+
+| Removed setter | Replacement |
+|---|---|
+| `with_p_idle_linear_rate(r)` | `with_p_idle_linear(r, model)`; use the symmetric `{"X": 1/3, "Y": 1/3, "Z": 1/3}` model if no model was previously set |
+| `with_p_idle_linear_model(m)` | `with_p_idle_linear(r, m)`; the rate and normalized model are now configured together |
+| `with_p_idle_quadratic_rate(r)` | `with_p_idle_sin_squared(r * PI, {"Z": 1.0})` |
+| `with_p_idle_quadratic_coherent(true)` | `with_p_idle_coherent(rate, model)`; choose the coherent family instead of switching another law's mode |
+| `with_p_idle_quadratic_coherent(false)` | `with_p_idle_sin_squared(rate, model)`; choose the stochastic family directly |
+| `with_p_idle_coherent_to_incoherent_factor(f)` | No replacement; the factor only modified the removed quadratic-rate path |
+| `with_average_p_idle_linear_rate(r)` / `with_average_p_idle_quadratic_rate(r)` | No replacement; a gate-channel average-error conversion is not duration independent for a rate-times-duration law |
+
+The old quadratic rate was in cycles per time and was converted before it
+reached the runtime. Family rates are in radians per time and receive no such
+conversion. At the removed path's default factor of `1.0`, the exact migration
+is:
+
+```text
+with_p_idle_quadratic_rate(r)  ==  with_p_idle_sin_squared(r * PI, {"Z": 1.0})
+```
+
+Copying `r` directly into the family setter changes the channel by a factor of
+pi.
 
 Coherent evolution is not sampled and consumes no RNG draws. Whether it can be
 consumed depends on the downstream consumer: the standard DEM builder rejects
@@ -161,16 +179,18 @@ To add the same kind of idle-noise site to both qubits after every two-qubit
 gate, set its duration with `with_idle_after_2q(...)`:
 
 ```python
-noise = GeneralNoiseModelBuilder().with_p_idle_linear_rate(0.01).with_idle_after_2q(1.0)
+noise = (
+    GeneralNoiseModelBuilder().with_p_idle_linear(0.01, {"X": 1 / 3, "Y": 1 / 3, "Z": 1 / 3}).with_idle_after_2q(1.0)
+)
 ```
 
 The duration only chooses where and how long idling occurs. It is not a
-standalone probability: all configured linear, sine-squared, coherent, and
-legacy quadratic idle mechanisms apply at these sites just as they do at a
+standalone probability: all configured linear, sine-squared, and coherent idle
+families apply at these sites just as they do at a
 scheduled `Idle` gate. A duration of `0.0` disables the after-two-qubit sites.
 Consequently, code that previously used `with_p2_idle(0.01)` without a linear
 idle rate now produces no after-2q idle noise; the equivalent configuration is
-`with_p_idle_linear_rate(0.01).with_idle_after_2q(1.0)`.
+`with_p_idle_linear(0.01, {"X": 1/3, "Y": 1/3, "Z": 1/3}).with_idle_after_2q(1.0)`.
 
 ## Common Noise Model Examples
 

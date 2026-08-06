@@ -71,7 +71,6 @@ fn emission_noise_1q() -> pecos_engines::noise::GeneralNoiseModelBuilder {
         .with_p_meas_0(0.0)
         .with_p_meas_1(0.0)
         .with_prep_leak_ratio(0.0)
-        .with_p_idle_linear_rate(0.0)
 }
 
 fn engines_zero_count() -> u64 {
@@ -200,7 +199,6 @@ fn emission_noise_2q() -> pecos_engines::noise::GeneralNoiseModelBuilder {
         .with_p_meas_0(0.0)
         .with_p_meas_1(0.0)
         .with_prep_leak_ratio(0.0)
-        .with_p_idle_linear_rate(0.0)
 }
 
 fn engines_2q_zero_count() -> u64 {

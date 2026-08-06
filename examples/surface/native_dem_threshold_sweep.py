@@ -556,7 +556,7 @@ def _noise_model_description(args: argparse.Namespace) -> str:
     sim_noise_model = getattr(args, "sim_noise_model", "depolarizing")
     base = f"p1={p1s:.4g}*p, p2=p, p_meas={pms:.4g}*p, p_prep={pps:.4g}*p"
     if sim_noise_model == "general":
-        return f"general_noise runtime ({base}, leak2depolar=True, p_idle_quadratic_coherent=False)"
+        return f"general_noise runtime ({base}, leak2depolar=True)"
     return f"depolarizing runtime ({base})"
 
 
@@ -954,7 +954,6 @@ def _run_gate_backend_result_dict(
         backend_start = time.perf_counter()
         noise_start = time.perf_counter()
         if sim_noise_model == "general":
-            use_coherent_idle = False
             noise_model = (
                 pecos.general_noise()
                 .with_p_prep(physical_error_rate * p_prep_scale)
@@ -962,7 +961,6 @@ def _run_gate_backend_result_dict(
                 .with_p1(physical_error_rate * p1_scale)
                 .with_p2(physical_error_rate)
                 .with_leakage_scale(0.0)
-                .with_p_idle_quadratic_coherent(use_coherent_idle)
                 .with_seed(seed)
             )
         elif sim_noise_model == "depolarizing":
@@ -3724,10 +3722,7 @@ def _parse_args() -> argparse.Namespace:
         "--sim-noise-model",
         choices=["depolarizing", "general"],
         default="depolarizing",
-        help=(
-            "Runtime noise model used by --sample-backend sim. The 'general' "
-            "option sets leak2depolar=True and p_idle_quadratic_coherent=False."
-        ),
+        help=("Runtime noise model used by --sample-backend sim. The 'general' option sets leak2depolar=True."),
     )
     parser.add_argument(
         "--dem-mode",

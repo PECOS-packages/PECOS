@@ -24,7 +24,6 @@ from pecos_rslib_exp import (  # noqa: E402
     FrontierDecoder,
 )
 
-
 SMALL_DEM = """\
 error(0.1) D0 L0
 error(0.2) D1

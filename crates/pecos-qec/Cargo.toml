@@ -24,6 +24,7 @@ pecos-neo = { workspace = true, optional = true }
 rand.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
+batsat.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true

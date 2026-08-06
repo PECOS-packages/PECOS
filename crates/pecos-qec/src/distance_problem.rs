@@ -15,7 +15,7 @@
 //! The encoding choices follow the qLDPC distance study in
 //! [arXiv:2606.12445](https://arxiv.org/abs/2606.12445): parity constraints use Tseitin XOR
 //! chains, while weight bounds use a Sinz sequential counter. The module emits standard text
-//! formats and deliberately has no solver dependency.
+//! formats for external solvers and can also feed the internal clauses directly to batsat.
 //!
 //! Certification has an asymmetric trust boundary. A solver's SAT witness is checked here using
 //! native GF(2) arithmetic, so the SAT half needs no solver trust. UNSAT answers cannot be checked
@@ -23,6 +23,7 @@
 //! the returned distance.
 
 use crate::{DetectorErrorModel, ParityCheckMatrix, StabilizerCodeSpec};
+use batsat::{BasicSolver, Lit, SolverInterface, lbool};
 use pecos_core::PauliOperator;
 use pecos_quantum::F2Matrix;
 use std::fmt::Write as _;
@@ -744,9 +745,22 @@ impl DistanceProblem {
     where
         S: FnMut(&str, usize) -> SolverAnswer,
     {
+        self.certify_distance_by(max_weight, |problem, weight| {
+            let dimacs = problem.to_dimacs(weight);
+            solver(&dimacs, weight)
+        })
+    }
+
+    fn certify_distance_by<S>(
+        &self,
+        max_weight: usize,
+        mut solver: S,
+    ) -> Result<Option<CertifiedDistance>, DistanceCertificationError>
+    where
+        S: FnMut(&Self, usize) -> SolverAnswer,
+    {
         for weight in 1..=max_weight {
-            let dimacs = self.to_dimacs(weight);
-            match solver(&dimacs, weight) {
+            match solver(self, weight) {
                 SolverAnswer::Unsat => {}
                 SolverAnswer::Unknown => {
                     return Err(DistanceCertificationError::Unknown { weight });
@@ -774,6 +788,62 @@ impl DistanceProblem {
     }
 }
 
+/// Certifies distance through `max_weight` using the in-process batsat SAT solver.
+///
+/// A fresh deterministic solver instance is built for each weight from the internal clause
+/// encoding. SAT answers are certified natively with [`DistanceProblem::verify_witness`] before
+/// they are accepted. UNSAT answers, and therefore the exactness of a returned distance, rest on
+/// trusting the solver. `Ok(None)` means batsat reported every weight through `max_weight` UNSAT.
+///
+/// Incremental assumptions could avoid rebuilding the solver in a future implementation, but are
+/// deliberately not used here.
+///
+/// # Errors
+///
+/// Returns an error if batsat produces an invalid or overweight model, or does not decide a bound.
+pub fn certified_distance(
+    problem: &DistanceProblem,
+    max_weight: usize,
+) -> Result<Option<CertifiedDistance>, DistanceCertificationError> {
+    problem.certify_distance_by(max_weight, |problem, weight| {
+        solve_with_batsat(&problem.encode(Some(weight)), problem.num_vars)
+    })
+}
+
+fn solve_with_batsat(encoding: &Encoding, num_primary_vars: usize) -> SolverAnswer {
+    let mut solver = BasicSolver::default();
+    let variables: Vec<_> = (0..encoding.num_vars)
+        .map(|_| solver.new_var_default())
+        .collect();
+
+    for clause in encoding.groups.iter().flat_map(|group| &group.clauses) {
+        let mut literals: Vec<_> = clause
+            .iter()
+            .map(|&literal| {
+                let index = literal.unsigned_abs() as usize - 1;
+                Lit::new(variables[index], literal > 0)
+            })
+            .collect();
+        if !solver.add_clause_reuse(&mut literals) {
+            return SolverAnswer::Unsat;
+        }
+    }
+
+    let answer = solver.solve_limited(&[]);
+    if answer == lbool::TRUE {
+        SolverAnswer::Sat(
+            variables[..num_primary_vars]
+                .iter()
+                .map(|&variable| solver.value_var(variable) == lbool::TRUE)
+                .collect(),
+        )
+    } else if answer == lbool::FALSE {
+        SolverAnswer::Unsat
+    } else {
+        SolverAnswer::Unknown
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -782,6 +852,7 @@ mod tests {
         connected_cluster_fault_distance, exhaustive_fault_distance,
     };
     use pecos_core::pauli::{Xs, Zs};
+    use std::time::Instant;
 
     #[derive(Debug)]
     struct ParsedCnf {
@@ -1106,6 +1177,132 @@ mod tests {
             assert!(certified.sat_certified);
             assert_eq!(problem.verify_witness(&certified.witness), Ok(expected));
         }
+    }
+
+    #[test]
+    fn batsat_certifies_steane_x_and_z_against_existing_oracle() {
+        let mut spec = StabilizerCodeSpec::from_stabilizer_code(&StabilizerCode::steane()).unwrap();
+        let oracle = spec.calculate_distance().unwrap().distance;
+        assert_eq!(spec.distance(), Some(oracle));
+
+        for problem in [
+            DistanceProblem::from_css_code_x_distance(&spec).unwrap(),
+            DistanceProblem::from_css_code_z_distance(&spec).unwrap(),
+        ] {
+            let certified = certified_distance(&problem, oracle).unwrap().unwrap();
+            assert_eq!(certified.distance, oracle);
+            assert_eq!(certified.unsat_trusted_below, oracle);
+            assert!(certified.sat_certified);
+            assert_eq!(problem.verify_witness(&certified.witness), Ok(oracle));
+        }
+    }
+
+    #[test]
+    fn batsat_certifies_repetition_triad_against_exhaustive_oracle() {
+        let dem = repetition_triad_dem();
+        let oracle = exhaustive_fault_distance(&dem, 3).unwrap().distance;
+        let problem = DistanceProblem::from_dem(&dem);
+        let certified = certified_distance(&problem, oracle).unwrap().unwrap();
+
+        assert_eq!(certified.distance, oracle);
+        assert_eq!(certified.unsat_trusted_below, oracle);
+        assert!(certified.sat_certified);
+        assert_eq!(problem.verify_witness(&certified.witness), Ok(oracle));
+    }
+
+    #[test]
+    fn batsat_is_deterministic_and_respects_max_weight() {
+        let problem = steane_distance_problem();
+        assert_eq!(certified_distance(&problem, 2), Ok(None));
+
+        let first = certified_distance(&problem, 3).unwrap().unwrap();
+        let second = certified_distance(&problem, 3).unwrap().unwrap();
+        assert_eq!(first.witness, second.witness);
+        assert_eq!(problem.verify_witness(&first.witness), Ok(3));
+        assert_eq!(problem.verify_witness(&second.witness), Ok(3));
+    }
+
+    fn bb_circulant(l: usize, m: usize, terms: &[(usize, usize)]) -> F2Matrix {
+        let size = l * m;
+        let mut matrix = F2Matrix::zeros(size, size);
+        for row_x in 0..l {
+            for row_y in 0..m {
+                let row = row_x * m + row_y;
+                for &(x_power, y_power) in terms {
+                    let column = ((row_x + x_power) % l) * m + (row_y + y_power) % m;
+                    matrix.set(row, column, matrix.get(row, column) ^ 1);
+                }
+            }
+        }
+        matrix
+    }
+
+    #[test]
+    #[ignore = "timing probe for the batsat backend"]
+    fn batsat_bivariate_bicycle_72_12_6_timing_probe() {
+        let (l, m) = (6, 6);
+        let block_size = l * m;
+        let n = 2 * block_size;
+        let a = bb_circulant(l, m, &[(3, 0), (0, 1), (0, 2)]);
+        let b = bb_circulant(l, m, &[(0, 3), (1, 0), (2, 0)]);
+        let mut hx = F2Matrix::zeros(block_size, n);
+        let mut hz = F2Matrix::zeros(block_size, n);
+        for row in 0..block_size {
+            for column in 0..block_size {
+                hx.set(row, column, a.get(row, column));
+                hx.set(row, block_size + column, b.get(row, column));
+                hz.set(row, column, b.get(column, row));
+                hz.set(row, block_size + column, a.get(column, row));
+            }
+        }
+
+        assert_eq!(n, 72);
+        assert_eq!(
+            hx.mul(&hz.transpose()),
+            F2Matrix::zeros(block_size, block_size)
+        );
+        let hx_rank = hx.row_reduce().1.len();
+        let hz_rank = hz.row_reduce().1.len();
+        assert_eq!(n - hx_rank - hz_rank, 12);
+
+        let (hx_rref, hx_pivots) = hx.row_reduce();
+        let logical_candidates = hz.kernel().into_iter().filter_map(|mut vector| {
+            for (row, &pivot) in hx_pivots.iter().enumerate() {
+                if vector[pivot] == 1 {
+                    for (column, bit) in vector.iter_mut().enumerate() {
+                        *bit ^= hx_rref.get(row, column);
+                    }
+                }
+            }
+            vector.iter().any(|&bit| bit != 0).then_some(vector)
+        });
+        let (logical_rref, _) = F2Matrix::from_rows(logical_candidates.collect()).row_reduce();
+        let logical_rows: Vec<_> = logical_rref
+            .rows()
+            .into_iter()
+            .filter(|row| row.iter().any(|&bit| bit != 0))
+            .collect();
+        assert_eq!(logical_rows.len(), 12);
+
+        let hx_checks = ParityCheckMatrix::from_dense(hx.rows()).unwrap();
+        let logical_checks = ParityCheckMatrix::from_dense(logical_rows).unwrap();
+        let problem = DistanceProblem::from_css_checks(&hx_checks, &logical_checks).unwrap();
+        let total_started = Instant::now();
+        let certified = problem
+            .certify_distance_by(6, |problem, weight| {
+                let started = Instant::now();
+                let answer = solve_with_batsat(&problem.encode(Some(weight)), problem.num_vars);
+                println!(
+                    "BB [[72,12,6]] weight {weight}: {:?} ({answer:?})",
+                    started.elapsed()
+                );
+                answer
+            })
+            .unwrap()
+            .unwrap();
+        println!("BB [[72,12,6]] total: {:?}", total_started.elapsed());
+        assert_eq!(certified.distance, 6);
+        assert_eq!(problem.verify_witness(&certified.witness), Ok(6));
     }
 
     #[test]

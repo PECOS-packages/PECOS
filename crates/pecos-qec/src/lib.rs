@@ -86,7 +86,7 @@ pub use distance::{
 };
 pub use distance_problem::{
     CertifiedDistance, DistanceCertificationError, DistanceProblem, DistanceProblemError,
-    SolverAnswer, WitnessError,
+    SolverAnswer, WitnessError, certified_distance,
 };
 pub use fault_tolerance::dem_builder::{
     DecomposedFault, DemBuilder, DemBuilderError, DemOutput, DetectorDef, DetectorErrorModel,

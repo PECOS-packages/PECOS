@@ -321,14 +321,28 @@ not directly interchangeable with these parameters.
 
 Every residual is readable from `dem.idle_noise_residuals` as a dictionary
 containing `channel_kind`, `location_index`, the concrete
-`detectors`/`dem_outputs`/`tracked_paulis` signature, and `magnitude`. Gate and
-idle categorical Pauli channels share this list. The magnitude is the
-total-variation distance between the requested categorical channel and the
-emitted independent mechanisms; in the two-dimensional boundary case it is
-also the excess on the reported signature and the matching identity deficit.
-Audited Guppy builds copy this list to
+`detectors`/`dem_outputs`/`tracked_paulis` signature, `magnitude`,
+`channel_weight`, and `relative_magnitude`. Gate and idle categorical Pauli
+channels share this list. The channel weight is the sum of the requested
+channel's non-identity probabilities before conversion, including branches
+whose propagated signature is empty. The magnitude is the total-variation
+distance between the requested categorical channel and the emitted independent
+mechanisms, and `relative_magnitude = magnitude / channel_weight`; in the
+two-dimensional boundary case the absolute magnitude is also the excess on the
+reported signature and the matching identity deficit. Audited Guppy builds
+copy this list to
 `dem_build.audit["idle_noise_residuals"]`. An empty list certifies that all
 categorical signature conversions were exact.
+
+`DetectorErrorModel.builder().with_residual_warning_threshold(fraction)` sets
+a relative physics tolerance. For example, `fraction=0.002` accepts an inexact
+conversion whose total-variation residual is at most 0.2% of that requested
+channel's total error weight. The default is zero, and a build warns when any
+residual is greater than the accepted fraction. The threshold gates only that
+warning: every exact figure remains in `dem.idle_noise_residuals` and the audit
+entry regardless of the tolerance. To suppress warnings wholesale, use
+`warnings.filterwarnings`; the builder setter encodes an accepted channel
+approximation, not a blanket quiet mode.
 
 The families are the only public way to configure these idle channels on
 `NoiseParameters`. They translate into underscore-prefixed canonical per-axis

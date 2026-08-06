@@ -1906,6 +1906,7 @@ impl<'a> DemBuilder<'a> {
 
         let loc = &self.influence_map.locations[loc_idx];
         for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
+            let channel_weight = probabilities.total();
             let mut exclusive = BTreeMap::new();
             for (effect, probability) in [
                 (x_effect.clone(), probabilities.px),
@@ -1937,6 +1938,7 @@ impl<'a> DemBuilder<'a> {
                     channel_kind: NoiseChannelKind::Idle,
                     effect,
                     magnitude,
+                    channel_weight,
                 });
             }
         }
@@ -1989,6 +1991,7 @@ impl<'a> DemBuilder<'a> {
         let context = format!("one-qubit {} gate at location {loc_idx}", loc.gate_type);
         validate_exclusive_probabilities(&rates, &context)
             .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+        let channel_weight = rates.iter().sum();
         let x_effect =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
         let y_effect =
@@ -2022,6 +2025,7 @@ impl<'a> DemBuilder<'a> {
                 channel_kind: NoiseChannelKind::SingleQubitGate,
                 effect,
                 magnitude,
+                channel_weight,
             });
         }
         Ok(())
@@ -2045,6 +2049,7 @@ impl<'a> DemBuilder<'a> {
         );
         validate_exclusive_probabilities(&rates, &context)
             .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+        let channel_weight = rates.iter().sum();
 
         let effects =
             self.two_qubit_effect_table(loc1, loc2, meas_to_detectors, meas_to_observables);
@@ -2086,6 +2091,7 @@ impl<'a> DemBuilder<'a> {
                 channel_kind: NoiseChannelKind::TwoQubitGate,
                 effect,
                 magnitude,
+                channel_weight,
             });
         }
         Ok(())

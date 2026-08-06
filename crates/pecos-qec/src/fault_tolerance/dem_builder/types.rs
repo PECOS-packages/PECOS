@@ -2732,6 +2732,25 @@ pub struct NoiseChannelResidual {
     pub effect: FaultMechanism,
     /// Total-variation distance from the requested categorical channel.
     pub magnitude: f64,
+    /// Total non-identity probability of the requested categorical channel.
+    pub channel_weight: f64,
+}
+
+impl NoiseChannelResidual {
+    /// Returns the residual as a fraction of the requested channel's error weight.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `channel_weight` is not finite and positive. Such a channel
+    /// cannot produce a residual, so this indicates a broken construction invariant.
+    #[must_use]
+    pub fn relative_magnitude(&self) -> f64 {
+        assert!(
+            self.channel_weight.is_finite() && self.channel_weight > 0.0,
+            "noise-channel residual invariant violated: channel_weight must be finite and positive"
+        );
+        self.magnitude / self.channel_weight
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -4830,7 +4849,8 @@ impl DetectorErrorModel {
     /// Returns every quantified categorical-channel approximation made during build.
     ///
     /// Each record identifies the channel kind, a representative concrete flip
-    /// signature, and the channel's total-variation residual magnitude.
+    /// signature, the requested channel's total error weight, and the absolute
+    /// and relative total-variation residual magnitudes.
     /// An empty slice means every categorical conversion was exact.
     #[inline]
     #[must_use]
@@ -7003,6 +7023,39 @@ fn trim_trailing_zeros(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    fn residual_with_channel_weight(channel_weight: f64) -> NoiseChannelResidual {
+        NoiseChannelResidual {
+            location_index: 0,
+            channel_kind: NoiseChannelKind::Idle,
+            effect: FaultMechanism::new(),
+            magnitude: 0.002,
+            channel_weight,
+        }
+    }
+
+    #[test]
+    fn noise_channel_residual_reports_relative_magnitude() {
+        assert_eq!(
+            residual_with_channel_weight(0.02)
+                .relative_magnitude()
+                .to_bits(),
+            0.1_f64.to_bits()
+        );
+    }
+
+    #[test]
+    fn noise_channel_residual_rejects_invalid_channel_weight() {
+        for channel_weight in [0.0, -0.01, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let result = std::panic::catch_unwind(|| {
+                residual_with_channel_weight(channel_weight).relative_magnitude()
+            });
+            assert!(
+                result.is_err(),
+                "channel weight {channel_weight:?} must violate the residual invariant"
+            );
+        }
+    }
 
     /// The single-qubit gate channel needs conversion too, at its own scale.
     ///

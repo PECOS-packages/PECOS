@@ -1759,8 +1759,9 @@ impl PyDetectorErrorModel {
     /// Quantified residuals from infeasible categorical-to-independent conversions.
     ///
     /// Each dictionary reports the channel kind, fault location, representative
-    /// flip signature, and total-variation magnitude. An empty list means every
-    /// categorical conversion was exact.
+    /// flip signature, total-variation magnitude, requested channel weight, and
+    /// their relative magnitude. An empty list means every categorical conversion
+    /// was exact.
     #[getter]
     fn idle_noise_residuals(&self, py: Python<'_>) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
         self.inner
@@ -1774,6 +1775,8 @@ impl PyDetectorErrorModel {
                 dict.set_item("dem_outputs", residual.effect.dem_outputs.to_vec())?;
                 dict.set_item("tracked_paulis", residual.effect.tracked_paulis.to_vec())?;
                 dict.set_item("magnitude", residual.magnitude)?;
+                dict.set_item("channel_weight", residual.channel_weight)?;
+                dict.set_item("relative_magnitude", residual.relative_magnitude())?;
                 Ok(dict.unbind())
             })
             .collect()

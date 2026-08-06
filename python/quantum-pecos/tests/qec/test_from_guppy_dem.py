@@ -5,6 +5,7 @@
 
 import inspect
 import json
+import warnings
 from typing import ClassVar
 
 import pytest
@@ -304,9 +305,9 @@ def test_noise_model_matches_flat_pauli_weights(entrypoint: str) -> None:
         "p_prep": 0.013,
     }
 
-    with pytest.warns(UserWarning, match=r"two-qubit gate \(largest 1\.184e-05\)"):
+    with pytest.warns(UserWarning, match=r"two-qubit gate .*largest TV 1\.184e-05"):
         grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(**noise_kwargs))
-    with pytest.warns(UserWarning, match=r"two-qubit gate \(largest 1\.184e-05\)"):
+    with pytest.warns(UserWarning, match=r"two-qubit gate .*largest TV 1\.184e-05"):
         flat = _noise_model_entrypoint_dem(entrypoint, **noise_kwargs)
 
     assert grouped.to_string() == flat.to_string()
@@ -315,6 +316,11 @@ def test_noise_model_matches_flat_pauli_weights(entrypoint: str) -> None:
     residual = grouped.idle_noise_residuals[0]
     assert residual["channel_kind"] == "two-qubit gate"
     assert residual["magnitude"] == pytest.approx(1.1843041548472428e-05)
+    assert residual["channel_weight"] == pytest.approx(0.007)
+    assert residual["relative_magnitude"] == pytest.approx(0.001691863078353204)
+    assert residual["relative_magnitude"] == pytest.approx(
+        residual["magnitude"] / residual["channel_weight"],
+    )
 
 
 @pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
@@ -2241,9 +2247,6 @@ def test_noise_channel_residual_warning_names_kinds_and_magnitudes() -> None:
     The residual is queryable on the DEM, but a field alone is easy to miss, so the
     build also warns when it emits the non-negative boundary fit.
     """
-    import warnings
-    from typing import ClassVar
-
     from pecos.qec.dem import _warn_on_noise_channel_residuals
 
     class _Exact:
@@ -2251,11 +2254,19 @@ def test_noise_channel_residual_warning_names_kinds_and_magnitudes() -> None:
 
     class _Approximated:
         idle_noise_residuals: ClassVar[list[dict[str, object]]] = [
-            {"location_index": 3, "channel_kind": "idle", "magnitude": 1.894e-05},
+            {
+                "location_index": 3,
+                "channel_kind": "idle",
+                "magnitude": 1.894e-05,
+                "channel_weight": 0.01,
+                "relative_magnitude": 1.894e-03,
+            },
             {
                 "location_index": 7,
                 "channel_kind": "one-qubit gate",
                 "magnitude": 2.1e-05,
+                "channel_weight": 0.1,
+                "relative_magnitude": 2.1e-04,
             },
         ]
 
@@ -2270,11 +2281,154 @@ def test_noise_channel_residual_warning_names_kinds_and_magnitudes() -> None:
     assert len(caught) == 1
     message = str(caught[0].message)
     assert "2 categorical noise channel(s) were approximated" in message
-    assert "1 idle (largest 1.894e-05)" in message
-    assert "1 one-qubit gate (largest 2.100e-05)" in message
+    assert "1 idle (largest relative 1.894e-03; largest TV 1.894e-05)" in message
+    assert "1 one-qubit gate (largest relative 2.100e-04; largest TV 2.100e-05)" in message
     assert "2.100e-05" in message
+    assert "fractions of each requested channel's total error weight" in message
     assert "total-variation distances" in message
     assert "dem.idle_noise_residuals" in message
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _warn_on_noise_channel_residuals(_Approximated(), 0.001)
+    assert len(caught) == 1
+    message = str(caught[0].message)
+    assert "1 categorical noise channel(s) were approximated" in message
+    assert "1 idle" in message
+    assert "one-qubit gate" not in message
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _warn_on_noise_channel_residuals(_Approximated(), 1.894e-03)
+    assert caught == []
+
+
+def _approximated_gate_build(
+    *,
+    p2: float = 0.007,
+    p2_weights: dict[str, float] | None = None,
+    residual_warning_threshold: float | None = None,
+):
+    weights = {"IX": 0.4, "XI": 0.6} if p2_weights is None else p2_weights
+    builder = (
+        DetectorErrorModel.builder()
+        .with_program(_structured_idle_noise_target)
+        .with_qubits(2)
+        .with_detectors([Detector(rec[-2])])
+        .with_observables([Observable(rec[-1])])
+        .with_noise(
+            NoiseParameters(
+                p1=0.0,
+                p2=p2,
+                p2_weights=weights,
+                p_meas=0.0,
+                p_prep=0.0,
+            ),
+        )
+    )
+    if residual_warning_threshold is not None:
+        builder.with_residual_warning_threshold(residual_warning_threshold)
+    return builder.build()
+
+
+def test_residual_warning_threshold_defaults_to_zero() -> None:
+    with pytest.warns(UserWarning, match="1 categorical noise channel"):
+        build = _approximated_gate_build()
+
+    assert len(build.dem.idle_noise_residuals) == 1
+
+
+def test_residual_warning_threshold_above_relative_magnitude_is_quiet() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        build = _approximated_gate_build(residual_warning_threshold=0.002)
+
+    assert build.dem.idle_noise_residuals[0]["relative_magnitude"] < 0.002
+
+
+def test_residual_warning_threshold_below_relative_magnitude_still_warns() -> None:
+    with pytest.warns(UserWarning, match=r"largest relative 1\.692e-03"):
+        build = _approximated_gate_build(residual_warning_threshold=0.001)
+
+    assert build.dem.idle_noise_residuals[0]["relative_magnitude"] > 0.001
+
+
+def test_residual_warning_threshold_never_filters_residual_data() -> None:
+    with pytest.warns(UserWarning, match="1 categorical noise channel"):
+        default_build = _approximated_gate_build()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        tolerant_build = _approximated_gate_build(residual_warning_threshold=0.002)
+
+    default_residuals = default_build.dem.idle_noise_residuals
+    tolerant_residuals = tolerant_build.dem.idle_noise_residuals
+    default_audit_residuals = default_build.audit["idle_noise_residuals"]
+    tolerant_audit_residuals = tolerant_build.audit["idle_noise_residuals"]
+
+    assert len(default_residuals) == 1
+    assert tolerant_residuals == default_residuals
+    assert tolerant_audit_residuals == default_audit_residuals
+    assert tolerant_audit_residuals == tolerant_residuals
+    assert default_audit_residuals == default_residuals
+
+    def encode(residuals: list[dict[str, object]]) -> bytes:
+        return json.dumps(
+            residuals,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+
+    assert encode(tolerant_residuals) == encode(default_residuals)
+    assert encode(tolerant_audit_residuals) == encode(default_audit_residuals)
+
+
+def test_relative_residual_threshold_is_portable_across_channel_weights() -> None:
+    target_relative_magnitude = 0.0002502503129381573
+    configurations = [
+        (0.001, {"IX": 0.5, "XI": 0.5}),
+        (0.1, {"IX": 0.002257285529184556, "XI": 0.9977427144708154}),
+    ]
+    observed_weights = []
+    observed_relative_magnitudes = []
+
+    for p2, p2_weights in configurations:
+        with pytest.warns(UserWarning, match=r"largest relative 2\.503e-04"):
+            warned_build = _approximated_gate_build(
+                p2=p2,
+                p2_weights=p2_weights,
+                residual_warning_threshold=0.0002,
+            )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            quiet_build = _approximated_gate_build(
+                p2=p2,
+                p2_weights=p2_weights,
+                residual_warning_threshold=0.0003,
+            )
+
+        assert quiet_build.dem.idle_noise_residuals == warned_build.dem.idle_noise_residuals
+        residual = quiet_build.dem.idle_noise_residuals[0]
+        observed_weights.append(residual["channel_weight"])
+        observed_relative_magnitudes.append(residual["relative_magnitude"])
+
+    assert observed_weights == pytest.approx([0.001, 0.1])
+    assert observed_relative_magnitudes == pytest.approx(
+        [target_relative_magnitude, target_relative_magnitude],
+        abs=1e-15,
+    )
+
+
+@pytest.mark.parametrize("fraction", [-0.1, float("nan"), float("inf"), float("-inf")])
+def test_residual_warning_threshold_rejects_invalid_fraction(fraction: float) -> None:
+    with pytest.raises(ValueError, match="fraction of the channel's total error weight"):
+        DetectorErrorModel.builder().with_residual_warning_threshold(fraction)
+
+
+def test_residual_warning_threshold_rejects_values_above_one_as_absolute() -> None:
+    with pytest.raises(ValueError, match="not an absolute probability") as exc_info:
+        DetectorErrorModel.builder().with_residual_warning_threshold(1.01)
+
+    assert "fraction of the channel's total error weight" in str(exc_info.value)
 
 
 @guppy

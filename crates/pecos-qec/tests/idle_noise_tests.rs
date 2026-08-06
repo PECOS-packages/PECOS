@@ -18,10 +18,10 @@ use pecos_core::pauli::{X, Y, Z};
 use pecos_core::{QubitId, TimeUnits};
 use pecos_qec::fault_tolerance::dem_builder::{
     DemBuilder, DemSamplerBuilder, DetectorErrorModel, FaultMechanism, IdleNoiseFamily, MemBuilder,
-    NoiseConfig, PauliProbs, PerGateTypeNoise, combine_probabilities,
+    NoiseConfig, PauliProbs, PerGateTypeNoise, SamplingEngine, combine_probabilities,
 };
 use pecos_qec::fault_tolerance::propagator::{
-    DagFaultAnalyzer, DagFaultInfluenceMap, DagSpacetimeLocation, Pauli,
+    DagFaultAnalyzer, DagFaultInfluenceMap, DagSpacetimeLocation, DetectorId, MeasurementId, Pauli,
 };
 use pecos_quantum::{DagCircuit, GateType};
 use std::collections::BTreeMap;
@@ -670,6 +670,22 @@ fn biased_xz_idle_channel_builds_with_quantified_boundary_residual() {
     let loc_idx = idle_location(&influence);
     let noise =
         NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.0075, 0.0, 0.0225));
+    let legacy_sampling_engine = SamplingEngine::from_influence_map(&influence, &[1.0], &noise);
+    let mut sampler_influence = influence.clone();
+    sampler_influence
+        .detectors
+        .push(DetectorId::single(MeasurementId {
+            tick: 0,
+            qubit: 0,
+            basis: 0,
+        }));
+    let sampler = DemSamplerBuilder::new(&sampler_influence)
+        .with_noise_config(noise.clone())
+        .with_detectors_json(r#"[{"id": 0, "records": [-2]}, {"id": 1, "records": [-1]}]"#)
+        .expect("valid detector metadata")
+        .build()
+        .expect("valid detector sampler");
+    let sampler_dem = sampler.to_detector_error_model();
     let dem = build_synthetic_idle_dem(&influence, noise)
         .expect("ordinary biased X/Z idle noise must produce a usable DEM");
     let mechanisms = idle_signature_contributions(&dem);
@@ -687,7 +703,24 @@ fn biased_xz_idle_channel_builds_with_quantified_boundary_residual() {
         panic!("the infeasible two-signature channel must report one residual")
     };
     assert_eq!(residual.effect, y_effect);
+    assert_eq!(residual.channel_weight.to_bits(), 0.03_f64.to_bits());
     assert!((distribution[&y_effect] - residual.magnitude).abs() < 1e-12);
+    for sampler_residuals in [
+        legacy_sampling_engine.idle_noise_residuals(),
+        sampler_dem.idle_noise_residuals(),
+    ] {
+        let [sampler_residual] = sampler_residuals else {
+            panic!("each sampler path must retain the idle-channel residual")
+        };
+        assert_eq!(
+            sampler_residual.channel_weight.to_bits(),
+            0.03_f64.to_bits()
+        );
+        assert_eq!(
+            sampler_residual.relative_magnitude().to_bits(),
+            residual.relative_magnitude().to_bits()
+        );
+    }
     let qx = mechanisms
         .iter()
         .find_map(|(effect, probability)| (effect == &x_effect).then_some(*probability))

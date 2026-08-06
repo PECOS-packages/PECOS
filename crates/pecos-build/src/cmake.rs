@@ -40,7 +40,12 @@ pub fn find_system_cmake() -> Option<PathBuf> {
     if !output.status.success() {
         return None;
     }
-    which_in_path("cmake")
+    let extensions: &[&str] = if cfg!(windows) {
+        &[".exe", ".bat", ""]
+    } else {
+        &[""]
+    };
+    crate::executable::which_in_path("cmake", extensions)
 }
 
 /// Directory containing the cmake binary for a given installation root.
@@ -62,24 +67,6 @@ pub fn cmake_binary_in(root: &Path) -> Option<PathBuf> {
     let bin_name = if cfg!(windows) { "cmake.exe" } else { "cmake" };
     let candidate = cmake_bin_dir(root).join(bin_name);
     candidate.is_file().then_some(candidate)
-}
-
-fn which_in_path(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    let exts: &[&str] = if cfg!(windows) {
-        &[".exe", ".bat", ""]
-    } else {
-        &[""]
-    };
-    for dir in std::env::split_paths(&path_var) {
-        for ext in exts {
-            let candidate = dir.join(format!("{name}{ext}"));
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
 }
 
 /// The docs URL we point users at for manual install instructions.

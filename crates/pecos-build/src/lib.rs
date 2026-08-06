@@ -61,11 +61,13 @@ pub mod cutensor;
 pub mod deps;
 pub mod download;
 pub mod errors;
+mod executable;
 pub mod extract;
 pub mod home;
 pub mod llvm;
 pub mod manifest;
 pub mod prompt;
+pub mod ripgrep;
 
 // Re-export main types for convenience
 pub use deps::ensure_dep_ready;

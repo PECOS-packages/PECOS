@@ -27,6 +27,7 @@ pecos python build --profile native   # Release + native-CPU codegen (Rust and C
 pecos install llvm            # Install managed LLVM 21.1 where supported
 pecos install cuda            # Install CUDA Toolkit to ~/.pecos/deps/cuda/
 pecos install cuquantum       # Install cuQuantum SDK to ~/.pecos/deps/cuquantum/
+pecos install ripgrep         # Install ripgrep with cargo install
 pecos install --all           # Install all optional dependencies
 pecos uninstall llvm          # Uninstall LLVM
 pecos upgrade llvm            # Upgrade (force reinstall) LLVM
@@ -61,6 +62,21 @@ Most development tasks are managed through the Justfile. Make sure you have `jus
 # Install just
 cargo install just
 ```
+
+### Passing arguments to a recipe
+
+`just --list` (and `just` with no arguments) prints each recipe as a signature, such as
+`build profile="debug"`. That names the parameter and its default; it is not the syntax for
+calling the recipe. Recipe arguments are positional:
+
+```bash
+just build release             # correct
+just build profile=release     # wrong: passes the literal text "profile=release"
+```
+
+The `name=value` form is reserved for overriding top-level variables, and only works before the
+recipe name (`just pecos="..." build`). After a recipe name, `name=value` is consumed as an ordinary
+positional argument.
 
 ### Quick Reference
 
@@ -182,6 +198,11 @@ pecos deps sync
 Syncs crate-level `pecos.toml` manifests from the workspace-level manifest.
 
 ## Dependency and Security Policy
+
+The dependency integrity check run by `just lint` and `just security-check`
+requires ripgrep. Install it with `pecos install ripgrep`, or manually with
+`cargo install ripgrep --locked`, `brew install ripgrep`, `apt install ripgrep`,
+or `winget install BurntSushi.ripgrep`.
 
 Run these recipes when changing dependencies, lockfiles, CI workflows, action references, cache behavior, or security policy:
 

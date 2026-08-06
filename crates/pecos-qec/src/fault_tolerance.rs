@@ -47,7 +47,8 @@ pub use decoder_integration::{
     LookupTableDecoder, apply_recovery, extract_syndrome, run_correction_cycle,
 };
 pub use fault_distance::{
-    FaultDistanceError, FaultDistanceResult, exhaustive_fault_distance, graphlike_fault_distance,
+    FaultDistanceError, FaultDistanceResult, connected_cluster_fault_distance,
+    exhaustive_fault_distance, graphlike_fault_distance,
 };
 pub use gadget_checker::{
     GadgetAnalysis, GadgetChecker, GadgetConfig, GadgetDecoderAnalysis, GadgetFaultClass,

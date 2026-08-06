@@ -96,10 +96,10 @@ pub use fault_tolerance::{
     PauliFaultIterator, PauliPropChecker, PropagationResult, SpacetimeLocation,
     StabilizerFlipAnalysis, StabilizerFlipChecker, StabilizerFlips, SyndromeAnalysis,
     SyndromeClass, SyndromeHistory, SyndromeHistoryAnalysis, SyndromeHistoryResult,
-    anticommutes_with_logical, apply_recovery, classify_fault, exhaustive_fault_distance,
-    extract_measurement_rounds, extract_spacetime_locations, extract_syndrome, get_syndrome_flips,
-    graphlike_fault_distance, has_syndrome, propagate_fault, propagate_faults,
-    run_circuit_with_faults, run_correction_cycle,
+    anticommutes_with_logical, apply_recovery, classify_fault, connected_cluster_fault_distance,
+    exhaustive_fault_distance, extract_measurement_rounds, extract_spacetime_locations,
+    extract_syndrome, get_syndrome_flips, graphlike_fault_distance, has_syndrome, propagate_fault,
+    propagate_faults, run_circuit_with_faults, run_correction_cycle,
 };
 pub use geometry::{CheckSchedule, LogicalOperator, PauliOp, StabilizerCheck, StabilizerColor};
 pub use logical_discovery::{

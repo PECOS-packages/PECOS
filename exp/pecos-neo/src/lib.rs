@@ -333,7 +333,9 @@ mod tests {
     fn test_prelude_usage() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        // Measurement outcomes draw from the simulator's RNG, so the simulator
+        // must be seeded for determinism; the runner seed does not govern them.
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
@@ -400,7 +402,9 @@ mod tests {
     fn test_multiple_shots() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        // Measurement outcomes draw from the simulator's RNG, so the simulator
+        // must be seeded for determinism; the runner seed does not govern them.
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
         let mut count_0 = 0;

@@ -545,11 +545,14 @@ jobs:
           enable-cache: true
           save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
-      # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build)
+      # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build).
+      # Linux only: Windows already links LLVM statically (llvm-sys has no dynamic
+      # support on MSVC), and macOS deliberately keeps shared LLVM with a bundled dylib.
       - name: Select static LLVM linkage for pecos-rslib-llvm release wheel
-        if: runner.os != 'macOS'
+        if: runner.os == 'Linux'
         shell: bash
         run: |
+          test "$(git grep -l 'llvm21-1-prefer-dynamic' -- '*Cargo.toml')" = "Cargo.toml"
           test "$(grep -c 'llvm21-1-prefer-dynamic' Cargo.toml)" -eq 1
           sed -i 's/llvm21-1-prefer-dynamic/llvm21-1-force-static/' Cargo.toml
           test "$(grep -c 'llvm21-1-force-static' Cargo.toml)" -eq 1
@@ -632,14 +635,14 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
 
       - name: Restore workspace LLVM linkage after release wheel
-        if: always() && runner.os != 'macOS'
+        if: always() && runner.os == 'Linux'
         shell: bash
         run: git checkout -- Cargo.toml
 
       - name: Verify static LLVM release wheel isolation
         if: runner.os == 'Linux'
         run: >
-          uv run --frozen --no-project --with patchelf==0.17.2.4 python scripts/ci/verify_static_llvm_wheels.py
+          uv run --frozen --no-project --python 3.12 --with patchelf==0.17.2.4 python scripts/ci/verify_static_llvm_wheels.py
           --base-wheel wheelhouse/*.whl
           --llvm-wheel wheelhouse-llvm/*.whl
           --llvm-archive .ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz

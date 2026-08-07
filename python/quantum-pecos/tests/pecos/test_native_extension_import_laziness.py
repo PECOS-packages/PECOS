@@ -10,7 +10,14 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""Import-isolation tests for optional native extensions."""
+"""Import-isolation tests for optional native extensions.
+
+Each test proves, in one fresh interpreter: (1) ``import pecos`` leaves the
+extension out of ``sys.modules``; (2) the native binary genuinely exists and
+imports afterwards -- checking the wrapper package alone would let a
+wrapper-without-binary installation pass vacuously; (3) the lazily resolved
+public symbols work.
+"""
 
 from __future__ import annotations
 
@@ -21,28 +28,54 @@ import textwrap
 
 import pytest
 
-_SCRIPT = textwrap.dedent(
+_LLVM_SCRIPT = textwrap.dedent(
     """
-    import importlib.util
     import sys
 
     import pecos
 
-    native_name = {native_name!r}
-    if importlib.util.find_spec(native_name) is None:
-        # The extension is absent entirely, so its non-appearance in
-        # sys.modules would prove nothing about import laziness.
-        raise AssertionError(f"{{native_name}} is not installed; laziness cannot be tested")
-    loaded = sorted(name for name in sys.modules if native_name in name)
+    loaded = sorted(name for name in sys.modules if "pecos_rslib_llvm" in name)
     if loaded:
-        raise AssertionError(f"import pecos loaded {{native_name}} eagerly: {{loaded}}")
+        raise AssertionError(f"import pecos loaded pecos_rslib_llvm eagerly: {loaded}")
+
+    # Prove the native binary itself is installed and importable, not just the
+    # pure-Python wrapper package.
+    import pecos_rslib_llvm.pecos_rslib_llvm  # noqa: F401
+
+    # Prove the lazy public symbols resolve to working objects.
+    from pecos.engines import compile_hugr_to_qis, get_compilation_backends
+
+    if not callable(compile_hugr_to_qis):
+        raise AssertionError("compile_hugr_to_qis did not resolve to a callable")
+    backends = get_compilation_backends()
+    if "backends" not in backends:
+        raise AssertionError(f"unexpected get_compilation_backends() result: {backends!r}")
+    """,
+)
+
+_CUDA_SCRIPT = textwrap.dedent(
+    """
+    import sys
+
+    import pecos
+
+    loaded = sorted(name for name in sys.modules if "pecos_rslib_cuda" in name)
+    if loaded:
+        raise AssertionError(f"import pecos loaded pecos_rslib_cuda eagerly: {loaded}")
+
+    import pecos_rslib_cuda.pecos_rslib_cuda  # noqa: F401
+
+    from pecos.simulators import CudaStateVec
+
+    if CudaStateVec is None:
+        raise AssertionError("CudaStateVec resolved to None despite pecos-rslib-cuda being installed")
     """,
 )
 
 
-def _assert_import_pecos_leaves_extension_unloaded(native_name: str) -> None:
+def _run_fresh_interpreter(script: str) -> None:
     result = subprocess.run(
-        [sys.executable, "-c", _SCRIPT.format(native_name=native_name)],
+        [sys.executable, "-c", script],
         check=False,
         capture_output=True,
         text=True,
@@ -52,11 +85,11 @@ def _assert_import_pecos_leaves_extension_unloaded(native_name: str) -> None:
 
 def test_import_pecos_does_not_load_llvm_extension() -> None:
     """A fresh ``import pecos`` leaves the (always-installed) LLVM extension unloaded."""
-    _assert_import_pecos_leaves_extension_unloaded("pecos_rslib_llvm")
+    _run_fresh_interpreter(_LLVM_SCRIPT)
 
 
 def test_import_pecos_does_not_load_cuda_extension() -> None:
     """A fresh ``import pecos`` leaves the CUDA extension unloaded, when it is installed."""
     if importlib.util.find_spec("pecos_rslib_cuda") is None:
         pytest.skip("pecos-rslib-cuda is not installed; the CUDA laziness guard cannot run")
-    _assert_import_pecos_leaves_extension_unloaded("pecos_rslib_cuda")
+    _run_fresh_interpreter(_CUDA_SCRIPT)

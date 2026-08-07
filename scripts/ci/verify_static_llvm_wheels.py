@@ -111,7 +111,7 @@ def verify_exported_symbols(nm: str, wheel: Path, extension: Path) -> None:
     print(f"Checked {wheel.name}:{extension.name}: sole defined dynamic symbol is {expected[0]}")
 
 
-def shared_llvm_from_prefix(prefix: Path) -> tuple[Path, Path]:
+def shared_llvm_from_prefix(prefix: Path) -> Path:
     """Locate the managed monolithic shared LLVM library in an installed prefix."""
     lib_dir = prefix / "lib"
     candidates = {
@@ -120,10 +120,10 @@ def shared_llvm_from_prefix(prefix: Path) -> tuple[Path, Path]:
     if not candidates:
         message = f"no managed shared libLLVM found in {lib_dir}"
         raise WheelVerificationError(message)
-    return max(candidates, key=lambda path: path.stat().st_size), lib_dir
+    return max(candidates, key=lambda path: path.stat().st_size)
 
 
-def shared_llvm_from_archive(archive_path: Path, destination: Path) -> tuple[Path, Path]:
+def shared_llvm_from_archive(archive_path: Path, destination: Path) -> Path:
     """Extract the managed monolithic shared LLVM library from a release archive."""
     with tarfile.open(archive_path) as archive:
         candidates = [
@@ -143,14 +143,13 @@ def shared_llvm_from_archive(archive_path: Path, destination: Path) -> tuple[Pat
         llvm_library = destination / PurePosixPath(member.name).name
         with source, llvm_library.open("wb") as output:
             shutil.copyfileobj(source, output)
-    return llvm_library, destination
+    return llvm_library
 
 
 def verify_clash_falsifier(
     patchelf: str,
     llvm_wheel: Path,
     managed_llvm: Path,
-    managed_lib_dir: Path,
     work_dir: Path,
 ) -> None:
     """Load a distinct-SONAME LLVM globally before importing the static wheel."""
@@ -173,7 +172,10 @@ def verify_clash_falsifier(
     # The reference libLLVM must load on this host before it can serve as the
     # clash neighbor; if it cannot (e.g. libstdc++ too old for a
     # manylinux-built library), that is an environment problem, not a wheel
-    # defect, and must be reported as such.
+    # defect, and is reported as a skipped falsifier rather than a failure.
+    # The wheel must import with NO library-path help: a static wheel needs
+    # none, and giving the child a resolvable libLLVM would let a dynamic
+    # wheel import cleanly and weaken the falsifier.
     test_program = (
         "import ctypes, sys\n"
         "try:\n"
@@ -186,11 +188,25 @@ def verify_clash_falsifier(
     )
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
-    current_library_path = env.get("LD_LIBRARY_PATH")
-    env["LD_LIBRARY_PATH"] = (
-        f"{managed_lib_dir}:{current_library_path}" if current_library_path else str(managed_lib_dir)
+    result = subprocess.run(
+        [str(venv_python), "-c", test_program, str(clash_library)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
     )
-    run_command([str(venv_python), "-c", test_program, str(clash_library)], env=env)
+    if result.returncode == 86:
+        print(
+            "WARNING: clash falsifier skipped -- the reference libLLVM did not load on this host "
+            f"(environment issue, not a wheel defect):\n{result.stderr}",
+        )
+        return
+    if result.returncode != 0:
+        message = (
+            f"clash falsifier failed with exit code {result.returncode}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        raise WheelVerificationError(message)
     print(
         f"Checked {llvm_wheel.name}: import succeeds after RTLD_GLOBAL load of "
         f"{managed_llvm.name} copied with SONAME {clash_soname}",
@@ -225,19 +241,13 @@ def verify(args: argparse.Namespace) -> None:
         verify_exported_symbols(nm, llvm_wheel, llvm_extension)
 
         if args.llvm_prefix is not None:
-            managed_llvm, managed_lib_dir = shared_llvm_from_prefix(args.llvm_prefix.resolve())
+            managed_llvm = shared_llvm_from_prefix(args.llvm_prefix.resolve())
         else:
-            managed_llvm, managed_lib_dir = shared_llvm_from_archive(
+            managed_llvm = shared_llvm_from_archive(
                 args.llvm_archive.resolve(),
                 work_dir / "managed-llvm",
             )
-        verify_clash_falsifier(
-            patchelf,
-            llvm_wheel,
-            managed_llvm,
-            managed_lib_dir,
-            work_dir,
-        )
+        verify_clash_falsifier(patchelf, llvm_wheel, managed_llvm, work_dir)
 
 
 def main() -> None:

@@ -41,10 +41,10 @@ from pecos.slr.ast.codegen.stim import AstToStim, ast_to_stim, ast_to_stim_str
 from pecos.slr.ast.nodes import Program
 
 
-def ast_to_qir(*args: object, **kwargs: object) -> str:
+def ast_to_qir(program: Program) -> str:
     """Generate QIR while deferring the LLVM extension import until use."""
     qir_module = import_module("pecos.slr.ast.codegen.qir")
-    return qir_module.ast_to_qir(*args, **kwargs)
+    return qir_module.ast_to_qir(program)
 
 
 def __getattr__(name: str) -> object:

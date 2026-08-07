@@ -67,7 +67,6 @@ cmake -S "$SOURCE_DIR/llvm" -B "$BUILD_DIR" -G "Unix Makefiles" \
 cmake --build "$BUILD_DIR" --target \
     install-llvm-config \
     install-LLVM \
-    install-llvm-libraries \
     install-llvm-headers \
     install-clang-headers \
     install-libclang \
@@ -76,20 +75,6 @@ cmake --build "$BUILD_DIR" --target \
 "$INSTALL_DIR/bin/llvm-config" --version
 "$INSTALL_DIR/bin/llvm-config" --shared-mode
 "$INSTALL_DIR/bin/llvm-config" --libnames --link-shared
-STATIC_LIB_NAMES="$("$INSTALL_DIR/bin/llvm-config" --libnames --link-static)"
-read -r -a STATIC_LIBRARIES <<< "$STATIC_LIB_NAMES"
-if [ "${#STATIC_LIBRARIES[@]}" -eq 0 ]; then
-    echo "llvm-config did not report any static LLVM archives" >&2
-    exit 1
-fi
-LLVM_LIB_DIR="$("$INSTALL_DIR/bin/llvm-config" --libdir)"
-for archive in "${STATIC_LIBRARIES[@]}"; do
-    if [ ! -f "$LLVM_LIB_DIR/$archive" ]; then
-        echo "Missing static LLVM archive reported by llvm-config: $LLVM_LIB_DIR/$archive" >&2
-        exit 1
-    fi
-done
-echo "Validated ${#STATIC_LIBRARIES[@]} static LLVM archives in $LLVM_LIB_DIR"
 
 test "$("$INSTALL_DIR/bin/llvm-config" --shared-mode)" = shared
 "$INSTALL_DIR/bin/llvm-config" --libnames --link-shared \

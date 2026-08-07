@@ -52,9 +52,9 @@ def _preload_unix_llvm_runtime() -> None:
     cannot import on its own.
 
     A static Linux/Windows release wheel has no ``NEEDED`` entry for
-    ``libLLVM`` at all, and a macOS release wheel bundles ``libLLVM`` with an
-    rpath (delocate) and imports directly -- so this never runs for a release
-    wheel. That matters: preloading a *second*, differently-named ``libLLVM``
+    ``libLLVM`` at all, and a macOS release wheel bundles ``libLLVM`` with a
+    relocatable load path (delocate) and imports directly -- so this never
+    runs for a release wheel. That matters: preloading a *second*, differently-named ``libLLVM``
     alongside a bundled copy leaves two sets of LLVM global state that crash
     the interpreter at shutdown, so this must stay a fallback and never become
     an eager preload. A shared source/editable build, however, links

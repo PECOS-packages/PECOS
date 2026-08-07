@@ -150,6 +150,10 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     ///
     /// The default keeps existing Boolean runtimes compatible and rejects a
     /// leakage outcome instead of silently converting 2 to true.
+    ///
+    /// # Errors
+    /// Returns an error if any outcome is not 0 or 1, since a Boolean runtime cannot
+    /// represent a leakage outcome, or if providing the measurements themselves fails.
     fn provide_measurement_outcomes(&mut self, outcomes: BTreeMap<usize, u32>) -> Result<()> {
         let measurements = outcomes
             .into_iter()

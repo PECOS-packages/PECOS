@@ -749,6 +749,9 @@ pub unsafe extern "C" fn ___lazy_measure(qubit: i64) -> i64 {
 ///
 /// # Safety
 /// The same requirements as [`___lazy_measure`] apply.
+///
+/// # Panics
+/// Panics if the allocated result ID is too large to fit in i64.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
     let qubit_id = i64_to_usize(qubit);

@@ -1676,10 +1676,7 @@ impl ClassicalEngine for QisEngine {
             for (result_id, value) in &self.measurement_results {
                 shot.data
                     .insert(format!("measurement_{result_id}"), Data::U32(*value));
-                debug!(
-                    "QisEngine: Added to shot: measurement_{} = {}",
-                    result_id, value
-                );
+                debug!("QisEngine: Added to shot: measurement_{result_id} = {value}");
             }
         }
 

@@ -1350,8 +1350,8 @@ impl SeleneRuntime {
             (
                 QuantumOp::Measure(source_qubit, source_result),
                 QuantumOp::Measure(lowered_qubit, lowered_result),
-            ) => source_qubit == lowered_qubit && source_result == lowered_result,
-            (
+            )
+            | (
                 QuantumOp::MeasureLeaked(source_qubit, source_result),
                 QuantumOp::MeasureLeaked(lowered_qubit, lowered_result),
             ) => source_qubit == lowered_qubit && source_result == lowered_result,

@@ -185,6 +185,10 @@ pub trait QisInterface: Send + Sync {
     /// Set an integer-valued measurement outcome for the running program.
     ///
     /// Existing interfaces remain Boolean-only by default.
+    ///
+    /// # Errors
+    /// Returns an error if `value` is not 0 or 1, since a Boolean-only interface
+    /// cannot represent a leakage outcome, or if setting the result itself fails.
     fn set_measurement_outcome(
         &mut self,
         result_id: u64,
@@ -277,6 +281,10 @@ pub trait DynamicSyncHandle: Send + Sync {
     fn set_measurement_result(&self, result_id: u64, value: bool) -> Result<(), InterfaceError>;
 
     /// Set an integer-valued measurement outcome for the running program.
+    ///
+    /// # Errors
+    /// Returns an error if `value` is not 0 or 1, since a Boolean-only interface
+    /// cannot represent a leakage outcome, or if setting the result itself fails.
     fn set_measurement_outcome(&self, result_id: u64, value: u64) -> Result<(), InterfaceError> {
         match value {
             0 => self.set_measurement_result(result_id, false),

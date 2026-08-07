@@ -50,8 +50,9 @@ macro_rules! load_sym {
 #[allow(non_snake_case)]
 pub struct CuQuantumBackend {
     // Keep libraries alive.
-    // Rust drops fields in declaration order, so dependents must come before
-    // their dependencies. cuda_rt is last because everything depends on it.
+    // Rust drops fields in declaration order, so cuDensityMat and cuTensorNet must
+    // come before their cuTensor dependency. cuda_rt remains last so its direct
+    // CUDA runtime symbols stay loaded until the other library handles are released.
     _cudensitymat: Library,
     _cutensornet: Library,
     _cutensor: Option<Library>,
@@ -178,11 +179,17 @@ unsafe impl Sync for CuQuantumBackend {}
 static BACKEND: OnceLock<Result<CuQuantumBackend, CuQuantumLoadError>> = OnceLock::new();
 
 /// Load cuQuantum libraries. Thread-safe, loads only once.
+///
+/// Availability probing must only open libraries; it must never create CUDA handles or contexts,
+/// because initializing the driver in a parent process poisons every later forked child.
 pub fn try_load() -> Result<&'static CuQuantumBackend, &'static CuQuantumLoadError> {
     BACKEND.get_or_init(load_all).as_ref()
 }
 
 /// Check if cuQuantum is available at runtime.
+///
+/// This probe only opens libraries and must not create CUDA handles, contexts, or otherwise
+/// initialize the driver before a caller may fork worker processes.
 pub fn is_available() -> bool {
     try_load().is_ok()
 }
@@ -269,20 +276,23 @@ fn cutensor_search_paths() -> Vec<PathBuf> {
     paths
 }
 
-/// Load a shared library with RTLD_GLOBAL so its symbols are visible to subsequent loads.
-/// This is necessary because cuQuantum libs have transitive dependencies (e.g.
-/// libcutensornet depends on libcutensor) that need to resolve via the global symbol table.
+/// Load a shared library without adding its symbols to the process-global lookup scope.
+///
+/// cuTensor is preloaded by full path before libraries with a `NEEDED` entry for its SONAME. ELF
+/// loaders reuse that already-loaded object when resolving the entry, so global symbol visibility
+/// is unnecessary. CUDA libraries export unmangled C symbols; keeping them local prevents this
+/// loader from polluting symbol resolution for other CUDA-using libraries in the same process.
 #[cfg(unix)]
-fn load_global<P: AsRef<std::ffi::OsStr>>(path: P) -> Result<Library, libloading::Error> {
+fn load_local<P: AsRef<std::ffi::OsStr>>(path: P) -> Result<Library, libloading::Error> {
     // RTLD_NOW: resolve all symbols immediately
-    // RTLD_GLOBAL: make symbols available for subsequent dlopen calls
-    let flags = libc::RTLD_NOW | libc::RTLD_GLOBAL;
+    // RTLD_LOCAL: keep exported symbols out of the process-global lookup scope
+    let flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
     let lib = unsafe { UnixLibrary::open(Some(path.as_ref()), flags) }?;
     Ok(lib.into())
 }
 
 #[cfg(not(unix))]
-fn load_global<P: AsRef<std::ffi::OsStr>>(path: P) -> Result<Library, libloading::Error> {
+fn load_local<P: AsRef<std::ffi::OsStr>>(path: P) -> Result<Library, libloading::Error> {
     unsafe { Library::new(path.as_ref()) }
 }
 
@@ -296,7 +306,7 @@ fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> 
         for dir in search_dirs {
             let path = dir.join(name);
             log::debug!("Trying to load {name} from: {}", path.display());
-            match load_global(&path) {
+            match load_local(&path) {
                 Ok(lib) => {
                     log::info!("Loaded {name} from: {}", path.display());
                     return Ok(lib);
@@ -306,7 +316,7 @@ fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> 
         }
         // Fall back to bare name (system linker search)
         log::debug!("Trying system path for {name}");
-        if let Ok(lib) = load_global(*name) {
+        if let Ok(lib) = load_local(*name) {
             log::info!("Loaded {name} from system path");
             return Ok(lib);
         }
@@ -328,16 +338,17 @@ fn load_all() -> Result<CuQuantumBackend, CuQuantumLoadError> {
     let cq_paths = cuquantum_search_paths();
     let ct_paths = cutensor_search_paths();
 
-    // Load CUDA runtime first (transitive dependency for everything else).
+    // Load CUDA runtime for the API symbols used directly by this backend. As dependency
+    // preloading, this is only a best-effort compatibility measure for variants that dynamically
+    // depend on libcudart; the shipped cuQuantum 25.11 libraries link the runtime statically.
     // Try versioned soname first -- unversioned symlink may not exist on runtime-only installs.
     let cuda_rt = try_load_lib(
         &["libcudart.so.13", "libcudart.so.12", "libcudart.so"],
         &cuda_paths,
     )?;
 
-    // Load cuTensor before cuTensorNet (transitive dependency).
-    // The handle must stay alive in CuQuantumBackend so dlclose doesn't
-    // unload the library while cuTensorNet still needs its symbols.
+    // Load cuTensor before cuTensorNet and cuDensityMat, whose dynamic `NEEDED` entries resolve
+    // its SONAME to this object. The handle must stay alive so it is not unloaded first.
     let cutensor = try_load_lib(&["libcutensor.so.2", "libcutensor.so"], &ct_paths).ok();
 
     let custatevec = try_load_lib(&["libcustatevec.so.1", "libcustatevec.so"], &cq_paths)?;

@@ -367,7 +367,7 @@ mod tests {
     const SHOTS: usize = 20_000;
 
     fn flip_rate(model: ComposableNoiseModel, commands: &CommandQueue, qubit: usize) -> f64 {
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
@@ -524,7 +524,7 @@ mod tests {
         let model = ComposableNoiseModel::new().add_channel(channel);
 
         let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).mz(&[0]).build();
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);

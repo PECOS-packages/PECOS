@@ -892,7 +892,7 @@ mod tests {
     fn test_importance_runner_basic() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
         let result = runner.run_shot(&commands);
         assert_eq!(result.outcomes.len(), 1);
@@ -908,7 +908,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_single_qubit_boost(0.001, 10.0)
             .with_seed(42);
 
@@ -927,7 +927,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
         let result = runner.run_shot(&commands);
 
         assert_eq!(result.outcomes.len(), 1);
@@ -947,7 +947,7 @@ mod tests {
         let true_rate = 0.001;
         let boost = 100.0; // Very aggressive boost
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 12345))
             .with_single_qubit_boost(true_rate, boost)
             .with_seed(12345);
 
@@ -980,7 +980,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(2))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(2, 42))
             .with_two_qubit_boost(0.01, 5.0)
             .with_seed(42);
 
@@ -992,7 +992,7 @@ mod tests {
     fn test_measurement_importance_sampling() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_measurement_boost(0.001, 100.0)
             .with_seed(42);
 
@@ -1074,7 +1074,8 @@ mod tests {
         // ========== Unbiased sampling ==========
         let mut unbiased_ones = 0;
         for seed in 0..num_shots {
-            let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(seed);
+            let mut runner =
+                ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed)).with_seed(seed);
             let result = runner.run_shot(&commands);
             if result.outcomes.get_bit(QubitId(0)).unwrap_or(false) {
                 unbiased_ones += 1;
@@ -1088,7 +1089,7 @@ mod tests {
         let mut biased_total_weight = 0.0;
 
         for seed in 0..num_shots {
-            let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+            let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
                 .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
                 .with_seed(seed);
 
@@ -1132,7 +1133,7 @@ mod tests {
         // Bias heavily toward 1
         let mut ones = 0;
         for seed in 0..num_shots {
-            let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+            let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
                 .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.9))
                 .with_seed(seed);
 
@@ -1160,7 +1161,7 @@ mod tests {
             .mz(&[0]) // No H, so deterministic
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.99))
             .with_seed(42);
 

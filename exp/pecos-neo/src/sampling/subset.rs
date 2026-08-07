@@ -2762,7 +2762,7 @@ mod tests {
 
         let mut world: World<SparseStab> = World::new(config.seed.unwrap());
         for _ in 0..config.samples_per_level {
-            world.spawn_with_simulator(SparseStab::new(1));
+            world.spawn_with_simulator(SparseStab::with_seed(1, 123));
         }
 
         let mut sim = EcsSubsetSimulation::new(world, config);
@@ -2804,7 +2804,7 @@ mod tests {
 
         let mut world: World<SparseStab> = World::new(config.seed.unwrap());
         for _ in 0..config.samples_per_level {
-            world.spawn_with_simulator(SparseStab::new(2));
+            world.spawn_with_simulator(SparseStab::with_seed(2, 456));
         }
 
         let initial_count = world.entity_count();
@@ -2888,7 +2888,7 @@ mod tests {
         let circuit = bit_flip_syndrome_circuit();
 
         // Run without errors - syndrome should be 0
-        let mut sim = SparseStab::new(5);
+        let mut sim = SparseStab::with_seed(5, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_rng(PecosRng::seed_from_u64(42));
 
         // Initialize all qubits to |0>
@@ -3236,7 +3236,7 @@ mod tests {
         // Create world with trajectories
         let mut world: World<SparseStab> = World::new(42);
         for _ in 0..num_trajectories {
-            world.spawn_with_simulator(SparseStab::new(num_qubits));
+            world.spawn_with_simulator(SparseStab::with_seed(num_qubits, 42));
         }
 
         // Configure QEC subset simulation

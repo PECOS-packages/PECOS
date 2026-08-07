@@ -517,7 +517,7 @@ mod tests {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut program = StaticProgram::new(commands, 1);
-        let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
         let result = runner.run_shot(&mut program);
 
@@ -531,7 +531,7 @@ mod tests {
         let round_commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut program = RepeatedProgram::new(round_commands, 3, 1);
-        let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
         let result = runner.run_shot(&mut program);
 
@@ -555,7 +555,7 @@ mod tests {
         };
 
         let mut program = ConditionalProgram::new(initial, branch, 1);
-        let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
         let result = runner.run_shot(&mut program);
 
@@ -567,7 +567,7 @@ mod tests {
     fn test_program_reset() {
         let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
         let mut program = StaticProgram::new(commands, 1);
-        let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
         // Run first shot
         let result1 = runner.run_shot(&mut program);
@@ -590,7 +590,7 @@ mod tests {
             .build();
 
         let mut program = StaticProgram::new(commands, 2);
-        let mut runner = ProgramRunner::new(SparseStab::new(2)).with_seed(42);
+        let mut runner = ProgramRunner::new(SparseStab::with_seed(2, 42)).with_seed(42);
 
         let result = runner.run_shot(&mut program);
 

@@ -423,7 +423,7 @@ fn test_noisy_execution_statistics() {
         let noise = ComposableNoiseModel::new()
             .add_channel(SingleQubitChannel::depolarizing(high_noise_rate));
         let mut program = StaticProgram::new(commands.clone(), 1);
-        let mut runner = ProgramRunner::new(SparseStab::new(1))
+        let mut runner = ProgramRunner::new(SparseStab::with_seed(1, seed as u64))
             .with_noise(noise)
             .with_seed(seed as u64);
 
@@ -528,7 +528,7 @@ fn test_command_source_with_user_gates() {
 
     // Create program using the user gate
     let mut program = UserGateProgram::new(user_gate_id);
-    let mut runner = ProgramRunner::new(SparseStab::new(2)).with_seed(42);
+    let mut runner = ProgramRunner::new(SparseStab::with_seed(2, 42)).with_seed(42);
 
     let result = runner.run_shot(&mut program);
 
@@ -564,7 +564,8 @@ fn test_conditional_program_with_feedback() {
 
     for seed in 0..num_shots {
         let mut program = ConditionalProgram::new(initial.clone(), branch, 1);
-        let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(seed as u64);
+        let mut runner =
+            ProgramRunner::new(SparseStab::with_seed(1, seed as u64)).with_seed(seed as u64);
 
         let result = runner.run_shot(&mut program);
 
@@ -916,7 +917,7 @@ fn test_e2e_custom_gate_definition_and_execution() {
     let num_shots = 100;
 
     for seed in 0..num_shots {
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, seed as u64);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(seed as u64);
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
@@ -1131,7 +1132,7 @@ fn test_e2e_custom_gate_noise_limitation() {
         .mz(&[0])
         .build();
 
-    let mut state = SparseStab::new(1);
+    let mut state = SparseStab::with_seed(1, 42);
     let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise)
         .with_seed(42);
@@ -1231,7 +1232,7 @@ fn test_e2e_complete_workflow_with_shot_runner() {
         .build();
 
     // Use CircuitRunner directly
-    let mut state = SparseStab::new(2);
+    let mut state = SparseStab::with_seed(2, 42);
     let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
     let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 

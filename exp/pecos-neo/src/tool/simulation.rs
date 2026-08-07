@@ -6286,7 +6286,7 @@ mod tests {
             .build();
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
@@ -6319,7 +6319,7 @@ mod tests {
             .run();
 
         let custom_results = sim_neo(circuit)
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(50))
             .seed(42)
             .run();
@@ -6353,7 +6353,7 @@ mod tests {
         let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .noise(noise)
             .sampling(monte_carlo(100))
             .seed(42)
@@ -6380,13 +6380,13 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let results1 = sim_neo(circuit.clone())
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(20))
             .seed(42)
             .run();
 
         let results2 = sim_neo(circuit)
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(20))
             .seed(42)
             .run();
@@ -6407,7 +6407,7 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
         let run = |workers: usize| {
             sim_neo(circuit.clone())
-                .quantum(custom_backend(SparseStab::new))
+                .quantum(custom_backend(|n| SparseStab::with_seed(n, 7)))
                 .sampling(monte_carlo(50).workers(workers))
                 .seed(42)
                 .run()
@@ -6438,7 +6438,7 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).z(&[0]).mz(&[0]).build();
         let run = |workers: usize| {
             sim_neo(circuit.clone())
-                .quantum(custom_backend(SparseStab::new))
+                .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
                 .noise(SingleQubitChannel::depolarizing(0.3))
                 .sampling(monte_carlo(40).workers(workers))
                 .seed(7)
@@ -6468,7 +6468,7 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend(StateVec::new))
+            .quantum(custom_backend(|n| StateVec::with_seed(n, 42)))
             .sampling(monte_carlo(10))
             .seed(42)
             .run();
@@ -6793,7 +6793,9 @@ mod tests {
             .build();
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend_with_rotations(StateVec::new))
+            .quantum(custom_backend_with_rotations(|n| {
+                StateVec::with_seed(n, 42)
+            }))
             .sampling(monte_carlo(10))
             .seed(42)
             .build()

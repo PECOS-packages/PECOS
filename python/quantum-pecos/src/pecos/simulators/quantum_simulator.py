@@ -18,6 +18,7 @@ and sparse stabilizer implementations.
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
 from pecos.reps.pyphir.op_types import QOp
@@ -36,12 +37,6 @@ try:
     from pecos.simulators import CuStateVec
 except ImportError:
     CuStateVec = None
-
-try:
-    from pecos.simulators import CudaStabilizer, CudaStateVec
-except ImportError:
-    CudaStateVec = None
-    CudaStabilizer = None
 
 
 class QuantumSimulator:
@@ -92,9 +87,11 @@ class QuantumSimulator:
             elif self.backend == "CuStateVec":
                 self.state = CuStateVec
             elif self.backend == "CudaStateVec":
-                self.state = CudaStateVec
+                simulators = importlib.import_module("pecos.simulators")
+                self.state = simulators.CudaStateVec
             elif self.backend == "CudaStabilizer":
-                self.state = CudaStabilizer
+                simulators = importlib.import_module("pecos.simulators")
+                self.state = simulators.CudaStabilizer
             else:
                 msg = f"simulator `{self.backend}` not currently implemented!"
                 raise NotImplementedError(msg)

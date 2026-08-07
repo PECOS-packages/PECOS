@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from pecos_rslib import ParityCheckMatrix, StabilizerCodeSpec, TickCircuit
+from pecos_rslib import DistanceResult, ParityCheckMatrix, StabilizerCodeSpec, TickCircuit
 
 class FaultDistanceResult:
-    """A fault distance and one witnessing set of DEM mechanism indices."""
+    """A unit-weight mechanism distance and one witnessing index set."""
 
     @property
     def distance(self) -> int: ...
@@ -198,6 +198,14 @@ class DistanceProblem:
     def __repr__(self) -> str: ...
 
 def certified_distance(problem: DistanceProblem, max_weight: int) -> CertifiedDistance | None: ...
+def connected_cluster_code_distance(
+    h: ParityCheckMatrix,
+    l: ParityCheckMatrix,
+    max_weight: int,
+) -> FaultDistanceResult | None: ...
+def x_distance(spec: StabilizerCodeSpec, max_weight: int) -> FaultDistanceResult | None: ...
+def z_distance(spec: StabilizerCodeSpec, max_weight: int) -> FaultDistanceResult | None: ...
+def stabilizer_code_distance(spec: StabilizerCodeSpec, max_weight: int) -> DistanceResult | None: ...
 
 # The native QEC module predates this focused stub. Preserve the untyped behavior of its other
 # classes and functions until that complete API is migrated rather than falsely narrowing them.

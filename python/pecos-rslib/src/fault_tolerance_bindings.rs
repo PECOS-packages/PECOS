@@ -45,7 +45,7 @@
 use crate::code_matrix_bindings::PyParityCheckMatrix;
 use crate::dag_circuit_bindings::PyTickCircuit;
 use crate::pecos_array::{Array, ArrayData};
-use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
+use crate::stabilizer_code_spec_bindings::{PyDistanceResult, PyStabilizerCodeSpec};
 use pecos_core::gate_type::GateType;
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
@@ -86,6 +86,9 @@ use pecos_qec::fault_tolerance::{
 use pecos_qec::{
     CertifiedDistance as RustCertifiedDistance, DistanceProblem as RustDistanceProblem,
     certified_distance as rust_certified_distance,
+    connected_cluster_code_distance as rust_connected_cluster_code_distance,
+    stabilizer_code_distance as rust_stabilizer_code_distance, x_distance as rust_x_distance,
+    z_distance as rust_z_distance,
 };
 use pecos_quantum::DagCircuit;
 use pecos_quantum::QubitId;
@@ -1270,7 +1273,7 @@ where
 // Detector Error Model
 // =============================================================================
 
-/// Result of a detector-error-model fault-distance search.
+/// Result of a unit-weight mechanism-distance search.
 #[pyclass(
     name = "FaultDistanceResult",
     module = "pecos_rslib.qec",
@@ -7690,6 +7693,50 @@ fn certified_distance(
     certify_python_problem(&problem.inner, max_weight)
 }
 
+/// Computes connected-cluster distance for a binary check/logical matrix pair.
+#[pyfunction]
+fn connected_cluster_code_distance(
+    h: &PyParityCheckMatrix,
+    l: &PyParityCheckMatrix,
+    max_weight: usize,
+) -> Option<PyFaultDistanceResult> {
+    rust_connected_cluster_code_distance(&h.inner, &l.inner, max_weight)
+        .map(PyFaultDistanceResult::from)
+}
+
+/// Computes pure-X connected-cluster distance for a CSS stabilizer code.
+#[pyfunction]
+fn x_distance(
+    code: &PyStabilizerCodeSpec,
+    max_weight: usize,
+) -> PyResult<Option<PyFaultDistanceResult>> {
+    rust_x_distance(&code.inner, max_weight)
+        .map(|result| result.map(PyFaultDistanceResult::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes pure-Z connected-cluster distance for a CSS stabilizer code.
+#[pyfunction]
+fn z_distance(
+    code: &PyStabilizerCodeSpec,
+    max_weight: usize,
+) -> PyResult<Option<PyFaultDistanceResult>> {
+    rust_z_distance(&code.inner, max_weight)
+        .map(|result| result.map(PyFaultDistanceResult::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes connected-cluster distance for any stabilizer code.
+#[pyfunction]
+fn stabilizer_code_distance(
+    code: &PyStabilizerCodeSpec,
+    max_weight: usize,
+) -> PyResult<Option<PyDistanceResult>> {
+    rust_stabilizer_code_distance(&code.inner, max_weight)
+        .map(|result| result.map(PyDistanceResult::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
 // =============================================================================
 // Module Registration
 // =============================================================================
@@ -7732,6 +7779,10 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(compare_dems_statistical, &qec)?)?;
     qec.add_function(wrap_pyfunction!(verify_dem_equivalence, &qec)?)?;
     qec.add_function(wrap_pyfunction!(assert_dems_equivalent, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(connected_cluster_code_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(x_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(z_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(stabilizer_code_distance, &qec)?)?;
 
     // Correlation analysis
     qec.add_function(wrap_pyfunction!(detector_flip_matrix, &qec)?)?;

@@ -244,6 +244,10 @@ impl EncodingBuilder {
 }
 
 impl DistanceProblem {
+    pub(crate) fn matrices(&self) -> (&F2Matrix, &F2Matrix) {
+        (&self.h, &self.l)
+    }
+
     /// Constructs a problem from check and logical matrices with matching widths.
     ///
     /// # Errors
@@ -977,10 +981,13 @@ mod tests {
     use super::*;
     use crate::{
         DemOutput, DistanceSearchConfig, FaultMechanism, StabilizerCode, calculate_distance,
-        connected_cluster_fault_distance, exhaustive_fault_distance,
+        connected_cluster_code_distance, connected_cluster_fault_distance,
+        exhaustive_fault_distance,
     };
     use pecos_core::pauli::{X, Xs, Ys, Z, Zs};
     use pecos_quantum::SymplecticMatrix;
+    use rand::rngs::SmallRng;
+    use rand::{RngExt, SeedableRng};
     use std::time::Instant;
 
     #[derive(Debug)]
@@ -1110,6 +1117,48 @@ mod tests {
             .map(|mask| assignment(mask, problem.num_vars()))
             .find(|candidate| cnf_satisfied_with_primary(&cnf, candidate))
             .map_or(SolverAnswer::Unsat, SolverAnswer::Sat)
+    }
+
+    #[test]
+    fn seeded_matrix_pairs_match_exhaustive_dimacs_minimum() {
+        let mut rng = SmallRng::seed_from_u64(0xC0DE_D157_A11C_E5E0);
+        for case in 0..64 {
+            let num_qubits = rng.random_range(1..=8);
+            let num_checks = rng.random_range(1..=4);
+            let num_logicals = rng.random_range(1..=3);
+            let h = ParityCheckMatrix::from_dense(
+                (0..num_checks)
+                    .map(|_| {
+                        (0..num_qubits)
+                            .map(|_| u8::from(rng.random_bool(0.5)))
+                            .collect()
+                    })
+                    .collect(),
+            )
+            .unwrap();
+            let l = ParityCheckMatrix::from_dense(
+                (0..num_logicals)
+                    .map(|_| {
+                        (0..num_qubits)
+                            .map(|_| u8::from(rng.random_bool(0.5)))
+                            .collect()
+                    })
+                    .collect(),
+            )
+            .unwrap();
+            let problem = DistanceProblem::from_css_checks(&h, &l).unwrap();
+            let exhaustive = exhaustive_dimacs_minimum(&problem);
+            let connected = connected_cluster_code_distance(&h, &l, num_qubits);
+
+            assert_eq!(
+                connected.as_ref().map(|result| result.distance),
+                exhaustive,
+                "distance mismatch in seeded case {case}: H={:?}, L={:?}",
+                h.rows(),
+                l.rows()
+            );
+            assert_eq!(connected.is_some(), exhaustive.is_some());
+        }
     }
 
     fn repetition_triad_dem() -> DetectorErrorModel {

@@ -18,6 +18,10 @@ from pecos.qec import (
     DetectorErrorModel,
     DistanceProblem,
     HookError,
+    connected_cluster_code_distance,
+    stabilizer_code_distance,
+    x_distance,
+    z_distance,
 )
 from pecos.quantum import ParityCheckMatrix, StabilizerCode, StabilizerCodeSpec, TickCircuit
 
@@ -156,6 +160,26 @@ def test_steane_certification_from_checks_and_code_spec() -> None:
         assert certified.unsat_trusted_below == 3
         assert problem.verify_witness(certified.witness) == 3
 
+    matrix_result = connected_cluster_code_distance(
+        ParityCheckMatrix(
+            [
+                [1, 0, 1, 0, 1, 0, 1],
+                [0, 1, 1, 0, 0, 1, 1],
+                [0, 0, 0, 1, 1, 1, 1],
+            ],
+        ),
+        ParityCheckMatrix([[1, 1, 1, 1, 1, 1, 1]]),
+        3,
+    )
+    assert matrix_result is not None
+    assert matrix_result.distance == 3
+    assert len(matrix_result.mechanism_indices) == 3
+
+    x_result = x_distance(spec, 3)
+    z_result = z_distance(spec, 3)
+    assert x_result is not None and x_result.distance == 3
+    assert z_result is not None and z_result.distance == 3
+
     assert from_checks.certified_distance(2) is None
 
     certified = from_checks.certified_distance(3)
@@ -164,6 +188,17 @@ def test_steane_certification_from_checks_and_code_spec() -> None:
     corrupted[0] = not corrupted[0]
     with pytest.raises(ValueError, match="witness violates H row 0"):
         from_checks.verify_witness(corrupted)
+
+
+def test_non_css_connected_cluster_binding_returns_logical_pauli() -> None:
+    spec = StabilizerCodeSpec.from_stabilizer_code(StabilizerCode.five_qubit())
+    result = stabilizer_code_distance(spec, 3)
+
+    assert result is not None
+    assert result.distance == 3
+    assert result.min_weight_operator.weight() == 3
+    assert all(result.min_weight_operator.commutes_with(stabilizer) for stabilizer in spec.stabilizers)
+    assert any(result.min_weight_operator.anticommutes_with(logical) for logical in spec.logical_zs + spec.logical_xs)
 
 
 def test_triad_dem_certification_agrees_with_exhaustive_distance() -> None:

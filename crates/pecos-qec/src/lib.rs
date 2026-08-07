@@ -63,6 +63,7 @@
 //! assert_eq!(analysis.undetectable_logical, 0);
 //! ```
 
+pub mod code_distance;
 pub mod dem_stab;
 pub mod distance;
 pub mod distance_problem;
@@ -78,6 +79,10 @@ pub mod surface;
 pub use dem_stab::{DemStabError, DemStabShotBatch, DemStabSim, DemStabSimBuilder};
 pub use mem_stab::{MemStabError, MemStabSim, MemStabSimBuilder};
 pub use parity_check_matrix::{ParityCheckMatrix, ParityCheckMatrixError};
+
+pub use code_distance::{
+    connected_cluster_code_distance, stabilizer_code_distance, x_distance, z_distance,
+};
 
 pub use distance::{
     DistanceResult, DistanceSearchConfig, LogicalOperatorInfo, WeightedPauliIterator,

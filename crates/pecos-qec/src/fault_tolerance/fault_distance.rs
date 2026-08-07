@@ -22,12 +22,15 @@ use super::dem_builder::{DetectorErrorModel, FaultMechanism};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
-/// Result of a fault-distance calculation, including one minimum-size witness.
+/// Result of a unit-weight mechanism-distance calculation, including one minimum-size witness.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FaultDistanceResult {
     /// Minimum number of fault mechanisms in an undetectable logical error.
     pub distance: usize,
-    /// Witnessing indices into [`DetectorErrorModel::to_mechanisms`], sorted ascending.
+    /// Witnessing mechanism indices, sorted ascending.
+    ///
+    /// For a detector error model these index [`DetectorErrorModel::to_mechanisms`]; for a binary
+    /// code-distance problem they are qubit-column indices.
     pub mechanism_indices: Vec<usize>,
 }
 
@@ -124,7 +127,7 @@ struct ConnectedClusterSearch<'a> {
     mechanisms: &'a [FaultMechanism],
     incidence: &'a BTreeMap<u32, Vec<usize>>,
     active: &'a [bool],
-    observable: u32,
+    logical_target: LogicalTarget,
     target_weight: usize,
     best: Option<Vec<usize>>,
 }
@@ -214,9 +217,7 @@ impl ConnectedClusterSearch<'_> {
     }
 
     fn consider_witness(&mut self, cluster: &[usize], effect: &FaultMechanism) {
-        if !effect.detectors.is_empty()
-            || effect.dem_outputs.binary_search(&self.observable).is_err()
-        {
+        if !effect.detectors.is_empty() || !self.logical_target.matches(effect) {
             return;
         }
         let mut candidate = cluster.to_vec();
@@ -229,6 +230,95 @@ impl ConnectedClusterSearch<'_> {
             self.best = Some(candidate);
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum LogicalTarget {
+    AnyBelow(u32),
+    Observable(u32),
+}
+
+impl LogicalTarget {
+    fn matches(self, effect: &FaultMechanism) -> bool {
+        match self {
+            Self::AnyBelow(limit) => effect.dem_outputs.iter().any(|&output| output < limit),
+            Self::Observable(observable) => effect.dem_outputs.binary_search(&observable).is_ok(),
+        }
+    }
+}
+
+struct ConnectedClusterProblem<'a> {
+    mechanisms: &'a [FaultMechanism],
+    incidence: BTreeMap<u32, Vec<usize>>,
+    active: Vec<bool>,
+}
+
+impl<'a> ConnectedClusterProblem<'a> {
+    fn new(mechanisms: &'a [FaultMechanism]) -> Self {
+        let incidence = detector_incidence(mechanisms);
+        let active = peel_unique_detector_mechanisms(mechanisms, &incidence);
+        Self {
+            mechanisms,
+            incidence,
+            active,
+        }
+    }
+
+    fn first_witness_at_weight(
+        &self,
+        weight: usize,
+        logical_target: LogicalTarget,
+    ) -> Option<Vec<usize>> {
+        (weight != 0 && weight <= self.mechanisms.len()).then_some(())?;
+        ConnectedClusterSearch {
+            mechanisms: self.mechanisms,
+            incidence: &self.incidence,
+            active: &self.active,
+            logical_target,
+            target_weight: weight,
+            best: None,
+        }
+        .run()
+    }
+
+    fn distance(
+        &self,
+        max_weight: usize,
+        logical_target: LogicalTarget,
+    ) -> Option<FaultDistanceResult> {
+        for weight in 1..=max_weight.min(self.mechanisms.len()) {
+            if let Some(mechanism_indices) = self.first_witness_at_weight(weight, logical_target) {
+                return Some(FaultDistanceResult {
+                    distance: weight,
+                    mechanism_indices,
+                });
+            }
+        }
+        None
+    }
+}
+
+pub(crate) fn connected_cluster_mechanism_distance(
+    mechanisms: &[FaultMechanism],
+    num_outputs: u32,
+    max_weight: usize,
+) -> Option<FaultDistanceResult> {
+    ConnectedClusterProblem::new(mechanisms)
+        .distance(max_weight, LogicalTarget::AnyBelow(num_outputs))
+}
+
+#[cfg(test)]
+pub(crate) fn connected_cluster_mechanism_distance_at_weight(
+    mechanisms: &[FaultMechanism],
+    num_outputs: u32,
+    weight: usize,
+) -> Option<FaultDistanceResult> {
+    ConnectedClusterProblem::new(mechanisms)
+        .first_witness_at_weight(weight, LogicalTarget::AnyBelow(num_outputs))
+        .map(|mechanism_indices| FaultDistanceResult {
+            distance: weight,
+            mechanism_indices,
+        })
 }
 
 #[derive(Clone, Copy)]
@@ -463,30 +553,10 @@ pub fn per_observable_fault_distances(
     max_weight: usize,
 ) -> Vec<Option<FaultDistanceResult>> {
     let mechanisms = mechanisms_from_dem(dem);
-    let incidence = detector_incidence(&mechanisms);
-    let active = peel_unique_detector_mechanisms(&mechanisms, &incidence);
+    let problem = ConnectedClusterProblem::new(&mechanisms);
 
     (0..u32::try_from(dem.num_observables()).expect("observable count fits in the u32 id space"))
-        .map(|observable| {
-            for weight in 1..=max_weight.min(mechanisms.len()) {
-                let mechanism_indices = ConnectedClusterSearch {
-                    mechanisms: &mechanisms,
-                    incidence: &incidence,
-                    active: &active,
-                    observable,
-                    target_weight: weight,
-                    best: None,
-                }
-                .run();
-                if let Some(mechanism_indices) = mechanism_indices {
-                    return Some(FaultDistanceResult {
-                        distance: weight,
-                        mechanism_indices,
-                    });
-                }
-            }
-            None
-        })
+        .map(|observable| problem.distance(max_weight, LogicalTarget::Observable(observable)))
         .collect()
 }
 
@@ -495,18 +565,19 @@ pub fn per_observable_fault_distances(
 /// The result is the minimum of [`per_observable_fault_distances`], ordered first by distance and
 /// then by the lexicographic mechanism-index witness. It is `None` only when no observable has a
 /// witness through `max_weight`.
+///
+/// # Panics
+///
+/// Panics if the observable count exceeds the `u32` id space.
 #[must_use]
 pub fn connected_cluster_fault_distance(
     dem: &DetectorErrorModel,
     max_weight: usize,
 ) -> Option<FaultDistanceResult> {
-    per_observable_fault_distances(dem, max_weight)
-        .into_iter()
-        .flatten()
-        .min_by(|left, right| {
-            (left.distance, &left.mechanism_indices)
-                .cmp(&(right.distance, &right.mechanism_indices))
-        })
+    let mechanisms = mechanisms_from_dem(dem);
+    let num_outputs =
+        u32::try_from(dem.num_observables()).expect("observable count fits in the u32 id space");
+    connected_cluster_mechanism_distance(&mechanisms, num_outputs, max_weight)
 }
 
 #[cfg(test)]

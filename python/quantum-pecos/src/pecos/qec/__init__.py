@@ -53,7 +53,11 @@ from pecos_rslib.qec import (
     certified_distance,
     compare_dems_exact,
     compare_dems_statistical,
+    connected_cluster_code_distance,
+    stabilizer_code_distance,
     verify_dem_equivalence,
+    x_distance,
+    z_distance,
 )
 
 from pecos.qec import analysis, color, protocols, surface
@@ -160,9 +164,13 @@ __all__ = [
     "Observable",
     "assert_dems_equivalent",
     "certified_distance",
+    "connected_cluster_code_distance",
     "compare_dems_exact",
     "compare_dems_statistical",
+    "stabilizer_code_distance",
     "verify_dem_equivalence",
+    "x_distance",
+    "z_distance",
     "build_dem_from_guppy",
     "rec",
     "result_ref",

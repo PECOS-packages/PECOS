@@ -15,22 +15,19 @@
 //! The construction and circuit schedule follow Tables 4 and 5 of
 //! [Bravyi et al., arXiv:2308.07915](https://arxiv.org/abs/2308.07915).
 
-use pecos_quantum::{AnnotationKind, Attribute, F2Matrix, TickCircuit, TickMeasRef};
+use pecos_quantum::{F2Matrix, TickCircuit, TickMeasRef};
 use thiserror::Error;
 
-use crate::ParityCheckMatrix;
+use crate::memory_circuit::{
+    CssMemoryCircuitFinish, discover_css_logical_operators, finish_css_memory_circuit,
+};
+use crate::{MemoryBasis, ParityCheckMatrix};
 
 /// One monomial `x^a y^b` in `F_2[x, y] / (x^l - 1, y^m - 1)`.
 pub type BbMonomial = (usize, usize);
 
-/// Memory-experiment preparation and final-measurement basis.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BbMemoryBasis {
-    /// Prepare and measure the encoded state in the X basis.
-    X,
-    /// Prepare and measure the encoded state in the Z basis.
-    Z,
-}
+/// Memory-experiment basis accepted by the bivariate-bicycle builder.
+pub type BbMemoryBasis = MemoryBasis;
 
 /// Errors reported while constructing a bivariate-bicycle code or memory circuit.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -145,14 +142,11 @@ impl BivariateBicycleCode {
             return Err(BivariateBicycleError::NonCommutingChecks);
         }
 
-        let logical_x = quotient_basis(&hz, &hx, num_qubits);
-        let logical_z = quotient_basis(&hx, &hz, num_qubits);
         let hx = ParityCheckMatrix::from_dense(hx.rows())
             .expect("a nonempty rectangular binary matrix was generated");
         let hz = ParityCheckMatrix::from_dense(hz.rows())
             .expect("a nonempty rectangular binary matrix was generated");
-        let logical_x = parity_matrix_from_rows(logical_x, num_qubits);
-        let logical_z = parity_matrix_from_rows(logical_z, num_qubits);
+        let (logical_x, logical_z) = discover_css_logical_operators(&hx, &hz);
 
         Ok(Self {
             l,
@@ -404,164 +398,23 @@ fn build_memory_circuit(
         x_measurements.push(x_refs);
     }
 
-    add_cycle_detectors(&mut circuit, &x_measurements, &z_measurements, basis)?;
-
-    let final_data = match basis {
-        BbMemoryBasis::X => circuit.tick().mx(&data_qubits),
-        BbMemoryBasis::Z => circuit.tick().mz(&data_qubits),
-    };
-    let (closing_checks, final_logicals, last_syndrome, label) = match basis {
-        BbMemoryBasis::X => (
-            code.hx(),
-            code.logical_x(),
-            &x_measurements[rounds - 1],
-            "X",
-        ),
-        BbMemoryBasis::Z => (
-            code.hz(),
-            code.logical_z(),
-            &z_measurements[rounds - 1],
-            "Z",
-        ),
-    };
-    for (check, &syndrome) in last_syndrome.iter().enumerate() {
-        let mut refs = vec![syndrome];
-        for (data, &bit) in closing_checks.row(check).unwrap().iter().enumerate() {
-            if bit == 1 {
-                refs.push(final_data[data]);
-            }
-        }
-        annotate_detector(&mut circuit, &format!("{label}{check}_final"), &refs)?;
-    }
-    for logical in 0..final_logicals.num_checks() {
-        let refs = final_logicals
-            .row(logical)
-            .unwrap()
-            .iter()
-            .enumerate()
-            .filter_map(|(data, &bit)| (bit == 1).then_some(final_data[data]))
-            .collect::<Vec<_>>();
-        circuit
-            .observable_labeled(&format!("L{logical}"), &refs)
-            .map_err(|error| BivariateBicycleError::InvalidAnnotation(error.to_string()))?;
-    }
-
-    let num_detectors = 2 * rounds * block_size;
-    let (detectors_json, observables_json) = annotation_metadata_json(&circuit);
-    circuit.set_meta(
-        "num_measurements",
-        Attribute::String(circuit.num_measurements().to_string()),
-    );
-    circuit.set_meta("detectors", Attribute::String(detectors_json));
-    circuit.set_meta("observables", Attribute::String(observables_json));
-    circuit.set_meta(
-        "num_detectors",
-        Attribute::String(num_detectors.to_string()),
-    );
-    circuit.set_meta(
-        "num_observables",
-        Attribute::String(code.num_logical_qubits().to_string()),
-    );
-    circuit.set_meta(
-        "num_data_qubits",
-        Attribute::String(code.num_qubits().to_string()),
-    );
-    circuit.set_meta(
-        "num_logical_qubits",
-        Attribute::String(code.num_logical_qubits().to_string()),
-    );
-    circuit.set_meta("syndrome_cycles", Attribute::String(rounds.to_string()));
-    circuit.set_meta(
-        "syndrome_extraction_depth",
-        Attribute::String((8 * rounds + 1).to_string()),
-    );
-    circuit.set_meta(
-        "circuit_type",
-        Attribute::String("bivariate_bicycle_memory".to_string()),
-    );
-    Ok(circuit)
-}
-
-fn annotation_metadata_json(circuit: &TickCircuit) -> (String, String) {
-    let mut detectors = Vec::new();
-    let mut observables = Vec::new();
-    for annotation in circuit.annotations() {
-        match &annotation.kind {
-            AnnotationKind::Detector {
-                measurement_ids,
-                coords: _,
-            } => {
-                let id = detectors.len();
-                detectors.push(serde_json::json!({
-                    "id": id,
-                    "meas_ids": measurement_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
-                    "label": annotation.label,
-                }));
-            }
-            AnnotationKind::Observable { measurement_ids } => {
-                let id = observables.len();
-                observables.push(serde_json::json!({
-                    "id": id,
-                    "meas_ids": measurement_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
-                    "label": annotation.label,
-                }));
-            }
-            AnnotationKind::TrackedPauli => {}
-        }
-    }
-    (
-        serde_json::to_string(&detectors).expect("annotation metadata is JSON-serializable"),
-        serde_json::to_string(&observables).expect("annotation metadata is JSON-serializable"),
+    finish_css_memory_circuit(
+        &mut circuit,
+        CssMemoryCircuitFinish {
+            data_qubits: &data_qubits,
+            hx: code.hx(),
+            hz: code.hz(),
+            logical_x: code.logical_x(),
+            logical_z: code.logical_z(),
+            x_measurements: &x_measurements,
+            z_measurements: &z_measurements,
+            rounds,
+            basis,
+            circuit_type: "bivariate_bicycle_memory",
+        },
     )
-}
-
-fn add_cycle_detectors(
-    circuit: &mut TickCircuit,
-    x_measurements: &[Vec<TickMeasRef>],
-    z_measurements: &[Vec<TickMeasRef>],
-    basis: BbMemoryBasis,
-) -> Result<(), BivariateBicycleError> {
-    let block_size = x_measurements[0].len();
-    for round in 0..x_measurements.len() {
-        for check in 0..block_size {
-            if round > 0 {
-                annotate_detector(
-                    circuit,
-                    &format!("X{check}_r{round}"),
-                    &[
-                        x_measurements[round - 1][check],
-                        x_measurements[round][check],
-                    ],
-                )?;
-                annotate_detector(
-                    circuit,
-                    &format!("Z{check}_r{round}"),
-                    &[
-                        z_measurements[round - 1][check],
-                        z_measurements[round][check],
-                    ],
-                )?;
-            } else {
-                let (label, reference) = match basis {
-                    BbMemoryBasis::X => ("X", x_measurements[0][check]),
-                    BbMemoryBasis::Z => ("Z", z_measurements[0][check]),
-                };
-                annotate_detector(circuit, &format!("{label}{check}_r0"), &[reference])?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn annotate_detector(
-    circuit: &mut TickCircuit,
-    label: &str,
-    measurements: &[TickMeasRef],
-) -> Result<(), BivariateBicycleError> {
-    circuit
-        .detector_labeled(label, measurements)
-        .map(|_| ())
-        .map_err(|error| BivariateBicycleError::InvalidAnnotation(error.to_string()))
+    .map_err(BivariateBicycleError::InvalidAnnotation)?;
+    Ok(circuit)
 }
 
 fn validated_block_size(l: usize, m: usize) -> Result<usize, BivariateBicycleError> {
@@ -667,41 +520,6 @@ fn sum_matrices(matrices: &[F2Matrix; 3]) -> F2Matrix {
     sum
 }
 
-fn quotient_basis(kernel_matrix: &F2Matrix, stabilizers: &F2Matrix, width: usize) -> Vec<Vec<u8>> {
-    let (stabilizer_rref, pivots) = stabilizers.row_reduce();
-    let reduced = kernel_matrix.kernel().into_iter().filter_map(|mut vector| {
-        for (row, &pivot) in pivots.iter().enumerate() {
-            if vector[pivot] == 1 {
-                for (column, bit) in vector.iter_mut().enumerate() {
-                    *bit ^= stabilizer_rref.get(row, column);
-                }
-            }
-        }
-        vector.iter().any(|&bit| bit != 0).then_some(vector)
-    });
-    let candidates: Vec<_> = reduced.collect();
-    if candidates.is_empty() {
-        return Vec::new();
-    }
-    let (rref, _) = F2Matrix::from_rows(candidates).row_reduce();
-    let rows = rref
-        .rows()
-        .into_iter()
-        .filter(|row| row.iter().any(|&bit| bit != 0))
-        .collect::<Vec<_>>();
-    debug_assert!(rows.iter().all(|row| row.len() == width));
-    rows
-}
-
-fn parity_matrix_from_rows(rows: Vec<Vec<u8>>, width: usize) -> ParityCheckMatrix {
-    if rows.is_empty() {
-        ParityCheckMatrix::zeros(0, width)
-    } else {
-        ParityCheckMatrix::from_dense(rows)
-            .expect("a rectangular logical-operator matrix was generated")
-    }
-}
-
 fn forward_shift(index: usize, l: usize, m: usize, term: BbMonomial) -> usize {
     let (x_power, y_power) = term;
     let x = index / m;
@@ -724,7 +542,7 @@ mod tests {
     use crate::fault_tolerance::{
         connected_cluster_fault_distance, graphlike_fault_distance, per_observable_fault_distances,
     };
-    use pecos_quantum::GateType;
+    use pecos_quantum::{AnnotationKind, GateType};
     use pecos_random::PecosRng;
     use pecos_simulators::{CircuitExecutor, SparseStab};
     use std::collections::BTreeSet;

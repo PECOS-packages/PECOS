@@ -51,6 +51,12 @@ def bb_memory_circuit(
     rounds: int,
     basis: str,
 ) -> TickCircuit: ...
+def coloration_memory_circuit(
+    hx: ParityCheckMatrix,
+    hz: ParityCheckMatrix,
+    rounds: int,
+    basis: str,
+) -> TickCircuit: ...
 
 class FaultDistanceResult:
     """A unit-weight mechanism distance and one witnessing index set."""

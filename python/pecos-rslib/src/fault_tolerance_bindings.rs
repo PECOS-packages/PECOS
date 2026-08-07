@@ -86,6 +86,7 @@ use pecos_qec::fault_tolerance::{
 use pecos_qec::{
     BbMemoryBasis as RustBbMemoryBasis, BivariateBicycleCode as RustBivariateBicycleCode,
     bb_memory_circuit as rust_bb_memory_circuit,
+    coloration_memory_circuit as rust_coloration_memory_circuit,
 };
 use pecos_qec::{
     CertifiedDistance as RustCertifiedDistance, DistanceProblem as RustDistanceProblem,
@@ -7852,6 +7853,28 @@ fn bb_memory_circuit(
     Ok(PyTickCircuit { inner })
 }
 
+/// Build a generic CSS memory circuit from exact Tanner-graph edge colorings.
+#[pyfunction]
+fn coloration_memory_circuit(
+    hx: &PyParityCheckMatrix,
+    hz: &PyParityCheckMatrix,
+    rounds: usize,
+    basis: &str,
+) -> PyResult<PyTickCircuit> {
+    let basis = match basis.to_ascii_uppercase().as_str() {
+        "X" => RustBbMemoryBasis::X,
+        "Z" => RustBbMemoryBasis::Z,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "basis must be 'X' or 'Z', got {basis:?}"
+            )));
+        }
+    };
+    let inner = rust_coloration_memory_circuit(&hx.inner, &hz.inner, rounds, basis)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    Ok(PyTickCircuit { inner })
+}
+
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
@@ -7908,6 +7931,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(decoder_dem_requirement, &qec)?)?;
     qec.add_function(wrap_pyfunction!(certified_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(coloration_memory_circuit, &qec)?)?;
 
     // Add Pauli constants
     qec.add("PAULI_I", 0u8)?;

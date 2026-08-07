@@ -65,6 +65,7 @@
 
 pub mod bivariate_bicycle;
 pub mod code_distance;
+pub mod coloration;
 pub mod dem_stab;
 pub mod distance;
 pub mod distance_problem;
@@ -72,6 +73,7 @@ pub mod fault_tolerance;
 pub mod geometry;
 pub mod logical_discovery;
 pub mod mem_stab;
+mod memory_circuit;
 pub mod parity_check_matrix;
 pub mod stabilizer_code;
 pub mod stabilizer_code_spec;
@@ -80,8 +82,10 @@ pub mod surface;
 pub use bivariate_bicycle::{
     BbMemoryBasis, BbMonomial, BivariateBicycleCode, BivariateBicycleError, bb_memory_circuit,
 };
+pub use coloration::{ColorationMemoryError, coloration_memory_circuit};
 pub use dem_stab::{DemStabError, DemStabShotBatch, DemStabSim, DemStabSimBuilder};
 pub use mem_stab::{MemStabError, MemStabSim, MemStabSimBuilder};
+pub use memory_circuit::MemoryBasis;
 pub use parity_check_matrix::{ParityCheckMatrix, ParityCheckMatrixError};
 
 pub use code_distance::{

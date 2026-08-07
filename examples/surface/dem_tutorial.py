@@ -81,7 +81,7 @@ def main():
     # ================================================================
     shots = 100_000
     sampler = DemSampler.from_circuit(tc, p1=p, p2=p, p_meas=p, p_prep=p)
-    batch = sampler.generate_samples(num_shots=shots, seed=42)
+    batch = sampler.sample_batch(num_shots=shots, seed=42)
 
     # Compute per-detector firing rates from DEM sampling
     num_dets = len(dets)

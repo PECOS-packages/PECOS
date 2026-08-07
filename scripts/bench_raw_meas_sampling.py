@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0
 """Benchmark: raw measurement sampling / detector DEM vs stabilizer simulation.
 
-Compares detector DEM (generate_samples), raw meas_sampling, and stabilizer.
+Compares detector DEM (sample_batch), raw meas_sampling, and stabilizer.
 Quick smoke test by default (~10s). Use --full for stable headline numbers.
 
 Usage:
@@ -54,7 +54,7 @@ def main():
 
         for shots in shot_list:
             t0 = time.perf_counter()
-            _ = sampler.generate_samples(shots, seed=42)
+            _ = sampler.sample_batch(shots, seed=42)
             t_det = time.perf_counter() - t0
 
             t0 = time.perf_counter()
@@ -94,7 +94,7 @@ def main():
 
         for shots in shot_list:
             t0 = time.perf_counter()
-            batch = sampler.generate_samples(shots, seed=42)
+            batch = sampler.sample_batch(shots, seed=42)
             t_gen = time.perf_counter() - t0
 
             t0 = time.perf_counter()
@@ -112,7 +112,7 @@ def main():
         print()
 
     print("Notes:")
-    print("  generate_samples is 3-6x faster after columnar SampleBatch.")
+    print("  sample_batch is 3-6x faster with columnar SampleBatch storage.")
     print("  End-to-end generate+decode is decode-dominated (<1% generation).")
     if not FULL:
         print("  Use --full for larger shot counts and stable headline numbers.")

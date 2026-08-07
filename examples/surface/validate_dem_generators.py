@@ -136,7 +136,7 @@ def dem_sampler_rates(tc, noise_kw, shots, seed, num_dets):
     from pecos_rslib.qec import DemSampler
 
     sampler = DemSampler.from_circuit(tc, **full_noise_kw(noise_kw))
-    batch = sampler.generate_samples(num_shots=shots, seed=seed)
+    batch = sampler.sample_batch(num_shots=shots, seed=seed)
     rates = [0.0] * num_dets
     for i in range(shots):
         syn = batch.get_syndrome(i)
@@ -162,7 +162,7 @@ def dem_builder_rates(tc, noise_kw, shots, seed, num_dets):
         .build()
     )
     sampler = dem.to_sampler()
-    batch = sampler.generate_samples(num_shots=shots, seed=seed)
+    batch = sampler.sample_batch(num_shots=shots, seed=seed)
     rates = [0.0] * num_dets
     for i in range(shots):
         syn = batch.get_syndrome(i)

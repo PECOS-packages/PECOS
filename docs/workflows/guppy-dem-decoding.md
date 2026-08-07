@@ -295,13 +295,14 @@ Each decoder is constructed from the DEM text form it accepts, then asked for a
 prediction per shot. A shot counts as a logical error when the predicted
 observable flip disagrees with the flip the sample actually carried.
 
-The three decoders expose slightly different call shapes today: PyMatching
-returns a per-observable `correction` vector, while Tesseract and BP+OSD return
-an `observables_mask` bitmask.
+The result types reconcile their underlying shapes through `observable_flips`.
+PyMatching's per-observable `correction` vector and Tesseract and BP+OSD's
+`observables_mask` bitmasks remain available when the underlying representation
+is useful.
 
 <!--continuation-->
 ```python
-from pecos.decoders import BpOsdDecoder, PyMatchingDecoder, TesseractDecoder
+from pecos.decoders import BpOsdDecoder, ObservableFlips, PyMatchingDecoder, TesseractDecoder
 
 pymatching = PyMatchingDecoder.from_dem(terminal_graphlike_text)
 tesseract = TesseractDecoder.from_dem(source_graphlike_text, preset="fast", pqlimit=50_000)
@@ -313,11 +314,11 @@ bp_osd_errors = 0
 
 for shot in range(batch.num_shots):
     syndrome = batch.get_syndrome(shot)
-    actual = batch.get_observable_mask(shot) & 1
+    actual = batch.observable_flips(shot)
 
-    pymatching_errors += pymatching.decode_syndrome(syndrome).correction[0] != actual
-    tesseract_errors += (tesseract.decode_syndrome(syndrome).observables_mask & 1) != actual
-    bp_osd_errors += (bp_osd.decode_syndrome(syndrome).observables_mask & 1) != actual
+    pymatching_errors += pymatching.decode_syndrome(syndrome).observable_flips != actual
+    tesseract_errors += tesseract.decode_syndrome(syndrome).observable_flips != actual
+    bp_osd_errors += bp_osd.decode_syndrome(syndrome).observable_flips != actual
 
 shots = batch.num_shots
 assert 0 < pymatching_errors < shots
@@ -330,14 +331,20 @@ print(f"tesseract   {tesseract_errors:5}   {tesseract_errors / shots:.4%}")
 print(f"bp_osd      {bp_osd_errors:5}   {bp_osd_errors / shots:.4%}")
 ```
 
+With one observable, any-observable and per-observable error rates coincide.
+With several, `predicted != actual` counts any-observable failures, while
+`predicted[i] != actual[i]` counts failures for observable `i`; say which rate
+you mean.
+
 The simulated shots decode the same way, against the same decoders:
 
 <!--continuation-->
 ```python
 sim_errors = 0
 for syndrome, observable_mask in sim_shots:
-    predicted = pymatching.decode_syndrome(syndrome).correction[0]
-    sim_errors += predicted != (observable_mask & 1)
+    predicted = pymatching.decode_syndrome(syndrome).observable_flips
+    actual = ObservableFlips.from_mask(observable_mask, dem.num_observables)
+    sim_errors += predicted != actual
 
 print(f"simulated shots, pymatching: {sim_errors}/{len(sim_shots)}")
 ```

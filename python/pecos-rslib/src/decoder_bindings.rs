@@ -40,6 +40,8 @@
 use ndarray::{Array1, Array2};
 use pyo3::prelude::*;
 
+use crate::observable_flips_bindings::PyObservableFlips;
+
 fn explicit_decode_attribute_error(class_name: &str, name: &str) -> PyErr {
     if name == "decode" {
         pyo3::exceptions::PyAttributeError::new_err(format!(
@@ -95,6 +97,12 @@ impl PyMwpmResult {
         self.correction_data.iter().map(|&x| i32::from(x)).collect()
     }
 
+    /// The decoded observable flips with their intrinsic observable count.
+    #[getter]
+    fn observable_flips(&self) -> PyObservableFlips {
+        PyObservableFlips::from_u8_bits(&self.correction_data)
+    }
+
     /// Get the correction as a list (alias for correction attribute).
     ///
     /// This mirrors `PyMatching`'s `decode()` return value.
@@ -125,9 +133,12 @@ impl PyMwpmResult {
 ///
 /// # Attributes
 ///
-/// * `decoding` - The decoded error vector
+/// * `decoding` - The decoded error vector, indexed by error mechanism, not observable
 /// * `converged` - Whether BP converged before max iterations
 /// * `iterations` - Number of BP iterations performed
+///
+/// Per-observable results come from the decoders' `from_dem` constructors,
+/// which return `DemAwareResult` from `decode_syndrome`.
 ///
 /// # Example
 ///
@@ -156,6 +167,10 @@ pub struct PyBpResult {
 #[pymethods]
 impl PyBpResult {
     /// The decoded error vector as a Python list.
+    ///
+    /// This vector is indexed by error mechanism, not by observable.
+    /// Per-observable results come from the `from_dem` constructors, whose
+    /// `decode_syndrome` method returns `DemAwareResult`.
     #[getter]
     fn decoding(&self) -> Vec<i32> {
         self.decoding_data.iter().map(|&x| i32::from(x)).collect()
@@ -1951,10 +1966,20 @@ pub struct PyTesseractResult {
     cost: f64,
     #[pyo3(get)]
     low_confidence: bool,
+    num_observables: usize,
 }
 
 #[pymethods]
 impl PyTesseractResult {
+    /// The decoded observable flips with the decoder's observable count.
+    #[getter]
+    fn observable_flips(&self) -> PyObservableFlips {
+        PyObservableFlips::from_mask_value(
+            pecos_decoder_core::obs_mask::ObsMask::from_u64(self.observables_mask),
+            self.num_observables,
+        )
+    }
+
     /// Get the observable predictions as a list of bits.
     fn observable_bits(&self, num_observables: usize) -> Vec<i32> {
         (0..num_observables)
@@ -2084,6 +2109,7 @@ impl PyTesseractDecoder {
     /// ```
     fn decode_from_defects(&mut self, detections: Vec<u64>) -> PyResult<PyTesseractResult> {
         let detections_arr = ndarray::Array1::from_vec(detections);
+        let num_observables = self.inner.num_observables();
 
         self.inner
             .decode_detections(&detections_arr.view())
@@ -2091,6 +2117,7 @@ impl PyTesseractDecoder {
                 observables_mask: result.observables_mask,
                 cost: result.cost,
                 low_confidence: result.low_confidence,
+                num_observables,
             })
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
@@ -2146,6 +2173,7 @@ impl PyTesseractDecoder {
 
         let dem_str = &self.dem_string;
         let config = &self.config;
+        let num_observables = self.inner.num_observables();
 
         let results: Result<Vec<_>, _> = pool.install(|| {
             syndromes
@@ -2181,6 +2209,7 @@ impl PyTesseractDecoder {
                                 observables_mask: r.observables_mask,
                                 cost: r.cost,
                                 low_confidence: r.low_confidence,
+                                num_observables,
                             })
                             .map_err(|e| e.to_string())
                     })
@@ -2908,6 +2937,7 @@ pub struct PyDemAwareResult {
     /// Number of BP iterations used.
     #[pyo3(get)]
     pub iterations: usize,
+    num_observables: usize,
 }
 
 impl PyDemAwareResult {
@@ -2936,7 +2966,13 @@ impl PyDemAwareResult {
     /// observables yield exactly the value the previous `u64` field held.
     #[getter]
     fn observables_mask(&self, py: Python<'_>) -> PyResult<Py<pyo3::PyAny>> {
-        crate::fault_tolerance_bindings::obsmask_to_py(py, &self.observables)
+        crate::observable_flips_bindings::obsmask_to_py(py, &self.observables)
+    }
+
+    /// The decoded observable flips with the decoder's observable count.
+    #[getter]
+    fn observable_flips(&self) -> PyObservableFlips {
+        PyObservableFlips::from_mask_value(self.observables.clone(), self.num_observables)
     }
 
     fn __repr__(&self) -> String {
@@ -3053,6 +3089,7 @@ impl PyDemAwareDecoder {
             observables,
             converged,
             iterations,
+            num_observables: self.dem_check_matrix.num_observables,
         })
     }
 
@@ -3106,6 +3143,7 @@ pub fn register_decoders_module(parent_module: &Bound<'_, PyModule>) -> PyResult
     let decoders_module = PyModule::new(py, "decoders")?;
 
     // Common result types
+    decoders_module.add_class::<PyObservableFlips>()?;
     decoders_module.add_class::<PyMwpmResult>()?;
     decoders_module.add_class::<PyBpResult>()?;
 

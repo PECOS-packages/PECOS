@@ -71,6 +71,8 @@ use pecos_quantum::DagCircuit;
 use pecos_quantum::QubitId;
 use pyo3::Py;
 use pyo3::prelude::*;
+
+use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
@@ -3596,6 +3598,12 @@ impl PySampleBatch {
         self.num_shots
     }
 
+    /// Number of observables in this batch.
+    #[getter]
+    fn num_observables(&self) -> usize {
+        self.obs_columns.len()
+    }
+
     /// Get the syndrome for shot `i` as a list of u8 values.
     fn get_syndrome(&self, i: usize) -> PyResult<Vec<u8>> {
         if i >= self.num_shots {
@@ -3631,6 +3639,20 @@ impl PySampleBatch {
             )));
         }
         obsmask_to_py(py, &self.extract_obs_mask_wide(i))
+    }
+
+    /// Observable flips for shot `i`, with the batch's observable count.
+    fn observable_flips(&self, i: usize) -> PyResult<PyObservableFlips> {
+        if i >= self.num_shots {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "Shot index {i} out of range (num_shots={})",
+                self.num_shots
+            )));
+        }
+        Ok(PyObservableFlips::from_mask_value(
+            self.extract_obs_mask_wide(i),
+            self.obs_columns.len(),
+        ))
     }
 
     /// Decode all samples with the given decoder type and return the error count.
@@ -5613,52 +5635,6 @@ impl PyCssUfDecoder {
 ///     ...     "`fusion_blossom_serial`",
 ///     ... )
 ///     >>> obs = decoder.decode(syndrome)
-/// Convert a wide observable mask to a Python integer (arbitrary precision).
-///
-/// `<= 64` observables become a plain `int` from the single `u64` (identical to
-/// the historical return); `> 64` observables become a big `int` built from the
-/// mask's little-endian words, with no truncation.
-pub(crate) fn obsmask_to_py(
-    py: Python<'_>,
-    mask: &pecos_decoder_core::obs_mask::ObsMask,
-) -> PyResult<Py<pyo3::PyAny>> {
-    if let Some(v) = mask.to_u64() {
-        return Ok(v.into_pyobject(py)?.into_any().unbind());
-    }
-    let mut bytes = Vec::with_capacity(mask.words().len() * 8);
-    for &word in mask.words() {
-        bytes.extend_from_slice(&word.to_le_bytes());
-    }
-    let py_bytes = pyo3::types::PyBytes::new(py, &bytes);
-    let int_type = py.get_type::<pyo3::types::PyInt>();
-    Ok(int_type
-        .call_method1("from_bytes", (py_bytes, "little"))?
-        .unbind())
-}
-
-/// Convert a Python integer (arbitrary precision) to a wide observable mask.
-///
-/// Inverse of [`obsmask_to_py`]: reads the int's little-endian bytes and packs
-/// them into `u64` words, so observable indices >= 64 are preserved.
-fn py_to_obsmask(
-    value: &pyo3::Bound<'_, pyo3::PyAny>,
-) -> PyResult<pecos_decoder_core::obs_mask::ObsMask> {
-    let bit_length: usize = value.call_method0("bit_length")?.extract()?;
-    let nbytes = bit_length.div_ceil(8).max(1);
-    let bytes: Vec<u8> = value
-        .call_method1("to_bytes", (nbytes, "little"))?
-        .extract()?;
-    let words: Vec<u64> = bytes
-        .chunks(8)
-        .map(|chunk| {
-            let mut buf = [0u8; 8];
-            buf[..chunk.len()].copy_from_slice(chunk);
-            u64::from_le_bytes(buf)
-        })
-        .collect();
-    Ok(pecos_decoder_core::obs_mask::ObsMask::from_words(&words))
-}
-
 #[pyclass(name = "LogicalSubgraphDecoder", module = "pecos_rslib.qec")]
 pub struct PyLogicalSubgraphDecoder {
     inner: pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder,
@@ -7042,6 +7018,7 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
 
+    qec.add_class::<PyObservableFlips>()?;
     qec.add_class::<PyFaultLocation>()?;
     qec.add_class::<PyDagFaultInfluenceMap>()?;
     qec.add_class::<PyDagFaultAnalyzer>()?;

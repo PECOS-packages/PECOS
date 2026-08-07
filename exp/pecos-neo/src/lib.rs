@@ -83,9 +83,11 @@
 //!     .mz(&[1])
 //!     .build();
 //!
-//! // Run without noise
-//! let mut state = SparseStab::new(2);
-//! let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+//! // Run without noise. Measurement randomness comes from the simulator's
+//! // RNG, so seed the simulator for reproducible outcomes; the runner seed
+//! // only governs noise sampling.
+//! let mut state = SparseStab::with_seed(2, 42);
+//! let mut runner = CircuitRunner::<SparseStab>::new();
 //! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 //!
 //! // Outcomes are correlated (Bell state)

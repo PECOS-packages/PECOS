@@ -802,6 +802,10 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     }
 
     /// Set the RNG seed for noise operations.
+    ///
+    /// This does not affect measurement randomness, which comes from the
+    /// simulator's own RNG (e.g. `SparseStab::with_seed`); use
+    /// `set_full_seed` on a program for whole-run determinism.
     #[must_use]
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.rng = PecosRng::seed_from_u64(seed);

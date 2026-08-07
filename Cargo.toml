@@ -302,3 +302,10 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package.fusion-blossom]
 opt-level = 2
+
+# batsat's solver core is tested and shipped by upstream with release arithmetic;
+# under this workspace's debug profile its internal activity/restart arithmetic
+# overflows on instances with thousands of variables. Run the dependency at its
+# supported semantics; PECOS code keeps full debug overflow checks.
+[profile.dev.package.batsat]
+overflow-checks = false

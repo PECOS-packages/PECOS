@@ -7772,12 +7772,12 @@ impl PyBivariateBicycleCode {
     }
 
     #[getter]
-    fn l(&self) -> usize {
+    fn l_order(&self) -> usize {
         self.inner.dimensions().0
     }
 
     #[getter]
-    fn m(&self) -> usize {
+    fn m_order(&self) -> usize {
         self.inner.dimensions().1
     }
 
@@ -7820,8 +7820,8 @@ impl PyBivariateBicycleCode {
     fn __repr__(&self) -> String {
         format!(
             "BivariateBicycleCode(l={}, m={}, n={}, k={})",
-            self.l(),
-            self.m(),
+            self.l_order(),
+            self.m_order(),
             self.num_qubits(),
             self.num_logical_qubits()
         )

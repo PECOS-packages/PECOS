@@ -639,6 +639,7 @@ impl QASMEngine {
             | GateType::Fdg
             | GateType::T
             | GateType::Tdg
+            | GateType::PZ
             | GateType::QAlloc => self.process_single_qubit_gate(gate.gate_type, &qubits),
             GateType::CX
             | GateType::CY
@@ -681,7 +682,7 @@ impl QASMEngine {
             | GateType::MPZ => Err(PecosError::Processing(
                 "measurement gates should be handled by MeasureWithMapping operation".to_string(),
             )),
-            GateType::PX | GateType::PZ => Err(PecosError::Processing(format!(
+            GateType::PX => Err(PecosError::Processing(format!(
                 "Gate type {:?} is not yet supported in the QASM engine",
                 gate.gate_type
             ))),

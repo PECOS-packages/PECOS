@@ -943,6 +943,17 @@ pub fn certified_distance(
 }
 
 fn solve_with_batsat(encoding: &Encoding, num_primary_vars: usize) -> SolverAnswer {
+    // The solver is an external dependency; an internal panic (observed: an
+    // arithmetic overflow under debug assertions on instances with thousands of
+    // variables) must not cross the FFI boundary. A fresh solver is built per
+    // call and discarded on unwind, so no shared state can be poisoned.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        solve_with_batsat_inner(encoding, num_primary_vars)
+    }))
+    .unwrap_or(SolverAnswer::Unknown)
+}
+
+fn solve_with_batsat_inner(encoding: &Encoding, num_primary_vars: usize) -> SolverAnswer {
     let mut solver = BasicSolver::default();
     let variables: Vec<_> = (0..encoding.num_vars)
         .map(|_| solver.new_var_default())

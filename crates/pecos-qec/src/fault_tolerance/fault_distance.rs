@@ -453,6 +453,10 @@ pub fn exhaustive_fault_distance(
 /// by increasing weight, with the lexicographically smallest original-index witness retained at
 /// each weight. Entry `i` is restricted to witnesses that flip observable `i`, and is `None` when
 /// no such witness is found through `max_weight`.
+///
+/// # Panics
+///
+/// Panics if the observable count exceeds the `u32` id space.
 #[must_use]
 pub fn per_observable_fault_distances(
     dem: &DetectorErrorModel,
@@ -519,7 +523,9 @@ mod tests {
             .max()
             .unwrap_or(0);
         for observable in 0..num_observables {
-            dem.add_observable(DemOutput::new(observable as u32));
+            dem.add_observable(DemOutput::new(
+                u32::try_from(observable).expect("test observable id fits in u32"),
+            ));
         }
         for (detectors, observables) in effects {
             dem.add_direct_contribution(

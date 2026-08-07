@@ -67,7 +67,7 @@ pub fn extract_spacetime_locations(
             let qubits: Vec<QubitId> = gate.qubits().to_vec();
             let is_measurement = matches!(
                 gate.gate_type(),
-                GateType::MZ | GateType::MeasureFree | GateType::MPZ
+                GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
             );
 
             locations.push(SpacetimeLocation::new(
@@ -210,8 +210,16 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
                     swap_pairs.push((c[0], c[1]));
                 }
             }
+            GateType::MX => {
+                sim.h(&gate.qubits);
+                sim.mz(&gate.qubits);
+            }
             GateType::MZ | GateType::MeasureFree => mz_qubits.extend(gate.qubits.iter()),
             GateType::MPZ => mpz_qubits.extend(gate.qubits.iter()),
+            GateType::PX => {
+                sim.pz(&gate.qubits);
+                sim.h(&gate.qubits);
+            }
             GateType::PZ => pz_qubits.extend(gate.qubits.iter()),
             GateType::I => {}
             _ => {
@@ -391,11 +399,19 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
                 _ => unreachable!(),
             }
         }
+        GateType::MX => {
+            sim.h(&qubits);
+            sim.mz(&qubits);
+        }
         GateType::MZ | GateType::MeasureFree => {
             sim.mz(&qubits);
         }
         GateType::MPZ => {
             sim.mpz(&qubits);
+        }
+        GateType::PX => {
+            sim.pz(&qubits);
+            sim.h(&qubits);
         }
         GateType::PZ => {
             sim.pz(&qubits);

@@ -1478,71 +1478,20 @@ mod tests {
         assert_eq!(problem.verify_witness(&second.witness), Ok(3));
     }
 
-    fn bb_circulant(l: usize, m: usize, terms: &[(usize, usize)]) -> F2Matrix {
-        let size = l * m;
-        let mut matrix = F2Matrix::zeros(size, size);
-        for row_x in 0..l {
-            for row_y in 0..m {
-                let row = row_x * m + row_y;
-                for &(x_power, y_power) in terms {
-                    let column = ((row_x + x_power) % l) * m + (row_y + y_power) % m;
-                    matrix.set(row, column, matrix.get(row, column) ^ 1);
-                }
-            }
-        }
-        matrix
-    }
-
     #[test]
     #[ignore = "timing probe for the batsat backend"]
     fn batsat_bivariate_bicycle_72_12_6_timing_probe() {
-        let (l, m) = (6, 6);
-        let block_size = l * m;
-        let n = 2 * block_size;
-        let a = bb_circulant(l, m, &[(3, 0), (0, 1), (0, 2)]);
-        let b = bb_circulant(l, m, &[(0, 3), (1, 0), (2, 0)]);
-        let mut hx = F2Matrix::zeros(block_size, n);
-        let mut hz = F2Matrix::zeros(block_size, n);
-        for row in 0..block_size {
-            for column in 0..block_size {
-                hx.set(row, column, a.get(row, column));
-                hx.set(row, block_size + column, b.get(row, column));
-                hz.set(row, column, b.get(column, row));
-                hz.set(row, block_size + column, a.get(column, row));
-            }
-        }
+        let code = crate::BivariateBicycleCode::new(
+            6,
+            6,
+            &[(3, 0), (0, 1), (0, 2)],
+            &[(0, 3), (1, 0), (2, 0)],
+        )
+        .expect("the paper's [[72,12,6]] code is valid");
+        assert_eq!(code.num_qubits(), 72);
+        assert_eq!(code.num_logical_qubits(), 12);
 
-        assert_eq!(n, 72);
-        assert_eq!(
-            hx.mul(&hz.transpose()),
-            F2Matrix::zeros(block_size, block_size)
-        );
-        let hx_rank = hx.row_reduce().1.len();
-        let hz_rank = hz.row_reduce().1.len();
-        assert_eq!(n - hx_rank - hz_rank, 12);
-
-        let (hx_rref, hx_pivots) = hx.row_reduce();
-        let logical_candidates = hz.kernel().into_iter().filter_map(|mut vector| {
-            for (row, &pivot) in hx_pivots.iter().enumerate() {
-                if vector[pivot] == 1 {
-                    for (column, bit) in vector.iter_mut().enumerate() {
-                        *bit ^= hx_rref.get(row, column);
-                    }
-                }
-            }
-            vector.iter().any(|&bit| bit != 0).then_some(vector)
-        });
-        let (logical_rref, _) = F2Matrix::from_rows(logical_candidates.collect()).row_reduce();
-        let logical_rows: Vec<_> = logical_rref
-            .rows()
-            .into_iter()
-            .filter(|row| row.iter().any(|&bit| bit != 0))
-            .collect();
-        assert_eq!(logical_rows.len(), 12);
-
-        let hx_checks = ParityCheckMatrix::from_dense(hx.rows()).unwrap();
-        let logical_checks = ParityCheckMatrix::from_dense(logical_rows).unwrap();
-        let problem = DistanceProblem::from_css_checks(&hx_checks, &logical_checks).unwrap();
+        let problem = DistanceProblem::from_css_checks(code.hx(), code.logical_x()).unwrap();
         let total_started = Instant::now();
         let certified = problem
             .certify_distance_by(6, |problem, weight| {

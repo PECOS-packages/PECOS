@@ -341,67 +341,18 @@ mod tests {
         assert!(!first.mechanism_indices.contains(&0));
     }
 
-    fn bb_circulant(l: usize, m: usize, terms: &[(usize, usize)]) -> F2Matrix {
-        let size = l * m;
-        let mut matrix = F2Matrix::zeros(size, size);
-        for row_x in 0..l {
-            for row_y in 0..m {
-                let row = row_x * m + row_y;
-                for &(x_power, y_power) in terms {
-                    let column = ((row_x + x_power) % l) * m + (row_y + y_power) % m;
-                    matrix.set(row, column, matrix.get(row, column) ^ 1);
-                }
-            }
-        }
-        matrix
-    }
-
     fn bb_code_pair(l: usize, m: usize) -> (ParityCheckMatrix, ParityCheckMatrix, usize) {
-        let block_size = l * m;
-        let num_qubits = 2 * block_size;
-        let a = bb_circulant(l, m, &[(3, 0), (0, 1), (0, 2)]);
-        let b = bb_circulant(l, m, &[(0, 3), (1, 0), (2, 0)]);
-        let mut hx = F2Matrix::zeros(block_size, num_qubits);
-        let mut hz = F2Matrix::zeros(block_size, num_qubits);
-        for row in 0..block_size {
-            for column in 0..block_size {
-                hx.set(row, column, a.get(row, column));
-                hx.set(row, block_size + column, b.get(row, column));
-                hz.set(row, column, b.get(column, row));
-                hz.set(row, block_size + column, a.get(column, row));
-            }
-        }
-        assert_eq!(
-            hx.mul(&hz.transpose()),
-            F2Matrix::zeros(block_size, block_size)
-        );
-
-        let hx_rank = hx.row_reduce().1.len();
-        let hz_rank = hz.row_reduce().1.len();
-        let num_logical_qubits = num_qubits - hx_rank - hz_rank;
-        let (hx_rref, hx_pivots) = hx.row_reduce();
-        let logical_candidates = hz.kernel().into_iter().filter_map(|mut vector| {
-            for (row, &pivot) in hx_pivots.iter().enumerate() {
-                if vector[pivot] == 1 {
-                    for (column, bit) in vector.iter_mut().enumerate() {
-                        *bit ^= hx_rref.get(row, column);
-                    }
-                }
-            }
-            vector.iter().any(|&bit| bit != 0).then_some(vector)
-        });
-        let (logical_rref, _) = F2Matrix::from_rows(logical_candidates.collect()).row_reduce();
-        let logical_rows: Vec<_> = logical_rref
-            .rows()
-            .into_iter()
-            .filter(|row| row.iter().any(|&bit| bit != 0))
-            .collect();
-        assert_eq!(logical_rows.len(), num_logical_qubits);
-
+        let code = crate::BivariateBicycleCode::new(
+            l,
+            m,
+            &[(3, 0), (0, 1), (0, 2)],
+            &[(0, 3), (1, 0), (2, 0)],
+        )
+        .unwrap();
         (
-            ParityCheckMatrix::from_dense(hx.rows()).unwrap(),
-            ParityCheckMatrix::from_dense(logical_rows).unwrap(),
-            num_logical_qubits,
+            code.hx().clone(),
+            code.logical_x().clone(),
+            code.num_logical_qubits(),
         )
     }
 

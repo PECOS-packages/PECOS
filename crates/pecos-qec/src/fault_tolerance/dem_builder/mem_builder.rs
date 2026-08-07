@@ -83,6 +83,12 @@ impl<'a> MemBuilder<'a> {
                 GateType::PZ | GateType::QAlloc if self.noise.p_prep > 0.0 && !loc.before => {
                     self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_prep, &mut mem);
                 }
+                GateType::PX if self.noise.p_prep > 0.0 && !loc.before => {
+                    self.process_single_pauli_fault(loc_idx, Pauli::Z, self.noise.p_prep, &mut mem);
+                }
+                GateType::MX if self.noise.p_meas > 0.0 && loc.before => {
+                    self.process_single_pauli_fault(loc_idx, Pauli::Z, self.noise.p_meas, &mut mem);
+                }
                 GateType::MZ | GateType::MeasureFree | GateType::MPZ
                     if self.noise.p_meas > 0.0 && loc.before =>
                 {

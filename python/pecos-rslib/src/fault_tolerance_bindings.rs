@@ -84,6 +84,10 @@ use pecos_qec::fault_tolerance::{
     PauliPropChecker, SpacetimeLocation,
 };
 use pecos_qec::{
+    BbMemoryBasis as RustBbMemoryBasis, BivariateBicycleCode as RustBivariateBicycleCode,
+    bb_memory_circuit as rust_bb_memory_circuit,
+};
+use pecos_qec::{
     CertifiedDistance as RustCertifiedDistance, DistanceProblem as RustDistanceProblem,
     certified_distance as rust_certified_distance,
     connected_cluster_code_distance as rust_connected_cluster_code_distance,
@@ -7741,6 +7745,113 @@ fn stabilizer_code_distance(
 // Module Registration
 // =============================================================================
 
+/// A validated bivariate-bicycle CSS code.
+#[pyclass(
+    name = "BivariateBicycleCode",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone, Debug)]
+pub struct PyBivariateBicycleCode {
+    inner: RustBivariateBicycleCode,
+}
+
+#[pymethods]
+impl PyBivariateBicycleCode {
+    /// Construct `QC(A, B)` from canonical `(x_power, y_power)` exponent lists.
+    #[new]
+    fn new(
+        l: usize,
+        m: usize,
+        a_terms: Vec<(usize, usize)>,
+        b_terms: Vec<(usize, usize)>,
+    ) -> PyResult<Self> {
+        let inner = RustBivariateBicycleCode::new(l, m, &a_terms, &b_terms)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    #[getter]
+    fn l(&self) -> usize {
+        self.inner.dimensions().0
+    }
+
+    #[getter]
+    fn m(&self) -> usize {
+        self.inner.dimensions().1
+    }
+
+    #[getter]
+    fn hx(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.hx().clone(),
+        }
+    }
+
+    #[getter]
+    fn hz(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.hz().clone(),
+        }
+    }
+
+    #[getter]
+    fn logical_x(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.logical_x().clone(),
+        }
+    }
+
+    #[getter]
+    fn logical_z(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.logical_z().clone(),
+        }
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
+    fn num_logical_qubits(&self) -> usize {
+        self.inner.num_logical_qubits()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BivariateBicycleCode(l={}, m={}, n={}, k={})",
+            self.l(),
+            self.m(),
+            self.num_qubits(),
+            self.num_logical_qubits()
+        )
+    }
+}
+
+/// Build the Table 5 bivariate-bicycle memory circuit.
+#[pyfunction]
+fn bb_memory_circuit(
+    l: usize,
+    m: usize,
+    a_terms: Vec<(usize, usize)>,
+    b_terms: Vec<(usize, usize)>,
+    rounds: usize,
+    basis: &str,
+) -> PyResult<PyTickCircuit> {
+    let basis = match basis.to_ascii_uppercase().as_str() {
+        "X" => RustBbMemoryBasis::X,
+        "Z" => RustBbMemoryBasis::Z,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "basis must be 'X' or 'Z', got {basis:?}"
+            )));
+        }
+    };
+    let inner = rust_bb_memory_circuit(l, m, &a_terms, &b_terms, rounds, basis)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    Ok(PyTickCircuit { inner })
+}
+
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
@@ -7773,6 +7884,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyCircuitFaultAnalyzer>()?;
     qec.add_class::<PyCertifiedDistance>()?;
     qec.add_class::<PyDistanceProblem>()?;
+    qec.add_class::<PyBivariateBicycleCode>()?;
 
     // Add DEM equivalence functions
     qec.add_function(wrap_pyfunction!(compare_dems_exact, &qec)?)?;
@@ -7795,6 +7907,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(mechanisms_to_dem_string, &qec)?)?;
     qec.add_function(wrap_pyfunction!(decoder_dem_requirement, &qec)?)?;
     qec.add_function(wrap_pyfunction!(certified_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
 
     // Add Pauli constants
     qec.add("PAULI_I", 0u8)?;

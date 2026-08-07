@@ -63,6 +63,7 @@
 //! assert_eq!(analysis.undetectable_logical, 0);
 //! ```
 
+pub mod bivariate_bicycle;
 pub mod code_distance;
 pub mod dem_stab;
 pub mod distance;
@@ -76,6 +77,9 @@ pub mod stabilizer_code;
 pub mod stabilizer_code_spec;
 pub mod surface;
 
+pub use bivariate_bicycle::{
+    BbMemoryBasis, BbMonomial, BivariateBicycleCode, BivariateBicycleError, bb_memory_circuit,
+};
 pub use dem_stab::{DemStabError, DemStabShotBatch, DemStabSim, DemStabSimBuilder};
 pub use mem_stab::{MemStabError, MemStabSim, MemStabSimBuilder};
 pub use parity_check_matrix::{ParityCheckMatrix, ParityCheckMatrixError};

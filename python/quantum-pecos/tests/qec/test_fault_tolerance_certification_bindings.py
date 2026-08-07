@@ -177,8 +177,10 @@ def test_steane_certification_from_checks_and_code_spec() -> None:
 
     x_result = x_distance(spec, 3)
     z_result = z_distance(spec, 3)
-    assert x_result is not None and x_result.distance == 3
-    assert z_result is not None and z_result.distance == 3
+    assert x_result is not None
+    assert x_result.distance == 3
+    assert z_result is not None
+    assert z_result.distance == 3
 
     assert from_checks.certified_distance(2) is None
 

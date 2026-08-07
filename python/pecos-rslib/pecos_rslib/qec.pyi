@@ -18,6 +18,40 @@ from typing import Any
 
 from pecos_rslib import DistanceResult, ParityCheckMatrix, StabilizerCodeSpec, TickCircuit
 
+class BivariateBicycleCode:
+    """A validated bivariate-bicycle CSS code."""
+
+    def __init__(
+        self,
+        l: int,
+        m: int,
+        a_terms: list[tuple[int, int]],
+        b_terms: list[tuple[int, int]],
+    ) -> None: ...
+    @property
+    def l(self) -> int: ...
+    @property
+    def m(self) -> int: ...
+    @property
+    def hx(self) -> ParityCheckMatrix: ...
+    @property
+    def hz(self) -> ParityCheckMatrix: ...
+    @property
+    def logical_x(self) -> ParityCheckMatrix: ...
+    @property
+    def logical_z(self) -> ParityCheckMatrix: ...
+    def num_qubits(self) -> int: ...
+    def num_logical_qubits(self) -> int: ...
+
+def bb_memory_circuit(
+    l: int,
+    m: int,
+    a_terms: list[tuple[int, int]],
+    b_terms: list[tuple[int, int]],
+    rounds: int,
+    basis: str,
+) -> TickCircuit: ...
+
 class FaultDistanceResult:
     """A unit-weight mechanism distance and one witnessing index set."""
 

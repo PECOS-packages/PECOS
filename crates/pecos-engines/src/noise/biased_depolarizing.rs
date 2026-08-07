@@ -221,13 +221,13 @@ impl BiasedDepolarizingNoiseModel {
                 GateType::MPZ => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                 }
-                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
+                GateType::MX | GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                     trace!("Applying measurement. Will apply bias after engine returns results.");
                     // we apply biased measurement after the engine
                     // returns the results, rather than before measurement
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                 }
-                GateType::PZ | GateType::QAlloc => {
+                GateType::PX | GateType::PZ | GateType::QAlloc => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying preparation with possible fault");
                     self.apply_prep_faults(&mut builder, gate);
@@ -322,7 +322,10 @@ impl BiasedDepolarizingNoiseModel {
     fn apply_prep_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &Gate) {
         if self.rng.occurs(self.p_prep) {
             trace!("Applying prep fault on qubits {:?}", gate.qubits);
-            NoiseUtils::apply_x(builder, *gate.qubits[0]);
+            match gate.gate_type {
+                GateType::PX => NoiseUtils::apply_z(builder, *gate.qubits[0]),
+                _ => NoiseUtils::apply_x(builder, *gate.qubits[0]),
+            }
         }
     }
 

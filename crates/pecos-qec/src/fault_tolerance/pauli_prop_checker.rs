@@ -277,9 +277,9 @@ fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
 
 /// Apply a gate to an end-read flip ledger.
 ///
-/// The checker classifies faults by reading `contains_x` on measurement
-/// qubits *after* full propagation, so a measurement's outcome flip must stay
-/// readable on the wire until a reset clears it -- including for
+/// The checker classifies faults by reading the anticommuting ledger component
+/// on measurement qubits *after* full propagation, so a measurement's outcome
+/// flip must stay readable on the wire until a reset clears it -- including for
 /// `MeasureFree`, whose collapse-accurate crossing would discard the flip
 /// together with the qubit. The Z component is still absorbed at every
 /// measurement: left in the ledger it could rotate into X through later
@@ -291,10 +291,15 @@ fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Gate) {
         // phantom -- and would disagree with the gate's own `mz; pz` lowering,
         // whose explicit PZ clears. Its mid-circuit flips are invisible to
         // end-reads, exactly as the lowering's always were.
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+        GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+            let x_basis = gate.gate_type == GateType::MX;
             for q in &gate.qubits {
                 let qubit = q.index();
-                if prop.contains_z(qubit) {
+                if x_basis {
+                    if prop.contains_x(qubit) {
+                        prop.track_x(&[qubit]);
+                    }
+                } else if prop.contains_z(qubit) {
                     prop.track_z(&[qubit]);
                 }
             }
@@ -302,7 +307,7 @@ fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Gate) {
         // The shared dispatcher keeps preps transparent and expects walkers
         // to clear at their own call sites; without this arm a stale ledger
         // entry would survive a re-preparation and read as a phantom flip.
-        GateType::PZ | GateType::QAlloc | GateType::MPZ => {
+        GateType::PX | GateType::PZ | GateType::QAlloc | GateType::MPZ => {
             for q in &gate.qubits {
                 prop.clear_qubit(q.index());
             }
@@ -2811,6 +2816,36 @@ mod tests {
         assert!(
             !prop.contains_x(0) && !prop.contains_z(0),
             "the re-preparation must clear the recorded flip from the ledger"
+        );
+    }
+
+    #[test]
+    fn mx_and_px_flip_ledger_semantics_swap_x_and_z() {
+        let mx = pecos_core::Gate::mx(&[0]);
+
+        let mut x_before_mx = PauliProp::new();
+        x_before_mx.track_x(&[0]);
+        apply_gate_flip_ledger(&mut x_before_mx, &mx);
+        assert!(
+            !x_before_mx.contains_x(0) && !x_before_mx.contains_z(0),
+            "an X commutes with an X-basis measurement and is invisible"
+        );
+
+        let mut z_before_mx = PauliProp::new();
+        z_before_mx.track_z(&[0]);
+        apply_gate_flip_ledger(&mut z_before_mx, &mx);
+        assert!(
+            z_before_mx.contains_z(0) && !z_before_mx.contains_x(0),
+            "a Z anticommutes with the measured X and remains as the readout flip"
+        );
+
+        let mut before_px = PauliProp::new();
+        before_px.track_x(&[0]);
+        before_px.track_z(&[0]);
+        apply_gate_flip_ledger(&mut before_px, &pecos_core::Gate::px(&[0]));
+        assert!(
+            !before_px.contains_x(0) && !before_px.contains_z(0),
+            "PX is a preparation and clears both ledger components"
         );
     }
 

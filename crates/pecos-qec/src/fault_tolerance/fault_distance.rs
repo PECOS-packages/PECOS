@@ -208,8 +208,8 @@ impl ConnectedClusterSearch<'_> {
             .flat_map(|detector| &self.incidence[detector])
             .copied()
             .filter(|&neighbor| {
-                neighbor > seed
-                    && self.active[neighbor]
+                self.active[neighbor]
+                    && neighbor > seed
                     && !members.contains(&neighbor)
                     && !excluded.contains(&neighbor)
             })

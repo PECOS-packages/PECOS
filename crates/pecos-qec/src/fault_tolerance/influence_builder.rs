@@ -429,7 +429,8 @@ impl<'a> InfluenceBuilder<'a> {
                 }
 
                 match op.gate_type {
-                    pecos_quantum::GateType::MZ
+                    pecos_quantum::GateType::MX
+                    | pecos_quantum::GateType::MZ
                     | pecos_quantum::GateType::MeasureFree
                     | pecos_quantum::GateType::MPZ => {
                         if qubits.len() > 1 {
@@ -437,6 +438,9 @@ impl<'a> InfluenceBuilder<'a> {
                                 node,
                                 count: qubits.len(),
                             });
+                        }
+                        if op.gate_type == pecos_quantum::GateType::MX {
+                            sim.h(&[qubits[0]]);
                         }
                         sim.mz(&[qubits[0]]);
                         if op.gate_type == pecos_quantum::GateType::MPZ {
@@ -460,9 +464,14 @@ impl<'a> InfluenceBuilder<'a> {
                     }
                     // Resets project onto |0>. Skipping them treated a reused
                     // qubit as still carrying its pre-reset correlations.
-                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc => {
+                    pecos_quantum::GateType::PX
+                    | pecos_quantum::GateType::PZ
+                    | pecos_quantum::GateType::QAlloc => {
                         for &q in &qubits {
                             sim.pz(q);
+                            if op.gate_type == pecos_quantum::GateType::PX {
+                                sim.h(&[q]);
+                            }
                         }
                     }
                     // No effect on stabilizer correlations.
@@ -636,7 +645,8 @@ impl<'a> InfluenceBuilder<'a> {
 
                 let is_measurement = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::MZ
+                    pecos_quantum::GateType::MX
+                        | pecos_quantum::GateType::MZ
                         | pecos_quantum::GateType::MeasureFree
                         | pecos_quantum::GateType::MPZ
                 );
@@ -668,7 +678,9 @@ impl<'a> InfluenceBuilder<'a> {
                 }
                 if matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                    pecos_quantum::GateType::PX
+                        | pecos_quantum::GateType::PZ
+                        | pecos_quantum::GateType::QAlloc
                 ) {
                     prepared_qubits.extend(qubits.iter().copied());
                 }
@@ -714,8 +726,11 @@ impl<'a> InfluenceBuilder<'a> {
                 {
                     let mut seed = PauliProp::new();
                     for qubit in &gate.qubits {
-                        // Z-basis measurement means we propagate Z
-                        seed.track_z(&[qubit.index()]);
+                        if gate.gate_type == pecos_quantum::GateType::MX {
+                            seed.track_x(&[qubit.index()]);
+                        } else {
+                            seed.track_z(&[qubit.index()]);
+                        }
                     }
                     Self::propagate_observable(
                         propagator,
@@ -873,7 +888,9 @@ impl<'a> InfluenceBuilder<'a> {
                 // cannot propagate past it.
                 let is_prep = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                    pecos_quantum::GateType::PX
+                        | pecos_quantum::GateType::PZ
+                        | pecos_quantum::GateType::QAlloc
                 );
                 if is_prep {
                     for q in &gate.qubits {
@@ -948,7 +965,8 @@ impl<'a> InfluenceBuilder<'a> {
 
                 let is_measurement = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::MZ
+                    pecos_quantum::GateType::MX
+                        | pecos_quantum::GateType::MZ
                         | pecos_quantum::GateType::MeasureFree
                         | pecos_quantum::GateType::MPZ
                 );
@@ -974,7 +992,9 @@ impl<'a> InfluenceBuilder<'a> {
                 }
                 if matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                    pecos_quantum::GateType::PX
+                        | pecos_quantum::GateType::PZ
+                        | pecos_quantum::GateType::QAlloc
                 ) {
                     prepared_qubits.extend(gate.qubits.iter().copied());
                 }

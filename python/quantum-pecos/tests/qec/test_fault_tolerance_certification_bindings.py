@@ -18,6 +18,10 @@ from pecos.qec import (
     DetectorErrorModel,
     DistanceProblem,
     HookError,
+    bounded_enumeration_code_distance,
+    bounded_enumeration_stabilizer_distance,
+    bounded_enumeration_x_distance,
+    bounded_enumeration_z_distance,
     connected_cluster_code_distance,
     stabilizer_code_distance,
     x_distance,
@@ -190,6 +194,51 @@ def test_steane_certification_from_checks_and_code_spec() -> None:
     corrupted[0] = not corrupted[0]
     with pytest.raises(ValueError, match="witness violates H row 0"):
         from_checks.verify_witness(corrupted)
+
+
+def test_bounded_enumeration_bindings_certify_and_return_intervals() -> None:
+    h = ParityCheckMatrix(
+        [
+            [1, 0, 1, 0, 1, 0, 1],
+            [0, 1, 1, 0, 0, 1, 1],
+            [0, 0, 0, 1, 1, 1, 1],
+        ],
+    )
+    l = ParityCheckMatrix([[1, 1, 1, 1, 1, 1, 1]])
+    problem = DistanceProblem.from_css_checks(h, l)
+
+    exact = bounded_enumeration_code_distance(h, l, 4)
+    assert exact is not None
+    assert exact.certified
+    assert exact.distance == exact.upper_bound == 3
+    assert exact.lower_bound >= exact.distance
+    assert exact.lb_certified
+    assert exact.level is not None
+    assert exact.max_level is None
+    assert problem.verify_witness(exact.witness) == 3
+
+    interval = bounded_enumeration_code_distance(h, l, 0)
+    assert interval is not None
+    assert not interval.certified
+    assert interval.distance is None
+    assert (interval.lower_bound, interval.upper_bound) == (1, 3)
+    assert interval.max_level == 0
+    assert problem.verify_witness(interval.witness) == interval.upper_bound
+
+    spec = StabilizerCodeSpec.from_stabilizer_code(StabilizerCode.steane())
+    assert bounded_enumeration_x_distance(spec, 4).distance == 3
+    assert bounded_enumeration_z_distance(spec, 4).distance == 3
+
+
+def test_five_qubit_bounded_enumeration_binding_uses_three_mechanisms_per_qubit() -> None:
+    spec = StabilizerCodeSpec.from_stabilizer_code(StabilizerCode.five_qubit())
+    result = bounded_enumeration_stabilizer_distance(spec, 5)
+
+    assert result is not None
+    assert result.certified
+    assert result.distance == 3
+    assert len(result.witness) == 3 * spec.num_qubits
+    assert sum(result.witness) == 3
 
 
 def test_non_css_connected_cluster_binding_returns_logical_pauli() -> None:

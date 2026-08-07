@@ -108,7 +108,7 @@ fn single_qubit_pauli(pauli: Pauli, qubit: usize) -> PauliString {
     PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, vec![(pauli, QubitId::new(qubit))])
 }
 
-fn mechanisms_from_stabilizer_code(
+pub(crate) fn mechanisms_from_stabilizer_code(
     code: &StabilizerCodeSpec,
 ) -> Result<Vec<FaultMechanism>, DistanceProblemError> {
     // Reuse the symplectic problem constructor for its established out-of-range validation.

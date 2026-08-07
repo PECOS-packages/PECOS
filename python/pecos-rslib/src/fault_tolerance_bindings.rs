@@ -89,7 +89,12 @@ use pecos_qec::{
     coloration_memory_circuit as rust_coloration_memory_circuit,
 };
 use pecos_qec::{
+    BoundedEnumerationDistance as RustBoundedEnumerationDistance,
     CertifiedDistance as RustCertifiedDistance, DistanceProblem as RustDistanceProblem,
+    bounded_enumeration_code_distance as rust_bounded_enumeration_code_distance,
+    bounded_enumeration_stabilizer_distance as rust_bounded_enumeration_stabilizer_distance,
+    bounded_enumeration_x_distance as rust_bounded_enumeration_x_distance,
+    bounded_enumeration_z_distance as rust_bounded_enumeration_z_distance,
     certified_distance as rust_certified_distance,
     connected_cluster_code_distance as rust_connected_cluster_code_distance,
     stabilizer_code_distance as rust_stabilizer_code_distance, x_distance as rust_x_distance,
@@ -7588,6 +7593,113 @@ impl PyCertifiedDistance {
     }
 }
 
+/// Native lower and upper bounds from bounded generator-row enumeration.
+#[pyclass(
+    name = "BoundedEnumerationDistance",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyBoundedEnumerationDistance {
+    lower_bound: usize,
+    upper_bound: usize,
+    witness: Vec<bool>,
+    certified: bool,
+    level: Option<usize>,
+    max_level: Option<usize>,
+    lb_certified: bool,
+}
+
+impl From<RustBoundedEnumerationDistance> for PyBoundedEnumerationDistance {
+    fn from(result: RustBoundedEnumerationDistance) -> Self {
+        match result {
+            RustBoundedEnumerationDistance::CertifiedByBounds {
+                distance,
+                witness,
+                lower_bound,
+                level,
+                lb_certified,
+            } => Self {
+                lower_bound,
+                upper_bound: distance,
+                witness,
+                certified: true,
+                level: Some(level),
+                max_level: None,
+                lb_certified,
+            },
+            RustBoundedEnumerationDistance::LevelLimitReached {
+                lower_bound,
+                upper_bound,
+                witness,
+                max_level,
+                lb_certified,
+            } => Self {
+                lower_bound,
+                upper_bound,
+                witness,
+                certified: false,
+                level: None,
+                max_level: Some(max_level),
+                lb_certified,
+            },
+        }
+    }
+}
+
+#[pymethods]
+impl PyBoundedEnumerationDistance {
+    #[getter]
+    fn lower_bound(&self) -> usize {
+        self.lower_bound
+    }
+
+    #[getter]
+    fn upper_bound(&self) -> usize {
+        self.upper_bound
+    }
+
+    #[getter]
+    fn distance(&self) -> Option<usize> {
+        self.certified.then_some(self.upper_bound)
+    }
+
+    #[getter]
+    fn witness(&self) -> Vec<bool> {
+        self.witness.clone()
+    }
+
+    #[getter]
+    fn certified(&self) -> bool {
+        self.certified
+    }
+
+    #[getter]
+    fn level(&self) -> Option<usize> {
+        self.level
+    }
+
+    #[getter]
+    fn max_level(&self) -> Option<usize> {
+        self.max_level
+    }
+
+    #[getter]
+    fn lb_certified(&self) -> bool {
+        self.lb_certified
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BoundedEnumerationDistance(lower_bound={}, upper_bound={}, certified={}, witness_weight={})",
+            self.lower_bound,
+            self.upper_bound,
+            self.certified,
+            self.witness.iter().filter(|&&selected| selected).count()
+        )
+    }
+}
+
 fn certify_python_problem(
     problem: &RustDistanceProblem,
     max_weight: usize,
@@ -7696,6 +7808,50 @@ fn certified_distance(
     max_weight: usize,
 ) -> PyResult<Option<PyCertifiedDistance>> {
     certify_python_problem(&problem.inner, max_weight)
+}
+
+/// Computes binary ``(H, L)`` distance using native bounded row enumeration.
+#[pyfunction]
+fn bounded_enumeration_code_distance(
+    h: &PyParityCheckMatrix,
+    l: &PyParityCheckMatrix,
+    max_level: usize,
+) -> Option<PyBoundedEnumerationDistance> {
+    rust_bounded_enumeration_code_distance(&h.inner, &l.inner, max_level)
+        .map(PyBoundedEnumerationDistance::from)
+}
+
+/// Computes pure-X bounded-enumeration distance for a CSS stabilizer code.
+#[pyfunction]
+fn bounded_enumeration_x_distance(
+    code: &PyStabilizerCodeSpec,
+    max_level: usize,
+) -> PyResult<Option<PyBoundedEnumerationDistance>> {
+    rust_bounded_enumeration_x_distance(&code.inner, max_level)
+        .map(|result| result.map(PyBoundedEnumerationDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes pure-Z bounded-enumeration distance for a CSS stabilizer code.
+#[pyfunction]
+fn bounded_enumeration_z_distance(
+    code: &PyStabilizerCodeSpec,
+    max_level: usize,
+) -> PyResult<Option<PyBoundedEnumerationDistance>> {
+    rust_bounded_enumeration_z_distance(&code.inner, max_level)
+        .map(|result| result.map(PyBoundedEnumerationDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes bounded-enumeration distance for any stabilizer code.
+#[pyfunction]
+fn bounded_enumeration_stabilizer_distance(
+    code: &PyStabilizerCodeSpec,
+    max_level: usize,
+) -> PyResult<Option<PyBoundedEnumerationDistance>> {
+    rust_bounded_enumeration_stabilizer_distance(&code.inner, max_level)
+        .map(|result| result.map(PyBoundedEnumerationDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
 /// Computes connected-cluster distance for a binary check/logical matrix pair.
@@ -7906,6 +8062,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyCircuitDistanceResult>()?;
     qec.add_class::<PyCircuitFaultAnalyzer>()?;
     qec.add_class::<PyCertifiedDistance>()?;
+    qec.add_class::<PyBoundedEnumerationDistance>()?;
     qec.add_class::<PyDistanceProblem>()?;
     qec.add_class::<PyBivariateBicycleCode>()?;
 
@@ -7915,6 +8072,13 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(verify_dem_equivalence, &qec)?)?;
     qec.add_function(wrap_pyfunction!(assert_dems_equivalent, &qec)?)?;
     qec.add_function(wrap_pyfunction!(connected_cluster_code_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(bounded_enumeration_code_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(bounded_enumeration_x_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(bounded_enumeration_z_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(
+        bounded_enumeration_stabilizer_distance,
+        &qec
+    )?)?;
     qec.add_function(wrap_pyfunction!(x_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(z_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(stabilizer_code_distance, &qec)?)?;

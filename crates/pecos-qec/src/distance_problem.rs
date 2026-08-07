@@ -991,9 +991,9 @@ fn solve_with_batsat_inner(encoding: &Encoding, num_primary_vars: usize) -> Solv
 mod tests {
     use super::*;
     use crate::{
-        DemOutput, DistanceSearchConfig, FaultMechanism, StabilizerCode, calculate_distance,
-        connected_cluster_code_distance, connected_cluster_fault_distance,
-        exhaustive_fault_distance,
+        DemOutput, DistanceSearchConfig, FaultMechanism, StabilizerCode,
+        bounded_enumeration_code_distance, calculate_distance, connected_cluster_code_distance,
+        connected_cluster_fault_distance, exhaustive_fault_distance,
     };
     use pecos_core::pauli::{X, Xs, Ys, Z, Zs};
     use pecos_quantum::SymplecticMatrix;
@@ -1160,6 +1160,7 @@ mod tests {
             let problem = DistanceProblem::from_css_checks(&h, &l).unwrap();
             let exhaustive = exhaustive_dimacs_minimum(&problem);
             let connected = connected_cluster_code_distance(&h, &l, num_qubits);
+            let bounded = bounded_enumeration_code_distance(&h, &l, num_qubits);
 
             assert_eq!(
                 connected.as_ref().map(|result| result.distance),
@@ -1168,6 +1169,20 @@ mod tests {
                 h.rows(),
                 l.rows()
             );
+            assert_eq!(
+                bounded.as_ref().map(super::super::bounded_enumeration_distance::BoundedEnumerationDistance::upper_bound),
+                exhaustive,
+                "bounded-enumeration mismatch in seeded case {case}: H={:?}, L={:?}",
+                h.rows(),
+                l.rows()
+            );
+            if let Some(result) = bounded {
+                assert!(result.is_certified());
+                assert_eq!(
+                    problem.verify_witness(result.witness()),
+                    Ok(exhaustive.unwrap())
+                );
+            }
             assert_eq!(connected.is_some(), exhaustive.is_some());
         }
     }

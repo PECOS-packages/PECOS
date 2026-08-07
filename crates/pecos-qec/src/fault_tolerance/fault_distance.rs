@@ -142,20 +142,13 @@ impl ConnectedClusterSearch<'_> {
             let mut cluster = vec![seed];
             let mut members = BTreeSet::from([seed]);
             let effect = self.mechanisms[seed].clone();
-            if self.target_weight == 1 {
-                self.consider_witness(&cluster, &effect);
-                continue;
-            }
+            self.extend(seed, &mut cluster, &mut members, &effect);
 
-            let extension = self.neighbors(seed, seed, &members, &BTreeSet::new());
-            self.extend(
-                seed,
-                &mut cluster,
-                &mut members,
-                &effect,
-                extension,
-                BTreeSet::new(),
-            );
+            // Every member added to a cluster is larger than its seed. Once the first seed with a
+            // witness has been exhausted, later seeds cannot improve the sorted witness.
+            if self.best.is_some() {
+                break;
+            }
         }
         self.best
     }
@@ -166,54 +159,47 @@ impl ConnectedClusterSearch<'_> {
         cluster: &mut Vec<usize>,
         members: &mut BTreeSet<usize>,
         effect: &FaultMechanism,
-        mut extension: BTreeSet<usize>,
-        mut excluded: BTreeSet<usize>,
     ) {
-        while let Some(candidate) = extension.pop_first() {
+        if effect.detectors.is_empty() {
+            if cluster.len() == self.target_weight {
+                self.consider_witness(cluster, effect);
+            }
+
+            // In the exact-weight search, a detector-free prefix below the target is already a
+            // closed component. The remaining mechanisms would also have to be detector-free,
+            // producing a proper detector-free component of the witness. One of the two parts
+            // carries the nonzero observable parity, contradicting minimum connectedness. The
+            // Connected Cluster method therefore rejects this prefix instead of reopening it
+            // (arXiv:2603.22532).
+            return;
+        }
+
+        if cluster.len() == self.target_weight {
+            return;
+        }
+
+        // Any completion must toggle the lowest unsatisfied detector again. Branching over every
+        // incident mechanism is therefore exhaustive, while immediately excluding mechanisms
+        // that cannot close this syndrome. The incidence vectors and detector parity are sorted,
+        // so both the detector choice and candidate order are deterministic. Requiring candidates
+        // larger than the seed preserves the minimum-index-root convention of the Connected
+        // Cluster method (arXiv:2603.22532).
+        let detector = effect.detectors[0];
+        let candidates = self.incidence[&detector].clone();
+        for candidate in candidates {
+            if !self.active[candidate] || candidate <= seed || members.contains(&candidate) {
+                continue;
+            }
+
             cluster.push(candidate);
             members.insert(candidate);
             let next_effect = effect.xor(&self.mechanisms[candidate]);
 
-            if cluster.len() == self.target_weight {
-                self.consider_witness(cluster, &next_effect);
-            } else {
-                let mut next_extension = extension.clone();
-                next_extension.extend(self.neighbors(candidate, seed, members, &excluded));
-                self.extend(
-                    seed,
-                    cluster,
-                    members,
-                    &next_effect,
-                    next_extension,
-                    excluded.clone(),
-                );
-            }
+            self.extend(seed, cluster, members, &next_effect);
 
             members.remove(&candidate);
             cluster.pop();
-            excluded.insert(candidate);
         }
-    }
-
-    fn neighbors(
-        &self,
-        mechanism_index: usize,
-        seed: usize,
-        members: &BTreeSet<usize>,
-        excluded: &BTreeSet<usize>,
-    ) -> BTreeSet<usize> {
-        self.mechanisms[mechanism_index]
-            .detectors
-            .iter()
-            .flat_map(|detector| &self.incidence[detector])
-            .copied()
-            .filter(|&neighbor| {
-                self.active[neighbor]
-                    && neighbor > seed
-                    && !members.contains(&neighbor)
-                    && !excluded.contains(&neighbor)
-            })
-            .collect()
     }
 
     fn consider_witness(&mut self, cluster: &[usize], effect: &FaultMechanism) {

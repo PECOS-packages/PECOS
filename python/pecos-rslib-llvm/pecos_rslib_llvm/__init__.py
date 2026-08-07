@@ -51,16 +51,18 @@ def _preload_unix_llvm_runtime() -> None:
     libLLVM.so.21.1`` resolves -- a fallback only, run when the extension
     cannot import on its own.
 
-    A distributed wheel bundles ``libLLVM`` with an rpath (auditwheel on Linux)
-    and imports directly, so this never runs for it -- which matters, because
-    preloading a *second*, differently-named ``libLLVM`` alongside the bundled
-    copy leaves two sets of LLVM global state that crash the interpreter at
-    shutdown. But a source/editable build links ``libLLVM`` by soname and may
-    carry no usable rpath, so without help it fails ``ImportError:
-    libLLVM.so.21.1``. PECOS installs LLVM under ``~/.pecos/deps/llvm-21.1``
-    (honouring ``PECOS_LLVM`` / ``LLVM_SYS_211_PREFIX``); load it from there.
-    Best-effort: if no candidate is found, the caller's retry re-raises the
-    original ImportError.
+    A static Linux/Windows release wheel has no ``NEEDED`` entry for
+    ``libLLVM`` at all, and a macOS release wheel bundles ``libLLVM`` with a
+    relocatable load path (delocate) and imports directly -- so this never
+    runs for a release wheel. That matters: preloading a *second*, differently-named ``libLLVM``
+    alongside a bundled copy leaves two sets of LLVM global state that crash
+    the interpreter at shutdown, so this must stay a fallback and never become
+    an eager preload. A shared source/editable build, however, links
+    ``libLLVM`` by soname and may carry no usable rpath, so without help it
+    fails ``ImportError: libLLVM.so.21.1``. PECOS installs LLVM under
+    ``~/.pecos/deps/llvm-21.1`` (honouring ``PECOS_LLVM`` /
+    ``LLVM_SYS_211_PREFIX``); load it from there. Best-effort: if no candidate
+    is found, the caller's retry re-raises the original ImportError.
     """
     if os.name == "nt":
         return
@@ -90,9 +92,9 @@ def _preload_unix_llvm_runtime() -> None:
 
 # Windows has no rpath, so a Windows source/editable build needs the managed
 # LLVM ``bin`` on the DLL search path (search-path only -- never loads a second
-# copy, so it is safe to run eagerly). Unix resolves ``libLLVM`` via the
-# extension's own rpath (dev build) or a bundled copy (wheel); only if that
-# fails do we fall back to preloading it below.
+# copy, so it is safe to run eagerly). A Unix shared source build normally
+# resolves ``libLLVM`` via its own rpath; only if that fails do we fall back to
+# preloading it below. Static release wheels do not need a runtime ``libLLVM``.
 _add_windows_llvm_dll_directories()
 
 try:

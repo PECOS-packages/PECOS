@@ -157,6 +157,7 @@ class CuStateVec(StateVector):
 
     def reset(self) -> Self:
         """Reset the quantum state for another run without reinitializing."""
+        check_fork_poison()
         # Initialize all qubits in the zero state
         if self.cupy_vector is not None:
             self.cupy_vector[:] = 0

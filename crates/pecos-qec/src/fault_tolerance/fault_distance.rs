@@ -462,14 +462,14 @@ pub fn per_observable_fault_distances(
     let incidence = detector_incidence(&mechanisms);
     let active = peel_unique_detector_mechanisms(&mechanisms, &incidence);
 
-    (0..dem.num_observables())
+    (0..u32::try_from(dem.num_observables()).expect("observable count fits in the u32 id space"))
         .map(|observable| {
             for weight in 1..=max_weight.min(mechanisms.len()) {
                 let mechanism_indices = ConnectedClusterSearch {
                     mechanisms: &mechanisms,
                     incidence: &incidence,
                     active: &active,
-                    observable: observable as u32,
+                    observable,
                     target_weight: weight,
                     best: None,
                 }

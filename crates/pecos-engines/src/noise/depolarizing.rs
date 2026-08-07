@@ -20,6 +20,49 @@ use pecos_random::PecosRng;
 use pecos_random::rng_ext::RngProbabilityExt;
 use std::any::Any;
 
+/////////////////////////////////////////////////////////
+/// Tools for cataloging error opportunities and outcomes
+/////////////////////////////////////////////////////////
+
+/// The kinds of faults supported in cataloging
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepolarizingFaultSiteKind {
+    Prep,
+    Meas,
+    SingleQubit,
+    TwoQubit,
+}
+
+/// This class stores one possible outcome and its probability]
+#[derive(Debug, Clone, PartialEq)]
+pub struct DepolarizingFaultOutcome {
+    /// Human-readable outcome label.
+    pub label: &'static str,
+    /// Outcome probability at this site.
+    pub probability: f64,
+}
+
+/// Sites at which faults can occur
+#[derive(Debug, Clone, PartialEq)]
+pub struct DepolarizingFaultSite{
+    // A globally unique identifier for this fault site
+    pub uid: usize,
+    pub gate_index: usize,
+    pub kind: DepolarizingFaultSiteKind,
+    pub gate_type: GateType,
+    // Specify the error location
+    pub qubits: Vec<usize>,
+    // Specify possible states and their probabilities
+    pub outcomes: Vec<DepolarizingFaultOutcome>,
+}
+
+// A fault catalog
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DepolarizingFaultCatalog {
+    /// Ordered fault sites.
+    pub sites: Vec<DepolarizingFaultSite>,
+}
+
 /// Implements depolarizing channel noise for quantum simulations
 ///
 /// This model applies different error probabilities to various quantum operations:
@@ -76,6 +119,10 @@ pub struct DepolarizingNoiseModel {
     scratch_builder: ByteMessageBuilder,
     /// Scratch gate storage reused across batches to avoid repeated allocations.
     scratch_gates: Vec<Gate>,
+    /// If True, then all faults will be cataloged
+    catalog_faults: bool,
+    /// Stores the catalog of faults
+    catalog: Option<DepolarizingFaultCatalog>,
 }
 
 impl ProbabilityValidator for DepolarizingNoiseModel {}
@@ -124,6 +171,8 @@ impl DepolarizingNoiseModel {
             rng: NoiseRng::default(),
             scratch_builder: NoiseUtils::create_quantum_builder(),
             scratch_gates: Vec::new(),
+            catalog_faults: false,
+            catalog: None,
         }
     }
 
@@ -167,6 +216,222 @@ impl DepolarizingNoiseModel {
     #[must_use]
     pub fn probabilities(&self) -> (f64, f64, f64, f64) {
         (self.p_prep, self.p_meas, self.p1, self.p2)
+    }
+
+    /// Enable or disable depolarizing fault-catalog capture during `start()`.
+    pub fn set_catalog_faults_enabled(&mut self, enabled: bool) {
+        self.catalog_faults = enabled;
+    }
+
+    /// Returns whether fault-catalog capture is enabled.
+    #[must_use]
+    pub fn catalog_faults_enabled(&self) -> bool {
+        self.catalog_faults
+    }
+
+    /// Returns the catalog captured during `start()`
+    #[must_use]
+    pub fn fault_catalog(&self) -> Option<&DepolarizingFaultCatalog> {
+        self.catalog.as_ref()
+    }
+
+    /// Takes ownership of the last captured catalog.
+    pub fn take_fault_catalog(&mut self) -> Option<DepolarizingFaultCatalog> {
+        self.catalog.take()
+    }
+
+    /// Build a fault catalog from a quantum-operation message.
+    ///
+    /// This does not modify the simulator state and is intended for
+    /// pre-sampling catalog construction.
+    ///
+    /// # Errors
+    /// Returns [`PecosError::Input`] if the message is not quantum-operations
+    /// formatted.
+    pub fn build_fault_catalog_from_message(
+        &self,
+        input: &ByteMessage,
+    ) -> Result<DepolarizingFaultCatalog, PecosError> {
+
+        // Convert message into vector of gate object
+        let mut gates = Vec::new();
+        input
+            .quantum_ops_into(&mut gates)
+            .map_err(|e| PecosError::Input(format!("Failed to parse quantum operations: {e}")))?;
+    
+        // Build up the fault catalog from the gates
+        Ok(Self::build_fault_catalog_from_gates(
+            &self,
+            &gates,
+        ))
+    }
+
+
+    /// Build a fault catalog from a vector of gates
+    ///
+    /// This does not modify the simulator state and is intended for
+    /// pre-sampling catalog construction.
+    fn build_fault_catalog_from_gates(
+        &self,
+        gates: &[Gate],
+    ) -> DepolarizingFaultCatalog {
+
+        // Create a vector to store the fault sites
+        let mut fault_sites = Vec::new();
+
+        // Track unique identifier for fault sites
+        let mut next_fault_site_id = 0_usize;
+
+        // Loop through provided gates
+        for (gate_index, gate) in gates.iter().enumerate() {
+
+            // Collect the qubits that the gate acts on
+            let qubits = gate.qubits.iter().map(|q| q.0).collect::<Vec<_>>();
+
+            // Collect gate kind and outcomes using matches of gate types
+            let kind_outcomes = match gate.gate_type {
+                // Single qubit gates
+                GateType::X
+                | GateType::Z
+                | GateType::Y
+                | GateType::SX
+                | GateType::SXdg
+                | GateType::SY
+                | GateType::SYdg
+                | GateType::SZ
+                | GateType::SZdg
+                | GateType::H
+                | GateType::F
+                | GateType::Fdg
+                | GateType::RX
+                | GateType::RY
+                | GateType::RZ
+                | GateType::T
+                | GateType::Tdg
+                | GateType::U
+                | GateType::R1XY => Some((
+                    DepolarizingFaultSiteKind::SingleQubit,
+                    Self::single_qubit_outcomes(self.p1),
+                )),
+                // Two qubit gates
+                GateType::CX
+                | GateType::CY
+                | GateType::CZ
+                | GateType::CH
+                | GateType::SXX
+                | GateType::SXXdg
+                | GateType::SYY
+                | GateType::SYYdg
+                | GateType::SZZ
+                | GateType::SZZdg
+                | GateType::SWAP
+                | GateType::CRZ
+                | GateType::RXX
+                | GateType::RYY
+                | GateType::RZZ
+                | GateType::RXXRYYRZZ
+                | GateType::U2q
+                | GateType::CCX => Some((
+                    DepolarizingFaultSiteKind::TwoQubit,
+                    Self::two_qubit_outcomes(self.p2),
+                )),
+                // Measure 
+                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => Some((
+                    DepolarizingFaultSiteKind::Meas,
+                    Self::binary_x_outcomes(self.p_meas),
+                )),
+                // Prepare
+                GateType::PZ | GateType::QAlloc => Some((
+                    DepolarizingFaultSiteKind::Prep,
+                    Self::binary_x_outcomes(self.p_prep),
+                )),
+                // Gates that do not get a fault event
+                GateType::Channel
+                // TODO Should probably make sure identities are handled correctly
+                | GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::QFree
+                | GateType::Custom
+                | GateType::TrackedPauliMeta => None,
+            };
+
+            // Add the new fault site
+            if let Some((kind, outcomes)) = kind_outcomes {
+                fault_sites.push(DepolarizingFaultSite {
+                    uid: next_fault_site_id,
+                    gate_index,
+                    kind,
+                    gate_type: gate.gate_type,
+                    qubits,
+                    outcomes,
+                });
+
+                // Increment the unique fault id
+                next_fault_site_id += 1;
+            }
+        }
+
+        DepolarizingFaultCatalog { sites: fault_sites }
+    }
+
+    fn binary_x_outcomes(p: f64) -> Vec<DepolarizingFaultOutcome> {
+        vec![
+            DepolarizingFaultOutcome {
+                label: "NoFault",
+                probability: 1.0 - p,
+            },
+            DepolarizingFaultOutcome {
+                label: "X",
+                probability: p,
+            },
+        ]
+    }
+
+    fn single_qubit_outcomes(p: f64) -> Vec<DepolarizingFaultOutcome> {
+        let branch = p / 3.0;
+        vec![
+            DepolarizingFaultOutcome {
+                label: "NoFault",
+                probability: 1.0 - p,
+            },
+            DepolarizingFaultOutcome {
+                label: "X",
+                probability: branch,
+            },
+            DepolarizingFaultOutcome {
+                label: "Y",
+                probability: branch,
+            },
+            DepolarizingFaultOutcome {
+                label: "Z",
+                probability: branch,
+            },
+        ]
+    }
+
+    fn two_qubit_outcomes(p: f64) -> Vec<DepolarizingFaultOutcome> {
+        const LABELS: [&str; 15] = [
+            "IX", "IY", "IZ", "XI", "XX", "XY", "XZ", "YI", "YX", "YY", "YZ", "ZI",
+            "ZX", "ZY", "ZZ",
+        ];
+
+        let mut outcomes = Vec::with_capacity(16);
+        outcomes.push(DepolarizingFaultOutcome {
+            label: "NoFault",
+            probability: 1.0 - p,
+        });
+
+        let branch = p / 15.0;
+        for label in LABELS {
+            outcomes.push(DepolarizingFaultOutcome {
+                label,
+                probability: branch,
+            });
+        }
+
+        outcomes
     }
 
     fn apply_noise_to_gate(
@@ -581,6 +846,16 @@ impl ControlEngine for DepolarizingNoiseModel {
             return Err(Self::channel_gate_error());
         }
 
+        // Initialize an empty fault catalog
+        if self.catalog_faults {
+            self.catalog = Some(Self::build_fault_catalog_from_gates(
+                &self,
+                &self.scratch_gates,
+            ));
+        } else {
+            self.catalog = None;
+        }
+
         if self.p_prep_threshold == 0
             && self.p_meas_threshold == 0
             && self.p1_threshold == 0
@@ -628,6 +903,7 @@ impl ControlEngine for DepolarizingNoiseModel {
 
     fn reset(&mut self) -> Result<(), PecosError> {
         // No state to reset
+        self.catalog = None;
         Ok(())
     }
 }
@@ -809,5 +1085,138 @@ mod tests {
             EngineStage::NeedsProcessing(_) => (),
             EngineStage::Complete(_) => panic!("Expected NeedsProcessing stage"),
         }
+    }
+
+    #[test]
+    fn test_fault_catalog_from_message_basic_attributes() {
+        // Check that the catalog has the correct information stored
+        // in it from a very simple circuit
+        let noise = DepolarizingNoiseModel::new(0.1, 0.2, 0.3, 0.4);
+
+        // Build a simple circuit
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.pz(&[0]);
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+
+        let msg = builder.build();
+
+        // Try to build the catalog
+        let catalog = noise
+            .build_fault_catalog_from_message(&msg)
+            .expect("catalog generation should succeed");
+
+        // Check that the catalog has the correct information stored
+        assert_eq!(catalog.sites.len(), 4);
+
+        // Check that the sites have the correct kind
+        assert_eq!(catalog.sites[0].kind, DepolarizingFaultSiteKind::Prep);
+        assert_eq!(catalog.sites[1].kind, DepolarizingFaultSiteKind::SingleQubit);
+        assert_eq!(catalog.sites[2].kind, DepolarizingFaultSiteKind::TwoQubit);
+        assert_eq!(catalog.sites[3].kind, DepolarizingFaultSiteKind::Meas);
+
+        // Check that the sites have the correct unique ids
+        assert_eq!(catalog.sites[0].uid, 0);
+        assert_eq!(catalog.sites[1].uid, 1);
+        assert_eq!(catalog.sites[2].uid, 2);
+        assert_eq!(catalog.sites[3].uid, 3);
+
+        // Check that the gates have been indexed correct
+        assert_eq!(catalog.sites[0].gate_index, 0);
+        assert_eq!(catalog.sites[1].gate_index, 1);
+        assert_eq!(catalog.sites[2].gate_index, 2);
+        assert_eq!(catalog.sites[3].gate_index, 3);
+
+        // Check that the gate types have been indexed correctly
+        assert_eq!(catalog.sites[0].gate_type, GateType::PZ);
+        assert_eq!(catalog.sites[1].gate_type, GateType::X);
+        assert_eq!(catalog.sites[2].gate_type, GateType::CX);
+        assert_eq!(catalog.sites[3].gate_type, GateType::MZ);
+
+        // Check that the qubits are stored correctly
+        assert_eq!(catalog.sites[0].qubits, vec![0]);
+        assert_eq!(catalog.sites[1].qubits, vec![0]);
+        assert_eq!(catalog.sites[2].qubits, vec![0, 1]);
+        assert_eq!(catalog.sites[3].qubits, vec![1]);
+
+        // Check that the outcomes are correct
+        assert_eq!(catalog.sites[0].outcomes.len(), 2);
+        assert_eq!(catalog.sites[1].outcomes.len(), 4);
+        assert_eq!(catalog.sites[2].outcomes.len(), 16);
+        assert_eq!(catalog.sites[3].outcomes.len(), 2);
+        
+        assert_eq!(catalog.sites[0].outcomes[0].label, "NoFault");
+        assert_eq!(catalog.sites[0].outcomes[1].label, "X");
+
+        assert_eq!(catalog.sites[1].outcomes[0].label, "NoFault");
+        assert_eq!(catalog.sites[1].outcomes[1].label, "X");
+        assert_eq!(catalog.sites[1].outcomes[2].label, "Y");
+        assert_eq!(catalog.sites[1].outcomes[3].label, "Z");
+
+        assert_eq!(catalog.sites[2].outcomes[0].label, "NoFault");
+        assert_eq!(catalog.sites[2].outcomes[1].label, "IX");
+        assert_eq!(catalog.sites[2].outcomes[2].label, "IY");
+        assert_eq!(catalog.sites[2].outcomes[3].label, "IZ");
+        assert_eq!(catalog.sites[2].outcomes[4].label, "XI");
+        assert_eq!(catalog.sites[2].outcomes[5].label, "XX");
+        assert_eq!(catalog.sites[2].outcomes[6].label, "XY");
+        assert_eq!(catalog.sites[2].outcomes[7].label, "XZ");
+        assert_eq!(catalog.sites[2].outcomes[8].label, "YI");
+        assert_eq!(catalog.sites[2].outcomes[9].label, "YX");
+        assert_eq!(catalog.sites[2].outcomes[10].label, "YY");
+        assert_eq!(catalog.sites[2].outcomes[11].label, "YZ");
+        assert_eq!(catalog.sites[2].outcomes[12].label, "ZI");
+        assert_eq!(catalog.sites[2].outcomes[13].label, "ZX");
+        assert_eq!(catalog.sites[2].outcomes[14].label, "ZY");
+        assert_eq!(catalog.sites[2].outcomes[15].label, "ZZ");
+
+    }
+
+    #[test]
+    fn test_fault_catalog_probabilities_sum_to_one() {
+        // Checks that all the fault catalog outcomes
+        // sum to 1
+        let noise = DepolarizingNoiseModel::new(0.1, 0.2, 0.3, 0.45);
+
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+        builder.pz(&[2]);
+
+        let msg = builder.build();
+        let catalog = noise
+            .build_fault_catalog_from_message(&msg)
+            .expect("catalog generation should succeed");
+
+        for site in &catalog.sites {
+            let sum: f64 = site.outcomes.iter().map(|o| o.probability).sum();
+            assert!((sum - 1.0).abs() < 1e-12, "outcomes must sum to one");
+            // Check that the first outcome is always NoFault
+            assert_eq!(site.outcomes[0].label, "NoFault");
+        }
+    }
+
+    #[test]
+    fn test_fault_catalog_capture_in_start() {
+        // 
+        let mut noise = DepolarizingNoiseModel::new_uniform(0.0);
+        noise.set_catalog_faults_enabled(true);
+
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        let msg = builder.build();
+
+        let _ = noise.start(msg).expect("noise start should succeed");
+
+        let catalog = noise
+            .fault_catalog()
+            .expect("catalog should be captured when enabled");
+        assert_eq!(catalog.sites.len(), 2);
     }
 }

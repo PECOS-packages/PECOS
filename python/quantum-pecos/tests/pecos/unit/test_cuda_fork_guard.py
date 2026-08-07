@@ -26,9 +26,11 @@ pytestmark = pytest.mark.skipif(not hasattr(os, "fork"), reason="os.fork is unav
 @pytest.fixture(autouse=True)
 def _reset_guard_state(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the guard's process-local state isolated between tests."""
-    monkeypatch.setattr(guard, "_cuda_initialized", False)
-    monkeypatch.setattr(guard, "_forked_after_cuda_init", False)
-    monkeypatch.setattr(guard, "_fork_warning_emitted", False)
+    monkeypatch.setattr(
+        guard,
+        "_state",
+        {"cuda_initialized": False, "forked_after_cuda_init": False, "fork_warning_emitted": False},
+    )
 
 
 def _wait_for_child(pid: int) -> int:

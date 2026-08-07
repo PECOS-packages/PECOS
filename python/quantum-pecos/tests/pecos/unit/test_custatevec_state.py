@@ -46,9 +46,11 @@ class _StubDriverError(_StubCudaStatusError):
 @pytest.fixture(autouse=True)
 def _reset_guard_state(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep synthetic failed initialization from marking later tests."""
-    monkeypatch.setattr(guard, "_cuda_initialized", False)
-    monkeypatch.setattr(guard, "_forked_after_cuda_init", False)
-    monkeypatch.setattr(guard, "_fork_warning_emitted", False)
+    monkeypatch.setattr(
+        guard,
+        "_state",
+        {"cuda_initialized": False, "forked_after_cuda_init": False, "fork_warning_emitted": False},
+    )
 
 
 def _inject_optional_dependency_stubs(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:

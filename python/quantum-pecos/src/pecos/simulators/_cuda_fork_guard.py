@@ -33,16 +33,17 @@ CUDA_FORK_ERROR_MESSAGE = (
     'already initialized CUDA (CUDA contexts do not survive fork) — use the multiprocessing "spawn" start method.'
 )
 
-_cuda_initialized = False
-_forked_after_cuda_init = False
-_fork_warning_emitted = False
+_state = {
+    "cuda_initialized": False,
+    "forked_after_cuda_init": False,
+    "fork_warning_emitted": False,
+}
 
 
 def _warn_before_fork() -> None:
     """Warn once when this process forks after a PECOS CUDA call."""
-    global _fork_warning_emitted
-    if _cuda_initialized and not _fork_warning_emitted:
-        _fork_warning_emitted = True
+    if _state["cuda_initialized"] and not _state["fork_warning_emitted"]:
+        _state["fork_warning_emitted"] = True
         warnings.warn(
             "This process is forking after CUDA initialization, so CUDA will be unusable in the forked child. "
             + CUDA_FORK_ERROR_MESSAGE,
@@ -53,20 +54,18 @@ def _warn_before_fork() -> None:
 
 def _mark_forked_child() -> None:
     """Record that the child inherited evidence of parent CUDA initialization."""
-    global _forked_after_cuda_init
-    if _cuda_initialized:
-        _forked_after_cuda_init = True
+    if _state["cuda_initialized"]:
+        _state["forked_after_cuda_init"] = True
 
 
 def mark_cuda_initialized() -> None:
     """Record that this process is about to make a real CUDA call."""
-    global _cuda_initialized
-    _cuda_initialized = True
+    _state["cuda_initialized"] = True
 
 
 def check_fork_poison() -> None:
     """Fail before CUDA use in a child forked after parent CUDA initialization."""
-    if _forked_after_cuda_init:
+    if _state["forked_after_cuda_init"]:
         raise RuntimeError(CUDA_FORK_ERROR_MESSAGE)
 
 

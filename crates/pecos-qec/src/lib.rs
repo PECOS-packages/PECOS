@@ -84,9 +84,13 @@ pub use bivariate_bicycle::{
     BbMemoryBasis, BbMonomial, BivariateBicycleCode, BivariateBicycleError, bb_memory_circuit,
 };
 pub use bounded_enumeration_distance::{
-    BoundedEnumerationDistance, bounded_enumeration_code_distance,
-    bounded_enumeration_stabilizer_distance, bounded_enumeration_x_distance,
-    bounded_enumeration_z_distance,
+    BoundedEnumerationBackendError, BoundedEnumerationDistance, CpuLevelEnumerationBackend,
+    LevelEnumerationBackend, LevelEnumerationInput, LevelEnumerationMinimum,
+    PackedSystematicGenerator, bounded_enumeration_code_distance,
+    bounded_enumeration_code_distance_with_backend, bounded_enumeration_stabilizer_distance,
+    bounded_enumeration_stabilizer_distance_with_backend, bounded_enumeration_x_distance,
+    bounded_enumeration_x_distance_with_backend, bounded_enumeration_z_distance,
+    bounded_enumeration_z_distance_with_backend,
 };
 pub use coloration::{ColorationMemoryError, coloration_memory_circuit};
 pub use dem_stab::{DemStabError, DemStabShotBatch, DemStabSim, DemStabSimBuilder};

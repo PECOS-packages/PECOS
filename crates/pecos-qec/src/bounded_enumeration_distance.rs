@@ -95,6 +95,97 @@ impl BoundedEnumerationDistance {
     }
 }
 
+/// Packed rows from one information set supplied to a level-enumeration backend.
+///
+/// Each row occupies [`LevelEnumerationInput::row_stride_words`] consecutive `u32` words, with
+/// column zero in the least-significant bit of the first word.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackedSystematicGenerator {
+    /// Concatenated packed generator rows.
+    pub rows: Vec<u32>,
+}
+
+/// One bounded-enumeration level presented to a backend.
+///
+/// `active_systematic_indices` preserves the information-set order used by the exact CPU search.
+/// A backend must examine every `level`-combination of the `dimension` rows for each listed
+/// systematic generator and minimize full-codeword weight among combinations with a nonzero
+/// logical effect.
+#[derive(Clone, Copy, Debug)]
+pub struct LevelEnumerationInput<'a> {
+    /// Generator-row combination size for this level.
+    pub level: usize,
+    /// Number of rows in every systematic generator.
+    pub dimension: usize,
+    /// Number of binary columns in a codeword.
+    pub codeword_bits: usize,
+    /// Packed words occupied by one generator or logical row.
+    pub row_stride_words: usize,
+    /// All peeled systematic generators.
+    pub systematic_generators: &'a [PackedSystematicGenerator],
+    /// Indices of the systematic generators active at this level.
+    pub active_systematic_indices: &'a [usize],
+    /// Concatenated packed logical rows.
+    pub logical_rows: &'a [u32],
+    /// Number of packed logical rows.
+    pub logical_count: usize,
+}
+
+/// Minimum found by a level-enumeration backend.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LevelEnumerationMinimum {
+    /// Minimum full-codeword weight with a nonzero logical effect, or `None` if none exists.
+    pub weight: Option<usize>,
+    /// Optional packed witness attaining `weight`.
+    ///
+    /// If supplied, this must be the first minimum in the systematic-generator and lexicographic
+    /// combination order described by [`LevelEnumerationInput`]. Backends may omit it; the host
+    /// then deterministically reconstructs it with a CPU re-scan when the minimum improves the
+    /// current upper bound.
+    pub witness: Option<Vec<u32>>,
+}
+
+/// Backend seam for the branchless combination loop in bounded enumeration.
+///
+/// The enumeration structure follows
+/// [arXiv:2408.10743](https://arxiv.org/abs/2408.10743). Implementations replace only a level's
+/// combination enumeration; bounds, termination, witness verification, and tie-breaking remain
+/// under the native host algorithm's control.
+pub trait LevelEnumerationBackend {
+    /// Error returned when a level cannot be enumerated.
+    type Error;
+
+    /// Returns the minimum logical codeword weight over all combinations in `input`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] if the backend cannot completely enumerate the requested level.
+    fn enumerate_level(
+        &mut self,
+        input: LevelEnumerationInput<'_>,
+    ) -> Result<LevelEnumerationMinimum, Self::Error>;
+}
+
+/// Error from bounded enumeration using an external level backend.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BoundedEnumerationBackendError<E> {
+    /// The requested distance problem is invalid.
+    DistanceProblem(DistanceProblemError),
+    /// The level backend failed.
+    Backend(E),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for BoundedEnumerationBackendError<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DistanceProblem(error) => error.fmt(formatter),
+            Self::Backend(error) => write!(formatter, "level-enumeration backend failed: {error}"),
+        }
+    }
+}
+
+impl<E: std::error::Error + 'static> std::error::Error for BoundedEnumerationBackendError<E> {}
+
 #[derive(Clone, Debug)]
 struct SystematicGenerator {
     rows: Vec<Vec<u8>>,
@@ -239,14 +330,102 @@ fn for_each_combination(count: usize, choose: usize, mut visit: impl FnMut(&[usi
     }
 }
 
-fn combination_codeword(rows: &[Vec<u8>], combination: &[usize]) -> Vec<u8> {
-    let mut codeword = vec![0; rows[0].len()];
+fn pack_rows(rows: &[Vec<u8>], row_stride_words: usize) -> Vec<u32> {
+    let mut packed = vec![0; rows.len() * row_stride_words];
+    for (row_index, row) in rows.iter().enumerate() {
+        for (column, &bit) in row.iter().enumerate() {
+            if bit != 0 {
+                packed[row_index * row_stride_words + column / 32] |= 1 << (column % 32);
+            }
+        }
+    }
+    packed
+}
+
+fn pack_matrix(matrix: &F2Matrix, row_stride_words: usize) -> Vec<u32> {
+    pack_rows(&matrix.rows(), row_stride_words)
+}
+
+fn packed_combination_codeword(
+    rows: &[u32],
+    row_stride_words: usize,
+    combination: &[usize],
+) -> Vec<u32> {
+    let mut codeword = vec![0; row_stride_words];
     for &row in combination {
-        for (bit, &generator_bit) in codeword.iter_mut().zip(&rows[row]) {
-            *bit ^= generator_bit;
+        for (word, &generator_word) in codeword
+            .iter_mut()
+            .zip(&rows[row * row_stride_words..][..row_stride_words])
+        {
+            *word ^= generator_word;
         }
     }
     codeword
+}
+
+fn packed_weight(row: &[u32]) -> usize {
+    row.iter().map(|word| word.count_ones() as usize).sum()
+}
+
+fn packed_has_logical_effect(
+    row: &[u32],
+    logical_rows: &[u32],
+    logical_count: usize,
+    row_stride_words: usize,
+) -> bool {
+    (0..logical_count).any(|logical| {
+        row.iter()
+            .zip(&logical_rows[logical * row_stride_words..][..row_stride_words])
+            .map(|(&word, &logical_word)| (word & logical_word).count_ones())
+            .sum::<u32>()
+            % 2
+            == 1
+    })
+}
+
+fn unpack_codeword(row: &[u32], codeword_bits: usize) -> Vec<u8> {
+    (0..codeword_bits)
+        .map(|column| ((row[column / 32] >> (column % 32)) & 1) as u8)
+        .collect()
+}
+
+/// Native CPU implementation of [`LevelEnumerationBackend`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CpuLevelEnumerationBackend;
+
+impl LevelEnumerationBackend for CpuLevelEnumerationBackend {
+    type Error = std::convert::Infallible;
+
+    fn enumerate_level(
+        &mut self,
+        input: LevelEnumerationInput<'_>,
+    ) -> Result<LevelEnumerationMinimum, Self::Error> {
+        let mut best_weight = None;
+        let mut best_witness = None;
+        for &systematic_index in input.active_systematic_indices {
+            let rows = &input.systematic_generators[systematic_index].rows;
+            for_each_combination(input.dimension, input.level, |combination| {
+                let candidate =
+                    packed_combination_codeword(rows, input.row_stride_words, combination);
+                if packed_has_logical_effect(
+                    &candidate,
+                    input.logical_rows,
+                    input.logical_count,
+                    input.row_stride_words,
+                ) {
+                    let weight = packed_weight(&candidate);
+                    if best_weight.is_none_or(|current| weight < current) {
+                        best_weight = Some(weight);
+                        best_witness = Some(candidate);
+                    }
+                }
+            });
+        }
+        Ok(LevelEnumerationMinimum {
+            weight: best_weight,
+            witness: best_witness,
+        })
+    }
 }
 
 fn lower_bound_after_level(
@@ -289,11 +468,39 @@ fn parity_check_from_matrix(matrix: &F2Matrix) -> ParityCheckMatrix {
     }
 }
 
-fn matrix_distance(
+fn reconstruct_level_witness(input: LevelEnumerationInput<'_>, target_weight: usize) -> Vec<u8> {
+    for &systematic_index in input.active_systematic_indices {
+        let rows = &input.systematic_generators[systematic_index].rows;
+        let mut witness = None;
+        for_each_combination(input.dimension, input.level, |combination| {
+            if witness.is_some() {
+                return;
+            }
+            let candidate = packed_combination_codeword(rows, input.row_stride_words, combination);
+            if packed_weight(&candidate) == target_weight
+                && packed_has_logical_effect(
+                    &candidate,
+                    input.logical_rows,
+                    input.logical_count,
+                    input.row_stride_words,
+                )
+            {
+                witness = Some(unpack_codeword(&candidate, input.codeword_bits));
+            }
+        });
+        if let Some(witness) = witness {
+            return witness;
+        }
+    }
+    panic!("level-enumeration backend returned a minimum with no matching witness")
+}
+
+fn matrix_distance_with_backend<B: LevelEnumerationBackend>(
     h: &ParityCheckMatrix,
     l: &ParityCheckMatrix,
     max_level: usize,
-) -> Option<BoundedEnumerationDistance> {
+    backend: &mut B,
+) -> Result<Option<BoundedEnumerationDistance>, B::Error> {
     assert_eq!(
         h.num_qubits(),
         l.num_qubits(),
@@ -302,10 +509,20 @@ fn matrix_distance(
     let generator = F2Matrix::from_rows(h.matrix().kernel());
     let dimension = generator.num_rows();
     if dimension == 0 {
-        return None;
+        return Ok(None);
     }
     let systematic_generators = peel_information_sets(&generator);
-    let mut best = seeded_upper_bound(&generator, &systematic_generators, l.matrix())?;
+    let Some(mut best) = seeded_upper_bound(&generator, &systematic_generators, l.matrix()) else {
+        return Ok(None);
+    };
+    let row_stride_words = generator.num_cols().div_ceil(32);
+    let packed_systematic_generators: Vec<_> = systematic_generators
+        .iter()
+        .map(|systematic| PackedSystematicGenerator {
+            rows: pack_rows(&systematic.rows, row_stride_words),
+        })
+        .collect();
+    let logical_rows = pack_matrix(l.matrix(), row_stride_words);
     // The first systematic generator is a basis of the whole code. Weight parity is linear over
     // GF(2), so even basis rows prove that every generated codeword has even weight.
     let even_code = generator
@@ -315,56 +532,93 @@ fn matrix_distance(
     let mut lower_bound = lower_bound_after_level(0, dimension, &systematic_generators, even_code);
     if lower_bound >= row_weight(&best) {
         let witness = verify_result_witness(h, l, &best);
-        return Some(BoundedEnumerationDistance::CertifiedByBounds {
+        return Ok(Some(BoundedEnumerationDistance::CertifiedByBounds {
             distance: row_weight(&best),
             witness,
             lower_bound,
             level: 0,
             lb_certified: true,
-        });
+        }));
     }
 
     for level in 1..=dimension {
         if level > max_level {
             let witness = verify_result_witness(h, l, &best);
-            return Some(BoundedEnumerationDistance::LevelLimitReached {
+            return Ok(Some(BoundedEnumerationDistance::LevelLimitReached {
                 lower_bound,
                 upper_bound: row_weight(&best),
                 witness,
                 max_level,
                 lb_certified: true,
-            });
+            }));
         }
-        for systematic in &systematic_generators {
-            let contribution = (level + 1).saturating_sub(dimension - systematic.rank);
-            if contribution == 0 {
-                // This information set adds zero to the current lower bound, so omitting its
-                // candidates cannot weaken the certificate. It could only improve the optional
-                // upper bound, which the full-rank first information set still updates.
-                continue;
-            }
-            for_each_combination(dimension, level, |combination| {
-                let candidate = combination_codeword(&systematic.rows, combination);
-                if has_logical_effect(&candidate, l.matrix())
-                    && row_weight(&candidate) < row_weight(&best)
-                {
-                    best = candidate;
-                }
-            });
+        let active_systematic_indices: Vec<_> = systematic_generators
+            .iter()
+            .enumerate()
+            .filter_map(|(index, systematic)| {
+                let contribution = (level + 1).saturating_sub(dimension - systematic.rank);
+                (contribution != 0).then_some(index)
+            })
+            .collect();
+        // Information sets omitted here add zero to this level's lower bound. Their candidates
+        // cannot weaken the certificate, while the full-rank first information set still makes
+        // the upper-bound search complete.
+        let input = LevelEnumerationInput {
+            level,
+            dimension,
+            codeword_bits: generator.num_cols(),
+            row_stride_words,
+            systematic_generators: &packed_systematic_generators,
+            active_systematic_indices: &active_systematic_indices,
+            logical_rows: &logical_rows,
+            logical_count: l.matrix().num_rows(),
+        };
+        let level_minimum = backend.enumerate_level(input)?;
+        if let Some(weight) = level_minimum.weight
+            && weight < row_weight(&best)
+        {
+            best = if let Some(witness) = level_minimum.witness {
+                assert_eq!(witness.len(), row_stride_words);
+                assert_eq!(packed_weight(&witness), weight);
+                assert!(packed_has_logical_effect(
+                    &witness,
+                    &logical_rows,
+                    l.matrix().num_rows(),
+                    row_stride_words,
+                ));
+                unpack_codeword(&witness, generator.num_cols())
+            } else {
+                // A minimum-only backend (including the GPU backend) intentionally pays for this
+                // bounded CPU replay only after improving the upper bound. It preserves the exact
+                // witness and tie-breaking behavior of the native systematic/lexicographic loop.
+                reconstruct_level_witness(input, weight)
+            };
         }
         lower_bound = lower_bound_after_level(level, dimension, &systematic_generators, even_code);
         if lower_bound >= row_weight(&best) {
             let witness = verify_result_witness(h, l, &best);
-            return Some(BoundedEnumerationDistance::CertifiedByBounds {
+            return Ok(Some(BoundedEnumerationDistance::CertifiedByBounds {
                 distance: row_weight(&best),
                 witness,
                 lower_bound,
                 level,
                 lb_certified: true,
-            });
+            }));
         }
     }
     unreachable!("enumerating every generator row must exhaust a finite binary code")
+}
+
+fn matrix_distance(
+    h: &ParityCheckMatrix,
+    l: &ParityCheckMatrix,
+    max_level: usize,
+) -> Option<BoundedEnumerationDistance> {
+    let mut backend = CpuLevelEnumerationBackend;
+    match matrix_distance_with_backend(h, l, max_level, &mut backend) {
+        Ok(result) => result,
+        Err(error) => match error {},
+    }
 }
 
 /// Computes binary `(H, L)` distance by bounded generator-row enumeration.
@@ -385,6 +639,27 @@ pub fn bounded_enumeration_code_distance(
     matrix_distance(h, l, max_level)
 }
 
+/// Computes binary `(H, L)` distance using an external level-enumeration backend.
+///
+/// Bounds, deterministic witness selection, and termination remain identical to
+/// [`bounded_enumeration_code_distance`].
+///
+/// # Errors
+///
+/// Returns an error if `backend` cannot enumerate a required level.
+///
+/// # Panics
+///
+/// Panics if the matrices have different widths.
+pub fn bounded_enumeration_code_distance_with_backend<B: LevelEnumerationBackend>(
+    h: &ParityCheckMatrix,
+    l: &ParityCheckMatrix,
+    max_level: usize,
+    backend: &mut B,
+) -> Result<Option<BoundedEnumerationDistance>, B::Error> {
+    matrix_distance_with_backend(h, l, max_level, backend)
+}
+
 /// Computes pure-X bounded-enumeration distance for a CSS-form stabilizer code.
 ///
 /// # Errors
@@ -402,6 +677,25 @@ pub fn bounded_enumeration_x_distance(
     Ok(matrix_distance(&h, &l, max_level))
 }
 
+/// Computes pure-X bounded-enumeration distance using an external level backend.
+///
+/// # Errors
+///
+/// Returns CSS problem errors or errors reported by `backend`.
+pub fn bounded_enumeration_x_distance_with_backend<B: LevelEnumerationBackend>(
+    code: &StabilizerCodeSpec,
+    max_level: usize,
+    backend: &mut B,
+) -> Result<Option<BoundedEnumerationDistance>, BoundedEnumerationBackendError<B::Error>> {
+    let problem = DistanceProblem::from_css_code_x_distance(code)
+        .map_err(BoundedEnumerationBackendError::DistanceProblem)?;
+    let (h, l) = problem.matrices();
+    let h = parity_check_from_matrix(h);
+    let l = parity_check_from_matrix(l);
+    matrix_distance_with_backend(&h, &l, max_level, backend)
+        .map_err(BoundedEnumerationBackendError::Backend)
+}
+
 /// Computes pure-Z bounded-enumeration distance for a CSS-form stabilizer code.
 ///
 /// # Errors
@@ -417,6 +711,25 @@ pub fn bounded_enumeration_z_distance(
     let h = parity_check_from_matrix(h);
     let l = parity_check_from_matrix(l);
     Ok(matrix_distance(&h, &l, max_level))
+}
+
+/// Computes pure-Z bounded-enumeration distance using an external level backend.
+///
+/// # Errors
+///
+/// Returns CSS problem errors or errors reported by `backend`.
+pub fn bounded_enumeration_z_distance_with_backend<B: LevelEnumerationBackend>(
+    code: &StabilizerCodeSpec,
+    max_level: usize,
+    backend: &mut B,
+) -> Result<Option<BoundedEnumerationDistance>, BoundedEnumerationBackendError<B::Error>> {
+    let problem = DistanceProblem::from_css_code_z_distance(code)
+        .map_err(BoundedEnumerationBackendError::DistanceProblem)?;
+    let (h, l) = problem.matrices();
+    let h = parity_check_from_matrix(h);
+    let l = parity_check_from_matrix(l);
+    matrix_distance_with_backend(&h, &l, max_level, backend)
+        .map_err(BoundedEnumerationBackendError::Backend)
 }
 
 /// Computes bounded-enumeration distance for any stabilizer code specification.
@@ -451,6 +764,37 @@ pub fn bounded_enumeration_stabilizer_distance(
     let h = parity_check_from_matrix(&h);
     let l = parity_check_from_matrix(&l);
     Ok(matrix_distance(&h, &l, max_level))
+}
+
+/// Computes general stabilizer-code distance using an external level backend.
+///
+/// # Errors
+///
+/// Returns stabilizer problem errors or errors reported by `backend`.
+pub fn bounded_enumeration_stabilizer_distance_with_backend<B: LevelEnumerationBackend>(
+    code: &StabilizerCodeSpec,
+    max_level: usize,
+    backend: &mut B,
+) -> Result<Option<BoundedEnumerationDistance>, BoundedEnumerationBackendError<B::Error>> {
+    let mechanisms = mechanisms_from_stabilizer_code(code)
+        .map_err(BoundedEnumerationBackendError::DistanceProblem)?;
+    let mut h = F2Matrix::zeros(code.stabilizers().len(), mechanisms.len());
+    let mut l = F2Matrix::zeros(
+        code.logical_zs().len() + code.logical_xs().len(),
+        mechanisms.len(),
+    );
+    for (column, mechanism) in mechanisms.iter().enumerate() {
+        for &detector in &mechanism.detectors {
+            h.set(detector as usize, column, 1);
+        }
+        for &output in &mechanism.dem_outputs {
+            l.set(output as usize, column, 1);
+        }
+    }
+    let h = parity_check_from_matrix(&h);
+    let l = parity_check_from_matrix(&l);
+    matrix_distance_with_backend(&h, &l, max_level, backend)
+        .map_err(BoundedEnumerationBackendError::Backend)
 }
 
 #[cfg(test)]

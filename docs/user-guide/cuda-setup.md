@@ -47,7 +47,8 @@ PECOS records when its CUDA simulator wrappers begin CUDA initialization. If one
 those simulators is later constructed in a child forked from that process, PECOS
 fails fast with the spawn guidance above. PECOS cannot detect CUDA initialization by
 another library in the parent; those cases still surface the guided error from the
-CUDA or cuQuantum layer.
+CUDA or cuQuantum layer. When a marked parent forks, PECOS also emits a one-time
+`RuntimeWarning` with the same guidance before the fork.
 
 ## System Requirements
 

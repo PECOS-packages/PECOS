@@ -83,6 +83,7 @@ class CudaStateVec(StateVector):
 
     def reset(self) -> Self:
         """Reset the quantum state to |0...0>."""
+        check_fork_poison()
         self.backend.reset()
         return self
 

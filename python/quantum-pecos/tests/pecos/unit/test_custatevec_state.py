@@ -61,13 +61,25 @@ def _inject_optional_dependency_stubs(monkeypatch: pytest.MonkeyPatch) -> types.
     driver = types.ModuleType("cupy.cuda.driver")
     runtime.CUDARuntimeError = _StubRuntimeError
     runtime.runtimeGetVersion = Mock(return_value=12000)
+    runtime.deviceGetDefaultMemPool = Mock(return_value=1)
+    runtime.memPoolSetAttribute = Mock()
+    runtime.cudaMemPoolAttrReleaseThreshold = object()
     driver.CUDADriverError = _StubDriverError
     cuda.runtime = runtime
     cuda.driver = driver
-    cuda.Device = Mock()
+    cuda.Device = Mock(
+        return_value=types.SimpleNamespace(attributes={"MemoryPoolsSupported": True}, id=0),
+    )
+    cuda.Stream = Mock(return_value=types.SimpleNamespace(ptr=1))
     cp.cuda = cuda
     cp.complex128 = object()
     cp.zeros = Mock(return_value=[0, 0])
+    cusv = types.SimpleNamespace(
+        create=Mock(return_value=object()),
+        set_stream=Mock(),
+        set_device_mem_handler=Mock(),
+        destroy=Mock(),
+    )
 
     monkeypatch.setitem(sys.modules, "cupy", cp)
     monkeypatch.setitem(sys.modules, "cupy.cuda", cuda)
@@ -77,7 +89,50 @@ def _inject_optional_dependency_stubs(monkeypatch: pytest.MonkeyPatch) -> types.
     monkeypatch.setattr(custatevec_state, "require_custatevec", Mock())
     monkeypatch.setattr(custatevec_state, "cudaDataType", types.SimpleNamespace(CUDA_C_64F=object()))
     monkeypatch.setattr(custatevec_state, "ComputeType", types.SimpleNamespace(COMPUTE_64F=object()))
+    monkeypatch.setattr(custatevec_state, "cusv", cusv)
     return cp
+
+
+def test_custatevec_constructor_marks_cuda_initialized(monkeypatch) -> None:
+    """Successful construction records the wrapper's first CUDA call."""
+    cp = _inject_optional_dependency_stubs(monkeypatch)
+
+    sim = custatevec_state.CuStateVec(1)
+
+    assert vars(guard)["_state"]["cuda_initialized"]
+    cp.zeros.assert_called_once()
+    custatevec_state.cusv.create.assert_called_once()
+    assert sim.libhandle is not None
+    sim.libhandle = None
+
+
+def test_custatevec_constructor_checks_fork_poison_before_cuda(monkeypatch) -> None:
+    """A poisoned child fails before dependency checks or CUDA calls."""
+    cp = _inject_optional_dependency_stubs(monkeypatch)
+    vars(guard)["_state"]["forked_after_cuda_init"] = True
+
+    with pytest.raises(RuntimeError) as exc_info:
+        custatevec_state.CuStateVec(1)
+
+    assert str(exc_info.value) == guard.CUDA_FORK_ERROR_MESSAGE
+    custatevec_state.require_custatevec.assert_not_called()
+    cp.zeros.assert_not_called()
+    cp.cuda.runtime.runtimeGetVersion.assert_not_called()
+    cp.cuda.Device.assert_not_called()
+    custatevec_state.cusv.create.assert_not_called()
+
+
+def test_custatevec_reset_checks_fork_poison(monkeypatch) -> None:
+    """An inherited simulator fails before reset touches its CUDA state."""
+    _inject_optional_dependency_stubs(monkeypatch)
+    sim = custatevec_state.CuStateVec(1)
+    vars(guard)["_state"]["forked_after_cuda_init"] = True
+
+    with pytest.raises(RuntimeError) as exc_info:
+        sim.reset()
+
+    assert str(exc_info.value) == guard.CUDA_FORK_ERROR_MESSAGE
+    sim.libhandle = None
 
 
 def test_cuda_initialization_errors_explain_fork_and_preserve_cause(monkeypatch) -> None:

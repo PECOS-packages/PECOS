@@ -59,7 +59,11 @@ def _mark_forked_child() -> None:
 
 
 def mark_cuda_initialized() -> None:
-    """Record that this process is about to make a real CUDA call."""
+    """Record that this process is about to make a real CUDA call.
+
+    The mark deliberately latches if that call fails because partial driver
+    initialization still makes later forked children unsafe.
+    """
     _state["cuda_initialized"] = True
 
 

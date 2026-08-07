@@ -51,9 +51,13 @@ def test_marked_parent_poisons_forked_child() -> None:
             guard.check_fork_poison()
         except RuntimeError as exc:
             os._exit(0 if str(exc) == guard.CUDA_FORK_ERROR_MESSAGE else 2)
-        os._exit(1)
+        except BaseException:
+            os._exit(3)
+        else:
+            os._exit(1)
 
     assert _wait_for_child(pid) == 0
+    guard.check_fork_poison()
 
 
 def test_unmarked_parent_does_not_poison_forked_child() -> None:
@@ -62,9 +66,10 @@ def test_unmarked_parent_does_not_poison_forked_child() -> None:
     if pid == 0:
         try:
             guard.check_fork_poison()
-        except RuntimeError:
+        except BaseException:
             os._exit(1)
-        os._exit(0)
+        else:
+            os._exit(0)
 
     assert _wait_for_child(pid) == 0
 
@@ -78,7 +83,14 @@ def test_marked_parent_warns_only_once_before_fork() -> None:
         for _ in range(2):
             pid = os.fork()
             if pid == 0:
-                os._exit(0)
+                try:
+                    guard.check_fork_poison()
+                except RuntimeError:
+                    os._exit(0)
+                except BaseException:
+                    os._exit(2)
+                else:
+                    os._exit(1)
             assert _wait_for_child(pid) == 0
 
     fork_warnings = [warning for warning in caught if warning.category is RuntimeWarning]

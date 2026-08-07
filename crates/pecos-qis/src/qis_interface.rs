@@ -182,6 +182,23 @@ pub trait QisInterface: Send + Sync {
         ))
     }
 
+    /// Set an integer-valued measurement outcome for the running program.
+    ///
+    /// Existing interfaces remain Boolean-only by default.
+    fn set_measurement_outcome(
+        &mut self,
+        result_id: u64,
+        value: u64,
+    ) -> Result<(), InterfaceError> {
+        match value {
+            0 => self.set_measurement_result(result_id, false),
+            1 => self.set_measurement_result(result_id, true),
+            _ => Err(InterfaceError::Other(format!(
+                "dynamic interface does not support leakage outcome {value}"
+            ))),
+        }
+    }
+
     /// Signal that the measurement result is ready
     ///
     /// This wakes up the blocked program to continue execution.
@@ -258,6 +275,17 @@ pub trait DynamicSyncHandle: Send + Sync {
     /// # Errors
     /// Returns an error if the FFI call fails or no execution context is registered.
     fn set_measurement_result(&self, result_id: u64, value: bool) -> Result<(), InterfaceError>;
+
+    /// Set an integer-valued measurement outcome for the running program.
+    fn set_measurement_outcome(&self, result_id: u64, value: u64) -> Result<(), InterfaceError> {
+        match value {
+            0 => self.set_measurement_result(result_id, false),
+            1 => self.set_measurement_result(result_id, true),
+            _ => Err(InterfaceError::Other(format!(
+                "dynamic interface does not support leakage outcome {value}"
+            ))),
+        }
+    }
 
     /// Signal that the measurement result is ready
     ///

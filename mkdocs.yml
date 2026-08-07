@@ -72,6 +72,7 @@ nav:
   - QEC Geometry: user-guide/qec-geometry.md
   - QEC with Guppy: user-guide/qec-guppy.md
   - Detector Error Models from Guppy: user-guide/dem-from-guppy.md
+  - Inferring DEM Annotations from Guppy Outputs: user-guide/inferred-guppy-dem.md
   - Decoders: user-guide/decoders.md
   - Graph API: user-guide/graph-api.md
   - Circuit Representation: user-guide/circuit-representation.md

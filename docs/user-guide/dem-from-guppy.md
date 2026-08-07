@@ -2,8 +2,21 @@
 
 This guide covers `DetectorErrorModel.from_guppy`, which builds a
 circuit-level detector error model (DEM) from a Guppy program by tracing it
-through the Selene QIS engine. This is the recommended way to get a DEM for
-a logical circuit you intend to run on a Selene-compatible runtime.
+through the Selene QIS engine. Use this entry point when detector and
+observable definitions are already available as records, measurement IDs, or
+scalar measurement-result tags.
+
+If the program has only computed detector and observable **values**, choose the
+inferred-output workflow instead:
+
+| Available information | Entry point |
+| --- | --- |
+| Static parity definitions | `DetectorErrorModel.from_guppy` (this guide) |
+| Raw measurements plus computed detector/observable outputs | [`infer_guppy_dem_annotations`](inferred-guppy-dem.md) |
+| An annotated `TickCircuit` | `DetectorErrorModel.from_circuit` |
+
+The inferred-output workflow leaves an existing Guppy program unchanged and
+recovers the missing static definitions from its `result()` outputs.
 
 ## What You'll Learn
 

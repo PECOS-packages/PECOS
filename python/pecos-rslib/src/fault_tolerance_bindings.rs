@@ -71,6 +71,15 @@ use pecos_qec::fault_tolerance::fault_distance::{
     graphlike_fault_distance as rust_graphlike_fault_distance,
     per_observable_fault_distances as rust_per_observable_fault_distances,
 };
+use pecos_qec::fault_tolerance::fault_distance_upper_bound::{
+    FaultDistanceBpMethod as RustFaultDistanceBpMethod,
+    FaultDistanceBpSchedule as RustFaultDistanceBpSchedule,
+    FaultDistanceObservableSubsetStrategy as RustFaultDistanceObservableSubsetStrategy,
+    FaultDistanceOsdMethod as RustFaultDistanceOsdMethod,
+    FaultDistanceUpperBoundConfig as RustFaultDistanceUpperBoundConfig,
+    FaultDistanceUpperBoundResult as RustFaultDistanceUpperBoundResult,
+    randomized_fault_distance_upper_bound as rust_randomized_fault_distance_upper_bound,
+};
 use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
 use pecos_qec::fault_tolerance::propagator::{
     DagFaultAnalyzer as RustDagFaultAnalyzer, DagFaultInfluenceMap as RustDagFaultInfluenceMap,
@@ -1316,6 +1325,172 @@ impl PyFaultDistanceResult {
     }
 }
 
+/// Fully explicit randomized fault-distance upper-bound configuration.
+#[pyclass(
+    frozen,
+    name = "FaultDistanceUpperBoundConfig",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFaultDistanceUpperBoundConfig {
+    inner: RustFaultDistanceUpperBoundConfig,
+}
+
+fn parse_fault_distance_subset_strategy(
+    value: &str,
+) -> PyResult<RustFaultDistanceObservableSubsetStrategy> {
+    match value {
+        "each_single_then_random" => {
+            Ok(RustFaultDistanceObservableSubsetStrategy::EachSingleThenRandom)
+        }
+        "random_nonempty" => Ok(RustFaultDistanceObservableSubsetStrategy::RandomNonempty),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "observable_subset_strategy must be 'each_single_then_random' or 'random_nonempty', got {value:?}"
+        ))),
+    }
+}
+
+fn parse_fault_distance_bp_method(value: &str) -> PyResult<RustFaultDistanceBpMethod> {
+    match value {
+        "product_sum" => Ok(RustFaultDistanceBpMethod::ProductSum),
+        "minimum_sum" => Ok(RustFaultDistanceBpMethod::MinimumSum),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "bp_method must be 'product_sum' or 'minimum_sum', got {value:?}"
+        ))),
+    }
+}
+
+fn parse_fault_distance_bp_schedule(value: &str) -> PyResult<RustFaultDistanceBpSchedule> {
+    match value {
+        "serial" => Ok(RustFaultDistanceBpSchedule::Serial),
+        "parallel" => Ok(RustFaultDistanceBpSchedule::Parallel),
+        "serial_relative" => Ok(RustFaultDistanceBpSchedule::SerialRelative),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "bp_schedule must be 'serial', 'parallel', or 'serial_relative', got {value:?}"
+        ))),
+    }
+}
+
+fn parse_fault_distance_osd_method(value: &str) -> PyResult<RustFaultDistanceOsdMethod> {
+    match value {
+        "off" => Ok(RustFaultDistanceOsdMethod::Off),
+        "osd_0" => Ok(RustFaultDistanceOsdMethod::Osd0),
+        "osd_e" => Ok(RustFaultDistanceOsdMethod::OsdE),
+        "osd_cs" => Ok(RustFaultDistanceOsdMethod::OsdCs),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "osd_method must be 'off', 'osd_0', 'osd_e', or 'osd_cs', got {value:?}"
+        ))),
+    }
+}
+
+#[pymethods]
+impl PyFaultDistanceUpperBoundConfig {
+    #[new]
+    #[pyo3(signature = (samples, seed, observable_subset_strategy, error_rate, max_iterations, bp_method, bp_schedule, min_sum_scaling_factor, osd_method, osd_order, omp_threads))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        samples: usize,
+        seed: u64,
+        observable_subset_strategy: &str,
+        error_rate: f64,
+        max_iterations: usize,
+        bp_method: &str,
+        bp_schedule: &str,
+        min_sum_scaling_factor: f64,
+        osd_method: &str,
+        osd_order: usize,
+        omp_threads: usize,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: RustFaultDistanceUpperBoundConfig {
+                samples,
+                seed,
+                observable_subset_strategy: parse_fault_distance_subset_strategy(
+                    observable_subset_strategy,
+                )?,
+                error_rate,
+                max_iterations,
+                bp_method: parse_fault_distance_bp_method(bp_method)?,
+                bp_schedule: parse_fault_distance_bp_schedule(bp_schedule)?,
+                min_sum_scaling_factor,
+                osd_method: parse_fault_distance_osd_method(osd_method)?,
+                osd_order,
+                omp_threads,
+            },
+        })
+    }
+
+    #[getter]
+    fn samples(&self) -> usize {
+        self.inner.samples
+    }
+
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.inner.seed
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FaultDistanceUpperBoundConfig(samples={}, seed={}, observable_subset_strategy={:?}, error_rate={}, max_iterations={}, bp_method={:?}, bp_schedule={:?}, min_sum_scaling_factor={}, osd_method={:?}, osd_order={}, omp_threads={})",
+            self.inner.samples,
+            self.inner.seed,
+            self.inner.observable_subset_strategy,
+            self.inner.error_rate,
+            self.inner.max_iterations,
+            self.inner.bp_method,
+            self.inner.bp_schedule,
+            self.inner.min_sum_scaling_factor,
+            self.inner.osd_method,
+            self.inner.osd_order,
+            self.inner.omp_threads,
+        )
+    }
+}
+
+/// Natively verified randomized fault-distance upper bound.
+#[pyclass(
+    frozen,
+    name = "FaultDistanceUpperBoundResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFaultDistanceUpperBoundResult {
+    #[pyo3(get)]
+    weight: usize,
+    #[pyo3(get)]
+    mechanism_indices: Vec<usize>,
+    #[pyo3(get)]
+    samples_run: usize,
+}
+
+impl From<RustFaultDistanceUpperBoundResult> for PyFaultDistanceUpperBoundResult {
+    fn from(result: RustFaultDistanceUpperBoundResult) -> Self {
+        Self {
+            weight: result.weight,
+            mechanism_indices: result.mechanism_indices,
+            samples_run: result.samples_run,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFaultDistanceUpperBoundResult {
+    #[getter]
+    fn bound_kind(&self) -> &'static str {
+        "upper_bound"
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FaultDistanceUpperBoundResult(weight={}, mechanism_indices={:?}, samples_run={}, bound_kind='upper_bound')",
+            self.weight, self.mechanism_indices, self.samples_run
+        )
+    }
+}
+
 /// A Detector Error Model (DEM) in standard DEM text format.
 ///
 /// This represents the error model of a quantum circuit, mapping error
@@ -1741,6 +1916,19 @@ impl PyDetectorErrorModel {
     /// This supports hyperedges but has combinatorial cost in the number of mechanisms.
     fn exhaustive_fault_distance(&self, max_weight: usize) -> Option<PyFaultDistanceResult> {
         rust_exhaustive_fault_distance(&self.inner, max_weight).map(PyFaultDistanceResult::from)
+    }
+
+    /// Sample natively verified decoder witnesses for a fault-distance upper bound.
+    ///
+    /// A return value is only an upper bound and never certifies exactness. Invalid decoder
+    /// vectors are discarded by native detector and observable parity checks.
+    fn randomized_fault_distance_upper_bound(
+        &self,
+        config: &PyFaultDistanceUpperBoundConfig,
+    ) -> PyResult<Option<PyFaultDistanceUpperBoundResult>> {
+        rust_randomized_fault_distance_upper_bound(&self.inner, &config.inner)
+            .map(|result| result.map(PyFaultDistanceUpperBoundResult::from))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Convert the DEM to a string in standard DEM format.
@@ -8156,6 +8344,8 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyInfluenceBuilder>()?;
     qec.add_class::<PyPauliFrameLookup>()?;
     qec.add_class::<PyFaultDistanceResult>()?;
+    qec.add_class::<PyFaultDistanceUpperBoundConfig>()?;
+    qec.add_class::<PyFaultDistanceUpperBoundResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;

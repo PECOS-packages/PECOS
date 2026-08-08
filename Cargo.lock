@@ -4653,6 +4653,7 @@ dependencies = [
  "ndarray 0.17.2",
  "pecos-core",
  "pecos-decoder-core",
+ "pecos-ldpc-decoders",
  "pecos-neo",
  "pecos-num",
  "pecos-quantum",

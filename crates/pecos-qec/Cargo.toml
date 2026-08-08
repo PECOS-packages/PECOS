@@ -15,6 +15,7 @@ readme = "README.md"
 ndarray.workspace = true
 pecos-core.workspace = true
 pecos-decoder-core.workspace = true
+pecos-ldpc-decoders.workspace = true
 pecos-num.workspace = true
 pecos-quantum.workspace = true
 pecos-simulators.workspace = true

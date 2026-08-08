@@ -22,6 +22,7 @@ pub mod correlation;
 pub mod decoder_integration;
 pub mod dem_builder;
 pub mod fault_distance;
+pub mod fault_distance_upper_bound;
 pub mod fault_sampler;
 pub mod flag_verification;
 pub mod gadget_checker;
@@ -50,6 +51,12 @@ pub use decoder_integration::{
 pub use fault_distance::{
     FaultDistanceError, FaultDistanceResult, connected_cluster_fault_distance,
     exhaustive_fault_distance, graphlike_fault_distance, per_observable_fault_distances,
+};
+pub use fault_distance_upper_bound::{
+    FaultDistanceBoundKind, FaultDistanceBpMethod, FaultDistanceBpSchedule,
+    FaultDistanceObservableSubsetStrategy, FaultDistanceOsdMethod, FaultDistanceUpperBoundConfig,
+    FaultDistanceUpperBoundError, FaultDistanceUpperBoundResult,
+    randomized_fault_distance_upper_bound,
 };
 pub use flag_verification::{FlagFaultToleranceReport, FlagViolation};
 pub use gadget_checker::{

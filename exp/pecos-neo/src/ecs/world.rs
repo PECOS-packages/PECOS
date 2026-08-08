@@ -597,7 +597,7 @@ mod tests {
     fn test_world_spawn_with_simulator() {
         let mut world: World<SparseStab> = World::new(42);
 
-        let e = world.spawn_with_simulator(SparseStab::new(2));
+        let e = world.spawn_with_simulator(SparseStab::with_seed(2, 42));
 
         assert!(world.simulators.contains(e));
         assert!(world.rngs.contains(e));
@@ -611,7 +611,7 @@ mod tests {
     fn test_world_despawn() {
         let mut world: World<SparseStab> = World::new(42);
 
-        let e = world.spawn_with_simulator(SparseStab::new(2));
+        let e = world.spawn_with_simulator(SparseStab::with_seed(2, 42));
         assert!(world.is_alive(e));
 
         world.despawn(e);
@@ -624,7 +624,7 @@ mod tests {
     fn test_world_clone_entity() {
         let mut world: World<SparseStab> = World::new(42);
 
-        let original = world.spawn_with_simulator(SparseStab::new(2));
+        let original = world.spawn_with_simulator(SparseStab::with_seed(2, 42));
         let clone = world.clone_entity(original).unwrap();
 
         assert_ne!(original, clone);
@@ -641,7 +641,7 @@ mod tests {
     fn test_world_split_entity() {
         let mut world: World<SparseStab> = World::new(42);
 
-        let original = world.spawn_with_simulator(SparseStab::new(2));
+        let original = world.spawn_with_simulator(SparseStab::with_seed(2, 42));
 
         // Get original weight
         let orig_weight = world.weights.get(original).unwrap().weight.weight();
@@ -673,7 +673,7 @@ mod tests {
         let mut world: World<SparseStab> = World::new(42);
 
         for _ in 0..10 {
-            world.spawn_with_simulator(SparseStab::new(2));
+            world.spawn_with_simulator(SparseStab::with_seed(2, 42));
         }
 
         let entities: Vec<EntityId> = world.entities().collect();
@@ -685,8 +685,8 @@ mod tests {
     fn test_world_prune_by_weight() {
         let mut world: World<SparseStab> = World::new(42);
 
-        let e1 = world.spawn_with_simulator(SparseStab::new(2));
-        let e2 = world.spawn_with_simulator(SparseStab::new(2));
+        let e1 = world.spawn_with_simulator(SparseStab::with_seed(2, 42));
+        let e2 = world.spawn_with_simulator(SparseStab::with_seed(2, 42));
 
         // Set e2 to very low weight
         world.weights.get_mut(e2).unwrap().weight = SampleWeight::from_linear(0.001);
@@ -702,8 +702,8 @@ mod tests {
     fn test_world_spawn_with_full_seeding() {
         let mut world: World<SparseStab> = World::new(42);
 
-        let e1 = world.spawn_with_full_seeding(SparseStab::new(2));
-        let e2 = world.spawn_with_full_seeding(SparseStab::new(2));
+        let e1 = world.spawn_with_full_seeding(SparseStab::with_seed(2, 42));
+        let e2 = world.spawn_with_full_seeding(SparseStab::with_seed(2, 42));
 
         assert!(world.is_alive(e1));
         assert!(world.is_alive(e2));
@@ -719,8 +719,8 @@ mod tests {
         let mut world1: World<SparseStab> = World::new(42);
         let mut world2: World<SparseStab> = World::new(42);
 
-        let e1a = world1.spawn_with_full_seeding(SparseStab::new(2));
-        let e1b = world2.spawn_with_full_seeding(SparseStab::new(2));
+        let e1a = world1.spawn_with_full_seeding(SparseStab::with_seed(2, 42));
+        let e1b = world2.spawn_with_full_seeding(SparseStab::with_seed(2, 42));
 
         // Entity IDs should match
         assert_eq!(e1a, e1b);

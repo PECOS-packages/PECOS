@@ -34,10 +34,25 @@ various target formats including QASM, QIR, Stim, and QuantumCircuit.
 For AST-based code generation, see :mod:`pecos.slr.ast.codegen`.
 """
 
+from importlib import import_module
+
 from pecos.slr.gen_codes.gen_qasm import QASMGenerator
-from pecos.slr.gen_codes.gen_qir import QIRGenerator
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.gen_codes.gen_stim import StimGenerator
+
+
+def __getattr__(name: str) -> object:
+    if name == "QIRGenerator":
+        qir_generator = import_module("pecos.slr.gen_codes.gen_qir").QIRGenerator
+        globals()[name] = qir_generator
+        return qir_generator
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), "QIRGenerator"})
+
 
 __all__ = [
     "QASMGenerator",

@@ -132,7 +132,8 @@ cargo run -p pecos-cli -- llvm find
 
 `llvm check` also reports LLVM's link mode. PECOS Rust builds prefer
 `libLLVM-21.so` when a shared LLVM 21.1 installation is available; static LLVM
-is only suitable for targeted builds.
+is only suitable for targeted builds. (Release wheels follow a different,
+per-platform policy — see [Shared vs Static LLVM](#shared-vs-static-llvm).)
 
 For `pecos rust test` and `just dev`, PECOS requires shared LLVM. On a Linux
 x86_64 developer machine, one static LLVM test link measured about 4 GB peak
@@ -252,17 +253,32 @@ LLVM_SYS_211_PREFIX = { value = "/path/to/llvm", force = true }
 
 ### Shared vs Static LLVM
 
-PECOS enables inkwell's `llvm21-1-prefer-dynamic` feature. That means Rust
-builds use `libLLVM-21.so` / `libLLVM.dylib` when `llvm-config --link-shared`
-can provide it. The managed installer rejects static LLVM because the normal
-development test path links many LLVM-using test binaries.
+Development and source builds enable inkwell's `llvm21-1-prefer-dynamic`
+feature. They use `libLLVM-21.so` / `libLLVM.dylib` when
+`llvm-config --link-shared` can provide it. On non-Windows platforms,
+`pecos rust test` and `just dev` refuse static-only LLVM because the normal
+development test path links many LLVM-using test binaries; linking LLVM
+statically into each one has a much higher peak memory cost. (Windows always
+links LLVM statically: llvm-sys does not support dynamic LLVM on MSVC.)
+
+Release `pecos-rslib-llvm` wheels use a different policy. The Linux release
+lane selects inkwell's `llvm21-1-force-static` feature at build time: LLVM is
+linked into the extension, and the extension's export list hides LLVM's
+symbols, so the wheel can coexist in one process with packages that load
+another LLVM. Windows wheels are statically linked already via llvm-sys's
+MSVC behavior. macOS release wheels keep shared LLVM with a bundled dylib
+(macOS's two-level namespace already prevents the cross-library symbol
+capture this protects against on Linux). The workspace manifest remains
+`prefer-dynamic` for source development; the Linux release lane patches that
+single feature selection only while building the LLVM wheel and restores it
+afterward.
 
 System package manager installs usually provide shared LLVM. On Debian/Ubuntu
 compatible Linux distributions, the managed installer uses the apt.llvm.org
 LLVM 21 packages locally under `~/.pecos/deps/llvm-21.1/`, without installing
 system packages.
 
-When LLVM is shared, PECOS CLI commands add LLVM's `libdir` to the runtime
+For shared source builds, PECOS CLI commands add LLVM's `libdir` to the runtime
 library path for child Cargo commands. That lets locally configured shared LLVM
 installs work without editing your shell startup files.
 

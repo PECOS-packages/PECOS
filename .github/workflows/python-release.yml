@@ -537,7 +537,27 @@ jobs:
           path: ./wheelhouse/*.whl
           if-no-files-found: error
 
-      # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build)
+      - name: Install uv for Linux wheel verification
+        if: runner.os == 'Linux'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version-file: ".github/uv.toml"
+          enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+      # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build).
+      # Linux only: Windows already links LLVM statically (llvm-sys has no dynamic
+      # support on MSVC), and macOS deliberately keeps shared LLVM with a bundled dylib.
+      - name: Select static LLVM linkage for pecos-rslib-llvm release wheel
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          test "$(git grep -l 'llvm21-1-prefer-dynamic' -- '*Cargo.toml')" = "Cargo.toml"
+          test "$(grep -c 'llvm21-1-prefer-dynamic' Cargo.toml)" -eq 1
+          sed -i 's/llvm21-1-prefer-dynamic/llvm21-1-force-static/' Cargo.toml
+          test "$(grep -c 'llvm21-1-force-static' Cargo.toml)" -eq 1
+          ! grep -q 'llvm21-1-prefer-dynamic' Cargo.toml
+
       - name: Build pecos-rslib-llvm wheels
         uses: pypa/cibuildwheel@298ed2fb2c105540f5ed055e8a6ad78d82dd3a7e # v3.3.1
         with:
@@ -613,6 +633,19 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
             delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
+
+      - name: Restore workspace LLVM linkage after release wheel
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: git checkout -- Cargo.toml
+
+      - name: Verify static LLVM release wheel isolation
+        if: runner.os == 'Linux'
+        run: >
+          uv run --frozen --no-project --python 3.12 --with patchelf==0.17.2.4 python scripts/ci/verify_static_llvm_wheels.py
+          --base-wheel wheelhouse/*.whl
+          --llvm-wheel wheelhouse-llvm/*.whl
+          --llvm-archive .ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
 
       - name: Verify pecos-rslib-llvm wheel platform tag
         run: >

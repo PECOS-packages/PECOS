@@ -761,7 +761,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42)).with_seed(42);
         let result = explorer.run_and_record(&commands);
 
         assert_eq!(result.path.len(), 1);
@@ -772,7 +772,7 @@ mod tests {
     fn test_path_explorer_replay() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(1));
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42));
 
         // Force outcome 0
         let path0 = EnumeratedPath { bits: 0, len: 1 };
@@ -794,7 +794,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42)).with_seed(42);
         let result = explorer.run_and_record(&commands);
 
         assert!(!result.outcomes.get_bit(QubitId(0)).unwrap());
@@ -812,7 +812,7 @@ mod tests {
             .fdg(&[0])
             .mz(&[0])
             .build();
-        let mut explorer = PathExplorer::new(SparseStab::new(1));
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42));
         let forced_one = EnumeratedPath { bits: 1, len: 1 };
 
         let result = explorer.run_with_path(&commands, &forced_one);
@@ -827,7 +827,7 @@ mod tests {
         // Should have 50% probability of each outcome
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(1));
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42));
         let mut stats = PathStatistics::new();
 
         // Enumerate all paths (just 2 for 1 measurement)
@@ -866,7 +866,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(2));
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(2, 42));
 
         // The first measurement is non-deterministic (50/50)
         // The second is deterministic (correlated with first)

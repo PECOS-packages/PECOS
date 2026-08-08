@@ -1,6 +1,6 @@
 [project]
 name = "pecos-selene-mast"
-version = "0.9.0.dev2"
+version = "0.9.0.dev3"
 requires-python = ">=3.10"
 description = "PECOS Mast simulator plugin for the Selene quantum emulator"
 license = "Apache-2.0"

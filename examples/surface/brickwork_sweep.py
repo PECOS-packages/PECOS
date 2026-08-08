@@ -196,7 +196,7 @@ def run_sweep(
                     t0 = time.perf_counter()
                     parsed = ParsedDem.from_string(dem_str)
                     rust_sampler = parsed.to_dem_sampler()
-                    batch = rust_sampler.generate_samples(shots, seed=circuit_seed + cell_idx)
+                    batch = rust_sampler.sample_batch(shots, seed=circuit_seed + cell_idx)
                     sample_sec = time.perf_counter() - t0
 
                     point = BrickworkPoint(
@@ -690,7 +690,7 @@ def main():
                 sc = b.stab_coords()
                 dem_str = b.build_dem(p1=p, p2=p, p_meas=p, p_prep=p)
                 parsed = ParsedDem.from_string(dem_str)
-                batch = parsed.to_dem_sampler().generate_samples(args.shots, seed=args.seed)
+                batch = parsed.to_dem_sampler().sample_batch(args.shots, seed=args.seed)
 
                 point = BrickworkPoint(
                     distance=d,

@@ -201,7 +201,7 @@ def run_comparison(
 
             # Generate samples once
             t0 = time.perf_counter()
-            sample_batch = sampler.sampler.generate_samples(shots, seed=seed + config_idx)
+            sample_batch = sampler.sampler.sample_batch(shots, seed=seed + config_idx)
             sample_seconds = time.perf_counter() - t0
 
             results: list[DecoderResult] = []

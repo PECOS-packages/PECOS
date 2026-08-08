@@ -40,7 +40,7 @@ fn run_general_noise_model(
     num_qubits: usize,
     num_shots: usize,
 ) -> BTreeMap<String, usize> {
-    let quantum = Box::new(StateVecEngine::new(num_qubits));
+    let quantum = Box::new(StateVecEngine::with_seed(num_qubits, 42));
     let mut system = QuantumSystem::new(Box::new(noise_model), quantum);
     system.set_seed(42);
 
@@ -88,7 +88,7 @@ fn run_composable_noise_model(
     num_qubits: usize,
     num_shots: usize,
 ) -> BTreeMap<String, usize> {
-    let mut state = SparseStab::new(num_qubits);
+    let mut state = SparseStab::with_seed(num_qubits, 42);
     let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(noise_model)
         .with_seed(42);
@@ -595,7 +595,7 @@ fn test_idle_noise_with_time_scale() {
         .mz(&[0])
         .build();
 
-    let mut state = SparseStab::new(1);
+    let mut state = SparseStab::with_seed(1, 42);
     let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(model)
         .with_seed(42);

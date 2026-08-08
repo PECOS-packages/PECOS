@@ -4,7 +4,7 @@
 """Tests for SampleBatch columnar storage and validation."""
 
 import pytest
-from pecos_rslib.qec import DemSampler, SampleBatch
+from pecos_rslib.qec import DemSampler, ParsedDem, SampleBatch
 
 
 class TestSampleBatchConstruction:
@@ -38,6 +38,21 @@ class TestSampleBatchConstruction:
         batch = SampleBatch([], [])
         assert batch.num_shots == 0
 
+    def test_observable_flips_preserves_explicit_width_for_empty_masks(self):
+        batch = SampleBatch([[1, 0], [0, 1]], [0, 0], num_observables=3)
+        assert batch.observable_flips() == [[False, False, False], [False, False, False]]
+
+    def test_observable_flips_infers_width_from_highest_set_bit(self):
+        batch = SampleBatch([[1, 0], [0, 1]], [0, 1 << 3])
+        assert batch.observable_flips() == [
+            [False, False, False, False],
+            [False, False, False, True],
+        ]
+
+    def test_explicit_observable_width_rejects_out_of_range_mask_bit(self):
+        with pytest.raises(ValueError, match=r"mask bit 3.*num_observables=3"):
+            SampleBatch([[1, 0]], [1 << 3], num_observables=3)
+
 
 class TestGeneratedSampleBatch:
     @pytest.fixture
@@ -63,18 +78,45 @@ class TestGeneratedSampleBatch:
 
     def test_num_shots(self, d3_setup):
         sampler, _ = d3_setup
-        batch = sampler.generate_samples(100, seed=42)
+        batch = sampler.sample_batch(100, seed=42)
+        assert type(batch) is SampleBatch
         assert batch.num_shots == 100
+
+    def test_bulk_accessors_match_per_shot_accessors(self, d3_setup):
+        sampler, _ = d3_setup
+        batch = sampler.sample_batch(73, seed=1234)
+
+        detector_events = batch.detector_events()
+        observable_flips = batch.observable_flips()
+        assert len(detector_events) == batch.num_shots
+        assert len(observable_flips) == batch.num_shots
+        for shot in range(batch.num_shots):
+            assert detector_events[shot] == [bool(value) for value in batch.get_syndrome(shot)]
+            mask = batch.get_observable_mask(shot)
+            assert observable_flips[shot] == [
+                bool(mask & (1 << observable)) for observable in range(sampler.num_observables)
+            ]
+
+    def test_parsed_dem_sample_batch_returns_sample_batch(self):
+        parsed = ParsedDem.from_string("error(0.25) D0 L0")
+        assert type(parsed.sample_batch(5, seed=7)) is SampleBatch
+
+    def test_parsed_dem_row_conversion_preserves_exact_column_positions(self):
+        parsed = ParsedDem.from_string("error(1.0) D0 D2 L0")
+        batch = parsed.sample_batch(4, seed=7)
+
+        assert batch.detector_events() == [[True, False, True]] * 4
+        assert batch.observable_flips() == [[True]] * 4
 
     def test_get_syndrome_shape(self, d3_setup):
         sampler, _ = d3_setup
-        batch = sampler.generate_samples(10, seed=42)
+        batch = sampler.sample_batch(10, seed=42)
         syn = batch.get_syndrome(0)
         assert len(syn) == sampler.num_detectors
 
     def test_get_observable_mask_type(self, d3_setup):
         sampler, _ = d3_setup
-        batch = sampler.generate_samples(10, seed=42)
+        batch = sampler.sample_batch(10, seed=42)
         mask = batch.get_observable_mask(0)
         assert isinstance(mask, int)
 
@@ -89,7 +131,7 @@ class TestGeneratedSampleBatch:
             stim.Circuit(stim_str).detector_error_model(decompose_errors=True),
         )
 
-        batch = sampler.generate_samples(1000, seed=42)
+        batch = sampler.sample_batch(1000, seed=42)
         errors = batch.decode_count(dem_str, "pymatching")
         assert isinstance(errors, int)
         assert 0 <= errors <= 1000

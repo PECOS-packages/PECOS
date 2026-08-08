@@ -99,7 +99,7 @@ fn test_hadamard_distribution_high_statistics() {
     let mc_results = MonteCarloRunner::run(
         &commands,
         &mc_config,
-        || (CircuitRunner::new(), SparseStab::new(1)),
+        || (CircuitRunner::new(), SparseStab::with_seed(1, 42)),
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     );
 
@@ -116,7 +116,7 @@ fn test_hadamard_distribution_high_statistics() {
     let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(coord_config);
 
     let coord_results = coordinator.run(
-        || SparseStab::new(1),
+        || SparseStab::with_seed(1, 42),
         |world| {
             let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
@@ -189,7 +189,7 @@ fn test_bell_state_distribution_high_statistics() {
     let mc_results = MonteCarloRunner::run(
         &commands,
         &mc_config,
-        || (CircuitRunner::new(), SparseStab::new(2)),
+        || (CircuitRunner::new(), SparseStab::with_seed(2, 42)),
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
@@ -276,7 +276,10 @@ fn test_depolarizing_noise_rate_validation() {
             &mc_config,
             || {
                 let noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
-                (CircuitRunner::new().with_noise(noise), SparseStab::new(1))
+                (
+                    CircuitRunner::new().with_noise(noise),
+                    SparseStab::with_seed(1, 42),
+                )
             },
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
@@ -333,7 +336,10 @@ fn test_measurement_error_rate_validation() {
                 let noise = GeneralNoiseModelBuilder::new()
                     .with_p_meas(p_meas, 0.0) // Only 0->1 flip
                     .build();
-                (CircuitRunner::new().with_noise(noise), SparseStab::new(1))
+                (
+                    CircuitRunner::new().with_noise(noise),
+                    SparseStab::with_seed(1, 42),
+                )
             },
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
@@ -418,7 +424,7 @@ fn test_neo_vs_engines_bell_state_comparison() {
     let neo_results = MonteCarloRunner::run(
         &commands,
         &mc_config,
-        || (CircuitRunner::new(), SparseStab::new(2)),
+        || (CircuitRunner::new(), SparseStab::with_seed(2, 42)),
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
@@ -527,7 +533,10 @@ fn test_neo_vs_engines_noisy_comparison() {
                 .with_p1(p1)
                 .with_p2(p2)
                 .build();
-            (CircuitRunner::new().with_noise(noise), SparseStab::new(2))
+            (
+                CircuitRunner::new().with_noise(noise),
+                SparseStab::with_seed(2, 42),
+            )
         },
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);

@@ -873,12 +873,12 @@ mod tests {
             .with_p_meas_symmetric(0.1)
             .build();
 
-        let mut state_a = SparseStab::new(1);
+        let mut state_a = SparseStab::with_seed(1, 42);
         let mut runner_a = CircuitRunner::<SparseStab>::new()
             .with_noise(noise_a)
             .with_seed(42);
 
-        let mut state_b = SparseStab::new(1);
+        let mut state_b = SparseStab::with_seed(1, 42);
         let mut runner_b = CircuitRunner::<SparseStab>::new()
             .with_noise(noise_b)
             .with_seed(42);
@@ -1294,7 +1294,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
@@ -1329,7 +1329,7 @@ mod tests {
             .build();
 
         // Run with GeneralNoiseModelBuilder - count Z basis measurements
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut general_ones = 0;
         for seed in 0..shots {
             let model = GeneralNoiseModelBuilder::new().with_p1(p1).build();
@@ -1397,7 +1397,7 @@ mod tests {
             .build();
 
         // Run with GeneralNoiseModelBuilder
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut general_errors = 0;
         for seed in 0..shots {
             let model = GeneralNoiseModelBuilder::new().with_p2(p2).build();
@@ -1460,7 +1460,7 @@ mod tests {
         let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
         // Run with GeneralNoiseModelBuilder - errors should flip to 1
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut general_ones = 0;
         for seed in 0..shots {
             let model = GeneralNoiseModelBuilder::new()

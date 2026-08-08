@@ -313,7 +313,7 @@ def run_comparison(
                     **sampler_params,
                     idle_rz=idle_rz if idle_rz > 0 else None,
                 )
-                batch = sampler.generate_samples(shots, seed=seed)
+                batch = sampler.sample_batch(shots, seed=seed)
             t_sample = time.perf_counter() - t0
             print(f"  Sampled {shots} shots in {t_sample:.2f}s")
 

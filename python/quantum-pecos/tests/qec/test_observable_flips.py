@@ -138,9 +138,9 @@ def test_sample_batch_observable_metadata_and_shot_bounds() -> None:
 
     assert batch.num_shots == 2
     assert batch.num_observables == 2
-    assert batch.observable_flips(1) == ObservableFlips.from_mask(3, 2)
+    assert batch.get_observable_flips(1) == ObservableFlips.from_mask(3, 2)
     with pytest.raises(IndexError, match=r"Shot index 2.*num_shots=2"):
-        batch.observable_flips(2)
+        batch.get_observable_flips(2)
 
 
 def test_uniform_loop_preserves_one_observable_error_counts() -> None:
@@ -157,7 +157,7 @@ def test_uniform_loop_preserves_one_observable_error_counts() -> None:
     for shot in range(batch.num_shots):
         syndrome = batch.get_syndrome(shot)
         actual_mask = batch.get_observable_mask(shot) & 1
-        actual_flips = batch.observable_flips(shot)
+        actual_flips = batch.get_observable_flips(shot)
         results = {name: decoder.decode_syndrome(syndrome) for name, decoder in decoders.items()}
 
         old_counts["pymatching"] += results["pymatching"].correction[0] != actual_mask
@@ -176,7 +176,7 @@ def test_any_observable_and_per_observable_counts_are_distinct() -> None:
     per_observable_errors = [0] * batch.num_observables
 
     for shot, predicted in enumerate(predictions):
-        actual = batch.observable_flips(shot)
+        actual = batch.get_observable_flips(shot)
         any_observable_errors += predicted != actual
         for index in range(batch.num_observables):
             per_observable_errors[index] += predicted[index] != actual[index]
@@ -189,7 +189,7 @@ def test_wide_observables_are_not_truncated_end_to_end() -> None:
     dem = _wide_dem()
     syndrome = [0, 1]
     batch = SampleBatch([syndrome], [1 << 70])
-    actual = batch.observable_flips(0)
+    actual = batch.get_observable_flips(0)
     decoders = [
         PyMatchingDecoder.from_dem(dem),
         DemAwareDecoder.from_dem(dem, decoder_type="bp_osd"),

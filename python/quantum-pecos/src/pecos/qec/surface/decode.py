@@ -3663,7 +3663,7 @@ def surface_code_memory(
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
-    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(shots, seed)
+    batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(shots, seed)
     num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_mask(shot) != 0)
     num_logical_errors = batch.decode_count(dem, decoder_type) if decode else num_raw_errors
 
@@ -3932,19 +3932,22 @@ class NativeSampler:
             - observable_flips: shape (num_shots, num_observables)
         """
         if pauli_masks is None:
-            det_events, obs_flips = self.sampler.sample_batch(num_shots, seed)
+            batch = self.sampler.sample_batch(num_shots, seed)
         else:
             if self.pauli_frame_lookup is None:
                 msg = "pauli_masks require build_native_sampler(..., twirl=TwirlConfig())"
                 raise ValueError(msg)
             masks_arr = _pauli_masks_as_int64(pauli_masks)
-            det_events, obs_flips = self.sampler.sample_batch_with_pauli_masks(
+            batch = self.sampler.sample_batch_with_pauli_masks(
                 num_shots,
                 self.pauli_frame_lookup,
                 masks_arr,
                 seed,
             )
-        return np.array(det_events, dtype=bool), np.array(obs_flips, dtype=bool)
+        return (
+            np.array(batch.detector_events(), dtype=bool),
+            np.array(batch.observable_flips(), dtype=bool),
+        )
 
 
 def build_native_sampler(
@@ -4242,7 +4245,7 @@ def decode_native_samples(
         raise ValueError(msg)
     weights = (1 << np.arange(obs_arr.shape[1], dtype=np.uint64)).astype(np.uint64)
     obs_masks = (obs_arr * weights).sum(axis=1).astype(np.uint64).tolist()
-    batch = SampleBatch(det_list, obs_masks)
+    batch = SampleBatch(det_list, obs_masks, num_observables=obs_arr.shape[1])
     return batch.decode_count(dem_str, decoder_type)
 
 

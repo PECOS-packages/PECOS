@@ -156,7 +156,7 @@ def main():
 
         sampler_params = {k: v for k, v in noise_params.items() if k in ("p1", "p2", "p_meas", "p_prep")}
         sampler = DemSampler.from_circuit(tc, **sampler_params)
-        train_batch = sampler.generate_samples(args.shots, seed=args.seed)
+        train_batch = sampler.sample_batch(args.shots, seed=args.seed)
 
     t_sample = time.perf_counter() - t0
     print(f"  Sampled in {t_sample:.2f}s")
@@ -198,7 +198,7 @@ def main():
             observable_masks2.append(obs_mask)
         test_batch = SampleBatch(detection_events2, observable_masks2)
     else:
-        test_batch = sampler.generate_samples(test_shots, seed=args.seed + 1000)
+        test_batch = sampler.sample_batch(test_shots, seed=args.seed + 1000)
 
     # Decode with lookup
     errors_lookup, n = decode_with_lookup(test_batch, table, num_dets)

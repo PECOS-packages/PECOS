@@ -84,7 +84,7 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
     let mc_results = MonteCarloRunner::run(
         &commands,
         &mc_config,
-        || (CircuitRunner::new(), SparseStab::new(2)),
+        || (CircuitRunner::new(), SparseStab::with_seed(2, 42)),
         |outcomes| {
             let b0 = outcomes.get_bit(QubitId(0)).unwrap_or(false);
             let b1 = outcomes.get_bit(QubitId(1)).unwrap_or(false);
@@ -111,7 +111,7 @@ fn test_coordinator_vs_monte_carlo_bell_state() {
     let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(coord_config);
 
     let coord_results = coordinator.run(
-        || SparseStab::new(2),
+        || SparseStab::with_seed(2, 42),
         |world| {
             let commands = CommandBuilder::new()
                 .pz(&[0])
@@ -190,7 +190,10 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
         || {
             let noise =
                 ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p1));
-            (CircuitRunner::new().with_noise(noise), SparseStab::new(1))
+            (
+                CircuitRunner::new().with_noise(noise),
+                SparseStab::with_seed(1, 42),
+            )
         },
         |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
     );
@@ -207,7 +210,7 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
     let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(coord_config);
 
     let coord_results = coordinator.run(
-        || SparseStab::new(1),
+        || SparseStab::with_seed(1, 42),
         |world| {
             let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
@@ -264,7 +267,7 @@ fn test_coordinator_determinism() {
 
     let results1: Vec<bool> = coord1
         .run(
-            || SparseStab::new(1),
+            || SparseStab::with_seed(1, 42),
             |world| {
                 let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
@@ -290,7 +293,7 @@ fn test_coordinator_determinism() {
 
     let results2: Vec<bool> = coord2
         .run(
-            || SparseStab::new(1),
+            || SparseStab::with_seed(1, 42),
             |world| {
                 let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
@@ -339,7 +342,7 @@ fn test_coordinator_sync_points() {
     let sync_count_clone = Arc::clone(&sync_count);
 
     let result = coordinator.run_with_sync::<_, _, _, ()>(
-        || SparseStab::new(1),
+        || SparseStab::with_seed(1, 42),
         10, // 10 steps
         |_world, _step| {
             // Do nothing per step
@@ -370,7 +373,7 @@ fn test_coordinator_hadamard_distribution() {
     let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
 
     let results = coordinator.run(
-        || SparseStab::new(1),
+        || SparseStab::with_seed(1, 42),
         |world| {
             let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 

@@ -313,7 +313,7 @@ mod tests {
         let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).mz(&[0]).build();
 
         let second_meas_rate = |model: ComposableNoiseModel| -> f64 {
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, 42);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(42);

@@ -1007,7 +1007,7 @@ mod tests {
     fn test_importance_runner_basic() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
         let result = runner.run_shot(&commands);
         assert_eq!(result.outcomes.len(), 1);
@@ -1023,7 +1023,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_single_qubit_boost(0.001, 10.0)
             .with_seed(42);
 
@@ -1042,7 +1042,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
         let result = runner.run_shot(&commands);
 
         assert_eq!(result.outcomes.len(), 1);
@@ -1057,7 +1057,7 @@ mod tests {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
         let noise =
             ComposableNoiseModel::new().add_channel(AfterPreparationGateChannel(GateType::H));
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_noise(noise)
             .with_seed(42);
 
@@ -1079,7 +1079,7 @@ mod tests {
             .build();
 
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = ImportanceSamplingRunner::new(SparseStab::new(1)).with_noise(noise);
+            let _ = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_noise(noise);
         }))
         .expect_err("importance sampling cannot execute coherent idle rotations");
         let message = panic
@@ -1103,16 +1103,17 @@ mod tests {
         let commands = CommandBuilder::new().pz(&qubits).mz(&qubits).build();
         let noise = || ComposableNoiseModel::new().add_channel(SeededPauliAfterPreparation);
 
-        let mut state = SparseStab::new(qubits.len());
+        let mut state = SparseStab::with_seed(qubits.len(), 42);
         let mut circuit_runner = crate::runner::CircuitRunner::<SparseStab>::new()
             .with_noise(noise())
             .with_seed(0x436_437);
         let circuit_bytes =
             outcome_bytes(&circuit_runner.apply_circuit(&mut state, &commands).unwrap());
 
-        let mut importance_runner = ImportanceSamplingRunner::new(SparseStab::new(qubits.len()))
-            .with_noise(noise())
-            .with_seed(0x436_437);
+        let mut importance_runner =
+            ImportanceSamplingRunner::new(SparseStab::with_seed(qubits.len(), 42))
+                .with_noise(noise())
+                .with_seed(0x436_437);
         let importance_bytes = outcome_bytes(&importance_runner.run_shot(&commands).outcomes);
 
         let baseline = vec![
@@ -1128,7 +1129,7 @@ mod tests {
         expected = "ImportanceSamplingRunner invariant violated: injected noise gate PZ"
     )]
     fn unsupported_noise_gate_panics_in_importance_runner() {
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1));
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42));
         runner.execute_noise_gate(&GateCommand::pz(QubitId(0)));
     }
 
@@ -1136,7 +1137,7 @@ mod tests {
     #[should_panic(expected = "ImportanceSamplingRunner cannot execute circuit gate T")]
     fn unsupported_circuit_gate_panics_in_importance_runner() {
         let commands = CommandBuilder::new().pz(&[0]).t(&[0]).build();
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1));
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42));
         let _ = runner.run_shot(&commands);
     }
 
@@ -1144,7 +1145,7 @@ mod tests {
     #[should_panic(expected = "ImportanceSamplingRunner cannot execute circuit gate T")]
     fn unsupported_circuit_gate_panics_in_biased_importance_runner() {
         let commands = CommandBuilder::new().pz(&[0]).t(&[0]).build();
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1));
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42));
         let _ = runner.run_shot_biased(&commands);
     }
 
@@ -1153,7 +1154,7 @@ mod tests {
         expected = "ImportanceSamplingRunner invariant violated: injected noise gate CX has 1"
     )]
     fn malformed_multi_qubit_noise_gate_panics_in_importance_runner() {
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1));
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42));
         runner.execute_noise_gate(&GateCommand::new(
             GateType::CX,
             smallvec::smallvec![QubitId(0)],
@@ -1170,7 +1171,7 @@ mod tests {
         let true_rate = 0.001;
         let boost = 100.0; // Very aggressive boost
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 12345))
             .with_single_qubit_boost(true_rate, boost)
             .with_seed(12345);
 
@@ -1203,7 +1204,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(2))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(2, 42))
             .with_two_qubit_boost(0.01, 5.0)
             .with_seed(42);
 
@@ -1215,7 +1216,7 @@ mod tests {
     fn test_measurement_importance_sampling() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_measurement_boost(0.001, 100.0)
             .with_seed(42);
 
@@ -1297,7 +1298,8 @@ mod tests {
         // ========== Unbiased sampling ==========
         let mut unbiased_ones = 0;
         for seed in 0..num_shots {
-            let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(seed);
+            let mut runner =
+                ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed)).with_seed(seed);
             let result = runner.run_shot(&commands);
             if result.outcomes.get_bit(QubitId(0)).unwrap_or(false) {
                 unbiased_ones += 1;
@@ -1311,7 +1313,7 @@ mod tests {
         let mut biased_total_weight = 0.0;
 
         for seed in 0..num_shots {
-            let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+            let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
                 .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
                 .with_seed(seed);
 
@@ -1355,7 +1357,7 @@ mod tests {
         // Bias heavily toward 1
         let mut ones = 0;
         for seed in 0..num_shots {
-            let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+            let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
                 .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.9))
                 .with_seed(seed);
 
@@ -1383,7 +1385,7 @@ mod tests {
             .mz(&[0]) // No H, so deterministic
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.99))
             .with_seed(42);
 

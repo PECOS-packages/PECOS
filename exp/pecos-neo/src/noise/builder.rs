@@ -800,7 +800,7 @@ mod tests {
             .build();
 
         // Simple configuration
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut simple_errors = 0;
         for seed in 0..shots {
             let model = NoiseModelBuilder::new().with_p1(p1).build();

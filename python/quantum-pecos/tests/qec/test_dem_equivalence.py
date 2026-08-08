@@ -94,7 +94,9 @@ class TestSampling:
         dem_str = "error(0.5) D0"
         dem = ParsedDem.from_string(dem_str)
 
-        det_events, obs_flips = dem.sample_batch(10000, seed=42)
+        batch = dem.sample_batch(10000, seed=42)
+        det_events = batch.detector_events()
+        obs_flips = batch.observable_flips()
 
         assert len(det_events) == 10000
         assert len(obs_flips) == 10000
@@ -109,7 +111,7 @@ class TestSampling:
         dem_str = "error(0.1) D0 ^ D1"
         dem = ParsedDem.from_string(dem_str)
 
-        det_events, _obs_flips = dem.sample_batch(50000, seed=42)
+        det_events = dem.sample_batch(50000, seed=42).detector_events()
 
         det_array = np.array(det_events)
         # Each sub-mechanism fires independently at p=0.1
@@ -124,11 +126,11 @@ class TestSampling:
         dem_str = "error(0.5) D0 D1"
         dem = ParsedDem.from_string(dem_str)
 
-        det1, obs1 = dem.sample_batch(1000, seed=123)
-        det2, obs2 = dem.sample_batch(1000, seed=123)
+        batch1 = dem.sample_batch(1000, seed=123)
+        batch2 = dem.sample_batch(1000, seed=123)
 
-        assert det1 == det2
-        assert obs1 == obs2
+        assert batch1.detector_events() == batch2.detector_events()
+        assert batch1.observable_flips() == batch2.observable_flips()
 
 
 class TestAggregation:
@@ -432,8 +434,8 @@ class TestPecosDecompositionEquivalence:
         num_shots = 100_000
         seed = 42
 
-        raw_dets, _raw_obs = raw_dem.sample_batch(num_shots, seed=seed)
-        decomp_dets, _decomp_obs = decomposed_dem.sample_batch(num_shots, seed=seed)
+        raw_dets = raw_dem.sample_batch(num_shots, seed=seed).detector_events()
+        decomp_dets = decomposed_dem.sample_batch(num_shots, seed=seed).detector_events()
 
         raw_array = np.array(raw_dets)
         decomp_array = np.array(decomp_dets)
@@ -464,8 +466,8 @@ class TestPecosDecompositionEquivalence:
         num_shots = 100_000
         seed = 42
 
-        raw_dets, _ = raw_dem.sample_batch(num_shots, seed=seed)
-        decomp_dets, _ = decomposed_dem.sample_batch(num_shots, seed=seed)
+        raw_dets = raw_dem.sample_batch(num_shots, seed=seed).detector_events()
+        decomp_dets = decomposed_dem.sample_batch(num_shots, seed=seed).detector_events()
 
         raw_array = np.array(raw_dets)
         decomp_array = np.array(decomp_dets)
@@ -494,8 +496,8 @@ class TestPecosDecompositionEquivalence:
         num_shots = 100_000
         seed = 42
 
-        _, raw_obs = raw_dem.sample_batch(num_shots, seed=seed)
-        _, decomp_obs = decomposed_dem.sample_batch(num_shots, seed=seed)
+        raw_obs = raw_dem.sample_batch(num_shots, seed=seed).observable_flips()
+        decomp_obs = decomposed_dem.sample_batch(num_shots, seed=seed).observable_flips()
 
         raw_obs_array = np.array(raw_obs)
         decomp_obs_array = np.array(decomp_obs)
@@ -547,8 +549,8 @@ class TestPecosDecompositionEquivalence:
         num_shots = 50_000
         seed = 123
 
-        raw_dets, _ = raw_dem.sample_batch(num_shots, seed=seed)
-        decomp_dets, _ = decomposed_dem.sample_batch(num_shots, seed=seed)
+        raw_dets = raw_dem.sample_batch(num_shots, seed=seed).detector_events()
+        decomp_dets = decomposed_dem.sample_batch(num_shots, seed=seed).detector_events()
 
         raw_array = np.array(raw_dets)
         decomp_array = np.array(decomp_dets)

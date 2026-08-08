@@ -1316,7 +1316,7 @@ mod tests {
 
         for seed in 0..shots {
             let model = CompositeNoiseModelBuilder::new().with_p1(p1).build();
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
@@ -1349,7 +1349,7 @@ mod tests {
             let model = CompositeNoiseModelBuilder::new()
                 .with_p_meas(p_0_to_1, p_1_to_0)
                 .build();
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
@@ -1568,7 +1568,7 @@ mod tests {
                 .with_p2_angle_scaling(AngleScaling::linear())
                 .build();
 
-            let mut state = StateVec::new(2);
+            let mut state = StateVec::with_seed(2, seed);
             let mut runner = CircuitRunner::<StateVec>::rotations()
                 .with_noise(model)
                 .with_seed(seed);
@@ -1607,7 +1607,7 @@ mod tests {
                 .with_p2_angle_scaling(AngleScaling::linear())
                 .build();
 
-            let mut state = StateVec::new(2);
+            let mut state = StateVec::with_seed(2, seed);
             let mut runner = CircuitRunner::<StateVec>::rotations()
                 .with_noise(model)
                 .with_seed(seed);
@@ -1739,7 +1739,7 @@ mod tests {
                 .with_p2(p2)
                 .build();
 
-            let mut state_general = SparseStab::new(2);
+            let mut state_general = SparseStab::with_seed(2, seed);
             let mut runner_general = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
@@ -1759,7 +1759,7 @@ mod tests {
                 .with_p2(p2)
                 .build();
 
-            let mut state_flow = SparseStab::new(2);
+            let mut state_flow = SparseStab::with_seed(2, seed);
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
@@ -1806,7 +1806,7 @@ mod tests {
                 .with_p_meas(p_meas_0, p_meas_1)
                 .build();
 
-            let mut state_general = SparseStab::new(1);
+            let mut state_general = SparseStab::with_seed(1, seed);
             let mut runner_general = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
@@ -1822,7 +1822,7 @@ mod tests {
                 .with_p_meas(p_meas_0, p_meas_1)
                 .build();
 
-            let mut state_flow = SparseStab::new(1);
+            let mut state_flow = SparseStab::with_seed(1, seed);
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
@@ -1868,7 +1868,7 @@ mod tests {
             // GeneralNoiseModelBuilder
             let general_model = GeneralNoiseModelBuilder::new().with_p_prep(p_prep).build();
 
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
@@ -1886,7 +1886,7 @@ mod tests {
                 .with_p_prep(p_prep)
                 .build();
 
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
@@ -2188,7 +2188,7 @@ mod tests {
                 .with_p1_emission_model(emission)
                 .build();
 
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
@@ -2284,7 +2284,7 @@ mod tests {
                 .with_p1_emission_weights(emission)
                 .build();
 
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
@@ -2300,7 +2300,7 @@ mod tests {
                 .with_p1_emission_model(emission)
                 .build();
 
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);
@@ -2347,7 +2347,7 @@ mod tests {
                 .with_p2_pauli_weights(TwoQubitPauliWeights::uniform())
                 .build();
 
-            let mut state = SparseStab::new(2);
+            let mut state = SparseStab::with_seed(2, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(general_model)
                 .with_seed(seed);
@@ -2364,7 +2364,7 @@ mod tests {
                 .with_p2_pauli_model(TwoQubitPauliWeights::uniform())
                 .build();
 
-            let mut state = SparseStab::new(2);
+            let mut state = SparseStab::with_seed(2, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);

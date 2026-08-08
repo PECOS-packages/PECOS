@@ -199,7 +199,7 @@ incurred — the ground truth that decoder predictions are scored against.
 <!--continuation-->
 ```python
 sampler = dem.to_sampler()
-batch = sampler.generate_samples(2000, seed=1)
+batch = sampler.sample_batch(2000, seed=1)
 
 assert batch.num_shots == 2000
 for shot in range(2):
@@ -314,7 +314,7 @@ bp_osd_errors = 0
 
 for shot in range(batch.num_shots):
     syndrome = batch.get_syndrome(shot)
-    actual = batch.observable_flips(shot)
+    actual = batch.get_observable_flips(shot)
 
     pymatching_errors += pymatching.decode_syndrome(syndrome).observable_flips != actual
     tesseract_errors += tesseract.decode_syndrome(syndrome).observable_flips != actual

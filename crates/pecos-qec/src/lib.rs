@@ -72,6 +72,7 @@ pub mod distance;
 pub mod distance_problem;
 pub mod fault_tolerance;
 pub mod geometry;
+pub mod hypergraph_product;
 pub mod logical_discovery;
 pub mod mem_stab;
 mod memory_circuit;
@@ -94,6 +95,7 @@ pub use bounded_enumeration_distance::{
 };
 pub use coloration::{ColorationMemoryError, coloration_memory_circuit};
 pub use dem_stab::{DemStabError, DemStabShotBatch, DemStabSim, DemStabSimBuilder};
+pub use hypergraph_product::{HypergraphProductCode, HypergraphProductError};
 pub use mem_stab::{MemStabError, MemStabSim, MemStabSimBuilder};
 pub use memory_circuit::MemoryBasis;
 pub use parity_check_matrix::{ParityCheckMatrix, ParityCheckMatrixError};

@@ -383,6 +383,32 @@ impl F2Matrix {
         result
     }
 
+    /// Computes the Kronecker (tensor) product of two GF(2) matrices.
+    ///
+    /// The result has `self.num_rows() * other.num_rows()` rows and
+    /// `self.num_cols() * other.num_cols()` columns, with block `(i, j)` equal
+    /// to `other` where `self[i, j] = 1` and zero otherwise.
+    #[must_use]
+    pub fn kronecker(&self, other: &Self) -> Self {
+        let rows = self.num_rows() * other.num_rows();
+        let cols = self.num_cols * other.num_cols;
+        let mut result = Self::zeros(rows, cols);
+        for i in 0..self.num_rows() {
+            for j in 0..self.num_cols {
+                if self.get(i, j) == 1 {
+                    for r in 0..other.num_rows() {
+                        for c in 0..other.num_cols {
+                            if other.get(r, c) == 1 {
+                                result.set(i * other.num_rows() + r, j * other.num_cols + c, 1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Computes the (right) null space of this matrix over GF(2).
     ///
     /// Returns a set of column vectors `v` such that `self * v = 0` (mod 2).
@@ -1844,5 +1870,19 @@ mod tests {
         let inv = m.invert().unwrap();
         assert_eq!(m.mul(&inv), F2Matrix::identity(4));
         assert_eq!(inv.mul(&m), F2Matrix::identity(4));
+    }
+
+    #[test]
+    fn kronecker_places_blocks_by_left_entries() {
+        let left = F2Matrix::from_rows(vec![vec![1, 1], vec![0, 1]]);
+        let right = F2Matrix::from_rows(vec![vec![1, 0], vec![1, 1]]);
+        let product = left.kronecker(&right);
+        assert_eq!(product.num_rows(), 4);
+        assert_eq!(product.num_cols(), 4);
+        // Block (0,0) and (0,1) are copies of `right`; block (1,0) is zero.
+        assert_eq!(product.row(0), vec![1, 0, 1, 0]);
+        assert_eq!(product.row(1), vec![1, 1, 1, 1]);
+        assert_eq!(product.row(2), vec![0, 0, 1, 0]);
+        assert_eq!(product.row(3), vec![0, 0, 1, 1]);
     }
 }

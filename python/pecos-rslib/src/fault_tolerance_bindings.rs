@@ -7956,6 +7956,67 @@ fn stabilizer_code_distance(
 // Module Registration
 // =============================================================================
 
+/// A hypergraph-product CSS code built from two classical parity-check matrices.
+#[pyclass(name = "HypergraphProductCode", module = "pecos_rslib.qec")]
+pub struct PyHypergraphProductCode {
+    inner: pecos_qec::HypergraphProductCode,
+}
+
+#[pymethods]
+impl PyHypergraphProductCode {
+    /// Build the hypergraph product of two classical parity-check matrices.
+    #[new]
+    fn new(h1: &PyParityCheckMatrix, h2: &PyParityCheckMatrix) -> PyResult<Self> {
+        pecos_qec::HypergraphProductCode::new(&h1.inner, &h2.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    #[getter]
+    fn hx(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.hx().clone(),
+        }
+    }
+
+    #[getter]
+    fn hz(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.hz().clone(),
+        }
+    }
+
+    #[getter]
+    fn logical_x(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.logical_x().clone(),
+        }
+    }
+
+    #[getter]
+    fn logical_z(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.logical_z().clone(),
+        }
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
+    fn num_logical_qubits(&self) -> usize {
+        self.inner.num_logical_qubits()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HypergraphProductCode(n={}, k={})",
+            self.inner.num_qubits(),
+            self.inner.num_logical_qubits()
+        )
+    }
+}
+
 /// A validated bivariate-bicycle CSS code.
 #[pyclass(
     name = "BivariateBicycleCode",
@@ -8119,6 +8180,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyBoundedEnumerationDistance>()?;
     qec.add_class::<PyDistanceProblem>()?;
     qec.add_class::<PyBivariateBicycleCode>()?;
+    qec.add_class::<PyHypergraphProductCode>()?;
 
     // Add DEM equivalence functions
     qec.add_function(wrap_pyfunction!(compare_dems_exact, &qec)?)?;

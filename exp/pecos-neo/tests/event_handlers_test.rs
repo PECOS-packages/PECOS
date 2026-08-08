@@ -158,7 +158,7 @@ fn event_handlers_on_runner_directly() {
 
     let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-    let mut state = pecos_simulators::SparseStab::new(1);
+    let mut state = pecos_simulators::SparseStab::with_seed(1, 42);
     let mut runner = CircuitRunner::<pecos_simulators::SparseStab>::new()
         .with_event_handlers(handlers)
         .with_seed(42);

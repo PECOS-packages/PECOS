@@ -359,7 +359,7 @@ mod tests {
             .add_channel(SingleQubitChannel::depolarizing(0.0))
             .add_channel(TwoQubitChannel::depolarizing(0.0));
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -388,7 +388,7 @@ mod tests {
             .add_plugin(&DepolarizingPlugin::new(0.0, 0.0))
             .add_plugin(&MeasurementNoisePlugin::symmetric(0.0));
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);

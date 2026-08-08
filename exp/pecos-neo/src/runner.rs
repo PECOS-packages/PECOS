@@ -2517,7 +2517,7 @@ mod tests {
     fn test_basic_execution() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
@@ -2535,7 +2535,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
@@ -2551,7 +2551,7 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -2564,7 +2564,7 @@ mod tests {
     fn test_apply_circuit_resets_noise() {
         let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
         let outcomes1 = runner.apply_circuit(&mut state, &commands).unwrap();
@@ -2588,7 +2588,7 @@ mod tests {
         let mut noise = ComposableNoiseModel::new().add_channel(LeakageChannel::new());
         noise.context_mut().mark_leaked(QubitId(0));
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -2608,7 +2608,7 @@ mod tests {
         let mut noise = ComposableNoiseModel::new().add_channel(LeakageChannel::new());
         noise.context_mut().mark_leaked(QubitId(0));
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -2632,7 +2632,7 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(LeakageChannel::new());
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -2661,7 +2661,7 @@ mod tests {
             smallvec::smallvec![QubitId(0)],
         ));
 
-        let mut state = StateVec::new(1);
+        let mut state = StateVec::with_seed(1, 42);
         let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
@@ -2687,7 +2687,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut state = StateVec::new(2);
+        let mut state = StateVec::with_seed(2, 42);
         let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
@@ -2710,7 +2710,7 @@ mod tests {
             .mz(&[2])
             .build();
 
-        let mut state = StateVec::new(3);
+        let mut state = StateVec::with_seed(3, 42);
         let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
@@ -2732,7 +2732,7 @@ mod tests {
             .mz(&[2])
             .build();
 
-        let mut state = StateVec::new(3);
+        let mut state = StateVec::with_seed(3, 42);
         let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
@@ -2755,7 +2755,7 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(IdleChannel::linear(1.0));
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -2780,7 +2780,7 @@ mod tests {
 
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates)
             .with_noise(noise)
             .with_seed(42);
@@ -2840,7 +2840,7 @@ mod tests {
                 .mz(&[0])
                 .build();
 
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, 42);
             let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
             runner.on_signal(move |_: &RoundBoundary| {
                 counter_clone.fetch_add(1, Ordering::Relaxed);
@@ -2870,7 +2870,7 @@ mod tests {
                 .mz(&[0])
                 .build();
 
-            let mut state = SparseStab::new(1);
+            let mut state = SparseStab::with_seed(1, 42);
             let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
             runner.on_signal(move |_: &RoundBoundary| {
                 rc.fetch_add(1, Ordering::Relaxed);
@@ -2897,7 +2897,7 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
         let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
@@ -2916,7 +2916,7 @@ mod tests {
             .mz(QubitId(1), ResultId(1))
             .build();
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
         let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
@@ -2939,7 +2939,7 @@ mod tests {
             .mz(QubitId(1), ResultId(1))
             .build();
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
         let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
@@ -2963,7 +2963,7 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def);
 
         let result = runner.apply_adapted_circuit(&mut state, &circuit);
@@ -2982,7 +2982,7 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
         let outcomes1 = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
@@ -3002,7 +3002,7 @@ mod tests {
             .mx(QubitId(0), ResultId(0))
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def).with_seed(42);
 
         let outcomes = runner.apply_adapted_circuit(&mut state, &circuit).unwrap();
@@ -3034,7 +3034,7 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def)
             .with_overrides(overrides)
             .with_seed(42);
@@ -3058,7 +3058,7 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def)
             .with_overrides(overrides)
             .with_seed(42);
@@ -3098,7 +3098,7 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut state = StateVec::new(1);
+        let mut state = StateVec::with_seed(1, 42);
         let mut runner =
             CircuitRunner::<StateVec>::rotations_with_definitions(gates_def).with_seed(42);
 
@@ -3118,7 +3118,7 @@ mod tests {
             .mz(QubitId(0), ResultId(0))
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(gates_def);
 
         assert!(!runner.has_rotation_support());
@@ -3142,7 +3142,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new();
 
         let err = runner
@@ -3181,7 +3181,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::with_definitions(defs).with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &circuit).unwrap();
 
@@ -3199,7 +3199,7 @@ mod tests {
             .rz(&[0], Angle64::from_radians(std::f64::consts::FRAC_PI_2))
             .mz(&[0])
             .build();
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &control).unwrap();
         let bit = outcomes.iter().next().expect("one measurement").outcome;
@@ -3213,7 +3213,7 @@ mod tests {
 
     #[test]
     fn test_apply_gate_basic() {
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
         runner
@@ -3232,7 +3232,7 @@ mod tests {
 
     #[test]
     fn test_apply_gate_standard_clifford_inverse_sequences() {
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
         runner
@@ -3294,7 +3294,7 @@ mod tests {
         ];
 
         for (gate, inverse, qubits) in cases {
-            let mut state = SparseStab::new(2);
+            let mut state = SparseStab::with_seed(2, 42);
             let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
             runner
@@ -3358,7 +3358,7 @@ mod tests {
     }
 
     fn prepare_matrix_test_state(prep_index: usize) -> StateVec {
-        let mut state = StateVec::new(2);
+        let mut state = StateVec::with_seed(2, 42);
         match prep_index {
             0 => {}
             1 => {

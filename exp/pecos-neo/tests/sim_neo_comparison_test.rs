@@ -461,7 +461,7 @@ fn test_sim_neo_vs_sim_conditional_x_correction() {
     for shot_idx in 0..NUM_SHOTS {
         let mut program = ConditionalProgram::new(initial.clone(), branch, 1);
         let seed = 42u64.wrapping_add(shot_idx as u64);
-        let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(seed);
+        let mut runner = ProgramRunner::new(SparseStab::with_seed(1, seed)).with_seed(seed);
 
         let result = runner.run_shot(&mut program);
 
@@ -552,7 +552,7 @@ fn test_sim_neo_vs_sim_conditional_with_noise() {
         let seed = 42u64.wrapping_add(shot_idx as u64);
         // Create fresh noise model for each shot
         let neo_noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
-        let mut runner = ProgramRunner::new(SparseStab::new(1))
+        let mut runner = ProgramRunner::new(SparseStab::with_seed(1, seed))
             .with_noise(neo_noise)
             .with_seed(seed);
 

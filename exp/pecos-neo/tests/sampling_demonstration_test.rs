@@ -40,7 +40,7 @@ fn demo_path_recording() {
         .mz(&[0])
         .build();
 
-    let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
+    let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
     // Run and record the path
     let result = explorer.run_and_record(&circuit);
@@ -64,7 +64,7 @@ fn demo_path_recording() {
 fn demo_path_replay() {
     let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-    let mut explorer = PathExplorer::new(SparseStab::new(1));
+    let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42));
 
     println!("\nPath Replay Demo:");
 
@@ -100,7 +100,7 @@ fn demo_path_enumeration() {
         .mz(&[1])
         .build();
 
-    let mut explorer = PathExplorer::new(SparseStab::new(2));
+    let mut explorer = PathExplorer::new(SparseStab::with_seed(2, 42));
     let mut stats = PathStatistics::new();
 
     println!("\nPath Enumeration Demo:");
@@ -143,7 +143,7 @@ fn demo_bell_state_paths() {
         .mz(&[1])
         .build();
 
-    let mut explorer = PathExplorer::new(SparseStab::new(2));
+    let mut explorer = PathExplorer::new(SparseStab::with_seed(2, 42));
 
     println!("\nBell State Path Demo:");
     println!("  In a Bell state, q1's measurement is DETERMINISTIC after q0 is measured.");
@@ -197,7 +197,7 @@ fn demo_importance_sampling_boosted_errors() {
     println!("  Boost factor: {boost}x");
 
     // Run many shots with boosted error rate
-    let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+    let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
         .with_single_qubit_boost(p_true, boost)
         .with_seed(42);
 
@@ -246,7 +246,7 @@ fn demo_variance_comparison() {
 
     for trial in 0..num_trials {
         // Standard Monte Carlo (true error rate)
-        let mut mc_state = SparseStab::new(1);
+        let mut mc_state = SparseStab::with_seed(1, trial as u64);
         let mut mc_runner = CircuitRunner::<SparseStab>::new()
             .with_noise(
                 ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p_true)),
@@ -265,13 +265,14 @@ fn demo_variance_comparison() {
 
         // Importance sampling (boosted)
         let p_proposal = (p_true * boost).min(0.5_f64);
-        let mut is_runner = ImportanceSamplingRunner::new(SparseStab::new(1))
-            .with_single_qubit_boost(p_true, boost)
-            .with_noise(
-                ComposableNoiseModel::new()
-                    .add_channel(SingleQubitChannel::depolarizing(p_proposal)),
-            )
-            .with_seed(1000 + trial as u64);
+        let mut is_runner =
+            ImportanceSamplingRunner::new(SparseStab::with_seed(1, 1000 + trial as u64))
+                .with_single_qubit_boost(p_true, boost)
+                .with_noise(
+                    ComposableNoiseModel::new()
+                        .add_channel(SingleQubitChannel::depolarizing(p_proposal)),
+                )
+                .with_seed(1000 + trial as u64);
 
         let mut is_stats = WeightedStatistics::new();
         for _ in 0..shots_per_trial {
@@ -326,7 +327,8 @@ fn demo_outcome_biasing() {
     println!("  Biasing measurements to explore rare branches.");
 
     // Without biasing: 50/50 outcomes
-    let mut unbiased_runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
+    let mut unbiased_runner =
+        ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
     let mut count_one = 0;
     for _ in 0..1000 {
@@ -339,7 +341,7 @@ fn demo_outcome_biasing() {
 
     // With biasing toward '1': more '1' outcomes (but with weights)
     let bias_config = OutcomeBiasConfig::bias_toward_one(0.9);
-    let mut biased_runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+    let mut biased_runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
         .with_outcome_bias(bias_config)
         .with_seed(42);
 
@@ -393,7 +395,7 @@ fn demo_conditional_program() {
     };
 
     let mut program = ConditionalProgram::new(initial, branch_fn, 1);
-    let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
+    let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
     println!("\nConditional Program Demo:");
 
@@ -479,7 +481,7 @@ fn demo_repeat_until_success() {
         success: false,
     };
 
-    let mut runner = ProgramRunner::new(SparseStab::new(1)).with_seed(42);
+    let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
     println!("\nRepeat-Until-Success Demo:");
 
@@ -513,7 +515,7 @@ fn demo_combined_path_and_error_analysis() {
         .mz(&[1])
         .build();
 
-    let mut explorer = PathExplorer::new(SparseStab::new(3));
+    let mut explorer = PathExplorer::new(SparseStab::with_seed(3, 42));
     let mut error_stats = PathStatistics::new();
 
     println!("\nCombined Path + Error Analysis Demo:");

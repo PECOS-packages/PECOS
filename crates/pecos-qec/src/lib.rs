@@ -108,8 +108,10 @@ pub use distance::{
     find_shortest_logicals, has_logical_error_at_weight,
 };
 pub use distance_problem::{
-    CertifiedDistance, DistanceCertificationError, DistanceProblem, DistanceProblemError,
-    SolverAnswer, WitnessError, certified_distance,
+    CertifiedDistance, CosetWeightError, DistanceCertificationError, DistanceProblem,
+    DistanceProblemError, SolverAnswer, WitnessError, certified_classical_distance,
+    certified_coset_weight, certified_distance, certified_stabilizer_coset_weight,
+    logical_coset_weight_profile,
 };
 pub use fault_tolerance::dem_builder::{
     DecomposedFault, DemBuilder, DemBuilderError, DemOutput, DetectorDef, DetectorErrorModel,

@@ -39,6 +39,13 @@ pub struct DistanceProblem {
     l: F2Matrix,
     num_vars: usize,
     weight_mode: WeightMode,
+    /// Target parity bit per H row. All-zero for homogeneous (distance) problems;
+    /// nonzero targets arise from affine coset-membership constraints.
+    parity_targets: Vec<u8>,
+    /// Whether a witness must flip at least one L row. Distance problems require
+    /// it; coset-weight problems have no nontriviality requirement (weight 0
+    /// legitimately means the representative lies in the group).
+    require_logical_effect: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,6 +275,8 @@ impl DistanceProblem {
             h: h.matrix().clone(),
             l: l.matrix().clone(),
             num_vars: h.num_qubits(),
+            parity_targets: vec![0; h.num_checks()],
+            require_logical_effect: true,
             weight_mode: WeightMode::Bit,
         })
     }
@@ -333,9 +342,11 @@ impl DistanceProblem {
             (z_checks, logical_z)
         };
         Ok(Self {
+            parity_targets: vec![0; checks.len()],
             h: Self::matrix_from_rows(checks, num_qubits),
             l: Self::matrix_from_rows(logicals, num_qubits),
             num_vars: num_qubits,
+            require_logical_effect: true,
             weight_mode: WeightMode::Bit,
         })
     }
@@ -379,9 +390,11 @@ impl DistanceProblem {
             .collect::<Result<Vec<_>, _>>()?;
         let num_vars = 2 * num_qubits;
         Ok(Self {
+            parity_targets: vec![0; checks.len()],
             h: Self::matrix_from_rows(checks, num_vars),
             l: Self::matrix_from_rows(logicals, num_vars),
             num_vars,
+            require_logical_effect: true,
             weight_mode: WeightMode::QubitSupport { num_qubits },
         })
     }
@@ -505,9 +518,11 @@ impl DistanceProblem {
             }
         }
         Self {
+            parity_targets: vec![0; h.num_rows()],
             h,
             l,
             num_vars,
+            require_logical_effect: true,
             weight_mode: WeightMode::Bit,
         }
     }
@@ -612,7 +627,9 @@ impl DistanceProblem {
     fn encode(&self, max_weight: Option<usize>) -> Encoding {
         let mut builder = EncodingBuilder::new(self.num_vars);
         self.encode_checks(&mut builder);
-        self.encode_logical_nontriviality(&mut builder);
+        if self.require_logical_effect {
+            self.encode_logical_nontriviality(&mut builder);
+        }
         let objective_variables = self.encode_weight_variables(&mut builder);
         if let Some(max_weight) = max_weight {
             Self::encode_sequential_counter(&mut builder, max_weight, &objective_variables);
@@ -668,7 +685,12 @@ impl DistanceProblem {
             let support = Self::row_support(&self.h, row);
             match support.as_slice() {
                 [] => {}
-                &[variable] => builder.parity_clauses.push(vec![-Self::literal(variable)]),
+                &[variable] => {
+                    let sign = if self.parity_targets[row] == 1 { 1 } else { -1 };
+                    builder
+                        .parity_clauses
+                        .push(vec![sign * Self::literal(variable)]);
+                }
                 &[first, second, ref rest @ ..] => {
                     let mut output = aux_iter.next().expect("pre-counted XOR auxiliary");
                     Self::push_xor(&mut builder.parity_clauses, first, second, output);
@@ -677,7 +699,11 @@ impl DistanceProblem {
                         Self::push_xor(&mut builder.parity_clauses, output, variable, next);
                         output = next;
                     }
-                    builder.parity_clauses.push(vec![-Self::literal(output)]);
+                    // The chain output must equal the row's target parity.
+                    let sign = if self.parity_targets[row] == 1 { 1 } else { -1 };
+                    builder
+                        .parity_clauses
+                        .push(vec![sign * Self::literal(output)]);
                 }
             }
         }
@@ -834,7 +860,7 @@ impl DistanceProblem {
                 .count()
                 % 2
                 == 1;
-            if odd {
+            if odd != (self.parity_targets[row] == 1) {
                 return Err(WitnessError::OddCheck { row });
             }
         }
@@ -847,7 +873,7 @@ impl DistanceProblem {
                 % 2
                 == 1
         });
-        if !logical_nonzero {
+        if self.require_logical_effect && !logical_nonzero {
             return Err(WitnessError::ZeroLogicalEffect);
         }
         Ok(match self.weight_mode {
@@ -918,6 +944,200 @@ impl DistanceProblem {
         }
         Ok(None)
     }
+}
+
+impl DistanceProblem {
+    /// Builds the affine problem "minimum weight of `representative + rowspan(group)`".
+    ///
+    /// Membership in the coset is expressed through the orthogonal complement: with `D` a basis
+    /// of `rowspan(G)^perp` (the kernel of `G`), `e` lies in `p + rowspan(G)` iff `D e = D p`.
+    /// There is no nontriviality requirement: weight 0 means the representative is in the group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the representative width does not match the group.
+    pub fn coset_weight_problem(
+        group: &ParityCheckMatrix,
+        representative: &[u8],
+    ) -> Result<Self, DistanceProblemError> {
+        let num_vars = group.num_qubits();
+        if representative.len() != num_vars {
+            return Err(DistanceProblemError::MatrixWidthMismatch {
+                h_width: num_vars,
+                l_width: representative.len(),
+            });
+        }
+        let dual_rows = group.matrix().kernel();
+        let parity_targets: Vec<u8> = dual_rows
+            .iter()
+            .map(|dual| {
+                u8::from(
+                    dual.iter()
+                        .zip(representative)
+                        .filter(|&(&d, &r)| d == 1 && r == 1)
+                        .count()
+                        % 2
+                        == 1,
+                )
+            })
+            .collect();
+        Ok(Self {
+            parity_targets,
+            h: Self::matrix_from_rows(dual_rows, num_vars),
+            l: F2Matrix::zeros(0, num_vars),
+            num_vars,
+            require_logical_effect: false,
+            weight_mode: WeightMode::Bit,
+        })
+    }
+
+    /// True when every affine target is zero, i.e. the zero assignment is a valid witness.
+    fn zero_assignment_satisfies(&self) -> bool {
+        !self.require_logical_effect && self.parity_targets.iter().all(|&target| target == 0)
+    }
+}
+
+/// Certified minimum weight of `representative + rowspan(group)` over the binary alphabet.
+///
+/// Weight 0 (the representative lies in the group) is certified without any solver call.
+///
+/// # Errors
+///
+/// Returns an error on width mismatch or if the solver misbehaves.
+pub fn certified_coset_weight(
+    group: &ParityCheckMatrix,
+    representative: &[u8],
+    max_weight: usize,
+) -> Result<Option<CertifiedDistance>, CosetWeightError> {
+    let problem = DistanceProblem::coset_weight_problem(group, representative)?;
+    if problem.zero_assignment_satisfies() {
+        return Ok(Some(CertifiedDistance {
+            distance: 0,
+            witness: vec![false; problem.num_vars],
+            sat_certified: true,
+            unsat_trusted_below: 0,
+        }));
+    }
+    certified_distance(&problem, max_weight).map_err(CosetWeightError::Certification)
+}
+
+/// Certified minimum qubit-support weight of `operator * stabilizer group` for any code.
+///
+/// Uses the plain symplectic representation `[X | Z]` (phases are irrelevant to weight and to
+/// GF(2) span membership) with the per-qubit-support weight mode, so a `Y` costs one.
+///
+/// # Errors
+///
+/// Returns an error on width mismatch or solver misbehavior.
+pub fn certified_stabilizer_coset_weight(
+    code: &StabilizerCodeSpec,
+    operator: &pecos_core::PauliString,
+    max_weight: usize,
+) -> Result<Option<CertifiedDistance>, CosetWeightError> {
+    let num_qubits = code.num_qubits();
+    let group = pecos_quantum::SymplecticMatrix::from_pauli_sequence_ignoring_phase(
+        &pecos_quantum::PauliSequence::new(code.stabilizers().to_vec()),
+        num_qubits,
+    )
+    .map_err(|error| CosetWeightError::Symplectic(error.to_string()))?;
+    let representative_rows = pecos_quantum::SymplecticMatrix::from_pauli_sequence_ignoring_phase(
+        &pecos_quantum::PauliSequence::new(vec![operator.clone()]),
+        num_qubits,
+    )
+    .map_err(|error| CosetWeightError::Symplectic(error.to_string()))?;
+    let Some(representative) = representative_rows.rows().into_iter().next() else {
+        return Err(CosetWeightError::Symplectic(
+            "operator produced no symplectic row".to_string(),
+        ));
+    };
+    let group_rows = group.rows();
+    let num_vars = 2 * num_qubits;
+    let dual_rows = F2Matrix::from_rows(group_rows).kernel();
+    let parity_targets: Vec<u8> = dual_rows
+        .iter()
+        .map(|dual| {
+            u8::from(
+                dual.iter()
+                    .zip(&representative)
+                    .filter(|&(&d, &r)| d == 1 && r == 1)
+                    .count()
+                    % 2
+                    == 1,
+            )
+        })
+        .collect();
+    let problem = DistanceProblem {
+        parity_targets,
+        h: DistanceProblem::matrix_from_rows(dual_rows, num_vars),
+        l: F2Matrix::zeros(0, num_vars),
+        num_vars,
+        require_logical_effect: false,
+        weight_mode: WeightMode::QubitSupport { num_qubits },
+    };
+    if problem.zero_assignment_satisfies() {
+        return Ok(Some(CertifiedDistance {
+            distance: 0,
+            witness: vec![false; num_vars],
+            sat_certified: true,
+            unsat_trusted_below: 0,
+        }));
+    }
+    certified_distance(&problem, max_weight).map_err(CosetWeightError::Certification)
+}
+
+/// Certified coset weight of every logical basis operator of a code (Z basis, then X basis).
+///
+/// # Errors
+///
+/// Propagates the first failure from [`certified_stabilizer_coset_weight`].
+pub fn logical_coset_weight_profile(
+    code: &StabilizerCodeSpec,
+    max_weight: usize,
+) -> Result<Vec<Option<CertifiedDistance>>, CosetWeightError> {
+    code.logical_zs()
+        .iter()
+        .chain(code.logical_xs())
+        .map(|logical| certified_stabilizer_coset_weight(code, logical, max_weight))
+        .collect()
+}
+
+/// Certified minimum weight of a nonzero kernel element of a classical parity-check matrix.
+///
+/// Nontriviality is expressed as "some coordinate is set" via an identity logical block.
+///
+/// # Errors
+///
+/// Returns an error on solver misbehavior.
+pub fn certified_classical_distance(
+    h: &ParityCheckMatrix,
+    max_weight: usize,
+) -> Result<Option<CertifiedDistance>, CosetWeightError> {
+    let n = h.num_qubits();
+    let identity_rows = (0..n)
+        .map(|column| {
+            let mut row = vec![0u8; n];
+            row[column] = 1;
+            row
+        })
+        .collect();
+    let identity = ParityCheckMatrix::from_dense(identity_rows)
+        .map_err(|error| CosetWeightError::Symplectic(error.to_string()))?;
+    let problem = DistanceProblem::from_css_checks(h, &identity)?;
+    certified_distance(&problem, max_weight).map_err(CosetWeightError::Certification)
+}
+
+/// Errors from the coset-weight and classical-distance entry points.
+#[derive(Debug, Error)]
+pub enum CosetWeightError {
+    /// Problem construction failed.
+    #[error(transparent)]
+    Problem(#[from] DistanceProblemError),
+    /// Symplectic conversion failed.
+    #[error("symplectic conversion failed: {0}")]
+    Symplectic(String),
+    /// The certification loop failed.
+    #[error(transparent)]
+    Certification(DistanceCertificationError),
 }
 
 /// Certifies distance through `max_weight` using the in-process batsat SAT solver.
@@ -1615,5 +1835,187 @@ mod tests {
                 actual: 6,
             })
         );
+    }
+
+    fn five_qubit_spec() -> StabilizerCodeSpec {
+        use pecos_core::{Pauli, PauliString, QuarterPhase, QubitId};
+        let pauli = |terms: &[(Pauli, usize)]| {
+            PauliString::with_phase_and_paulis(
+                QuarterPhase::PlusOne,
+                terms.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
+            )
+        };
+        StabilizerCodeSpec::new(
+            5,
+            vec![
+                pauli(&[(Pauli::X, 0), (Pauli::Z, 1), (Pauli::Z, 2), (Pauli::X, 3)]),
+                pauli(&[(Pauli::X, 1), (Pauli::Z, 2), (Pauli::Z, 3), (Pauli::X, 4)]),
+                pauli(&[(Pauli::X, 0), (Pauli::X, 2), (Pauli::Z, 3), (Pauli::Z, 4)]),
+                pauli(&[(Pauli::Z, 0), (Pauli::X, 1), (Pauli::X, 3), (Pauli::Z, 4)]),
+            ],
+            vec![pauli(&[
+                (Pauli::Z, 0),
+                (Pauli::Z, 1),
+                (Pauli::Z, 2),
+                (Pauli::Z, 3),
+                (Pauli::Z, 4),
+            ])],
+            vec![pauli(&[
+                (Pauli::X, 0),
+                (Pauli::X, 1),
+                (Pauli::X, 2),
+                (Pauli::X, 3),
+                (Pauli::X, 4),
+            ])],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn classical_distance_matches_known_codes() {
+        let hamming = steane_hamming_matrix();
+        let certified = certified_classical_distance(&hamming, 4).unwrap().unwrap();
+        assert_eq!(certified.distance, 3);
+
+        let repetition = ParityCheckMatrix::from_dense(vec![vec![1, 1, 0], vec![0, 1, 1]]).unwrap();
+        let certified = certified_classical_distance(&repetition, 3)
+            .unwrap()
+            .unwrap();
+        assert_eq!(certified.distance, 3);
+
+        let enumerated = bounded_enumeration_classical_agreement(&hamming, 3);
+        assert_eq!(enumerated, 3);
+    }
+
+    fn bounded_enumeration_classical_agreement(h: &ParityCheckMatrix, expected: usize) -> usize {
+        let n = h.num_qubits();
+        let identity = ParityCheckMatrix::from_dense(
+            (0..n)
+                .map(|column| {
+                    let mut row = vec![0u8; n];
+                    row[column] = 1;
+                    row
+                })
+                .collect(),
+        )
+        .unwrap();
+        match bounded_enumeration_code_distance(h, &identity, n).unwrap() {
+            crate::BoundedEnumerationDistance::CertifiedByBounds { distance, .. } => {
+                assert_eq!(distance, expected);
+                distance
+            }
+            other @ crate::BoundedEnumerationDistance::LevelLimitReached { .. } => {
+                panic!("expected certified classical distance, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn coset_weight_of_group_element_is_zero_and_of_all_ones_is_three() {
+        let hamming = steane_hamming_matrix();
+        let member = hamming.rows()[0].clone();
+        let zero = certified_coset_weight(&hamming, &member, 7)
+            .unwrap()
+            .unwrap();
+        assert_eq!(zero.distance, 0);
+
+        let all_ones = vec![1u8; 7];
+        let three = certified_coset_weight(&hamming, &all_ones, 7)
+            .unwrap()
+            .unwrap();
+        assert_eq!(three.distance, 3);
+        // Native re-verification of the witness against the coset condition.
+        let problem = DistanceProblem::coset_weight_problem(&hamming, &all_ones).unwrap();
+        assert_eq!(problem.verify_witness(&three.witness), Ok(3));
+    }
+
+    #[test]
+    fn coset_weight_agrees_with_brute_force_on_seeded_groups() {
+        use rand::rngs::SmallRng;
+        use rand::{RngExt, SeedableRng};
+        let mut rng = SmallRng::seed_from_u64(0xC05E_75EE_D000_0001);
+        for _ in 0..48 {
+            let n = rng.random_range(3..=9);
+            let row_count = rng.random_range(1..=3);
+            let rows: Vec<Vec<u8>> = (0..row_count)
+                .map(|_| (0..n).map(|_| u8::from(rng.random_bool(0.5))).collect())
+                .collect();
+            let Ok(group) = ParityCheckMatrix::from_dense(rows.clone()) else {
+                continue;
+            };
+            let representative: Vec<u8> = (0..n).map(|_| u8::from(rng.random_bool(0.5))).collect();
+            let certified = certified_coset_weight(&group, &representative, n)
+                .unwrap()
+                .expect("coset always has an element within weight n");
+            let mut brute = usize::MAX;
+            for mask in 0..(1usize << row_count) {
+                let mut candidate = representative.clone();
+                for (index, row) in rows.iter().enumerate() {
+                    if mask & (1 << index) != 0 {
+                        for (bit, r) in candidate.iter_mut().zip(row) {
+                            *bit ^= r;
+                        }
+                    }
+                }
+                brute = brute.min(candidate.iter().map(|&bit| usize::from(bit)).sum::<usize>());
+            }
+            assert_eq!(certified.distance, brute);
+        }
+    }
+
+    #[test]
+    fn five_qubit_logical_x_coset_weight_is_three_by_qubit_support() {
+        use pecos_core::{Pauli, PauliString, QuarterPhase, QubitId};
+        let spec = five_qubit_spec();
+        let logical_x = PauliString::with_phase_and_paulis(
+            QuarterPhase::PlusOne,
+            (0..5).map(|q| (Pauli::X, QubitId::new(q))).collect(),
+        );
+        let certified = certified_stabilizer_coset_weight(&spec, &logical_x, 5)
+            .unwrap()
+            .unwrap();
+        // Raw weight is 5; XXXXX times XZZXI equals IYYIX of qubit-support weight 3.
+        assert_eq!(certified.distance, 3);
+    }
+
+    #[test]
+    fn steane_logical_profile_is_all_threes_and_stabilizer_costs_zero() {
+        let hamming = steane_hamming_matrix();
+        let mut builder = crate::StabilizerCodeSpecBuilder::new(7);
+        builder = builder.checks_from_css(&hamming, &hamming).unwrap();
+        let spec = builder.build_with_discovered_logicals().unwrap();
+
+        let profile = logical_coset_weight_profile(&spec, 7).unwrap();
+        assert_eq!(profile.len(), 2);
+        for entry in profile {
+            assert_eq!(entry.unwrap().distance, 3);
+        }
+        let stabilizer = spec.stabilizers()[0].clone();
+        let zero = certified_stabilizer_coset_weight(&spec, &stabilizer, 7)
+            .unwrap()
+            .unwrap();
+        assert_eq!(zero.distance, 0);
+    }
+
+    #[test]
+    fn yy_code_y_logical_coset_weight_is_one() {
+        use pecos_core::{Pauli, PauliString, QuarterPhase, QubitId};
+        let pauli = |terms: &[(Pauli, usize)]| {
+            PauliString::with_phase_and_paulis(
+                QuarterPhase::PlusOne,
+                terms.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
+            )
+        };
+        let spec = StabilizerCodeSpec::new(
+            2,
+            vec![pauli(&[(Pauli::Y, 0), (Pauli::Y, 1)])],
+            vec![pauli(&[(Pauli::Y, 0)])],
+            vec![pauli(&[(Pauli::X, 0), (Pauli::Z, 1)])],
+        )
+        .unwrap();
+        let certified = certified_stabilizer_coset_weight(&spec, &pauli(&[(Pauli::Y, 0)]), 2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(certified.distance, 1);
     }
 }

@@ -7810,6 +7810,60 @@ fn certified_distance(
     certify_python_problem(&problem.inner, max_weight)
 }
 
+/// Certified minimum weight of ``representative + rowspan(group)`` over GF(2).
+///
+/// Weight 0 means the representative is in the group; certified without a solver call.
+/// SAT answers are natively verified; UNSAT answers are solver-trusted.
+#[pyfunction]
+fn certified_coset_weight(
+    group: &PyParityCheckMatrix,
+    representative: Vec<u8>,
+    max_weight: usize,
+) -> PyResult<Option<PyCertifiedDistance>> {
+    pecos_qec::certified_coset_weight(&group.inner, &representative, max_weight)
+        .map(|result| result.map(PyCertifiedDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Certified minimum qubit-support weight of ``operator * stabilizer group`` for any code.
+#[pyfunction]
+fn certified_stabilizer_coset_weight(
+    code: &PyStabilizerCodeSpec,
+    operator: &crate::pauli_bindings::PauliString,
+    max_weight: usize,
+) -> PyResult<Option<PyCertifiedDistance>> {
+    pecos_qec::certified_stabilizer_coset_weight(&code.inner, &operator.to_rust(), max_weight)
+        .map(|result| result.map(PyCertifiedDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Certified coset weight of every logical basis operator (Z basis, then X basis).
+#[pyfunction]
+fn logical_coset_weight_profile(
+    code: &PyStabilizerCodeSpec,
+    max_weight: usize,
+) -> PyResult<Vec<Option<PyCertifiedDistance>>> {
+    pecos_qec::logical_coset_weight_profile(&code.inner, max_weight)
+        .map(|profile| {
+            profile
+                .into_iter()
+                .map(|entry| entry.map(PyCertifiedDistance::from))
+                .collect()
+        })
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Certified minimum weight of a nonzero kernel element of a classical parity-check matrix.
+#[pyfunction]
+fn certified_classical_distance(
+    h: &PyParityCheckMatrix,
+    max_weight: usize,
+) -> PyResult<Option<PyCertifiedDistance>> {
+    pecos_qec::certified_classical_distance(&h.inner, max_weight)
+        .map(|result| result.map(PyCertifiedDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
 /// Computes binary ``(H, L)`` distance using native bounded row enumeration.
 #[pyfunction]
 fn bounded_enumeration_code_distance(
@@ -8094,6 +8148,10 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(mechanisms_to_dem_string, &qec)?)?;
     qec.add_function(wrap_pyfunction!(decoder_dem_requirement, &qec)?)?;
     qec.add_function(wrap_pyfunction!(certified_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(certified_coset_weight, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(certified_stabilizer_coset_weight, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(logical_coset_weight_profile, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(certified_classical_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
     qec.add_function(wrap_pyfunction!(coloration_memory_circuit, &qec)?)?;
 

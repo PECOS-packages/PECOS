@@ -204,10 +204,10 @@ def test_bounded_enumeration_bindings_certify_and_return_intervals() -> None:
             [0, 0, 0, 1, 1, 1, 1],
         ],
     )
-    l = ParityCheckMatrix([[1, 1, 1, 1, 1, 1, 1]])
-    problem = DistanceProblem.from_css_checks(h, l)
+    logicals = ParityCheckMatrix([[1, 1, 1, 1, 1, 1, 1]])
+    problem = DistanceProblem.from_css_checks(h, logicals)
 
-    exact = bounded_enumeration_code_distance(h, l, 4)
+    exact = bounded_enumeration_code_distance(h, logicals, 4)
     assert exact is not None
     assert exact.certified
     assert exact.distance == exact.upper_bound == 3
@@ -217,7 +217,7 @@ def test_bounded_enumeration_bindings_certify_and_return_intervals() -> None:
     assert exact.max_level is None
     assert problem.verify_witness(exact.witness) == 3
 
-    interval = bounded_enumeration_code_distance(h, l, 0)
+    interval = bounded_enumeration_code_distance(h, logicals, 0)
     assert interval is not None
     assert not interval.certified
     assert interval.distance is None

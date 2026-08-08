@@ -2057,7 +2057,6 @@ class ObservableFlips:
     @staticmethod
     def from_bits(bits: Iterable[SupportsIndex]) -> ObservableFlips: ...
 
-
 class qec:
     """Fault-tolerance and detector-error-model submodule."""
 

@@ -93,3 +93,18 @@ class TestGeneratedSampleBatch:
         errors = batch.decode_count(dem_str, "pymatching")
         assert isinstance(errors, int)
         assert 0 <= errors <= 1000
+
+
+def test_seeded_healthy_decoder_counts_and_stats_are_unchanged() -> None:
+    dem = "error(0.1) D0 L0\nerror(0.2) D0\n"
+    batch = DemSampler.from_dem_string(dem).generate_samples(257, seed=314159)
+
+    assert batch.decode_count(dem, "pymatching") == 48
+    assert batch.decode_count_batch(dem) == 48
+    assert batch.decode_count_parallel(dem, "pymatching", num_workers=3) == 48
+
+    stats = batch.decode_stats(dem, "pymatching")
+    parallel_stats = batch.decode_stats_parallel(dem, "pymatching", num_workers=3)
+    assert stats.num_shots == parallel_stats.num_shots == 257
+    assert stats.num_errors == parallel_stats.num_errors == 48
+    assert stats.logical_error_rate == parallel_stats.logical_error_rate == 48 / 257

@@ -429,7 +429,9 @@ impl<'a> InfluenceBuilder<'a> {
                 }
 
                 match op.gate_type {
-                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => {
+                    pecos_quantum::GateType::MZ
+                    | pecos_quantum::GateType::MeasureFree
+                    | pecos_quantum::GateType::MPZ => {
                         if qubits.len() > 1 {
                             return Err(InfluenceBuildError::BatchedMeasurementUnsupported {
                                 node,
@@ -437,6 +439,10 @@ impl<'a> InfluenceBuilder<'a> {
                             });
                         }
                         sim.mz(&[qubits[0]]);
+                        if op.gate_type == pecos_quantum::GateType::MPZ {
+                            // Measure-and-prepare resets after the readout.
+                            sim.pz(qubits[0]);
+                        }
                         node_to_meas_idx[node] = Some(meas_idx);
                         meas_idx += 1;
                     }
@@ -630,7 +636,9 @@ impl<'a> InfluenceBuilder<'a> {
 
                 let is_measurement = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree
+                    pecos_quantum::GateType::MZ
+                        | pecos_quantum::GateType::MeasureFree
+                        | pecos_quantum::GateType::MPZ
                 );
 
                 // Standard circuit noise model: one fault location per gate.
@@ -819,8 +827,28 @@ impl<'a> InfluenceBuilder<'a> {
         let loc_map = Self::build_location_map(propagator);
 
         // Process gates in reverse topological order
-        while let Some((_, node)) = work.heap.pop() {
+        while let Some((topo_pos, node)) = work.heap.pop() {
             if let Some(gate) = propagator.gate(node) {
+                // The seed's own measurement node: the observable represents
+                // the readout, which happens before the gate's preparing half,
+                // so the crossing must not apply (an MPZ's reset would kill
+                // its own seed before the before-location records). Faults
+                // after the whole gate cannot flip its record, so only the
+                // before-location is recorded.
+                if start_topo_pos == Some(topo_pos) && gate.gate_type.consumes_measurement_record()
+                {
+                    if let Some(qubit_locs) = loc_map.get(&(node, true)) {
+                        Self::record_influence(
+                            &prop,
+                            qubit_locs,
+                            target_idx,
+                            is_detector,
+                            &mut *work.recorder,
+                        );
+                    }
+                    continue;
+                }
+
                 // Record per-qubit influences at before=false location
                 if let Some(qubit_locs) = loc_map.get(&(node, false)) {
                     Self::record_influence(
@@ -920,7 +948,9 @@ impl<'a> InfluenceBuilder<'a> {
 
                 let is_measurement = matches!(
                     gate.gate_type,
-                    pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree
+                    pecos_quantum::GateType::MZ
+                        | pecos_quantum::GateType::MeasureFree
+                        | pecos_quantum::GateType::MPZ
                 );
 
                 let before = is_measurement;

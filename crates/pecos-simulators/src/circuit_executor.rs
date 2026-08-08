@@ -194,6 +194,9 @@ fn execute_gate_command<S: CliffordGateable>(
         GateType::MZ | GateType::MeasureFree => {
             measurements.extend(sim.mz(qubits));
         }
+        GateType::MPZ => {
+            measurements.extend(sim.mpz(qubits));
+        }
         GateType::Idle => {}
         other => {
             panic!("Unsupported gate type in circuit executor: {other:?}");

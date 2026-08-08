@@ -154,7 +154,7 @@ impl<'a> TickFaultAnalyzer<'a> {
             for gate in tick.iter_gate_batches() {
                 // Currently only Z-basis measurements are supported
                 let basis = match gate.gate_type {
-                    GateType::MZ | GateType::MeasureFree => 0, // Z-basis
+                    GateType::MZ | GateType::MeasureFree | GateType::MPZ => 0, // Z-basis
                     _ => continue,
                 };
 

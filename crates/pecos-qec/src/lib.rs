@@ -79,6 +79,7 @@ mod memory_circuit;
 pub mod parity_check_matrix;
 pub mod stabilizer_code;
 pub mod stabilizer_code_spec;
+pub mod subsystem_distance;
 pub mod surface;
 
 pub use bivariate_bicycle::{
@@ -99,6 +100,7 @@ pub use hypergraph_product::{HypergraphProductCode, HypergraphProductError};
 pub use mem_stab::{MemStabError, MemStabSim, MemStabSimBuilder};
 pub use memory_circuit::MemoryBasis;
 pub use parity_check_matrix::{ParityCheckMatrix, ParityCheckMatrixError};
+pub use subsystem_distance::{SubsystemCodeError, subsystem_dressed_distance};
 
 pub use code_distance::{
     connected_cluster_code_distance, stabilizer_code_distance, x_distance, z_distance,

@@ -185,6 +185,11 @@ pub struct HugrEngine {
     /// Active Calls being processed.
     pub(crate) active_calls: BTreeMap<Node, ActiveCallInfo>,
 
+    /// Calls whose callee CFG finished before every return value materialized.
+    /// Maps Call node -> (callee CFG, final block), retaining the propagation
+    /// context needed to replay CFG outputs after a measurement result arrives.
+    pub(crate) pending_call_returns: BTreeMap<Node, (Node, Node)>,
+
     /// Nodes inside `FuncDefn` bodies (should not be processed until function is called).
     pub(crate) nodes_inside_func_defns: BTreeSet<Node>,
 
@@ -409,6 +414,7 @@ impl HugrEngine {
 
         // Clear Call/FuncDefn control flow state
         self.active_calls.clear();
+        self.pending_call_returns.clear();
         self.pending_func_calls.clear();
 
         // Clear TailLoop control flow state
@@ -1456,6 +1462,12 @@ impl HugrEngine {
                 self.active_calls.keys().collect::<Vec<_>>()
             ));
         }
+        if !self.pending_call_returns.is_empty() {
+            stalled.push(format!(
+                "pending Call returns: {:?}",
+                self.pending_call_returns.keys().collect::<Vec<_>>()
+            ));
+        }
         if !self.active_tailloops.is_empty() {
             stalled.push(format!(
                 "active TailLoops: {:?}",
@@ -1915,6 +1927,7 @@ impl Default for HugrEngine {
             func_defns: BTreeMap::new(),
             call_targets: BTreeMap::new(),
             active_calls: BTreeMap::new(),
+            pending_call_returns: BTreeMap::new(),
             nodes_inside_func_defns: BTreeSet::new(),
             pending_func_calls: BTreeMap::new(),
             // Control flow fields (TailLoop)
@@ -2050,6 +2063,12 @@ impl ClassicalEngine for HugrEngine {
                     // And for first-iteration tail loops in the same
                     // situation (fill-only, never past the first Continue).
                     self.repropagate_tailloop_initial_inputs(&hugr);
+
+                    // A callee CFG may finish in the measurement-emission
+                    // cascade, before this round's outcome exists. Replay
+                    // its outputs and complete the owning Call only now that
+                    // every return port can materialize.
+                    self.retry_pending_call_returns(&hugr);
 
                     // Replay can fill the very port a pending control was
                     // starving on (the resolver pass above ran before the

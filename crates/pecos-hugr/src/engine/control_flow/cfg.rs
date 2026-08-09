@@ -724,7 +724,7 @@ impl HugrEngine {
         }
 
         // Check if this CFG is inside a FuncDefn that's being called
-        self.complete_func_call_if_needed(hugr, cfg_node);
+        self.complete_func_call_if_needed(hugr, cfg_node, final_block);
 
         // Add CFG successors to work queue
         let successors: Vec<_> = hugr.output_neighbours(cfg_node).collect();

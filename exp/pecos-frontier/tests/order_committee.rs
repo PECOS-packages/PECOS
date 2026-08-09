@@ -137,6 +137,7 @@ fn ordering_and_committee_match_upstream_fixtures() {
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,
                 column_order: Some(fixture.forward_ordering.clone()),
+                merge_indistinguishable: false,
             },
         )
         .unwrap();

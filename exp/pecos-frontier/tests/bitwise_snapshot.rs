@@ -146,6 +146,7 @@ fn collect_snapshot() -> SnapshotFile {
                     delta: f64::INFINITY,
                     score_alpha: 0.8,
                     column_order: None,
+                    merge_indistinguishable: false,
                 },
             ),
             (
@@ -155,6 +156,7 @@ fn collect_snapshot() -> SnapshotFile {
                     delta: fixture.pruned.delta,
                     score_alpha: 0.8,
                     column_order: None,
+                    merge_indistinguishable: false,
                 },
             ),
         ] {
@@ -189,6 +191,7 @@ fn collect_snapshot() -> SnapshotFile {
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,
                 column_order: Some(fixture.forward_ordering),
+                merge_indistinguishable: false,
             },
         )
         .expect("fixture committee construction must succeed");

@@ -101,6 +101,7 @@ fn parse_dem_and_config(
     delta: f64,
     score_alpha: f64,
     column_order: ColumnOrderArgument,
+    merge_indistinguishable: bool,
 ) -> PyResult<(SparseDem, RustFrontierConfig)> {
     let dem = SparseDem::from_dem_str(dem_str).map_err(|e| runtime_error(&e))?;
     let column_order = resolve_column_order(&dem, column_order)?;
@@ -111,6 +112,7 @@ fn parse_dem_and_config(
             delta,
             score_alpha,
             column_order,
+            merge_indistinguishable,
         },
     ))
 }
@@ -357,8 +359,8 @@ impl PyFrontierDecoder {
     /// Construct a native Frontier decoder from a Stim-format DEM string.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, column_order=ColumnOrderArgument::default()),
-        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, column_order='deadline_reorder')"
+        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false),
+        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, column_order='deadline_reorder', merge_indistinguishable=False)"
     )]
     fn from_dem(
         dem: &str,
@@ -366,8 +368,16 @@ impl PyFrontierDecoder {
         delta: f64,
         score_alpha: f64,
         column_order: ColumnOrderArgument,
+        merge_indistinguishable: bool,
     ) -> PyResult<Self> {
-        let (dem, config) = parse_dem_and_config(dem, k, delta, score_alpha, column_order)?;
+        let (dem, config) = parse_dem_and_config(
+            dem,
+            k,
+            delta,
+            score_alpha,
+            column_order,
+            merge_indistinguishable,
+        )?;
         let num_detectors = dem.num_detectors;
         let inner =
             RustFrontierDecoder::from_sparse_dem(&dem, config).map_err(|e| runtime_error(&e))?;
@@ -424,8 +434,8 @@ impl PyFrontierCommitteeDecoder {
     /// Construct a native forward/backward committee from a Stim-format DEM.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, column_order=ColumnOrderArgument::default()),
-        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, column_order='deadline_reorder')"
+        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false),
+        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, column_order='deadline_reorder', merge_indistinguishable=False)"
     )]
     fn from_dem(
         dem: &str,
@@ -433,8 +443,16 @@ impl PyFrontierCommitteeDecoder {
         delta: f64,
         score_alpha: f64,
         column_order: ColumnOrderArgument,
+        merge_indistinguishable: bool,
     ) -> PyResult<Self> {
-        let (dem, config) = parse_dem_and_config(dem, k, delta, score_alpha, column_order)?;
+        let (dem, config) = parse_dem_and_config(
+            dem,
+            k,
+            delta,
+            score_alpha,
+            column_order,
+            merge_indistinguishable,
+        )?;
         let num_detectors = dem.num_detectors;
         let inner =
             RustFrontierCommittee::from_sparse_dem(&dem, config).map_err(|e| runtime_error(&e))?;

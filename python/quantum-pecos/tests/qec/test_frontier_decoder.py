@@ -134,3 +134,39 @@ def test_decode_batch_matches_individual_decodes() -> None:
     assert [result.observables_mask for result in batch] == [result.observables_mask for result in individual]
     assert [result.log_evidence for result in batch] == [result.log_evidence for result in individual]
     assert [result.logical_masses for result in batch] == [result.logical_masses for result in individual]
+
+
+DUPLICATE_DEM = """\
+error(0.3) D0 L0
+error(0.3) D0 L0
+"""
+
+
+def test_merge_indistinguishable_kwarg_defaults_off_and_merges_when_enabled() -> None:
+    default_decoder = FrontierDecoder.from_dem(DUPLICATE_DEM, column_order="time_order")
+    merged_decoder = FrontierDecoder.from_dem(
+        DUPLICATE_DEM,
+        column_order="time_order",
+        merge_indistinguishable=True,
+    )
+
+    default_result = default_decoder.decode([0])
+    merged_result = merged_decoder.decode([0])
+    assert default_result.processed_columns == 2
+    assert merged_result.processed_columns == 1
+    # decode([0]) passes SPARSE fired-detector indices: detector 0 fired. The only
+    # explanation is the merged mechanism firing, whose XOR probability is
+    # 0.3*0.7 + 0.7*0.3 = 0.42, so the total evidence is exactly 0.42.
+    assert math.isclose(math.exp(merged_result.log_evidence), 0.42, abs_tol=1e-15)
+
+
+def test_committee_merge_kwarg_defaults_off_and_merges_when_enabled() -> None:
+    default_committee = FrontierCommitteeDecoder.from_dem(DUPLICATE_DEM, column_order="time_order")
+    merged_committee = FrontierCommitteeDecoder.from_dem(
+        DUPLICATE_DEM,
+        column_order="time_order",
+        merge_indistinguishable=True,
+    )
+
+    assert default_committee.decode([0]).processed_columns == 2
+    assert merged_committee.decode([0]).processed_columns == 1

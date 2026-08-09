@@ -16,7 +16,7 @@ use pecos_decoder_core::{DecoderError, ObservableDecoder};
 use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierResult, FrontierStatus};
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn sparse_dem(
     mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>,
@@ -37,6 +37,14 @@ fn exact_config() -> FrontierConfig {
         delta: f64::INFINITY,
         score_alpha: 0.8,
         column_order: None,
+        merge_indistinguishable: false,
+    }
+}
+
+fn merged_exact_config() -> FrontierConfig {
+    FrontierConfig {
+        merge_indistinguishable: true,
+        ..exact_config()
     }
 }
 
@@ -106,6 +114,24 @@ fn result_mass_map(result: &FrontierResult) -> BTreeMap<Vec<u64>, f64> {
         .iter()
         .map(|entry| (entry.logical.words().to_vec(), entry.log_mass))
         .collect()
+}
+
+fn assert_mass_maps_close(
+    actual: &BTreeMap<Vec<u64>, f64>,
+    expected: &BTreeMap<Vec<u64>, f64>,
+    tolerance: f64,
+    context: &str,
+) {
+    assert_eq!(actual.len(), expected.len(), "{context}: label count");
+    for (label, expected_mass) in expected {
+        let actual_mass = actual
+            .get(label)
+            .unwrap_or_else(|| panic!("{context}: missing logical label {label:?}"));
+        assert!(
+            (actual_mass - expected_mass).abs() <= tolerance,
+            "{context}, label {label:?}: expected {expected_mass}, got {actual_mass}"
+        );
+    }
 }
 
 #[test]
@@ -195,6 +221,292 @@ fn unpruned_matches_independent_brute_force_on_seeded_random_dems() {
         forced_mechanism_count > 0,
         "seeded models must exercise forced mechanisms"
     );
+}
+
+#[test]
+fn indistinguishable_merging_matches_unmerged_and_original_brute_force() {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4d30_425f_584f_525f);
+
+    for case_index in 0..24 {
+        let num_detectors = rng.random_range(3..=7);
+        let num_observables = rng.random_range(1..=3);
+        let base_count = 3 + case_index % 3;
+        let duplicate_probabilities: Vec<f64> = if case_index % 2 == 0 {
+            match case_index % 6 {
+                0 => vec![0.3, 0.3],
+                2 => vec![0.12, 0.47],
+                _ => vec![0.5, 0.21],
+            }
+        } else {
+            match case_index % 6 {
+                1 => vec![0.5, 0.5, 0.5],
+                3 => vec![0.1, 0.2, 0.3],
+                _ => vec![0.17, 0.41, 0.26],
+            }
+        };
+        let duplicate_observables = if case_index % 3 == 0 {
+            Vec::new()
+        } else {
+            vec![0]
+        };
+
+        let mut base_mechanisms = Vec::with_capacity(base_count);
+        for base_index in 0..base_count {
+            let detector_count = 1 + usize::from(base_index % 3 == 0);
+            let mut detectors = Vec::with_capacity(detector_count);
+            while detectors.len() < detector_count {
+                let detector = u32::try_from(rng.random_range(1..num_detectors))
+                    .expect("seeded detector index fits u32");
+                if !detectors.contains(&detector) {
+                    detectors.push(detector);
+                }
+            }
+            detectors.sort_unstable();
+            let observables = if rng.random_bool(0.5) {
+                vec![
+                    u32::try_from(rng.random_range(0..num_observables))
+                        .expect("seeded observable index fits u32"),
+                ]
+            } else {
+                Vec::new()
+            };
+            base_mechanisms.push((rng.random_range(0.02..0.48), detectors, observables));
+        }
+
+        // Plant the first two equal-symptom copies around an unrelated column;
+        // odd cases add a third copy later in the sequence.
+        let mut mechanisms = Vec::with_capacity(base_count + duplicate_probabilities.len());
+        mechanisms.push((
+            duplicate_probabilities[0],
+            vec![0],
+            duplicate_observables.clone(),
+        ));
+        mechanisms.push(base_mechanisms.remove(0));
+        mechanisms.push((
+            duplicate_probabilities[1],
+            vec![0],
+            duplicate_observables.clone(),
+        ));
+        mechanisms.append(&mut base_mechanisms);
+        if let Some(&third_probability) = duplicate_probabilities.get(2) {
+            mechanisms.push((third_probability, vec![0], duplicate_observables));
+        }
+
+        let mut observed = vec![0_u8; num_detectors];
+        for (probability, detectors, _) in &mechanisms {
+            if rng.random_bool(*probability) {
+                for &detector in detectors {
+                    observed[detector as usize] ^= 1;
+                }
+            }
+        }
+
+        let dem = sparse_dem(mechanisms, num_detectors, num_observables);
+        let mechanism_count = dem.mechanisms.len();
+        let expected_merged_count = dem
+            .mechanisms
+            .iter()
+            .map(|(_, detectors, observables)| (detectors, observables))
+            .collect::<BTreeSet<_>>()
+            .len();
+        let order = (case_index % 2 == 1).then(|| (0..mechanism_count).rev().collect());
+        let mut off_config = exact_config();
+        off_config.column_order = order.clone();
+        let mut on_config = merged_exact_config();
+        on_config.column_order = order;
+        let mut unmerged = FrontierDecoder::from_sparse_dem(&dem, off_config).unwrap();
+        let mut merged = FrontierDecoder::from_sparse_dem(&dem, on_config).unwrap();
+        let unmerged_result = unmerged.decode(&observed).unwrap();
+        let merged_result = merged.decode(&observed).unwrap();
+        let enumerated = independent_enumeration(&dem, &observed);
+        let context = format!("seeded merge case {case_index}");
+
+        assert_eq!(
+            merged_result.predicted, unmerged_result.predicted,
+            "{context}"
+        );
+        assert_eq!(
+            merged_result.predicted.words(),
+            independent_winner(&enumerated),
+            "{context}"
+        );
+        assert_mass_maps_close(
+            &result_mass_map(&merged_result),
+            &result_mass_map(&unmerged_result),
+            1e-12,
+            &context,
+        );
+        assert_mass_maps_close(
+            &result_mass_map(&merged_result),
+            &enumerated,
+            1e-12,
+            &context,
+        );
+        assert_eq!(unmerged_result.processed_columns, mechanism_count);
+        assert_eq!(merged_result.processed_columns, expected_merged_count);
+    }
+}
+
+#[test]
+fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
+    // The original-index permutation produces [A(first), B, A(second), C].
+    // Merging must produce [A(xor), B, C], not move A to its later slot.
+    let dem = sparse_dem(
+        vec![
+            (0.2, vec![], vec![1]),     // C: original index 0
+            (0.25, vec![0], vec![]),    // A(second): original index 1
+            (0.1, vec![0, 1], vec![0]), // B: original index 2
+            (0.2, vec![0], vec![]),     // A(first): original index 3
+        ],
+        2,
+        2,
+    );
+    let xor_probability = 0.2 * (1.0 - 0.25) + 0.25 * (1.0 - 0.2);
+    let premerged = sparse_dem(
+        vec![
+            (xor_probability, vec![0], vec![]),
+            (0.1, vec![0, 1], vec![0]),
+            (0.2, vec![], vec![1]),
+        ],
+        2,
+        2,
+    );
+    let moved_to_last = sparse_dem(
+        vec![
+            (0.1, vec![0, 1], vec![0]),
+            (xor_probability, vec![0], vec![]),
+            (0.2, vec![], vec![1]),
+        ],
+        2,
+        2,
+    );
+    let pruning = FrontierConfig {
+        k: 1,
+        delta: f64::INFINITY,
+        score_alpha: 0.0,
+        column_order: Some(vec![3, 2, 1, 0]),
+        merge_indistinguishable: true,
+    };
+    let mut merged = FrontierDecoder::from_sparse_dem(&dem, pruning).unwrap();
+    let mut hand_built = FrontierDecoder::from_sparse_dem(
+        &premerged,
+        FrontierConfig {
+            k: 1,
+            delta: f64::INFINITY,
+            score_alpha: 0.0,
+            column_order: None,
+            merge_indistinguishable: false,
+        },
+    )
+    .unwrap();
+    let mut wrong_order = FrontierDecoder::from_sparse_dem(
+        &moved_to_last,
+        FrontierConfig {
+            k: 1,
+            delta: f64::INFINITY,
+            score_alpha: 0.0,
+            column_order: None,
+            merge_indistinguishable: false,
+        },
+    )
+    .unwrap();
+
+    let actual = merged.decode(&[0, 0]).unwrap();
+    let expected = hand_built.decode(&[0, 0]).unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(actual.processed_columns, 3);
+
+    // For D0=0,D1=1, prefix-only K=1 drops the needed A branch when A is
+    // first. Moving A after B retains a path, so this specifically guards the
+    // first-occurrence deadline position rather than only the merged count.
+    assert!(merged.decode(&[0, 1]).is_err());
+    assert!(hand_built.decode(&[0, 1]).is_err());
+    assert_eq!(
+        wrong_order.decode(&[0, 1]).unwrap().predicted,
+        ObsMask::from_u64(1)
+    );
+}
+
+#[test]
+fn merge_requires_matching_observable_sets() {
+    let dem = sparse_dem(vec![(0.2, vec![0], vec![0]), (0.3, vec![0], vec![1])], 1, 2);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, merged_exact_config()).unwrap();
+    let result = decoder.decode(&[1]).unwrap();
+    let enumerated = independent_enumeration(&dem, &[1]);
+
+    assert_eq!(result.processed_columns, 2);
+    assert_mass_maps_close(
+        &result_mass_map(&result),
+        &enumerated,
+        1e-12,
+        "different observable symptoms",
+    );
+}
+
+#[test]
+fn forced_and_probabilistic_identical_symptoms_stay_in_separate_layers() {
+    let dem = sparse_dem(vec![(1.0, vec![0], vec![0]), (0.3, vec![0], vec![0])], 1, 1);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, merged_exact_config()).unwrap();
+
+    for observed in [[0], [1]] {
+        let result = decoder.decode(&observed).unwrap();
+        let enumerated = independent_enumeration(&dem, &observed);
+        assert_eq!(result.processed_columns, 1);
+        assert_eq!(result.predicted.words(), independent_winner(&enumerated));
+        assert_mass_maps_close(
+            &result_mass_map(&result),
+            &enumerated,
+            1e-12,
+            "forced and probabilistic layers",
+        );
+    }
+}
+
+#[test]
+fn zero_probability_duplicate_is_dropped_before_merging() {
+    let dem = sparse_dem(vec![(0.0, vec![0], vec![0]), (0.3, vec![0], vec![0])], 1, 1);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, merged_exact_config()).unwrap();
+    let result = decoder.decode(&[1]).unwrap();
+    let enumerated = independent_enumeration(&dem, &[1]);
+
+    assert_eq!(result.processed_columns, 1);
+    assert_mass_maps_close(
+        &result_mass_map(&result),
+        &enumerated,
+        1e-12,
+        "zero-probability duplicate",
+    );
+}
+
+#[test]
+fn merge_is_default_off_and_preserves_the_unmerged_floating_path() {
+    let default_config = FrontierConfig::default();
+    assert!(!default_config.merge_indistinguishable);
+    let dem = sparse_dem(vec![(0.3, vec![0], vec![0]), (0.3, vec![0], vec![0])], 1, 1);
+    let premerged = sparse_dem(vec![(0.3 * 0.7 * 2.0, vec![0], vec![0])], 1, 1);
+    let mut default_decoder = FrontierDecoder::from_sparse_dem(&dem, default_config).unwrap();
+    let mut explicit_off = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+    let mut hand_merged = FrontierDecoder::from_sparse_dem(&premerged, exact_config()).unwrap();
+    let default_result = default_decoder.decode(&[1]).unwrap();
+    let explicit_result = explicit_off.decode(&[1]).unwrap();
+    let hand_merged_result = hand_merged.decode(&[1]).unwrap();
+
+    assert_eq!(default_result.processed_columns, 2);
+    assert_eq!(explicit_result.processed_columns, 2);
+    assert_eq!(
+        default_result.log_evidence.to_bits(),
+        explicit_result.log_evidence.to_bits()
+    );
+    assert_eq!(
+        default_result.logical_masses[0].log_mass.to_bits(),
+        explicit_result.logical_masses[0].log_mass.to_bits()
+    );
+    assert_ne!(
+        default_result.log_evidence.to_bits(),
+        hand_merged_result.log_evidence.to_bits()
+    );
+    assert_ne!(default_result, hand_merged_result);
+    assert_eq!(hand_merged_result.processed_columns, 1);
 }
 
 #[test]
@@ -390,6 +702,7 @@ fn overpruning_can_remove_the_only_eventually_feasible_prefix() {
         delta: 0.01,
         score_alpha: 0.0,
         column_order: None,
+        merge_indistinguishable: false,
     };
     let mut overpruned = FrontierDecoder::from_sparse_dem(&dem, tight).unwrap();
     assert!(overpruned.decode(&[0, 1]).is_err());
@@ -423,6 +736,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             delta: f64::INFINITY,
             score_alpha: 0.0,
             column_order: None,
+            merge_indistinguishable: false,
         },
     )
     .unwrap();
@@ -435,6 +749,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             delta: 0.1,
             score_alpha: 0.0,
             column_order: None,
+            merge_indistinguishable: false,
         },
     )
     .unwrap();
@@ -474,6 +789,7 @@ fn width_pruning_accounts_for_the_discarded_state_and_mass() {
             delta: f64::INFINITY,
             score_alpha: 0.0,
             column_order: None,
+            merge_indistinguishable: false,
         },
     )
     .unwrap();
@@ -503,6 +819,7 @@ fn delta_pruning_reports_its_status_flag() {
             delta: 0.5,
             score_alpha: 0.0,
             column_order: None,
+            merge_indistinguishable: false,
         },
     )
     .unwrap();
@@ -532,6 +849,7 @@ fn one_prune_call_can_trigger_both_pruning_flags() {
             delta: 0.5,
             score_alpha: 0.0,
             column_order: None,
+            merge_indistinguishable: false,
         },
     )
     .unwrap();
@@ -564,6 +882,7 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             delta: f64::INFINITY,
             score_alpha: 0.0,
             column_order: None,
+            merge_indistinguishable: false,
         },
     )
     .unwrap();
@@ -574,6 +893,7 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             delta: f64::INFINITY,
             score_alpha: 0.8,
             column_order: None,
+            merge_indistinguishable: false,
         },
     )
     .unwrap();

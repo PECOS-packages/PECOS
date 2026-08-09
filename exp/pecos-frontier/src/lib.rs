@@ -50,6 +50,15 @@ pub struct FrontierConfig {
     pub score_alpha: f64,
     /// Optional permutation of the DEM mechanism indices.
     pub column_order: Option<Vec<usize>>,
+    /// Merge probabilistic mechanisms with identical detector and observable
+    /// sets using their XOR-combined probability.
+    ///
+    /// This merge is mathematically exact, but it takes a different
+    /// floating-point path and Frontier's parity contract is bitwise, so it is
+    /// disabled by default. Zero-probability mechanisms are already discarded,
+    /// while probability-one mechanisms remain separate in the forced layer
+    /// and are not merged with otherwise identical probabilistic mechanisms.
+    pub merge_indistinguishable: bool,
 }
 
 impl Default for FrontierConfig {
@@ -60,6 +69,7 @@ impl Default for FrontierConfig {
             delta: 50.0,
             score_alpha: 0.8,
             column_order: None,
+            merge_indistinguishable: false,
         }
     }
 }
@@ -262,6 +272,8 @@ struct PruneResult {
     delta_pruned: bool,
 }
 
+type RawColumn = (Vec<u64>, Vec<u64>, f64);
+
 /// Ordered, pruned dynamic-programming decoder for sparse detector error models.
 #[derive(Clone, Debug)]
 pub struct FrontierDecoder {
@@ -289,7 +301,9 @@ impl FrontierDecoder {
     ///
     /// Zero-probability mechanisms are discarded and probability-one mechanisms
     /// are folded into the initial state after validating the optional ordering
-    /// permutation. All indices and probabilities are checked.
+    /// permutation. When configured, indistinguishable probabilistic mechanisms
+    /// are merged in their ordered sequence before deadline and suffix data are
+    /// constructed. All indices and probabilities are checked.
     ///
     /// # Errors
     ///
@@ -305,7 +319,7 @@ impl FrontierDecoder {
             .column_order
             .clone()
             .unwrap_or_else(|| (0..dem.mechanisms.len()).collect());
-        let mut raw_columns = Vec::with_capacity(dem.mechanisms.len());
+        let mut raw_columns: Vec<RawColumn> = Vec::with_capacity(dem.mechanisms.len());
         #[cfg(debug_assertions)]
         let mut probabilistic_order = Vec::with_capacity(dem.mechanisms.len());
         let mut forced_syndrome = vec![0; detector_words];
@@ -352,6 +366,10 @@ impl FrontierDecoder {
             let mut sorted_probabilistic_order = probabilistic_order;
             sorted_probabilistic_order.sort_unstable();
             debug_assert_eq!(sorted_probabilistic_order, expected_probabilistic_order);
+        }
+
+        if config.merge_indistinguishable {
+            raw_columns = merge_indistinguishable_columns(raw_columns);
         }
 
         let mut touched_detectors = vec![0; detector_words];
@@ -598,6 +616,7 @@ impl FrontierCommittee {
             delta,
             score_alpha,
             column_order,
+            merge_indistinguishable,
         } = config;
         let mut forward_order = column_order.unwrap_or_else(|| (0..dem.mechanisms.len()).collect());
         let forward = FrontierDecoder::from_sparse_dem(
@@ -607,6 +626,7 @@ impl FrontierCommittee {
                 delta,
                 score_alpha,
                 column_order: Some(forward_order.clone()),
+                merge_indistinguishable,
             },
         )?;
         forward_order.reverse();
@@ -615,6 +635,7 @@ impl FrontierCommittee {
             delta,
             score_alpha,
             column_order: Some(forward_order),
+            merge_indistinguishable,
         };
         let backward = FrontierDecoder::from_sparse_dem(dem, backward_config)?;
         let build_seconds = build_started.elapsed().as_secs_f64();
@@ -877,6 +898,35 @@ fn validate_probability(probability: f64, index: usize) -> Result<(), DecoderErr
         )));
     }
     Ok(())
+}
+
+fn merge_indistinguishable_columns(raw_columns: Vec<RawColumn>) -> Vec<RawColumn> {
+    let mut first_positions: BTreeMap<(Vec<u64>, Vec<u64>), usize> = BTreeMap::new();
+    let mut merged_columns: Vec<RawColumn> = Vec::with_capacity(raw_columns.len());
+
+    for (detectors, observables, probability) in raw_columns {
+        let symptoms = (detectors.clone(), observables.clone());
+        if let Some(&first_position) = first_positions.get(&symptoms) {
+            let first_probability = &mut merged_columns[first_position].2;
+            *first_probability = xor_combined_probability(*first_probability, probability);
+        } else {
+            first_positions.insert(symptoms, merged_columns.len());
+            merged_columns.push((detectors, observables, probability));
+        }
+    }
+
+    merged_columns
+}
+
+fn xor_combined_probability(first: f64, second: f64) -> f64 {
+    debug_assert!(first > 0.0 && first < 1.0);
+    debug_assert!(second > 0.0 && second < 1.0);
+    let combined = first * (1.0 - second) + second * (1.0 - first);
+    debug_assert!(
+        combined > 0.0 && combined < 1.0,
+        "the XOR probability of two probabilities in (0, 1) must remain in (0, 1)"
+    );
+    combined
 }
 
 fn validate_indices(
@@ -1142,8 +1192,12 @@ fn and_not_assign(left: &mut [u64], right: &[u64]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrontierLogicalMass, FrontierResult, FrontierStatus, committee_rank, logaddexp};
+    use super::{
+        FrontierCommittee, FrontierConfig, FrontierDecoder, FrontierLogicalMass, FrontierResult,
+        FrontierStatus, SparseDem, committee_rank, logaddexp, merge_indistinguishable_columns,
+    };
     use pecos_decoder_core::obs_mask::ObsMask;
+    use std::collections::BTreeMap;
 
     #[test]
     fn logaddexp_handles_negative_infinity_on_either_side() {
@@ -1155,6 +1209,79 @@ mod tests {
             logaddexp(-2.5, f64::NEG_INFINITY).to_bits(),
             (-2.5_f64).to_bits()
         );
+    }
+
+    #[test]
+    fn xor_probability_arithmetic_is_pinned() {
+        let two_copies =
+            merge_indistinguishable_columns(vec![(vec![1], vec![2], 0.3), (vec![1], vec![2], 0.3)]);
+        // Exactly one of two p=0.3 variables fires with probability
+        // 0.3*0.7 + 0.3*0.7 = 0.3*0.7*2 = 0.42.
+        assert_eq!(two_copies.len(), 1);
+        assert_eq!(two_copies[0].2.to_bits(), (0.3_f64 * 0.7 * 2.0).to_bits());
+
+        let three_copies = merge_indistinguishable_columns(vec![
+            (vec![1], vec![2], 0.5),
+            (vec![1], vec![2], 0.5),
+            (vec![1], vec![2], 0.5),
+        ]);
+        // XOR with a fair bit is fair. The first pair folds to 0.5, and
+        // folding the third fair bit therefore remains exactly 0.5.
+        assert_eq!(three_copies.len(), 1);
+        assert_eq!(three_copies[0].2.to_bits(), 0.5_f64.to_bits());
+
+        let dem = SparseDem {
+            mechanisms: vec![
+                (0.5, vec![0], vec![0]),
+                (0.5, vec![0], vec![0]),
+                (0.5, vec![0], vec![0]),
+            ],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 1,
+            num_observables: 1,
+        };
+        let mut decoder = FrontierDecoder::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                merge_indistinguishable: true,
+                ..FrontierConfig::default()
+            },
+        )
+        .unwrap();
+        let result = decoder.decode(&[1]).unwrap();
+        assert_eq!(result.processed_columns, 1);
+        assert_eq!(result.log_evidence.to_bits(), 0.5_f64.ln().to_bits());
+    }
+
+    #[test]
+    fn committee_merges_both_legs() {
+        let dem = SparseDem {
+            mechanisms: vec![
+                (0.3, vec![0], vec![0]),
+                (0.2, vec![1], vec![]),
+                (0.4, vec![0], vec![0]),
+            ],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 2,
+            num_observables: 1,
+        };
+        let mut committee = FrontierCommittee::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                k: usize::MAX,
+                delta: f64::INFINITY,
+                score_alpha: 0.8,
+                column_order: None,
+                merge_indistinguishable: true,
+            },
+        )
+        .unwrap();
+        let forward = committee.forward.decode(&[0, 0]).unwrap();
+        let backward = committee.backward.decode(&[0, 0]).unwrap();
+
+        assert_eq!(forward.processed_columns, 2);
+        assert_eq!(backward.processed_columns, 2);
+        assert_eq!(forward.processed_columns, backward.processed_columns);
     }
 
     #[test]

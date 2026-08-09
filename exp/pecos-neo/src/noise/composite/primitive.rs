@@ -20,7 +20,7 @@ use std::fmt::Write as _;
 use super::action::GateAction;
 use super::condition::Condition;
 use super::response::CompositeResponse;
-use crate::noise::NoiseContext;
+use crate::noise::{NoiseContext, NoiseGateRequirement};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -43,6 +43,11 @@ pub trait Primitive: Send + Sync {
 
     /// Clone this primitive into a boxed trait object.
     fn clone_box(&self) -> Box<dyn Primitive>;
+
+    /// Runner capabilities required by gates this primitive can inject.
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        smallvec::SmallVec::new()
+    }
 
     /// Multi-line tree representation for debugging.
     ///
@@ -334,6 +339,12 @@ impl<P1: Primitive, P2: Primitive> Primitive for TwoStage<P1, P2> {
             stage2: self.stage2.clone_box(),
         })
     }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        let mut requirements = self.stage1.gate_requirements();
+        requirements.extend(self.stage2.gate_requirements());
+        requirements
+    }
 }
 
 impl Primitive for Box<dyn Primitive> {
@@ -383,6 +394,10 @@ impl Primitive for Box<dyn Primitive> {
     fn clone_box(&self) -> Box<dyn Primitive> {
         (**self).clone_box()
     }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        (**self).gate_requirements()
+    }
 }
 
 // Implement Primitive for all GateActions
@@ -402,6 +417,10 @@ impl<A: GateAction + Clone + 'static> Primitive for A {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        GateAction::gate_requirements(self)
     }
 }
 
@@ -481,6 +500,10 @@ impl<P: Primitive> Primitive for Prob<P> {
             probability: self.probability,
             inner: self.inner.clone_box(),
         })
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.inner.gate_requirements()
     }
 }
 
@@ -576,6 +599,10 @@ where
             inner: self.inner.clone_box(),
         })
     }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.inner.gate_requirements()
+    }
 }
 
 /// Linear time-dependent probability: p = rate * duration.
@@ -647,6 +674,10 @@ impl<P: Primitive> Primitive for ProbLinear<P> {
             rate_per_time_unit: self.rate_per_time_unit,
             inner: self.inner.clone_box(),
         })
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.inner.gate_requirements()
     }
 }
 
@@ -739,6 +770,10 @@ impl<P: Primitive> Primitive for ProbQuadratic<P> {
             inner: self.inner.clone_box(),
         })
     }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.inner.gate_requirements()
+    }
 }
 
 /// Conditional: if condition is true, execute `then_branch`, else `else_branch`.
@@ -808,6 +843,12 @@ impl<C: Condition + Clone + 'static, T: Primitive, E: Primitive> Primitive for W
             then_branch: self.then_branch.clone_box(),
             else_branch: self.else_branch.clone_box(),
         })
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        let mut requirements = self.then_branch.gate_requirements();
+        requirements.extend(self.else_branch.gate_requirements());
+        requirements
     }
 }
 
@@ -914,6 +955,13 @@ impl<P: Primitive> Primitive for Sample<P> {
                 .collect(),
         ))
     }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.branches
+            .iter()
+            .flat_map(|(_, primitive)| primitive.gate_requirements())
+            .collect()
+    }
 }
 
 /// Sequential: execute all primitives in order, combine responses.
@@ -987,6 +1035,13 @@ impl<P: Primitive> Primitive for Seq<P> {
         Box::new(BoxSeq::new(
             self.primitives.iter().map(Primitive::clone_box).collect(),
         ))
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.primitives
+            .iter()
+            .flat_map(Primitive::gate_requirements)
+            .collect()
     }
 }
 
@@ -1062,6 +1117,13 @@ impl Primitive for BoxSeq {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.primitives
+            .iter()
+            .flat_map(Primitive::gate_requirements)
+            .collect()
     }
 }
 
@@ -1257,6 +1319,13 @@ impl Primitive for BoxSample {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.branches
+            .iter()
+            .flat_map(|(_, primitive)| primitive.gate_requirements())
+            .collect()
     }
 }
 

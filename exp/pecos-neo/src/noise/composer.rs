@@ -22,7 +22,8 @@
 use super::context::NoiseContext;
 use super::idle::IdleChannel;
 use super::plugin::{ContextObserver, EventHandler, NoiseModelConfig, NoisePlugin};
-use super::{NoiseChannel, NoiseEvent, NoiseResponse};
+use super::{NoiseChannel, NoiseEvent, NoiseGateRequirement, NoiseResponse};
+use crate::command::GateType;
 use pecos_core::{QubitId, TimeScale};
 use pecos_random::PecosRng;
 
@@ -59,6 +60,9 @@ pub struct ComposableNoiseModel {
     /// Noise channels that produce noise responses.
     channels: Vec<Box<dyn NoiseChannel>>,
 
+    /// Runner capabilities required by configured gate-injection mechanisms.
+    gate_requirements: Vec<NoiseGateRequirement>,
+
     /// Observers that react to context state changes.
     observers: Vec<Box<dyn ContextObserver>>,
 
@@ -76,6 +80,7 @@ impl std::fmt::Debug for ComposableNoiseModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ComposableNoiseModel")
             .field("time_scale", &self.time_scale)
+            .field("gate_requirements", &self.gate_requirements)
             .field("event_handler_count", &self.event_handlers.len())
             .field(
                 "event_handler_names",
@@ -109,6 +114,7 @@ impl ComposableNoiseModel {
         Self {
             event_handlers: Vec::new(),
             channels: Vec::new(),
+            gate_requirements: Vec::new(),
             observers: Vec::new(),
             context: NoiseContext::new(),
             time_scale: None,
@@ -186,6 +192,12 @@ impl ComposableNoiseModel {
 
         // Transfer registered components from config to model
         self.event_handlers.extend(config.event_handlers);
+        self.gate_requirements.extend(
+            config
+                .channels
+                .iter()
+                .flat_map(|channel| channel.gate_requirements()),
+        );
         self.channels.extend(config.channels);
         self.observers.extend(config.observers);
 
@@ -201,6 +213,26 @@ impl ComposableNoiseModel {
     /// For plugin-based configuration, use `add_plugin()` instead.
     #[must_use]
     pub fn add_channel(mut self, channel: impl NoiseChannel + 'static) -> Self {
+        self.gate_requirements.extend(channel.gate_requirements());
+        self.channels.push(Box::new(channel));
+        self
+    }
+
+    /// Add a channel while recording the builder setter that configured it.
+    pub(crate) fn add_channel_configured_by(
+        mut self,
+        channel: impl NoiseChannel + 'static,
+        configured_by: &'static str,
+        fix: &'static str,
+    ) -> Self {
+        self.gate_requirements
+            .extend(channel.gate_requirements().into_iter().map(|requirement| {
+                NoiseGateRequirement {
+                    configured_by,
+                    fix,
+                    ..requirement
+                }
+            }));
         self.channels.push(Box::new(channel));
         self
     }
@@ -211,8 +243,51 @@ impl ComposableNoiseModel {
     /// or other source. For most cases, use [`Self::add_channel`] instead.
     #[must_use]
     pub fn add_boxed_channel(mut self, channel: Box<dyn NoiseChannel>) -> Self {
+        self.gate_requirements.extend(channel.gate_requirements());
         self.channels.push(channel);
         self
+    }
+
+    /// Validate gate-injection requirements against a runner configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns a diagnostic naming the configuring setter, incompatible runner,
+    /// and concrete fix when an injected gate is unsupported.
+    pub(crate) fn validate_runner_gate_support(
+        &self,
+        runner: &str,
+        has_rotation_support: bool,
+    ) -> Result<(), String> {
+        for requirement in &self.gate_requirements {
+            let gate_type = requirement.gate_type;
+            if supports_clifford_noise_gate(gate_type)
+                || (has_rotation_support && supports_rotation_noise_gate(gate_type))
+            {
+                continue;
+            }
+
+            let needs_rotation = supports_rotation_noise_gate(gate_type);
+            let fix = if runner == "ImportanceSamplingRunner" && needs_rotation {
+                "switch to a stochastic noise mechanism (for coherent idle configuration, use \
+                 the stochastic idle family with with_p_idle_coherent(false)); \
+                 ImportanceSamplingRunner does not provide a rotation executor"
+            } else {
+                requirement.fix
+            };
+            let limitation = if needs_rotation {
+                "has no rotation executor and cannot represent that noise gate"
+            } else {
+                "cannot execute that injected gate with any supported executor"
+            };
+            return Err(format!(
+                "{} configures a noise mechanism that can inject {gate_type:?}, but {runner} \
+                 {limitation}; {fix}.",
+                requirement.configured_by
+            ));
+        }
+
+        Ok(())
     }
 
     /// Add an event handler directly to the model.
@@ -235,14 +310,17 @@ impl ComposableNoiseModel {
 
     /// Add an idle channel with T1/T2 times in physical units.
     ///
-    /// Requires `with_time_scale()` to be called first.
+    /// Requires `with_time_scale()` to be called first. T2 is total transverse coherence time,
+    /// not pure-dephasing Tphi. The first-order Pauli-twirl mapping, physical bound, validity
+    /// domain, and numerical compatibility note are documented by [`IdleChannel::from_t1_t2`].
     ///
     /// # Arguments
     /// * `t1_seconds` - T1 relaxation time in seconds
-    /// * `t2_seconds` - T2 dephasing time in seconds
+    /// * `t2_seconds` - Total T2 transverse coherence time in seconds
     ///
     /// # Panics
-    /// Panics if `with_time_scale()` has not been called.
+    /// Panics if `with_time_scale()` has not been called, if either time is non-finite or not
+    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
     ///
     /// # Example
     /// ```
@@ -258,10 +336,7 @@ impl ComposableNoiseModel {
         let scale = self
             .time_scale
             .expect("with_time_scale() must be called before with_idle_t1_t2()");
-        // Convert physical times to time units
-        let t1_units = scale.from_seconds(t1_seconds).as_f64();
-        let t2_units = scale.from_seconds(t2_seconds).as_f64();
-        let channel = IdleChannel::from_t1_t2(t1_units, t2_units);
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
         self.add_channel(channel)
     }
 
@@ -476,6 +551,53 @@ impl ComposableNoiseModel {
     }
 }
 
+fn supports_clifford_noise_gate(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::I
+            | GateType::X
+            | GateType::Y
+            | GateType::Z
+            | GateType::H
+            | GateType::F
+            | GateType::Fdg
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
+            | GateType::SZ
+            | GateType::SZdg
+            | GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SWAP
+    )
+}
+
+fn supports_rotation_noise_gate(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::T
+            | GateType::Tdg
+            | GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::U
+            | GateType::R1XY
+            | GateType::CRZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+            | GateType::CCX
+    )
+}
+
 // ============================================================================
 // From implementations for ergonomic noise model construction
 // ============================================================================
@@ -485,6 +607,7 @@ impl Clone for ComposableNoiseModel {
         Self {
             event_handlers: self.event_handlers.iter().map(|h| h.clone_box()).collect(),
             channels: self.channels.iter().map(|c| c.clone_box()).collect(),
+            gate_requirements: self.gate_requirements.clone(),
             observers: self.observers.iter().map(|o| o.clone_box()).collect(),
             context: self.context.clone(),
             time_scale: self.time_scale,

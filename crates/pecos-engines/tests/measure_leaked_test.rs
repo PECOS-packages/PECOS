@@ -31,11 +31,11 @@ fn test_measure_leaked_basic_functionality() {
 fn test_measure_leaked_with_general_noise_model() {
     // Create a noise model
     let mut noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0)
-        .with_p1_probability(0.0)
-        .with_p2_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0)
+        .with_p1(0.0)
+        .with_p2(0.0)
         .with_seed(42)
         .build();
 
@@ -120,11 +120,11 @@ fn test_measure_leaked_preserves_quantum_state() {
 fn test_measure_leaked_sequential_measurements() {
     // Test that leaked state persists across multiple measurements
     let mut noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0)
-        .with_p1_probability(0.0)
-        .with_p2_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0)
+        .with_p1(0.0)
+        .with_p2(0.0)
         .with_seed(42)
         .build();
 
@@ -181,11 +181,11 @@ fn test_measure_leaked_sequential_measurements() {
 fn test_measure_leaked_with_prep_unleaks() {
     // Test that Prep operation unleaks qubits
     let mut noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0)
-        .with_p1_probability(0.0)
-        .with_p2_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0)
+        .with_p1(0.0)
+        .with_p2(0.0)
         .with_seed(42)
         .build();
 

@@ -43,7 +43,7 @@ use super::prelude::*;
 use crate::command::GateType;
 use crate::noise::two_qubit::AngleScaling;
 use crate::noise::{
-    ComposableNoiseModel, CrosstalkTransitions, SingleQubitEmissionWeights,
+    ComposableNoiseModel, CrosstalkTransitions, IdleChannel, SingleQubitEmissionWeights,
     TwoQubitEmissionWeights, TwoQubitPauliWeights,
 };
 use pecos_core::TimeScale;
@@ -122,7 +122,7 @@ pub struct CompositeNoiseModelBuilder {
     p2_pauli_model: Option<TwoQubitPauliWeights>,
     p2_emission_model: Option<TwoQubitEmissionWeights>,
     p2_angle_scaling: Option<AngleScaling>,
-    p2_idle_rate: f64,
+    idle_after_2q: f64,
 
     // Preparation parameters
     p_prep: f64,
@@ -177,7 +177,7 @@ impl Default for CompositeNoiseModelBuilder {
             p2_pauli_model: None,
             p2_emission_model: None,
             p2_angle_scaling: None,
-            p2_idle_rate: 0.0,
+            idle_after_2q: 0.0,
             p_prep: 0.0,
             p_prep_leak_ratio: 0.0,
             p_prep_crosstalk: 0.0,
@@ -395,13 +395,13 @@ impl CompositeNoiseModelBuilder {
         self
     }
 
-    /// Set idle noise rate after two-qubit gates.
+    /// Set the duration of the idle-noise site applied after each two-qubit gate.
     ///
-    /// This applies additional stochastic noise after each two-qubit gate,
-    /// modeling the fact that two-qubit gates often take longer.
+    /// A duration of zero disables these sites. Nonzero sites receive all
+    /// configured linear and quadratic idle mechanisms.
     #[must_use]
-    pub fn with_p2_idle(mut self, rate: f64) -> Self {
-        self.p2_idle_rate = validate_probability(rate, "p2_idle");
+    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
+        self.idle_after_2q = validate_rate(duration, "idle_after_2q");
         self
     }
 
@@ -576,7 +576,8 @@ impl CompositeNoiseModelBuilder {
 
     /// Set the quadratic idle noise rate (T2-like dephasing).
     ///
-    /// The error probability follows: `p = sin(rate * duration)^2`
+    /// The error probability follows: `p = sin(rate * duration / 2)^2`,
+    /// the exact Pauli twirl of the coherent RZ rotation.
     ///
     /// This models coherent dephasing converted to stochastic errors.
     /// Use `with_p_idle_coherent(true)` to use actual coherent RZ rotations instead.
@@ -593,7 +594,7 @@ impl CompositeNoiseModelBuilder {
     /// such as frequency offsets in physical systems.
     ///
     /// When `false` (default), dephasing is modeled as stochastic Z errors
-    /// with probability `sin(rate * duration)^2`.
+    /// with probability `sin(rate * duration / 2)^2`.
     #[must_use]
     pub fn with_p_idle_coherent(mut self, coherent: bool) -> Self {
         self.p_idle_coherent = coherent;
@@ -706,15 +707,16 @@ impl CompositeNoiseModelBuilder {
 
     /// Set T1/T2 relaxation times in physical units (seconds).
     ///
-    /// This is a convenience method that converts physical T1/T2 times to
-    /// the internal rate parameters based on the configured time scale.
-    ///
-    /// - T1 (amplitude damping): Sets linear idle noise rate = 1/T1
-    /// - T2 (dephasing): Sets quadratic idle noise rate = 1/T2^2
+    /// This is a convenience method that converts physical T1/T2 times to the internal rate
+    /// parameters based on the configured time scale. T2 is total transverse coherence time, not
+    /// pure-dephasing Tphi. The first-order Pauli-twirl mapping, physical bound, validity domain,
+    /// and numerical compatibility note are documented by [`IdleChannel::from_t1_t2`]. The
+    /// convenience configures the linear family and leaves the quadratic family unused.
     ///
     /// # Panics
     ///
-    /// Panics if `with_time_scale()` has not been called first.
+    /// Panics if `with_time_scale()` has not been called first, if either time is non-finite or not
+    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
     ///
     /// # Example
     ///
@@ -733,13 +735,14 @@ impl CompositeNoiseModelBuilder {
             .time_scale
             .expect("with_time_scale() must be called before with_idle_t1_t2()");
 
-        // Convert physical times to time units
-        let t1_units = scale.from_seconds(t1_seconds).as_f64();
-        let t2_units = scale.from_seconds(t2_seconds).as_f64();
-
-        // Set rates: linear_rate = 1/T1, quadratic_rate = 1/T2^2
-        self.p_idle_linear_rate = 1.0 / t1_units.max(1.0);
-        self.p_idle_quadratic_rate = 1.0 / (t2_units * t2_units).max(1.0);
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
+        self.p_idle_linear_rate = channel.linear_rate;
+        self.p_idle_linear_pauli_weights = Some(PauliWeights::custom(
+            channel.linear_weights.x,
+            channel.linear_weights.y,
+            channel.linear_weights.z,
+        ));
+        self.p_idle_quadratic_rate = channel.quadratic_rate;
         self
     }
 
@@ -793,8 +796,8 @@ impl CompositeNoiseModelBuilder {
             model = model.add_channel(channel);
         }
 
-        // Two-qubit gate noise (including p2_idle)
-        if self.p2 > 0.0 || self.p2_idle_rate > 0.0 {
+        // Two-qubit gate noise
+        if self.p2 > 0.0 {
             let tq_noise = self.build_two_qubit_noise();
             let channel = CompositeChannelBuilder::two_qubit("flow_tq", tq_noise);
             model = model.add_channel(channel);
@@ -853,11 +856,37 @@ impl CompositeNoiseModelBuilder {
             model = model.add_channel(channel);
         }
 
-        // Idle noise (T1/T2)
-        if self.p_idle_linear_rate > 0.0 || self.p_idle_quadratic_rate > 0.0 {
-            let idle_noise = self.build_idle_noise();
-            let channel = CompositeChannelBuilder::idle("flow_idle", idle_noise);
-            model = model.add_channel(channel);
+        // Idle noise (T1/T2 and operand-local sites after two-qubit gates)
+        if self.p_idle_linear_rate > 0.0
+            || self.p_idle_quadratic_rate > 0.0
+            || self.idle_after_2q > 0.0
+        {
+            let composite_weights = self
+                .p_idle_linear_pauli_weights
+                .unwrap_or_else(PauliWeights::uniform)
+                .normalized();
+            let total = composite_weights.x + composite_weights.y + composite_weights.z;
+            let linear_weights = crate::noise::PauliWeights::custom(
+                composite_weights.x / total,
+                composite_weights.y / total,
+                composite_weights.z / total,
+            );
+            let channel = IdleChannel {
+                linear_rate: self.p_idle_linear_rate,
+                linear_weights,
+                sin_squared_rate: 0.0,
+                sin_squared_model: std::collections::BTreeMap::new(),
+                quadratic_rate: self.p_idle_quadratic_rate,
+                coherent_dephasing: self.p_idle_coherent,
+                coherent_to_incoherent_factor: self.p_idle_coherent_to_incoherent_factor,
+                idle_after_2q: self.idle_after_2q,
+            };
+            model = model.add_channel_configured_by(
+                channel,
+                "CompositeNoiseModelBuilder::with_p_idle_coherent(true)",
+                "supply a rotation executor with CircuitRunner::rotations(), or switch to the \
+                 stochastic idle family with with_p_idle_coherent(false)",
+            );
         }
 
         // Before-gate channel for skip logic (if leakage is enabled)
@@ -983,18 +1012,10 @@ impl CompositeNoiseModelBuilder {
     /// When angle scaling is configured, uses `prob_fn` for dynamic probability.
     /// Otherwise, uses constant `prob`.
     fn build_two_qubit_noise(&self) -> BoxSeq {
-        // Check if we need angle-dependent probability
-        let main_noise = if let Some(scaling) = self.p2_angle_scaling {
+        if let Some(scaling) = self.p2_angle_scaling {
             self.build_two_qubit_noise_angle_scaled(scaling)
         } else {
             self.build_two_qubit_noise_constant()
-        };
-
-        // Add idle noise after the gate if configured (memory sweeping)
-        if self.p2_idle_rate > 0.0 {
-            seq![main_noise, prob(self.p2_idle_rate, inject_z()),]
-        } else {
-            main_noise
         }
     }
 
@@ -1196,73 +1217,28 @@ impl CompositeNoiseModelBuilder {
             ]
         }
     }
-
-    /// Build idle noise primitive (T1/T2).
-    fn build_idle_noise(&self) -> BoxSeq {
-        use super::action::InjectCoherentRZ;
-        use super::primitive::{ProbLinear, ProbQuadratic};
-
-        // T1 uses custom Pauli weights if specified, otherwise uniform
-        let make_t1_pauli = || match self.p_idle_linear_pauli_weights {
-            Some(w) => Pauli::new(w),
-            None => Pauli::uniform(),
-        };
-
-        // T2: either coherent RZ rotations or stochastic Z errors
-        let make_t2_stochastic = || {
-            ProbQuadratic::new(self.p_idle_quadratic_rate, inject_z())
-                .with_factor(self.p_idle_coherent_to_incoherent_factor)
-        };
-
-        let make_t2_coherent = || InjectCoherentRZ::new(self.p_idle_quadratic_rate);
-
-        match (
-            self.p_idle_linear_rate > 0.0,
-            self.p_idle_quadratic_rate > 0.0,
-            self.p_idle_coherent,
-        ) {
-            (true, true, false) => {
-                // Both T1 (linear) and T2 (quadratic stochastic) noise
-                seq![
-                    ProbLinear::new(self.p_idle_linear_rate, make_t1_pauli()),
-                    make_t2_stochastic(),
-                ]
-            }
-            (true, true, true) => {
-                // Both T1 (linear stochastic) and T2 (coherent RZ) noise
-                seq![
-                    ProbLinear::new(self.p_idle_linear_rate, make_t1_pauli()),
-                    make_t2_coherent(),
-                ]
-            }
-            (true, false, _) => {
-                // Only T1 (linear) noise
-                seq![ProbLinear::new(self.p_idle_linear_rate, make_t1_pauli()),]
-            }
-            (false, true, false) => {
-                // Only T2 (quadratic stochastic) noise
-                seq![make_t2_stochastic(),]
-            }
-            (false, true, true) => {
-                // Only T2 (coherent RZ) noise
-                seq![make_t2_coherent(),]
-            }
-            (false, false, _) => {
-                // No idle noise (shouldn't reach here due to caller check)
-                seq![nothing(),]
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 #[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
-    use crate::command::CommandBuilder;
+    use crate::command::{CommandBuilder, GateCommand};
+    use crate::noise::{NoiseEvent, NoiseResponse};
     use crate::runner::CircuitRunner;
     use pecos_core::QubitId;
+    use pecos_random::PecosRng;
     use pecos_simulators::SparseStab;
+
+    fn collect_gates(response: NoiseResponse) -> Vec<GateCommand> {
+        match response {
+            NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
+            NoiseResponse::Multiple(responses) => {
+                responses.into_iter().flat_map(collect_gates).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
 
     #[test]
     fn test_empty_builder() {
@@ -1495,112 +1471,54 @@ mod tests {
     }
 
     #[test]
-    fn test_p2_idle() {
-        let model = CompositeNoiseModelBuilder::new()
-            .with_p2(0.01)
-            .with_p2_idle(0.001)
+    fn after_2q_idle_uses_idle_channel_without_p2() {
+        let mut model = CompositeNoiseModelBuilder::new()
+            .with_p_idle_linear(1.0)
+            .with_p_idle_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
+            .with_idle_after_2q(1.0)
             .build();
+        assert_eq!(model.channel_names(), ["IdleChannel"]);
 
-        // Should have TQ channel (p2_idle is integrated into the TQ noise)
-        assert_eq!(model.channel_count(), 1);
-    }
-
-    #[test]
-    fn test_p2_idle_primitive() {
-        use crate::noise::NoiseChannel;
-        use pecos_random::PecosRng;
-
-        // Test that the primitive applies idle noise correctly
-        // Build the primitive directly
-        let tq_noise = seq![
-            prob(0.0, pauli()),    // No main error
-            prob(1.0, inject_z()), // 100% idle Z error
-        ];
-
-        let channel = CompositeChannelBuilder::two_qubit("test_idle", tq_noise);
-
-        let mut ctx = crate::noise::NoiseContext::new();
-        let mut rng = PecosRng::seed_from_u64(42);
-
-        // Create a two-qubit gate event
         let qubits = [QubitId(0), QubitId(1)];
-        let event = crate::noise::NoiseEvent::AfterGate {
+        let event = NoiseEvent::AfterGate {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &[],
             gate_id: None,
         };
+        let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(73)));
 
-        // Check that the channel responds to this event
-        assert!(
-            channel.responds_to(&event),
-            "Channel should respond to AfterGate with 2 qubits"
-        );
-
-        // Apply and check that response is not None (gates were injected)
-        let response = channel.apply(&event, &mut ctx, &mut rng);
-        assert!(
-            !response.is_none(),
-            "With 100% idle error, should inject Z gates (response should not be None)"
-        );
+        assert_eq!(gates.len(), 2);
+        assert!(gates.iter().all(|gate| gate.gate_type == GateType::X));
     }
 
     #[test]
-    fn test_p2_idle_statistical() {
-        // Test that p2_idle works via the builder
-        // Use high p2 (which also applies p2_idle) to ensure the channel triggers
-        let commands = CommandBuilder::new()
-            .pz(&[0])
-            .pz(&[1])
-            .h(&[0]) // Make qubit 0 in superposition
-            .cx(&[(0, 1)]) // Two-qubit gate
-            .mz(&[0])
-            .mz(&[1])
+    fn quadratic_only_after_2q_noise_uses_the_idle_channel() {
+        let mut model = CompositeNoiseModelBuilder::new()
+            .with_p_idle_quadratic(std::f64::consts::PI)
+            .with_idle_after_2q(1.0)
             .build();
+        assert_eq!(model.channel_names(), ["IdleChannel"]);
 
-        let shots = 500;
-        let p2 = 0.5; // 50% gate error rate
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+        let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(79)));
 
-        let mut errors_with = 0;
-        let mut errors_without = 0;
+        assert_eq!(gates.len(), 2);
+        assert!(gates.iter().all(|gate| gate.gate_type == GateType::Z));
+    }
 
-        for seed in 0..shots {
-            // With p2 error
-            let model_with = CompositeNoiseModelBuilder::new().with_p2(p2).build();
-            let mut state = SparseStab::with_seed(2, seed);
-            let mut runner = CircuitRunner::<SparseStab>::new()
-                .with_noise(model_with)
-                .with_seed(seed);
-            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
-            let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
-            let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
-            // Bell state: q0 != q1 indicates error
-            if q0 != q1 {
-                errors_with += 1;
-            }
-
-            // Without noise
-            let model_without = CompositeNoiseModelBuilder::new().build();
-            let mut state = SparseStab::with_seed(2, seed);
-            let mut runner = CircuitRunner::<SparseStab>::new()
-                .with_noise(model_without)
-                .with_seed(seed);
-            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
-            let q0 = outcomes.get(QubitId(0)).is_some_and(|o| o.outcome);
-            let q1 = outcomes.get(QubitId(1)).is_some_and(|o| o.outcome);
-            if q0 != q1 {
-                errors_without += 1;
-            }
-        }
-
-        // With 50% error, should see significantly more errors
-        let rate_with = f64::from(errors_with) / shots as f64;
-        let rate_without = f64::from(errors_without) / shots as f64;
-
-        assert!(
-            rate_with > rate_without + 0.1,
-            "With p2={p2}, expected more errors ({rate_with}) than without ({rate_without})"
-        );
+    #[test]
+    fn after_2q_duration_without_rates_builds_only_the_idle_channel() {
+        let model = CompositeNoiseModelBuilder::new()
+            .with_idle_after_2q(2.0)
+            .build();
+        assert_eq!(model.channel_names(), ["IdleChannel"]);
     }
 
     // Note: CompositeNoiseModelBuilder no longer implements Clone because it can hold
@@ -2122,12 +2040,22 @@ mod tests {
     #[test]
     fn test_idle_t1_t2_configuration() {
         // T1=50us, T2=30us with nanosecond time units
-        let model = CompositeNoiseModelBuilder::new()
+        let builder = CompositeNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
-            .with_idle_t1_t2(50e-6, 30e-6)
-            .build();
+            .with_idle_t1_t2(50e-6, 30e-6);
+        let expected = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+        let actual_weights = builder
+            .p_idle_linear_pauli_weights
+            .expect("T1/T2 convenience must set linear Pauli weights");
+
+        assert!((builder.p_idle_linear_rate - expected.linear_rate).abs() < f64::EPSILON);
+        assert!((actual_weights.x - expected.linear_weights.x).abs() < f64::EPSILON);
+        assert!((actual_weights.y - expected.linear_weights.y).abs() < f64::EPSILON);
+        assert!((actual_weights.z - expected.linear_weights.z).abs() < f64::EPSILON);
+        assert!((builder.p_idle_quadratic_rate - expected.quadratic_rate).abs() < f64::EPSILON);
 
         // Should have created an idle channel
+        let model = builder.build();
         assert_eq!(model.channel_count(), 1);
         // Should have time scale set
         assert!(model.time_scale().is_some());

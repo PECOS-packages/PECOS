@@ -35,10 +35,10 @@ def example_basic_noise_builder() -> None:
     noise = (
         general_noise()
         .with_seed(42)
-        .with_p1_probability(0.001)  # Single-qubit gate error
-        .with_p2_probability(0.01)  # Two-qubit gate error
-        .with_meas_0_probability(0.002)  # 0->1 measurement flip
-        .with_meas_1_probability(0.002)  # 1->0 measurement flip
+        .with_p1(0.001)  # Single-qubit gate error
+        .with_p2(0.01)  # Two-qubit gate error
+        .with_p_meas_0(0.002)  # 0->1 measurement flip
+        .with_p_meas_1(0.002)  # 1->0 measurement flip
     )
 
     # Use noise directly with .noise()
@@ -74,7 +74,7 @@ def example_advanced_noise_builder() -> None:
         .with_scale(1.2)  # Scale all error rates by 1.2
         .with_noiseless_gate("H")  # H gates have no noise
         # Single-qubit gate noise with Pauli distribution
-        .with_average_p1_probability(0.001)  # Average error (converted to total)
+        .with_average_p1(0.001)  # Average error (converted to total)
         .with_p1_pauli_model(
             {
                 "X": 0.5,  # 50% X errors
@@ -83,11 +83,11 @@ def example_advanced_noise_builder() -> None:
             },
         )
         # Two-qubit gate noise
-        .with_average_p2_probability(0.008)  # Average error (converted to total)
+        .with_average_p2(0.008)  # Average error (converted to total)
         # Preparation and measurement noise
-        .with_prep_probability(0.001)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.003)  # Asymmetric measurement error
+        .with_p_prep(0.001)
+        .with_p_meas_0(0.002)
+        .with_p_meas_1(0.003)  # Asymmetric measurement error
     )
 
     results = sim(qasm).noise(noise).run(1000)
@@ -113,7 +113,7 @@ def example_direct_configuration() -> None:
     """
 
     # Create noise using functional API
-    noise = general_noise().with_p1_probability(0.001).with_p2_probability(0.01)
+    noise = general_noise().with_p1(0.001).with_p2(0.01)
 
     # Configure entire simulation with method chaining
     simulation = (
@@ -157,10 +157,10 @@ def example_builder_vs_direct() -> None:
     print("Using general_noise() with method chaining:")
     noise_via_builder = (
         general_noise()
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.002)
+        .with_p1(0.001)
+        .with_p2(0.01)
+        .with_p_meas_0(0.002)
+        .with_p_meas_1(0.002)
         .with_noiseless_gate("H")
         .with_p1_pauli_model({"X": 0.5, "Y": 0.3, "Z": 0.2})
     )
@@ -173,10 +173,10 @@ def example_builder_vs_direct() -> None:
     noise_equivalent = (
         general_noise()
         .with_seed(42)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.002)
+        .with_p1(0.001)
+        .with_p2(0.01)
+        .with_p_meas_0(0.002)
+        .with_p_meas_1(0.002)
         .set_noiseless_gates(["H"])
         .with_p1_pauli_model({"X": 0.5, "Y": 0.3, "Z": 0.2})
     )
@@ -205,16 +205,12 @@ def example_different_noise_models() -> None:
         ("Depolarizing", depolarizing_noise().with_probability(0.1)),
         (
             "Custom depolarizing",
-            depolarizing_noise()
-            .with_prep_probability(0.01)
-            .with_meas_probability(0.05)
-            .with_p1_probability(0.02)
-            .with_p2_probability(0.03),
+            depolarizing_noise().with_p_prep(0.01).with_p_meas(0.05).with_p1(0.02).with_p2(0.03),
         ),
         ("Biased depolarizing", biased_depolarizing_noise().with_probability(0.1)),
         (
             "General",
-            general_noise().with_meas_1_probability(0.1),  # 10% chance to flip 1->0
+            general_noise().with_p_meas_1(0.1),  # 10% chance to flip 1->0
         ),
     ]
 
@@ -251,14 +247,14 @@ def example_ion_trap_noise() -> None:
         general_noise()
         .with_seed(42)
         # Ion trap typical parameters
-        .with_prep_probability(0.001)  # State prep error
+        .with_p_prep(0.001)  # State prep error
         # Single-qubit gates (typically very good)
-        .with_p1_probability(0.0001)
+        .with_p1(0.0001)
         # Two-qubit gates (main error source)
-        .with_p2_probability(0.003)
+        .with_p2(0.003)
         # Measurement (asymmetric for ions)
-        .with_meas_0_probability(0.001)  # Dark state error
-        .with_meas_1_probability(0.005)  # Bright state error
+        .with_p_meas_0(0.001)  # Dark state error
+        .with_p_meas_1(0.005)  # Bright state error
     )
 
     results = sim(qasm).noise(noise).run(1000)

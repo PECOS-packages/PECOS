@@ -50,6 +50,7 @@ mod gate_registry_bindings;
 mod graph_bindings;
 mod namespace_modules;
 mod num_bindings;
+mod observable_flips_bindings;
 mod pauli_bindings;
 mod pauli_prop_bindings;
 mod pauli_sequence_bindings;

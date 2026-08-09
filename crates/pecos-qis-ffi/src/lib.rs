@@ -62,8 +62,10 @@ pub struct ExecutionContext {
     pub sync_condvar: Condvar,
     /// Storage for pending operations (shared between threads)
     pub pending_ops: Mutex<Vec<Operation>>,
-    /// Storage for measurement results (shared between threads)
-    pub measurement_results: Mutex<Vec<Option<bool>>>,
+    /// Storage for measurement outcomes (shared between threads).
+    ///
+    /// Ordinary measurements use 0/1. Leakage-aware measurements may also use 2.
+    pub measurement_results: Mutex<Vec<Option<u64>>>,
     /// Storage for named results from `print_bool`/`print_bool_arr` (e.g., "synx", "final")
     pub named_results: Mutex<BTreeMap<String, Vec<bool>>>,
     /// Runtime provenance for each `result(...)` output call.
@@ -650,7 +652,7 @@ pub fn is_dynamic_mode_active() -> bool {
 /// This is used by the worker thread to get results set by the main thread.
 /// Returns None if no execution context is registered.
 #[must_use]
-pub fn get_measurement_result(result_id: u64) -> Option<bool> {
+pub fn get_measurement_outcome(result_id: u64) -> Option<u64> {
     let ctx = get_execution_context()?;
     let result_index = usize::try_from(result_id).ok()?;
     // SAFETY: Context is valid for duration of execution
@@ -664,6 +666,23 @@ pub fn get_measurement_result(result_id: u64) -> Option<bool> {
     }
 }
 
+/// Get a Boolean measurement result from the execution context.
+///
+/// Returns `None` for a leakage outcome instead of silently treating 2 as true.
+#[must_use]
+pub fn get_measurement_result(result_id: u64) -> Option<bool> {
+    match get_measurement_outcome(result_id)? {
+        0 => Some(false),
+        1 => Some(true),
+        value => {
+            log::error!(
+                "get_measurement_result: result_id={result_id} has non-Boolean outcome {value}"
+            );
+            None
+        }
+    }
+}
+
 /// Set a measurement result via FFI (called by main thread after simulation)
 ///
 /// This stores in the execution context so worker thread can access it.
@@ -673,6 +692,20 @@ pub fn get_measurement_result(result_id: u64) -> Option<bool> {
 /// This function is safe to call from any thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn pecos_set_measurement_result(result_id: u64, value: bool) {
+    pecos_set_measurement_outcome(result_id, u64::from(value));
+}
+
+/// Set an integer-valued measurement outcome via FFI.
+///
+/// Ordinary measurement results are 0/1; leakage-aware results may also be 2.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_set_measurement_outcome(result_id: u64, value: u64) {
+    if value > 2 {
+        log::error!(
+            "pecos_set_measurement_outcome: invalid outcome {value} for result_id={result_id}"
+        );
+        return;
+    }
     log::debug!("pecos_set_measurement_result: result_id={result_id}, value={value}");
     if let Some(ctx) = get_execution_context() {
         let Ok(result_index) = usize::try_from(result_id) else {
@@ -919,7 +952,7 @@ mod tests {
         context.waiting_for_result.store(42, Ordering::SeqCst);
         if let Ok(mut results) = context.measurement_results.lock() {
             results.resize(1, None);
-            results[0] = Some(true);
+            results[0] = Some(1);
         }
         if let Ok(mut ops) = context.pending_ops.lock() {
             ops.push(Operation::AllocateQubit { id: 0 });

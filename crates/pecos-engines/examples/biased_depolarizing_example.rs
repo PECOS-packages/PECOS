@@ -51,11 +51,11 @@ fn example1_different_bias_levels(circ: &ByteMessage, quantum: &StateVecEngine) 
     for (p_flip_0, p_flip_1, desc) in configs {
         // Create the biased depolarizing noise model
         let noise = BiasedDepolarizingNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(p_flip_0) // Probability of flipping 0 to 1
-            .with_meas_1_probability(p_flip_1) // Probability of flipping 1 to 0
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(p_flip_0) // Probability of flipping 0 to 1
+            .with_p_meas_1(p_flip_1) // Probability of flipping 1 to 0
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
         let mut system = QuantumSystem::new(Box::new(noise), Box::new(quantum.clone()));
 
@@ -110,11 +110,11 @@ fn example2_with_seed(circ: &ByteMessage) {
     println!("Example 2: Using direct constructor with seed");
 
     let noise = BiasedDepolarizingNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.4) // Probability of flipping 0 to 1
-        .with_meas_1_probability(0.1) // Probability of flipping 1 to 0
-        .with_p1_probability(0.0)
-        .with_p2_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.4) // Probability of flipping 0 to 1
+        .with_p_meas_1(0.1) // Probability of flipping 1 to 0
+        .with_p1(0.0)
+        .with_p2(0.0)
         .with_seed(123)
         .build();
     let quantum = Box::new(StateVecEngine::new(1));
@@ -170,11 +170,11 @@ fn example3_bell_state() {
     // Create a new quantum system with 2 qubits
     let quantum2 = Box::new(StateVecEngine::new(2));
     let noise2 = BiasedDepolarizingNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.2) // Probability of flipping 0 to 1
-        .with_meas_1_probability(0.3) // Probability of flipping 1 to 0
-        .with_p1_probability(0.0)
-        .with_p2_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.2) // Probability of flipping 0 to 1
+        .with_p_meas_1(0.3) // Probability of flipping 1 to 0
+        .with_p1(0.0)
+        .with_p2(0.0)
         .build();
     let mut system2 = QuantumSystem::new(Box::new(noise2), quantum2);
 

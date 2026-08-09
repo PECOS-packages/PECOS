@@ -64,14 +64,13 @@ fn rate_zero(shots: &pecos_engines::shot_results::ShotVec) -> (u64, f64) {
 /// fresh builder each call since `.noise()` consumes it.
 fn emission_noise_1q() -> pecos_engines::noise::GeneralNoiseModelBuilder {
     pecos_engines::noise::GeneralNoiseModel::builder()
-        .with_p1_probability(P1)
+        .with_p1(P1)
         .with_p1_emission_ratio(EMISSION)
-        .with_p2_probability(0.0)
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0)
+        .with_p2(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0)
         .with_prep_leak_ratio(0.0)
-        .with_p_idle_linear_rate(0.0)
 }
 
 fn engines_zero_count() -> u64 {
@@ -193,14 +192,13 @@ const CX_MEASURE: &str = r#"
 
 fn emission_noise_2q() -> pecos_engines::noise::GeneralNoiseModelBuilder {
     pecos_engines::noise::GeneralNoiseModel::builder()
-        .with_p1_probability(0.0)
-        .with_p2_probability(P2)
+        .with_p1(0.0)
+        .with_p2(P2)
         .with_p2_emission_ratio(1.0)
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0)
         .with_prep_leak_ratio(0.0)
-        .with_p_idle_linear_rate(0.0)
 }
 
 fn engines_2q_zero_count() -> u64 {

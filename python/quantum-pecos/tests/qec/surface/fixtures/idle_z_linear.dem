@@ -1,0 +1,37 @@
+detector(0, 0, 0) D0
+detector(1, 0, 0) D1
+detector(2, 0, 0) D2
+detector(3, 0, 0) D3
+detector(0, 0, 1) D4
+detector(1, 0, 1) D5
+detector(2, 0, 1) D6
+detector(3, 0, 1) D7
+detector(4, 1, 0) D8
+detector(5, 1, 0) D9
+detector(6, 1, 0) D10
+detector(7, 1, 0) D11
+detector(4, 1, 1) D12
+detector(5, 1, 1) D13
+detector(6, 1, 1) D14
+detector(7, 1, 1) D15
+detector(4, 1, 2) D16
+detector(5, 1, 2) D17
+detector(6, 1, 2) D18
+detector(7, 1, 2) D19
+logical_observable L0
+error(0.023502) D0
+error(0.014821) D0 D1
+error(0.005982) D0 D4
+error(0.037626) D1
+error(0.011892) D1 D2
+error(0.040401) D2
+error(0.017732) D2 D3
+error(0.026361) D3
+error(0.005982) D3 D7
+error(0.023502) D4
+error(0.014821) D4 D5
+error(0.032028) D5
+error(0.011892) D5 D6
+error(0.032028) D6
+error(0.014821) D6 D7
+error(0.023502) D7

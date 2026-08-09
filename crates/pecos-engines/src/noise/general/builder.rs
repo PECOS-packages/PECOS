@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Layout:
 /// `(p_prep, p_meas_0, p_meas_1, p1, p2, angle, p1_emission_ratio, p2_emission_ratio)`
 /// where `angle` is `Some((a, b, c, d, power))` when angle scaling is
-/// configured. The emission ratios use the model default (0.5) when unset, and
+/// configured. The emission ratios use the model default (zero) when unset, and
 /// the emission DISTRIBUTION is required to be the default (uniform Pauli) --
 /// custom emission models keep the config out of this subset.
 pub type PauliWithAngleScaling = (
@@ -36,11 +36,10 @@ pub struct GeneralNoiseModelBuilder {
     leakage_scale: Option<f64>,
     emission_scale: Option<f64>,
     // idle noise
-    p_idle_coherent: Option<bool>,
     p_idle_linear_rate: Option<f64>,
     p_idle_linear_model: Option<SingleQubitWeightedSampler>,
-    p_idle_quadratic_rate: Option<f64>,
-    p_idle_coherent_to_incoherent_factor: Option<f64>,
+    p_idle_sin_squared: Option<(f64, BTreeMap<String, f64>)>,
+    p_idle_coherent: Option<(f64, BTreeMap<String, f64>)>,
     idle_scale: Option<f64>,
     // prep noise
     p_prep: Option<f64>,
@@ -63,7 +62,11 @@ pub struct GeneralNoiseModelBuilder {
     p2_emission_model: Option<TwoQubitWeightedSampler>,
     p2_seepage_prob: Option<f64>,
     p2_pauli_model: Option<TwoQubitWeightedSampler>,
-    p2_idle: Option<f64>,
+    /// Duration of the idle-noise sites applied after two-qubit gates.
+    ///
+    /// These sites use the configured linear and quadratic idle mechanisms; this value is not a
+    /// standalone error probability.
+    idle_after_2q: Option<f64>,
     p2_scale: Option<f64>,
     // measurement noise
     p_meas_0: Option<f64>,
@@ -95,9 +98,8 @@ impl GeneralNoiseModelBuilder {
             // idle noise
             p_idle_linear_rate: None,
             p_idle_linear_model: None,
-            p_idle_quadratic_rate: None,
+            p_idle_sin_squared: None,
             p_idle_coherent: None,
-            p_idle_coherent_to_incoherent_factor: None,
             idle_scale: None,
             // prep noise
             p_prep: None,
@@ -120,7 +122,7 @@ impl GeneralNoiseModelBuilder {
             p2_emission_model: None,
             p2_seepage_prob: None,
             p2_pauli_model: None,
-            p2_idle: None,
+            idle_after_2q: None,
             p2_scale: None,
             // measurement noise
             p_meas_0: None,
@@ -133,9 +135,40 @@ impl GeneralNoiseModelBuilder {
         }
     }
 
-    /// Build the general noise model
+    /// Fill unset parameters with the legacy demonstration preset.
     ///
-    /// TODO: Consider another build with noiseless default
+    /// This preset reproduces the general noise model's historical defaults. It is intended for
+    /// demonstrations and is not a calibrated device model. Parameters already set by the caller
+    /// are preserved, so explicit setters win whether they appear before or after `auto()`.
+    ///
+    /// The preset uses preparation, measurement, one-qubit, two-qubit, and linear-idle error rates
+    /// of 0.01, 0.01/0.01, 0.001, 0.01, and 0.001 respectively. Its other effects are:
+    ///
+    /// - `p_prep_leak_ratio = 0.5`: half of preparation faults leak the qubit out of the
+    ///   computational subspace.
+    /// - `p1_emission_ratio = p2_emission_ratio = 0.5`: half of gate errors take the spontaneous-
+    ///   emission branch, which removes the original gate and substitutes a sample from the
+    ///   emission model. The preset's uniform emission models contain Pauli keys only, so these
+    ///   branches do not cause leakage.
+    /// - `p1_seepage_prob = p2_seepage_prob = 0.5`: seepage is attempted only for qubits that are
+    ///   already leaked.
+    #[must_use]
+    pub fn auto(mut self) -> Self {
+        self.p_prep.get_or_insert(0.01);
+        self.p_meas_0.get_or_insert(0.01);
+        self.p_meas_1.get_or_insert(0.01);
+        self.p1.get_or_insert(0.001);
+        self.p2.get_or_insert(0.01);
+        self.p_idle_linear_rate.get_or_insert(0.001);
+        self.p1_emission_ratio.get_or_insert(0.5);
+        self.p2_emission_ratio.get_or_insert(0.5);
+        self.p_prep_leak_ratio.get_or_insert(0.5);
+        self.p1_seepage_prob.get_or_insert(0.5);
+        self.p2_seepage_prob.get_or_insert(0.5);
+        self
+    }
+
+    /// Build the general noise model
     ///
     /// # Returns
     /// A `GeneralNoiseModel`
@@ -144,6 +177,9 @@ impl GeneralNoiseModelBuilder {
     /// Panics if any probabilities are not set or are not between 0 and 1.
     #[must_use]
     pub fn build(mut self) -> GeneralNoiseModel {
+        self.validate_configuration()
+            .unwrap_or_else(|message| panic!("{message}"));
+
         // Start with the default noise model as a base
         let mut model = GeneralNoiseModel::default();
 
@@ -166,10 +202,6 @@ impl GeneralNoiseModelBuilder {
 
         // idle noise
         // -----------------------------------------------------------------------------------------
-        if let Some(coherent) = self.p_idle_coherent {
-            model.p_idle_coherent = coherent;
-        }
-
         if let Some(p_idle_linear_rate) = self.p_idle_linear_rate {
             model.p_idle_linear_rate = p_idle_linear_rate;
         }
@@ -178,12 +210,14 @@ impl GeneralNoiseModelBuilder {
             model.p_idle_linear_model = model_map;
         }
 
-        if let Some(p_idle_quadratic_rate) = self.p_idle_quadratic_rate {
-            model.p_idle_quadratic_rate = p_idle_quadratic_rate;
+        if let Some((rate, sine_model)) = self.p_idle_sin_squared.clone() {
+            model.p_idle_sin_squared_rate = rate;
+            model.p_idle_sin_squared_model = sine_model;
         }
 
-        if let Some(factor) = self.p_idle_coherent_to_incoherent_factor {
-            model.p_idle_coherent_to_incoherent_factor = factor;
+        if let Some((rate, coherent_model)) = self.p_idle_coherent.clone() {
+            model.p_idle_coherent_rate = rate;
+            model.p_idle_coherent_model = coherent_model;
         }
 
         // prep noise
@@ -252,8 +286,8 @@ impl GeneralNoiseModelBuilder {
             model.p2_pauli_model = model_map;
         }
 
-        if let Some(p2_idle) = self.p2_idle {
-            model.p2_idle = p2_idle;
+        if let Some(idle_after_2q) = self.idle_after_2q {
+            model.idle_after_2q = idle_after_2q;
         }
 
         // measurement noise
@@ -353,61 +387,93 @@ impl GeneralNoiseModelBuilder {
 
     // --- idle noise --- //
 
-    /// Set whether to use coherent dephasing
+    /// Set the DEM-style linear idle-noise family.
+    ///
+    /// `rate` is the total event rate per time unit. For an idle of duration `d`, one event is
+    /// sampled with probability `rate * d`, then its X, Y, Z, or leakage axis is drawn from
+    /// `model`. The model must therefore be a normalized distribution: this linear family splits
+    /// one total rate across its axes.
+    ///
+    /// In contrast, [`Self::with_p_idle_sin_squared`] takes radians per time unit and an
+    /// unnormalized model because sine laws do not add linearly: each axis carries its own
+    /// independent rate. That setter applies no unit conversion.
+    ///
+    /// All engines idle-noise families are off by default, so translating a DEM configuration only
+    /// requires setting the requested families.
+    ///
+    /// The linear sampling structure deliberately remains different from the DEM: engines emits
+    /// at most one linear event followed by a categorical axis choice, while the DEM emits
+    /// independent per-axis mechanisms. The difference is second order in the rates; this setter
+    /// aligns the units and axis alphabet, not that sampling structure.
     #[must_use]
-    pub fn with_p_idle_coherent(mut self, use_coherent: bool) -> Self {
-        self.p_idle_coherent = Some(use_coherent);
-        self
-    }
-
-    /// Set the idling noise error rate for the linear term
-    #[must_use]
-    pub fn with_p_idle_linear_rate(mut self, rate: f64) -> Self {
+    pub fn with_p_idle_linear(mut self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
         self.p_idle_linear_rate = Some(Self::validate_non_negative(rate, "linear idling rate"));
-        self
-    }
-
-    // TODO: See if we should put a average scaling...
-    /// Set the average idling noise error rate per channel for the linear term
-    #[must_use]
-    pub fn with_average_p_idle_linear_rate(mut self, rate: f64) -> Self {
-        let rate: f64 = rate * 3.0 / 2.0;
-        self.p_idle_linear_rate = Some(rate);
-        self
-    }
-
-    /// Set the stochastic model for idling that is linearly dependent on time
-    #[must_use]
-    pub fn with_p_idle_linear_model(mut self, model: &BTreeMap<String, f64>) -> Self {
         self.p_idle_linear_model = Some(SingleQubitWeightedSampler::new(model));
         self
     }
 
-    /// Set the idling noise error rate for the quadratic term
-    #[must_use]
-    pub fn with_p_idle_quadratic_rate(mut self, rate: f64) -> Self {
-        self.p_idle_quadratic_rate = Some(rate);
-        self
-    }
-
-    /// Set the average idling noise error rate per channel for the quadratic term
-    #[must_use]
-    pub fn with_average_p_idle_quadratic_rate(mut self, rate: f64) -> Self {
-        let rate: f64 = rate * (3.0 / 2.0_f64).sqrt();
-        self.p_idle_quadratic_rate = Some(rate);
-        self
-    }
-
-    /// Set the coherent-to-incoherent conversion factor
+    /// Set the DEM-style stochastic sine-squared idle-noise family.
     ///
-    /// # Parameters
-    /// * `factor` - The conversion factor between coherent and incoherent noise
+    /// `rate` is in radians per time unit. No unit conversion is applied. For each axis P with
+    /// multiplier `n_P` and an idle of duration `d`, engines independently samples
+    /// `P(P) = sin^2(rate * n_P * d)`.
+    ///
+    /// The model accepts X, Y, Z, and L and is intentionally unnormalized: sine laws do not add
+    /// linearly, so every axis carries its own independent rate. By comparison,
+    /// [`Self::with_p_idle_linear`] requires a normalized distribution because its one total
+    /// linear event rate is split across axes.
+    ///
+    /// The removed cycles-per-time spelling migrates exactly as follows at its former default
+    /// factor of one:
+    ///
+    /// `with_p_idle_quadratic_rate(r)  ==  with_p_idle_sin_squared(r * PI, {"Z": 1.0})`
+    ///
+    /// All engines idle-noise families are off by default, so translating a DEM configuration only
+    /// requires setting the requested families.
+    ///
+    /// The linear sampling structure deliberately remains different from the DEM: engines emits
+    /// at most one linear event followed by a categorical axis choice, while the DEM emits
+    /// independent per-axis mechanisms. The difference is second order in the rates; this setter
+    /// aligns the units and axis alphabet, not that sampling structure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rate` or a multiplier is not finite and non-negative, or if `model` contains a
+    /// key other than X, Y, Z, or L.
     #[must_use]
-    pub fn with_p_idle_coherent_to_incoherent_factor(mut self, factor: f64) -> Self {
-        self.p_idle_coherent_to_incoherent_factor = Some(Self::validate_positive(
-            factor,
-            "Coherent-to-incoherent factor",
-        ));
+    pub fn with_p_idle_sin_squared(mut self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
+        let rate = Self::validate_finite_non_negative(rate, "sine-squared idling rate");
+        Self::validate_sine_model(model);
+        self.p_idle_sin_squared = Some((rate, model.clone()));
+        self
+    }
+
+    /// Set the DEM-style coherent idle-noise family.
+    ///
+    /// `rate` is in radians per time unit. No unit conversion is applied, just as for
+    /// [`Self::with_p_idle_sin_squared`]. For each RX/RY/RZ generator with multiplier `n_P` and an
+    /// idle of duration `d`, engines applies a deterministic rotation with angle `rate * n_P * d`;
+    /// coherent evolution is not sampled and consumes no random draw.
+    ///
+    /// The model is intentionally unnormalized because its values are relative rate multipliers,
+    /// not probabilities to be split from one total event rate. The symmetric default model is
+    /// `{"RX": 1.0, "RY": 1.0, "RZ": 1.0}`. Leakage and all keys other than RX, RY, and RZ
+    /// are rejected because leakage is not a rotation.
+    ///
+    /// Whether these rotations can be consumed depends on the downstream consumer. The standard
+    /// DEM builder rejects coherent idle noise; the EEG route in `exp/pecos-eeg` represents it
+    /// with an RZ generator; and a simulator applies it only when its rotation executor is
+    /// installed. PECOS #437 documents how a missing executor could otherwise silently drop it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rate` or a multiplier is not finite and non-negative, or if `model` contains a
+    /// key other than RX, RY, or RZ.
+    #[must_use]
+    pub fn with_p_idle_coherent(mut self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
+        let rate = Self::validate_finite_non_negative(rate, "coherent idling rate");
+        Self::validate_coherent_model(model);
+        self.p_idle_coherent = Some((rate, model.clone()));
         self
     }
 
@@ -427,7 +493,7 @@ impl GeneralNoiseModelBuilder {
 
     /// Set the probability of error during preparation
     #[must_use]
-    pub fn with_prep_probability(mut self, probability: f64) -> Self {
+    pub fn with_p_prep(mut self, probability: f64) -> Self {
         self.p_prep = Some(Self::validate_probability(probability));
         self
     }
@@ -483,7 +549,7 @@ impl GeneralNoiseModelBuilder {
 
     /// Set the probability of error after single-qubit gates
     #[must_use]
-    pub fn with_p1_probability(mut self, probability: f64) -> Self {
+    pub fn with_p1(mut self, probability: f64) -> Self {
         self.p1 = Some(Self::validate_probability(probability));
         self
     }
@@ -498,7 +564,7 @@ impl GeneralNoiseModelBuilder {
     /// For a single-qubit gate with uniform error distribution across 3 Pauli errors,
     /// the ratio of total error rate to average error rate is 3/2.
     #[must_use]
-    pub fn with_average_p1_probability(mut self, probability: f64) -> Self {
+    pub fn with_average_p1(mut self, probability: f64) -> Self {
         self.p1 = Some(Self::validate_probability(probability * 3.0 / 2.0));
         self
     }
@@ -547,7 +613,7 @@ impl GeneralNoiseModelBuilder {
 
     /// Set the probability of error after two-qubit gates
     #[must_use]
-    pub fn with_p2_probability(mut self, probability: f64) -> Self {
+    pub fn with_p2(mut self, probability: f64) -> Self {
         self.p2 = Some(Self::validate_probability(probability));
         self
     }
@@ -562,7 +628,7 @@ impl GeneralNoiseModelBuilder {
     /// For a two-qubit gate with uniform error distribution across 15 Pauli errors,
     /// the ratio of total error rate to average error rate is 5/4.
     #[must_use]
-    pub fn with_average_p2_probability(mut self, probability: f64) -> Self {
+    pub fn with_average_p2(mut self, probability: f64) -> Self {
         self.p2 = Some(Self::validate_probability(probability * 5.0 / 4.0));
         self
     }
@@ -635,9 +701,17 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
+    /// Set the duration of the idle-noise site applied to each qubit after a two-qubit gate.
+    ///
+    /// A duration of `0.0` disables these sites. Nonzero sites receive every configured linear,
+    /// sine-squared, and coherent idle family over the given duration.
+    ///
+    /// Anyone who previously wrote `with_p2_idle(0.01)` and no linear rate now gets no after-2q
+    /// idle noise; the equivalent is
+    /// `with_p_idle_linear(0.01, model).with_idle_after_2q(1.0)`.
     #[must_use]
-    pub fn with_p2_idle(mut self, probability: f64) -> Self {
-        self.p2_idle = Some(Self::validate_probability(probability));
+    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
+        self.idle_after_2q = Some(Self::validate_duration(duration));
         self
     }
 
@@ -658,21 +732,21 @@ impl GeneralNoiseModelBuilder {
 
     /// Set the probability of flipping 0 to 1 during measurement
     #[must_use]
-    pub fn with_meas_0_probability(mut self, probability: f64) -> Self {
+    pub fn with_p_meas_0(mut self, probability: f64) -> Self {
         self.p_meas_0 = Some(Self::validate_probability(probability));
         self
     }
 
     /// Set the probability of flipping 1 to 0 during measurement
     #[must_use]
-    pub fn with_meas_1_probability(mut self, probability: f64) -> Self {
+    pub fn with_p_meas_1(mut self, probability: f64) -> Self {
         self.p_meas_1 = Some(Self::validate_probability(probability));
         self
     }
 
     /// Set the probability of bit flipping the measurement result
     #[must_use]
-    pub fn with_meas_probability(mut self, probability: f64) -> Self {
+    pub fn with_p_meas(mut self, probability: f64) -> Self {
         self.p_meas_0 = Some(Self::validate_probability(probability));
         self.p_meas_1 = Some(Self::validate_probability(probability));
         self
@@ -755,6 +829,61 @@ impl GeneralNoiseModelBuilder {
         value
     }
 
+    /// Validate that a value is finite and non-negative.
+    fn validate_finite_non_negative(value: f64, name: &str) -> f64 {
+        assert!(
+            value.is_finite() && value >= 0.0,
+            "{name} must be finite and non-negative, got {value}"
+        );
+        value
+    }
+
+    /// Validate an unnormalized sine-family multiplier model.
+    fn validate_sine_model(model: &BTreeMap<String, f64>) {
+        for (axis, multiplier) in model {
+            assert!(
+                matches!(axis.as_str(), "X" | "Y" | "Z" | "L"),
+                "p_idle_sin_squared model has invalid key '{axis}'; expected X, Y, Z, or L"
+            );
+            Self::validate_finite_non_negative(
+                *multiplier,
+                &format!("p_idle_sin_squared multiplier for '{axis}'"),
+            );
+        }
+    }
+
+    /// Validate an unnormalized coherent-family multiplier model.
+    fn validate_coherent_model(model: &BTreeMap<String, f64>) {
+        for (axis, multiplier) in model {
+            assert!(
+                matches!(axis.as_str(), "RX" | "RY" | "RZ"),
+                "p_idle_coherent model has invalid key '{axis}'; expected RX, RY, or RZ"
+            );
+            Self::validate_finite_non_negative(
+                *multiplier,
+                &format!("p_idle_coherent multiplier for '{axis}'"),
+            );
+        }
+    }
+
+    /// Validate cross-field configuration invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description of the first invalid combination.
+    pub fn validate_configuration(&self) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    /// Validate that a duration is finite and non-negative
+    fn validate_duration(duration: f64) -> f64 {
+        assert!(
+            duration.is_finite() && duration >= 0.0,
+            "Duration must be finite and non-negative, got {duration}"
+        );
+        duration
+    }
+
     // ========================================================================================== //
     /// The simple Pauli-probability subset of this configuration, if the
     /// physics reduces to it.
@@ -762,17 +891,13 @@ impl GeneralNoiseModelBuilder {
     /// Returns `(p_prep, p_meas_0, p_meas_1, p1, p2)`. `p1`/`p2` are in the
     /// standard depolarizing convention the builder stores internally (the
     /// `with_average_*` setters convert on the way in). Unset probabilities
-    /// take their `GeneralNoiseModel::default()` values — this model's
-    /// philosophy is realistic defaults, NOT unset-means-off.
+    /// take their no-effect `GeneralNoiseModel::default()` values.
     ///
     /// Returns `Some` only when the noise shape is plain Pauli noise:
     ///
-    /// - Knobs whose model defaults are non-neutral must be EXPLICITLY
-    ///   zeroed: emission ratios (default 0.5 — half the errors replace the
-    ///   gate instead of following it), prep leak ratio (default 0.5), and
-    ///   the linear idle rate (default 0.001).
-    /// - Knobs with neutral defaults (crosstalk, quadratic idle, scales,
-    ///   noiseless gates) may be unset or set to their neutral value.
+    /// - Emission ratios, preparation leakage, idle noise, crosstalk, and other optional
+    ///   mechanisms may be unset or set to their neutral value.
+    /// - Scales may be unset or set to one, and the noiseless-gate set must be empty.
     /// - Custom Pauli/emission/crosstalk models and angle-dependent
     ///   two-qubit noise must be unset.
     ///
@@ -781,8 +906,9 @@ impl GeneralNoiseModelBuilder {
     /// common configuration without re-deriving probability conventions.
     #[must_use]
     pub fn simple_probabilities(&self) -> Option<(f64, f64, f64, f64, f64)> {
+        let zero_or_unset = |v: Option<f64>| v.is_none() || v == Some(0.0);
         let emission_off =
-            self.p1_emission_ratio == Some(0.0) && self.p2_emission_ratio == Some(0.0);
+            zero_or_unset(self.p1_emission_ratio) && zero_or_unset(self.p2_emission_ratio);
         if self.is_plain_pauli_except_angle_and_emission()
             && self.resolved_angle_scaling().is_none()
             && emission_off
@@ -839,27 +965,22 @@ impl GeneralNoiseModelBuilder {
     /// True when every non-Pauli feature is off EXCEPT possibly the
     /// angle-dependent two-qubit scaling and the spontaneous-emission ratios.
     /// Shared by `simple_probabilities` (which additionally requires both the
-    /// angle scaling unset and emission explicitly off) and
+    /// angle scaling unset and emission off) and
     /// `pauli_with_angle_scaling` (which extracts them). The emission DISTRIBUTION
     /// must still be the default uniform model (`p1/p2_emission_model` unset) --
     /// custom emission samplers are NOT in this subset.
     fn is_plain_pauli_except_angle_and_emission(&self) -> bool {
-        let explicitly_zero = |v: Option<f64>| v == Some(0.0);
         let zero_or_unset = |v: Option<f64>| v.is_none() || v == Some(0.0);
         let one_or_unset = |v: Option<f64>| v.is_none() || v == Some(1.0);
 
-        // Non-neutral model defaults: unset means the default applies, so
-        // these must be explicitly zeroed for the physics to be plain Pauli.
-        // (Emission ratios are intentionally NOT required off here -- they are
-        // handled separately, since neo now matches engines' gate-removing
-        // emission with the default uniform distribution.)
-        let defaulted_features_off =
-            explicitly_zero(self.p_prep_leak_ratio) && explicitly_zero(self.p_idle_linear_rate);
-
-        // Neutral model defaults: unset is fine.
-        let optional_features_off = zero_or_unset(self.p_idle_quadratic_rate)
+        // Emission ratios are intentionally NOT required off here: they are handled separately,
+        // since neo matches engines' gate-removing emission with the default uniform distribution.
+        let optional_features_off = zero_or_unset(self.p_prep_leak_ratio)
+            && zero_or_unset(self.p_idle_linear_rate)
+            && self.p_idle_sin_squared.is_none()
+            && self.p_idle_coherent.is_none()
             && zero_or_unset(self.p_prep_crosstalk)
-            && zero_or_unset(self.p2_idle)
+            && zero_or_unset(self.idle_after_2q)
             && zero_or_unset(self.p_meas_crosstalk_global)
             && zero_or_unset(self.p_meas_crosstalk_local);
 
@@ -890,11 +1011,7 @@ impl GeneralNoiseModelBuilder {
 
         let gates_default = self.noiseless_gates.as_ref().is_none_or(BTreeSet::is_empty);
 
-        defaulted_features_off
-            && optional_features_off
-            && custom_models_off
-            && scales_neutral
-            && gates_default
+        optional_features_off && custom_models_off && scales_neutral && gates_default
     }
 
     /// Resolve the base Pauli probabilities `(p_prep, p_meas_0, p_meas_1, p1,
@@ -1003,19 +1120,7 @@ impl GeneralNoiseModelBuilder {
         model.p2_emission_ratio *= emission_scale * scale;
         model.p2_emission_ratio = model.p2_emission_ratio.min(1.0);
 
-        model.p_idle_quadratic_rate *= (idle_scale * scale).sqrt();
-
-        // If we need to do incoherent noise instead of coherent
-        if !model.p_idle_coherent {
-            // 0.5 to deal with the 0.5 in sin(rate x duration x 0.5)^2
-            let factor = model.p_idle_coherent_to_incoherent_factor * 0.5;
-            model.p_idle_quadratic_rate *= factor;
-        }
-        // frequency is in units of 2pi so convert to radians
-        model.p_idle_quadratic_rate *= 2.0 * std::f64::consts::PI;
-
         model.p_idle_linear_rate = model.p_idle_linear_rate * scale * idle_scale;
-        model.p2_idle = Self::validate_probability(model.p2_idle * scale * idle_scale);
     }
 }
 
@@ -1029,19 +1134,123 @@ impl crate::noise::IntoNoiseModel for GeneralNoiseModelBuilder {
 mod tests {
     use super::*;
 
-    #[test]
-    fn simple_probabilities_requires_explicit_zeros_for_defaulted_features() {
-        // Bare builder: model defaults include emission 0.5, prep leak 0.5,
-        // idle 0.001 — physics beyond the simple Pauli subset.
+    fn assert_float_eq(actual: f64, expected: f64) {
         assert!(
-            GeneralNoiseModelBuilder::new()
-                .simple_probabilities()
-                .is_none()
+            (actual - expected).abs() < f64::EPSILON,
+            "expected {expected}, got {actual}"
         );
-        // Setting only a probability does not neutralize the defaults.
+    }
+
+    #[test]
+    fn auto_reproduces_legacy_demonstration_preset() {
+        let model = GeneralNoiseModelBuilder::new().auto().build();
+
+        assert_float_eq(model.p_prep, 0.01);
+        assert_float_eq(model.p_meas_0, 0.01);
+        assert_float_eq(model.p_meas_1, 0.01);
+        assert_float_eq(model.p1, 0.001);
+        assert_float_eq(model.p2, 0.01);
+        assert_float_eq(model.p_idle_linear_rate, 0.001);
+        assert_float_eq(model.p1_emission_ratio, 0.5);
+        assert_float_eq(model.p2_emission_ratio, 0.5);
+        assert_float_eq(model.p_prep_leak_ratio, 0.5);
+        assert_float_eq(model.p1_seepage_prob, 0.5);
+        assert_float_eq(model.p2_seepage_prob, 0.5);
+    }
+
+    #[test]
+    fn explicit_setter_beats_auto_in_both_orders() {
+        let linear_model = BTreeMap::from([
+            ("X".to_string(), 1.0 / 3.0),
+            ("Y".to_string(), 1.0 / 3.0),
+            ("Z".to_string(), 1.0 / 3.0),
+        ]);
+        let set_explicit = |builder: GeneralNoiseModelBuilder| {
+            builder
+                .with_p_prep(0.11)
+                .with_p_meas_0(0.12)
+                .with_p_meas_1(0.13)
+                .with_p1(0.14)
+                .with_p2(0.15)
+                .with_p_idle_linear(0.16, &linear_model)
+                .with_p1_emission_ratio(0.17)
+                .with_p2_emission_ratio(0.18)
+                .with_prep_leak_ratio(0.19)
+                .with_p1_seepage_prob(0.20)
+                .with_p2_seepage_prob(0.21)
+        };
+        let models = [
+            set_explicit(GeneralNoiseModelBuilder::new().auto()).build(),
+            set_explicit(GeneralNoiseModelBuilder::new()).auto().build(),
+        ];
+
+        for model in models {
+            assert_float_eq(model.p_prep, 0.11);
+            assert_float_eq(model.p_meas_0, 0.12);
+            assert_float_eq(model.p_meas_1, 0.13);
+            assert_float_eq(model.p1, 0.14);
+            assert_float_eq(model.p2, 0.15);
+            assert_float_eq(model.p_idle_linear_rate, 0.16);
+            assert_float_eq(model.p1_emission_ratio, 0.17);
+            assert_float_eq(model.p2_emission_ratio, 0.18);
+            assert_float_eq(model.p_prep_leak_ratio, 0.19);
+            assert_float_eq(model.p1_seepage_prob, 0.20);
+            assert_float_eq(model.p2_seepage_prob, 0.21);
+        }
+    }
+
+    #[test]
+    fn retired_idle_builder_state_and_setters_are_absent_from_rust_source() {
+        let source = include_str!("builder.rs");
+        let removed_setters = [
+            "with_p_idle_linear_rate",
+            "with_p_idle_linear_model",
+            "with_p_idle_quadratic_rate",
+            "with_p_idle_quadratic_coherent",
+            "with_p_idle_coherent_to_incoherent_factor",
+            "with_average_p_idle_linear_rate",
+            "with_average_p_idle_quadratic_rate",
+        ];
+
+        for setter in removed_setters {
+            assert!(
+                !source.contains(&format!("pub fn {setter}")),
+                "{setter} must not remain on GeneralNoiseModelBuilder"
+            );
+        }
+
+        let removed_factor = ["p_idle_coherent_to_", "incoherent_factor"].concat();
+        assert!(
+            !source.contains(&format!("{removed_factor}: Option"))
+                && !source.contains(&format!("self.{removed_factor}"))
+                && !source.contains(&format!("model.{removed_factor}")),
+            "the orphaned coherent-to-incoherent factor must not remain in builder state or auto()"
+        );
+    }
+
+    #[test]
+    fn auto_does_not_overwrite_explicit_zero() {
+        let model = GeneralNoiseModelBuilder::new().with_p2(0.0).auto().build();
+
+        assert_float_eq(model.p2, 0.0);
+        assert_float_eq(model.p1, 0.001);
+    }
+
+    #[test]
+    fn simple_probabilities_accepts_neutral_defaults_and_rejects_auto_features() {
+        assert_eq!(
+            GeneralNoiseModelBuilder::new().simple_probabilities(),
+            Some((0.0, 0.0, 0.0, 0.0, 0.0))
+        );
         assert!(
             GeneralNoiseModelBuilder::new()
-                .with_average_p1_probability(0.2)
+                .with_average_p1(0.2)
+                .simple_probabilities()
+                .is_some()
+        );
+        assert!(
+            GeneralNoiseModelBuilder::new()
+                .auto()
                 .simple_probabilities()
                 .is_none()
         );
@@ -1050,17 +1259,16 @@ mod tests {
     #[test]
     fn simple_probabilities_returns_stored_convention_values() {
         let simple = GeneralNoiseModelBuilder::new()
-            .with_average_p1_probability(0.2)
-            .with_average_p2_probability(0.4)
-            .with_prep_probability(0.01)
-            .with_meas_0_probability(0.02)
-            .with_meas_1_probability(0.03)
+            .with_average_p1(0.2)
+            .with_average_p2(0.4)
+            .with_p_prep(0.01)
+            .with_p_meas_0(0.02)
+            .with_p_meas_1(0.03)
             .with_p1_emission_ratio(0.0)
             .with_p2_emission_ratio(0.0)
             .with_prep_leak_ratio(0.0)
-            .with_p_idle_linear_rate(0.0)
             .simple_probabilities()
-            .expect("fully zeroed config is simple");
+            .expect("plain Pauli config is simple");
 
         let (p_prep, p_meas_0, p_meas_1, p1, p2) = simple;
         assert!((p_prep - 0.01).abs() < 1e-12);
@@ -1077,9 +1285,8 @@ mod tests {
             .with_p1_emission_ratio(0.0)
             .with_p2_emission_ratio(0.0)
             .with_prep_leak_ratio(0.0)
-            .with_p_idle_linear_rate(0.0)
             .simple_probabilities()
-            .expect("zeroed features with default probabilities is simple");
+            .expect("neutral defaults are simple");
 
         let (d_prep, d_meas_0, d_meas_1, d_p1, d_p2, _) =
             GeneralNoiseModel::default().probabilities();
@@ -1091,12 +1298,11 @@ mod tests {
     #[test]
     fn pauli_with_angle_scaling_matches_simple_when_no_angle() {
         let builder = GeneralNoiseModelBuilder::new()
-            .with_average_p1_probability(0.2)
-            .with_average_p2_probability(0.4)
+            .with_average_p1(0.2)
+            .with_average_p2(0.4)
             .with_p1_emission_ratio(0.0)
             .with_p2_emission_ratio(0.0)
-            .with_prep_leak_ratio(0.0)
-            .with_p_idle_linear_rate(0.0);
+            .with_prep_leak_ratio(0.0);
 
         let simple = builder.simple_probabilities().expect("simple config");
         let (p_prep, p_meas_0, p_meas_1, p1, p2, angle, p1_emission, p2_emission) = builder
@@ -1104,7 +1310,7 @@ mod tests {
             .expect("simple config is also pauli-with-angle");
         assert_eq!((p_prep, p_meas_0, p_meas_1, p1, p2), simple);
         assert!(angle.is_none());
-        // Emission was explicitly zeroed to land in the strict simple subset.
+        // Emission is zero in the strict simple subset.
         assert_eq!((p1_emission, p2_emission), (0.0, 0.0));
     }
 
@@ -1114,17 +1320,16 @@ mod tests {
     #[test]
     fn pauli_with_angle_scaling_extracts_configured_angle() {
         let builder = GeneralNoiseModelBuilder::new()
-            .with_p2_probability(0.3)
+            .with_p2(0.3)
             .with_p2_angle_params(1.5, 0.0, 1.0, 0.0)
             .with_p2_angle_power(2.0)
-            .with_average_p1_probability(0.0)
+            .with_average_p1(0.0)
             .with_p1_emission_ratio(0.0)
             .with_p2_emission_ratio(0.0)
             .with_prep_leak_ratio(0.0)
-            .with_p_idle_linear_rate(0.0)
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0);
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0);
 
         // Angle scaling is outside the STRICT simple subset.
         assert!(builder.simple_probabilities().is_none());
@@ -1140,16 +1345,15 @@ mod tests {
     #[test]
     fn pauli_with_angle_scaling_fills_unset_power_from_default() {
         let builder = GeneralNoiseModelBuilder::new()
-            .with_p2_probability(0.3)
+            .with_p2(0.3)
             .with_p2_angle_params(1.5, 0.0, 1.0, 0.0)
-            .with_average_p1_probability(0.0)
+            .with_average_p1(0.0)
             .with_p1_emission_ratio(0.0)
             .with_p2_emission_ratio(0.0)
             .with_prep_leak_ratio(0.0)
-            .with_p_idle_linear_rate(0.0)
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0);
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0);
 
         let (_, _, _, _, _, angle, _, _) = builder
             .pauli_with_angle_scaling()
@@ -1162,11 +1366,11 @@ mod tests {
     /// angle configured.
     #[test]
     fn pauli_with_angle_scaling_rejects_non_angle_features() {
-        // Prep-leakage and linear idling keep their (non-zero) model defaults
-        // because they are never explicitly zeroed -> beyond the subset.
-        // (Emission ratios are NOT a blocker -- they are part of the subset.)
+        // Explicit preparation leakage is beyond the subset. (Emission ratios are NOT a
+        // blocker -- they are part of the subset.)
         let builder = GeneralNoiseModelBuilder::new()
-            .with_p2_probability(0.3)
+            .with_p2(0.3)
+            .with_prep_leak_ratio(0.5)
             .with_p2_angle_params(1.5, 0.0, 1.0, 0.0);
         assert!(builder.pauli_with_angle_scaling().is_none());
     }
@@ -1176,12 +1380,11 @@ mod tests {
     #[test]
     fn pauli_with_angle_scaling_extracts_emission_ratios() {
         let builder = GeneralNoiseModelBuilder::new()
-            .with_average_p1_probability(0.2)
-            .with_average_p2_probability(0.4)
+            .with_average_p1(0.2)
+            .with_average_p2(0.4)
             .with_p1_emission_ratio(0.25)
             .with_p2_emission_ratio(0.75)
-            .with_prep_leak_ratio(0.0)
-            .with_p_idle_linear_rate(0.0);
+            .with_prep_leak_ratio(0.0);
 
         // Non-zero emission is OUTSIDE the strict simple subset...
         assert!(builder.simple_probabilities().is_none());
@@ -1200,11 +1403,10 @@ mod tests {
     #[test]
     fn pauli_with_angle_scaling_rejects_emission_scale() {
         let builder = GeneralNoiseModelBuilder::new()
-            .with_average_p1_probability(0.2)
+            .with_average_p1(0.2)
             .with_p1_emission_ratio(0.25)
             .with_emission_scale(2.0)
-            .with_prep_leak_ratio(0.0)
-            .with_p_idle_linear_rate(0.0);
+            .with_prep_leak_ratio(0.0);
 
         // The built model applies the scale (0.25 * 2.0 = 0.5)...
         let built = builder.clone().build();

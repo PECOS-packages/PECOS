@@ -37,6 +37,79 @@ fn test_sparse_matrix_creation() {
 }
 
 #[test]
+fn test_bp_tuning_validation_names_invalid_parameter() {
+    let pcm = repetition_code(3);
+    let too_large = usize::try_from(i32::MAX).unwrap() + 1;
+    let make_osd = |max_iter, scaling, osd_order| {
+        BpOsdDecoder::new(
+            &pcm,
+            Some(0.1),
+            None,
+            max_iter,
+            BpMethod::ProductSum,
+            BpSchedule::Parallel,
+            scaling,
+            OsdMethod::OsdCs,
+            osd_order,
+            InputVectorType::Syndrome,
+            None,
+            None,
+            None,
+        )
+    };
+
+    assert!(
+        make_osd(too_large, 1.0, 0)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("max_iter")
+    );
+    assert!(
+        make_osd(10, f64::NAN, 0)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("ms_scaling_factor")
+    );
+    assert!(
+        make_osd(10, -0.1, 0)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("ms_scaling_factor")
+    );
+    assert!(
+        make_osd(10, 1.0, too_large)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("osd_order")
+    );
+
+    let lsd_error = BpLsdDecoder::new(
+        &pcm,
+        Some(0.1),
+        None,
+        10,
+        BpMethod::ProductSum,
+        BpSchedule::Parallel,
+        1.0,
+        OsdMethod::OsdCs,
+        too_large,
+        0,
+        InputVectorType::Syndrome,
+        None,
+        None,
+        None,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(lsd_error.contains("lsd_order"));
+}
+
+#[test]
 fn test_repetition_code_decoder() {
     let pcm = repetition_code(5);
     let error_rate = 0.1;

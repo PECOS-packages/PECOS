@@ -416,11 +416,11 @@ fn test_repetition_code_logical_error_vs_rounds() {
 
     // GeneralNoiseModel
     let general_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(p_meas)
-        .with_meas_1_probability(p_meas)
-        .with_average_p1_probability(p1 / 1.5) // Scale for average probability
-        .with_average_p2_probability(p2 / 1.25)
+        .with_p_prep(0.0)
+        .with_p_meas_0(p_meas)
+        .with_p_meas_1(p_meas)
+        .with_average_p1(p1 / 1.5) // Scale for average probability
+        .with_average_p2(p2 / 1.25)
         .with_p1_emission_ratio(0.0)
         .with_p2_emission_ratio(0.0)
         .with_seed(42)
@@ -480,11 +480,11 @@ fn test_repetition_code_syndrome_rates() {
     let p_meas = 0.02;
 
     let general_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(p_meas)
-        .with_meas_1_probability(p_meas)
-        .with_average_p1_probability(p1 / 1.5)
-        .with_average_p2_probability(p2 / 1.25)
+        .with_p_prep(0.0)
+        .with_p_meas_0(p_meas)
+        .with_p_meas_1(p_meas)
+        .with_average_p1(p1 / 1.5)
+        .with_average_p2(p2 / 1.25)
         .with_p1_emission_ratio(0.0)
         .with_p2_emission_ratio(0.0)
         .with_seed(42)
@@ -545,11 +545,11 @@ fn test_repetition_code_syndrome_correlations() {
     let p_meas = 0.02;
 
     let general_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(p_meas)
-        .with_meas_1_probability(p_meas)
-        .with_average_p1_probability(p1 / 1.5)
-        .with_average_p2_probability(p2 / 1.25)
+        .with_p_prep(0.0)
+        .with_p_meas_0(p_meas)
+        .with_p_meas_1(p_meas)
+        .with_average_p1(p1 / 1.5)
+        .with_average_p2(p2 / 1.25)
         .with_p1_emission_ratio(0.0)
         .with_p2_emission_ratio(0.0)
         .with_seed(42)
@@ -623,11 +623,11 @@ fn test_repetition_code_error_scaling() {
 
     for &p in &error_rates {
         let general_model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(p)
-            .with_meas_1_probability(p)
-            .with_average_p1_probability(p / 1.5)
-            .with_average_p2_probability(p / 1.25)
+            .with_p_prep(0.0)
+            .with_p_meas_0(p)
+            .with_p_meas_1(p)
+            .with_average_p1(p / 1.5)
+            .with_average_p2(p / 1.25)
             .with_p1_emission_ratio(0.0)
             .with_p2_emission_ratio(0.0)
             .with_seed(42)

@@ -68,14 +68,14 @@ class TestQasmSimDefaults:
 
         # Test default values for noise models using builder pattern
         # Note: depolarizing_noise() builder requires explicit probability
-        depolarizing_noise().with_p1_probability(0.001)
+        depolarizing_noise().with_p1(0.001)
         # Can't directly assert on builder properties
 
         # General noise model has defaults that can be overridden
         GeneralNoiseModelBuilder()
         # Default values are set when building
 
-        (biased_depolarizing_noise().with_p1_probability(0.001).with_p2_probability(0.001).with_prep_probability(0.001))
+        (biased_depolarizing_noise().with_p1(0.001).with_p2(0.001).with_p_prep(0.001))
         # Builder pattern requires explicit values
 
     def test_builder_defaults_new_api(self) -> None:
@@ -141,9 +141,9 @@ class TestQasmSimDefaults:
         # - bit_format: BigInt (integers, not binary strings)
         #
         # Noise model builders:
-        # - depolarizing_noise(): requires explicit .with_p1_probability()
+        # - depolarizing_noise(): requires explicit .with_p1()
         # - biased_depolarizing_noise(): requires probability settings
-        # - GeneralNoiseModelBuilder(): has internal defaults
+        # - GeneralNoiseModelBuilder(): no-effect defaults; .auto() opts into the legacy preset
         #
         # New unified API defaults:
         # - All optional fields use builder defaults when not specified

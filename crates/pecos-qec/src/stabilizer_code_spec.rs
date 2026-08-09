@@ -65,6 +65,17 @@ pub enum StabilizerCodeSpecError {
     #[error("stabilizer code encodes no logical qubits, so code distance is undefined")]
     NoLogicalQubits,
 
+    /// The logical Z and X lists have different lengths, so they cannot form X/Z pairs.
+    #[error(
+        "mismatched logical lists: {num_logical_zs} logical Z operators but {num_logical_xs} logical X operators"
+    )]
+    MismatchedLogicalLists {
+        /// Number of supplied logical Z operators.
+        num_logical_zs: usize,
+        /// Number of supplied logical X operators.
+        num_logical_xs: usize,
+    },
+
     /// A typed matrix width does not match the builder width.
     #[error("{matrix} matrix has {actual} qubits, expected {expected}")]
     MatrixWidthMismatch {
@@ -437,6 +448,15 @@ impl StabilizerCodeSpec {
     /// logical pairs differs from `n - rank(S)`, or [`StabilizerCodeSpecError::NoLogicalQubits`]
     /// when that complete count is zero and code distance is therefore undefined.
     pub fn verify_logical_completeness(&self) -> Result<()> {
+        // Unequal lists cannot form X/Z pairs at all: the pairing checks iterate over the
+        // shorter list, so an excess operator on either side would go unexamined and a
+        // missing partner would leave a logical coset invisible to Z- or X-only searches.
+        if self.logical_zs.len() != self.logical_xs.len() {
+            return Err(StabilizerCodeSpecError::MismatchedLogicalLists {
+                num_logical_zs: self.logical_zs.len(),
+                num_logical_xs: self.logical_xs.len(),
+            });
+        }
         let supplied_logical_pairs = self.logical_zs.len();
         let num_logical_qubits = self.num_logical_qubits();
         if supplied_logical_pairs != num_logical_qubits {

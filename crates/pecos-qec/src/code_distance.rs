@@ -308,6 +308,24 @@ mod tests {
     }
 
     #[test]
+    fn mismatched_logical_lists_are_rejected_not_searched_one_sided() {
+        // A logical Z added through the mutator without its X partner: the pair checks
+        // iterate over the shorter list, so nothing pairs, completeness counts only the
+        // Z side, and an unchecked search would certify distance 3 via the X coset while
+        // the weight-1 logical Z0 stays invisible to the Z-only searches.
+        let mut spec =
+            StabilizerCodeSpec::from_stabilizers(3, vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        spec.add_logical_z(Zs([0]));
+        assert_eq!(
+            stabilizer_code_distance(&spec, 3).unwrap_err(),
+            DistanceProblemError::StabilizerSpec(StabilizerCodeSpecError::MismatchedLogicalLists {
+                num_logical_zs: 1,
+                num_logical_xs: 0,
+            })
+        );
+    }
+
+    #[test]
     fn logical_anticommuting_with_a_stabilizer_is_rejected_not_certified() {
         // Frozen qubit 0 tensor the Steane code (true distance 3). The supplied count is
         // complete (k = 1), but the logical X anticommutes with the frozen-qubit stabilizer

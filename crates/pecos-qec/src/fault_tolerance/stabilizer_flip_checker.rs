@@ -37,7 +37,7 @@
 //!     .check(Zs([0, 1]))
 //!     .check(Zs([1, 2]))
 //!     .logical_z(Zs([0, 1, 2]))
-//!     .logical_x(Xs([0]))
+//!     .logical_x(Xs([0, 1, 2]))
 //!     .build()
 //!     .unwrap();
 //!
@@ -763,10 +763,14 @@ mod tests {
         // 3 qubits * 3 Pauli types = 9 weight-1 errors
         assert_eq!(analysis.total_errors, 9);
 
-        // The 3-qubit bit flip code only protects against X errors.
-        // Z errors are undetectable and flip the logical X.
-        // So there ARE undetectable logical errors at weight 1 (Z errors).
-        assert!(analysis.undetectable_logical > 0);
+        // The 3-qubit bit flip code only protects against X errors. Each single-qubit Z
+        // is undetectable and flips the transversal logical X; each single-qubit X or Y
+        // triggers a syndrome while flipping the logical Z. The exact counts pin the
+        // fixture: with the invalid X0 "logical" this analysis instead reports one
+        // undetectable and two stabilizer-equivalent errors.
+        assert_eq!(analysis.stabilizer_errors, 0);
+        assert_eq!(analysis.undetectable_logical, 3);
+        assert_eq!(analysis.detectable_with_logical, 6);
     }
 
     #[test]

@@ -51,7 +51,7 @@
 //!     .check(Zs([0, 1]))
 //!     .check(Zs([1, 2]))
 //!     .logical_z(Zs([0, 1, 2]))
-//!     .logical_x(Xs([0]))
+//!     .logical_x(Xs([0, 1, 2]))
 //!     .build()
 //!     .unwrap();
 //!

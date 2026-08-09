@@ -875,7 +875,12 @@ mod tests {
         let bounded = bounded_enumeration_stabilizer_distance(&spec, 5)
             .unwrap()
             .unwrap();
-        let connected = stabilizer_code_distance(&spec, 3).unwrap().unwrap();
+        let connected = match stabilizer_code_distance(&spec, 3).unwrap() {
+            crate::StabilizerDistanceSearchOutcome::Certified(result) => result,
+            crate::StabilizerDistanceSearchOutcome::BudgetExhausted { max_weight } => {
+                panic!("expected certified distance, exhausted weight {max_weight}")
+            }
+        };
         let symplectic = DistanceProblem::from_stabilizer_spec(&spec).unwrap();
         let sat = certified_distance(&symplectic, 3).unwrap().unwrap();
 

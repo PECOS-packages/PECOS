@@ -15,8 +15,7 @@
 use pecos_qec::{
     DistanceResult as RustDistanceResult, DistanceSearchConfig,
     LogicalOperatorInfo as RustLogicalOperatorInfo, StabilizerCodeSpec as RustCodeSpec,
-    StabilizerCodeSpecBuilder as RustCodeSpecBuilder, calculate_distance,
-    find_min_weight_logicals_with_info, find_shortest_logicals,
+    StabilizerCodeSpecBuilder as RustCodeSpecBuilder, calculate_distance, find_shortest_logicals,
 };
 use pyo3::prelude::*;
 use pyo3::types::PyType;
@@ -340,13 +339,15 @@ impl PyStabilizerCodeSpec {
         max_weight: Option<usize>,
         css: bool,
         verbose: bool,
-    ) -> Option<PyDistanceResult> {
+    ) -> PyResult<Option<PyDistanceResult>> {
         let config = DistanceSearchConfig {
             max_weight,
             css_only: css,
             verbose,
         };
-        calculate_distance(&self.inner, &config).map(PyDistanceResult::from)
+        calculate_distance(&self.inner, &config)
+            .map(|result| result.map(PyDistanceResult::from))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Find all logical operators at the minimum weight searched.
@@ -356,16 +357,20 @@ impl PyStabilizerCodeSpec {
         max_weight: Option<usize>,
         css: bool,
         verbose: bool,
-    ) -> Vec<PyLogicalOperatorInfo> {
+    ) -> PyResult<Vec<PyLogicalOperatorInfo>> {
         let config = DistanceSearchConfig {
             max_weight,
             css_only: css,
             verbose,
         };
-        find_min_weight_logicals_with_info(&self.inner, &config)
-            .into_iter()
-            .map(PyLogicalOperatorInfo::from)
-            .collect()
+        find_shortest_logicals(&self.inner, &config, 0)
+            .map(|logicals| {
+                logicals
+                    .into_iter()
+                    .map(PyLogicalOperatorInfo::from)
+                    .collect()
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Find logical operators through ``delta`` weights above the minimum.
@@ -376,16 +381,20 @@ impl PyStabilizerCodeSpec {
         max_weight: Option<usize>,
         css: bool,
         verbose: bool,
-    ) -> Vec<PyLogicalOperatorInfo> {
+    ) -> PyResult<Vec<PyLogicalOperatorInfo>> {
         let config = DistanceSearchConfig {
             max_weight,
             css_only: css,
             verbose,
         };
         find_shortest_logicals(&self.inner, &config, delta)
-            .into_iter()
-            .map(PyLogicalOperatorInfo::from)
-            .collect()
+            .map(|logicals| {
+                logicals
+                    .into_iter()
+                    .map(PyLogicalOperatorInfo::from)
+                    .collect()
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     fn __str__(&self) -> String {

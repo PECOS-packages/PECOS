@@ -61,6 +61,10 @@ pub enum StabilizerCodeSpecError {
         num_logical_qubits: usize,
     },
 
+    /// The stabilizer code encodes no logical qubits, so its distance is undefined.
+    #[error("stabilizer code encodes no logical qubits, so code distance is undefined")]
+    NoLogicalQubits,
+
     /// A typed matrix width does not match the builder width.
     #[error("{matrix} matrix has {actual} qubits, expected {expected}")]
     MatrixWidthMismatch {
@@ -430,7 +434,8 @@ impl StabilizerCodeSpec {
     /// # Errors
     ///
     /// Returns [`StabilizerCodeSpecError::IncompleteLogicalBasis`] when the number of supplied
-    /// logical pairs differs from `n - rank(S)`.
+    /// logical pairs differs from `n - rank(S)`, or [`StabilizerCodeSpecError::NoLogicalQubits`]
+    /// when that complete count is zero and code distance is therefore undefined.
     pub fn verify_logical_completeness(&self) -> Result<()> {
         let supplied_logical_pairs = self.logical_zs.len();
         let num_logical_qubits = self.num_logical_qubits();
@@ -439,6 +444,9 @@ impl StabilizerCodeSpec {
                 supplied_logical_pairs,
                 num_logical_qubits,
             });
+        }
+        if num_logical_qubits == 0 {
+            return Err(StabilizerCodeSpecError::NoLogicalQubits);
         }
         Ok(())
     }
@@ -749,9 +757,13 @@ impl StabilizerCodeSpec {
     /// # Returns
     ///
     /// A [`crate::DistanceResult`] containing the distance and the first logical error found.
-    /// Returns `None` if no logical error exists (stabilizer state).
-    #[must_use]
-    pub fn calculate_distance(&mut self) -> Option<crate::DistanceResult> {
+    /// Returns `None` if no logical error exists within the search budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the supplied logical basis is incomplete or the code encodes no
+    /// logical qubits.
+    pub fn calculate_distance(&mut self) -> Result<Option<crate::DistanceResult>> {
         self.calculate_distance_with_options(&crate::DistanceSearchConfig::default())
     }
 
@@ -767,16 +779,20 @@ impl StabilizerCodeSpec {
     ///
     /// A [`crate::DistanceResult`] containing the distance and the first logical error found.
     /// Returns `None` if no logical error exists up to `max_weight`.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the supplied logical basis is incomplete or the code encodes no
+    /// logical qubits.
     pub fn calculate_distance_with_options(
         &mut self,
         config: &crate::DistanceSearchConfig,
-    ) -> Option<crate::DistanceResult> {
-        let result = crate::calculate_distance(self, config);
+    ) -> Result<Option<crate::DistanceResult>> {
+        let result = crate::calculate_distance(self, config)?;
         if let Some(ref r) = result {
             self.distance = Some(r.distance);
         }
-        result
+        Ok(result)
     }
 
     // ========================================================================
@@ -1508,7 +1524,7 @@ mod tests {
             StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x])
                 .unwrap();
 
-        let result = code.calculate_distance();
+        let result = code.calculate_distance().unwrap();
         assert!(result.is_some());
         let result = result.unwrap();
 
@@ -1556,7 +1572,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = code.calculate_distance();
+        let result = code.calculate_distance().unwrap();
         assert!(result.is_some());
         let result = result.unwrap();
 
@@ -1602,7 +1618,7 @@ mod tests {
 
         // CSS mode should find the same distance for CSS codes
         let config = crate::DistanceSearchConfig::css();
-        let result = code.calculate_distance_with_options(&config);
+        let result = code.calculate_distance_with_options(&config).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().distance, 3);
     }
@@ -1635,7 +1651,7 @@ mod tests {
             StabilizerCodeSpec::new(5, vec![s1, s2, s3, s4], vec![logical_z], vec![logical_x])
                 .unwrap();
 
-        let result = code.calculate_distance();
+        let result = code.calculate_distance().unwrap();
         assert!(result.is_some());
         let result = result.unwrap();
 
@@ -1682,6 +1698,7 @@ mod tests {
         assert_eq!(
             crate::calculate_distance(&code, &crate::DistanceSearchConfig::default())
                 .unwrap()
+                .unwrap()
                 .distance,
             3
         );
@@ -1705,6 +1722,7 @@ mod tests {
 
         assert_eq!(
             crate::calculate_distance(&code, &crate::DistanceSearchConfig::default())
+                .unwrap()
                 .unwrap()
                 .distance,
             3

@@ -50,6 +50,15 @@ def _repetition_spec() -> StabilizerCodeSpec:
     )
 
 
+def _incomplete_five_qubit_spec() -> StabilizerCodeSpec:
+    return StabilizerCodeSpec(
+        5,
+        [PauliString.from_dense_str("IZZZZ"), PauliString.from_dense_str("IXXXX")],
+        [PauliString.from_dense_str("IZZII")],
+        [PauliString.from_dense_str("IIXXI")],
+    )
+
+
 def test_five_qubit_hand_built_spec_finds_genuine_weight_three_logical() -> None:
     spec = _five_qubit_spec()
     spec.verify()
@@ -128,6 +137,25 @@ def test_max_weight_below_true_distance_returns_no_results() -> None:
     assert spec.distance(max_weight=2) is None
     assert spec.min_weight_logicals(max_weight=2) == []
     assert spec.shortest_logicals(delta=1, max_weight=2) == []
+
+
+@pytest.mark.parametrize(
+    "search",
+    [
+        lambda spec: spec.distance(),
+        lambda spec: spec.min_weight_logicals(),
+        lambda spec: spec.shortest_logicals(delta=1),
+    ],
+    ids=["distance", "min-weight-logicals", "shortest-logicals"],
+)
+def test_incomplete_logical_basis_is_rejected_by_spec_distance_searches(
+    search: Callable[[StabilizerCodeSpec], object],
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"incomplete logical basis: supplied 1 logical pairs, expected 3",
+    ):
+        search(_incomplete_five_qubit_spec())
 
 
 def test_five_qubit_shortest_logicals_include_requested_weight_range() -> None:

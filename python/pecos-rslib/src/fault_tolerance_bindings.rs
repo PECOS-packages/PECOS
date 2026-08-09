@@ -45,7 +45,7 @@
 use crate::code_matrix_bindings::PyParityCheckMatrix;
 use crate::dag_circuit_bindings::PyTickCircuit;
 use crate::pecos_array::{Array, ArrayData};
-use crate::stabilizer_code_spec_bindings::{PyDistanceResult, PyStabilizerCodeSpec};
+use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
 use pecos_core::gate_type::GateType;
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
@@ -99,7 +99,10 @@ use pecos_qec::{
 };
 use pecos_qec::{
     BoundedEnumerationDistance as RustBoundedEnumerationDistance,
-    CertifiedDistance as RustCertifiedDistance, DistanceProblem as RustDistanceProblem,
+    CertifiedDistance as RustCertifiedDistance,
+    ClassicalDistanceSearchOutcome as RustClassicalDistanceSearchOutcome,
+    DistanceProblem as RustDistanceProblem, DistanceResult as RustDistanceResult,
+    StabilizerDistanceSearchOutcome as RustStabilizerDistanceSearchOutcome,
     bounded_enumeration_code_distance as rust_bounded_enumeration_code_distance,
     bounded_enumeration_stabilizer_distance as rust_bounded_enumeration_stabilizer_distance,
     bounded_enumeration_x_distance as rust_bounded_enumeration_x_distance,
@@ -7778,6 +7781,171 @@ impl PyCertifiedDistance {
     }
 }
 
+/// Result of a budgeted stabilizer-code distance search.
+#[pyclass(
+    name = "StabilizerDistanceSearchResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyStabilizerDistanceSearchResult {
+    result: Option<RustDistanceResult>,
+    max_weight: Option<usize>,
+}
+
+impl From<RustStabilizerDistanceSearchOutcome> for PyStabilizerDistanceSearchResult {
+    fn from(outcome: RustStabilizerDistanceSearchOutcome) -> Self {
+        match outcome {
+            RustStabilizerDistanceSearchOutcome::Certified(result) => Self {
+                result: Some(result),
+                max_weight: None,
+            },
+            RustStabilizerDistanceSearchOutcome::BudgetExhausted { max_weight } => Self {
+                result: None,
+                max_weight: Some(max_weight),
+            },
+        }
+    }
+}
+
+#[pymethods]
+impl PyStabilizerDistanceSearchResult {
+    #[getter]
+    fn certified(&self) -> bool {
+        self.result.is_some()
+    }
+
+    #[getter]
+    fn distance(&self) -> Option<usize> {
+        self.result.as_ref().map(|result| result.distance)
+    }
+
+    #[getter]
+    fn min_weight_operator(&self) -> Option<crate::pauli_bindings::PauliString> {
+        self.result.as_ref().map(|result| {
+            crate::pauli_bindings::PauliString::from_rust(result.min_weight_operator.clone())
+        })
+    }
+
+    #[getter]
+    fn lower_bound(&self) -> usize {
+        self.result.as_ref().map_or_else(
+            || self.max_weight.unwrap_or(0).saturating_add(1),
+            |result| result.distance,
+        )
+    }
+
+    #[getter]
+    fn max_weight(&self) -> Option<usize> {
+        self.max_weight
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.result {
+            Some(result) => format!(
+                "StabilizerDistanceSearchResult(certified=True, distance={})",
+                result.distance
+            ),
+            None => format!(
+                "StabilizerDistanceSearchResult(certified=False, lower_bound={}, max_weight={})",
+                self.lower_bound(),
+                self.max_weight.unwrap_or(0)
+            ),
+        }
+    }
+}
+
+/// Result of a budgeted classical-code distance certification.
+#[pyclass(
+    name = "ClassicalDistanceSearchResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyClassicalDistanceSearchResult {
+    outcome: RustClassicalDistanceSearchOutcome,
+}
+
+impl From<RustClassicalDistanceSearchOutcome> for PyClassicalDistanceSearchResult {
+    fn from(outcome: RustClassicalDistanceSearchOutcome) -> Self {
+        Self { outcome }
+    }
+}
+
+#[pymethods]
+impl PyClassicalDistanceSearchResult {
+    #[getter]
+    fn certified(&self) -> bool {
+        !matches!(
+            self.outcome,
+            RustClassicalDistanceSearchOutcome::BudgetExhausted { .. }
+        )
+    }
+
+    #[getter]
+    fn distance(&self) -> Option<usize> {
+        match &self.outcome {
+            RustClassicalDistanceSearchOutcome::Certified(result) => Some(result.distance),
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword
+            | RustClassicalDistanceSearchOutcome::BudgetExhausted { .. } => None,
+        }
+    }
+
+    #[getter]
+    fn witness(&self) -> Option<Vec<bool>> {
+        match &self.outcome {
+            RustClassicalDistanceSearchOutcome::Certified(result) => Some(result.witness.clone()),
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword
+            | RustClassicalDistanceSearchOutcome::BudgetExhausted { .. } => None,
+        }
+    }
+
+    #[getter]
+    fn lower_bound(&self) -> Option<usize> {
+        match &self.outcome {
+            RustClassicalDistanceSearchOutcome::Certified(result) => Some(result.distance),
+            RustClassicalDistanceSearchOutcome::BudgetExhausted { max_weight } => {
+                Some(max_weight.saturating_add(1))
+            }
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword => None,
+        }
+    }
+
+    #[getter]
+    fn max_weight(&self) -> Option<usize> {
+        match self.outcome {
+            RustClassicalDistanceSearchOutcome::BudgetExhausted { max_weight } => Some(max_weight),
+            RustClassicalDistanceSearchOutcome::Certified(_)
+            | RustClassicalDistanceSearchOutcome::NoNonzeroCodeword => None,
+        }
+    }
+
+    #[getter]
+    fn no_nonzero_codeword(&self) -> bool {
+        matches!(
+            self.outcome,
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword
+        )
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.outcome {
+            RustClassicalDistanceSearchOutcome::Certified(result) => format!(
+                "ClassicalDistanceSearchResult(certified=True, distance={})",
+                result.distance
+            ),
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword => {
+                "ClassicalDistanceSearchResult(certified=True, no_nonzero_codeword=True)"
+                    .to_string()
+            }
+            RustClassicalDistanceSearchOutcome::BudgetExhausted { max_weight } => format!(
+                "ClassicalDistanceSearchResult(certified=False, lower_bound={}, max_weight={max_weight})",
+                max_weight.saturating_add(1)
+            ),
+        }
+    }
+}
+
 /// Native lower and upper bounds from bounded generator-row enumeration.
 #[pyclass(
     name = "BoundedEnumerationDistance",
@@ -8022,13 +8190,17 @@ fn certified_stabilizer_coset_weight(
         .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
-/// Certified coset weight of every logical basis operator (Z basis, then X basis).
+/// Certified coset weight of every supplied logical generator (Z generators, then X generators).
+///
+/// The minimum of this list is not the code distance: two weight-two supplied generators can,
+/// for example, have a weight-one product in another logical coset.
+/// The supplied generators are measured as given; logical-basis completeness is not required.
 #[pyfunction]
-fn logical_coset_weight_profile(
+fn logical_generator_coset_weights(
     code: &PyStabilizerCodeSpec,
     max_weight: usize,
 ) -> PyResult<Vec<Option<PyCertifiedDistance>>> {
-    pecos_qec::logical_coset_weight_profile(&code.inner, max_weight)
+    pecos_qec::logical_generator_coset_weights(&code.inner, max_weight)
         .map(|profile| {
             profile
                 .into_iter()
@@ -8043,9 +8215,9 @@ fn logical_coset_weight_profile(
 fn certified_classical_distance(
     h: &PyParityCheckMatrix,
     max_weight: usize,
-) -> PyResult<Option<PyCertifiedDistance>> {
+) -> PyResult<PyClassicalDistanceSearchResult> {
     pecos_qec::certified_classical_distance(&h.inner, max_weight)
-        .map(|result| result.map(PyCertifiedDistance::from))
+        .map(PyClassicalDistanceSearchResult::from)
         .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
@@ -8131,9 +8303,9 @@ fn z_distance(
 fn stabilizer_code_distance(
     code: &PyStabilizerCodeSpec,
     max_weight: usize,
-) -> PyResult<Option<PyDistanceResult>> {
+) -> PyResult<PyStabilizerDistanceSearchResult> {
     rust_stabilizer_code_distance(&code.inner, max_weight)
-        .map(|result| result.map(PyDistanceResult::from))
+        .map(PyStabilizerDistanceSearchResult::from)
         .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
@@ -8364,6 +8536,8 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyCircuitDistanceResult>()?;
     qec.add_class::<PyCircuitFaultAnalyzer>()?;
     qec.add_class::<PyCertifiedDistance>()?;
+    qec.add_class::<PyStabilizerDistanceSearchResult>()?;
+    qec.add_class::<PyClassicalDistanceSearchResult>()?;
     qec.add_class::<PyBoundedEnumerationDistance>()?;
     qec.add_class::<PyDistanceProblem>()?;
     qec.add_class::<PyBivariateBicycleCode>()?;
@@ -8399,7 +8573,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(certified_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(certified_coset_weight, &qec)?)?;
     qec.add_function(wrap_pyfunction!(certified_stabilizer_coset_weight, &qec)?)?;
-    qec.add_function(wrap_pyfunction!(logical_coset_weight_profile, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(logical_generator_coset_weights, &qec)?)?;
     qec.add_function(wrap_pyfunction!(certified_classical_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
     qec.add_function(wrap_pyfunction!(coloration_memory_circuit, &qec)?)?;

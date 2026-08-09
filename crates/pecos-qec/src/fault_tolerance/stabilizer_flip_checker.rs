@@ -471,8 +471,15 @@ impl<'a> StabilizerFlipChecker<'a> {
     /// Quick check if any weight-t error causes an undetectable logical error.
     ///
     /// Returns early on first failure, more efficient than full analysis.
-    #[must_use]
-    pub fn has_undetectable_logical(&self, weight: usize) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the code's supplied logical basis is incomplete or it encodes no
+    /// logical qubits.
+    pub fn has_undetectable_logical(
+        &self,
+        weight: usize,
+    ) -> Result<bool, crate::StabilizerCodeSpecError> {
         crate::distance::has_logical_error_at_weight(
             self.code,
             weight,
@@ -484,13 +491,20 @@ impl<'a> StabilizerFlipChecker<'a> {
     ///
     /// The distance is the minimum weight of an undetectable logical error.
     /// Returns None if no undetectable logical error is found up to `max_weight`.
-    #[must_use]
-    pub fn compute_distance(&self, max_weight: usize) -> Option<usize> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the code's supplied logical basis is incomplete or it encodes no
+    /// logical qubits.
+    pub fn compute_distance(
+        &self,
+        max_weight: usize,
+    ) -> Result<Option<usize>, crate::StabilizerCodeSpecError> {
         crate::calculate_distance(
             self.code,
             &crate::DistanceSearchConfig::with_max_weight(max_weight),
         )
-        .map(|result| result.distance)
+        .map(|result| result.map(|distance| distance.distance))
     }
 }
 
@@ -797,7 +811,7 @@ mod tests {
 
         // The overall distance is 1 (single Z error is undetectable logical)
         // because this code doesn't protect against Z errors.
-        let distance = checker.compute_distance(5);
+        let distance = checker.compute_distance(5).unwrap();
         assert_eq!(distance, Some(1));
     }
 
@@ -876,7 +890,7 @@ mod tests {
         let checker = StabilizerFlipChecker::new(&code);
 
         // The [[5,1,3]] code has distance 3
-        let distance = checker.compute_distance(5);
+        let distance = checker.compute_distance(5).unwrap();
         assert_eq!(distance, Some(3), "5-qubit code distance should be 3");
     }
 
@@ -947,7 +961,7 @@ mod tests {
         let code = steane_code();
         let checker = StabilizerFlipChecker::new(&code);
 
-        let distance = checker.compute_distance(5);
+        let distance = checker.compute_distance(5).unwrap();
         assert_eq!(distance, Some(3), "Steane code distance should be 3");
     }
 
@@ -957,7 +971,7 @@ mod tests {
         let checker_distance = StabilizerFlipChecker::new(&code).compute_distance(5);
         let engine_distance =
             crate::calculate_distance(&code, &crate::DistanceSearchConfig::with_max_weight(5))
-                .map(|result| result.distance);
+                .map(|result| result.map(|distance| distance.distance));
 
         assert_eq!(checker_distance, engine_distance);
     }

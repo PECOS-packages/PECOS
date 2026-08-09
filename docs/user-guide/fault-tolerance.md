@@ -310,7 +310,7 @@ let code = StabilizerCodeSpec::builder(7)
     .unwrap();
 
 // Basic distance calculation
-let result = calculate_distance(&code, &DistanceSearchConfig::default());
+let result = calculate_distance(&code, &DistanceSearchConfig::default()).unwrap();
 if let Some(r) = result {
     println!("Distance: {}", r.distance);
     println!("Min-weight operator: {}", r.min_weight_operator);
@@ -326,7 +326,7 @@ let result = calculate_distance(&code, &DistanceSearchConfig::with_max_weight(5)
 ### Finding All Minimum-Weight Logicals
 
 ```rust
-use pecos_qec::{StabilizerCodeSpec, find_min_weight_logicals_with_info, DistanceSearchConfig};
+use pecos_qec::{StabilizerCodeSpec, find_shortest_logicals, DistanceSearchConfig};
 use pecos_core::pauli::{Xs, Zs};
 
 let code = StabilizerCodeSpec::builder(7)
@@ -341,7 +341,7 @@ let code = StabilizerCodeSpec::builder(7)
     .build()
     .unwrap();
 
-let logicals = find_min_weight_logicals_with_info(&code, &DistanceSearchConfig::default());
+let logicals = find_shortest_logicals(&code, &DistanceSearchConfig::default(), 0).unwrap();
 for op in &logicals {
     println!("Weight {}: {} (equivalent to {})",
         op.weight, op.operator, op.equivalence_string());
@@ -398,7 +398,7 @@ let spec = StabilizerCodeSpec::from_stabilizer_code(&code).unwrap();
 spec.verify().unwrap();
 
 // 4. Compute distance
-let dist = calculate_distance(&spec, &DistanceSearchConfig::default());
+let dist = calculate_distance(&spec, &DistanceSearchConfig::default()).unwrap();
 println!("Distance: {:?}", dist.as_ref().map(|r| r.distance));
 
 // 5. Check fault tolerance at weight 1

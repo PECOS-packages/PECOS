@@ -133,6 +133,20 @@ pub struct CertifiedDistance {
     pub unsat_trusted_below: usize,
 }
 
+/// Outcome of a budgeted classical-code distance certification.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClassicalDistanceSearchOutcome {
+    /// The exact minimum weight and a nonzero kernel witness were certified.
+    Certified(CertifiedDistance),
+    /// No nonzero kernel element exists because the parity-check matrix has full column rank.
+    NoNonzeroCodeword,
+    /// Every weight through the requested bound was certified absent.
+    BudgetExhausted {
+        /// Largest Hamming weight included in the search.
+        max_weight: usize,
+    },
+}
+
 /// Reasons a proposed SAT witness fails native verification.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum WitnessError {
@@ -1116,12 +1130,17 @@ pub fn certified_stabilizer_coset_weight(
     certified_distance(&problem, max_weight).map_err(CosetWeightError::Certification)
 }
 
-/// Certified coset weight of every logical basis operator of a code (Z basis, then X basis).
+/// Certified coset weight of every supplied logical generator (Z generators, then X generators).
+///
+/// The minimum of this list is **not** the code distance: for example, two weight-two supplied
+/// generators can have a weight-one product in a distinct logical coset.
+/// This intentionally operates on the supplied generators and does not require them to form a
+/// complete logical basis.
 ///
 /// # Errors
 ///
 /// Propagates the first failure from [`certified_stabilizer_coset_weight`].
-pub fn logical_coset_weight_profile(
+pub fn logical_generator_coset_weights(
     code: &StabilizerCodeSpec,
     max_weight: usize,
 ) -> Result<Vec<Option<CertifiedDistance>>, CosetWeightError> {
@@ -1142,8 +1161,11 @@ pub fn logical_coset_weight_profile(
 pub fn certified_classical_distance(
     h: &ParityCheckMatrix,
     max_weight: usize,
-) -> Result<Option<CertifiedDistance>, CosetWeightError> {
+) -> Result<ClassicalDistanceSearchOutcome, CosetWeightError> {
     let n = h.num_qubits();
+    if h.rank() == n {
+        return Ok(ClassicalDistanceSearchOutcome::NoNonzeroCodeword);
+    }
     let identity_rows = (0..n)
         .map(|column| {
             let mut row = vec![0u8; n];
@@ -1154,7 +1176,12 @@ pub fn certified_classical_distance(
     let identity = ParityCheckMatrix::from_dense(identity_rows)
         .map_err(|error| CosetWeightError::Symplectic(error.to_string()))?;
     let problem = DistanceProblem::from_css_checks(h, &identity)?;
-    certified_distance(&problem, max_weight).map_err(CosetWeightError::Certification)
+    certified_distance(&problem, max_weight)
+        .map(|result| match result {
+            Some(certified) => ClassicalDistanceSearchOutcome::Certified(certified),
+            None => ClassicalDistanceSearchOutcome::BudgetExhausted { max_weight },
+        })
+        .map_err(CosetWeightError::Certification)
 }
 
 /// Errors from the coset-weight and classical-distance entry points.
@@ -1246,7 +1273,7 @@ mod tests {
         bounded_enumeration_code_distance, calculate_distance, connected_cluster_code_distance,
         connected_cluster_fault_distance, exhaustive_fault_distance,
     };
-    use pecos_core::pauli::{X, Xs, Ys, Z, Zs};
+    use pecos_core::pauli::{X, Xs, Y, Ys, Z, Zs};
     use pecos_quantum::SymplecticMatrix;
     use rand::rngs::SmallRng;
     use rand::{RngExt, SeedableRng};
@@ -1581,7 +1608,9 @@ mod tests {
             .logical_z(Zs([0, 1, 2, 3, 4, 5, 6]))
             .build_verified()
             .unwrap();
-        let oracle = calculate_distance(&spec, &DistanceSearchConfig::css()).unwrap();
+        let oracle = calculate_distance(&spec, &DistanceSearchConfig::css())
+            .unwrap()
+            .unwrap();
         let problem = steane_distance_problem();
 
         assert_eq!(oracle.distance, 3);
@@ -1616,7 +1645,7 @@ mod tests {
     fn batsat_certifies_five_qubit_symplectic_distance_and_logical_witness() {
         let mut spec =
             StabilizerCodeSpec::from_stabilizer_code(&StabilizerCode::five_qubit()).unwrap();
-        let calculated = spec.calculate_distance().unwrap().distance;
+        let calculated = spec.calculate_distance().unwrap().unwrap().distance;
         let oracle = spec.distance().unwrap();
         assert_eq!(calculated, oracle);
         assert_eq!(oracle, 3);
@@ -1756,7 +1785,7 @@ mod tests {
     #[test]
     fn batsat_certifies_steane_x_and_z_against_existing_oracle() {
         let mut spec = StabilizerCodeSpec::from_stabilizer_code(&StabilizerCode::steane()).unwrap();
-        let oracle = spec.calculate_distance().unwrap().distance;
+        let oracle = spec.calculate_distance().unwrap().unwrap().distance;
         assert_eq!(spec.distance(), Some(oracle));
 
         for problem in [
@@ -1946,17 +1975,38 @@ mod tests {
     #[test]
     fn classical_distance_matches_known_codes() {
         let hamming = steane_hamming_matrix();
-        let certified = certified_classical_distance(&hamming, 4).unwrap().unwrap();
+        let certified = match certified_classical_distance(&hamming, 4).unwrap() {
+            ClassicalDistanceSearchOutcome::Certified(certified) => certified,
+            other => panic!("expected certified Hamming distance, got {other:?}"),
+        };
         assert_eq!(certified.distance, 3);
 
         let repetition = ParityCheckMatrix::from_dense(vec![vec![1, 1, 0], vec![0, 1, 1]]).unwrap();
-        let certified = certified_classical_distance(&repetition, 3)
-            .unwrap()
-            .unwrap();
+        let certified = match certified_classical_distance(&repetition, 3).unwrap() {
+            ClassicalDistanceSearchOutcome::Certified(certified) => certified,
+            other => panic!("expected certified repetition distance, got {other:?}"),
+        };
         assert_eq!(certified.distance, 3);
 
         let enumerated = bounded_enumeration_classical_agreement(&hamming, 3);
         assert_eq!(enumerated, 3);
+    }
+
+    #[test]
+    fn classical_distance_distinguishes_full_rank_from_budget_exhaustion() {
+        let full_rank =
+            ParityCheckMatrix::from_dense(vec![vec![1, 0, 0], vec![0, 1, 0], vec![0, 0, 1]])
+                .unwrap();
+        assert_eq!(
+            certified_classical_distance(&full_rank, 2).unwrap(),
+            ClassicalDistanceSearchOutcome::NoNonzeroCodeword
+        );
+
+        let repetition = ParityCheckMatrix::from_dense(vec![vec![1, 1, 0], vec![0, 1, 1]]).unwrap();
+        assert_eq!(
+            certified_classical_distance(&repetition, 2).unwrap(),
+            ClassicalDistanceSearchOutcome::BudgetExhausted { max_weight: 2 }
+        );
     }
 
     fn bounded_enumeration_classical_agreement(h: &ParityCheckMatrix, expected: usize) -> usize {
@@ -2096,7 +2146,7 @@ mod tests {
             .unwrap();
         assert_eq!(certified.distance, 1);
 
-        let profile = logical_coset_weight_profile(&spec, 1).unwrap();
+        let profile = logical_generator_coset_weights(&spec, 1).unwrap();
         assert_eq!(
             profile
                 .into_iter()
@@ -2107,13 +2157,43 @@ mod tests {
     }
 
     #[test]
+    fn generator_coset_minimum_can_exceed_code_distance() {
+        let spec = StabilizerCodeSpec::new(
+            2,
+            Vec::new(),
+            vec![Xs([0, 1]), Y(0) & Z(1)],
+            vec![X(0) & Y(1), Zs([0, 1])],
+        )
+        .unwrap();
+        spec.verify().unwrap();
+
+        let profile = logical_generator_coset_weights(&spec, 2).unwrap();
+        assert_eq!(
+            profile
+                .into_iter()
+                .map(|entry| entry.unwrap().distance)
+                .min(),
+            Some(2)
+        );
+        let distance = crate::stabilizer_code_distance(&spec, 1).unwrap();
+        match distance {
+            crate::StabilizerDistanceSearchOutcome::Certified(result) => {
+                assert_eq!(result.distance, 1);
+            }
+            other @ crate::StabilizerDistanceSearchOutcome::BudgetExhausted { .. } => {
+                panic!("expected certified code distance, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
     fn steane_logical_profile_is_all_threes_and_stabilizer_costs_zero() {
         let hamming = steane_hamming_matrix();
         let mut builder = crate::StabilizerCodeSpecBuilder::new(7);
         builder = builder.checks_from_css(&hamming, &hamming).unwrap();
         let spec = builder.build_with_discovered_logicals().unwrap();
 
-        let profile = logical_coset_weight_profile(&spec, 7).unwrap();
+        let profile = logical_generator_coset_weights(&spec, 7).unwrap();
         assert_eq!(profile.len(), 2);
         for entry in profile {
             assert_eq!(entry.unwrap().distance, 3);

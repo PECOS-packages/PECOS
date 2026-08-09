@@ -22,8 +22,10 @@ from pecos.qec import (
     bounded_enumeration_stabilizer_distance,
     bounded_enumeration_x_distance,
     bounded_enumeration_z_distance,
+    certified_classical_distance,
     certified_stabilizer_coset_weight,
     connected_cluster_code_distance,
+    logical_generator_coset_weights,
     stabilizer_code_distance,
     x_distance,
     z_distance,
@@ -262,11 +264,73 @@ def test_non_css_connected_cluster_binding_returns_logical_pauli() -> None:
     spec = StabilizerCodeSpec.from_stabilizer_code(StabilizerCode.five_qubit())
     result = stabilizer_code_distance(spec, 3)
 
-    assert result is not None
+    assert result.certified
     assert result.distance == 3
     assert result.min_weight_operator.weight() == 3
     assert all(result.min_weight_operator.commutes_with(stabilizer) for stabilizer in spec.stabilizers)
     assert any(result.min_weight_operator.anticommutes_with(logical) for logical in spec.logical_zs + spec.logical_xs)
+
+
+def test_stabilizer_distance_binding_reports_budget_exhaustion_and_no_logicals() -> None:
+    spec = StabilizerCodeSpec.from_stabilizer_code(StabilizerCode.five_qubit())
+    exhausted = stabilizer_code_distance(spec, 2)
+
+    assert not exhausted.certified
+    assert exhausted.distance is None
+    assert exhausted.min_weight_operator is None
+    assert exhausted.lower_bound == 3
+    assert exhausted.max_weight == 2
+
+    stabilizer_state = StabilizerCodeSpec(
+        1,
+        [PauliString.from_dense_str("Z")],
+        [],
+        [],
+    )
+    with pytest.raises(ValueError, match="encodes no logical qubits"):
+        stabilizer_code_distance(stabilizer_state, 1)
+
+
+def test_classical_distance_binding_distinguishes_empty_kernel_from_budget() -> None:
+    full_rank = ParityCheckMatrix(
+        [
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+        ],
+    )
+    nonexistent = certified_classical_distance(full_rank, 2)
+    assert nonexistent.certified
+    assert nonexistent.no_nonzero_codeword
+    assert nonexistent.distance is None
+    assert nonexistent.witness is None
+    assert nonexistent.lower_bound is None
+    assert nonexistent.max_weight is None
+
+    repetition = ParityCheckMatrix([[1, 1, 0], [0, 1, 1]])
+    exhausted = certified_classical_distance(repetition, 2)
+    assert not exhausted.certified
+    assert not exhausted.no_nonzero_codeword
+    assert exhausted.distance is None
+    assert exhausted.witness is None
+    assert exhausted.lower_bound == 3
+    assert exhausted.max_weight == 2
+
+
+def test_logical_generator_profile_minimum_is_not_code_distance() -> None:
+    spec = StabilizerCodeSpec(
+        2,
+        [],
+        [PauliString.from_dense_str("XX"), PauliString.from_dense_str("YZ")],
+        [PauliString.from_dense_str("XY"), PauliString.from_dense_str("ZZ")],
+    )
+    spec.verify()
+
+    profile = logical_generator_coset_weights(spec, 2)
+    assert min(entry.distance for entry in profile if entry is not None) == 2
+    distance = stabilizer_code_distance(spec, 1)
+    assert distance.certified
+    assert distance.distance == 1
 
 
 def test_triad_dem_certification_agrees_with_exhaustive_distance() -> None:

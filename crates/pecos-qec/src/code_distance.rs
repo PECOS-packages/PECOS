@@ -29,6 +29,18 @@ use crate::{
 use pecos_core::{Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
 use pecos_quantum::F2Matrix;
 
+/// Outcome of a budgeted connected-cluster stabilizer-code distance search.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StabilizerDistanceSearchOutcome {
+    /// The exact distance and a minimum-weight logical operator were found.
+    Certified(DistanceResult),
+    /// No logical operator was found through the requested physical weight.
+    BudgetExhausted {
+        /// Largest physical weight included in the search.
+        max_weight: usize,
+    },
+}
+
 fn mechanisms_from_matrices(h: &F2Matrix, l: &F2Matrix) -> Vec<FaultMechanism> {
     assert_eq!(
         h.num_cols(),
@@ -182,8 +194,9 @@ fn mechanism_witness_to_pauli(num_qubits: usize, mechanism_indices: &[usize]) ->
 ///
 /// # Errors
 ///
-/// Returns [`DistanceProblemError::QubitOutOfRange`] if an operator addresses a qubit outside the
-/// declared code width.
+/// Returns a stabilizer-spec error if the logical basis is incomplete or the code encodes no
+/// logical qubits. Returns [`DistanceProblemError::QubitOutOfRange`] if an operator addresses a
+/// qubit outside the declared code width.
 ///
 /// # Panics
 ///
@@ -191,9 +204,14 @@ fn mechanism_witness_to_pauli(num_qubits: usize, mechanism_indices: &[usize]) ->
 pub fn stabilizer_code_distance(
     code: &StabilizerCodeSpec,
     max_weight: usize,
-) -> Result<Option<DistanceResult>, DistanceProblemError> {
+) -> Result<StabilizerDistanceSearchOutcome, DistanceProblemError> {
     code.verify_logical_completeness()?;
-    stabilizer_code_distance_without_logical_completeness(code, max_weight)
+    Ok(
+        match stabilizer_code_distance_without_logical_completeness(code, max_weight)? {
+            Some(result) => StabilizerDistanceSearchOutcome::Certified(result),
+            None => StabilizerDistanceSearchOutcome::BudgetExhausted { max_weight },
+        },
+    )
 }
 
 /// Searches after a caller has validated either ordinary or subsystem logical completeness.
@@ -273,6 +291,15 @@ mod tests {
         })
     }
 
+    fn certified(outcome: StabilizerDistanceSearchOutcome) -> DistanceResult {
+        match outcome {
+            StabilizerDistanceSearchOutcome::Certified(result) => result,
+            StabilizerDistanceSearchOutcome::BudgetExhausted { max_weight } => {
+                panic!("expected certified distance, exhausted weight {max_weight}")
+            }
+        }
+    }
+
     #[test]
     fn incomplete_logical_basis_is_rejected_by_all_spec_distance_entry_points() {
         let spec = incomplete_five_qubit_spec();
@@ -310,9 +337,25 @@ mod tests {
     }
 
     #[test]
+    fn stabilizer_distance_distinguishes_budget_exhaustion_and_no_logical_qubits() {
+        let five_qubit =
+            StabilizerCodeSpec::from_stabilizer_code(&StabilizerCode::five_qubit()).unwrap();
+        assert_eq!(
+            stabilizer_code_distance(&five_qubit, 2).unwrap(),
+            StabilizerDistanceSearchOutcome::BudgetExhausted { max_weight: 2 }
+        );
+
+        let stabilizer_state = StabilizerCodeSpec::builder(1).check(Z(0)).build().unwrap();
+        assert_eq!(
+            stabilizer_code_distance(&stabilizer_state, 1).unwrap_err(),
+            DistanceProblemError::StabilizerSpec(StabilizerCodeSpecError::NoLogicalQubits)
+        );
+    }
+
+    #[test]
     fn steane_css_distances_agree_with_sat_and_weight_search() {
         let mut spec = steane_spec();
-        let searched = spec.calculate_distance().unwrap();
+        let searched = spec.calculate_distance().unwrap().unwrap();
         assert_eq!(searched.distance, 3);
         assert_eq!(spec.distance(), Some(3));
 
@@ -351,8 +394,8 @@ mod tests {
     fn five_qubit_distance_agrees_with_sat_and_weight_search() {
         let mut spec =
             StabilizerCodeSpec::from_stabilizer_code(&StabilizerCode::five_qubit()).unwrap();
-        let searched = spec.calculate_distance().unwrap();
-        let connected = stabilizer_code_distance(&spec, 3).unwrap().unwrap();
+        let searched = spec.calculate_distance().unwrap().unwrap();
+        let connected = certified(stabilizer_code_distance(&spec, 3).unwrap());
         let problem = DistanceProblem::from_stabilizer_spec(&spec).unwrap();
         let certified = certified_distance(&problem, 3).unwrap().unwrap();
 
@@ -369,7 +412,7 @@ mod tests {
     #[test]
     fn yy_code_requires_a_y_mechanism_at_distance_one() {
         let spec = yy_code();
-        let connected = stabilizer_code_distance(&spec, 1).unwrap().unwrap();
+        let connected = certified(stabilizer_code_distance(&spec, 1).unwrap());
 
         assert_eq!(connected.distance, 1);
         assert!(

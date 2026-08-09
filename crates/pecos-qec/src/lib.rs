@@ -103,19 +103,20 @@ pub use parity_check_matrix::{ParityCheckMatrix, ParityCheckMatrixError};
 pub use subsystem_distance::{SubsystemCodeError, subsystem_dressed_distance};
 
 pub use code_distance::{
-    connected_cluster_code_distance, stabilizer_code_distance, x_distance, z_distance,
+    StabilizerDistanceSearchOutcome, connected_cluster_code_distance, stabilizer_code_distance,
+    x_distance, z_distance,
 };
 
 pub use distance::{
     DistanceResult, DistanceSearchConfig, LogicalOperatorInfo, WeightedPauliIterator,
-    calculate_distance, find_min_weight_logicals, find_min_weight_logicals_with_info,
-    find_shortest_logicals, has_logical_error_at_weight,
+    calculate_distance, find_min_weight_logicals, find_shortest_logicals,
+    has_logical_error_at_weight,
 };
 pub use distance_problem::{
-    CertifiedDistance, CosetWeightError, DistanceCertificationError, DistanceProblem,
-    DistanceProblemError, SolverAnswer, WitnessError, certified_classical_distance,
-    certified_coset_weight, certified_distance, certified_stabilizer_coset_weight,
-    logical_coset_weight_profile,
+    CertifiedDistance, ClassicalDistanceSearchOutcome, CosetWeightError,
+    DistanceCertificationError, DistanceProblem, DistanceProblemError, SolverAnswer, WitnessError,
+    certified_classical_distance, certified_coset_weight, certified_distance,
+    certified_stabilizer_coset_weight, logical_generator_coset_weights,
 };
 pub use fault_tolerance::dem_builder::{
     DecomposedFault, DemBuilder, DemBuilderError, DemOutput, DetectorDef, DetectorErrorModel,

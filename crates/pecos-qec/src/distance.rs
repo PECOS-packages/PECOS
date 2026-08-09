@@ -15,8 +15,8 @@
 //! This module provides algorithms for computing the distance of a stabilizer code
 //! by exhaustively searching for minimum weight logical operators.
 
-use crate::StabilizerCodeSpec;
 use crate::stabilizer_code_spec::CodeIndices;
+use crate::{StabilizerCodeSpec, StabilizerCodeSpecError};
 use pecos_core::{Pauli, PauliString, QubitId};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -37,7 +37,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const PARALLEL_CANDIDATE_THRESHOLD: usize = 65_536;
 
 /// Result of a distance calculation, including the minimum weight logical operator found.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DistanceResult {
     /// The code distance (minimum weight of any logical operator).
     pub distance: usize,
@@ -46,7 +46,7 @@ pub struct DistanceResult {
 }
 
 /// A logical operator with information about which logical operations it implements.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogicalOperatorInfo {
     /// The Pauli operator.
     pub operator: PauliString,
@@ -289,11 +289,16 @@ impl Iterator for WeightedPauliIterator {
 /// # Warning
 /// This is an exponential-time algorithm. For codes with many qubits, it may take
 /// a very long time to complete. Use `config.max_weight` to limit the search.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns an error if the supplied logical basis is incomplete or the code encodes no logical
+/// qubits.
 pub fn calculate_distance(
     code: &StabilizerCodeSpec,
     config: &DistanceSearchConfig,
-) -> Option<DistanceResult> {
+) -> Result<Option<DistanceResult>, StabilizerCodeSpecError> {
+    code.verify_logical_completeness()?;
     let max_weight = config.max_weight.unwrap_or(code.num_qubits());
 
     // Build indices once for O(weight) lookups instead of O(num_stabilizers * weight)
@@ -305,89 +310,53 @@ pub fn calculate_distance(
         }
 
         if let Some(pauli) = first_logical_error_at_weight(code, weight, config, &indices) {
-            return Some(DistanceResult {
+            return Ok(Some(DistanceResult {
                 distance: weight,
                 min_weight_operator: pauli,
-            });
+            }));
         }
     }
 
-    None
+    Ok(None)
 }
 
 /// Check whether a code has a logical error at exactly one physical weight.
 ///
 /// Stabilizer and logical column indices are built once for the complete scan.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns an error if the supplied logical basis is incomplete or the code encodes no logical
+/// qubits.
 pub fn has_logical_error_at_weight(
     code: &StabilizerCodeSpec,
     weight: usize,
     config: &DistanceSearchConfig,
-) -> bool {
+) -> Result<bool, StabilizerCodeSpecError> {
+    code.verify_logical_completeness()?;
     if config.verbose {
         eprintln!("Checking weight {weight}...");
     }
 
     let indices = code.build_indices();
-    first_logical_error_at_weight(code, weight, config, &indices).is_some()
+    Ok(first_logical_error_at_weight(code, weight, config, &indices).is_some())
 }
 
 /// Find all minimum weight logical operators.
 ///
 /// Unlike `calculate_distance`, this returns all logical operators of the minimum weight,
 /// not just one.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns an error if the supplied logical basis is incomplete or the code encodes no logical
+/// qubits.
 pub fn find_min_weight_logicals(
     code: &StabilizerCodeSpec,
     config: &DistanceSearchConfig,
-) -> Vec<PauliString> {
-    find_min_weight_logicals_with_info(code, config)
-        .into_iter()
-        .map(|info| info.operator)
-        .collect()
-}
-
-/// Find all minimum weight logical operators with equivalence information.
-///
-/// This returns detailed information about each found operator, including which
-/// logical operators it's equivalent to (e.g., X0, Z1, X0*Z1, etc.).
-///
-/// # Example
-///
-/// ```
-/// use pecos_qec::{StabilizerCodeSpec, DistanceSearchConfig, find_min_weight_logicals_with_info};
-/// use pecos_core::{Pauli, PauliString, QubitId, QuarterPhase};
-///
-/// fn pauli_string(paulis: &[(Pauli, usize)]) -> PauliString {
-///     PauliString::with_phase_and_paulis(
-///         QuarterPhase::PlusOne,
-///         paulis.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
-///     )
-/// }
-///
-/// // 3-qubit bit flip code
-/// let stab1 = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1)]);
-/// let stab2 = pauli_string(&[(Pauli::Z, 1), (Pauli::Z, 2)]);
-/// let logical_z = pauli_string(&[(Pauli::Z, 0), (Pauli::Z, 1), (Pauli::Z, 2)]);
-/// let logical_x = pauli_string(&[(Pauli::X, 0), (Pauli::X, 1), (Pauli::X, 2)]);
-///
-/// let code = StabilizerCodeSpec::new(3, vec![stab1, stab2], vec![logical_z], vec![logical_x]).unwrap();
-///
-/// let config = DistanceSearchConfig::with_max_weight(2);
-/// let logicals = find_min_weight_logicals_with_info(&code, &config);
-///
-/// // Each found operator has equivalence info
-/// for info in &logicals {
-///     println!("Found {} with weight {}, equivalent to {}",
-///              info.operator, info.weight, info.equivalence_string());
-/// }
-/// ```
-#[must_use]
-pub fn find_min_weight_logicals_with_info(
-    code: &StabilizerCodeSpec,
-    config: &DistanceSearchConfig,
-) -> Vec<LogicalOperatorInfo> {
+) -> Result<Vec<PauliString>, StabilizerCodeSpecError> {
     find_shortest_logicals(code, config, 0)
+        .map(|logicals| logicals.into_iter().map(|info| info.operator).collect())
 }
 
 /// Find all logical operators from the minimum weight through `delta` weights above it.
@@ -395,12 +364,17 @@ pub fn find_min_weight_logicals_with_info(
 /// The search always starts at weight 1. Once the minimum logical weight is found,
 /// collection continues through `minimum_weight + delta`, subject to
 /// `config.max_weight`.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns an error if the supplied logical basis is incomplete or the code encodes no logical
+/// qubits.
 pub fn find_shortest_logicals(
     code: &StabilizerCodeSpec,
     config: &DistanceSearchConfig,
     delta: usize,
-) -> Vec<LogicalOperatorInfo> {
+) -> Result<Vec<LogicalOperatorInfo>, StabilizerCodeSpecError> {
+    code.verify_logical_completeness()?;
     let max_weight = config.max_weight.unwrap_or(code.num_qubits());
     let mut results = Vec::new();
     let mut found_distance: Option<usize> = None;
@@ -441,7 +415,7 @@ pub fn find_shortest_logicals(
         }
     }
 
-    results
+    Ok(results)
 }
 
 fn first_logical_error_at_weight(
@@ -852,6 +826,37 @@ mod tests {
             .expect("[[17,1,5]] color code should be valid")
     }
 
+    fn incomplete_five_qubit_spec() -> StabilizerCodeSpec {
+        StabilizerCodeSpec::new(
+            5,
+            vec![Xs(1..=4), Zs(1..=4)],
+            vec![Zs([1, 2])],
+            vec![Xs([2, 3])],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn incomplete_logical_basis_is_rejected_by_exhaustive_distance_apis() {
+        let code = incomplete_five_qubit_spec();
+        let config = DistanceSearchConfig::default();
+        let expected = StabilizerCodeSpecError::IncompleteLogicalBasis {
+            supplied_logical_pairs: 1,
+            num_logical_qubits: 3,
+        };
+
+        assert_eq!(calculate_distance(&code, &config), Err(expected.clone()));
+        assert_eq!(
+            has_logical_error_at_weight(&code, 1, &config),
+            Err(expected.clone())
+        );
+        assert_eq!(
+            find_min_weight_logicals(&code, &config),
+            Err(expected.clone())
+        );
+        assert_eq!(find_shortest_logicals(&code, &config, 1), Err(expected));
+    }
+
     #[test]
     fn test_weighted_pauli_iterator_weight_1() {
         let iter = WeightedPauliIterator::new(3, 1, false);
@@ -937,7 +942,7 @@ mod tests {
             .unwrap();
 
         let config = DistanceSearchConfig::default();
-        let result = calculate_distance(&code, &config);
+        let result = calculate_distance(&code, &config).unwrap();
 
         // The minimum weight logical operator for this code is a single Z
         // (Z on any qubit commutes with ZZ stabilizers and anticommutes with XXX)
@@ -954,7 +959,7 @@ mod tests {
         assert!(code.verify().is_ok());
 
         let config = DistanceSearchConfig::with_max_weight(3);
-        let result = calculate_distance(&code, &config);
+        let result = calculate_distance(&code, &config).unwrap();
 
         // The [[5,1,3]] code has distance 3
         assert!(result.is_some());
@@ -966,9 +971,9 @@ mod tests {
     fn test_five_qubit_shortest_logicals_respect_logical_weight_spectrum() {
         let code = five_qubit_code();
         let config = DistanceSearchConfig::default();
-        let minimum = find_min_weight_logicals_with_info(&code, &config);
-        let delta_one = find_shortest_logicals(&code, &config, 1);
-        let delta_two = find_shortest_logicals(&code, &config, 2);
+        let minimum = find_shortest_logicals(&code, &config, 0).unwrap();
+        let delta_one = find_shortest_logicals(&code, &config, 1).unwrap();
+        let delta_two = find_shortest_logicals(&code, &config, 2).unwrap();
 
         assert_eq!(minimum.len(), 30);
         assert_eq!(delta_one.len(), 30);
@@ -1008,10 +1013,10 @@ mod tests {
             })
             .collect();
 
-        let distance = calculate_distance(&code, &config).unwrap();
+        let distance = calculate_distance(&code, &config).unwrap().unwrap();
         assert_eq!(distance.min_weight_operator, expected[0].1);
 
-        let actual = find_shortest_logicals(&code, &config, 2);
+        let actual = find_shortest_logicals(&code, &config, 2).unwrap();
         assert!(
             actual
                 .iter()
@@ -1030,7 +1035,7 @@ mod tests {
             })
             .next()
             .unwrap();
-        let actual_css = calculate_distance(&code, &css_config).unwrap();
+        let actual_css = calculate_distance(&code, &css_config).unwrap().unwrap();
         assert_eq!(actual_css.distance, expected_css.0);
         assert_eq!(actual_css.min_weight_operator, expected_css.1);
     }
@@ -1050,7 +1055,7 @@ mod tests {
         let actual = logical_errors_at_weight(&code, 5, &config, &indices);
         assert_eq!(actual, expected);
 
-        let distance = calculate_distance(&code, &config).unwrap();
+        let distance = calculate_distance(&code, &config).unwrap().unwrap();
         assert_eq!(distance.distance, 5);
         assert_eq!(distance.min_weight_operator, expected[0]);
     }
@@ -1067,7 +1072,7 @@ mod tests {
             .unwrap();
 
         let config = DistanceSearchConfig::with_max_weight(2);
-        let logicals = find_min_weight_logicals_with_info(&code, &config);
+        let logicals = find_shortest_logicals(&code, &config, 0).unwrap();
 
         // Should find single-qubit Z errors (equivalent to Z0)
         // and single-qubit X errors (equivalent to X0)

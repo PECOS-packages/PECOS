@@ -11,11 +11,13 @@
 // the License.
 
 use pecos_frontier::{
+    BpTrellisConfig as RustBpTrellisConfig, BpTrellisDecoder as RustBpTrellisDecoder,
     CommitteeDirection, CommitteeMember, CommitteeStatus, DecoderError,
     FrontierCommittee as RustFrontierCommittee,
     FrontierCommitteeResult as RustFrontierCommitteeResult, FrontierConfig as RustFrontierConfig,
     FrontierDecoder as RustFrontierDecoder, FrontierResult as RustFrontierResult, FrontierStatus,
-    ObsMask, SparseDem, backward_deadline_column_order, deadline_column_order,
+    ObsMask, SparseDem, TrellisOrdering as RustTrellisOrdering, backward_deadline_column_order,
+    deadline_column_order,
 };
 use pyo3::Borrowed;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -47,6 +49,34 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ColumnOrderArgument {
 impl Default for ColumnOrderArgument {
     fn default() -> Self {
         Self::Name("deadline_reorder".to_owned())
+    }
+}
+
+enum TrellisOrderArgument {
+    Name(String),
+    Explicit(Vec<usize>),
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for TrellisOrderArgument {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if let Ok(name) = object.extract::<String>() {
+            return Ok(Self::Name(name));
+        }
+        if let Ok(order) = object.extract::<Vec<usize>>() {
+            return Ok(Self::Explicit(order));
+        }
+        Err(PyValueError::new_err(
+            "ordering must be 'deadline', 'backward_deadline', 'time_order', \
+             or a list of mechanism indices",
+        ))
+    }
+}
+
+impl Default for TrellisOrderArgument {
+    fn default() -> Self {
+        Self::Name("deadline".to_owned())
     }
 }
 
@@ -115,6 +145,43 @@ fn parse_dem_and_config(
             column_order,
             merge_indistinguishable,
             bp_score_iterations,
+        },
+    ))
+}
+
+fn parse_bptrellis_dem_and_config(
+    dem_str: &str,
+    k: usize,
+    delta: f64,
+    score_alpha: f64,
+    bp_score_iterations: usize,
+    merge_indistinguishable: bool,
+    ordering: TrellisOrderArgument,
+) -> PyResult<(SparseDem, RustBpTrellisConfig)> {
+    let dem = SparseDem::from_dem_str(dem_str).map_err(|e| runtime_error(&e))?;
+    let ordering = match ordering {
+        TrellisOrderArgument::Name(name) => match name.as_str() {
+            "deadline" => RustTrellisOrdering::Deadline,
+            "backward_deadline" => RustTrellisOrdering::BackwardDeadline,
+            "time_order" => RustTrellisOrdering::TimeOrder,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "invalid ordering {name:?}; expected 'deadline', 'backward_deadline', \
+                     'time_order', or a list of mechanism indices"
+                )));
+            }
+        },
+        TrellisOrderArgument::Explicit(order) => RustTrellisOrdering::Explicit(order),
+    };
+    Ok((
+        dem,
+        RustBpTrellisConfig {
+            k,
+            delta,
+            score_alpha,
+            bp_score_iterations,
+            merge_indistinguishable,
+            ordering,
         },
     ))
 }
@@ -398,6 +465,85 @@ impl PyFrontierDecoder {
         let num_detectors = dem.num_detectors;
         let inner =
             RustFrontierDecoder::from_sparse_dem(&dem, config).map_err(|e| runtime_error(&e))?;
+        Ok(Self {
+            inner,
+            num_detectors,
+        })
+    }
+
+    /// Wall-clock seconds spent constructing the decoder model.
+    #[getter]
+    fn build_seconds(&self) -> f64 {
+        self.inner.build_seconds()
+    }
+
+    /// Decode sparse fired-detector indices.
+    fn decode(&mut self, detection_events: Vec<u64>) -> PyResult<PyFrontierResult> {
+        let syndrome = sparse_to_dense(&detection_events, self.num_detectors)?;
+        self.decode_syndrome(syndrome)
+    }
+
+    /// Decode one dense detector syndrome.
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyFrontierResult> {
+        self.inner
+            .decode(&syndrome)
+            .map(|inner| PyFrontierResult { inner })
+            .map_err(|e| runtime_error(&e))
+    }
+
+    /// Decode a batch of dense detector syndromes in input order.
+    fn decode_batch(&mut self, shots: Vec<Vec<u8>>) -> PyResult<Vec<PyFrontierResult>> {
+        shots
+            .into_iter()
+            .map(|syndrome| self.decode_syndrome(syndrome))
+            .collect()
+    }
+}
+
+/// PECOS's own trellis-class decoder: a degeneracy-aware approximate logical
+/// maximum-likelihood coset-mass decoder, exact in the unpruned limit, with
+/// BP-guided retention. BP only guides pruning and never changes mass
+/// arithmetic; pruned results have no certified discarded-mass bound, and
+/// optimality is relative to the supplied DEM rather than the physics.
+///
+/// This is not a wrap or port of an external project. Its defaults, including
+/// the BB144-validated near-floor `k=8`, are provisional pending broader
+/// validation.
+#[pyclass(name = "BpTrellisDecoder", module = "pecos_rslib_exp", unsendable)]
+pub struct PyBpTrellisDecoder {
+    inner: RustBpTrellisDecoder,
+    num_detectors: usize,
+}
+
+#[pymethods]
+impl PyBpTrellisDecoder {
+    /// Construct a PECOS BP-guided trellis decoder from a Stim-format DEM.
+    #[staticmethod]
+    #[pyo3(
+        signature = (dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default()),
+        text_signature = "(dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline')"
+    )]
+    fn from_dem(
+        dem: &str,
+        k: usize,
+        delta: f64,
+        score_alpha: f64,
+        bp_score_iterations: usize,
+        merge_indistinguishable: bool,
+        ordering: TrellisOrderArgument,
+    ) -> PyResult<Self> {
+        let (dem, config) = parse_bptrellis_dem_and_config(
+            dem,
+            k,
+            delta,
+            score_alpha,
+            bp_score_iterations,
+            merge_indistinguishable,
+            ordering,
+        )?;
+        let num_detectors = dem.num_detectors;
+        let inner =
+            RustBpTrellisDecoder::from_sparse_dem(&dem, config).map_err(|e| runtime_error(&e))?;
         Ok(Self {
             inner,
             num_detectors,

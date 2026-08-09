@@ -22,6 +22,7 @@ import pytest
 pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
 
 from pecos_rslib_exp import (  # noqa: E402
+    BpTrellisDecoder,
     FrontierCommitteeDecoder,
     FrontierDecoder,
 )
@@ -81,6 +82,34 @@ def test_column_order_variants_and_validation() -> None:
         FrontierDecoder.from_dem(SMALL_DEM, column_order=object())
     with pytest.raises(RuntimeError, match="permutation"):
         FrontierDecoder.from_dem(SMALL_DEM, column_order=[0, 0])
+
+
+def test_bptrellis_defaults_and_decode_shapes() -> None:
+    decoder = BpTrellisDecoder.from_dem(SMALL_DEM)
+
+    dense = decoder.decode_syndrome([1, 0])
+    sparse = decoder.decode([0])
+    batch = decoder.decode_batch([[1, 0], [0, 1]])
+
+    assert dense.observables_mask == 1
+    assert sparse.observables_mask == dense.observables_mask
+    assert batch[0].observables_mask == dense.observables_mask
+    assert batch[1].observables_mask == 0
+    assert decoder.build_seconds >= 0.0
+
+
+def test_bptrellis_ordering_variants_and_validation() -> None:
+    for ordering in (
+        "deadline",
+        "backward_deadline",
+        "time_order",
+        [1, 0],
+    ):
+        decoder = BpTrellisDecoder.from_dem(SMALL_DEM, ordering=ordering)
+        assert decoder.decode_syndrome([1, 0]).observables_mask == 1
+
+    with pytest.raises(ValueError, match="invalid ordering"):
+        BpTrellisDecoder.from_dem(SMALL_DEM, ordering="not_an_order")
 
 
 def test_committee_easy_tie_selects_forward() -> None:

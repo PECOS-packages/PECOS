@@ -54,6 +54,9 @@ fn main() {
         .expect("missing score_alpha")
         .parse()
         .expect("score_alpha");
+    let bp_score_iterations: usize = args
+        .next()
+        .map_or(0, |raw| raw.parse().expect("bp_score_iterations"));
 
     let model: BridgeModel =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read model json"))
@@ -70,7 +73,7 @@ fn main() {
         score_alpha,
         column_order: None,
         merge_indistinguishable: false,
-        bp_score_iterations: 0,
+        bp_score_iterations,
     };
     let mut decoder = FrontierDecoder::from_sparse_dem(&dem, config).expect("build decoder");
 

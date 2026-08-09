@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Frontier approximate logical maximum-likelihood decoding.
+//! Trellis-class approximate logical maximum-likelihood decoding.
 //!
 //! The decoder performs ordered dynamic programming over independent binary
 //! fault mechanisms. Prefixes with identical active detector boundary and
@@ -19,9 +19,17 @@
 //! for a fixed build and platform; underlying `ln`/`exp` implementations may
 //! differ across platforms.
 //!
-//! Pruning ranks accumulated prefix log mass plus a `score_alpha`-weighted
-//! suffix-compatibility estimate. Unpruned results are exact and
-//! upstream-verified.
+//! [`BpTrellisDecoder`] is PECOS's own degeneracy-aware, coset-mass decoder in
+//! this class. It is exact in the unpruned limit; with pruning it is
+//! approximate and has no certified bound on discarded posterior mass. Its
+//! optimality is relative to the supplied detector error model (DEM), not the
+//! underlying physics. Belief propagation (BP) guides only which states
+//! pruning retains and never changes branch probabilities or mass arithmetic.
+//! It is not a wrap or port of an external project.
+//!
+//! In contrast, [`FrontierDecoder`] is the parity port of Leverrier and
+//! Urbanke's Frontier decoder. Its input-order defaults remain those of that
+//! port. Both types use the same engine and return [`FrontierResult`].
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::bp::{BpGraph, BpScratch, min_sum_bp_into};
@@ -77,6 +85,58 @@ impl Default for FrontierConfig {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+        }
+    }
+}
+
+/// Processing order used by [`BpTrellisDecoder`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum TrellisOrdering {
+    /// Compute the deadline-optimized order with [`deadline_column_order`].
+    #[default]
+    Deadline,
+    /// Compute the backward deadline-optimized order with
+    /// [`backward_deadline_column_order`].
+    BackwardDeadline,
+    /// Preserve the detector error model's mechanism order.
+    TimeOrder,
+    /// Use an explicit permutation mapping target positions to source
+    /// mechanism indices.
+    Explicit(Vec<usize>),
+}
+
+/// Configuration for PECOS's [`BpTrellisDecoder`].
+///
+/// These defaults are provisional. In particular, `k = 8` was validated as
+/// near-floor on the BB144 benchmark used to select BP-guided retention, but
+/// broader code and noise-model validation is still pending.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BpTrellisConfig {
+    /// Maximum number of boundary states retained after each column.
+    pub k: usize,
+    /// Log-mass window below the best boundary state retained after each
+    /// column.
+    pub delta: f64,
+    /// Weight applied to the suffix-compatibility score during pruning.
+    pub score_alpha: f64,
+    /// Number of min-sum BP iterations used only to score pruning candidates.
+    pub bp_score_iterations: usize,
+    /// Merge probabilistic mechanisms with identical detector and observable
+    /// sets using their exact XOR-combined probability.
+    pub merge_indistinguishable: bool,
+    /// Mechanism processing order.
+    pub ordering: TrellisOrdering,
+}
+
+impl Default for BpTrellisConfig {
+    fn default() -> Self {
+        Self {
+            k: 8,
+            delta: 100.0,
+            score_alpha: 0.8,
+            bp_score_iterations: 5,
+            merge_indistinguishable: true,
+            ordering: TrellisOrdering::Deadline,
         }
     }
 }
@@ -321,6 +381,22 @@ pub struct FrontierDecoder {
     forced_logical: Vec<u64>,
     bp_score: Option<BpScoreState>,
     build_seconds: f64,
+}
+
+/// PECOS's BP-guided trellis decoder for logical coset posterior mass.
+///
+/// This is a degeneracy-aware approximate logical maximum-likelihood decoder,
+/// exact in the unpruned limit. It is optimal relative to the supplied DEM,
+/// not the underlying physics. Pruned results have no certified bound on
+/// discarded posterior mass. BP guides only which states pruning retains and
+/// never changes the engine's branch probabilities or mass arithmetic.
+///
+/// This PECOS decoder is not a wrap or port of an external project. It owns a
+/// [`FrontierDecoder`] configured with PECOS's defaults and ordering semantics
+/// and shares that engine's [`FrontierResult`].
+#[derive(Clone, Debug)]
+pub struct BpTrellisDecoder {
+    inner: FrontierDecoder,
 }
 
 /// Two-leg Frontier decoder using a processing order and its plain reverse.
@@ -709,6 +785,67 @@ impl FrontierDecoder {
     }
 }
 
+impl BpTrellisDecoder {
+    /// Construct a decoder from a sparse detector error model.
+    ///
+    /// Unlike [`FrontierDecoder`], the default ordering is the explicitly
+    /// computed [`deadline_column_order`], not input order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if ordering generation or the mapped Frontier
+    /// configuration fails validation.
+    pub fn from_sparse_dem(dem: &SparseDem, config: BpTrellisConfig) -> Result<Self, DecoderError> {
+        let column_order = match config.ordering {
+            TrellisOrdering::Deadline => Some(deadline_column_order(dem)?),
+            TrellisOrdering::BackwardDeadline => Some(backward_deadline_column_order(dem)?),
+            TrellisOrdering::TimeOrder => None,
+            TrellisOrdering::Explicit(order) => Some(order),
+        };
+        let inner = FrontierDecoder::from_sparse_dem(
+            dem,
+            FrontierConfig {
+                k: config.k,
+                delta: config.delta,
+                score_alpha: config.score_alpha,
+                column_order,
+                merge_indistinguishable: config.merge_indistinguishable,
+                bp_score_iterations: config.bp_score_iterations,
+            },
+        )?;
+        Ok(Self { inner })
+    }
+
+    /// Parse a Stim-format detector error model and construct a decoder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if parsing, ordering generation, or decoder
+    /// validation fails.
+    pub fn from_dem_str(dem_str: &str, config: BpTrellisConfig) -> Result<Self, DecoderError> {
+        let dem = SparseDem::from_dem_str(dem_str)?;
+        Self::from_sparse_dem(&dem, config)
+    }
+
+    /// Decode a dense detector syndrome with the shared trellis engine.
+    ///
+    /// Every nonzero byte is treated as a fired detector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] for a dimension mismatch or when the syndrome
+    /// is unexplainable with the retained frontier.
+    pub fn decode(&mut self, syndrome: &[u8]) -> Result<FrontierResult, DecoderError> {
+        self.inner.decode(syndrome)
+    }
+
+    /// Wall-clock seconds spent constructing this decoder model.
+    #[must_use]
+    pub fn build_seconds(&self) -> f64 {
+        self.inner.build_seconds()
+    }
+}
+
 impl FrontierCommittee {
     /// Construct a forward/backward committee from a sparse DEM.
     ///
@@ -827,6 +964,16 @@ impl ObservableDecoder for FrontierDecoder {
         }
         let decoded = self.decode(syndrome)?.predicted;
         Ok(decoded.words().first().copied().unwrap_or(0))
+    }
+}
+
+impl ObservableDecoder for BpTrellisDecoder {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.inner.decode_obs(syndrome)
+    }
+
+    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+        self.inner.decode_to_observables(syndrome)
     }
 }
 

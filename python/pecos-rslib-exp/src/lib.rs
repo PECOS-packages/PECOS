@@ -65,6 +65,7 @@ pub(crate) fn extract_angle(
 
 #[pymodule]
 fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<frontier_bindings::PyBpTrellisDecoder>()?;
     m.add_class::<frontier_bindings::PyFrontierDecoder>()?;
     m.add_class::<frontier_bindings::PyFrontierCommitteeDecoder>()?;
     m.add_class::<frontier_bindings::PyFrontierResult>()?;

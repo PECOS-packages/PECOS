@@ -1852,9 +1852,12 @@ impl PyRelayBpBuilder {
             error_priors,
             max_iter: 200,
             alpha: None,
-            // The pre-relay leg needs uniform memory to be paper-representative
-            // (measured 99/1000 vs 1/1000 failures on the BB144 circuit DEM at
-            // p=0.003 with memory off vs 0.65).
+            // `gamma0` enables memory-BP for the entire relay ensemble: the
+            // pre-relay leg uses it directly and relay legs draw per-leg
+            // strengths only when it is set. `None` disables memory entirely
+            // and makes relay ensembling ineffective. Measured 99/1000 vs
+            // 1/1000 failures on the BB144 circuit DEM at p=0.003 with memory
+            // off vs 0.65.
             gamma0: Some(RELAY_BP_DEFAULT_GAMMA0),
             pre_iter: 80,
             num_sets: 300,
@@ -1882,9 +1885,10 @@ impl PyRelayBpBuilder {
         slf
     }
 
-    /// Set the pre-relay leg's uniform memory strength (default: 0.65; None
-    /// disables memory, which severely degrades accuracy on circuit-level
-    /// detector error models). Graph-dependent - tune per code.
+    /// Enable memory-BP for the entire relay ensemble (default: 0.65). The
+    /// pre-relay leg uses this directly and relay legs draw per-leg strengths
+    /// only when it is set; None disables memory entirely and makes relay
+    /// ensembling ineffective. Graph-dependent - tune per code.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -1921,6 +1925,10 @@ impl PyRelayBpBuilder {
     }
 
     /// Set random seed for relay parameter sampling (default: 0).
+    ///
+    /// The RNG advances across decodes, so reused-decoder outcomes depend on
+    /// decode history. Equal seeds reproduce only the same full shot sequence,
+    /// not an individual syndrome independently.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -1980,6 +1988,9 @@ impl PyRelayBpBuilder {
 /// Relay BP ensemble decoder for qLDPC codes.
 ///
 /// Created via `RelayBpBuilder(...).build()`.
+/// Its relay RNG advances across decodes, so a reused decoder's per-shot
+/// outcomes depend on decode history. A seed reproduces the same full shot
+/// sequence, not each syndrome independently.
 ///
 /// # Example
 ///

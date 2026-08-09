@@ -22,7 +22,9 @@ pub struct DecodingResult {
 ///
 /// Wraps `relay_bp::bp::relay::RelayDecoder<f64>`, which combines multiple
 /// min-sum BP legs with disordered memory strengths for improved convergence
-/// on qLDPC codes.
+/// on qLDPC codes. Its relay RNG advances across decodes, so a reused decoder's
+/// per-shot outcomes depend on decode history. A seed reproduces the same full
+/// shot sequence, not each syndrome independently.
 pub struct RelayBpDecoder {
     inner: relay_bp::bp::relay::RelayDecoder<f64>,
     num_checks: usize,

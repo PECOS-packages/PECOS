@@ -315,6 +315,41 @@ mod tests {
     }
 
     #[test]
+    fn committee_bp_legs_do_not_share_bp_state() {
+        let dem = SparseDem {
+            mechanisms: vec![
+                (0.15, vec![0], vec![]),
+                (0.15, vec![0, 1], vec![0]),
+                (0.08, vec![1], vec![]),
+            ],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 2,
+            num_observables: 1,
+        };
+        let committee = FrontierCommittee::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                k: 1,
+                delta: f64::INFINITY,
+                score_alpha: 0.8,
+                column_order: None,
+                merge_indistinguishable: false,
+                bp_score_iterations: 5,
+            },
+        )
+        .unwrap();
+        let (forward_graph, forward_scratch) = committee.forward.bp_state_addrs().unwrap();
+        let (backward_graph, backward_scratch) = committee.backward.bp_state_addrs().unwrap();
+
+        assert_ne!(forward_graph, forward_scratch);
+        assert_ne!(forward_graph, backward_graph);
+        assert_ne!(forward_graph, backward_scratch);
+        assert_ne!(forward_scratch, backward_graph);
+        assert_ne!(forward_scratch, backward_scratch);
+        assert_ne!(backward_graph, backward_scratch);
+    }
+
+    #[test]
     fn committee_rank_maps_special_terminal_statistics() {
         let no_runner_up = FrontierResult {
             predicted: ObsMask::new(),

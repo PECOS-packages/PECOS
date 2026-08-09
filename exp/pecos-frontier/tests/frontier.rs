@@ -13,7 +13,9 @@
 use pecos_decoder_core::dem::SparseDem;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
-use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierResult, FrontierStatus};
+use pecos_frontier::{
+    FrontierCommittee, FrontierConfig, FrontierDecoder, FrontierResult, FrontierStatus,
+};
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::{BTreeMap, BTreeSet};
@@ -715,6 +717,17 @@ fn fails_loud_for_untouched_and_unachievable_syndromes() {
         FrontierDecoder::from_sparse_dem(&parity_locked_dem, exact_config()).unwrap();
     let impossible_error = parity_locked.decode(&[1, 0]).unwrap_err();
     assert!(impossible_error.to_string().contains("pruning parameters"));
+}
+
+#[test]
+fn committee_and_direct_decoder_share_unexplainable_error_text() {
+    let dem = sparse_dem(vec![(0.2, vec![0, 1], vec![])], 2, 0);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+    let mut committee = FrontierCommittee::from_sparse_dem(&dem, exact_config()).unwrap();
+
+    let direct_error = decoder.decode(&[1, 0]).unwrap_err();
+    let committee_error = committee.decode(&[1, 0]).unwrap_err();
+    assert_eq!(direct_error.to_string(), committee_error.to_string());
 }
 
 #[test]

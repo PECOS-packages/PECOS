@@ -18,6 +18,9 @@
 //! configured frontier width and log-mass window provide deterministic pruning
 //! for a fixed build and platform; underlying `ln`/`exp` implementations may
 //! differ across platforms.
+//! This engine is PECOS-native code. Its behavior is held to a bitwise parity
+//! contract with the upstream Frontier decoder by the test suite and frozen
+//! fixtures in `pecos-frontier`.
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::bp::{BpGraph, BpScratch, min_sum_bp_into};
@@ -45,7 +48,7 @@ pub struct TrellisConfig {
     /// Log-mass window below the best boundary state retained after each column.
     pub delta: f64,
     /// Weight applied to the suffix-compatibility score during pruning.
-    /// Defaults to `0.8`, matching upstream Frontier.
+    /// Defaults to `0.8`, chosen to match the parity contract.
     pub score_alpha: f64,
     /// Optional permutation of the DEM mechanism indices.
     pub column_order: Option<Vec<usize>>,
@@ -53,10 +56,11 @@ pub struct TrellisConfig {
     /// sets using their XOR-combined probability.
     ///
     /// This merge is mathematically exact, but it takes a different
-    /// floating-point path and Frontier's parity contract is bitwise, so it is
-    /// disabled by default. Zero-probability mechanisms are already discarded,
-    /// while probability-one mechanisms remain separate in the forced layer
-    /// and are not merged with otherwise identical probabilistic mechanisms.
+    /// floating-point path and the parity contract maintained by
+    /// `pecos-frontier` is bitwise, so it is disabled by default.
+    /// Zero-probability mechanisms are already discarded, while probability-one
+    /// mechanisms remain separate in the forced layer and are not merged with
+    /// otherwise identical probabilistic mechanisms.
     pub merge_indistinguishable: bool,
     /// Number of min-sum BP iterations used only to score pruning candidates.
     /// Zero disables BP-informed scoring.
@@ -513,6 +517,21 @@ impl TrellisDecoder {
     #[must_use]
     pub fn build_seconds(&self) -> f64 {
         self.build_seconds
+    }
+
+    /// Addresses of this decoder's BP scoring state, if BP scoring is enabled.
+    /// Exists so downstream crates can assert two decoders do not share state.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn bp_state_addrs(&self) -> Option<(usize, usize)> {
+        self.bp_score.as_ref().map(|bp_score| {
+            let graph: &BpGraph = &bp_score.graph;
+            let scratch: &BpScratch = &bp_score.scratch;
+            (
+                std::ptr::from_ref(graph).addr(),
+                std::ptr::from_ref(scratch).addr(),
+            )
+        })
     }
 
     /// Parse a Stim-format detector error model and construct a decoder.
@@ -1250,51 +1269,5 @@ mod tests {
             bp_score_probability(-1_000.0).to_bits(),
             (1.0 - 1e-6_f64).to_bits()
         );
-    }
-
-    #[test]
-    fn trellis_decoders_own_and_run_independent_bp_state() {
-        let dem = SparseDem {
-            mechanisms: vec![
-                (0.15, vec![0], vec![]),
-                (0.15, vec![0, 1], vec![0]),
-                (0.08, vec![1], vec![]),
-            ],
-            detector_coords: BTreeMap::new(),
-            num_detectors: 2,
-            num_observables: 1,
-        };
-        let config = TrellisConfig {
-            k: 1,
-            delta: f64::INFINITY,
-            score_alpha: 0.8,
-            column_order: None,
-            merge_indistinguishable: false,
-            bp_score_iterations: 5,
-        };
-        let mut forward = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
-        let mut backward = TrellisDecoder::from_sparse_dem(
-            &dem,
-            TrellisConfig {
-                column_order: Some((0..dem.mechanisms.len()).rev().collect()),
-                ..config
-            },
-        )
-        .unwrap();
-        let forward_bp = forward.bp_score.as_ref().unwrap();
-        let backward_bp = backward.bp_score.as_ref().unwrap();
-        assert!(!std::ptr::eq(
-            &raw const forward_bp.graph,
-            &raw const backward_bp.graph
-        ));
-        assert!(!std::ptr::eq(
-            &raw const forward_bp.scratch,
-            &raw const backward_bp.scratch
-        ));
-
-        let forward_result = forward.decode(&[1, 0]).unwrap();
-        let backward_result = backward.decode(&[1, 0]).unwrap();
-        assert!(forward_result.bp_seconds > 0.0);
-        assert!(backward_result.bp_seconds > 0.0);
     }
 }

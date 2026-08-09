@@ -243,13 +243,20 @@ def _gate_names(tc):
     ]
 
 
-def test_tick_circuit_pass_bindings_cancel_and_remove_simple_gates():
+def test_tick_circuit_identity_pass_bindings_are_separate():
     tc = TickCircuit()
     tc.tick().h([0])
     tc.tick().h([0])
     tc.tick().i([1])
+    tc.tick().idle(2, [2])
+    tc.tick().rz(0.0, [3])
 
     tc.cancel_inverses()
+    assert _gate_names(tc) == ["I", "Idle", "RZ"]
+
+    tc.strip_idles()
+    assert _gate_names(tc) == ["I", "RZ"]
+
     tc.remove_identity()
 
     assert _gate_names(tc) == []

@@ -65,10 +65,12 @@ pub trait CircuitPass {
 // Free functions: primary user-facing pass API
 // ============================================================================
 
-/// Lower Clifford-angle rotations to named Clifford gates.
+/// Lower non-identity Clifford-angle rotations to named Clifford gates.
 ///
 /// RZ(pi/2) -> SZ, RZ(pi) -> Z, RX(pi/2) -> SX, etc.
 /// Also decomposes two-qubit rotations: RZZ(pi) -> Z+Z.
+/// Zero-angle rotations are left for [`RemoveIdentity`] so callers can retain
+/// their gate-noise locations when required.
 pub fn lower_clifford_rotations(circuit: &mut TickCircuit) {
     SimplifyRotations.apply_tick(circuit);
 }
@@ -81,9 +83,17 @@ pub fn insert_idle_after_two_qubit_gates(circuit: &mut TickCircuit, duration: f6
     InsertIdleAfterTwoQubitGates(duration).apply_tick(circuit);
 }
 
-/// Remove identity gates (I, Idle, zero-angle rotations).
+/// Remove unitary identity gates (I and zero-angle rotations).
 pub fn remove_identity(circuit: &mut TickCircuit) {
     RemoveIdentity.apply_tick(circuit);
+}
+
+/// Remove explicit duration-carrying Idle gates.
+///
+/// This deliberately preserves `I`: [`TickCircuit::fill_idle_gates`] uses
+/// identity gates as single-qubit gate-noise locations.
+pub fn strip_idles(circuit: &mut TickCircuit) {
+    StripIdles.apply_tick(circuit);
 }
 
 /// Cancel adjacent inverse gate pairs (H-H, S-Sdg, T-Tdg, etc.).
@@ -186,7 +196,7 @@ impl CircuitPass for PassPipeline {
     }
 }
 
-/// Replace rotation gates at special angles with their named equivalents.
+/// Replace non-identity rotation gates at special angles with their named equivalents.
 ///
 /// For example, `RZ(pi/2)` becomes `SZ`, `RX(pi)` becomes `X`, and
 /// `RZZ(pi)` decomposes into two independent `Z` gates.
@@ -285,6 +295,11 @@ fn simplify_gate_in_place(gate: &mut Gate) -> bool {
     if gate.angles.len() != 1 {
         return false;
     }
+    // Identity removal is a separate, explicit pass because these gates can
+    // still be noise locations in a fault model.
+    if is_rotation(gate.gate_type) && gate.angles[0].is_zero() {
+        return false;
+    }
     if let Some(named) = pecos_core::try_simplify_rotation(gate.gate_type, gate.angles[0]) {
         gate.gate_type = named;
         gate.angles.clear();
@@ -295,13 +310,18 @@ fn simplify_gate_in_place(gate: &mut Gate) -> bool {
 
 // === Helper functions for circuit transformation passes ===
 
-/// Returns `true` if the gate is an identity operation (I, Idle, or zero-angle rotation).
+/// Returns `true` if the gate is a unitary identity operation.
 fn is_identity_gate(gate: &Gate) -> bool {
     match gate.gate_type {
-        GateType::I | GateType::Idle => true,
+        GateType::I => true,
         gt if is_rotation(gt) => gate.angles.len() == 1 && gate.angles[0].is_zero(),
         _ => false,
     }
+}
+
+/// Returns `true` only for explicit duration-carrying idle gates.
+fn is_idle_gate(gate: &Gate) -> bool {
+    gate.gate_type == GateType::Idle
 }
 
 /// Returns `true` if the gate type is a rotation (parameterized by a single angle).
@@ -612,48 +632,73 @@ impl CircuitPass for SimplifyRotations {
     }
 }
 
-/// Remove identity gates (I, Idle, zero-angle rotations) from circuits.
+fn remove_matching_tick_gates(circuit: &mut TickCircuit, predicate: impl Fn(&Gate) -> bool) {
+    for tick in circuit.ticks_mut() {
+        let to_remove: Vec<usize> = tick
+            .gate_batches()
+            .iter()
+            .enumerate()
+            .filter(|(_, gate)| predicate(gate))
+            .map(|(index, _)| index)
+            .collect();
+        for &index in to_remove.iter().rev() {
+            tick.remove_gate(index);
+        }
+    }
+}
+
+fn remove_matching_dag_gates(circuit: &mut DagCircuit, predicate: impl Fn(&Gate) -> bool) {
+    let nodes = circuit.nodes();
+    for node in nodes {
+        let Some(gate) = circuit.gate(node) else {
+            continue;
+        };
+        if !predicate(gate) {
+            continue;
+        }
+        let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
+        let mut rewire = Vec::new();
+        for &qubit in &qubits {
+            let predecessor = circuit.predecessor_on_qubit(node, qubit);
+            let successor = circuit.successor_on_qubit(node, qubit);
+            rewire.push((qubit, predecessor, successor));
+        }
+        circuit.remove_gate(node);
+        for (qubit, predecessor, successor) in rewire {
+            if let (Some(predecessor), Some(successor)) = (predecessor, successor) {
+                let _ = circuit.connect(predecessor, successor, qubit);
+            }
+        }
+    }
+}
+
+/// Remove unitary identity gates (I and zero-angle rotations) from circuits.
 pub struct RemoveIdentity;
 
 impl CircuitPass for RemoveIdentity {
     fn apply_tick(&self, circuit: &mut TickCircuit) {
-        for tick in circuit.ticks_mut() {
-            let to_remove: Vec<usize> = tick
-                .gate_batches()
-                .iter()
-                .enumerate()
-                .filter(|(_, g)| is_identity_gate(g))
-                .map(|(i, _)| i)
-                .collect();
-            for &idx in to_remove.iter().rev() {
-                tick.remove_gate(idx);
-            }
-        }
+        remove_matching_tick_gates(circuit, is_identity_gate);
     }
 
     fn apply_dag(&self, circuit: &mut DagCircuit) {
-        let nodes = circuit.nodes();
-        for node in nodes {
-            let Some(gate) = circuit.gate(node) else {
-                continue;
-            };
-            if !is_identity_gate(gate) {
-                continue;
-            }
-            let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-            let mut rewire = Vec::new();
-            for &q in &qubits {
-                let pred = circuit.predecessor_on_qubit(node, q);
-                let succ = circuit.successor_on_qubit(node, q);
-                rewire.push((q, pred, succ));
-            }
-            circuit.remove_gate(node);
-            for (q, pred, succ) in rewire {
-                if let (Some(p), Some(s)) = (pred, succ) {
-                    let _ = circuit.connect(p, s, q);
-                }
-            }
-        }
+        remove_matching_dag_gates(circuit, is_identity_gate);
+    }
+}
+
+/// Remove explicit duration-carrying Idle gates from circuits.
+///
+/// This deliberately preserves [`GateType::I`]:
+/// [`TickCircuit::fill_idle_gates`] inserts `I` on inactive qubits as a
+/// single-qubit gate-noise location.
+pub struct StripIdles;
+
+impl CircuitPass for StripIdles {
+    fn apply_tick(&self, circuit: &mut TickCircuit) {
+        remove_matching_tick_gates(circuit, is_idle_gate);
+    }
+
+    fn apply_dag(&self, circuit: &mut DagCircuit) {
+        remove_matching_dag_gates(circuit, is_idle_gate);
     }
 }
 
@@ -1799,6 +1844,16 @@ mod tests {
     }
 
     #[test]
+    fn tick_zero_angle_rotation_unchanged() {
+        let mut tc = TickCircuit::new();
+        tc.tick().rz(Angle64::ZERO, &[0]);
+        SimplifyRotations.apply_tick(&mut tc);
+        let gate = &tc.ticks()[0].gate_batches()[0];
+        assert_eq!(gate.gate_type, GateType::RZ);
+        assert_eq!(gate.angles.as_slice(), &[Angle64::ZERO]);
+    }
+
+    #[test]
     fn tick_non_rotation_unchanged() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[0]);
@@ -1877,6 +1932,17 @@ mod tests {
         let gate = dag.gate(nodes[0]).unwrap();
         assert_eq!(gate.gate_type, GateType::RZ);
         assert_eq!(gate.angles.len(), 1);
+    }
+
+    #[test]
+    fn dag_zero_angle_rotation_unchanged() {
+        let mut dag = DagCircuit::new();
+        dag.rz(Angle64::ZERO, &[0]);
+        let node = dag.nodes()[0];
+        SimplifyRotations.apply_dag(&mut dag);
+        let gate = dag.gate(node).unwrap();
+        assert_eq!(gate.gate_type, GateType::RZ);
+        assert_eq!(gate.angles.as_slice(), &[Angle64::ZERO]);
     }
 
     // ==================== Matrix equivalence tests (UnitaryRep level) ====================
@@ -2305,21 +2371,41 @@ mod tests {
     }
 
     #[test]
-    fn identity_gate_idle() {
+    fn idle_gate_is_not_unitary_identity() {
         let gate = Gate::idle(1.0, vec![QubitId::from(0)]);
-        assert!(is_identity_gate(&gate));
+        assert!(!is_identity_gate(&gate));
+        assert!(is_idle_gate(&gate));
     }
 
     #[test]
-    fn identity_gate_rz_zero() {
-        let gate = Gate::rz(Angle64::ZERO, &[0]);
-        assert!(is_identity_gate(&gate));
+    fn i_gate_is_not_idle() {
+        assert!(!is_idle_gate(&Gate::i(&[0])));
     }
 
     #[test]
-    fn identity_gate_rxx_zero() {
-        let gate = Gate::rxx(Angle64::ZERO, &[(0, 1)]);
-        assert!(is_identity_gate(&gate));
+    fn all_single_angle_zero_rotations_are_identities() {
+        let gates = [
+            Gate::rx(Angle64::ZERO, &[0]),
+            Gate::ry(Angle64::ZERO, &[0]),
+            Gate::rz(Angle64::ZERO, &[0]),
+            Gate::rxx(Angle64::ZERO, &[(0, 1)]),
+            Gate::ryy(Angle64::ZERO, &[(0, 1)]),
+            Gate::rzz(Angle64::ZERO, &[(0, 1)]),
+            Gate::crz(Angle64::ZERO, &[(0, 1)]),
+        ];
+        for gate in gates {
+            assert!(is_identity_gate(&gate), "{:?}", gate.gate_type);
+        }
+    }
+
+    #[test]
+    fn rotation_with_multiple_angles_is_not_an_identity() {
+        let gate = Gate::with_angles(
+            GateType::RZ,
+            smallvec::smallvec![Angle64::ZERO, Angle64::ZERO],
+            smallvec::smallvec![QubitId::from(0)],
+        );
+        assert!(!is_identity_gate(&gate));
     }
 
     #[test]
@@ -2443,13 +2529,35 @@ mod tests {
     }
 
     #[test]
-    fn tick_remove_identity_mixed() {
+    fn tick_remove_identity_removes_unitary_identities_but_keeps_idle() {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[0]);
         tc.ticks_mut()[0].add_gate(Gate::i(&[1]));
+        tc.ticks_mut()[0].add_gate(Gate::idle(2.0, vec![QubitId::from(2)]));
+        tc.ticks_mut()[0].add_gate(Gate::rz(Angle64::ZERO, &[3]));
         RemoveIdentity.apply_tick(&mut tc);
-        assert_eq!(tc.ticks()[0].gate_batches().len(), 1);
-        assert_eq!(tc.ticks()[0].gate_batches()[0].gate_type, GateType::H);
+        let gate_types: Vec<GateType> = tc.ticks()[0]
+            .gate_batches()
+            .iter()
+            .map(|gate| gate.gate_type)
+            .collect();
+        assert_eq!(gate_types, [GateType::H, GateType::Idle]);
+    }
+
+    #[test]
+    fn tick_strip_idles_removes_only_idle() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+        tc.ticks_mut()[0].add_gate(Gate::i(&[1]));
+        tc.ticks_mut()[0].add_gate(Gate::idle(2.0, vec![QubitId::from(2)]));
+        tc.ticks_mut()[0].add_gate(Gate::rz(Angle64::ZERO, &[3]));
+        StripIdles.apply_tick(&mut tc);
+        let gate_types: Vec<GateType> = tc.ticks()[0]
+            .gate_batches()
+            .iter()
+            .map(|gate| gate.gate_type)
+            .collect();
+        assert_eq!(gate_types, [GateType::H, GateType::I, GateType::RZ]);
     }
 
     // ==================== RemoveIdentity DAG tests ====================
@@ -2471,23 +2579,93 @@ mod tests {
     }
 
     #[test]
-    fn dag_remove_identity_preserves_h() {
+    fn dag_remove_identity_removes_unitary_identities_but_keeps_idle() {
         let mut dag = DagCircuit::new();
         dag.h(&[0]);
+        dag.add_gate(Gate::i(&[1]));
+        dag.add_gate(Gate::idle(2.0, vec![QubitId::from(2)]));
+        dag.rz(Angle64::ZERO, &[3]);
         RemoveIdentity.apply_dag(&mut dag);
-        assert_eq!(dag.gate_count(), 1);
+        let gate_types: Vec<GateType> = dag
+            .nodes()
+            .into_iter()
+            .filter_map(|node| dag.gate(node).map(|gate| gate.gate_type))
+            .collect();
+        assert_eq!(gate_types, [GateType::H, GateType::Idle]);
+    }
+
+    #[test]
+    fn dag_strip_idles_removes_only_idle() {
+        let mut dag = DagCircuit::new();
+        dag.h(&[0]);
+        dag.add_gate(Gate::i(&[1]));
+        dag.add_gate(Gate::idle(2.0, vec![QubitId::from(2)]));
+        dag.rz(Angle64::ZERO, &[3]);
+        StripIdles.apply_dag(&mut dag);
+        let gate_types: Vec<GateType> = dag
+            .nodes()
+            .into_iter()
+            .filter_map(|node| dag.gate(node).map(|gate| gate.gate_type))
+            .collect();
+        assert_eq!(gate_types, [GateType::H, GateType::I, GateType::RZ]);
     }
 
     #[test]
     fn dag_remove_identity_rewires() {
         let mut dag = DagCircuit::new();
-        dag.h(&[0]);
-        dag.add_gate(Gate::i(&[0]));
-        dag.z(&[0]);
+        let h = dag.add_gate_auto_wire(Gate::h(&[0]));
+        dag.add_gate_auto_wire(Gate::i(&[0]));
+        let z = dag.add_gate_auto_wire(Gate::z(&[0]));
         let nodes_before = dag.nodes();
         assert_eq!(nodes_before.len(), 3);
         RemoveIdentity.apply_dag(&mut dag);
         assert_eq!(dag.gate_count(), 2);
+        assert_eq!(dag.predecessor_on_qubit(z, QubitId::from(0)), Some(h));
+    }
+
+    #[test]
+    fn dag_strip_idles_rewires() {
+        let mut dag = DagCircuit::new();
+        let h = dag.add_gate_auto_wire(Gate::h(&[0]));
+        dag.add_gate_auto_wire(Gate::idle(2.0, vec![QubitId::from(0)]));
+        let z = dag.add_gate_auto_wire(Gate::z(&[0]));
+        StripIdles.apply_dag(&mut dag);
+        assert_eq!(dag.gate_count(), 2);
+        assert_eq!(dag.predecessor_on_qubit(z, QubitId::from(0)), Some(h));
+    }
+
+    #[test]
+    fn remove_identity_then_strip_idles_matches_old_combined_tick_behavior() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+        tc.ticks_mut()[0].add_gate(Gate::i(&[1]));
+        tc.ticks_mut()[0].add_gate(Gate::idle(2.0, vec![QubitId::from(2)]));
+        tc.ticks_mut()[0].add_gate(Gate::rz(Angle64::ZERO, &[3]));
+        RemoveIdentity.apply_tick(&mut tc);
+        StripIdles.apply_tick(&mut tc);
+        let gate_types: Vec<GateType> = tc.ticks()[0]
+            .gate_batches()
+            .iter()
+            .map(|gate| gate.gate_type)
+            .collect();
+        assert_eq!(gate_types, [GateType::H]);
+    }
+
+    #[test]
+    fn remove_identity_then_strip_idles_matches_old_combined_dag_behavior() {
+        let mut dag = DagCircuit::new();
+        dag.h(&[0]);
+        dag.add_gate(Gate::i(&[1]));
+        dag.add_gate(Gate::idle(2.0, vec![QubitId::from(2)]));
+        dag.rz(Angle64::ZERO, &[3]);
+        RemoveIdentity.apply_dag(&mut dag);
+        StripIdles.apply_dag(&mut dag);
+        let gate_types: Vec<GateType> = dag
+            .nodes()
+            .into_iter()
+            .filter_map(|node| dag.gate(node).map(|gate| gate.gate_type))
+            .collect();
+        assert_eq!(gate_types, [GateType::H]);
     }
 
     // ==================== CancelInverses tick tests ====================

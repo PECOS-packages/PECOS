@@ -313,7 +313,7 @@ def _apply_traced_idle_passes(
         # would double-count idle noise, so insertion implies stripping first.
         strip_traced_idles = idle_after_2q_duration is not None
     if strip_traced_idles:
-        circuit.remove_identity()
+        circuit.strip_idles()
     if idle_after_2q_duration is not None:
         if not math.isfinite(idle_after_2q_duration) or idle_after_2q_duration <= 0.0:
             msg = (
@@ -546,11 +546,12 @@ class _DetectorErrorModelMixin:
             p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
             p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
             p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
-            strip_traced_idles: If true, remove identity-like gates from the
-                normalized traced circuit, including ``I``, ``Idle``, and
-                zero-angle rotations. This pass runs before idle insertion
-                when both idle-pass options are set. Defaults to ``None``,
-                which strips exactly when ``idle_after_2q_duration`` is set:
+            strip_traced_idles: If true, remove ``Idle`` gates from the
+                normalized traced circuit while preserving ``I`` and
+                zero-angle rotations as gate-noise locations. This pass runs
+                before idle insertion when both idle-pass options are set.
+                Defaults to ``None``, which strips exactly when
+                ``idle_after_2q_duration`` is set:
                 inserting a uniform idle convention on top of runtime-emitted
                 idles would double-count idle noise. Pass ``False`` explicitly
                 to keep runtime-emitted idles alongside inserted ones.
@@ -1061,7 +1062,7 @@ class GuppyDemBuilder:
         return self
 
     def with_strip_traced_idles(self, flag: bool | None) -> Self:
-        """Choose whether runtime-emitted identity-like gates are stripped."""
+        """Choose whether runtime-emitted ``Idle`` gates are stripped."""
         self._set_once("_strip_traced_idles", flag, "with_strip_traced_idles")
         return self
 
@@ -1539,10 +1540,10 @@ def build_dem_from_guppy(
         p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
         p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
         p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
-        strip_traced_idles: If true, remove identity-like gates from the
-            normalized trace, including ``I``, ``Idle``, and zero-angle
-            rotations. This pass runs before idle insertion when both
-            idle-pass options are set. Defaults to ``None``, which strips
+        strip_traced_idles: If true, remove ``Idle`` gates from the normalized
+            trace while preserving ``I`` and zero-angle rotations as
+            gate-noise locations. This pass runs before idle insertion when
+            both idle-pass options are set. Defaults to ``None``, which strips
             exactly when ``idle_after_2q_duration`` is set; pass ``False``
             explicitly to keep runtime-emitted idles alongside inserted
             ones.

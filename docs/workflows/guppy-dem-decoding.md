@@ -110,8 +110,8 @@ observables = [Observable("m0")]
 ## 3. Generate the DEM with gate and idle noise
 
 `with_idle_after_2q(1.0)` inserts an idle of that duration on both qubits after
-every two-qubit gate; traced identity-like gates are stripped first by default,
-so runtime-emitted idles are not double-counted.
+every two-qubit gate; traced `Idle` gates are stripped first by default, so
+runtime-emitted idles are not double-counted.
 
 That default matters because the trace need not be idle-free. `with_runtime(...)`
 selects the Selene runtime plugin that lowers and unrolls the Guppy program into
@@ -254,10 +254,11 @@ from pecos.tracing import trace_program_to_tick_circuit
 # a Selene runtime plugin, which may schedule idles of its own.
 tick_circuit = trace_program_to_tick_circuit(rep_code_memory, 7)
 
-# remove_identity() drops everything that is identity by effect: I, Idle, and
-# zero-angle rotations. That clears runtime-emitted idles so only one convention
-# survives -- insertion is then this pass OR with_idle_after_2q, never both.
-tick_circuit.remove_identity()
+# strip_idles() removes only duration-carrying Idle gates, clearing the
+# runtime-emitted convention before insertion. remove_identity() is a separate
+# unitary optimization for I and zero-angle rotations; it also removes their
+# gate-noise locations, so call it only when that optimization is intended.
+tick_circuit.strip_idles()
 ```
 
 `sim()` does not yet accept a `TickCircuit` (PECOS #444), so today this is how to

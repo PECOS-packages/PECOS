@@ -70,6 +70,7 @@ fn main() {
         score_alpha,
         column_order: None,
         merge_indistinguishable: false,
+        bp_score_iterations: 0,
     };
     let mut decoder = FrontierDecoder::from_sparse_dem(&dem, config).expect("build decoder");
 

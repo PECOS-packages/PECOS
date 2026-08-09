@@ -38,6 +38,7 @@ fn exact_config() -> FrontierConfig {
         score_alpha: 0.8,
         column_order: None,
         merge_indistinguishable: false,
+        bp_score_iterations: 0,
     }
 }
 
@@ -114,6 +115,29 @@ fn result_mass_map(result: &FrontierResult) -> BTreeMap<Vec<u64>, f64> {
         .iter()
         .map(|entry| (entry.logical.words().to_vec(), entry.log_mass))
         .collect()
+}
+
+fn assert_result_semantics_bitwise_equal(left: &FrontierResult, right: &FrontierResult) {
+    assert_eq!(left.predicted, right.predicted);
+    assert_eq!(left.log_evidence.to_bits(), right.log_evidence.to_bits());
+    assert_eq!(
+        left.runner_up_gap.map(f64::to_bits),
+        right.runner_up_gap.map(f64::to_bits)
+    );
+    assert_eq!(left.peak_retained_states, right.peak_retained_states);
+    assert_eq!(left.processed_columns, right.processed_columns);
+    assert_eq!(left.transitions, right.transitions);
+    assert_eq!(left.dropped_states, right.dropped_states);
+    assert_eq!(
+        left.dropped_log_mass.to_bits(),
+        right.dropped_log_mass.to_bits()
+    );
+    assert_eq!(left.status, right.status);
+    assert_eq!(left.logical_masses.len(), right.logical_masses.len());
+    for (left_mass, right_mass) in left.logical_masses.iter().zip(&right.logical_masses) {
+        assert_eq!(left_mass.logical, right_mass.logical);
+        assert_eq!(left_mass.log_mass.to_bits(), right_mass.log_mass.to_bits());
+    }
 }
 
 fn assert_mass_maps_close(
@@ -386,6 +410,7 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
         score_alpha: 0.0,
         column_order: Some(vec![3, 2, 1, 0]),
         merge_indistinguishable: true,
+        bp_score_iterations: 0,
     };
     let mut merged = FrontierDecoder::from_sparse_dem(&dem, pruning).unwrap();
     let mut hand_built = FrontierDecoder::from_sparse_dem(
@@ -396,6 +421,7 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
             score_alpha: 0.0,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         },
     )
     .unwrap();
@@ -407,6 +433,7 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
             score_alpha: 0.0,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         },
     )
     .unwrap();
@@ -703,6 +730,7 @@ fn overpruning_can_remove_the_only_eventually_feasible_prefix() {
         score_alpha: 0.0,
         column_order: None,
         merge_indistinguishable: false,
+        bp_score_iterations: 0,
     };
     let mut overpruned = FrontierDecoder::from_sparse_dem(&dem, tight).unwrap();
     assert!(overpruned.decode(&[0, 1]).is_err());
@@ -737,6 +765,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             score_alpha: 0.0,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         },
     )
     .unwrap();
@@ -750,6 +779,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             score_alpha: 0.0,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         },
     )
     .unwrap();
@@ -790,6 +820,7 @@ fn width_pruning_accounts_for_the_discarded_state_and_mass() {
             score_alpha: 0.0,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         },
     )
     .unwrap();
@@ -820,6 +851,7 @@ fn delta_pruning_reports_its_status_flag() {
             score_alpha: 0.0,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         },
     )
     .unwrap();
@@ -850,6 +882,7 @@ fn one_prune_call_can_trigger_both_pruning_flags() {
             score_alpha: 0.0,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         },
     )
     .unwrap();
@@ -883,6 +916,7 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             score_alpha: 0.0,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         },
     )
     .unwrap();
@@ -894,6 +928,7 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             score_alpha: 0.8,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         },
     )
     .unwrap();
@@ -950,6 +985,7 @@ fn validates_probabilities_indices_order_and_pruning_configuration() {
         FrontierConfig::default().score_alpha.to_bits(),
         0.8_f64.to_bits()
     );
+    assert_eq!(FrontierConfig::default().bp_score_iterations, 0);
     let probability_one_dem = sparse_dem(vec![(1.0, vec![], vec![])], 0, 0);
     assert!(FrontierDecoder::from_sparse_dem(&probability_one_dem, exact_config()).is_ok());
 
@@ -1038,4 +1074,91 @@ fn rejects_wrong_syndrome_length() {
             actual: 0
         })
     ));
+}
+
+#[test]
+fn bp_scores_change_the_greedy_survivor_without_changing_its_mass() {
+    // For observed D0=1,D1=0, after column 0 the DEM-prior suffix estimate is:
+    //   skip: 0.85 * (0.15 * 0.794)^0.8 = exp(-1.864...)
+    //   take: 0.15 * (0.85 * 0.794)^0.8 = exp(-2.211...)
+    // where 0.794 is the even-parity probability of future p=.15 and p=.08
+    // faults on D1. Thus static K=1 keeps skip, which must later take columns 1
+    // and 2 and produces L0=1.
+    //
+    // Five serial BP iterations give q1=0.101840... and q2=0.052612.... The
+    // same row-moment arithmetic changes the suffix factors to about 0.0872
+    // after skip and 0.7692 after take, narrowly reranking take above skip.
+    // The surviving L0=0 path's DEM mass is still, independently,
+    // 0.15 * 0.85 * 0.92 = 0.1173; BP supplies scores only.
+    let dem = sparse_dem(
+        vec![
+            (0.15, vec![0], vec![]),
+            (0.15, vec![0, 1], vec![0]),
+            (0.08, vec![1], vec![]),
+        ],
+        2,
+        1,
+    );
+    let syndrome = [1, 0];
+    let bp_config = FrontierConfig {
+        k: 1,
+        delta: f64::INFINITY,
+        score_alpha: 0.8,
+        column_order: None,
+        merge_indistinguishable: false,
+        bp_score_iterations: 5,
+    };
+    let mut bp_scored = FrontierDecoder::from_sparse_dem(&dem, bp_config.clone()).unwrap();
+    let mut dem_scored = FrontierDecoder::from_sparse_dem(
+        &dem,
+        FrontierConfig {
+            bp_score_iterations: 0,
+            ..bp_config
+        },
+    )
+    .unwrap();
+
+    let dem_result = dem_scored.decode(&syndrome).unwrap();
+    let bp_result = bp_scored.decode(&syndrome).unwrap();
+    assert_eq!(dem_result.predicted, ObsMask::from_u64(1));
+    assert!(bp_result.predicted.is_zero());
+
+    let enumerated = independent_enumeration(&dem, &syndrome);
+    let expected_log_mass = enumerated
+        .get(bp_result.predicted.words())
+        .expect("the BP-retained label must exist in the exact enumeration");
+    assert!((bp_result.logical_masses[0].log_mass.exp() - expected_log_mass.exp()).abs() <= 1e-12);
+    assert!((bp_result.logical_masses[0].log_mass.exp() - 0.1173).abs() <= 1e-12);
+}
+
+#[test]
+fn bp_scoring_is_bitwise_deterministic_across_reuse_and_fresh_construction() {
+    let dem = sparse_dem(
+        vec![
+            (0.15, vec![0], vec![]),
+            (0.15, vec![0, 1], vec![0]),
+            (0.08, vec![1], vec![]),
+        ],
+        2,
+        1,
+    );
+    let config = FrontierConfig {
+        k: 1,
+        delta: f64::INFINITY,
+        score_alpha: 0.8,
+        column_order: None,
+        merge_indistinguishable: false,
+        bp_score_iterations: 5,
+    };
+    let mut reused_decoder = FrontierDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+    let first = reused_decoder.decode(&[1, 0]).unwrap();
+    let second = reused_decoder.decode(&[1, 0]).unwrap();
+    let mut fresh_decoder = FrontierDecoder::from_sparse_dem(&dem, config).unwrap();
+    let fresh = fresh_decoder.decode(&[1, 0]).unwrap();
+
+    assert!(first.bp_seconds >= 0.0 && second.bp_seconds >= 0.0 && fresh.bp_seconds >= 0.0);
+    // Wall-clock telemetry is intentionally excluded from the bitwise semantic
+    // comparison.
+    assert_result_semantics_bitwise_equal(&first, &second);
+    assert_result_semantics_bitwise_equal(&first, &fresh);
 }

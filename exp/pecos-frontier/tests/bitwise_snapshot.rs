@@ -125,6 +125,30 @@ fn snapshot_result(result: FrontierResult) -> SnapshotOutcome {
     }
 }
 
+fn assert_results_bitwise_equal(left: &FrontierResult, right: &FrontierResult) {
+    assert_eq!(left.predicted, right.predicted);
+    assert_eq!(left.log_evidence.to_bits(), right.log_evidence.to_bits());
+    assert_eq!(
+        left.runner_up_gap.map(f64::to_bits),
+        right.runner_up_gap.map(f64::to_bits)
+    );
+    assert_eq!(left.peak_retained_states, right.peak_retained_states);
+    assert_eq!(left.processed_columns, right.processed_columns);
+    assert_eq!(left.transitions, right.transitions);
+    assert_eq!(left.dropped_states, right.dropped_states);
+    assert_eq!(
+        left.dropped_log_mass.to_bits(),
+        right.dropped_log_mass.to_bits()
+    );
+    assert_eq!(left.bp_seconds.to_bits(), right.bp_seconds.to_bits());
+    assert_eq!(left.status, right.status);
+    assert_eq!(left.logical_masses.len(), right.logical_masses.len());
+    for (left_mass, right_mass) in left.logical_masses.iter().zip(&right.logical_masses) {
+        assert_eq!(left_mass.logical, right_mass.logical);
+        assert_eq!(left_mass.log_mass.to_bits(), right_mass.log_mass.to_bits());
+    }
+}
+
 fn collect_snapshot() -> SnapshotFile {
     let fixtures: FixtureFile<Fixture> =
         serde_json::from_str(UPSTREAM_FIXTURES_JSON).expect("upstream fixtures must parse");
@@ -147,6 +171,7 @@ fn collect_snapshot() -> SnapshotFile {
                     score_alpha: 0.8,
                     column_order: None,
                     merge_indistinguishable: false,
+                    bp_score_iterations: 0,
                 },
             ),
             (
@@ -157,6 +182,7 @@ fn collect_snapshot() -> SnapshotFile {
                     score_alpha: 0.8,
                     column_order: None,
                     merge_indistinguishable: false,
+                    bp_score_iterations: 0,
                 },
             ),
         ] {
@@ -192,6 +218,7 @@ fn collect_snapshot() -> SnapshotFile {
                 score_alpha: 0.8,
                 column_order: Some(fixture.forward_ordering),
                 merge_indistinguishable: false,
+                bp_score_iterations: 0,
             },
         )
         .expect("fixture committee construction must succeed");
@@ -229,6 +256,53 @@ fn decode_outputs_match_bitwise_snapshot() {
 
     assert_eq!(actual.scenarios.len(), 128, "scenario corpus changed");
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
+    let fixtures: FixtureFile<Fixture> =
+        serde_json::from_str(UPSTREAM_FIXTURES_JSON).expect("upstream fixtures must parse");
+    assert!(fixtures.fixtures.len() >= 3, "need several fixture models");
+
+    for fixture in fixtures.fixtures {
+        let dem = sparse_dem(
+            fixture.mechanisms,
+            fixture.num_detectors,
+            fixture.num_observables,
+        );
+        let off_config = FrontierConfig {
+            k: usize::MAX,
+            delta: f64::INFINITY,
+            score_alpha: 0.8,
+            column_order: None,
+            merge_indistinguishable: false,
+            bp_score_iterations: 0,
+        };
+        let mut off = FrontierDecoder::from_sparse_dem(&dem, off_config.clone()).unwrap();
+        let mut on = FrontierDecoder::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                bp_score_iterations: 5,
+                ..off_config
+            },
+        )
+        .unwrap();
+
+        for syndrome_mask in fixture.syndromes {
+            let syndrome = dense_syndrome(syndrome_mask, fixture.num_detectors);
+            match (off.decode(&syndrome), on.decode(&syndrome)) {
+                (Ok(off_result), Ok(on_result)) => {
+                    assert_results_bitwise_equal(&off_result, &on_result);
+                    assert_eq!(on_result.bp_seconds.to_bits(), 0.0_f64.to_bits());
+                }
+                (Err(_), Err(_)) => {}
+                (off_result, on_result) => panic!(
+                    "{} syndrome {syndrome_mask}: off={off_result:?}, on={on_result:?}",
+                    fixture.name
+                ),
+            }
+        }
+    }
 }
 
 #[test]

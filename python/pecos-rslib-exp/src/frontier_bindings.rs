@@ -100,6 +100,7 @@ fn parse_dem_and_config(
     k: usize,
     delta: f64,
     score_alpha: f64,
+    bp_score_iterations: usize,
     column_order: ColumnOrderArgument,
     merge_indistinguishable: bool,
 ) -> PyResult<(SparseDem, RustFrontierConfig)> {
@@ -113,6 +114,7 @@ fn parse_dem_and_config(
             score_alpha,
             column_order,
             merge_indistinguishable,
+            bp_score_iterations,
         },
     ))
 }
@@ -232,6 +234,12 @@ impl PyFrontierResult {
         self.inner.dropped_log_mass
     }
 
+    /// Wall-clock seconds spent producing BP-informed pruning scores.
+    #[getter]
+    fn bp_seconds(&self) -> f64 {
+        self.inner.bp_seconds
+    }
+
     /// Completeness status of this decode.
     #[getter]
     fn status(&self) -> &'static str {
@@ -306,6 +314,13 @@ impl PyFrontierCommitteeResult {
         self.inner.selected.dropped_log_mass
     }
 
+    /// Wall-clock seconds spent by the selected leg producing BP-informed
+    /// pruning scores.
+    #[getter]
+    fn bp_seconds(&self) -> f64 {
+        self.inner.selected.bp_seconds
+    }
+
     /// Completeness status of the selected leg.
     #[getter]
     fn status(&self) -> &'static str {
@@ -359,14 +374,15 @@ impl PyFrontierDecoder {
     /// Construct a native Frontier decoder from a Stim-format DEM string.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false),
-        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, column_order='deadline_reorder', merge_indistinguishable=False)"
+        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false),
+        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False)"
     )]
     fn from_dem(
         dem: &str,
         k: usize,
         delta: f64,
         score_alpha: f64,
+        bp_score_iterations: usize,
         column_order: ColumnOrderArgument,
         merge_indistinguishable: bool,
     ) -> PyResult<Self> {
@@ -375,6 +391,7 @@ impl PyFrontierDecoder {
             k,
             delta,
             score_alpha,
+            bp_score_iterations,
             column_order,
             merge_indistinguishable,
         )?;
@@ -434,14 +451,15 @@ impl PyFrontierCommitteeDecoder {
     /// Construct a native forward/backward committee from a Stim-format DEM.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false),
-        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, column_order='deadline_reorder', merge_indistinguishable=False)"
+        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false),
+        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False)"
     )]
     fn from_dem(
         dem: &str,
         k: usize,
         delta: f64,
         score_alpha: f64,
+        bp_score_iterations: usize,
         column_order: ColumnOrderArgument,
         merge_indistinguishable: bool,
     ) -> PyResult<Self> {
@@ -450,6 +468,7 @@ impl PyFrontierCommitteeDecoder {
             k,
             delta,
             score_alpha,
+            bp_score_iterations,
             column_order,
             merge_indistinguishable,
         )?;

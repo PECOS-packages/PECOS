@@ -49,6 +49,7 @@ def test_sparse_and_dense_decode_agree() -> None:
     assert dense.dropped_states == 0
     assert dense.dropped_log_mass == float("-inf")
     assert dense.status == "exact"
+    assert dense.bp_seconds == 0.0
     assert decoder.build_seconds >= 0.0
 
 
@@ -94,6 +95,24 @@ def test_committee_easy_tie_selects_forward() -> None:
     assert result.status == "exact"
     assert result.transitions == 2
     assert committee.build_seconds >= 0.0
+
+
+def test_bp_score_iterations_and_telemetry_are_exposed() -> None:
+    decoder = FrontierDecoder.from_dem(
+        SMALL_DEM,
+        k=1,
+        delta=float("inf"),
+        bp_score_iterations=3,
+    )
+    committee = FrontierCommitteeDecoder.from_dem(
+        SMALL_DEM,
+        k=1,
+        delta=float("inf"),
+        bp_score_iterations=3,
+    )
+
+    assert decoder.decode_syndrome([1, 0]).bp_seconds >= 0.0
+    assert committee.decode_syndrome([1, 0]).bp_seconds >= 0.0
 
 
 def test_pruning_telemetry_and_status_strings() -> None:

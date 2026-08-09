@@ -138,6 +138,7 @@ fn ordering_and_committee_match_upstream_fixtures() {
                 score_alpha: 0.8,
                 column_order: Some(fixture.forward_ordering.clone()),
                 merge_indistinguishable: false,
+                bp_score_iterations: 0,
             },
         )
         .unwrap();

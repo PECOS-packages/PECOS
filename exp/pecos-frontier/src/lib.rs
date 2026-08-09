@@ -24,6 +24,7 @@
 //! upstream-verified.
 
 use pecos_decoder_core::ObservableDecoder;
+use pecos_decoder_core::bp::{BpGraph, BpScratch, min_sum_bp_into};
 pub use pecos_decoder_core::dem::SparseDem;
 pub use pecos_decoder_core::errors::DecoderError;
 pub use pecos_decoder_core::obs_mask::ObsMask;
@@ -32,6 +33,8 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 const WORD_BITS: usize = u64::BITS as usize;
+const BP_MIN_SUM_SCALE: f64 = 0.625;
+const BP_SCORE_PROBABILITY_MIN: f64 = 1e-6;
 
 /// Frontier pruning and column-order configuration.
 ///
@@ -59,6 +62,9 @@ pub struct FrontierConfig {
     /// while probability-one mechanisms remain separate in the forced layer
     /// and are not merged with otherwise identical probabilistic mechanisms.
     pub merge_indistinguishable: bool,
+    /// Number of min-sum BP iterations used only to score pruning candidates.
+    /// Zero disables BP-informed scoring.
+    pub bp_score_iterations: usize,
 }
 
 impl Default for FrontierConfig {
@@ -70,6 +76,7 @@ impl Default for FrontierConfig {
             score_alpha: 0.8,
             column_order: None,
             merge_indistinguishable: false,
+            bp_score_iterations: 0,
         }
     }
 }
@@ -165,6 +172,9 @@ pub struct FrontierResult {
     /// not a bound on true lost posterior mass: a state dropped early would
     /// otherwise have branched through later columns.
     pub dropped_log_mass: f64,
+    /// Wall-clock seconds spent producing BP-informed suffix scores for this
+    /// shot. This is zero when BP scoring is disabled or pruning cannot run.
+    pub bp_seconds: f64,
     /// Whether the successful decode was exact or which pruning mechanisms
     /// discarded at least one state.
     pub status: FrontierStatus,
@@ -272,7 +282,31 @@ struct PruneResult {
     delta_pruned: bool,
 }
 
+#[derive(Clone, Debug)]
+struct BpScoreState {
+    graph: BpGraph,
+    scratch: BpScratch,
+    posterior: Vec<f64>,
+    residual_syndrome: Vec<u8>,
+}
+
+impl BpScoreState {
+    fn new(graph: BpGraph) -> Self {
+        let scratch = BpScratch::new(&graph);
+        let posterior = vec![0.0; graph.mechanism_count()];
+        let residual_syndrome = vec![0; graph.check_count()];
+        Self {
+            graph,
+            scratch,
+            posterior,
+            residual_syndrome,
+        }
+    }
+}
+
 type RawColumn = (Vec<u64>, Vec<u64>, f64);
+type SuffixCompatibilityTables = Vec<Vec<SuffixCompatibility>>;
+type BpSuffixPreparation = (Option<SuffixCompatibilityTables>, f64);
 
 /// Ordered, pruned dynamic-programming decoder for sparse detector error models.
 #[derive(Clone, Debug)]
@@ -285,6 +319,7 @@ pub struct FrontierDecoder {
     touched_detectors: Vec<u64>,
     forced_syndrome: Vec<u64>,
     forced_logical: Vec<u64>,
+    bp_score: Option<BpScoreState>,
     build_seconds: f64,
 }
 
@@ -309,6 +344,10 @@ impl FrontierDecoder {
     ///
     /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning
     /// parameters, probabilities, indices, or column order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal post-filter BP graph and DP column counts differ.
     pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
         let build_started = Instant::now();
         validate_config(&config, dem.mechanisms.len())?;
@@ -372,6 +411,44 @@ impl FrontierDecoder {
             raw_columns = merge_indistinguishable_columns(raw_columns);
         }
 
+        let bp_score = if config.bp_score_iterations > 0
+            && !(config.k == usize::MAX && config.delta.is_infinite())
+        {
+            // This graph is deliberately built from exactly the post-order,
+            // post-zero/one-filter, post-merge column sequence consumed by the
+            // DP, never from the raw DEM mechanisms. Posterior index j therefore
+            // corresponds to DP column j.
+            let bp_dem = SparseDem {
+                mechanisms: raw_columns
+                    .iter()
+                    .map(|(detector_words, _, probability)| {
+                        let detectors = set_bits(detector_words)
+                            .map(|detector| {
+                                u32::try_from(detector).map_err(|_| {
+                                    DecoderError::InvalidConfiguration(format!(
+                                        "detector index {detector} does not fit u32"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok((*probability, detectors, Vec::new()))
+                    })
+                    .collect::<Result<Vec<_>, DecoderError>>()?,
+                detector_coords: BTreeMap::new(),
+                num_detectors: dem.num_detectors,
+                num_observables: 0,
+            };
+            let graph = BpGraph::from_sparse_dem(&bp_dem)?;
+            assert_eq!(
+                graph.mechanism_count(),
+                raw_columns.len(),
+                "BP mechanisms must correspond one-for-one with DP columns"
+            );
+            Some(BpScoreState::new(graph))
+        } else {
+            None
+        };
+
         let mut touched_detectors = vec![0; detector_words];
         let mut last_touch = vec![None; dem.num_detectors];
         for (column_index, (detectors, _, _)) in raw_columns.iter().enumerate() {
@@ -414,26 +491,10 @@ impl FrontierDecoder {
             });
         }
 
-        let mut row_moments: Vec<f64> = vec![1.0; dem.num_detectors];
-        for (column, moment) in columns
-            .iter_mut()
-            .rev()
-            .zip(column_moments.into_iter().rev())
-        {
-            column.suffix_compatibility = set_bits(&column.active_mask)
-                .map(|detector| {
-                    let eta = row_moments[detector];
-                    SuffixCompatibility {
-                        word_index: detector / WORD_BITS,
-                        bit_mask: 1 << (detector % WORD_BITS),
-                        log_probability_zero: 1.0_f64.midpoint(eta).ln(),
-                        log_probability_one: 1.0_f64.midpoint(-eta).ln(),
-                    }
-                })
-                .collect();
-            for detector in set_bits(&column.detector_toggle) {
-                row_moments[detector] *= moment;
-            }
+        let suffix_tables =
+            build_suffix_compatibility_tables(&columns, &column_moments, dem.num_detectors);
+        for (column, suffix_compatibility) in columns.iter_mut().zip(suffix_tables) {
+            column.suffix_compatibility = suffix_compatibility;
         }
 
         debug_assert_model_invariants(&columns, &touched_detectors);
@@ -448,6 +509,7 @@ impl FrontierDecoder {
             touched_detectors,
             forced_syndrome,
             forced_logical,
+            bp_score,
             build_seconds,
         })
     }
@@ -495,6 +557,8 @@ impl FrontierDecoder {
             return Err(unexplainable_error());
         }
 
+        let (bp_suffix_compatibility, bp_seconds) = self.bp_suffix_compatibility(&observed)?;
+
         let mut initial_syndrome = self.forced_syndrome.clone();
         and_assign(&mut initial_syndrome, &self.touched_detectors);
         let initial = StateKey {
@@ -509,7 +573,7 @@ impl FrontierDecoder {
         let mut k_capped = false;
         let mut delta_pruned = false;
 
-        for column in &self.columns {
+        for (column_index, column) in self.columns.iter().enumerate() {
             let mut merged = BTreeMap::new();
             for (state, &log_mass) in &frontier {
                 let branch_base = log_mass + column.log_one_minus_probability;
@@ -538,12 +602,15 @@ impl FrontierDecoder {
             if merged.is_empty() {
                 return Err(unexplainable_error());
             }
+            let suffix_compatibility = bp_suffix_compatibility
+                .as_ref()
+                .map_or(&column.suffix_compatibility, |tables| &tables[column_index]);
             let pruned = prune(
                 merged,
                 self.config.k,
                 self.config.delta,
                 self.config.score_alpha,
-                &column.suffix_compatibility,
+                suffix_compatibility,
                 &observed,
             );
             frontier = pruned.retained;
@@ -593,9 +660,52 @@ impl FrontierDecoder {
             transitions,
             dropped_states,
             dropped_log_mass,
+            bp_seconds,
             status,
             logical_masses,
         })
+    }
+
+    fn bp_suffix_compatibility(
+        &mut self,
+        observed: &[u64],
+    ) -> Result<BpSuffixPreparation, DecoderError> {
+        let Some(bp_score) = &mut self.bp_score else {
+            return Ok((None, 0.0));
+        };
+
+        let started = Instant::now();
+        for (detector, residual) in bp_score.residual_syndrome.iter_mut().enumerate() {
+            let word_index = detector / WORD_BITS;
+            let bit_mask = 1 << (detector % WORD_BITS);
+            *residual =
+                u8::from((observed[word_index] ^ self.forced_syndrome[word_index]) & bit_mask != 0);
+        }
+        min_sum_bp_into(
+            &bp_score.graph,
+            &bp_score.residual_syndrome,
+            self.config.bp_score_iterations,
+            BP_MIN_SUM_SCALE,
+            true,
+            &mut bp_score.scratch,
+            &mut bp_score.posterior,
+        )?;
+        assert_eq!(
+            bp_score.posterior.len(),
+            self.columns.len(),
+            "BP beliefs must correspond one-for-one with DP columns"
+        );
+
+        // These clamped probabilities are a heuristic for score arithmetic
+        // only. The BP output never replaces the DEM probabilities used by
+        // branch mass arithmetic.
+        let moments: Vec<f64> = bp_score
+            .posterior
+            .iter()
+            .map(|&llr| 1.0 - 2.0 * bp_score_probability(llr))
+            .collect();
+        let tables = build_suffix_compatibility_tables(&self.columns, &moments, self.num_detectors);
+        Ok((Some(tables), started.elapsed().as_secs_f64()))
     }
 }
 
@@ -617,6 +727,7 @@ impl FrontierCommittee {
             score_alpha,
             column_order,
             merge_indistinguishable,
+            bp_score_iterations,
         } = config;
         let mut forward_order = column_order.unwrap_or_else(|| (0..dem.mechanisms.len()).collect());
         let forward = FrontierDecoder::from_sparse_dem(
@@ -627,6 +738,7 @@ impl FrontierCommittee {
                 score_alpha,
                 column_order: Some(forward_order.clone()),
                 merge_indistinguishable,
+                bp_score_iterations,
             },
         )?;
         forward_order.reverse();
@@ -636,6 +748,7 @@ impl FrontierCommittee {
             score_alpha,
             column_order: Some(forward_order),
             merge_indistinguishable,
+            bp_score_iterations,
         };
         let backward = FrontierDecoder::from_sparse_dem(dem, backward_config)?;
         let build_seconds = build_started.elapsed().as_secs_f64();
@@ -670,6 +783,9 @@ impl FrontierCommittee {
     /// Returns the standard unexplainable-syndrome error if both legs find no
     /// retained path.
     pub fn decode(&mut self, syndrome: &[u8]) -> Result<FrontierCommitteeResult, DecoderError> {
+        // Each leg owns its BP graph and scratch and runs independently on the
+        // same syndrome. Their beliefs are expected to match, but are never
+        // shared by reference between the two code paths.
         let forward_result = self.forward.decode(syndrome);
         let backward_result = self.backward.decode(syndrome);
         let forward = committee_member(&forward_result);
@@ -1053,6 +1169,43 @@ fn prune(
     }
 }
 
+fn build_suffix_compatibility_tables(
+    columns: &[Column],
+    column_moments: &[f64],
+    num_detectors: usize,
+) -> Vec<Vec<SuffixCompatibility>> {
+    assert_eq!(columns.len(), column_moments.len());
+    let mut tables = vec![Vec::new(); columns.len()];
+    let mut row_moments = vec![1.0; num_detectors];
+    for ((column, table), &moment) in columns
+        .iter()
+        .rev()
+        .zip(tables.iter_mut().rev())
+        .zip(column_moments.iter().rev())
+    {
+        *table = set_bits(&column.active_mask)
+            .map(|detector| {
+                let eta = row_moments[detector];
+                SuffixCompatibility {
+                    word_index: detector / WORD_BITS,
+                    bit_mask: 1 << (detector % WORD_BITS),
+                    log_probability_zero: 1.0_f64.midpoint(eta).ln(),
+                    log_probability_one: 1.0_f64.midpoint(-eta).ln(),
+                }
+            })
+            .collect();
+        for detector in set_bits(&column.detector_toggle) {
+            row_moments[detector] *= moment;
+        }
+    }
+    tables
+}
+
+fn bp_score_probability(posterior_llr: f64) -> f64 {
+    let probability = 1.0 / (1.0 + posterior_llr.exp());
+    probability.clamp(BP_SCORE_PROBABILITY_MIN, 1.0 - BP_SCORE_PROBABILITY_MIN)
+}
+
 fn debug_assert_model_invariants(columns: &[Column], touched_detectors: &[u64]) {
     #[cfg(debug_assertions)]
     {
@@ -1194,7 +1347,8 @@ fn and_not_assign(left: &mut [u64], right: &[u64]) {
 mod tests {
     use super::{
         FrontierCommittee, FrontierConfig, FrontierDecoder, FrontierLogicalMass, FrontierResult,
-        FrontierStatus, SparseDem, committee_rank, logaddexp, merge_indistinguishable_columns,
+        FrontierStatus, SparseDem, bp_score_probability, committee_rank, logaddexp,
+        merge_indistinguishable_columns,
     };
     use pecos_decoder_core::obs_mask::ObsMask;
     use std::collections::BTreeMap;
@@ -1254,6 +1408,15 @@ mod tests {
     }
 
     #[test]
+    fn bp_score_probability_clamps_saturated_llrs() {
+        assert_eq!(bp_score_probability(1_000.0).to_bits(), 1e-6_f64.to_bits());
+        assert_eq!(
+            bp_score_probability(-1_000.0).to_bits(),
+            (1.0 - 1e-6_f64).to_bits()
+        );
+    }
+
+    #[test]
     fn committee_merges_both_legs() {
         let dem = SparseDem {
             mechanisms: vec![
@@ -1273,6 +1436,7 @@ mod tests {
                 score_alpha: 0.8,
                 column_order: None,
                 merge_indistinguishable: true,
+                bp_score_iterations: 0,
             },
         )
         .unwrap();
@@ -1282,6 +1446,40 @@ mod tests {
         assert_eq!(forward.processed_columns, 2);
         assert_eq!(backward.processed_columns, 2);
         assert_eq!(forward.processed_columns, backward.processed_columns);
+    }
+
+    #[test]
+    fn committee_bp_legs_own_and_run_independent_state() {
+        let dem = SparseDem {
+            mechanisms: vec![
+                (0.15, vec![0], vec![]),
+                (0.15, vec![0, 1], vec![0]),
+                (0.08, vec![1], vec![]),
+            ],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 2,
+            num_observables: 1,
+        };
+        let mut committee = FrontierCommittee::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                k: 1,
+                delta: f64::INFINITY,
+                score_alpha: 0.8,
+                column_order: None,
+                merge_indistinguishable: false,
+                bp_score_iterations: 5,
+            },
+        )
+        .unwrap();
+        let forward_graph = &committee.forward.bp_score.as_ref().unwrap().graph;
+        let backward_graph = &committee.backward.bp_score.as_ref().unwrap().graph;
+        assert!(!std::ptr::eq(forward_graph, backward_graph));
+
+        let forward = committee.forward.decode(&[1, 0]).unwrap();
+        let backward = committee.backward.decode(&[1, 0]).unwrap();
+        assert!(forward.bp_seconds > 0.0);
+        assert!(backward.bp_seconds > 0.0);
     }
 
     #[test]
@@ -1295,6 +1493,7 @@ mod tests {
             transitions: 0,
             dropped_states: 0,
             dropped_log_mass: f64::NEG_INFINITY,
+            bp_seconds: 0.0,
             status: FrontierStatus::Exact,
             logical_masses: vec![FrontierLogicalMass {
                 logical: ObsMask::new(),

@@ -270,6 +270,105 @@ def test_selene_engine_uses_plugin_when_cargo_target_is_empty(tmp_path: Path) ->
     _run_selene_cwd_probe(tmp_path, empty_cargo_target)
 
 
+def test_qis_trace_capture_supports_leakage_measurement_futures(tmp_path: Path) -> None:
+    """The Helios leakage symbols must resolve instead of calling address zero."""
+    probe = tmp_path / "measure_leaked_trace_probe.py"
+    probe.write_text(
+        textwrap.dedent(
+            """
+            import pecos
+            from guppylang import guppy
+            from guppylang.std.builtins import result
+            from guppylang.std.qsystem import measure_leaked
+            from guppylang.std.quantum import qubit
+
+            @guppy
+            def measure_leakage() -> None:
+                measured = measure_leaked(qubit())
+                result("not leaked", not measured.is_leaked())
+                measured.discard()
+                result("constant detector", 0)
+
+            trace = pecos.capture_qis_operation_trace(measure_leakage, 1, seed=17)
+            assert trace
+            assert any(
+                item.get("name") == "not leaked"
+                for chunk in trace
+                for item in chunk.get("named_result_traces", [])
+            )
+            assert any(
+                item.get("name") == "constant detector" and item.get("values") == [False]
+                for chunk in trace
+                for item in chunk.get("named_result_traces", [])
+            )
+            """,
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(probe)],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_guppy_leakage_outcome_round_trips_through_qis(tmp_path: Path) -> None:
+    """A PECOS leakage outcome of 2 must reach Guppy's unsigned future intact."""
+    probe = tmp_path / "measure_leaked_outcome_probe.py"
+    probe.write_text(
+        textwrap.dedent(
+            """
+            import pecos
+            from guppylang import guppy
+            from guppylang.std.builtins import result
+            from guppylang.std.qsystem import measure_leaked
+            from guppylang.std.quantum import qubit, z
+
+            @guppy
+            def measure_forced_leakage() -> None:
+                q = qubit()
+                z(q)
+                measured = measure_leaked(q)
+                result("leaked", measured.is_leaked())
+                measured.discard()
+
+            noise = (
+                pecos.general_noise()
+                .with_p1(1.0)
+                .with_p1_emission_ratio(1.0)
+                .with_p1_emission_model({"L": 1.0})
+                .with_leakage_scale(1.0)
+            )
+            results = (
+                pecos.sim(measure_forced_leakage)
+                .classical(pecos.selene_engine())
+                .qubits(1)
+                .quantum(pecos.state_vector())
+                .noise(noise)
+                .seed(19)
+                .run(4)
+                .to_dict()
+            )
+            assert all(results["leaked"]), results
+            """,
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(probe)],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_sim_guppy_reuses_physical_slot_after_measurement() -> None:
     """Test that a recycled physical slot is reinitialized when Guppy reallocates a qubit."""
     import pecos

@@ -109,10 +109,10 @@ fn test_custom_depolarizing_noise() {
 
     // Use builder for custom depolarizing noise
     let noise_builder = DepolarizingNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_probability(0.01)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.1); // High two-qubit error
+        .with_p_prep(0.01)
+        .with_p_meas(0.01)
+        .with_p1(0.001)
+        .with_p2(0.1); // High two-qubit error
 
     let results = qasm_engine()
         .program(Qasm::from_string(qasm))
@@ -327,9 +327,9 @@ fn test_general_noise() {
     // Use GeneralNoiseModelBuilder instead of old GeneralNoise
     let noise_builder = GeneralNoiseModel::builder()
         .with_seed(42)
-        .with_p1_probability(0.001)
-        .with_meas_0_probability(0.001)
-        .with_meas_1_probability(0.001);
+        .with_p1(0.001)
+        .with_p_meas_0(0.001)
+        .with_p_meas_1(0.001);
 
     let results = qasm_engine()
         .program(Qasm::from_string(qasm))

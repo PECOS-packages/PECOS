@@ -65,6 +65,12 @@ pub struct OperationTraceChunk {
     pub lowered_quantum_ops: Vec<LoweredQuantumGateTrace>,
     pub lowered_quantum_ops_complete: bool,
     pub named_result_traces: Vec<NamedResultTrace>,
+    /// Physical measurement outcomes keyed by stable QIS result id.
+    ///
+    /// This is populated only on the terminal ``trace_complete`` chunk. It
+    /// lets consumers certify aggregate named-result provenance without
+    /// relying on when the compiled program happened to read each future.
+    pub measurement_results: BTreeMap<usize, u32>,
 }
 
 /// Shared in-memory store for traced QIS operation batches.
@@ -271,7 +277,7 @@ pub struct QisEngine {
     measurement_mapping: Vec<usize>,
 
     /// Stored measurement results for `get_results()`
-    measurement_results: BTreeMap<usize, bool>,
+    measurement_results: BTreeMap<usize, u32>,
 
     /// RNG for generating per-shot seeds
     rng: PecosRng,
@@ -321,26 +327,22 @@ pub struct QisEngine {
 }
 
 impl QisEngine {
-    fn parse_measurement_outcomes(message: &ByteMessage) -> Result<Vec<usize>, PecosError> {
+    fn parse_measurement_outcomes(message: &ByteMessage) -> Result<Vec<u32>, PecosError> {
         message
             .outcomes()
-            .map(|outcomes| outcomes.into_iter().map(|value| value as usize).collect())
+            .map(|outcomes| outcomes.into_iter().collect())
             .map_err(|e| PecosError::Generic(format!("Failed to parse measurements: {e}")))
     }
 
-    fn map_measurements(
-        measurement_mapping: &[usize],
-        measurements: &[usize],
-    ) -> Vec<(usize, bool)> {
+    fn map_measurements(measurement_mapping: &[usize], measurements: &[u32]) -> Vec<(usize, u32)> {
         measurement_mapping
             .iter()
             .copied()
             .zip(measurements.iter().copied())
-            .map(|(result_id, value)| (result_id, value != 0))
             .collect()
     }
 
-    fn store_measurement_updates(&mut self, updates: &[(usize, bool)]) {
+    fn store_measurement_updates(&mut self, updates: &[(usize, u32)]) {
         for &(result_id, value) in updates {
             self.measurement_results.insert(result_id, value);
             debug!("QisEngine: Stored measurement result_id={result_id}, value={value}");
@@ -349,14 +351,14 @@ impl QisEngine {
 
     fn provide_measurement_updates_to_runtime(
         &mut self,
-        updates: &[(usize, bool)],
+        updates: &[(usize, u32)],
     ) -> Result<(), PecosError> {
         if updates.is_empty() {
             return Ok(());
         }
-        let measurement_map: BTreeMap<usize, bool> = updates.iter().copied().collect();
+        let measurement_map: BTreeMap<usize, u32> = updates.iter().copied().collect();
         self.runtime
-            .provide_measurements(measurement_map)
+            .provide_measurement_outcomes(measurement_map)
             .map_err(|e| PecosError::Generic(format!("Failed to provide measurements: {e}")))
     }
 
@@ -703,6 +705,11 @@ impl QisEngine {
                             builder.mz(&[self.mapped_qubit(*qubit, qop)?]);
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
+                        QuantumOp::MeasureLeaked(qubit, result_id) => {
+                            self.measurement_mapping.push(*result_id);
+                            builder.measure_leakages(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
+                        }
                         QuantumOp::ZZ(qubit1, qubit2) => {
                             builder.szz(&[(
                                 self.mapped_qubit(*qubit1, qop)?,
@@ -850,6 +857,11 @@ impl QisEngine {
                         builder.mz(&[qubit]);
                         gate_metadata.push(metadata);
                     }
+                    QuantumOp::MeasureLeaked(qubit, result_id) => {
+                        self.measurement_mapping.push(result_id);
+                        builder.measure_leakages(&[qubit]);
+                        gate_metadata.push(metadata);
+                    }
                     QuantumOp::ZZ(qubit1, qubit2) => {
                         builder.szz(&[(qubit1, qubit2)]);
                         gate_metadata.push(metadata);
@@ -984,7 +996,7 @@ impl QisEngine {
                         .iter()
                         .map(|q| usize::from(*q))
                         .collect::<Vec<_>>();
-                    let measurement_result_ids = if gate_type == "MZ" {
+                    let measurement_result_ids = if matches!(gate_type.as_str(), "MZ" | "MeasureLeaked") {
                         let end = measurement_cursor + qubits.len();
                         if end > measurement_mapping.len() {
                             return Err(
@@ -1070,6 +1082,11 @@ impl QisEngine {
             lowered_quantum_ops: lowered_trace,
             lowered_quantum_ops_complete,
             named_result_traces: Vec::new(),
+            measurement_results: if stage == "trace_complete" {
+                self.measurement_results.clone()
+            } else {
+                BTreeMap::new()
+            },
         };
 
         if let Some(ref collector) = self.operation_trace_collector {
@@ -1140,6 +1157,7 @@ impl QisEngine {
             lowered_quantum_ops: Vec::new(),
             lowered_quantum_ops_complete: true,
             named_result_traces: named_result_traces.to_vec(),
+            measurement_results: BTreeMap::new(),
         };
 
         if let Some(ref collector) = self.operation_trace_collector {
@@ -1278,7 +1296,7 @@ impl QisEngine {
     }
 
     /// Set a measurement result for the running program
-    fn set_dynamic_result(&mut self, result_id: u64, value: bool) -> Result<(), PecosError> {
+    fn set_dynamic_result(&mut self, result_id: u64, value: u32) -> Result<(), PecosError> {
         let state = self
             .dynamic_state
             .as_ref()
@@ -1289,7 +1307,7 @@ impl QisEngine {
             .ok_or_else(|| PecosError::Generic("No sync handle available".to_string()))?;
 
         handle
-            .set_measurement_result(result_id, value)
+            .set_measurement_outcome(result_id, u64::from(value))
             .map_err(|e| PecosError::Generic(format!("Failed to set measurement result: {e}")))?;
         debug!("Set dynamic result: {result_id} = {value}");
         Ok(())
@@ -1442,7 +1460,7 @@ impl QisEngine {
     /// from stale state, and no later gate can certify that trace.
     fn provide_measurements_terminal(
         &mut self,
-        updates: &[(usize, bool)],
+        updates: &[(usize, u32)],
     ) -> Result<(), PecosError> {
         match self.provide_measurement_updates_to_runtime(updates) {
             Ok(()) => Ok(()),
@@ -1656,15 +1674,9 @@ impl ClassicalEngine for QisEngine {
         // results (from result() calls) are consistent.
         if !has_named_results {
             for (result_id, value) in &self.measurement_results {
-                shot.data.insert(
-                    format!("measurement_{result_id}"),
-                    Data::U32(u32::from(*value)),
-                );
-                debug!(
-                    "QisEngine: Added to shot: measurement_{} = {}",
-                    result_id,
-                    i32::from(*value)
-                );
+                shot.data
+                    .insert(format!("measurement_{result_id}"), Data::U32(*value));
+                debug!("QisEngine: Added to shot: measurement_{result_id} = {value}");
             }
         }
 
@@ -2063,6 +2075,67 @@ mod tests {
             in_memory[0].lowered_quantum_ops[3].measurement_result_ids,
             vec![7]
         );
+        assert!(in_memory[0].measurement_results.is_empty());
+        drop(in_memory);
+
+        engine.measurement_results.insert(7, 1);
+        engine.trace_complete_chunk();
+        let in_memory = collector.lock().expect("collector lock");
+        assert_eq!(in_memory[1].stage, "trace_complete");
+        assert_eq!(in_memory[1].measurement_results, BTreeMap::from([(7, 1)]));
+    }
+
+    #[test]
+    fn test_direct_lowering_preserves_leakage_measurement() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        let ops = vec![
+            Operation::AllocateQubit { id: 0 },
+            QuantumOp::MeasureLeaked(0, 8).into(),
+        ];
+
+        let lowered = engine
+            .lower_operations_to_commands(&ops)
+            .expect("lower leakage-aware measurement");
+        let quantum_ops = lowered
+            .commands
+            .quantum_ops()
+            .expect("parse quantum operations");
+
+        assert_eq!(quantum_ops.len(), 2);
+        assert_eq!(
+            quantum_ops[1].gate_type,
+            pecos_core::gate_type::GateType::MeasureLeaked
+        );
+        assert_eq!(engine.measurement_mapping, vec![8]);
+    }
+
+    #[test]
+    fn test_general_noise_returns_two_for_lowered_leakage_measurement() {
+        use pecos_engines::QuantumSystem;
+        use pecos_engines::noise::general::GeneralNoiseModel;
+        use pecos_engines::quantum::StateVecEngine;
+
+        let mut emission_model = BTreeMap::new();
+        emission_model.insert("L".to_string(), 1.0);
+        let noise = GeneralNoiseModel::builder()
+            .with_p1(1.0)
+            .with_p1_emission_ratio(1.0)
+            .with_p1_emission_model(&emission_model)
+            .build();
+        let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(1)));
+        let mut builder = ByteMessage::quantum_operations_builder();
+        builder.pz(&[0]);
+        builder.r1xy(
+            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+            Angle64::from_radians(3.0 * std::f64::consts::FRAC_PI_2),
+            &[0],
+        );
+        builder.rz(Angle64::HALF_TURN, &[0]);
+        builder.measure_leakages(&[0]);
+
+        let result = system.process(builder.build()).expect("simulate leakage");
+
+        assert_eq!(result.outcomes().expect("parse outcome"), vec![2]);
     }
 
     #[test]

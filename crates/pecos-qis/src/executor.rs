@@ -378,6 +378,7 @@ enum ExecutionEntryPoint<'a> {
 }
 type WaitForNeedResultFn = unsafe extern "C" fn(u64) -> u64;
 type SetMeasurementResultFn = unsafe extern "C" fn(u64, bool);
+type SetMeasurementOutcomeFn = unsafe extern "C" fn(u64, u64);
 type SignalResultReadyFn = unsafe extern "C" fn();
 type AbortExecutionFn = unsafe extern "C" fn();
 type GetNamedResultsJsonFn = unsafe extern "C" fn() -> *mut std::ffi::c_char;
@@ -434,6 +435,20 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         };
         unsafe { set_fn(result_id, value) };
         debug!("HeliosSyncHandle: Set measurement result {result_id} = {value}");
+        Ok(())
+    }
+
+    fn set_measurement_outcome(&self, result_id: u64, value: u64) -> Result<(), InterfaceError> {
+        let lib = Self::get_lib()?;
+        let set_fn: Symbol<SetMeasurementOutcomeFn> = unsafe {
+            lib.get(b"pecos_set_measurement_outcome\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_set_measurement_outcome: {e}"
+                ))
+            })?
+        };
+        unsafe { set_fn(result_id, value) };
+        debug!("HeliosSyncHandle: Set measurement outcome {result_id} = {value}");
         Ok(())
     }
 
@@ -2469,6 +2484,24 @@ impl QisInterface for QisHeliosInterface {
         };
         unsafe { set_fn(result_id, value) };
         debug!("Set measurement result via FFI: {result_id} = {value}");
+        Ok(())
+    }
+
+    fn set_measurement_outcome(
+        &mut self,
+        result_id: u64,
+        value: u64,
+    ) -> Result<(), InterfaceError> {
+        let lib = Self::get_qis_ffi_lib_singleton()?;
+        let set_fn: Symbol<SetMeasurementOutcomeFn> = unsafe {
+            lib.get(b"pecos_set_measurement_outcome\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_set_measurement_outcome: {e}"
+                ))
+            })?
+        };
+        unsafe { set_fn(result_id, value) };
+        debug!("Set measurement outcome via FFI: {result_id} = {value}");
         Ok(())
     }
 

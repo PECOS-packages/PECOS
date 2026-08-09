@@ -13,10 +13,10 @@ class TestSampleBatchConstruction:
         assert list(batch.get_syndrome(0)) == [1, 0]
         assert list(batch.get_syndrome(1)) == [0, 1]
 
-    def test_round_trip_get_observable_mask(self):
+    def test_round_trip_get_observable_flips(self):
         batch = SampleBatch([[1, 0], [0, 1]], [1, 0])
-        assert batch.get_observable_mask(0) == 1
-        assert batch.get_observable_mask(1) == 0
+        assert batch.get_observable_flips(0).mask == 1
+        assert batch.get_observable_flips(1).mask == 0
 
     def test_num_shots(self):
         batch = SampleBatch([[0, 0], [1, 1], [0, 1]], [0, 0, 0])
@@ -92,7 +92,7 @@ class TestGeneratedSampleBatch:
         assert len(observable_flips) == batch.num_shots
         for shot in range(batch.num_shots):
             assert detector_events[shot] == [bool(value) for value in batch.get_syndrome(shot)]
-            mask = batch.get_observable_mask(shot)
+            mask = batch.get_observable_flips(shot).mask
             assert observable_flips[shot] == [
                 bool(mask & (1 << observable)) for observable in range(sampler.num_observables)
             ]
@@ -114,10 +114,10 @@ class TestGeneratedSampleBatch:
         syn = batch.get_syndrome(0)
         assert len(syn) == sampler.num_detectors
 
-    def test_get_observable_mask_type(self, d3_setup):
+    def test_get_observable_flips_mask_type(self, d3_setup):
         sampler, _ = d3_setup
         batch = sampler.sample_batch(10, seed=42)
-        mask = batch.get_observable_mask(0)
+        mask = batch.get_observable_flips(0).mask
         assert isinstance(mask, int)
 
     def test_decode_count(self, d3_setup):

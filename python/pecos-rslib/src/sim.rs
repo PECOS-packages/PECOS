@@ -654,7 +654,8 @@ impl PySimBuilder {
     /// This is the preferred programmatic tracing path for QIS-control simulations.
     /// It collects the structured trace in memory first, and any JSON dumping
     /// configured via `trace_operations(...)` becomes an optional mirror/export.
-    fn capture_operation_trace(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (shots=1))]
+    fn capture_operation_trace(&self, py: Python<'_>, shots: usize) -> PyResult<Py<PyAny>> {
         use crate::engine_builders::{
             PyBiasedDepolarizingNoiseModelBuilder, PyDepolarizingNoiseModelBuilder,
             PyGeneralNoiseModelBuilder,
@@ -761,7 +762,7 @@ impl PySimBuilder {
                 if let Some(ref noise_py) = builder.noise_builder {
                     sim_builder =
                         if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
-                            sim_builder.noise(general.inner.clone())
+                            sim_builder.noise(general.validated_inner()?)
                         } else if let Ok(depolarizing) =
                             noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                         {
@@ -778,7 +779,12 @@ impl PySimBuilder {
                         };
                 }
 
-                sim_builder.run(1).map_err(|e| {
+                if shots == 0 {
+                    return Err(PyValueError::new_err(
+                        "capture_operation_trace shots must be greater than zero",
+                    ));
+                }
+                sim_builder.run(shots).map_err(|e| {
                     PyRuntimeError::new_err(format!("Trace capture simulation failed: {e}"))
                 })?;
 
@@ -946,7 +952,7 @@ impl PySimBuilder {
                 if let Some(ref noise_py) = builder.noise_builder {
                     sim_builder = Python::attach(|py| -> PyResult<_> {
                         if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
-                            Ok(sim_builder.noise(general.inner.clone()))
+                            Ok(sim_builder.noise(general.validated_inner()?))
                         } else if let Ok(depolarizing) =
                             noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                         {
@@ -1122,7 +1128,7 @@ impl PySimBuilder {
                 if let Some(ref noise_py) = builder.noise_builder {
                     sim_builder = Python::attach(|py| -> PyResult<_> {
                         if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
-                            Ok(sim_builder.noise(general.inner.clone()))
+                            Ok(sim_builder.noise(general.validated_inner()?))
                         } else if let Ok(depolarizing) =
                             noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                         {
@@ -1288,7 +1294,7 @@ impl PySimBuilder {
                         sim_builder = Python::attach(|py| -> PyResult<_> {
                             if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(general.inner.clone()))
+                                Ok(sim_builder.noise(general.validated_inner()?))
                             } else if let Ok(depolarizing) =
                                 noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                             {
@@ -1488,7 +1494,7 @@ impl PySimBuilder {
                         sim_builder = Python::attach(|py| -> PyResult<_> {
                             if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(general.inner.clone()))
+                                Ok(sim_builder.noise(general.validated_inner()?))
                             } else if let Ok(depolarizing) =
                                 noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                             {
@@ -1660,7 +1666,7 @@ impl PySimBuilder {
                         sim_builder = Python::attach(|py| -> PyResult<_> {
                             if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(general.inner.clone()))
+                                Ok(sim_builder.noise(general.validated_inner()?))
                             } else if let Ok(depolarizing) =
                                 noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                             {
@@ -1873,7 +1879,7 @@ fn apply_noise_to_facade(
 
     Python::attach(|py| -> PyResult<_> {
         if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
-            Ok(facade.noise(general.inner.clone()))
+            Ok(facade.noise(general.validated_inner()?))
         } else if let Ok(depolarizing) = noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py) {
             Ok(facade.noise(depolarizing.inner.clone()))
         } else if let Ok(biased) = noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py) {

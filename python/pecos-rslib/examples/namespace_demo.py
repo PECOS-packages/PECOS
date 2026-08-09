@@ -85,8 +85,8 @@ def namespace_usage_examples() -> None:
         .seed(42)\\
         .quantum_engine(quantum.sparse_stab())\\
         .noise(noise.depolarizing()
-               .with_prep_probability(0.001)
-               .with_p1_probability(0.01))\\
+               .with_p_prep(0.001)
+               .with_p1(0.01))\\
         .run(1000)
     """,
     )
@@ -130,11 +130,7 @@ def run_example_simulations() -> None:
         .to_sim()
         .quantum_engine(pecos_rslib.quantum.sparse_stab())
         .noise(
-            pecos_rslib.noise.depolarizing()
-            .with_prep_probability(0.001)
-            .with_meas_probability(0.001)
-            .with_p1_probability(0.002)
-            .with_p2_probability(0.01),
+            pecos_rslib.noise.depolarizing().with_p_prep(0.001).with_p_meas(0.001).with_p1(0.002).with_p2(0.01),
         )
         .run(1000)
     )
@@ -148,7 +144,7 @@ def run_example_simulations() -> None:
     sim = engines.qasm().program(bell_state).to_sim()
     sim.seed(12345)
     sim.quantum_engine(quantum.sparse_stab())  # Using the alias
-    sim.noise(noise.general().with_p1_probability(0.001))
+    sim.noise(noise.general().with_p1(0.001))
     results = sim.run(500)
     print("   Ran 500 shots with imported namespaces")
 

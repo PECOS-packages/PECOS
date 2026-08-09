@@ -196,7 +196,7 @@ def _replay_qis_trace_into_tick_circuit(
                 float(theta),
                 [(mapped_slot(int(qubit_a), op_name), mapped_slot(int(qubit_b), op_name))],
             )
-        elif op_name == "Measure":
+        elif op_name in {"Measure", "MeasureLeaked"}:
             program_id, result_id = tuple_args(payload, op_name, 2)
             measurement_qubit = mapped_slot(int(program_id), op_name)
             if _should_add_global_measurement_crosstalk_payload(
@@ -321,9 +321,12 @@ def _replay_lowered_qis_trace_into_tick_circuit(
     a tick --- matching the parallel structure of the abstract circuit.
 
     MeasIds flow from runtime-lowered measurement provenance:
-    ``lowered_quantum_ops`` MZ entries must carry ``measurement_result_ids``.
-    This avoids inferring lowered measurement IDs from raw QIS operation order,
-    which is not stable under runtime scheduling or transport.
+    ``lowered_quantum_ops`` MZ and MeasureLeaked entries must carry
+    ``measurement_result_ids``. MeasureLeaked is replayed as the Boolean MZ
+    component of the accepted no-leakage path; leakage probability remains
+    outside the Pauli circuit/DEM model. This avoids inferring lowered
+    measurement IDs from raw QIS operation order, which is not stable under
+    runtime scheduling or transport.
     """
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
         measurement_crosstalk_topology,
@@ -372,10 +375,10 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                     msg = f"Lowered Idle gate expected one duration param, got {params!r}"
                     raise ValueError(msg)
                 tick.idle(_runtime_idle_seconds_to_time_units(params[0]), qubits)
-            elif gate_type == "MZ":
+            elif gate_type in {"MZ", "MeasureLeaked"}:
                 if not isinstance(gate.get("measurement_result_ids"), list):
                     msg = (
-                        "Lowered MZ trace is missing measurement_result_ids; "
+                        f"Lowered {gate_type} trace is missing measurement_result_ids; "
                         "rebuild PECOS so runtime-lowered measurements carry "
                         "their result-id provenance instead of relying on "
                         "operation-order inference."
@@ -387,7 +390,10 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                     gate_type,
                 )
                 if len(meas_ids) != len(qubits):
-                    msg = f"Lowered MZ gate carries {len(meas_ids)} measurement_result_ids for {len(qubits)} qubit(s)"
+                    msg = (
+                        f"Lowered {gate_type} gate carries {len(meas_ids)} "
+                        f"measurement_result_ids for {len(qubits)} qubit(s)"
+                    )
                     raise ValueError(msg)
                 if _should_add_global_measurement_crosstalk_payload(
                     measurement_crosstalk_topology,
@@ -645,6 +651,8 @@ def source_measurement_ids_from_operation_trace(chunks: list[dict[str, Any]]) ->
             if not isinstance(quantum, Mapping):
                 continue
             measure = quantum.get("Measure")
+            if measure is None:
+                measure = quantum.get("MeasureLeaked")
             if not isinstance(measure, Sequence) or isinstance(measure, (str, bytes)) or len(measure) != 2:
                 continue
             result_id = measure[1]

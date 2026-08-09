@@ -270,8 +270,8 @@ impl DType {
     fn __call__<'py>(&self, py: Python<'py>, value: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         match self {
             DType::Bool => {
-                // Convert to bool and return as Python bool
-                let bool_val = value.extract::<bool>()?;
+                // Match Python/NumPy boolean scalar construction via truth-value testing.
+                let bool_val = value.is_truthy()?;
                 Ok(PyBool::new(py, bool_val).to_owned().into_any().unbind())
             }
             DType::F64 => {
@@ -4233,6 +4233,7 @@ pub fn register_dtypes_module(parent_module: &Bound<'_, PyModule>) -> PyResult<(
 
     // Create singleton instances for each dtype (Rust-based names)
     dtypes.add("bool", DType::Bool)?;
+    dtypes.add("bool_", DType::Bool)?;
     // Signed integers
     dtypes.add("i8", DType::I8)?;
     dtypes.add("i16", DType::I16)?;

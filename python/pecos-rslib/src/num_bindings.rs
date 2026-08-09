@@ -29,7 +29,7 @@
 #![allow(clippy::needless_question_mark)] // PyO3 error handling patterns
 #![allow(clippy::redundant_closure_for_method_calls)] // Closures more readable for complex operations
 
-use ndarray::{Array as NdArray, Array1, ArrayD, Axis, IxDyn};
+use ndarray::{Array as NdArray, Array1, ArrayD, Axis, Dimension, IxDyn};
 use num_complex::Complex64;
 // REMOVED: use numpy::{
 //     IntoPyArray, PyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
@@ -37,7 +37,7 @@ use num_complex::Complex64;
 use pyo3::conversion::IntoPyObjectExt;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyTuple, PyType};
 
 // Import Array and ArrayData from pecos_array module for migration from numpy.ndarray to Array
 use crate::pecos_array::{Array, ArrayData};
@@ -53,6 +53,12 @@ use crate::pecos_random_bindings::RngPcg;
 use crate::prelude::{
     BrentqOptions, CurveFitError, CurveFitOptions, NewtonOptions, Poly1d as RustPoly1d,
 };
+
+const SUPPORTED_DTYPES: &str = "'float64'/'float', 'float32'/'f32', 'complex128'/'complex', 'int64'/'int'/'i64', 'int32'/'i32', 'int16'/'i16', 'int8'/'i8', 'uint64'/'u64', 'uint32'/'u32', 'uint16'/'u16', 'uint8'/'u8', 'bool'";
+
+/// Abstract integer dtype category used by `issubdtype`.
+#[pyclass(name = "integer", module = "pecos_rslib.num")]
+struct IntegerDType;
 
 /// Helper function to convert `CurveFitError` to appropriate Python exception.
 ///
@@ -2543,12 +2549,13 @@ fn linspace(
 /// print(x)  # [0, 1, 2, 3, 4]
 /// ```
 #[pyfunction]
-#[pyo3(signature = (start, stop=None, step=None))]
+#[pyo3(signature = (start, stop=None, step=None, dtype=None))]
 fn arange(
     py: Python<'_>,
     start: Bound<'_, PyAny>,
     stop: Option<Bound<'_, PyAny>>,
     step: Option<Bound<'_, PyAny>>,
+    dtype: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<Array>> {
     // Handle single-argument case: arange(stop) → arange(0, stop, 1)
     let default_step = || -> Bound<'_, PyAny> {
@@ -2578,24 +2585,105 @@ fn arange(
 
     let all_ints = is_int(&start_param) && is_int(&stop_param) && is_int(&step_param);
 
-    // Extract float values for computation
+    let target_dtype = if let Some(dtype) = dtype {
+        if let Ok(dtype) = dtype.extract::<crate::dtypes::DType>() {
+            dtype
+        } else if let Ok(dtype) = dtype.extract::<&str>() {
+            crate::dtypes::DType::from_str(dtype)?
+        } else {
+            return Err(PyTypeError::new_err("dtype must be a string or DType enum"));
+        }
+    } else if all_ints {
+        crate::dtypes::DType::I64
+    } else {
+        crate::dtypes::DType::F64
+    };
+
+    if all_ints {
+        let start = start_param.extract::<i128>()?;
+        let stop = stop_param.extract::<i128>()?;
+        let step = step_param.extract::<i128>()?;
+        if step == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "step must not be zero",
+            ));
+        }
+
+        macro_rules! integer_range {
+            ($type:ty, $constructor:ident, $name:literal) => {{
+                let mut values = Vec::<$type>::new();
+                let mut current = start;
+                while (step > 0 && current < stop) || (step < 0 && current > stop) {
+                    values.push(<$type>::try_from(current).map_err(|_| {
+                        pyo3::exceptions::PyOverflowError::new_err(format!(
+                            "value {current} is out of range for {}",
+                            $name
+                        ))
+                    })?);
+                    current = current.checked_add(step).ok_or_else(|| {
+                        pyo3::exceptions::PyOverflowError::new_err("arange value overflow")
+                    })?;
+                }
+                return Py::new(py, Array::$constructor(Array1::from(values).into_dyn()));
+            }};
+        }
+
+        match target_dtype {
+            crate::dtypes::DType::I8 => integer_range!(i8, from_array_i8, "int8"),
+            crate::dtypes::DType::I16 => integer_range!(i16, from_array_i16, "int16"),
+            crate::dtypes::DType::I32 => integer_range!(i32, from_array_i32, "int32"),
+            crate::dtypes::DType::I64 => integer_range!(i64, from_array_i64, "int64"),
+            crate::dtypes::DType::U8 => integer_range!(u8, from_array_u8, "uint8"),
+            crate::dtypes::DType::U16 => integer_range!(u16, from_array_u16, "uint16"),
+            crate::dtypes::DType::U32 => integer_range!(u32, from_array_u32, "uint32"),
+            crate::dtypes::DType::U64 => integer_range!(u64, from_array_u64, "uint64"),
+            _ => {}
+        }
+    }
+
+    // Generate non-integral ranges through the existing floating-point primitive.
     let start_f64: f64 = start_param.extract()?;
     let stop_f64: f64 = stop_param.extract()?;
     let step_f64: f64 = step_param.extract()?;
-
-    // Generate the range using Rust implementation
     let result_f64 = crate::prelude::arange(start_f64, stop_f64, step_f64);
 
-    // Return appropriate dtype based on inference
-    if all_ints {
-        // Convert to int64 array
-        #[allow(clippy::cast_possible_truncation)] // Intentional truncation for int array
-        let result_i64: Array1<i64> = result_f64.mapv(|x| x as i64);
-        Py::new(py, Array::from_array_i64(result_i64.into_dyn()))
-    } else {
-        // Return as float64 array
-        Py::new(py, Array::from_array_f64(result_f64.into_dyn()))
+    if matches!(
+        target_dtype,
+        crate::dtypes::DType::U8
+            | crate::dtypes::DType::U16
+            | crate::dtypes::DType::U32
+            | crate::dtypes::DType::U64
+    ) {
+        let upper_bound = match target_dtype {
+            crate::dtypes::DType::U8 => f64::from(u8::MAX) + 1.0,
+            crate::dtypes::DType::U16 => f64::from(u16::MAX) + 1.0,
+            crate::dtypes::DType::U32 => f64::from(u32::MAX) + 1.0,
+            crate::dtypes::DType::U64 => 18_446_744_073_709_551_616.0,
+            _ => unreachable!(),
+        };
+        if result_f64
+            .iter()
+            .any(|&value| !value.is_finite() || value < 0.0 || value >= upper_bound)
+        {
+            return Err(pyo3::exceptions::PyOverflowError::new_err(format!(
+                "arange value is out of range for {}",
+                target_dtype.to_numpy_str()
+            )));
+        }
     }
+
+    if matches!(
+        target_dtype,
+        crate::dtypes::DType::Pauli | crate::dtypes::DType::PauliString
+    ) {
+        return Err(PyTypeError::new_err(format!(
+            "arange() does not support dtype {}. Supported: {SUPPORTED_DTYPES}",
+            target_dtype.to_numpy_str()
+        )));
+    }
+
+    let result = Array::from_array_f64(result_f64.into_dyn()).astype(target_dtype);
+    Py::new(py, result)
 }
 
 /// Create a new array filled with zeros.
@@ -2648,6 +2736,11 @@ fn zeros(
             "shape must be an integer or tuple of integers",
         ));
     };
+    if !(1..=3).contains(&shape_vec.len()) {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "only 1D, 2D, and 3D arrays are currently supported",
+        ));
+    }
 
     // Convert dtype to string - accept both DType enum and string, default to "float64"
     let dtype_str = if let Some(dt) = dtype {
@@ -2698,7 +2791,7 @@ fn zeros(
             };
             Py::new(py, Array::from_array_c128(arr))
         }
-        "int64" | "int" => {
+        "int64" | "int" | "i64" => {
             let arr = match shape_vec.len() {
                 1 => NdArray::from_elem(shape_vec[0], 0i64).into_dyn(),
                 2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 0i64).into_dyn(),
@@ -2770,6 +2863,22 @@ fn zeros(
             };
             Py::new(py, Array::from_array_i8(arr))
         }
+        "uint64" | "u64" => {
+            let arr = ArrayD::from_elem(IxDyn(&shape_vec), 0_u64);
+            Py::new(py, Array::from_array_u64(arr))
+        }
+        "uint32" | "u32" => {
+            let arr = ArrayD::from_elem(IxDyn(&shape_vec), 0_u32);
+            Py::new(py, Array::from_array_u32(arr))
+        }
+        "uint16" | "u16" => {
+            let arr = ArrayD::from_elem(IxDyn(&shape_vec), 0_u16);
+            Py::new(py, Array::from_array_u16(arr))
+        }
+        "uint8" | "u8" => {
+            let arr = ArrayD::from_elem(IxDyn(&shape_vec), 0_u8);
+            Py::new(py, Array::from_array_u8(arr))
+        }
         "bool" => {
             let arr = match shape_vec.len() {
                 1 => NdArray::from_elem(shape_vec[0], false).into_dyn(),
@@ -2786,7 +2895,7 @@ fn zeros(
             Py::new(py, Array::from_array_bool(arr))
         }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "unsupported dtype: {dtype_str}. Supported: 'float64', 'float32', 'complex128', 'int64', 'int32', 'int16', 'int8', 'bool'"
+            "unsupported dtype: {dtype_str}. Supported: {SUPPORTED_DTYPES}"
         ))),
     }
 }
@@ -2841,6 +2950,11 @@ fn ones(
             "shape must be an integer or tuple of integers",
         ));
     };
+    if !(1..=3).contains(&shape_vec.len()) {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "only 1D, 2D, and 3D arrays are currently supported",
+        ));
+    }
 
     // Convert dtype to string - accept both DType enum and string, default to "float64"
     let dtype_str = if let Some(dt) = dtype {
@@ -2891,7 +3005,7 @@ fn ones(
             };
             Py::new(py, Array::from_array_c128(arr))
         }
-        "int64" | "int" => {
+        "int64" | "int" | "i64" => {
             let arr = match shape_vec.len() {
                 1 => NdArray::from_elem(shape_vec[0], 1i64).into_dyn(),
                 2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 1i64).into_dyn(),
@@ -2963,6 +3077,22 @@ fn ones(
             };
             Py::new(py, Array::from_array_i8(arr))
         }
+        "uint64" | "u64" => {
+            let arr = ArrayD::from_elem(IxDyn(&shape_vec), 1_u64);
+            Py::new(py, Array::from_array_u64(arr))
+        }
+        "uint32" | "u32" => {
+            let arr = ArrayD::from_elem(IxDyn(&shape_vec), 1_u32);
+            Py::new(py, Array::from_array_u32(arr))
+        }
+        "uint16" | "u16" => {
+            let arr = ArrayD::from_elem(IxDyn(&shape_vec), 1_u16);
+            Py::new(py, Array::from_array_u16(arr))
+        }
+        "uint8" | "u8" => {
+            let arr = ArrayD::from_elem(IxDyn(&shape_vec), 1_u8);
+            Py::new(py, Array::from_array_u8(arr))
+        }
         "bool" => {
             let arr = match shape_vec.len() {
                 1 => NdArray::from_elem(shape_vec[0], true).into_dyn(),
@@ -2979,7 +3109,7 @@ fn ones(
             Py::new(py, Array::from_array_bool(arr))
         }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "unsupported dtype: {dtype_str}. Supported: 'float64', 'float32', 'complex128', 'int64', 'int32', 'int16', 'int8', 'bool'"
+            "unsupported dtype: {dtype_str}. Supported: {SUPPORTED_DTYPES}"
         ))),
     }
 }
@@ -3097,6 +3227,14 @@ fn array(
             // It's our DType enum - convert to numpy-compatible string
             let numpy_str = dtype_enum.to_numpy_str();
             dict.set_item("dtype", numpy_str)?;
+        } else if let Ok(dtype_name) = dt.extract::<&str>() {
+            // PECOS spellings such as "u8" deliberately mean the native bit width,
+            // whereas NumPy interprets "u8" as an eight-byte integer.
+            if let Ok(dtype_enum) = DType::from_str(dtype_name) {
+                dict.set_item("dtype", dtype_enum.to_numpy_str())?;
+            } else {
+                dict.set_item("dtype", dt)?;
+            }
         } else {
             // It's already a string or numpy dtype - pass through directly
             dict.set_item("dtype", dt)?;
@@ -3188,6 +3326,22 @@ fn array(
                 },
             )
         }
+        "u1" | "|u1" | "=u1" | "<u1" | ">u1" => {
+            let ndarray = array_buffer::extract_u8_array(&np_array)?;
+            Py::new(py, Array::from_array_u8(ndarray))
+        }
+        "<u2" | ">u2" | "=u2" => {
+            let ndarray = array_buffer::extract_u16_array(&np_array)?;
+            Py::new(py, Array::from_array_u16(ndarray))
+        }
+        "<u4" | ">u4" | "=u4" => {
+            let ndarray = array_buffer::extract_u32_array(&np_array)?;
+            Py::new(py, Array::from_array_u32(ndarray))
+        }
+        "<u8" | ">u8" | "=u8" => {
+            let ndarray = array_buffer::extract_u64_array(&np_array)?;
+            Py::new(py, Array::from_array_u64(ndarray))
+        }
         "|b1" => {
             let ndarray = array_buffer::extract_bool_array(&np_array)?;
             Py::new(
@@ -3207,7 +3361,7 @@ fn array(
             )
         }
         _ => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-            "Unsupported dtype '{typestr_str}' in array()"
+            "Unsupported dtype '{typestr_str}' in array(). Supported typestring kinds: 'b', 'i', 'u', 'f', 'c'"
         ))),
     }
 }
@@ -3288,6 +3442,121 @@ fn asarray(
 
     // Input is not an Array - delegate to array() which will create one
     array(py, obj, dtype)
+}
+
+/// Return the indices of non-zero elements, grouped by dimension.
+#[pyfunction]
+fn nonzero(py: Python<'_>, a: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let array = asarray(py, a, None)?;
+    let array = array.bind(py).borrow();
+    let truth_values = array.data.to_bool_array();
+    if truth_values.ndim() == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Calling nonzero on 0d arrays is not allowed. Use an array with at least one dimension.",
+        ));
+    }
+    let mut coordinates = vec![Vec::<i64>::new(); truth_values.ndim()];
+
+    for (index, &is_nonzero) in truth_values.indexed_iter() {
+        if is_nonzero {
+            for (axis, &coordinate) in index.slice().iter().enumerate() {
+                coordinates[axis].push(i64::try_from(coordinate).map_err(|_| {
+                    pyo3::exceptions::PyOverflowError::new_err("array index does not fit in int64")
+                })?);
+            }
+        }
+    }
+
+    let result = coordinates
+        .into_iter()
+        .map(|axis| Py::new(py, Array::from_array_i64(Array1::from(axis).into_dyn())))
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(PyTuple::new(py, result)?.into_any().unbind())
+}
+
+/// Return an array of zeros with the same shape and dtype as the input.
+#[pyfunction]
+fn zeros_like(py: Python<'_>, a: Bound<'_, PyAny>) -> PyResult<Py<Array>> {
+    let array = asarray(py, a, None)?;
+    let array = array.bind(py).borrow();
+
+    macro_rules! zeros_like_variant {
+        ($array:expr, $variant:ident, $zero:expr) => {
+            Array {
+                data: ArrayData::$variant(ArrayD::from_elem($array.raw_dim(), $zero)),
+            }
+        };
+    }
+
+    let result = match &array.data {
+        ArrayData::Bool(array) => zeros_like_variant!(array, Bool, false),
+        ArrayData::I8(array) => zeros_like_variant!(array, I8, 0_i8),
+        ArrayData::I16(array) => zeros_like_variant!(array, I16, 0_i16),
+        ArrayData::I32(array) => zeros_like_variant!(array, I32, 0_i32),
+        ArrayData::I64(array) => zeros_like_variant!(array, I64, 0_i64),
+        ArrayData::U8(array) => zeros_like_variant!(array, U8, 0_u8),
+        ArrayData::U16(array) => zeros_like_variant!(array, U16, 0_u16),
+        ArrayData::U32(array) => zeros_like_variant!(array, U32, 0_u32),
+        ArrayData::U64(array) => zeros_like_variant!(array, U64, 0_u64),
+        ArrayData::F32(array) => zeros_like_variant!(array, F32, 0.0_f32),
+        ArrayData::F64(array) => zeros_like_variant!(array, F64, 0.0_f64),
+        ArrayData::Complex64(array) => {
+            zeros_like_variant!(array, Complex64, num_complex::Complex32::new(0.0, 0.0))
+        }
+        ArrayData::Complex128(array) => {
+            zeros_like_variant!(array, Complex128, Complex64::new(0.0, 0.0))
+        }
+        ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
+            return Err(PyTypeError::new_err(
+                "zeros_like() requires an array with a numeric dtype",
+            ));
+        }
+    };
+    Py::new(py, result)
+}
+
+fn is_integer_category(arg: &Bound<'_, PyAny>) -> bool {
+    arg.is(arg.py().get_type::<IntegerDType>().as_any())
+}
+
+fn dtype_from_argument(arg: &Bound<'_, PyAny>) -> PyResult<crate::dtypes::DType> {
+    if let Ok(dtype) = arg.extract::<crate::dtypes::DType>() {
+        return Ok(dtype);
+    }
+    if let Ok(name) = arg.extract::<&str>() {
+        return crate::dtypes::DType::from_str(name);
+    }
+    if arg.cast::<PyType>().is_ok() {
+        let name: String = arg.getattr("__name__")?.extract()?;
+        return crate::dtypes::DType::from_str(&name);
+    }
+    Err(PyTypeError::new_err(format!(
+        "cannot interpret {arg} as a dtype"
+    )))
+}
+
+/// Return whether one dtype is a subtype of another dtype or dtype category.
+#[pyfunction]
+fn issubdtype(arg1: Bound<'_, PyAny>, arg2: Bound<'_, PyAny>) -> PyResult<bool> {
+    if is_integer_category(&arg1) {
+        return Ok(is_integer_category(&arg2));
+    }
+
+    let dtype1 = dtype_from_argument(&arg1)?;
+    if is_integer_category(&arg2) {
+        return Ok(matches!(
+            dtype1,
+            crate::dtypes::DType::I8
+                | crate::dtypes::DType::I16
+                | crate::dtypes::DType::I32
+                | crate::dtypes::DType::I64
+                | crate::dtypes::DType::U8
+                | crate::dtypes::DType::U16
+                | crate::dtypes::DType::U32
+                | crate::dtypes::DType::U64
+        ));
+    }
+    Ok(dtype1 == dtype_from_argument(&arg2)?)
 }
 
 /// Delete an element at a specific index from a 1D array.
@@ -3407,6 +3676,125 @@ fn delete(py: Python<'_>, arr: Bound<'_, PyAny>, index: usize) -> PyResult<Py<Py
     Err(PyTypeError::new_err("Unsupported array type for delete"))
 }
 
+fn normalize_reduction_axis(axis: isize, ndim: usize) -> PyResult<usize> {
+    let normalized = if axis < 0 { ndim as isize + axis } else { axis };
+    if normalized < 0 || normalized as usize >= ndim {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "axis {axis} is out of bounds for array of dimension {ndim}"
+        )));
+    }
+    Ok(normalized as usize)
+}
+
+fn checked_unsigned_sum<T>(mut values: impl Iterator<Item = T>) -> PyResult<u64>
+where
+    T: Into<u64>,
+{
+    values.try_fold(0_u64, |sum, value| {
+        sum.checked_add(value.into()).ok_or_else(|| {
+            pyo3::exceptions::PyOverflowError::new_err("unsigned integer sum exceeds uint64")
+        })
+    })
+}
+
+fn checked_unsigned_sum_axis<T>(array: &ArrayD<T>, axis: usize) -> PyResult<ArrayD<u64>>
+where
+    T: Copy + Into<u64>,
+{
+    let mut overflowed = false;
+    let result = array.map_axis(Axis(axis), |lane| {
+        checked_unsigned_sum(lane.iter().copied()).unwrap_or_else(|_| {
+            overflowed = true;
+            0
+        })
+    });
+    if overflowed {
+        Err(pyo3::exceptions::PyOverflowError::new_err(
+            "unsigned integer sum exceeds uint64",
+        ))
+    } else {
+        Ok(result)
+    }
+}
+
+fn sum_unsigned_array(py: Python<'_>, array: &Array, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    macro_rules! sum_unsigned {
+        ($array:expr) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                let result = checked_unsigned_sum_axis($array, axis)?;
+                return Ok(Py::new(py, Array::from_array_u64(result))?.into_any());
+            }
+            return checked_unsigned_sum($array.iter().copied())?.into_py_any(py);
+        }};
+    }
+
+    match &array.data {
+        ArrayData::U8(array) => sum_unsigned!(array),
+        ArrayData::U16(array) => sum_unsigned!(array),
+        ArrayData::U32(array) => sum_unsigned!(array),
+        ArrayData::U64(array) => sum_unsigned!(array),
+        _ => Err(PyTypeError::new_err("expected an unsigned integer array")),
+    }
+}
+
+fn extreme_unsigned_array(
+    py: Python<'_>,
+    array: &Array,
+    axis: Option<isize>,
+    find_maximum: bool,
+) -> PyResult<Py<PyAny>> {
+    macro_rules! extreme_unsigned {
+        ($array:expr, $variant:ident, $minimum:expr, $maximum:expr) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                let initial = if find_maximum { $minimum } else { $maximum };
+                let result = $array.fold_axis(Axis(axis), initial, |&current, &value| {
+                    if (find_maximum && value > current) || (!find_maximum && value < current) {
+                        value
+                    } else {
+                        current
+                    }
+                });
+                return Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::$variant(result),
+                    },
+                )?
+                .into_any());
+            }
+
+            let value = if find_maximum {
+                $array.iter().max()
+            } else {
+                $array.iter().min()
+            }
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "zero-size array reduction has no identity",
+                )
+            })?;
+            return (*value).into_py_any(py);
+        }};
+    }
+
+    match &array.data {
+        ArrayData::U8(array) => extreme_unsigned!(array, U8, u8::MIN, u8::MAX),
+        ArrayData::U16(array) => extreme_unsigned!(array, U16, u16::MIN, u16::MAX),
+        ArrayData::U32(array) => extreme_unsigned!(array, U32, u32::MIN, u32::MAX),
+        ArrayData::U64(array) => extreme_unsigned!(array, U64, u64::MIN, u64::MAX),
+        _ => Err(PyTypeError::new_err("expected an unsigned integer array")),
+    }
+}
+
+fn input_has_unsigned_dtype(a: &Bound<'_, PyAny>) -> bool {
+    a.getattr("dtype")
+        .and_then(|dtype| dtype.getattr("kind"))
+        .and_then(|kind| kind.extract::<String>())
+        .is_ok_and(|kind| kind == "u")
+}
+
 /// Calculate the sum of array elements.
 ///
 /// Drop-in replacement for `numpy.sum()` with full polymorphism and axis support.
@@ -3452,6 +3840,19 @@ fn delete(py: Python<'_>, arr: Bound<'_, PyAny>, index: usize) -> PyResult<Py<Py
 fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
     use num_complex::Complex64;
 
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
+        && matches!(
+            array.data,
+            ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_)
+        )
+    {
+        return sum_unsigned_array(py, &array, axis);
+    }
+    if input_has_unsigned_dtype(&a) {
+        let converted = array(py, a, None)?;
+        return sum(py, converted.into_bound(py).into_any(), axis);
+    }
+
     // Handle axis=None case: sum all elements
     if axis.is_none() {
         // Check if it's a numpy array by checking for 'dtype' attribute
@@ -3467,7 +3868,7 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
                         let result: i64 = arr.iter().map(|&b| i64::from(b)).sum();
                         return Ok(result.into_py_any(py)?);
                     }
-                    "i" | "u" => {
+                    "i" => {
                         // Integer array
                         let arr = array_buffer::extract_i64_array(&a)?;
                         let result: i64 = arr.iter().sum();
@@ -3487,7 +3888,7 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
                     }
                     _ => {
                         return Err(PyTypeError::new_err(format!(
-                            "Unsupported dtype kind: {kind}"
+                            "Unsupported dtype kind: {kind}. Supported: 'b', 'i', 'u', 'f', 'c'"
                         )));
                     }
                 }
@@ -3642,6 +4043,18 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
 #[pyo3(signature = (a, axis=None))]
 #[allow(clippy::needless_pass_by_value)]
 fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
+        && matches!(
+            array.data,
+            ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_)
+        )
+    {
+        return extreme_unsigned_array(py, &array, axis, true);
+    }
+    if input_has_unsigned_dtype(&a) {
+        let converted = array(py, a, None)?;
+        return max(py, converted.into_bound(py).into_any(), axis);
+    }
     // Handle axis=None case: find global maximum
     if axis.is_none() {
         // Check if it's a numpy array by checking for 'dtype' attribute
@@ -3657,7 +4070,7 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
                         let result = arr.iter().any(|&x| x);
                         return Ok(result.into_py_any(py)?);
                     }
-                    "i" | "u" => {
+                    "i" => {
                         // Integer array
                         let arr = array_buffer::extract_i64_array(&a)?;
                         let array_view = &arr;
@@ -3688,7 +4101,7 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
                     }
                     _ => {
                         return Err(PyTypeError::new_err(format!(
-                            "Unsupported dtype kind: {kind}"
+                            "Unsupported dtype kind: {kind}. Supported: 'b', 'i', 'u', 'f'"
                         )));
                     }
                 }
@@ -3784,6 +4197,18 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
 #[pyo3(signature = (a, axis=None))]
 #[allow(clippy::needless_pass_by_value)]
 fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
+        && matches!(
+            array.data,
+            ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_)
+        )
+    {
+        return extreme_unsigned_array(py, &array, axis, false);
+    }
+    if input_has_unsigned_dtype(&a) {
+        let converted = array(py, a, None)?;
+        return min(py, converted.into_bound(py).into_any(), axis);
+    }
     // Handle axis=None case: find global minimum
     if axis.is_none() {
         // Check if it's a numpy array by checking for 'dtype' attribute
@@ -3799,7 +4224,7 @@ fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
                         let result = !arr.iter().all(|&x| x);
                         return Ok(result.into_py_any(py)?);
                     }
-                    "i" | "u" => {
+                    "i" => {
                         // Integer array
                         let arr = array_buffer::extract_i64_array(&a)?;
                         let array_view = &arr;
@@ -3830,7 +4255,7 @@ fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
                     }
                     _ => {
                         return Err(PyTypeError::new_err(format!(
-                            "Unsupported dtype kind: {kind}"
+                            "Unsupported dtype kind: {kind}. Supported: 'b', 'i', 'u', 'f'"
                         )));
                     }
                 }
@@ -4211,6 +4636,10 @@ fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             arr.mapv(|x| x != 0.0)
         } else if let Ok(arr) = array_buffer::extract_i64_array(&a) {
             arr.mapv(|x| x != 0)
+        } else if let Ok(arr) = array_buffer::extract_u64_array(&a) {
+            arr.mapv(|x| x != 0)
+        } else if let Ok(arr) = array_buffer::extract_u8_array(&a) {
+            arr.mapv(|x| x != 0)
         } else {
             return Err(PyTypeError::new_err(
                 "all() argument must be bool, numeric scalar, or array",
@@ -4241,6 +4670,12 @@ fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return Ok(arr.iter().all(|&x| x != 0.0).into_py_any(py)?);
     }
     if let Ok(arr) = array_buffer::extract_i64_array(&a) {
+        return Ok(arr.iter().all(|&x| x != 0).into_py_any(py)?);
+    }
+    if let Ok(arr) = array_buffer::extract_u64_array(&a) {
+        return Ok(arr.iter().all(|&x| x != 0).into_py_any(py)?);
+    }
+    if let Ok(arr) = array_buffer::extract_u8_array(&a) {
         return Ok(arr.iter().all(|&x| x != 0).into_py_any(py)?);
     }
     if let Ok(val) = a.extract::<bool>() {
@@ -4277,6 +4712,10 @@ fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             arr.mapv(|x| x != 0.0)
         } else if let Ok(arr) = array_buffer::extract_i64_array(&a) {
             arr.mapv(|x| x != 0)
+        } else if let Ok(arr) = array_buffer::extract_u64_array(&a) {
+            arr.mapv(|x| x != 0)
+        } else if let Ok(arr) = array_buffer::extract_u8_array(&a) {
+            arr.mapv(|x| x != 0)
         } else {
             return Err(PyTypeError::new_err(
                 "any() argument must be bool, numeric scalar, or array",
@@ -4307,6 +4746,12 @@ fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return Ok(arr.iter().any(|&x| x != 0.0).into_py_any(py)?);
     }
     if let Ok(arr) = array_buffer::extract_i64_array(&a) {
+        return Ok(arr.iter().any(|&x| x != 0).into_py_any(py)?);
+    }
+    if let Ok(arr) = array_buffer::extract_u64_array(&a) {
+        return Ok(arr.iter().any(|&x| x != 0).into_py_any(py)?);
+    }
+    if let Ok(arr) = array_buffer::extract_u8_array(&a) {
         return Ok(arr.iter().any(|&x| x != 0).into_py_any(py)?);
     }
     if let Ok(val) = a.extract::<bool>() {
@@ -5392,6 +5837,8 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     array_module.add_function(wrap_pyfunction!(arange, &array_module)?)?;
     array_module.add_function(wrap_pyfunction!(zeros, &array_module)?)?;
     array_module.add_function(wrap_pyfunction!(ones, &array_module)?)?;
+    array_module.add_function(wrap_pyfunction!(zeros_like, &array_module)?)?;
+    array_module.add_function(wrap_pyfunction!(nonzero, &array_module)?)?;
     array_module.add_function(wrap_pyfunction!(delete, &array_module)?)?;
     array_module.add_function(wrap_pyfunction!(sum, &array_module)?)?;
     array_module.add_function(wrap_pyfunction!(max, &array_module)?)?;
@@ -5486,6 +5933,11 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     num_module.add_function(wrap_pyfunction!(ones, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(array, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(asarray, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(zeros_like, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(nonzero, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(issubdtype, &num_module)?)?;
+    num_module.add_class::<IntegerDType>()?;
+    num_module.add("bool_", crate::dtypes::DType::Bool)?;
     num_module.add_function(wrap_pyfunction!(delete, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(kron, &num_module)?)?;
 

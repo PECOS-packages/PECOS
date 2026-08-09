@@ -37,7 +37,9 @@ use ndarray::{ArrayD, Axis, Ix2, IxDyn, Slice};
 use num_complex::{Complex32, Complex64};
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyFloat, PyInt, PySequence, PySlice, PySliceIndices, PyTuple, PyType};
+use pyo3::types::{
+    PyBool, PyFloat, PyInt, PyList, PySequence, PySlice, PySliceIndices, PyTuple, PyType,
+};
 
 use crate::dtypes::DType;
 use crate::pauli_bindings::{Pauli, PauliString};
@@ -126,7 +128,7 @@ impl ArrayData {
     }
 
     /// Convert to a boolean array (truthy: non-zero / non-false).
-    fn to_bool_array(&self) -> ArrayD<bool> {
+    pub(crate) fn to_bool_array(&self) -> ArrayD<bool> {
         match self {
             ArrayData::Bool(arr) => arr.clone(),
             ArrayData::I8(arr) => arr.mapv(|x| x != 0),
@@ -186,6 +188,7 @@ struct FlatBuffers {
     paulistrings: Vec<PauliString>,
     bools: Vec<bool>,
     i64s: Vec<i64>,
+    u64s: Vec<u64>,
     elem_type: ElemType,
 }
 
@@ -198,8 +201,42 @@ impl FlatBuffers {
             paulistrings: Vec::new(),
             bools: Vec::new(),
             i64s: Vec::new(),
+            u64s: Vec::new(),
             elem_type,
         }
+    }
+
+    fn target_is_unsigned(&self) -> bool {
+        matches!(
+            self.elem_type,
+            ElemType::U8 | ElemType::U16 | ElemType::U32 | ElemType::U64
+        )
+    }
+
+    fn push_signed_integer(&mut self, value: i64) -> PyResult<()> {
+        if self.target_is_unsigned() {
+            self.u64s.push(u64::try_from(value).map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err(format!(
+                    "value {value} is out of range for an unsigned dtype"
+                ))
+            })?);
+        } else {
+            self.i64s.push(value);
+        }
+        Ok(())
+    }
+
+    fn push_unsigned_integer(&mut self, value: u64) -> PyResult<()> {
+        if self.target_is_unsigned() {
+            self.u64s.push(value);
+        } else {
+            self.i64s.push(i64::try_from(value).map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err(format!(
+                    "value {value} is out of range for a signed dtype"
+                ))
+            })?);
+        }
+        Ok(())
     }
 }
 
@@ -1086,6 +1123,34 @@ impl Array {
         self.format_array()
     }
 
+    /// Convert the array to nested Python lists with native scalar values.
+    fn tolist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        fn build_nested(
+            array: &Array,
+            py: Python<'_>,
+            indices: &mut Vec<usize>,
+            axis: usize,
+        ) -> PyResult<Py<PyAny>> {
+            if axis == array.data.ndim() {
+                if indices.is_empty() {
+                    return array.extract_scalar(py);
+                }
+                let index = PyTuple::new(py, indices.iter().copied())?;
+                return array.__getitem__(index.as_any());
+            }
+
+            let mut items = Vec::with_capacity(array.data.shape()[axis]);
+            for index in 0..array.data.shape()[axis] {
+                indices.push(index);
+                items.push(build_nested(array, py, indices, axis + 1)?);
+                indices.pop();
+            }
+            Ok(PyList::new(py, items)?.into_any().unbind())
+        }
+
+        build_nested(self, py, &mut Vec::new(), 0)
+    }
+
     /// Implement __`array_interface`__ property for `NumPy` compatibility
     /// This allows `NumPy` to consume our arrays via zero-copy protocol
     #[getter]
@@ -1157,7 +1222,7 @@ impl Array {
                 dict.set_item("strides", strides_tuple)?;
             }
             ArrayData::U8(arr) => {
-                dict.set_item("typestr", "u1")?;
+                dict.set_item("typestr", "|u1")?;
                 dict.set_item("data", (arr.as_ptr() as usize, false))?;
                 let strides: Vec<isize> = arr
                     .strides()
@@ -1986,9 +2051,11 @@ impl Array {
             return Ok(arr.copy());
         }
 
-        // Then try NumPy array directly (for compatibility with existing NumPy arrays)
-        if let Ok(arr) = Self::try_from_numpy(data) {
-            return Ok(arr);
+        // Then try an array-interface provider directly. Once an object advertises the
+        // protocol, preserve any precise dtype/buffer error instead of masking it as a
+        // generic non-array input error.
+        if data.hasattr("__array_interface__")? {
+            return Self::try_from_numpy(data);
         }
 
         // Finally try Python sequence (list/tuple) - parse using pure Rust
@@ -2174,8 +2241,17 @@ impl Array {
                 })
             }
             ElemType::U8 => {
-                // Convert i64 to u8
-                let flat_u8: Vec<u8> = bufs.i64s.iter().map(|&x| x as u8).collect();
+                let flat_u8: Vec<u8> = bufs
+                    .u64s
+                    .into_iter()
+                    .map(|value| {
+                        u8::try_from(value).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {value} is out of range for uint8"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
                 let arr = ArrayD::from_shape_vec(shape, flat_u8).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2184,8 +2260,17 @@ impl Array {
                 })
             }
             ElemType::U16 => {
-                // Convert i64 to u16
-                let flat_u16: Vec<u16> = bufs.i64s.iter().map(|&x| x as u16).collect();
+                let flat_u16: Vec<u16> = bufs
+                    .u64s
+                    .into_iter()
+                    .map(|value| {
+                        u16::try_from(value).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {value} is out of range for uint16"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
                 let arr = ArrayD::from_shape_vec(shape, flat_u16).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2194,8 +2279,17 @@ impl Array {
                 })
             }
             ElemType::U32 => {
-                // Convert i64 to u32
-                let flat_u32: Vec<u32> = bufs.i64s.iter().map(|&x| x as u32).collect();
+                let flat_u32: Vec<u32> = bufs
+                    .u64s
+                    .into_iter()
+                    .map(|value| {
+                        u32::try_from(value).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {value} is out of range for uint32"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
                 let arr = ArrayD::from_shape_vec(shape, flat_u32).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2204,9 +2298,7 @@ impl Array {
                 })
             }
             ElemType::U64 => {
-                // Convert i64 to u64
-                let flat_u64: Vec<u64> = bufs.i64s.iter().map(|&x| x as u64).collect();
-                let arr = ArrayD::from_shape_vec(shape, flat_u64).map_err(|e| {
+                let arr = ArrayD::from_shape_vec(shape, bufs.u64s).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
@@ -2342,42 +2434,42 @@ impl Array {
                 }
                 ArrayData::I8(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_signed_integer(i64::from(*val))?;
                     }
                 }
                 ArrayData::I16(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_signed_integer(i64::from(*val))?;
                     }
                 }
                 ArrayData::I32(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_signed_integer(i64::from(*val))?;
                     }
                 }
                 ArrayData::I64(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(*val);
+                        bufs.push_signed_integer(*val)?;
                     }
                 }
                 ArrayData::U8(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_unsigned_integer(u64::from(*val))?;
                     }
                 }
                 ArrayData::U16(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_unsigned_integer(u64::from(*val))?;
                     }
                 }
                 ArrayData::U32(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_unsigned_integer(u64::from(*val))?;
                     }
                 }
                 ArrayData::U64(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(*val as i64);
+                        bufs.push_unsigned_integer(*val)?;
                     }
                 }
                 ArrayData::F32(ndarray) => {
@@ -2470,16 +2562,13 @@ impl Array {
                     bufs.bools.push(val != 0.0);
                 }
             }
-            ElemType::I8
-            | ElemType::I16
-            | ElemType::I32
-            | ElemType::I64
-            | ElemType::U8
-            | ElemType::U16
-            | ElemType::U32
-            | ElemType::U64 => {
+            ElemType::I8 | ElemType::I16 | ElemType::I32 | ElemType::I64 => {
                 let val = data.extract::<i64>()?;
-                bufs.i64s.push(val);
+                bufs.push_signed_integer(val)?;
+            }
+            ElemType::U8 | ElemType::U16 | ElemType::U32 | ElemType::U64 => {
+                let val = data.extract::<u64>()?;
+                bufs.push_unsigned_integer(val)?;
             }
             ElemType::F32 | ElemType::F64 => {
                 let val = data.extract::<f64>()?;
@@ -2744,6 +2833,30 @@ impl Array {
                     data: ArrayData::I8(ndarray),
                 })
             }
+            "|u1" | "u1" | "=u1" | "<u1" | ">u1" => {
+                let ndarray = array_buffer::extract_u8_array(array)?;
+                Ok(Self {
+                    data: ArrayData::U8(ndarray),
+                })
+            }
+            "<u2" | ">u2" | "=u2" => {
+                let ndarray = array_buffer::extract_u16_array(array)?;
+                Ok(Self {
+                    data: ArrayData::U16(ndarray),
+                })
+            }
+            "<u4" | ">u4" | "=u4" => {
+                let ndarray = array_buffer::extract_u32_array(array)?;
+                Ok(Self {
+                    data: ArrayData::U32(ndarray),
+                })
+            }
+            "<u8" | ">u8" | "=u8" => {
+                let ndarray = array_buffer::extract_u64_array(array)?;
+                Ok(Self {
+                    data: ArrayData::U64(ndarray),
+                })
+            }
             "<c8" | ">c8" | "=c8" => {
                 let ndarray = array_buffer::extract_complex32_array(array)?;
                 Ok(Self {
@@ -2757,7 +2870,7 @@ impl Array {
                 })
             }
             _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Unsupported dtype: {typestr_str}. Expected one of: f64, i64, complex128, f32, i32, i16, i8, complex64, bool"
+                "Unsupported dtype: {typestr_str}. Supported typestring kinds: 'b', 'i', 'u', 'f', 'c'"
             ))),
         }
     }

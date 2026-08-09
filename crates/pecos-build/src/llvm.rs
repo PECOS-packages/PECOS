@@ -103,15 +103,8 @@ pub struct PathToolReport {
 /// (and external tools like Selene) find it.
 #[must_use]
 pub fn which_on_path(exe_name: &str) -> Option<PathBuf> {
-    let exe = if cfg!(windows) {
-        format!("{exe_name}.exe")
-    } else {
-        exe_name.to_string()
-    };
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths)
-        .map(|dir| dir.join(&exe))
-        .find(|candidate| candidate.is_file())
+    let extensions: &[&str] = if cfg!(windows) { &[".exe"] } else { &[""] };
+    crate::executable::which_in_path(exe_name, extensions)
 }
 
 /// Parse an LLVM `--version` output into a bare `X.Y.Z` version string.

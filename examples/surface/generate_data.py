@@ -221,7 +221,7 @@ def generate(
 
                 # Sample once
                 t0 = time.perf_counter()
-                batch = sampler.sampler.generate_samples(shots, seed=seed + cell_idx)
+                batch = sampler.sampler.sample_batch(shots, seed=seed + cell_idx)
                 sample_seconds = time.perf_counter() - t0
 
                 point = DataPoint(

@@ -399,7 +399,7 @@ mod tests {
         let results = MonteCarloRunner::run(
             &commands,
             &config,
-            || (CircuitRunner::new(), SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::with_seed(1, 42)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
@@ -436,7 +436,10 @@ mod tests {
             || {
                 let noise =
                     ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
-                (CircuitRunner::new().with_noise(noise), SparseStab::new(1))
+                (
+                    CircuitRunner::new().with_noise(noise),
+                    SparseStab::with_seed(1, 42),
+                )
             },
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
@@ -459,7 +462,7 @@ mod tests {
             &commands,
             &config,
             || {
-                ImportanceSamplingRunner::new(SparseStab::new(1))
+                ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
                     .with_single_qubit_boost(0.001, 10.0)
             },
             |outcomes| {
@@ -500,7 +503,7 @@ mod tests {
         let results = MonteCarloRunner::run(
             &commands,
             &config,
-            || (CircuitRunner::new(), SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::with_seed(1, 12345)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
@@ -535,14 +538,14 @@ mod tests {
         let results1 = MonteCarloRunner::run(
             &commands,
             &config1,
-            || (CircuitRunner::new(), SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::with_seed(1, 42)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
         let results2 = MonteCarloRunner::run(
             &commands,
             &config2,
-            || (CircuitRunner::new(), SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::with_seed(1, 12345)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
@@ -575,14 +578,14 @@ mod tests {
         let results1 = MonteCarloRunner::run(
             &commands,
             &config1,
-            || (CircuitRunner::new(), SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::with_seed(1, 42)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 
         let results2 = MonteCarloRunner::run(
             &commands,
             &config2,
-            || (CircuitRunner::new(), SparseStab::new(1)),
+            || (CircuitRunner::new(), SparseStab::with_seed(1, 42)),
             |outcomes| outcomes.get_bit(QubitId(0)).unwrap_or(false),
         );
 

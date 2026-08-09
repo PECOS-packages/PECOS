@@ -296,9 +296,15 @@ mod tests {
         let mut worker0: WorkerState<SparseStab> = WorkerState::new(0, 42);
         let mut worker1: WorkerState<SparseStab> = WorkerState::new(1, 42);
 
-        worker0.world.spawn_with_simulator(SparseStab::new(1));
-        worker0.world.spawn_with_simulator(SparseStab::new(1));
-        worker1.world.spawn_with_simulator(SparseStab::new(1));
+        worker0
+            .world
+            .spawn_with_simulator(SparseStab::with_seed(1, 42));
+        worker0
+            .world
+            .spawn_with_simulator(SparseStab::with_seed(1, 42));
+        worker1
+            .world
+            .spawn_with_simulator(SparseStab::with_seed(1, 42));
 
         let workers = vec![worker0, worker1];
         let weights = collect_weights(&workers);
@@ -317,7 +323,9 @@ mod tests {
                 let mut worker = WorkerState::new(id, 42);
                 // Each worker gets 5 entities
                 for _ in 0..5 {
-                    worker.world.spawn_with_simulator(SparseStab::new(1));
+                    worker
+                        .world
+                        .spawn_with_simulator(SparseStab::with_seed(1, 42));
                 }
                 worker
             })
@@ -357,10 +365,16 @@ mod tests {
 
         // Worker 0 gets 10 entities, others get 1 each
         for _ in 0..10 {
-            workers[0].world.spawn_with_simulator(SparseStab::new(1));
+            workers[0]
+                .world
+                .spawn_with_simulator(SparseStab::with_seed(1, 42));
         }
-        workers[1].world.spawn_with_simulator(SparseStab::new(1));
-        workers[2].world.spawn_with_simulator(SparseStab::new(1));
+        workers[1]
+            .world
+            .spawn_with_simulator(SparseStab::with_seed(1, 42));
+        workers[2]
+            .world
+            .spawn_with_simulator(SparseStab::with_seed(1, 42));
 
         let transfers = balance_entity_counts(&mut workers);
 

@@ -329,7 +329,7 @@ class TestDemSamplerVsStim:
         seed = 123
 
         # PECOS: get per-detector counts
-        pecos_det_batch, _ = pecos_sampler.sample_batch(num_shots, seed=seed)
+        pecos_det_batch = pecos_sampler.sample_batch(num_shots, seed=seed).detector_events()
         pecos_det_array = np.array(pecos_det_batch)
         pecos_det_rates = pecos_det_array.mean(axis=0)
 

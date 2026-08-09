@@ -28,6 +28,7 @@ from pecos.qec.surface.decode import (
     _extract_pauli_masks_from_results,
     generate_circuit_level_dem_from_builder,
 )
+from pecos_rslib.qec import SampleBatch
 
 
 def test_extract_pauli_masks_packs_bits_in_row_major_site_qubit_order() -> None:
@@ -226,6 +227,58 @@ def test_native_sampler_accepts_harvested_uint8_pauli_masks() -> None:
     assert obs_flips.shape == (4, sampler.num_observables)
 
     assert decode_native_samples(sampler, 4, seed=123, pauli_masks=masks) == 0
+
+
+def test_sample_batch_with_pauli_masks_returns_sample_batch() -> None:
+    patch = SurfacePatch.create(distance=3)
+    sampler = build_native_sampler(
+        patch,
+        num_rounds=2,
+        noise=NoiseModel(),
+        basis="Z",
+        twirl=TwirlConfig(),
+    )
+    assert sampler.pauli_frame_lookup is not None
+    zero_masks = np.zeros((4, sampler.num_pauli_sites), dtype=np.int64)
+
+    masks = zero_masks.copy()
+    expected_det_xor: list[list[bool]] | None = None
+    expected_obs_xor: list[list[bool]] | None = None
+    for site in range(sampler.num_pauli_sites):
+        for pauli in (1, 2, 3):
+            candidate = zero_masks.copy()
+            candidate[0, site] = pauli
+            det_xor, obs_xor = sampler.pauli_frame_lookup.compute_mask_xor(candidate)
+            if np.asarray(det_xor).any() or np.asarray(obs_xor).any():
+                masks = candidate
+                expected_det_xor = det_xor
+                expected_obs_xor = obs_xor
+                break
+        if expected_det_xor is not None:
+            break
+
+    assert expected_det_xor is not None
+    assert expected_obs_xor is not None
+
+    zero_batch = sampler.sampler.sample_batch_with_pauli_masks(
+        4,
+        sampler.pauli_frame_lookup,
+        zero_masks,
+        seed=123,
+    )
+    masked_batch = sampler.sampler.sample_batch_with_pauli_masks(
+        4,
+        sampler.pauli_frame_lookup,
+        masks,
+        seed=123,
+    )
+
+    actual_det_xor = np.asarray(zero_batch.detector_events()) ^ np.asarray(masked_batch.detector_events())
+    actual_obs_xor = np.asarray(zero_batch.observable_flips()) ^ np.asarray(masked_batch.observable_flips())
+
+    assert type(masked_batch) is SampleBatch
+    np.testing.assert_array_equal(actual_det_xor, expected_det_xor)
+    np.testing.assert_array_equal(actual_obs_xor, expected_obs_xor)
 
 
 def test_canonical_frame_output_reuses_raw_abstract_sampler_topology() -> None:

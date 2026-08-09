@@ -161,7 +161,7 @@ assert dem.num_observables == 1
 
 # Sample syndromes/observables and decode them, all PECOS-native.
 sampler = dem.to_sampler()
-batch = sampler.generate_samples(1000, 0)
+batch = sampler.sample_batch(1000, 0)
 assert batch.num_shots == 1000
 
 decoder = PyMatchingDecoder.from_dem(dem.to_string_decomposed())
@@ -176,6 +176,50 @@ print(f"logical error rate: {errors / batch.num_shots:.4f}")
 The DEM built this way is identical to the reference DEM produced by the
 surface traced-QIS pipeline — the abstract builder's metadata and the
 traced Guppy program agree on measurement order.
+
+## Sampling and Comparing Decoders with `SampleBatch`
+
+`DemSampler.sample_batch` and `ParsedDem.sample_batch` return a
+`SampleBatch`. The detector events and observable flips remain in Rust memory,
+so the same shots can be passed to several decoders without copying them
+through Python. When Python data is needed, `detector_events()` and
+`observable_flips()` return shots-major `list[list[bool]]` values.
+
+<!--test-name: dem_sample_batch_workflow-->
+```python
+from pecos_rslib.qec import ParsedDem, SampleBatch
+
+dem_text = "error(0.1) D0 L0"
+sampler = ParsedDem.from_string(dem_text).to_dem_sampler()
+batch = sampler.sample_batch(32, seed=42)
+
+assert isinstance(batch, SampleBatch)
+assert batch.num_shots == 32
+
+# Materialize shots-major Python data only when it is needed.
+detector_events = batch.detector_events()
+observable_flips = batch.observable_flips()
+assert len(detector_events) == len(observable_flips) == 32
+assert all(len(shot) == 1 for shot in detector_events)
+assert all(len(shot) == 1 for shot in observable_flips)
+
+# Aggregate errors, inspect individual predictions, or collect timings.
+error_count = batch.decode_count(dem_text, "pymatching")
+predictions = batch.decode_each(dem_text, "pymatching")
+stats = batch.decode_stats(dem_text, "pymatching")
+
+assert 0 <= error_count <= batch.num_shots
+assert len(predictions) == batch.num_shots
+assert stats.num_shots == batch.num_shots
+```
+
+Use `decode_count` for a logical-error total, `decode_each` to inspect the
+prediction for every shot, and `decode_stats` for error counts plus per-shot
+timing statistics. The parallel `decode_count_parallel` and
+`decode_stats_parallel` variants distribute slow decoder work across multiple
+workers. A former raw-list call such as
+`detectors, observables = sampler.sample_batch(...)` becomes a batch call
+followed by the two bulk accessors shown above.
 
 ## Choosing the Selene Runtime
 

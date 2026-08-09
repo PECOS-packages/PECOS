@@ -471,8 +471,12 @@ mod tests {
     fn test_worker_state_with_entities() {
         let mut worker: WorkerState<SparseStab> = WorkerState::new(0, 42);
 
-        worker.world.spawn_with_simulator(SparseStab::new(2));
-        worker.world.spawn_with_simulator(SparseStab::new(2));
+        worker
+            .world
+            .spawn_with_simulator(SparseStab::with_seed(2, 42));
+        worker
+            .world
+            .spawn_with_simulator(SparseStab::with_seed(2, 42));
 
         assert_eq!(worker.active_count(), 2);
 
@@ -513,7 +517,7 @@ mod tests {
 
         // Simple test: return entity count from each world
         let results = coordinator.run(
-            || SparseStab::new(1),
+            || SparseStab::with_seed(1, 42),
             |world| {
                 // Just return the entity IDs as results
                 world.entities().map(|e| e.0).collect()
@@ -538,12 +542,12 @@ mod tests {
         let coordinator2: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
 
         let results1 = coordinator1.run(
-            || SparseStab::new(1),
+            || SparseStab::with_seed(1, 42),
             |world| world.entities().map(|e| world.base_seed() + e.0).collect(),
         );
 
         let results2 = coordinator2.run(
-            || SparseStab::new(1),
+            || SparseStab::with_seed(1, 42),
             |world| world.entities().map(|e| world.base_seed() + e.0).collect(),
         );
 
@@ -564,7 +568,7 @@ mod tests {
         let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
 
         let results = coordinator.run(
-            || SparseStab::new(1),
+            || SparseStab::with_seed(1, 42),
             |world| {
                 world
                     .entities()
@@ -596,7 +600,7 @@ mod tests {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let results = coordinator.run(
-            || SparseStab::new(1),
+            || SparseStab::with_seed(1, 42),
             |world| {
                 // Run one shot per entity
                 world
@@ -665,7 +669,7 @@ mod tests {
         let mut sync_count = 0;
 
         let result: ParallelResult<()> = coordinator.run_with_sync(
-            || SparseStab::new(1),
+            || SparseStab::with_seed(1, 42),
             5, // 5 steps
             |_world, _step| {
                 // Do nothing per step

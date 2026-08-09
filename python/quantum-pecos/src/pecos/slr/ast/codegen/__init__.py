@@ -27,10 +27,11 @@ Example with validation:
     ...
 """
 
+from importlib import import_module
+
 from pecos.slr.ast.codegen.base import CodegenOptions, CodegenResult
 from pecos.slr.ast.codegen.guppy import AstToGuppy, ast_to_guppy
 from pecos.slr.ast.codegen.qasm import AstToQasm, ast_to_qasm
-from pecos.slr.ast.codegen.qir import AstToQir, ast_to_qir
 from pecos.slr.ast.codegen.quantum_circuit import (
     AstToQuantumCircuit,
     ast_to_quantum_circuit,
@@ -38,6 +39,26 @@ from pecos.slr.ast.codegen.quantum_circuit import (
 )
 from pecos.slr.ast.codegen.stim import AstToStim, ast_to_stim, ast_to_stim_str
 from pecos.slr.ast.nodes import Program
+
+
+def ast_to_qir(program: Program) -> str:
+    """Generate QIR while deferring the LLVM extension import until use."""
+    qir_module = import_module("pecos.slr.ast.codegen.qir")
+    return qir_module.ast_to_qir(program)
+
+
+def __getattr__(name: str) -> object:
+    if name == "AstToQir":
+        qir_generator = import_module("pecos.slr.ast.codegen.qir").AstToQir
+        globals()[name] = qir_generator
+        return qir_generator
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), "AstToQir"})
+
 
 # Mapping of target names to generator functions
 _GENERATORS = {

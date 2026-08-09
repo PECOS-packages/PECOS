@@ -88,7 +88,7 @@ def dem_detector_events(tc, noise_kw, shots, seed):
 
     full_kw = {k: noise_kw.get(k, 0.0) for k in ["p1", "p2", "p_meas", "p_prep"]}
     sampler = DemSampler.from_circuit(tc, **full_kw)
-    batch = sampler.generate_samples(num_shots=shots, seed=seed)
+    batch = sampler.sample_batch(num_shots=shots, seed=seed)
     num_dets = len(json.loads(tc.get_meta("detectors")))
 
     events = []

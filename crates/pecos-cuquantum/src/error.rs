@@ -52,7 +52,11 @@ pub enum CuQuantumError {
 /// cuStateVec-specific error
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateVecError {
-    #[error("Not initialized")]
+    #[error(
+        "Not initialized. CUDA could not initialize in this process; a common cause is running \
+         in a forked child of a process that already initialized CUDA (CUDA contexts do not \
+         survive fork) — use the multiprocessing \"spawn\" start method."
+    )]
     NotInitialized,
 
     #[error("Allocation failed")]
@@ -142,7 +146,11 @@ impl From<custatevecStatus_t> for CuQuantumError {
 /// cuStabilizer-specific error
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StabilizerError {
-    #[error("Not initialized")]
+    #[error(
+        "Not initialized. CUDA could not initialize in this process; a common cause is running \
+         in a forked child of a process that already initialized CUDA (CUDA contexts do not \
+         survive fork) — use the multiprocessing \"spawn\" start method."
+    )]
     NotInitialized,
 
     #[error("Allocation failed")]
@@ -201,7 +209,11 @@ impl From<custabilizerStatus_t> for CuQuantumError {
 /// cuTensorNet-specific error
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TensorNetError {
-    #[error("Not initialized")]
+    #[error(
+        "Not initialized. CUDA could not initialize in this process; a common cause is running \
+         in a forked child of a process that already initialized CUDA (CUDA contexts do not \
+         survive fork) — use the multiprocessing \"spawn\" start method."
+    )]
     NotInitialized,
 
     #[error("Allocation failed")]
@@ -289,7 +301,11 @@ impl From<cutensornetStatus_t> for CuQuantumError {
 /// cuDensityMat-specific error
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DensityMatError {
-    #[error("Not initialized")]
+    #[error(
+        "Not initialized. CUDA could not initialize in this process; a common cause is running \
+         in a forked child of a process that already initialized CUDA (CUDA contexts do not \
+         survive fork) — use the multiprocessing \"spawn\" start method."
+    )]
     NotInitialized,
 
     #[error("Allocation failed")]
@@ -459,6 +475,36 @@ mod tests {
         let err = CuQuantumError::StateVec(StateVecError::InvalidValue);
         let msg = format!("{err}");
         assert!(msg.contains("Invalid value"));
+    }
+
+    #[test]
+    fn test_cuquantum_not_initialized_display_has_fork_hint_only_for_that_status() {
+        let not_initialized_messages = [
+            CuQuantumError::from(custatevecStatus_t::CUSTATEVEC_STATUS_NOT_INITIALIZED).to_string(),
+            CuQuantumError::from(custabilizerStatus_t::CUSTABILIZER_STATUS_NOT_INITIALIZED)
+                .to_string(),
+            CuQuantumError::from(cutensornetStatus_t::CUTENSORNET_STATUS_NOT_INITIALIZED)
+                .to_string(),
+            CuQuantumError::from(cudensitymatStatus_t::CUDENSITYMAT_STATUS_NOT_INITIALIZED)
+                .to_string(),
+        ];
+        for message in not_initialized_messages {
+            assert!(message.contains("forked child"));
+            assert!(message.contains("\"spawn\" start method"));
+        }
+
+        let other_messages = [
+            CuQuantumError::from(custatevecStatus_t::CUSTATEVEC_STATUS_INVALID_VALUE).to_string(),
+            CuQuantumError::from(custabilizerStatus_t::CUSTABILIZER_STATUS_INVALID_VALUE)
+                .to_string(),
+            CuQuantumError::from(cutensornetStatus_t::CUTENSORNET_STATUS_INVALID_VALUE).to_string(),
+            CuQuantumError::from(cudensitymatStatus_t::CUDENSITYMAT_STATUS_INVALID_VALUE)
+                .to_string(),
+        ];
+        for message in other_messages {
+            assert!(!message.contains("forked child"));
+            assert!(!message.contains("\"spawn\" start method"));
+        }
     }
 
     #[test]

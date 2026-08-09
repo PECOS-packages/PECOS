@@ -94,7 +94,7 @@ def _decode_raw_measurements(result, circuit, matching, shots):
 
 def _decode_native_dem_samples(circuit, noise_args, matching, shots, seed):
     sampler = DemSampler.from_circuit(circuit, **noise_args)
-    batch = sampler.generate_samples(shots, seed=seed)
+    batch = sampler.sample_batch(shots, seed=seed)
     syndrome = np.zeros(sampler.num_detectors, dtype=np.uint8)
 
     errors = 0

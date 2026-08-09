@@ -1149,7 +1149,7 @@ def test_constrained_from_guppy_dem_is_consumable_by_pecos_native_decoder() -> N
     assert sampler.num_observables == dem.num_observables
     assert dem.num_observables == 1  # one logical observable for a single patch
 
-    batch = sampler.generate_samples(16, 0)
+    batch = sampler.sample_batch(16, 0)
     assert batch.num_shots == 16
     # Each shot's syndrome covers exactly the DEM's detectors.
     assert len(batch.get_syndrome(0)) == dem.num_detectors

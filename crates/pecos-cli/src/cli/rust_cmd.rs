@@ -91,6 +91,12 @@ fn detect_cargo_llvm_link_mode() -> Option<(PathBuf, LlvmLinkMode)> {
 }
 
 fn reject_static_llvm_workspace_test() -> Result<()> {
+    // This guard inspects the installed LLVM's link mode (`llvm-config --shared-mode`),
+    // not the cargo feature selection: it protects the development workspace test path,
+    // which links many LLVM-using test binaries, from a static-only LLVM install.
+    // Linux release wheels intentionally build static via a release-lane manifest patch
+    // (Windows is always static on MSVC; macOS wheels stay shared) and are not visible
+    // to (or blocked by) this check.
     let Some((llvm_path, link_mode)) = detect_cargo_llvm_link_mode() else {
         return Ok(());
     };
@@ -127,6 +133,18 @@ fn reject_static_llvm_workspace_test() -> Result<()> {
          LLVM 21.1 static workspace tests can spawn many multi-GB linker jobs. \
          {setup_hint}",
         llvm_path.display()
+    )))
+}
+
+fn require_cmake_for_mwpf(invocation: &str) -> Result<()> {
+    if pecos_build::cmake::find_cmake().is_some() {
+        return Ok(());
+    }
+
+    Err(Error::Config(format!(
+        "{invocation}, which enables the `mwpf` feature and requires cmake. \
+         Install cmake with `pecos install cmake`. See {}",
+        pecos_build::cmake::DOCS_URL
     )))
 }
 
@@ -305,6 +323,8 @@ fn run_cargo_command_with_rustflags(args: &[&str], rustflags: Option<&str>) -> b
 /// Run cargo check with GPU-aware feature handling
 #[allow(clippy::too_many_lines)]
 fn run_check(include_ffi: bool) -> Result<()> {
+    require_cmake_for_mwpf("`pecos rust check` runs the workspace with `--all-features`")?;
+
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
@@ -387,6 +407,8 @@ fn run_check(include_ffi: bool) -> Result<()> {
 /// Run cargo clippy with GPU-aware feature handling
 #[allow(clippy::too_many_lines)]
 fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
+    require_cmake_for_mwpf("`pecos rust clippy` runs the workspace with `--all-features`")?;
+
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
@@ -486,6 +508,8 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
 
 /// Run cargo test with GPU-aware feature handling
 fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
+    require_cmake_for_mwpf("`pecos rust test` runs `cargo test -p pecos-decoders --all-features`")?;
+
     // Warn about any C++ dependency version differences across crates
     check_dep_consistency();
 

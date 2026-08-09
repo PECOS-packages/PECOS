@@ -603,3 +603,26 @@ def test_zero_dimensional_reductions_reject_out_of_range_axis(
         with pytest.raises(ValueError, match=f"^{error_message}$") as method_error:
             getattr(pecos_array, reduction_name)(axis=1)
         assert str(method_error.value) == str(numpy_error.value)
+
+
+@pytest.mark.parametrize("dtype_name", ["int8", "int64", "float32", "complex128", "uint8", "bool_"])
+def test_zero_dimensional_default_axis_reductions_match_numpy(dtype_name: str) -> None:
+    """axis=None on a 0-d array must reduce to the sole element, as NumPy does.
+
+    The explicit-axis fix routed only axis=0/-1 through the scalar path; the
+    default axis=None stayed on the legacy kind-dispatch, where a 0-d buffer
+    extracts as empty -- sum silently returned 0 and max/min raised.
+    """
+    value = 1.25 + 2.5j if dtype_name == "complex128" else 1
+    np_arr = np.array(value, dtype=getattr(np, dtype_name))
+    pecos_arr = Array(np_arr)
+
+    assert num.sum(pecos_arr) == np.sum(np_arr)
+    assert num.any(pecos_arr) == bool(np_arr.any())
+    assert num.all(pecos_arr) == bool(np_arr.all())
+    if dtype_name != "complex128":
+        assert num.max(pecos_arr) == np.max(np_arr).item()
+        assert num.min(pecos_arr) == np.min(np_arr).item()
+    else:
+        assert num.max(pecos_arr) == complex(np.max(np_arr))
+        assert num.min(pecos_arr) == complex(np.min(np_arr))

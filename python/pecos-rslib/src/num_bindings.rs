@@ -3727,9 +3727,6 @@ fn uses_zero_dimensional_reduction_axis(
     a: &Bound<'_, PyAny>,
     axis: Option<isize>,
 ) -> PyResult<bool> {
-    let Some(axis) = axis else {
-        return Ok(false);
-    };
     let ndim = if let Ok(ndim) = a.getattr("ndim") {
         ndim.extract::<usize>()?
     } else {
@@ -3738,6 +3735,14 @@ fn uses_zero_dimensional_reduction_axis(
     if ndim != 0 {
         return Ok(false);
     }
+    // A 0-d array reduces to its sole element for the default axis=None exactly
+    // as for the explicit axis 0 / -1 forms NumPy accepts. Routing only the
+    // explicit forms here left axis=None on the legacy kind-dispatch paths,
+    // where a 0-d buffer extracts as empty: sum silently returned 0 and
+    // max/min raised on an "empty" sequence.
+    let Some(axis) = axis else {
+        return Ok(true);
+    };
     if matches!(axis, -1 | 0) {
         return Ok(true);
     }

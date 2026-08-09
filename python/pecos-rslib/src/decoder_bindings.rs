@@ -718,7 +718,7 @@ pub struct PyFusionBlossomDecoder {
     inner: RustFusionBlossomDecoder,
 }
 
-fn fusion_blossom_config(
+fn fusion_blossom_solver_config(
     num_nodes: usize,
     num_observables: usize,
     solver_type: RustSolverType,
@@ -738,14 +738,14 @@ mod fusion_blossom_tuning_tests {
 
     #[test]
     fn max_tree_size_override_reaches_config() {
-        let config = fusion_blossom_config(4, 1, RustSolverType::Serial, Some(1));
+        let config = fusion_blossom_solver_config(4, 1, RustSolverType::Serial, Some(1));
 
         assert_eq!(config.max_tree_size, Some(1));
     }
 
     #[test]
     fn max_tree_size_default_reaches_config() {
-        let config = fusion_blossom_config(4, 1, RustSolverType::Serial, None);
+        let config = fusion_blossom_solver_config(4, 1, RustSolverType::Serial, None);
 
         assert_eq!(config.max_tree_size, None);
     }
@@ -779,7 +779,7 @@ impl PyFusionBlossomDecoder {
             }
         };
 
-        let config = fusion_blossom_config(num_nodes, num_observables, solver_type, max_tree_size);
+        let config = fusion_blossom_solver_config(num_nodes, num_observables, solver_type, max_tree_size);
 
         RustFusionBlossomDecoder::new(config)
             .map(|inner| Self { inner })
@@ -848,7 +848,7 @@ impl PyFusionBlossomDecoder {
             }
         }
 
-        let config = fusion_blossom_config(
+        let config = fusion_blossom_solver_config(
             rows,
             num_observables.unwrap_or(cols),
             RustSolverType::Serial,

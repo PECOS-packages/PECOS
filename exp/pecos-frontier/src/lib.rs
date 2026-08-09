@@ -29,6 +29,7 @@ pub use pecos_decoder_core::errors::DecoderError;
 pub use pecos_decoder_core::obs_mask::ObsMask;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 const WORD_BITS: usize = u64::BITS as usize;
 
@@ -106,6 +107,23 @@ pub struct FrontierLogicalMass {
     pub log_mass: f64,
 }
 
+/// Completeness status of one successful Frontier decode.
+///
+/// `NoPath` remains a [`DecoderError`]. This envelope will gain a budget arm
+/// only when the decoder has an actual budget mechanism.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FrontierStatus {
+    /// No state was discarded by pruning, so the retained result is exact.
+    Exact,
+    /// At least one state was discarded by pruning.
+    Pruned {
+        /// Whether the configured frontier-width cap discarded any state.
+        k_capped: bool,
+        /// Whether the configured log-mass window discarded any state.
+        delta_pruned: bool,
+    },
+}
+
 /// Result of one Frontier decode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrontierResult {
@@ -125,6 +143,21 @@ pub struct FrontierResult {
     pub peak_retained_states: usize,
     /// Number of probabilistic columns processed (`0 < p < 1`).
     pub processed_columns: usize,
+    /// Number of candidate branch evaluations, counted at entry to
+    /// `merge_branch` (two per retained state for every processed column).
+    pub transitions: u64,
+    /// Number of merged boundary states discarded across all pruning calls.
+    pub dropped_states: u64,
+    /// Log-sum-exp of the log masses of all states discarded by pruning, or
+    /// negative infinity when no state was discarded.
+    ///
+    /// This accounts for retained prefix mass discarded at pruning time. It is
+    /// not a bound on true lost posterior mass: a state dropped early would
+    /// otherwise have branched through later columns.
+    pub dropped_log_mass: f64,
+    /// Whether the successful decode was exact or which pruning mechanisms
+    /// discarded at least one state.
+    pub status: FrontierStatus,
     /// Retained unnormalized joint terminal masses, ordered by mass descending
     /// and numeric label ascending. The first entry is the winning label and
     /// its retained log mass.
@@ -221,6 +254,14 @@ struct ScoredCandidate {
     score: f64,
 }
 
+struct PruneResult {
+    retained: BTreeMap<StateKey, f64>,
+    dropped_states: u64,
+    dropped_log_mass: f64,
+    k_capped: bool,
+    delta_pruned: bool,
+}
+
 /// Ordered, pruned dynamic-programming decoder for sparse detector error models.
 #[derive(Clone, Debug)]
 pub struct FrontierDecoder {
@@ -232,6 +273,7 @@ pub struct FrontierDecoder {
     touched_detectors: Vec<u64>,
     forced_syndrome: Vec<u64>,
     forced_logical: Vec<u64>,
+    build_seconds: f64,
 }
 
 /// Two-leg Frontier decoder using a processing order and its plain reverse.
@@ -239,6 +281,7 @@ pub struct FrontierDecoder {
 pub struct FrontierCommittee {
     forward: FrontierDecoder,
     backward: FrontierDecoder,
+    build_seconds: f64,
 }
 
 impl FrontierDecoder {
@@ -253,6 +296,7 @@ impl FrontierDecoder {
     /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning
     /// parameters, probabilities, indices, or column order.
     pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
+        let build_started = Instant::now();
         validate_config(&config, dem.mechanisms.len())?;
 
         let detector_words = words_for(dem.num_detectors);
@@ -262,6 +306,8 @@ impl FrontierDecoder {
             .clone()
             .unwrap_or_else(|| (0..dem.mechanisms.len()).collect());
         let mut raw_columns = Vec::with_capacity(dem.mechanisms.len());
+        #[cfg(debug_assertions)]
+        let mut probabilistic_order = Vec::with_capacity(dem.mechanisms.len());
         let mut forced_syndrome = vec![0; detector_words];
         let mut forced_logical = vec![0; logical_words];
 
@@ -288,6 +334,24 @@ impl FrontierDecoder {
             }
 
             raw_columns.push((detector_toggle, logical_toggle, *probability));
+            #[cfg(debug_assertions)]
+            probabilistic_order.push(mechanism_index);
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            let expected_probabilistic_order: Vec<usize> = dem
+                .mechanisms
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (probability, _, _))| {
+                    (*probability != 0.0 && probability.to_bits() != 1.0_f64.to_bits())
+                        .then_some(index)
+                })
+                .collect();
+            let mut sorted_probabilistic_order = probabilistic_order;
+            sorted_probabilistic_order.sort_unstable();
+            debug_assert_eq!(sorted_probabilistic_order, expected_probabilistic_order);
         }
 
         let mut touched_detectors = vec![0; detector_words];
@@ -302,7 +366,10 @@ impl FrontierDecoder {
         // Seed with the forced contribution: detectors carrying a forced bit
         // must stay in every active mask until their closing column, or the
         // per-step projection would erase the bit before that column arrives.
+        // Forced-only detectors have no probabilistic closing column and are
+        // handled by the precheck instead, so they are not active DP state.
         let mut open_detectors = forced_syndrome.clone();
+        and_assign(&mut open_detectors, &touched_detectors);
         let mut columns = Vec::with_capacity(raw_columns.len());
         let mut column_moments = Vec::with_capacity(raw_columns.len());
         for (column_index, (detector_toggle, logical_toggle, probability)) in
@@ -351,6 +418,9 @@ impl FrontierDecoder {
             }
         }
 
+        debug_assert_model_invariants(&columns, &touched_detectors);
+        let build_seconds = build_started.elapsed().as_secs_f64();
+
         Ok(Self {
             config,
             columns,
@@ -360,7 +430,15 @@ impl FrontierDecoder {
             touched_detectors,
             forced_syndrome,
             forced_logical,
+            build_seconds,
         })
+    }
+
+    /// Wall-clock seconds spent constructing this model in
+    /// [`Self::from_sparse_dem`].
+    #[must_use]
+    pub fn build_seconds(&self) -> f64 {
+        self.build_seconds
     }
 
     /// Parse a Stim-format detector error model and construct a decoder.
@@ -407,12 +485,24 @@ impl FrontierDecoder {
         };
         let mut frontier = BTreeMap::from([(initial, 0.0)]);
         let mut peak_retained_states = frontier.len();
+        let mut transitions = 0;
+        let mut dropped_states = 0;
+        let mut dropped_log_mass = f64::NEG_INFINITY;
+        let mut k_capped = false;
+        let mut delta_pruned = false;
 
         for column in &self.columns {
             let mut merged = BTreeMap::new();
             for (state, &log_mass) in &frontier {
                 let branch_base = log_mass + column.log_one_minus_probability;
-                merge_branch(&mut merged, state.clone(), branch_base, column, &observed);
+                merge_branch(
+                    &mut merged,
+                    state.clone(),
+                    branch_base,
+                    column,
+                    &observed,
+                    &mut transitions,
+                );
 
                 let mut taken = state.clone();
                 xor_assign(&mut taken.active_syndrome, &column.detector_toggle);
@@ -423,13 +513,14 @@ impl FrontierDecoder {
                     branch_base + column.log_odds,
                     column,
                     &observed,
+                    &mut transitions,
                 );
             }
 
             if merged.is_empty() {
                 return Err(unexplainable_error());
             }
-            frontier = prune(
+            let pruned = prune(
                 merged,
                 self.config.k,
                 self.config.delta,
@@ -437,6 +528,11 @@ impl FrontierDecoder {
                 &column.suffix_compatibility,
                 &observed,
             );
+            frontier = pruned.retained;
+            dropped_states += pruned.dropped_states;
+            dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
+            k_capped |= pruned.k_capped;
+            delta_pruned |= pruned.delta_pruned;
             if frontier.is_empty() {
                 return Err(unexplainable_error());
             }
@@ -459,6 +555,14 @@ impl FrontierDecoder {
                 log_mass: candidate.log_mass,
             })
             .collect();
+        let status = if dropped_states == 0 {
+            FrontierStatus::Exact
+        } else {
+            FrontierStatus::Pruned {
+                k_capped,
+                delta_pruned,
+            }
+        };
 
         Ok(FrontierResult {
             predicted: ObsMask::from_words(&winner.key.logical),
@@ -468,6 +572,10 @@ impl FrontierDecoder {
                 .map(|runner_up| winner.log_mass - runner_up.log_mass),
             peak_retained_states,
             processed_columns: self.columns.len(),
+            transitions,
+            dropped_states,
+            dropped_log_mass,
+            status,
             logical_masses,
         })
     }
@@ -484,6 +592,7 @@ impl FrontierCommittee {
     /// Returns [`DecoderError::InvalidConfiguration`] when the configuration or
     /// DEM is invalid.
     pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
+        let build_started = Instant::now();
         let FrontierConfig {
             k,
             delta,
@@ -508,7 +617,19 @@ impl FrontierCommittee {
             column_order: Some(forward_order),
         };
         let backward = FrontierDecoder::from_sparse_dem(dem, backward_config)?;
-        Ok(Self { forward, backward })
+        let build_seconds = build_started.elapsed().as_secs_f64();
+        Ok(Self {
+            forward,
+            backward,
+            build_seconds,
+        })
+    }
+
+    /// Wall-clock seconds spent constructing both committee legs in
+    /// [`Self::from_sparse_dem`].
+    #[must_use]
+    pub fn build_seconds(&self) -> f64 {
+        self.build_seconds
     }
 
     /// Parse a Stim-format detector error model and construct a committee.
@@ -625,10 +746,22 @@ fn deadline_order_for_sequence(
             position,
         )
     });
-    Ok(positions
+    let ordered_sequence: Vec<usize> = positions
         .into_iter()
         .map(|position| sequence[position])
-        .collect())
+        .collect();
+    #[cfg(debug_assertions)]
+    {
+        let mut sorted_input = sequence.to_vec();
+        sorted_input.sort_unstable();
+        let mut sorted_output = ordered_sequence.clone();
+        sorted_output.sort_unstable();
+        debug_assert_eq!(
+            sorted_output, sorted_input,
+            "generated order must permute input"
+        );
+    }
+    Ok(ordered_sequence)
 }
 
 fn committee_member(result: &Result<FrontierResult, DecoderError>) -> CommitteeMember {
@@ -778,7 +911,9 @@ fn merge_branch(
     log_mass: f64,
     column: &Column,
     observed: &[u64],
+    transitions: &mut u64,
 ) {
+    *transitions += 1;
     if state
         .active_syndrome
         .iter()
@@ -802,9 +937,15 @@ fn prune(
     score_alpha: f64,
     suffix_compatibility: &[SuffixCompatibility],
     observed: &[u64],
-) -> BTreeMap<StateKey, f64> {
+) -> PruneResult {
     if k == usize::MAX && delta.is_infinite() {
-        return frontier;
+        return PruneResult {
+            retained: frontier,
+            dropped_states: 0,
+            dropped_log_mass: f64::NEG_INFINITY,
+            k_capped: false,
+            delta_pruned: false,
+        };
     }
 
     let mut candidates: Vec<ScoredCandidate> = frontier
@@ -834,12 +975,66 @@ fn prune(
             .then_with(|| left.candidate.key.cmp(&right.candidate.key))
     });
     let cutoff = candidates[0].score - delta;
-    candidates
-        .into_iter()
-        .take(k)
-        .take_while(|candidate| candidate.score >= cutoff)
-        .map(|scored| (scored.candidate.key, scored.candidate.log_mass))
-        .collect()
+    let mut retained = BTreeMap::new();
+    let mut dropped_states = 0;
+    let mut dropped_log_mass = f64::NEG_INFINITY;
+    let mut k_capped = false;
+    let mut delta_pruned = false;
+
+    for (index, scored) in candidates.into_iter().enumerate() {
+        let within_k = index < k;
+        let within_delta = scored.score >= cutoff;
+        if within_k && within_delta {
+            retained.insert(scored.candidate.key, scored.candidate.log_mass);
+        } else {
+            dropped_states += 1;
+            dropped_log_mass = logaddexp(dropped_log_mass, scored.candidate.log_mass);
+            k_capped |= !within_k;
+            delta_pruned |= within_k && !within_delta;
+        }
+    }
+
+    PruneResult {
+        retained,
+        dropped_states,
+        dropped_log_mass,
+        k_capped,
+        delta_pruned,
+    }
+}
+
+fn debug_assert_model_invariants(columns: &[Column], touched_detectors: &[u64]) {
+    #[cfg(debug_assertions)]
+    {
+        let mut closed_detectors = vec![0; touched_detectors.len()];
+        for column in columns {
+            debug_assert!(
+                closed_detectors
+                    .iter()
+                    .zip(&column.close_mask)
+                    .all(|(&closed, &closing)| closed & closing == 0),
+                "close masks must be disjoint"
+            );
+            or_assign(&mut closed_detectors, &column.close_mask);
+            debug_assert!(
+                closed_detectors
+                    .iter()
+                    .zip(&column.active_mask)
+                    .all(|(&closed, &active)| closed & active == 0),
+                "a detector must not remain active after its closing column"
+            );
+        }
+        debug_assert_eq!(
+            closed_detectors, touched_detectors,
+            "close masks must partition touched detectors"
+        );
+        debug_assert!(
+            columns
+                .last()
+                .is_none_or(|column| column.active_mask.iter().all(|&word| word == 0)),
+            "the final column must have an empty active mask"
+        );
+    }
 }
 
 fn suffix_compatibility_score(
@@ -947,7 +1142,7 @@ fn and_not_assign(left: &mut [u64], right: &[u64]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrontierLogicalMass, FrontierResult, committee_rank, logaddexp};
+    use super::{FrontierLogicalMass, FrontierResult, FrontierStatus, committee_rank, logaddexp};
     use pecos_decoder_core::obs_mask::ObsMask;
 
     #[test]
@@ -970,6 +1165,10 @@ mod tests {
             runner_up_gap: None,
             peak_retained_states: 1,
             processed_columns: 0,
+            transitions: 0,
+            dropped_states: 0,
+            dropped_log_mass: f64::NEG_INFINITY,
+            status: FrontierStatus::Exact,
             logical_masses: vec![FrontierLogicalMass {
                 logical: ObsMask::new(),
                 log_mass: f64::NAN,

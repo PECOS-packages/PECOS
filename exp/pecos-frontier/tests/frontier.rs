@@ -13,7 +13,7 @@
 use pecos_decoder_core::dem::SparseDem;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
-use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierResult};
+use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierResult, FrontierStatus};
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::BTreeMap;
@@ -441,6 +441,109 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
     assert_eq!(
         delta_pruned.decode(&[1]).unwrap().predicted,
         ObsMask::from_u64(1)
+    );
+}
+
+#[test]
+fn transitions_count_every_candidate_branch_evaluation() {
+    // Column 0 evaluates two branches from the initial state and retains two
+    // distinct logical labels. Column 1 evaluates two branches from each of
+    // those states, so the hand-derived total is 2 + 2*2 = 6.
+    let dem = sparse_dem(vec![(0.2, vec![], vec![0]), (0.3, vec![], vec![1])], 0, 2);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+    let result = decoder.decode(&[]).unwrap();
+
+    assert_eq!(result.transitions, 6);
+    assert_eq!(result.dropped_states, 0);
+    assert_eq!(
+        result.dropped_log_mass.to_bits(),
+        f64::NEG_INFINITY.to_bits()
+    );
+    assert_eq!(result.status, FrontierStatus::Exact);
+}
+
+#[test]
+fn width_pruning_accounts_for_the_discarded_state_and_mass() {
+    // The only column creates skip/take states with masses 0.75 and 0.25.
+    // K=1 keeps the former and drops exactly the latter.
+    let dem = sparse_dem(vec![(0.25, vec![], vec![0])], 0, 1);
+    let mut decoder = FrontierDecoder::from_sparse_dem(
+        &dem,
+        FrontierConfig {
+            k: 1,
+            delta: f64::INFINITY,
+            score_alpha: 0.0,
+            column_order: None,
+        },
+    )
+    .unwrap();
+    let result = decoder.decode(&[]).unwrap();
+
+    assert_eq!(result.transitions, 2);
+    assert_eq!(result.dropped_states, 1);
+    assert!((result.dropped_log_mass.exp() - 0.25).abs() < 1e-15);
+    assert_eq!(
+        result.status,
+        FrontierStatus::Pruned {
+            k_capped: true,
+            delta_pruned: false,
+        }
+    );
+}
+
+#[test]
+fn delta_pruning_reports_its_status_flag() {
+    // The two masses are 0.75 and 0.25, whose log-score gap ln(3) exceeds the
+    // 0.5 window. With unlimited K, Delta alone drops the take state.
+    let dem = sparse_dem(vec![(0.25, vec![], vec![0])], 0, 1);
+    let mut decoder = FrontierDecoder::from_sparse_dem(
+        &dem,
+        FrontierConfig {
+            k: usize::MAX,
+            delta: 0.5,
+            score_alpha: 0.0,
+            column_order: None,
+        },
+    )
+    .unwrap();
+    let result = decoder.decode(&[]).unwrap();
+
+    assert_eq!(result.dropped_states, 1);
+    assert_eq!(
+        result.status,
+        FrontierStatus::Pruned {
+            k_capped: false,
+            delta_pruned: true,
+        }
+    );
+}
+
+#[test]
+fn one_prune_call_can_trigger_both_pruning_flags() {
+    // The first p=0.5 column retains two equal-mass states. The p=0.1 column
+    // then produces masses 0.45, 0.45, 0.05, 0.05. K=3 removes the fourth;
+    // within those first three, Delta=0.5 removes the third, so both mechanisms
+    // discard one of the four hand-derived candidates.
+    let dem = sparse_dem(vec![(0.5, vec![], vec![0]), (0.1, vec![], vec![1])], 0, 2);
+    let mut decoder = FrontierDecoder::from_sparse_dem(
+        &dem,
+        FrontierConfig {
+            k: 3,
+            delta: 0.5,
+            score_alpha: 0.0,
+            column_order: None,
+        },
+    )
+    .unwrap();
+    let result = decoder.decode(&[]).unwrap();
+
+    assert_eq!(result.dropped_states, 2);
+    assert_eq!(
+        result.status,
+        FrontierStatus::Pruned {
+            k_capped: true,
+            delta_pruned: true,
+        }
     );
 }
 

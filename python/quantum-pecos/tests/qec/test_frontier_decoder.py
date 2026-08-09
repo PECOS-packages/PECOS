@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
@@ -43,6 +45,11 @@ def test_sparse_and_dense_decode_agree() -> None:
     assert sparse.log_evidence == dense.log_evidence
     assert sparse.logical_masses == dense.logical_masses
     assert dense.observable_bits(2) == [1, 0]
+    assert dense.transitions == 4
+    assert dense.dropped_states == 0
+    assert dense.dropped_log_mass == float("-inf")
+    assert dense.status == "exact"
+    assert decoder.build_seconds >= 0.0
 
 
 def test_wide_observable_mask_is_a_python_int() -> None:
@@ -84,6 +91,25 @@ def test_committee_easy_tie_selects_forward() -> None:
     assert result.direction == "forward"
     assert result.forward_log_evidence == result.log_evidence
     assert result.backward_log_evidence == result.log_evidence
+    assert result.status == "exact"
+    assert result.transitions == 2
+    assert committee.build_seconds >= 0.0
+
+
+def test_pruning_telemetry_and_status_strings() -> None:
+    width = FrontierDecoder.from_dem("error(0.25) L0\n", k=1, delta=float("inf"))
+    width_result = width.decode_syndrome([])
+    assert width_result.dropped_states == 1
+    assert math.exp(width_result.dropped_log_mass) == pytest.approx(0.25)
+    assert width_result.status == "pruned:k"
+
+    delta = FrontierDecoder.from_dem("error(0.25) L0\n", k=2, delta=0.5)
+    assert delta.decode_syndrome([]).status == "pruned:delta"
+
+    both = FrontierDecoder.from_dem(
+        "error(0.5) L0\nerror(0.1) L1\n", k=3, delta=0.5
+    )
+    assert both.decode_syndrome([]).status == "pruned:k+delta"
 
 
 def test_unexplainable_and_out_of_range_syndromes_raise_runtime_error() -> None:

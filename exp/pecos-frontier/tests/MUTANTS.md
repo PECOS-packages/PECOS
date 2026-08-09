@@ -1,0 +1,22 @@
+# Frontier manual mutant checklist
+
+The repository has no mutation runner. Apply each compiling edit separately,
+run the named killer test(s), and restore the source before trying the next
+row. “Equivalent” rows document mutations that intentionally have no killer.
+
+| Mutant | Exact edit (quoted old → new) | Expected killer test(s) or disposition |
+|---|---|---|
+| `merge_to_max` | `".and_modify(|mass| *mass = logaddexp(*mass, log_mass))"` → `".and_modify(|mass| *mass = (*mass).max(log_mass))"` | `degeneracy_mass_beats_the_single_most_likely_error`; `decode_outputs_match_bitwise_snapshot` |
+| `remove_close_check` | Delete the complete `"if state.active_syndrome.iter().zip(observed).zip(&column.close_mask).any(|((&accumulated, &expected), &closing)| (accumulated ^ expected) & closing != 0) { return; }"` block in `merge_branch`. | `fails_loud_for_untouched_and_unachievable_syndromes`; `unpruned_matches_independent_brute_force_on_seeded_random_dems`; `decode_outputs_match_bitwise_snapshot` |
+| `flip_wide_label_tie_break_to_little_endian` | `"compare_words_as_unsigned(&self.logical, &other.logical)"` → `"self.logical.cmp(&other.logical)"` | `wide_logical_ties_use_numeric_label_order`; `decode_outputs_match_bitwise_snapshot` |
+| `k_off_by_one` | `"let within_k = index < k;"` → `"let within_k = index <= k;"` | `width_pruning_accounts_for_the_discarded_state_and_mass`; `width_and_delta_pruning_can_change_the_logical_answer`; `decode_outputs_match_bitwise_snapshot` |
+| `remove_forced_seed` | `"let mut initial_syndrome = self.forced_syndrome.clone();"` → `"let mut initial_syndrome = vec![0; self.detector_words];"` | `forced_syndrome_shifts_shared_probabilistic_detector`; `unpruned_matches_independent_brute_force_on_seeded_random_dems` |
+| `swap_suffix_rho_zero_and_one` | In `suffix_compatibility_score`, replace `"row.log_probability_zero"` with `"row.log_probability_one"` and the existing `"row.log_probability_one"` with `"row.log_probability_zero"` in the opposite branch. | `suffix_compatibility_changes_the_greedy_survivor`; `decode_outputs_match_bitwise_snapshot` |
+| `eta_off_by_one_apply_moment_before_snapshot` | Move the complete `"for detector in set_bits(&column.detector_toggle) { row_moments[detector] *= moment; }"` loop from after the `column.suffix_compatibility = ...collect();` assignment to immediately before it. | `suffix_compatibility_changes_the_greedy_survivor`; `decode_outputs_match_bitwise_snapshot` |
+| `score_fold_restore` | `"retained.insert(scored.candidate.key, scored.candidate.log_mass);"` → `"retained.insert(scored.candidate.key, scored.score);"` | `decode_outputs_match_bitwise_snapshot`; `unpruned_and_pruned_results_match_upstream_golden_fixtures` |
+| `remove_committee_forward_bonus` | `"let forward_bonus = if is_forward { 1.0 } else { 0.0 };"` → `"let forward_bonus = 0.0;"` | **EQUIVALENT.** The bonus is consulted only after all preceding rank components tie, and `FrontierCommittee::decode` already selects forward when `compare_committee_legs` returns `Equal`. Removing the bonus therefore leaves every binary-committee selection unchanged. |
+| `remove_active_mask_projection` | Delete `"and_assign(&mut state.active_syndrome, &column.active_mask);"` from `merge_branch`. | **EQUIVALENT.** A branch survives the close check only when every closing detector equals the observed bit. Keeping those now-inactive bits changes the noncanonical key representation but cannot prevent equivalent surviving prefixes from merging: all survivors carry the same observed values in those positions. |
+| `remove_transitions_increment` | Delete `"*transitions += 1;"` from `merge_branch`. | `transitions_count_every_candidate_branch_evaluation` |
+| `skip_dropped_mass_accumulation` | Delete `"dropped_log_mass = logaddexp(dropped_log_mass, scored.candidate.log_mass);"` from the discarded-candidate branch in `prune`. | `width_pruning_accounts_for_the_discarded_state_and_mass` |
+| `report_exact_after_pruning` | Replace the complete `"let status = if dropped_states == 0 { FrontierStatus::Exact } else { FrontierStatus::Pruned { k_capped, delta_pruned } };"` expression with `"let status = FrontierStatus::Exact;"`. | `width_pruning_accounts_for_the_discarded_state_and_mass`; `delta_pruning_reports_its_status_flag`; `one_prune_call_can_trigger_both_pruning_flags` |
+| `error_as_mismatch` | N/A: this mutation belongs to the `pecos-rslib` adapter layer, not `pecos-frontier`; this crate returns `DecoderError` directly and has no error-to-mismatch conversion. | N/A |

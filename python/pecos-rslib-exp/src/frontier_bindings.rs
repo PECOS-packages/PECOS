@@ -14,8 +14,8 @@ use pecos_frontier::{
     CommitteeDirection, CommitteeMember, CommitteeStatus, DecoderError,
     FrontierCommittee as RustFrontierCommittee,
     FrontierCommitteeResult as RustFrontierCommitteeResult, FrontierConfig as RustFrontierConfig,
-    FrontierDecoder as RustFrontierDecoder, FrontierResult as RustFrontierResult, ObsMask,
-    SparseDem, backward_deadline_column_order, deadline_column_order,
+    FrontierDecoder as RustFrontierDecoder, FrontierResult as RustFrontierResult, FrontierStatus,
+    ObsMask, SparseDem, backward_deadline_column_order, deadline_column_order,
 };
 use pyo3::Borrowed;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -152,6 +152,28 @@ fn member_log_evidence(member: CommitteeMember) -> Option<f64> {
     }
 }
 
+fn frontier_status(status: FrontierStatus) -> &'static str {
+    match status {
+        FrontierStatus::Exact => "exact",
+        FrontierStatus::Pruned {
+            k_capped: true,
+            delta_pruned: false,
+        } => "pruned:k",
+        FrontierStatus::Pruned {
+            k_capped: false,
+            delta_pruned: true,
+        } => "pruned:delta",
+        FrontierStatus::Pruned {
+            k_capped: true,
+            delta_pruned: true,
+        } => "pruned:k+delta",
+        FrontierStatus::Pruned {
+            k_capped: false,
+            delta_pruned: false,
+        } => unreachable!("pruned status must name at least one pruning mechanism"),
+    }
+}
+
 /// Result returned by the native experimental Frontier decoder.
 #[pyclass(name = "FrontierResult", module = "pecos_rslib_exp")]
 pub struct PyFrontierResult {
@@ -188,6 +210,30 @@ impl PyFrontierResult {
     #[getter]
     fn processed_columns(&self) -> usize {
         self.inner.processed_columns
+    }
+
+    /// Number of candidate branch evaluations.
+    #[getter]
+    fn transitions(&self) -> u64 {
+        self.inner.transitions
+    }
+
+    /// Number of merged states discarded across pruning calls.
+    #[getter]
+    fn dropped_states(&self) -> u64 {
+        self.inner.dropped_states
+    }
+
+    /// Log-sum-exp of masses discarded at pruning time.
+    #[getter]
+    fn dropped_log_mass(&self) -> f64 {
+        self.inner.dropped_log_mass
+    }
+
+    /// Completeness status of this decode.
+    #[getter]
+    fn status(&self) -> &'static str {
+        frontier_status(self.inner.status)
     }
 
     /// Terminal logical labels and their unnormalized joint log masses.
@@ -238,6 +284,30 @@ impl PyFrontierCommitteeResult {
     #[getter]
     fn processed_columns(&self) -> usize {
         self.inner.selected.processed_columns
+    }
+
+    /// Number of candidate branch evaluations in the selected leg.
+    #[getter]
+    fn transitions(&self) -> u64 {
+        self.inner.selected.transitions
+    }
+
+    /// Number of states discarded by the selected leg.
+    #[getter]
+    fn dropped_states(&self) -> u64 {
+        self.inner.selected.dropped_states
+    }
+
+    /// Log-sum-exp of masses discarded by the selected leg at pruning time.
+    #[getter]
+    fn dropped_log_mass(&self) -> f64 {
+        self.inner.selected.dropped_log_mass
+    }
+
+    /// Completeness status of the selected leg.
+    #[getter]
+    fn status(&self) -> &'static str {
+        frontier_status(self.inner.selected.status)
     }
 
     /// Terminal logical labels and log masses from the selected leg.
@@ -307,6 +377,12 @@ impl PyFrontierDecoder {
         })
     }
 
+    /// Wall-clock seconds spent constructing the decoder model.
+    #[getter]
+    fn build_seconds(&self) -> f64 {
+        self.inner.build_seconds()
+    }
+
     /// Decode sparse fired-detector indices.
     fn decode(&mut self, detection_events: Vec<u64>) -> PyResult<PyFrontierResult> {
         let syndrome = sparse_to_dense(&detection_events, self.num_detectors)?;
@@ -366,6 +442,12 @@ impl PyFrontierCommitteeDecoder {
             inner,
             num_detectors,
         })
+    }
+
+    /// Wall-clock seconds spent constructing both committee legs.
+    #[getter]
+    fn build_seconds(&self) -> f64 {
+        self.inner.build_seconds()
     }
 
     /// Decode sparse fired-detector indices with both committee legs.

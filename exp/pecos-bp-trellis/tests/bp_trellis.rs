@@ -10,11 +10,11 @@
 // either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
+use pecos_bp_trellis::{BpTrellisConfig, BpTrellisDecoder, TrellisOrdering};
 use pecos_decoder_core::ObservableDecoder;
 use pecos_frontier::{
-    BpTrellisConfig, BpTrellisDecoder, DecoderError, FrontierConfig, FrontierDecoder,
-    FrontierResult, ObsMask, SparseDem, TrellisOrdering, backward_deadline_column_order,
-    deadline_column_order,
+    DecoderError, FrontierConfig, FrontierDecoder, FrontierResult, ObsMask, SparseDem,
+    backward_deadline_column_order, deadline_column_order,
 };
 use std::collections::BTreeMap;
 
@@ -198,6 +198,19 @@ fn bptrellis_works_through_observable_decoder_trait_object() {
     let mut boxed: Box<dyn ObservableDecoder> = Box::new(decoder);
 
     assert_eq!(boxed.decode_to_observables(&[1]).unwrap(), 1);
+}
+
+#[test]
+fn bptrellis_observable_trait_rejects_wide_masks_without_truncation() {
+    let dem = sparse_dem(vec![(0.2, vec![0], vec![64])], 1, 65);
+    let decoder = BpTrellisDecoder::from_sparse_dem(&dem, BpTrellisConfig::default()).unwrap();
+    let mut boxed: Box<dyn ObservableDecoder> = Box::new(decoder);
+
+    assert!(boxed.decode_obs(&[1]).unwrap().get(64));
+    assert!(matches!(
+        boxed.decode_to_observables(&[1]),
+        Err(DecoderError::InvalidConfiguration(_))
+    ));
 }
 
 #[test]

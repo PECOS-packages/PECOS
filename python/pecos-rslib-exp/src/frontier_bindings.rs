@@ -10,14 +10,16 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_frontier::{
+use pecos_bp_trellis::{
     BpTrellisConfig as RustBpTrellisConfig, BpTrellisDecoder as RustBpTrellisDecoder,
+    TrellisOrdering as RustTrellisOrdering,
+};
+use pecos_frontier::{
     CommitteeDirection, CommitteeMember, CommitteeStatus, DecoderError,
     FrontierCommittee as RustFrontierCommittee,
     FrontierCommitteeResult as RustFrontierCommitteeResult, FrontierConfig as RustFrontierConfig,
     FrontierDecoder as RustFrontierDecoder, FrontierResult as RustFrontierResult, FrontierStatus,
-    ObsMask, SparseDem, TrellisOrdering as RustTrellisOrdering, backward_deadline_column_order,
-    deadline_column_order,
+    ObsMask, SparseDem, backward_deadline_column_order, deadline_column_order,
 };
 use pyo3::Borrowed;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};

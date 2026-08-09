@@ -4154,6 +4154,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-bp-trellis"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-decoder-core",
+ "pecos-frontier",
+]
+
+[[package]]
 name = "pecos-build"
 version = "0.2.0-dev.0"
 dependencies = [
@@ -4815,6 +4823,7 @@ name = "pecos-rslib-exp"
 version = "0.2.0-dev.0"
 dependencies = [
  "num-complex 0.4.6",
+ "pecos-bp-trellis",
  "pecos-core",
  "pecos-eeg",
  "pecos-frontier",

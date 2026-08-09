@@ -209,6 +209,7 @@ pecos-hugr-qis = { version = "0.2.0-dev.0", path = "crates/pecos-hugr-qis" }
 pecos-ldpc-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-ldpc-decoders" }
 pecos-lindblad = { version = "0.2.0-dev.0", path = "exp/pecos-lindblad" }
 pecos-llvm = { version = "0.2.0-dev.0", path = "crates/pecos-llvm" }
+pecos-lp = { version = "0.2.0-dev.0", path = "crates/pecos-lp" }
 pecos-mwpf = { version = "0.2.0-dev.0", path = "crates/pecos-mwpf" }
 pecos-neo = { version = "0.2.0-dev.0", path = "exp/pecos-neo" }
 pecos-num = { version = "0.2.0-dev.0", path = "crates/pecos-num" }

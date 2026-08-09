@@ -10,7 +10,24 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::Sense;
+//! Small dense linear-programming solver: two-phase tableau simplex with
+//! Bland's rule.
+//!
+//! Built for the tiny LPs that arise in decoder relaxations (tens to ~200
+//! columns). Deterministic by construction — fixed iteration order, no
+//! randomization — so repeated solves are byte-identical. Every accepted
+//! solution passes a final primal-feasibility audit; numerical trouble
+//! surfaces as [`LpOutcome::InternalError`], never as a silently wrong
+//! optimum.
+
+/// Whether the objective is maximized or minimized.
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum Direction {
+    /// Maximize the objective.
+    Maximize,
+    /// Minimize the objective.
+    Minimize,
+}
 
 const EPSILON: f64 = 1e-9;
 
@@ -23,23 +40,37 @@ const PIVOT_TOLERANCE: f64 = 1e-7;
 /// row bound's magnitude. Matches the order of `HiGHS`'s default (1e-7).
 const FEASIBILITY_TOLERANCE: f64 = 1e-7;
 
+/// A variable: objective coefficient and inclusive bounds (infinities allowed).
 #[derive(Clone, Copy)]
-pub(super) struct ColumnData {
-    pub(super) objective: f64,
-    pub(super) lower: f64,
-    pub(super) upper: f64,
+pub struct ColumnData {
+    /// Objective coefficient.
+    pub objective: f64,
+    /// Lower bound (`f64::NEG_INFINITY` for unbounded below).
+    pub lower: f64,
+    /// Upper bound (`f64::INFINITY` for unbounded above).
+    pub upper: f64,
 }
 
-pub(super) struct RowData {
-    pub(super) lower: f64,
-    pub(super) upper: f64,
-    pub(super) factors: Vec<(usize, f64)>,
+/// A constraint row: inclusive bounds on a sparse linear form over columns.
+pub struct RowData {
+    /// Lower bound (`f64::NEG_INFINITY` for unbounded below).
+    pub lower: f64,
+    /// Upper bound (`f64::INFINITY` for unbounded above).
+    pub upper: f64,
+    /// Sparse coefficients as `(column index, factor)` pairs.
+    pub factors: Vec<(usize, f64)>,
 }
 
-pub(super) enum LpOutcome {
+/// Result of an LP solve.
+pub enum LpOutcome {
+    /// Optimal variable values in column order.
     Optimal(Vec<f64>),
+    /// No feasible point exists.
     Infeasible,
+    /// The objective improves without bound.
     Unbounded,
+    /// Numerical failure (audit rejection or iteration cap); never a silently
+    /// degraded solution.
     InternalError,
 }
 
@@ -77,8 +108,10 @@ enum SimplexResult {
     IterationLimit,
 }
 
-pub(super) fn solve(sense: Sense, columns: &[ColumnData], rows: &[RowData]) -> LpOutcome {
-    let problem = match preprocess(sense, columns, rows) {
+/// Solve the LP defined by `columns` and `rows`.
+#[must_use]
+pub fn solve(direction: Direction, columns: &[ColumnData], rows: &[RowData]) -> LpOutcome {
+    let problem = match preprocess(direction, columns, rows) {
         Ok(problem) => problem,
         Err(PreprocessError::Infeasible) => return LpOutcome::Infeasible,
         Err(PreprocessError::Internal) => return LpOutcome::InternalError,
@@ -88,11 +121,15 @@ pub(super) fn solve(sense: Sense, columns: &[ColumnData], rows: &[RowData]) -> L
 }
 
 fn preprocess(
-    sense: Sense,
+    direction: Direction,
     columns: &[ColumnData],
     rows: &[RowData],
 ) -> Result<StandardProblem, PreprocessError> {
-    let direction = if sense == Sense::Maximise { 1.0 } else { -1.0 };
+    let sign = if direction == Direction::Maximize {
+        1.0
+    } else {
+        -1.0
+    };
     let mut objective = Vec::new();
     let mut transforms = Vec::with_capacity(columns.len());
     let mut upper_bounds = Vec::new();
@@ -102,7 +139,7 @@ fn preprocess(
         if !column.objective.is_finite() {
             return Err(PreprocessError::Internal);
         }
-        let coefficient = direction * column.objective;
+        let coefficient = sign * column.objective;
 
         if column.lower.is_finite() {
             let variable = objective.len();

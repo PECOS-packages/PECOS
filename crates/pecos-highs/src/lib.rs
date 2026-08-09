@@ -20,9 +20,7 @@
 
 use std::ops::{Bound, RangeBounds};
 
-use simplex::{ColumnData, LpOutcome, RowData};
-
-mod simplex;
+use pecos_lp::{ColumnData, Direction, LpOutcome, RowData};
 
 /// Whether an objective is maximized or minimized.
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -138,7 +136,11 @@ impl Model {
             };
         }
 
-        let outcome = simplex::solve(self.sense, &self.columns, &self.rows);
+        let direction = match self.sense {
+            Sense::Maximise => Direction::Maximize,
+            Sense::Minimise => Direction::Minimize,
+        };
+        let outcome = pecos_lp::solve(direction, &self.columns, &self.rows);
         match outcome {
             LpOutcome::Optimal(columns) => SolvedModel {
                 status: HighsModelStatus::Optimal,

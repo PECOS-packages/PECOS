@@ -6,8 +6,11 @@ authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
-description = "Pure-Rust LP compatibility shim for the subset of highs used by mwpf"
+description = "Pure-Rust compatibility facade for the subset of the highs API used by mwpf, backed by pecos-lp"
 publish = false
+
+[dependencies]
+pecos-lp.workspace = true
 
 [lints]
 workspace = true

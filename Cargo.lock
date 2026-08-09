@@ -2454,6 +2454,9 @@ dependencies = [
 [[package]]
 name = "highs"
 version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-lp",
+]
 
 [[package]]
 name = "html-escape"
@@ -4459,6 +4462,10 @@ dependencies = [
  "pecos-build",
  "pecos-core",
 ]
+
+[[package]]
+name = "pecos-lp"
+version = "0.2.0-dev.0"
 
 [[package]]
 name = "pecos-mwpf"

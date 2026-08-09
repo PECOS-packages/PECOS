@@ -26,7 +26,7 @@ from pecos.qec import (
     surface_memory_dem_spec,
 )
 from pecos.qec.dem import _generator_certified_result_traces
-from pecos.qec.dem_spec import GuppyDemBuild, _resolve_dem_specs
+from pecos.qec.dem_spec import GuppyDemBuild, RecordRef, ResultRef, _resolve_dem_specs
 from pecos_rslib.quantum import TickCircuit
 
 
@@ -130,6 +130,44 @@ def test_real_guppy_rec_and_result_ref_builds_are_byte_identical() -> None:
     assert via_records.observables_json == via_results.observables_json
     assert via_records.schema_fingerprint == via_results.schema_fingerprint
     assert via_records.dem.to_string() == via_results.dem.to_string()
+
+
+def test_bare_tag_strings_are_shorthand_for_result_ref() -> None:
+    noise = {"p1": 0.01, "p2": 0.02, "p_meas": 0.1, "p_prep": 0.0}
+    via_result_ref = build_dem_from_guppy(
+        _scrambled_tagged_measurements,
+        num_qubits=2,
+        detectors=[Detector(result_ref("a"))],
+        observables=[Observable(result_ref("b"))],
+        **noise,
+    )
+    via_strings = build_dem_from_guppy(
+        _scrambled_tagged_measurements,
+        num_qubits=2,
+        detectors=[Detector("a")],
+        observables=[Observable("b")],
+        **noise,
+    )
+
+    assert via_strings.detectors_json == via_result_ref.detectors_json
+    assert via_strings.observables_json == via_result_ref.observables_json
+    assert via_strings.schema_fingerprint == via_result_ref.schema_fingerprint
+    assert via_strings.dem.to_string() == via_result_ref.dem.to_string()
+
+
+def test_tag_strings_mix_with_rec_and_result_ref_refs() -> None:
+    detector = Detector("a", result_ref("b"), rec[-1])
+
+    assert detector.refs == (ResultRef("a"), ResultRef("b"), RecordRef(-1))
+
+
+def test_tag_string_shorthand_rejects_empty_and_wrong_types() -> None:
+    with pytest.raises(ValueError, match="non-empty string"):
+        Detector("")
+    with pytest.raises(TypeError, match="measurement references must be"):
+        Detector(3.5)
+    with pytest.raises(ValueError, match="at least one measurement"):
+        Observable()
 
 
 def test_trace_once_build_evaluates_runtime_and_rejects_uncertified_named_results(

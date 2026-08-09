@@ -24,6 +24,7 @@ type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyBool;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -852,7 +853,9 @@ pub fn hugr_engine() -> PyHugrEngineBuilder {
     PyHugrEngineBuilder::new()
 }
 
-/// Create a general noise model builder
+/// Create a general noise model builder with no-effect defaults.
+///
+/// Call ``.auto()`` to opt into the legacy demonstration preset.
 #[pyfunction]
 pub fn general_noise() -> PyGeneralNoiseModelBuilder {
     PyGeneralNoiseModelBuilder::new()
@@ -877,6 +880,15 @@ pub struct PyGeneralNoiseModelBuilder {
     pub(crate) inner: GeneralNoiseModelBuilder,
 }
 
+impl PyGeneralNoiseModelBuilder {
+    pub(crate) fn validated_inner(&self) -> PyResult<GeneralNoiseModelBuilder> {
+        self.inner
+            .validate_configuration()
+            .map_err(|message| pyo3::exceptions::PyValueError::new_err(message.to_string()))?;
+        Ok(self.inner.clone())
+    }
+}
+
 #[pymethods]
 impl PyGeneralNoiseModelBuilder {
     #[new]
@@ -886,38 +898,61 @@ impl PyGeneralNoiseModelBuilder {
         }
     }
 
+    /// Fill unset parameters with the legacy demonstration preset.
+    ///
+    /// This reproduces the general noise model's historical defaults for demonstrations; it is
+    /// not a calibrated device model. Explicit setters win in either call order because ``auto``
+    /// fills only parameters that the caller has not set.
+    ///
+    /// The preset sets preparation, measurement, one-qubit, two-qubit, and linear-idle rates to
+    /// 0.01, 0.01/0.01, 0.001, 0.01, and 0.001 respectively. In addition:
+    ///
+    /// * ``p_prep_leak_ratio = 0.5`` means half of preparation faults leak the qubit out of the
+    ///   computational subspace.
+    /// * ``p1_emission_ratio = p2_emission_ratio = 0.5`` means half of gate errors take the
+    ///   spontaneous-emission branch, which removes the original gate and substitutes a sample
+    ///   from the emission model. The preset emission models contain Pauli keys only, so these
+    ///   branches cause no leakage.
+    /// * ``p1_seepage_prob = p2_seepage_prob = 0.5`` applies only to qubits that are already
+    ///   leaked.
+    fn auto(&self) -> Self {
+        Self {
+            inner: self.inner.clone().auto(),
+        }
+    }
+
     /// Set single-qubit gate error probability
-    fn with_p1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p1_probability(p),
+            inner: self.inner.clone().with_p1(p),
         })
     }
 
     /// Set two-qubit gate error probability
-    fn with_p2_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p2(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p2_probability(p),
+            inner: self.inner.clone().with_p2(p),
         })
     }
 
     /// Set preparation error probability
-    fn with_prep_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_prep(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_prep_probability(p),
+            inner: self.inner.clone().with_p_prep(p),
         })
     }
 
     /// Set measurement error probability for |0⟩ state
-    fn with_meas_0_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas_0(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_0_probability(p),
+            inner: self.inner.clone().with_p_meas_0(p),
         })
     }
 
     /// Set measurement error probability for |1⟩ state
-    fn with_meas_1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas_1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_1_probability(p),
+            inner: self.inner.clone().with_p_meas_1(p),
         })
     }
 
@@ -974,41 +1009,30 @@ impl PyGeneralNoiseModelBuilder {
     }
 
     /// Set average single-qubit gate error probability
-    fn with_average_p1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_average_p1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_average_p1_probability(p),
+            inner: self.inner.clone().with_average_p1(p),
         })
     }
 
     /// Set average two-qubit gate error probability
-    fn with_average_p2_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_average_p2(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_average_p2_probability(p),
+            inner: self.inner.clone().with_average_p2(p),
         })
     }
 
     /// Set measurement error probability (symmetric)
-    fn with_meas_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_probability(p),
-        })
-    }
-
-    /// Set preparation error probability
-    fn with_preparation_probability(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_prep_probability(p),
+            inner: self.inner.clone().with_p_meas(p),
         })
     }
 
     /// Set measurement error probability (asymmetric)
     fn with_measurement_probability(&self, p0: f64, p1: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self
-                .inner
-                .clone()
-                .with_meas_0_probability(p0)
-                .with_meas_1_probability(p1),
+            inner: self.inner.clone().with_p_meas_0(p0).with_p_meas_1(p1),
         })
     }
 
@@ -1055,60 +1079,103 @@ impl PyGeneralNoiseModelBuilder {
         })
     }
 
-    /// Set whether to use coherent dephasing for idle errors
-    fn with_p_idle_coherent(&self, use_coherent: bool) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_idle_coherent(use_coherent),
-        })
-    }
-
-    /// Set the idling noise error rate for the linear term
-    fn with_p_idle_linear_rate(&self, rate: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_idle_linear_rate(rate),
-        })
-    }
-
-    /// Set the idling noise error rate for the quadratic term
-    fn with_p_idle_quadratic_rate(&self, rate: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_idle_quadratic_rate(rate),
-        })
-    }
-
-    /// Set the stochastic model for idling that is linearly dependent on time
-    fn with_p_idle_linear_model(
+    /// Set the DEM-style linear idle-noise family.
+    ///
+    /// ``rate`` is the total event rate per time unit. The X/Y/Z/L ``model`` must be a
+    /// normalized distribution because this family splits one total linear rate across axes.
+    ///
+    /// By contrast, ``with_p_idle_sin_squared`` uses radians per time unit and unnormalized
+    /// relative multipliers because sine laws do not add linearly: each axis has its own
+    /// independent rate. It applies no unit conversion.
+    ///
+    /// All engines idle-noise families are off by default, so translating a DEM configuration only
+    /// requires setting the requested families. Engines keeps its existing linear sampling
+    /// structure: one event followed by a categorical axis choice, versus the DEM's independent
+    /// per-axis mechanisms. The difference is second order in the rates; this setter aligns units
+    /// and the axis alphabet, not the sampling structure.
+    fn with_p_idle_linear(
         &self,
+        rate: f64,
         model: std::collections::BTreeMap<String, f64>,
     ) -> PyResult<Self> {
-        use std::collections::BTreeMap;
-        let btree_map: BTreeMap<String, f64> = model.into_iter().collect();
         Ok(Self {
-            inner: self.inner.clone().with_p_idle_linear_model(&btree_map),
+            inner: self.inner.clone().with_p_idle_linear(rate, &model),
         })
     }
 
-    /// Set coherent to incoherent noise conversion factor
-    fn with_p_idle_coherent_to_incoherent_factor(&self, factor: f64) -> PyResult<Self> {
+    /// Set the DEM-style stochastic sine-squared idle-noise family.
+    ///
+    /// ``rate`` is radians per time unit and no unit conversion is applied. For each X/Y/Z/L axis
+    /// P, multiplier ``n_P``, and duration ``d``, engines independently samples
+    /// ``P(P) = sin^2(rate * n_P * d)``.
+    ///
+    /// The model is intentionally unnormalized because sine laws do not add linearly: each axis
+    /// carries its own independent rate. ``with_p_idle_linear`` instead requires a normalized
+    /// distribution because it splits one total linear rate across axes.
+    ///
+    /// The removed cycles-per-time spelling migrates exactly as follows at its former default
+    /// factor of one:
+    ///
+    /// ``with_p_idle_quadratic_rate(r)  ==  with_p_idle_sin_squared(r * PI, {"Z": 1.0})``
+    ///
+    /// All engines idle-noise families are off by default, so translating a DEM configuration
+    /// only requires setting the requested families.
+    ///
+    /// Engines deliberately retains its existing linear sampling structure: one event followed
+    /// by a categorical axis choice, versus the DEM's independent per-axis mechanisms. The
+    /// difference is second order in the rates; this setter aligns units and the axis alphabet,
+    /// not the sampling structure.
+    fn with_p_idle_sin_squared(
+        &self,
+        rate: f64,
+        model: std::collections::BTreeMap<String, f64>,
+    ) -> PyResult<Self> {
         Ok(Self {
-            inner: self
-                .inner
-                .clone()
-                .with_p_idle_coherent_to_incoherent_factor(factor),
+            inner: self.inner.clone().with_p_idle_sin_squared(rate, &model),
         })
     }
 
-    /// Set the average idling noise error rate per channel for the linear term
-    fn with_average_p_idle_linear_rate(&self, rate: f64) -> PyResult<Self> {
+    /// Set the DEM-style coherent idle-noise family.
+    ///
+    /// ``rate`` is radians per time unit and no unit conversion is applied. For each RX/RY/RZ
+    /// generator P, multiplier ``n_P``, and duration ``d``, engines deterministically applies a
+    /// rotation with angle ``rate * n_P * d``. Coherent evolution is not sampled and consumes no
+    /// random draw.
+    ///
+    /// The model is intentionally unnormalized because its values are relative rate multipliers,
+    /// not probabilities to be split from one total event rate. It defaults to
+    /// ``{"RX": 1.0, "RY": 1.0, "RZ": 1.0}``. Leakage and all other keys are rejected because
+    /// leakage is not a rotation.
+    ///
+    /// Consumption is consumer-dependent: the standard DEM builder rejects coherent idle noise;
+    /// the EEG route in ``exp/pecos-eeg`` represents it with an RZ generator; and a simulator
+    /// applies it only when its rotation executor is installed. PECOS #437 documents how a
+    /// missing executor could otherwise silently drop it.
+    #[pyo3(signature = (rate, model=None))]
+    fn with_p_idle_coherent(
+        &self,
+        rate: &Bound<'_, PyAny>,
+        model: Option<std::collections::BTreeMap<String, f64>>,
+    ) -> PyResult<Self> {
+        if rate.is_instance_of::<PyBool>() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "coherent idling rate must be a finite, non-negative float, not bool",
+            ));
+        }
+        let rate = rate.extract::<f64>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err(
+                "coherent idling rate must be a finite, non-negative float",
+            )
+        })?;
+        let model = model.unwrap_or_else(|| {
+            std::collections::BTreeMap::from([
+                ("RX".to_string(), 1.0),
+                ("RY".to_string(), 1.0),
+                ("RZ".to_string(), 1.0),
+            ])
+        });
         Ok(Self {
-            inner: self.inner.clone().with_average_p_idle_linear_rate(rate),
-        })
-    }
-
-    /// Set the average idling noise error rate per channel for the quadratic term
-    fn with_average_p_idle_quadratic_rate(&self, rate: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_average_p_idle_quadratic_rate(rate),
+            inner: self.inner.clone().with_p_idle_coherent(rate, &model),
         })
     }
 
@@ -1220,10 +1287,18 @@ impl PyGeneralNoiseModelBuilder {
         })
     }
 
-    /// Set idle probability for two-qubit gates
-    fn with_p2_idle(&self, probability: f64) -> PyResult<Self> {
+    /// Set the duration of the idle-noise site applied to each qubit after a two-qubit gate.
+    ///
+    /// A duration of `0.0` disables these sites. Nonzero sites receive all configured idle
+    /// families over the given duration: linear stochastic noise, independent per-axis
+    /// sine-squared noise, and coherent rotations.
+    ///
+    /// Anyone who previously wrote `with_p2_idle(0.01)` and no linear rate now gets no after-2q
+    /// idle noise; the equivalent is
+    /// `with_p_idle_linear(0.01, {"Z": 1.0}).with_idle_after_2q(1.0)`.
+    fn with_idle_after_2q(&self, duration: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p2_idle(probability),
+            inner: self.inner.clone().with_idle_after_2q(duration),
         })
     }
 
@@ -1299,30 +1374,30 @@ impl PyDepolarizingNoiseModelBuilder {
     }
 
     /// Set preparation error probability
-    fn with_prep_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_prep(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_prep_probability(p),
+            inner: self.inner.clone().with_p_prep(p),
         })
     }
 
     /// Set measurement error probability
-    fn with_meas_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_probability(p),
+            inner: self.inner.clone().with_p_meas(p),
         })
     }
 
     /// Set single-qubit gate error probability
-    fn with_p1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p1_probability(p),
+            inner: self.inner.clone().with_p1(p),
         })
     }
 
     /// Set two-qubit gate error probability
-    fn with_p2_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p2(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p2_probability(p),
+            inner: self.inner.clone().with_p2(p),
         })
     }
 
@@ -1338,11 +1413,6 @@ impl PyDepolarizingNoiseModelBuilder {
         Ok(Self {
             inner: self.inner.clone().with_seed(seed),
         })
-    }
-
-    /// Set preparation error probability (alias for `with_prep_probability`)
-    fn with_preparation_probability(&self, p: f64) -> PyResult<Self> {
-        self.with_prep_probability(p)
     }
 }
 
@@ -1363,37 +1433,37 @@ impl PyBiasedDepolarizingNoiseModelBuilder {
     }
 
     /// Set preparation error probability
-    fn with_prep_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_prep(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_prep_probability(p),
+            inner: self.inner.clone().with_p_prep(p),
         })
     }
 
     /// Set measurement 0->1 flip probability
-    fn with_meas_0_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas_0(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_0_probability(p),
+            inner: self.inner.clone().with_p_meas_0(p),
         })
     }
 
     /// Set measurement 1->0 flip probability
-    fn with_meas_1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p_meas_1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_meas_1_probability(p),
+            inner: self.inner.clone().with_p_meas_1(p),
         })
     }
 
     /// Set single-qubit gate error probability
-    fn with_p1_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p1(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p1_probability(p),
+            inner: self.inner.clone().with_p1(p),
         })
     }
 
     /// Set two-qubit gate error probability
-    fn with_p2_probability(&self, p: f64) -> PyResult<Self> {
+    fn with_p2(&self, p: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p2_probability(p),
+            inner: self.inner.clone().with_p2(p),
         })
     }
 

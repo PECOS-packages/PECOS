@@ -1525,7 +1525,7 @@ pub(crate) fn compute_location_probs_from_noise(
                 | GateType::RZZ => noise.p2_rate_for_gate(loc.gate_type),
                 GateType::Idle => {
                     if noise.uses_dedicated_idle_noise() {
-                        let duration = loc.idle_duration.max(0.0);
+                        let duration = loc.idle_duration;
                         noise.idle_pauli_probs(duration).total()
                     } else {
                         0.0

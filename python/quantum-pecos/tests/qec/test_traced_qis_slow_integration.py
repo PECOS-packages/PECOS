@@ -104,7 +104,7 @@ def _decode_native_dem_samples(circuit, noise_args, matching, shots, seed):
             syndrome[det_index] = sampled_syndrome[det_index]
         predicted = matching.decode(syndrome)
         predicted_mask = sum(int(bit) << index for index, bit in enumerate(predicted))
-        errors += predicted_mask != batch.get_observable_mask(shot_index)
+        errors += predicted_mask != batch.get_observable_flips(shot_index).mask
 
     return errors
 

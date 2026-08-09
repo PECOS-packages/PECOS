@@ -51,6 +51,7 @@ mod gate_registry_bindings;
 mod graph_bindings;
 mod namespace_modules;
 mod num_bindings;
+mod observable_flips_bindings;
 mod pauli_bindings;
 mod pauli_prop_bindings;
 mod pauli_sequence_bindings;
@@ -449,6 +450,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("all", num.getattr("all")?)?;
     m.add("any", num.getattr("any")?)?;
     m.add("where", num.getattr("where_array")?)?;
+    m.add("nonzero", num.getattr("nonzero")?)?;
+    m.add("issubdtype", num.getattr("issubdtype")?)?;
 
     // Optimization functions
     m.add("brentq", num.getattr("brentq")?)?;
@@ -467,6 +470,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("arange", num.getattr("arange")?)?;
     m.add("zeros", num.getattr("zeros")?)?;
     m.add("ones", num.getattr("ones")?)?;
+    m.add("asarray", num.getattr("asarray")?)?;
+    m.add("zeros_like", num.getattr("zeros_like")?)?;
     m.add("delete", num.getattr("delete")?)?;
     m.add("kron", num.getattr("kron")?)?;
 
@@ -483,6 +488,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // These are convenience aliases for dtypes.i8.type
     // =========================================================================
     let dtypes = m.getattr("dtypes")?;
+    m.add("bool_", num.getattr("bool_")?)?;
+    m.add("integer", num.getattr("integer")?)?;
     m.add("i8", dtypes.getattr("i8")?.getattr("type")?)?;
     m.add("i16", dtypes.getattr("i16")?.getattr("type")?)?;
     m.add("i32", dtypes.getattr("i32")?.getattr("type")?)?;

@@ -283,13 +283,9 @@ def _backend_runtime_label(sample_backend: str, native_circuit_source: str = "ab
     raise ValueError(msg)
 
 
-def _predicted_observable_flip(result: object) -> int:
+def _predicted_observable_flip(result: Any) -> int:
     """Extract the predicted logical observable flip from a DEM decoder result."""
-    observables_mask = getattr(result, "observables_mask", None)
-    if observables_mask is not None:
-        return int(observables_mask & 1)
-    correction = getattr(result, "correction", [])
-    return int(correction[0]) if len(correction) > 0 else 0
+    return int(result.observable_flips[0])
 
 
 def _format_rate(value: float | None) -> str:
@@ -556,7 +552,7 @@ def _noise_model_description(args: argparse.Namespace) -> str:
     sim_noise_model = getattr(args, "sim_noise_model", "depolarizing")
     base = f"p1={p1s:.4g}*p, p2=p, p_meas={pms:.4g}*p, p_prep={pps:.4g}*p"
     if sim_noise_model == "general":
-        return f"general_noise runtime ({base}, leak2depolar=True, p_idle_coherent=False)"
+        return f"general_noise runtime ({base}, leak2depolar=True)"
     return f"depolarizing runtime ({base})"
 
 
@@ -588,15 +584,9 @@ def _create_dem_decoder(decoder_type: str, dem_str: str, *, tesseract_beam: int 
     return PyMatchingDecoder.from_dem(dem_str)
 
 
-def _decode_one_shot(dem_decoder: object, events_flat: list[int]) -> object:
-    """Decode one shot using whichever DEM decoder was created.
-
-    Tesseract.decode() wants sparse indices; decode_syndrome() accepts dense vectors.
-    PyMatching.decode() accepts dense vectors directly.
-    """
-    if hasattr(dem_decoder, "decode_syndrome"):
-        return dem_decoder.decode_syndrome(events_flat)
-    return dem_decoder.decode(events_flat)
+def _decode_one_shot(dem_decoder: Any, events_flat: list[int]) -> object:
+    """Decode one dense syndrome using whichever DEM decoder was created."""
+    return dem_decoder.decode_syndrome(events_flat)
 
 
 def _decode_all_shots(
@@ -639,7 +629,7 @@ def _decode_all_shots(
         batch_results = dem_decoder.decode_batch(syndromes)
         num_errors = 0
         for shot_idx, result in enumerate(batch_results):
-            predicted_flip = int(result.observables_mask & 1)
+            predicted_flip = int(result.observable_flips[0])
             num_errors += int(predicted_flip != true_flips[shot_idx])
         return num_errors
 
@@ -669,11 +659,11 @@ def _decoder_runtime(
     p_prep_scale: float = 0.5,
 ) -> _DecoderRuntime:
     """Build and cache the expensive native decoder-side objects once."""
-    from pecos.qec.surface import NoiseModel, SurfaceDecoder
+    from pecos.qec.surface import NoiseParameters, SurfaceDecoder
 
     basis = basis.upper()
     patch = _surface_patch(distance)
-    noise = NoiseModel(
+    noise = NoiseParameters(
         p1=physical_error_rate * p1_scale,
         p2=physical_error_rate,
         p_meas=physical_error_rate * p_meas_scale,
@@ -954,15 +944,13 @@ def _run_gate_backend_result_dict(
         backend_start = time.perf_counter()
         noise_start = time.perf_counter()
         if sim_noise_model == "general":
-            use_coherent_idle = False
             noise_model = (
                 pecos.general_noise()
-                .with_prep_probability(physical_error_rate * p_prep_scale)
-                .with_meas_probability(physical_error_rate * p_meas_scale)
-                .with_p1_probability(physical_error_rate * p1_scale)
-                .with_p2_probability(physical_error_rate)
+                .with_p_prep(physical_error_rate * p_prep_scale)
+                .with_p_meas(physical_error_rate * p_meas_scale)
+                .with_p1(physical_error_rate * p1_scale)
+                .with_p2(physical_error_rate)
                 .with_leakage_scale(0.0)
-                .with_p_idle_coherent(use_coherent_idle)
                 .with_seed(seed)
             )
         elif sim_noise_model == "depolarizing":
@@ -3724,10 +3712,7 @@ def _parse_args() -> argparse.Namespace:
         "--sim-noise-model",
         choices=["depolarizing", "general"],
         default="depolarizing",
-        help=(
-            "Runtime noise model used by --sample-backend sim. The 'general' "
-            "option sets leak2depolar=True and p_idle_coherent=False."
-        ),
+        help=("Runtime noise model used by --sample-backend sim. The 'general' option sets leak2depolar=True."),
     )
     parser.add_argument(
         "--dem-mode",

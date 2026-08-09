@@ -186,7 +186,7 @@ fn test_monte_carlo_with_depolarizing_noise() {
     // Build equivalent noise models
     // pecos-engines uses scaled probabilities
     let engines_noise = GeneralNoiseModel::builder()
-        .with_average_p1_probability(p1 / 1.5) // Scale down for engines
+        .with_average_p1(p1 / 1.5) // Scale down for engines
         .build();
 
     // Simple circuit: prep, apply X (identity on |0>), measure
@@ -266,8 +266,8 @@ fn test_monte_carlo_measurement_errors() {
 
     // pecos-engines noise model
     let engines_noise = GeneralNoiseModel::builder()
-        .with_meas_0_probability(p_meas)
-        .with_meas_1_probability(p_meas)
+        .with_p_meas_0(p_meas)
+        .with_p_meas_1(p_meas)
         .build();
 
     // Circuit: prep |0>, measure (should be 0, but measurement errors flip some)
@@ -401,7 +401,7 @@ fn test_monte_carlo_two_qubit_noise() {
 
     // pecos-engines noise model (scaled)
     let engines_noise = GeneralNoiseModel::builder()
-        .with_average_p2_probability(p2 / 1.25) // Scale down for engines
+        .with_average_p2(p2 / 1.25) // Scale down for engines
         .build();
 
     // Circuit: Bell state creation, errors will decorrelate outcomes

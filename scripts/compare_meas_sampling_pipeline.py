@@ -133,7 +133,7 @@ def run_native_sampler(tc, noise_args, matching, shots, seed):
 
         predicted = matching.decode(syndrome)
         pred_mask = sum(int(v) << j for j, v in enumerate(predicted))
-        if pred_mask != batch.get_observable_mask(i):
+        if pred_mask != batch.get_observable_flips(i).mask:
             errors += 1
 
     t_decode = time.perf_counter() - t0

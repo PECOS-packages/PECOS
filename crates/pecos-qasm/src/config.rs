@@ -61,15 +61,17 @@ pub struct GeneralNoiseFields {
 
     // Idle noise parameters
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub p_idle_coherent: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub p_idle_linear_rate: Option<f64>,
+    pub p_idle_linear: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p_idle_linear_model: Option<BTreeMap<String, f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub p_idle_quadratic_rate: Option<f64>,
+    pub p_idle_sin_squared: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub p_idle_coherent_to_incoherent_factor: Option<f64>,
+    pub p_idle_sin_squared_model: Option<BTreeMap<String, f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_idle_coherent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_idle_coherent_model: Option<BTreeMap<String, f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idle_scale: Option<f64>,
 
@@ -114,8 +116,11 @@ pub struct GeneralNoiseFields {
     pub p2_seepage_prob: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p2_pauli_model: Option<BTreeMap<String, f64>>,
+    /// Duration of the idle-noise sites applied to both qubits after a two-qubit gate.
+    ///
+    /// The configured idle families determine the noise at these sites.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub p2_idle: Option<f64>,
+    pub idle_after_2q: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p2_scale: Option<f64>,
 
@@ -205,20 +210,42 @@ impl GeneralNoiseFields {
 
     /// Apply idle noise parameters to the builder
     fn apply_idle_params(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
-        if let Some(v) = self.p_idle_coherent {
-            builder = builder.with_p_idle_coherent(v);
+        if let Some(rate) = self.p_idle_linear {
+            let default_model = BTreeMap::from([
+                ("X".to_string(), 1.0 / 3.0),
+                ("Y".to_string(), 1.0 / 3.0),
+                ("Z".to_string(), 1.0 / 3.0),
+            ]);
+            builder = builder.with_p_idle_linear(
+                rate,
+                self.p_idle_linear_model.as_ref().unwrap_or(&default_model),
+            );
         }
-        if let Some(v) = self.p_idle_linear_rate {
-            builder = builder.with_p_idle_linear_rate(v);
+        if let Some(rate) = self.p_idle_sin_squared {
+            let default_model = BTreeMap::from([
+                ("X".to_string(), 1.0),
+                ("Y".to_string(), 1.0),
+                ("Z".to_string(), 1.0),
+            ]);
+            builder = builder.with_p_idle_sin_squared(
+                rate,
+                self.p_idle_sin_squared_model
+                    .as_ref()
+                    .unwrap_or(&default_model),
+            );
         }
-        if let Some(model) = self.p_idle_linear_model.as_ref() {
-            builder = builder.with_p_idle_linear_model(model);
-        }
-        if let Some(v) = self.p_idle_quadratic_rate {
-            builder = builder.with_p_idle_quadratic_rate(v);
-        }
-        if let Some(v) = self.p_idle_coherent_to_incoherent_factor {
-            builder = builder.with_p_idle_coherent_to_incoherent_factor(v);
+        if let Some(rate) = self.p_idle_coherent {
+            let default_model = BTreeMap::from([
+                ("RX".to_string(), 1.0),
+                ("RY".to_string(), 1.0),
+                ("RZ".to_string(), 1.0),
+            ]);
+            builder = builder.with_p_idle_coherent(
+                rate,
+                self.p_idle_coherent_model
+                    .as_ref()
+                    .unwrap_or(&default_model),
+            );
         }
         if let Some(v) = self.idle_scale {
             builder = builder.with_idle_scale(v);
@@ -229,7 +256,7 @@ impl GeneralNoiseFields {
     /// Apply prep noise parameters to the builder
     fn apply_prep_params(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
         if let Some(v) = self.p_prep {
-            builder = builder.with_prep_probability(v);
+            builder = builder.with_p_prep(v);
         }
         if let Some(v) = self.p_prep_leak_ratio {
             builder = builder.with_prep_leak_ratio(v);
@@ -252,7 +279,7 @@ impl GeneralNoiseFields {
         mut builder: GeneralNoiseModelBuilder,
     ) -> GeneralNoiseModelBuilder {
         if let Some(v) = self.p1 {
-            builder = builder.with_p1_probability(v);
+            builder = builder.with_p1(v);
         }
         if let Some(v) = self.p1_emission_ratio {
             builder = builder.with_p1_emission_ratio(v);
@@ -278,7 +305,7 @@ impl GeneralNoiseFields {
         mut builder: GeneralNoiseModelBuilder,
     ) -> GeneralNoiseModelBuilder {
         if let Some(v) = self.p2 {
-            builder = builder.with_p2_probability(v);
+            builder = builder.with_p2(v);
         }
         if let Some((a, b, c, d)) = self.p2_angle_params {
             builder = builder.with_p2_angle_params(a, b, c, d);
@@ -298,8 +325,8 @@ impl GeneralNoiseFields {
         if let Some(model) = self.p2_pauli_model.as_ref() {
             builder = builder.with_p2_pauli_model(model);
         }
-        if let Some(v) = self.p2_idle {
-            builder = builder.with_p2_idle(v);
+        if let Some(v) = self.idle_after_2q {
+            builder = builder.with_idle_after_2q(v);
         }
         if let Some(v) = self.p2_scale {
             builder = builder.with_p2_scale(v);
@@ -310,10 +337,10 @@ impl GeneralNoiseFields {
     /// Apply measurement noise parameters to the builder
     fn apply_meas_params(&self, mut builder: GeneralNoiseModelBuilder) -> GeneralNoiseModelBuilder {
         if let Some(v) = self.p_meas_0 {
-            builder = builder.with_meas_0_probability(v);
+            builder = builder.with_p_meas_0(v);
         }
         if let Some(v) = self.p_meas_1 {
-            builder = builder.with_meas_1_probability(v);
+            builder = builder.with_p_meas_1(v);
         }
         if let Some(v) = self.p_meas_crosstalk {
             builder = builder.with_p_meas_crosstalk(v);

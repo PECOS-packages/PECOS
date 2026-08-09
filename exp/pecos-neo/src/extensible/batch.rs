@@ -290,7 +290,9 @@ impl BatchedCircuit {
             (Batch::OutputResult { results }, ResolvedOp::OutputResult { result }) => {
                 results.push(*result);
             }
-            _ => {} // Should not happen if can_extend is correct
+            _ => unreachable!(
+                "BatchedCircuit invariant violated: can_extend accepted an incompatible operation"
+            ),
         }
     }
 
@@ -345,6 +347,11 @@ pub trait BatchExecutor {
     );
 
     /// Execute the full batched circuit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the default executor encounters a multi-angle operation it
+    /// cannot represent instead of silently dropping it.
     fn execute_batched(&mut self, circuit: &BatchedCircuit) -> Self::MeasurementResults
     where
         Self::MeasurementResults: Default,
@@ -371,8 +378,14 @@ pub trait BatchExecutor {
                             self.execute_single_qubit(*gate_id, &[qubits[0]]);
                         } else if qubits.len() == 2 && angles.is_empty() {
                             self.execute_two_qubit(*gate_id, &[(qubits[0], qubits[1])]);
+                        } else {
+                            panic!(
+                                "BatchExecutor cannot execute multi-angle gate {gate_id:?} with \
+                                 {} qubit(s) and {} angle(s)",
+                                qubits.len(),
+                                angles.len()
+                            );
                         }
-                        // Other cases would need more specific handling
                     }
                 }
                 Batch::Prep { basis, qubits } => {
@@ -511,6 +524,65 @@ impl<T: SimpleExecutor> BatchExecutor for T {
 mod tests {
     use super::super::gates;
     use super::*;
+
+    struct NoopExecutor;
+
+    impl SimpleExecutor for NoopExecutor {
+        type MeasurementResults = Vec<bool>;
+
+        fn execute_gate(&mut self, _gate_id: GateId, _qubits: &[QubitId], _angles: &[Angle64]) {}
+
+        fn execute_prep(&mut self, _basis: super::super::PrepBasis, _qubit: QubitId) {}
+
+        fn execute_measure(
+            &mut self,
+            _basis: super::super::MeasBasis,
+            _qubit: QubitId,
+            _result: super::super::ResultId,
+            _results: &mut Self::MeasurementResults,
+        ) {
+        }
+
+        fn get_result(
+            &self,
+            _result: super::super::ResultId,
+            _results: &Self::MeasurementResults,
+        ) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "BatchedCircuit invariant violated")]
+    fn incompatible_extension_panics() {
+        let mut batch = Batch::SingleQubit {
+            gate_id: gates::H,
+            qubits: vec![QubitId(0)],
+        };
+        let prep = ResolvedOp::Prep {
+            qubit: QubitId(1),
+            basis: super::super::PrepBasis::Z,
+        };
+
+        BatchedCircuit::extend_batch(&mut batch, &prep);
+    }
+
+    #[test]
+    #[should_panic(expected = "BatchExecutor cannot execute multi-angle gate")]
+    fn unsupported_multi_angle_batch_panics() {
+        let circuit = BatchedCircuit {
+            batches: vec![Batch::MultiAngle {
+                gate_id: gates::U,
+                ops: vec![(
+                    smallvec::smallvec![QubitId(0)],
+                    smallvec::smallvec![Angle64::ZERO, Angle64::ZERO],
+                )],
+            }],
+            result_count: 0,
+        };
+
+        let _ = NoopExecutor.execute_batched(&circuit);
+    }
 
     #[test]
     fn test_batch_from_resolved_groups_same_gates() {

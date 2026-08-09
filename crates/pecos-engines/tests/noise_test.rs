@@ -76,11 +76,11 @@ fn test_single_qubit_gate_noise_distributions() {
 
     // Create noise model with high error rates using the builder pattern
     let noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0) // Disable emission errors
         .with_seed(42)
         .build();
@@ -159,11 +159,11 @@ fn test_rotation_gate_with_different_angles() {
     // Create noise model with high error rates for clearer results using the builder pattern
     // Explicitly avoid marking RZ as a noiseless gate for this test
     let noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.05)
-        .with_meas_0_probability(0.05)
-        .with_meas_1_probability(0.05)
-        .with_average_p1_probability(0.1)
-        .with_average_p2_probability(0.2)
+        .with_p_prep(0.05)
+        .with_p_meas_0(0.05)
+        .with_p_meas_1(0.05)
+        .with_average_p1(0.1)
+        .with_average_p2(0.2)
         .build();
 
     // Test rotation gates with different angles
@@ -299,11 +299,11 @@ fn test_two_qubit_gate_noise_distributions() {
 
     // Create noise model with high error rates for clearer results using the builder pattern
     let noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.05)
-        .with_meas_0_probability(0.05)
-        .with_meas_1_probability(0.05)
-        .with_average_p1_probability(0.1)
-        .with_average_p2_probability(0.2)
+        .with_p_prep(0.05)
+        .with_p_meas_0(0.05)
+        .with_p_meas_1(0.05)
+        .with_average_p1(0.1)
+        .with_average_p2(0.2)
         .build();
 
     // Test CNOT gate with different input states
@@ -435,11 +435,11 @@ fn test_rzz_angle_dependent_error_model() {
 
     // Create noise model with RZZ angle-dependent error parameters using the builder pattern
     let noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.05)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.05)
+        .with_average_p2(0.1)
         .with_p2_angle_params(0.05, 0.0, 0.1, 0.0) // a=0.05, b=0, c=0.1, d=0
         .with_p2_angle_power(1.0) // Linear scaling with angle
         .with_seed(42)
@@ -519,11 +519,11 @@ fn test_leakage_model() {
 
     // Create noise model with significant leakage using the builder pattern
     let noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.05)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.05)
+        .with_average_p2(0.1)
         .with_p2_emission_ratio(0.8) // High emission ratio for obvious effect
         .with_prep_leak_ratio(0.5) // 50% of prep errors lead to leakage
         .with_seed(42)
@@ -562,11 +562,11 @@ fn test_software_gates_not_affected_by_noise() {
 
     // Create noise model with high error rates using the builder pattern
     let noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.3)
-        .with_average_p2_probability(0.3)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.3)
+        .with_average_p2(0.3)
         .with_seed(42)
         .with_noiseless_gate(GateType::RZ)
         .build();
@@ -615,15 +615,17 @@ fn test_software_gates_not_affected_by_noise() {
 #[test]
 fn test_coherent_vs_incoherent_dephasing() {
     const NUM_SHOTS: usize = 2000;
+    let coherent_idle_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
+    let sine_idle_model = BTreeMap::from([("Z".to_string(), 1.0)]);
 
     // Create two noise models with different dephasing types using the builder pattern
     let coherent_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.05)
-        .with_average_p2_probability(0.1)
-        .with_p_idle_coherent(true)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.05)
+        .with_average_p2(0.1)
+        .with_p_idle_coherent(0.2, &coherent_idle_model)
         .with_seed(42)
         .build();
 
@@ -631,13 +633,12 @@ fn test_coherent_vs_incoherent_dephasing() {
     // The build() method now returns GeneralNoiseModel directly
 
     let incoherent_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.05)
-        .with_average_p2_probability(0.1)
-        .with_p_idle_coherent(false)
-        .with_p_idle_coherent_to_incoherent_factor(2.0)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.05)
+        .with_average_p2(0.1)
+        .with_p_idle_sin_squared(0.1, &sine_idle_model)
         .with_seed(42)
         .build();
 
@@ -646,7 +647,7 @@ fn test_coherent_vs_incoherent_dephasing() {
 
     // Create a dephasing test circuit:
     // 1. Prepare |+⟩ state with H
-    // 2. Wait a bit (we'll use a Z gate for simplicity instead of a true idle)
+    // 2. Wait for one time unit
     // 3. Apply H to convert phase to population
     // 4. Measure
 
@@ -656,8 +657,7 @@ fn test_coherent_vs_incoherent_dephasing() {
     // Prepare |+⟩ state
     builder.h(&[0]);
 
-    // Add Z gate (as a simplified way to introduce phase)
-    builder.z(&[0]);
+    builder.idle(1.0, &[0]);
 
     // Convert phase to population
     builder.h(&[0]);
@@ -701,11 +701,11 @@ fn test_parameter_scaling_impact() {
     for scale in scale_factors {
         // Create a noise model with the given scale factor using the builder pattern
         let noise_model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.01)
-            .with_meas_0_probability(0.01)
-            .with_meas_1_probability(0.01)
-            .with_average_p1_probability(0.05)
-            .with_average_p2_probability(0.1)
+            .with_p_prep(0.01)
+            .with_p_meas_0(0.01)
+            .with_p_meas_1(0.01)
+            .with_average_p1(0.05)
+            .with_average_p2(0.1)
             .with_scale(scale) // Apply overall scaling
             .with_seed(42)
             .build();
@@ -756,11 +756,11 @@ fn test_debug_x_gate_noise() {
 
     // Create a simple noise model with high error rate but no emission errors using the builder pattern
     let noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0)
         .build();
 
@@ -810,11 +810,11 @@ fn test_seed_effect() {
 
     // Create a simple noise model with high error rate but no emission errors using the builder pattern
     let noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0)
         .build();
 
@@ -890,11 +890,11 @@ fn test_seed_effect() {
         .collect();
 
     let complex_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0)
         .with_p1_pauli_model(&pauli_model)
         .with_p1_emission_model(&emission_model)
@@ -923,11 +923,11 @@ fn test_combined_comparison() {
     println!("=== TESTING SIMPLER MODEL ===");
     // Create a simple noise model with high error rate but no emission errors using the builder pattern
     let simple_noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0)
         .with_seed(42)
         .build();
@@ -977,11 +977,11 @@ fn test_combined_comparison() {
 
     // Create the model with the builder
     let complex_noise_model = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.8)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.8)
         .with_p1_emission_ratio(0.0) // No leakage errors
         .with_p1_pauli_model(&pauli_model)
         .with_p1_emission_model(&emission_model)
@@ -1041,11 +1041,11 @@ fn test_pauli_model_effect() {
     println!("=== Test with default Pauli model ===");
     // Create a noise model with default Pauli model using the builder pattern
     let noise_model1 = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0)
         .with_seed(42)
         .build();
@@ -1085,11 +1085,11 @@ fn test_pauli_model_effect() {
         .collect();
 
     let noise_model2 = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0)
         .with_p1_pauli_model(&x_biased_model)
         .with_p1_emission_model(&emission_model)
@@ -1120,11 +1120,11 @@ fn test_pauli_model_effect() {
     .collect();
 
     let noise_model3 = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0)
         .with_p1_pauli_model(&z_biased_model)
         .with_p1_emission_model(&emission_model)
@@ -1160,11 +1160,11 @@ fn test_pauli_model_behavior() {
 
     // ====== Model 1: Default model (equal distribution of X, Y, Z errors) ======
     let model1 = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0) // Turn off emission errors
         .with_seed(42)
         .build();
@@ -1192,11 +1192,11 @@ fn test_pauli_model_behavior() {
     .collect();
 
     let model2 = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0) // Turn off emission errors
         .with_p1_pauli_model(&x_biased_model)
         .with_seed(42)
@@ -1225,11 +1225,11 @@ fn test_pauli_model_behavior() {
     .collect();
 
     let model3 = GeneralNoiseModel::builder()
-        .with_prep_probability(0.01)
-        .with_meas_0_probability(0.01)
-        .with_meas_1_probability(0.01)
-        .with_average_p1_probability(0.5)
-        .with_average_p2_probability(0.1)
+        .with_p_prep(0.01)
+        .with_p_meas_0(0.01)
+        .with_p_meas_1(0.01)
+        .with_average_p1(0.5)
+        .with_average_p2(0.1)
         .with_p1_emission_ratio(0.0) // Turn off emission errors
         .with_p1_pauli_model(&z_biased_model)
         .with_seed(42)

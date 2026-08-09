@@ -113,10 +113,10 @@ fn test_run_qasm_with_config_structs() {
 
     // Test with config struct converted to enum
     let noise_config = DepolarizingNoiseModelBuilder::new()
-        .with_prep_probability(0.01)
-        .with_meas_probability(0.01)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.1);
+        .with_p_prep(0.01)
+        .with_p_meas(0.01)
+        .with_p1(0.001)
+        .with_p2(0.1);
 
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))

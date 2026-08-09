@@ -17,8 +17,10 @@
 
 use super::types::{
     DemOutput, DetectorDef, DetectorErrorModel, DirectSourceComponents, DirectSourceFamily,
-    FaultMechanism, MeasurementCrosstalkDemMode, NoiseConfig, PerGateTypeNoise,
-    ReplacementBranchApproximation, SourceMetadata, record_offset_to_absolute_index,
+    FaultMechanism, IdleChannelFamilies, MeasurementCrosstalkDemMode, NoiseChannelKind,
+    NoiseChannelResidual, NoiseConfig, PauliProbs, PerGateTypeNoise,
+    ReplacementBranchApproximation, SourceMetadata, fit_exclusive_signatures,
+    record_offset_to_absolute_index, validate_exclusive_probabilities, validate_idle_probabilities,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Direction, Pauli, apply_gate};
@@ -428,12 +430,15 @@ impl<'a> DemBuilder<'a> {
                 p1_total * weights.weight_for(&Z(0)),
             ];
         }
-        let per = per_channel_probability(p1_total, 3);
+        let per = p1_total / 3.0;
         [per, per, per]
     }
 
-    /// Resolve `[rate_X, rate_Y, rate_Z]` for an explicit idle location.
-    fn idle_rates_for_loc(&self, loc: &DagSpacetimeLocation) -> [f64; 3] {
+    /// Resolve the categorical Pauli channel for an explicit idle location.
+    fn idle_probabilities_for_loc(
+        &self,
+        loc: &DagSpacetimeLocation,
+    ) -> Result<IdleChannelFamilies, DemBuilderError> {
         if let Some(pg) = &self.per_gate {
             let explicit_rates = loc
                 .qubits
@@ -441,22 +446,34 @@ impl<'a> DemBuilder<'a> {
                 .and_then(|q| pg.explicit_1q_rates_on(GateType::Idle, *q))
                 .or_else(|| pg.explicit_1q_rates(GateType::Idle));
             if let Some(rates) = explicit_rates {
-                return rates;
+                let probabilities = PauliProbs {
+                    px: rates[0],
+                    py: rates[1],
+                    pz: rates[2],
+                };
+                validate_idle_probabilities(probabilities, "per-gate")
+                    .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+                return Ok(IdleChannelFamilies {
+                    exclusive: smallvec::smallvec![probabilities],
+                    independent: SmallVec::new(),
+                });
             }
             if pg.base.uses_dedicated_idle_noise() {
-                let duration = loc.idle_duration.max(0.0);
-                let probs = pg.base.idle_pauli_probs(duration);
-                return [probs.px, probs.py, probs.pz];
+                return pg
+                    .base
+                    .try_idle_channel_families(loc.idle_duration)
+                    .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()));
             }
-            return [0.0; 3];
+            return Ok(IdleChannelFamilies::default());
         }
 
         if self.noise.uses_dedicated_idle_noise() {
-            let duration = loc.idle_duration.max(0.0);
-            let probs = self.noise.idle_pauli_probs(duration);
-            return [probs.px, probs.py, probs.pz];
+            return self
+                .noise
+                .try_idle_channel_families(loc.idle_duration)
+                .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()));
         }
-        [0.0; 3]
+        Ok(IdleChannelFamilies::default())
     }
 
     /// Resolve the 15-entry 2Q per-Pauli-pair rate array for a gate
@@ -501,7 +518,7 @@ impl<'a> DemBuilder<'a> {
                 p2_total * weight
             });
         }
-        [per_channel_probability(self.noise.p2_rate_for_gate(loc1.gate_type), 15); 15]
+        [self.noise.p2_rate_for_gate(loc1.gate_type) / 15.0; 15]
     }
 
     /// Sets the number of measurements (used for record offset calculation).
@@ -795,13 +812,16 @@ impl<'a> DemBuilder<'a> {
     /// with a non-empty influence map, a used record offset is out of range,
     /// a used `meas_id` is not present in the circuit (resolved against the
     /// stable stamped ids when available, else positionally), or a
-    /// both-present entry's `records` and `meas_ids` are not redundant.
+    /// both-present entry's `records` and `meas_ids` are not redundant. Returns
+    /// [`DemBuilderError::ConfigurationError`] for an invalid noise input or a
+    /// non-positive signature-channel character.
     pub fn try_build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
         self.validate_measurement_count()?;
         self.validate_metadata_refs()?;
         self.validate_replacement_branch_approximation()?;
         self.validate_measurement_crosstalk_dem_mode()?;
-        Ok(self.build())
+        self.validate_idle_noise()?;
+        self.build_inner()
     }
 
     /// Builds the Detector Error Model with source tracking.
@@ -815,14 +835,22 @@ impl<'a> DemBuilder<'a> {
     /// circuit-derived metadata must use [`Self::try_build`] instead.
     /// # Panics
     ///
-    /// Panics if the configured replacement-branch approximation is invalid;
-    /// validity is established by construction-time validation.
+    /// Panics if the configured replacement-branch approximation is invalid,
+    /// or if a noise input or signature channel is invalid. Use
+    /// [`Self::try_build`] to receive those failures as errors.
     #[must_use]
     pub fn build(&self) -> DetectorErrorModel {
         self.validate_replacement_branch_approximation()
             .expect("invalid DEM replacement branch approximation");
         self.validate_measurement_crosstalk_dem_mode()
             .expect("invalid DEM measurement crosstalk configuration");
+        self.validate_idle_noise()
+            .expect("invalid DEM idle-noise configuration");
+        self.build_inner()
+            .expect("invalid DEM signature conversion")
+    }
+
+    fn build_inner(&self) -> Result<DetectorErrorModel, DemBuilderError> {
         let num_influence_dem_outputs = self
             .num_influence_dem_outputs()
             .max(self.influence_map.dem_output_metadata.len());
@@ -887,9 +915,9 @@ impl<'a> DemBuilder<'a> {
             &mut dem,
             &meas_to_detectors,
             &meas_to_observables,
-        );
+        )?;
 
-        dem
+        Ok(dem)
     }
 
     fn validate_replacement_branch_approximation(&self) -> Result<(), DemBuilderError> {
@@ -1023,6 +1051,15 @@ impl<'a> DemBuilder<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    fn validate_idle_noise(&self) -> Result<(), DemBuilderError> {
+        for loc in &self.influence_map.locations {
+            if loc.gate_type == GateType::Idle && !loc.before {
+                let _ = self.idle_probabilities_for_loc(loc)?;
+            }
+        }
         Ok(())
     }
 
@@ -1425,7 +1462,7 @@ impl<'a> DemBuilder<'a> {
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) {
+    ) -> Result<(), DemBuilderError> {
         let locations = &self.influence_map.locations;
 
         for (loc_idx, loc) in locations.iter().enumerate() {
@@ -1512,26 +1549,26 @@ impl<'a> DemBuilder<'a> {
                     if !loc.before =>
                 {
                     let rates = self.rates_1q_for_loc(loc);
-                    if rates.iter().any(|r| *r > 0.0) {
+                    if rates.iter().any(|r| *r != 0.0) {
                         self.process_single_qubit_fault_source_tracked(
                             loc_idx,
                             rates,
                             dem,
                             meas_to_detectors,
                             meas_to_observables,
-                        );
+                        )?;
                     }
                 }
                 GateType::Idle if !loc.before => {
-                    let rates = self.idle_rates_for_loc(loc);
-                    if rates.iter().any(|r| *r > 0.0) {
-                        self.process_single_qubit_fault_source_tracked(
+                    let families = self.idle_probabilities_for_loc(loc)?;
+                    if !families.exclusive.is_empty() || !families.independent.is_empty() {
+                        self.process_idle_fault_source_tracked(
                             loc_idx,
-                            rates,
+                            families,
                             dem,
                             meas_to_detectors,
                             meas_to_observables,
-                        );
+                        )?;
                     }
                 }
                 _ => {}
@@ -1543,7 +1580,7 @@ impl<'a> DemBuilder<'a> {
             let loc1 = &locations[loc1_idx];
             let loc2 = &locations[loc2_idx];
             let rates = self.rates_2q_for_locs(loc1, loc2);
-            if rates.iter().any(|r| *r > 0.0) {
+            if rates.iter().any(|r| *r != 0.0) {
                 self.process_two_qubit_fault_source_tracked(
                     loc1_idx,
                     loc2_idx,
@@ -1551,7 +1588,7 @@ impl<'a> DemBuilder<'a> {
                     dem,
                     meas_to_detectors,
                     meas_to_observables,
-                );
+                )?;
             }
             if self.noise.p2_replacement_approximation
                 == ReplacementBranchApproximation::BranchImpact
@@ -1572,6 +1609,7 @@ impl<'a> DemBuilder<'a> {
                 );
             }
         }
+        Ok(())
     }
 
     /// Processes a prep fault with source tracking.
@@ -1870,8 +1908,99 @@ impl<'a> DemBuilder<'a> {
         }
     }
 
-    /// Processes a single-qubit gate fault with source tracking.
-    /// `rates` is `[rate_X, rate_Y, rate_Z]` -- zero entries are skipped.
+    /// Converts one categorical idle Pauli channel after propagation has
+    /// produced its concrete detector/observable flip signatures.
+    fn process_idle_fault_source_tracked(
+        &self,
+        loc_idx: usize,
+        families: IdleChannelFamilies,
+        dem: &mut DetectorErrorModel,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) -> Result<(), DemBuilderError> {
+        let x_effect =
+            self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
+        let y_effect =
+            self.compute_mechanism(loc_idx, Pauli::Y, meas_to_detectors, meas_to_observables);
+        let z_effect =
+            self.compute_mechanism(loc_idx, Pauli::Z, meas_to_detectors, meas_to_observables);
+        debug_assert_eq!(y_effect, x_effect.xor(&z_effect));
+
+        let loc = &self.influence_map.locations[loc_idx];
+        for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
+            let channel_weight = probabilities.total();
+            let mut exclusive = BTreeMap::new();
+            for (effect, probability) in [
+                (x_effect.clone(), probabilities.px),
+                (y_effect.clone(), probabilities.py),
+                (z_effect.clone(), probabilities.pz),
+            ] {
+                if effect.is_empty() || probability == 0.0 {
+                    continue;
+                }
+                *exclusive.entry(effect).or_insert(0.0) += probability;
+            }
+
+            let context = format!("location {loc_idx} exclusive family {family_index}");
+            let fit = fit_exclusive_signatures(exclusive, FaultMechanism::xor, &context)
+                .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+            for (effect, probability) in fit.mechanisms {
+                Self::add_single_location_signature_contribution(
+                    loc_idx,
+                    loc,
+                    effect,
+                    probability,
+                    dem,
+                );
+            }
+            if let Some((effect, magnitude)) = fit.residual {
+                dem.add_idle_noise_residual(NoiseChannelResidual {
+                    location_index: u32::try_from(loc_idx)
+                        .expect("fault-location index must fit in residual metadata"),
+                    channel_kind: NoiseChannelKind::Idle,
+                    effect,
+                    magnitude,
+                    channel_weight,
+                });
+            }
+        }
+        for probabilities in families.independent {
+            for (effect, probability) in [
+                (x_effect.clone(), probabilities.px),
+                (y_effect.clone(), probabilities.py),
+                (z_effect.clone(), probabilities.pz),
+            ] {
+                Self::add_single_location_signature_contribution(
+                    loc_idx,
+                    loc,
+                    effect,
+                    probability,
+                    dem,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn add_single_location_signature_contribution(
+        loc_idx: usize,
+        loc: &DagSpacetimeLocation,
+        effect: FaultMechanism,
+        probability: f64,
+        dem: &mut DetectorErrorModel,
+    ) {
+        if effect.is_empty() || probability == 0.0 {
+            return;
+        }
+        dem.add_direct_contribution_with_source(
+            effect,
+            probability,
+            SourceMetadata::new(&[loc_idx], &[], &[loc.gate_type], &[loc.before])
+                .with_direct_source_family(DirectSourceFamily::ExclusiveSignature),
+        );
+    }
+
+    /// Converts a categorical single-qubit gate channel at the propagated-signature layer.
     fn process_single_qubit_fault_source_tracked(
         &self,
         loc_idx: usize,
@@ -1879,76 +2008,52 @@ impl<'a> DemBuilder<'a> {
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) {
-        let [rate_x, rate_y, rate_z] = rates;
-
+    ) -> Result<(), DemBuilderError> {
+        let loc = &self.influence_map.locations[loc_idx];
+        let context = format!("one-qubit {} gate at location {loc_idx}", loc.gate_type);
+        validate_exclusive_probabilities(&rates, &context)
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+        let channel_weight = rates.iter().sum();
         let x_effect =
             self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
+        let y_effect =
+            self.compute_mechanism(loc_idx, Pauli::Y, meas_to_detectors, meas_to_observables);
         let z_effect =
             self.compute_mechanism(loc_idx, Pauli::Z, meas_to_detectors, meas_to_observables);
+        debug_assert_eq!(y_effect, x_effect.xor(&z_effect));
 
-        // X error: direct source
-        if rate_x > 0.0 && !x_effect.is_empty() {
-            dem.add_direct_contribution_with_source(
-                x_effect.clone(),
-                rate_x,
-                SourceMetadata::new(
-                    &[loc_idx],
-                    &[Pauli::X],
-                    &[self.influence_map.locations[loc_idx].gate_type],
-                    &[self.influence_map.locations[loc_idx].before],
-                ),
-            );
-        }
-
-        // Z error: direct source
-        if rate_z > 0.0 && !z_effect.is_empty() {
-            dem.add_direct_contribution_with_source(
-                z_effect.clone(),
-                rate_z,
-                SourceMetadata::new(
-                    &[loc_idx],
-                    &[Pauli::Z],
-                    &[self.influence_map.locations[loc_idx].gate_type],
-                    &[self.influence_map.locations[loc_idx].before],
-                ),
-            );
-        }
-
-        // Y error: Y = XZ, so effect is XOR of X and Z effects
-        let y_effect = x_effect.xor(&z_effect);
-        if rate_y > 0.0 && !y_effect.is_empty() {
-            if !x_effect.is_empty() && !z_effect.is_empty() {
-                dem.add_y_decomposed_contribution_with_source(
-                    &x_effect,
-                    &z_effect,
-                    rate_y,
-                    SourceMetadata::new(
-                        &[loc_idx],
-                        &[Pauli::Y],
-                        &[self.influence_map.locations[loc_idx].gate_type],
-                        &[self.influence_map.locations[loc_idx].before],
-                    ),
-                );
-            } else {
-                // One is empty, so Y has same effect as the non-empty one (direct source)
-                dem.add_direct_contribution_with_source(
-                    y_effect,
-                    rate_y,
-                    SourceMetadata::new(
-                        &[loc_idx],
-                        &[Pauli::Y],
-                        &[self.influence_map.locations[loc_idx].gate_type],
-                        &[self.influence_map.locations[loc_idx].before],
-                    ),
-                );
+        let mut exclusive = BTreeMap::new();
+        for (effect, probability) in [x_effect, y_effect, z_effect].into_iter().zip(rates) {
+            if effect.is_empty() || probability == 0.0 {
+                continue;
             }
+            *exclusive.entry(effect).or_insert(0.0) += probability;
         }
+        let fit = fit_exclusive_signatures(exclusive, FaultMechanism::xor, &context)
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+        for (effect, probability) in fit.mechanisms {
+            Self::add_single_location_signature_contribution(
+                loc_idx,
+                loc,
+                effect,
+                probability,
+                dem,
+            );
+        }
+        if let Some((effect, magnitude)) = fit.residual {
+            dem.add_idle_noise_residual(NoiseChannelResidual {
+                location_index: u32::try_from(loc_idx)
+                    .expect("fault-location index must fit in residual metadata"),
+                channel_kind: NoiseChannelKind::SingleQubitGate,
+                effect,
+                magnitude,
+                channel_weight,
+            });
+        }
+        Ok(())
     }
 
-    /// Processes a two-qubit gate fault with source tracking and intra-channel decomposition.
-    /// `rates` is the 15-entry array in `PAULI_2Q_ORDER` order -- zero entries
-    /// are skipped.
+    /// Converts a categorical two-qubit gate channel at the propagated-signature layer.
     fn process_two_qubit_fault_source_tracked(
         &self,
         loc1: usize,
@@ -1957,31 +2062,61 @@ impl<'a> DemBuilder<'a> {
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) {
+    ) -> Result<(), DemBuilderError> {
         let loc1_meta = &self.influence_map.locations[loc1];
         let loc2_meta = &self.influence_map.locations[loc2];
+        let context = format!(
+            "two-qubit {} gate at locations {loc1} and {loc2}",
+            loc1_meta.gate_type
+        );
+        validate_exclusive_probabilities(&rates, &context)
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+        let channel_weight = rates.iter().sum();
 
         let effects =
             self.two_qubit_effect_table(loc1, loc2, meas_to_detectors, meas_to_observables);
 
-        // Process all 15 non-trivial Pauli combinations
+        let mut exclusive = BTreeMap::new();
         for p1 in 0u8..4 {
             for p2 in 0u8..4 {
                 if p1 == 0 && p2 == 0 {
-                    continue; // Skip II
-                }
-
-                // Per-pair rate: index = 4*p1 + p2 - 1 (skipping II at idx 0).
-                let flat = 4 * (p1 as usize) + (p2 as usize);
-                let prob = rates[flat - 1];
-                if prob == 0.0 {
                     continue;
                 }
-                Self::add_two_qubit_pauli_contribution(
-                    loc1, loc2, p1, p2, prob, &effects, loc1_meta, loc2_meta, dem, None,
-                );
+                let flat = 4 * (p1 as usize) + (p2 as usize);
+                let probability = rates[flat - 1];
+                let effect = effects[p1 as usize][p2 as usize].clone();
+                if effect.is_empty() || probability == 0.0 {
+                    continue;
+                }
+                *exclusive.entry(effect).or_insert(0.0) += probability;
             }
         }
+        let fit = fit_exclusive_signatures(exclusive, FaultMechanism::xor, &context)
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+        for (effect, probability) in fit.mechanisms {
+            dem.add_direct_contribution_with_source(
+                effect,
+                probability,
+                SourceMetadata::new(
+                    &[loc1, loc2],
+                    &[],
+                    &[loc1_meta.gate_type, loc2_meta.gate_type],
+                    &[loc1_meta.before, loc2_meta.before],
+                )
+                .with_direct_source_family(DirectSourceFamily::ExclusiveSignature),
+            );
+        }
+        if let Some((effect, magnitude)) = fit.residual {
+            dem.add_idle_noise_residual(NoiseChannelResidual {
+                location_index: u32::try_from(loc1)
+                    .expect("fault-location index must fit in residual metadata"),
+                channel_kind: NoiseChannelKind::TwoQubitGate,
+                effect,
+                magnitude,
+                channel_weight,
+            });
+        }
+        Ok(())
     }
 
     fn two_qubit_effect_table(
@@ -2491,39 +2626,6 @@ fn pauli_label_to_index(label: char) -> Option<u8> {
         'Z' => Some(3),
         _ => None,
     }
-}
-
-/// Computes the per-error probability for independent error channels.
-///
-/// For a depolarizing channel with total error probability `p` split among `n`
-/// independent Pauli channels, this computes the probability for each channel
-/// such that the combined probability of any error occurring equals `p`.
-///
-/// Formula: `p_each = 1 - (1-p)^(1/n)`
-///
-/// This is derived from: `P(at least one error) = 1 - P(no errors) = 1 - (1-p_each)^n = p`
-///
-/// For small `p`, this is approximately `p/n`, but the exact formula accounts
-/// for the independence of error channels.
-///
-/// # Arguments
-///
-/// * `total_prob` - Total depolarizing probability (e.g., 0.02 for 2% error rate)
-/// * `num_channels` - Number of independent error channels (3 for DEPOLARIZE1, 15 for DEPOLARIZE2)
-///
-/// # Returns
-///
-/// Per-channel error probability
-#[inline]
-fn per_channel_probability(total_prob: f64, num_channels: u32) -> f64 {
-    if total_prob <= 0.0 {
-        return 0.0;
-    }
-    if total_prob >= 1.0 {
-        return 1.0;
-    }
-    // p_each = 1 - (1-p)^(1/n)
-    1.0 - (1.0 - total_prob).powf(1.0 / f64::from(num_channels))
 }
 
 // ============================================================================
@@ -4111,12 +4213,6 @@ mod tests {
                 if location.num_alternatives == 0 {
                     continue;
                 }
-                let num_alternatives = f64::from(
-                    u32::try_from(location.num_alternatives)
-                        .expect("fault alternative count fits in u32"),
-                );
-                let per_channel_probability =
-                    1.0 - location.no_fault_probability.powf(1.0 / num_alternatives);
                 for fault in &location.faults {
                     if fault.affected_detectors.is_empty() && fault.affected_observables.is_empty()
                     {
@@ -4133,7 +4229,7 @@ mod tests {
                         .map(|&obs| u32::try_from(obs).unwrap())
                         .collect();
                     *by_effect.entry((detectors, observables)).or_insert(0.0) +=
-                        per_channel_probability;
+                        fault.absolute_probability;
                 }
             }
             by_effect
@@ -4159,7 +4255,7 @@ mod tests {
                 .collect()
         }
 
-        fn assert_catalog_dem_probabilities_match(
+        fn assert_catalog_dem_effects_match(
             catalog: &FaultCatalog,
             dem: &DetectorErrorModel,
             gate_type: GateType,
@@ -4171,13 +4267,6 @@ mod tests {
                 dem_probs.keys().collect::<Vec<_>>(),
                 "{gate_type:?} should produce the same non-empty effects in the fault catalog and DEM"
             );
-            for (effect, catalog_probability) in catalog_probs {
-                let dem_probability = dem_probs[&effect];
-                assert!(
-                    (catalog_probability - dem_probability).abs() < 1e-12,
-                    "{gate_type:?} effect {effect:?}: catalog probability {catalog_probability} != DEM probability {dem_probability}"
-                );
-            }
         }
 
         for gate_type in [
@@ -4223,7 +4312,7 @@ mod tests {
                 dem_has_source(&dem, gate_type),
                 "DEM should track a source contribution for {gate_type:?}"
             );
-            assert_catalog_dem_probabilities_match(&catalog, &dem, gate_type);
+            assert_catalog_dem_effects_match(&catalog, &dem, gate_type);
         }
 
         for gate_type in [
@@ -4271,7 +4360,7 @@ mod tests {
                 dem_has_source(&dem, gate_type),
                 "DEM should track a source contribution for {gate_type:?}"
             );
-            assert_catalog_dem_probabilities_match(&catalog, &dem, gate_type);
+            assert_catalog_dem_effects_match(&catalog, &dem, gate_type);
         }
     }
 
@@ -5239,38 +5328,6 @@ mod tests {
 
         xor_toggle_4(&mut vec, 2); // Toggle off
         assert!(vec.is_empty());
-    }
-
-    #[test]
-    fn test_per_channel_probability() {
-        // Test DEPOLARIZE1: p=0.01, n=3
-        let p1 = per_channel_probability(0.01, 3);
-        // Should be 1 - (1-0.01)^(1/3) = 0.003344...
-        assert!((p1 - 0.003_344_506).abs() < 1e-6);
-
-        // Verify: combining 3 channels gives back ~p
-        let combined = 1.0 - (1.0 - p1).powi(3);
-        assert!((combined - 0.01).abs() < 1e-10);
-
-        // Test DEPOLARIZE2: p=0.02, n=15
-        let p2 = per_channel_probability(0.02, 15);
-        // Should be 1 - (1-0.02)^(1/15) = 0.001346...
-        assert!((p2 - 0.001_345_941).abs() < 1e-6);
-
-        // Verify: combining 15 channels gives back ~p
-        let combined2 = 1.0 - (1.0 - p2).powi(15);
-        assert!((combined2 - 0.02).abs() < 1e-10);
-
-        // Edge cases
-        assert!((per_channel_probability(0.0, 3) - 0.0).abs() < f64::EPSILON);
-        assert!((per_channel_probability(1.0, 3) - 1.0).abs() < f64::EPSILON);
-        assert!((per_channel_probability(-0.1, 3) - 0.0).abs() < f64::EPSILON);
-
-        // For small p, should be close to p/n
-        let small_p = per_channel_probability(0.001, 15);
-        let simple = 0.001 / 15.0;
-        // Difference should be < 0.1% for small p
-        assert!((small_p - simple).abs() / simple < 0.001);
     }
 
     /// Issue #325 regression: `from_circuit` once produced different DEMs for

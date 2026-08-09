@@ -55,6 +55,7 @@ from pecos_rslib.qec import (
     InfluenceBuilder,
     ParsedDem,
     PauliFrameLookup,
+    SampleBatch,
     StabilizerDistanceSearchResult,
     assert_dems_equivalent,
     bb_memory_circuit,
@@ -109,7 +110,7 @@ from pecos.qec.color import (
 # Python from_guppy convenience constructor attached. The Guppy/Selene trace
 # pipeline is Python-only, so it cannot live in the Rust extension without a
 # dependency cycle.
-from pecos.qec.dem import DetectorErrorModel, build_dem_from_guppy
+from pecos.qec.dem import DetectorErrorModel, GuppyDemBuilder, build_dem_from_guppy
 from pecos.qec.dem_spec import (
     Detector,
     GuppyDemBuild,
@@ -123,6 +124,10 @@ from pecos.qec.generic import (
     PauliOperator,
     PauliType,
     StabilizerCheck,
+)
+from pecos.qec.guppy_output_dem import (
+    InferredGuppyDemAnnotations,
+    infer_guppy_dem_annotations,
 )
 from pecos.qec.protocols import (
     InnerCodeGeometry,
@@ -165,6 +170,7 @@ __all__ = [
     "DemBuilder",
     "DemSampler",
     "DemSamplerBuilder",
+    "SampleBatch",
     "DetectorErrorModel",
     "BivariateBicycleCode",
     "HypergraphProductCode",
@@ -185,6 +191,8 @@ __all__ = [
     "ParsedDem",
     "StabilizerDistanceSearchResult",
     "GuppyDemBuild",
+    "GuppyDemBuilder",
+    "InferredGuppyDemAnnotations",
     "Observable",
     "assert_dems_equivalent",
     "bb_memory_circuit",
@@ -206,6 +214,7 @@ __all__ = [
     "x_distance",
     "z_distance",
     "build_dem_from_guppy",
+    "infer_guppy_dem_annotations",
     "rec",
     "result_ref",
     "surface_memory_dem_spec",

@@ -56,7 +56,7 @@ use pecos_qec::fault_tolerance::dem_builder::{
     DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
     DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
     EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
-    FaultSourceType as RustFaultSourceType, MeasurementCrosstalkDemMode,
+    FaultSourceType as RustFaultSourceType, IdleNoiseFamily, MeasurementCrosstalkDemMode,
     MeasurementCrosstalkTransitionModel, NoiseConfig, OutputMode, PAULI_2Q_ORDER,
     ParsedDem as RustParsedDem, PauliWeights, ReplacementBranchApproximation,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
@@ -116,13 +116,33 @@ use pecos_quantum::DagCircuit;
 use pecos_quantum::QubitId;
 use pyo3::Py;
 use pyo3::prelude::*;
+
+use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
 use std::collections::BTreeMap;
 use std::str::FromStr;
+
+mod decoder_comparison;
+
+use decoder_comparison::{PyDecoderComparisonResult, compare_decoder_outcomes};
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
 /// Per-shot detector rows paired with per-shot observable/DEM-output rows.
 type PyDetectorObservableRows = (Vec<Vec<bool>>, Vec<Vec<bool>>);
+
+fn idle_family_from_axis_rates(px: f64, py: f64, pz: f64) -> IdleNoiseFamily {
+    if px == 0.0 && py == 0.0 && pz == 0.0 {
+        return IdleNoiseFamily::default();
+    }
+    IdleNoiseFamily::new(
+        1.0,
+        BTreeMap::from([
+            ("X".to_string(), px),
+            ("Y".to_string(), py),
+            ("Z".to_string(), pz),
+        ]),
+    )
+}
 
 fn parse_p1_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
     use pecos_core::pauli::{X, Y, Z};
@@ -391,6 +411,32 @@ fn apply_noise_options(
     p2_gate_rates: Option<BTreeMap<String, f64>>,
     p1_gate_rates: Option<BTreeMap<String, f64>>,
 ) -> PyResult<NoiseConfig> {
+    // Reject the base-idle-channel combinations this function would otherwise
+    // resolve silently: `set_t1_t2` makes T1/T2 the base channel that shadows
+    // `p_idle`, and `set_idle_rz` zeroes `p_idle` and overwrites T1/T2 with a
+    // synthetic T2. Each combination discards a caller-supplied rate without
+    // any signal (issue #426).
+    if p_idle.is_some() && (t1.is_some() || t2.is_some()) {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "p_idle cannot be combined with t1/t2; the T1/T2 channel replaces the \
+             depolarizing base idle channel, so p_idle would be ignored",
+        ));
+    }
+    if idle_rz.is_some() {
+        if p_idle.is_some() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "idle_rz cannot be combined with p_idle; the coherent RZ conversion \
+                 replaces the base idle channel, so p_idle would be ignored",
+            ));
+        }
+        if t1.is_some() || t2.is_some() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "idle_rz cannot be combined with t1/t2; the coherent RZ conversion \
+                 overwrites the T1/T2 channel with an equivalent T2",
+            ));
+        }
+    }
+
     noise.p_idle = p_idle.unwrap_or(0.0);
     if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
         noise = noise.set_t1_t2(t1_val, t2_val);
@@ -398,42 +444,25 @@ fn apply_noise_options(
     if let Some(rz) = idle_rz {
         noise = noise.set_idle_rz(rz);
     }
-    if let Some(rate) = p_idle_linear_rate {
-        noise = noise.set_idle_linear_rate(rate);
-    }
-    if let Some(rate) = p_idle_quadratic_rate {
-        noise = noise.set_idle_quadratic_rate(rate);
-    }
-    if let Some(rate) = p_idle_x_linear_rate {
-        noise.p_idle_x_linear_rate = rate.max(0.0);
-    }
-    if let Some(rate) = p_idle_y_linear_rate {
-        noise.p_idle_y_linear_rate = rate.max(0.0);
-    }
-    if let Some(rate) = p_idle_z_linear_rate {
-        noise.p_idle_linear_rate = rate.max(0.0);
-    }
-    if let Some(rate) = p_idle_x_quadratic_rate {
-        noise.p_idle_x_quadratic_rate = rate.max(0.0);
-    }
-    if let Some(rate) = p_idle_y_quadratic_rate {
-        noise.p_idle_y_quadratic_rate = rate.max(0.0);
-    }
-    if let Some(rate) = p_idle_z_quadratic_rate {
-        noise.p_idle_quadratic_rate = rate.max(0.0);
-    }
-    if let Some(rate) = p_idle_quadratic_sine_rate {
-        noise = noise.set_idle_quadratic_sine_rate(rate);
-    }
-    if let Some(rate) = p_idle_x_quadratic_sine_rate {
-        noise.p_idle_x_quadratic_sine_rate = rate.max(0.0);
-    }
-    if let Some(rate) = p_idle_y_quadratic_sine_rate {
-        noise.p_idle_y_quadratic_sine_rate = rate.max(0.0);
-    }
-    if let Some(rate) = p_idle_z_quadratic_sine_rate {
-        noise.p_idle_quadratic_sine_rate = rate.max(0.0);
-    }
+    noise.p_idle_linear = idle_family_from_axis_rates(
+        p_idle_x_linear_rate.unwrap_or(0.0),
+        p_idle_y_linear_rate.unwrap_or(0.0),
+        p_idle_z_linear_rate.or(p_idle_linear_rate).unwrap_or(0.0),
+    );
+    noise.p_idle_quadratic = idle_family_from_axis_rates(
+        p_idle_x_quadratic_rate.unwrap_or(0.0),
+        p_idle_y_quadratic_rate.unwrap_or(0.0),
+        p_idle_z_quadratic_rate
+            .or(p_idle_quadratic_rate)
+            .unwrap_or(0.0),
+    );
+    noise.p_idle_quadratic_sine = idle_family_from_axis_rates(
+        p_idle_x_quadratic_sine_rate.unwrap_or(0.0),
+        p_idle_y_quadratic_sine_rate.unwrap_or(0.0),
+        p_idle_z_quadratic_sine_rate
+            .or(p_idle_quadratic_sine_rate)
+            .unwrap_or(0.0),
+    );
     if let Some(weights) = p1_weights {
         noise = noise.set_p1_weights(parse_p1_weights(weights)?);
     }
@@ -1682,6 +1711,7 @@ fn contribution_record_to_pydict(
     dict.set_item("before_flags", contribution.source_before_flags.to_vec())?;
     if let Some(family) = contribution.direct_source_family {
         let family_label = match family {
+            RustDirectSourceFamily::ExclusiveSignature => "ExclusiveSignature",
             RustDirectSourceFamily::SingleLocation => "SingleLocation",
             RustDirectSourceFamily::SingleLocationY => "SingleLocationY",
             RustDirectSourceFamily::TwoLocationPlainY => "TwoLocationPlainY",
@@ -2018,6 +2048,32 @@ impl PyDetectorErrorModel {
     #[getter]
     fn num_contributions(&self) -> usize {
         self.inner.num_contributions()
+    }
+
+    /// Quantified residuals from infeasible categorical-to-independent conversions.
+    ///
+    /// Each dictionary reports the channel kind, fault location, representative
+    /// flip signature, total-variation magnitude, requested channel weight, and
+    /// their relative magnitude. An empty list means every categorical conversion
+    /// was exact.
+    #[getter]
+    fn idle_noise_residuals(&self, py: Python<'_>) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        self.inner
+            .idle_noise_residuals()
+            .iter()
+            .map(|residual| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("location_index", residual.location_index)?;
+                dict.set_item("channel_kind", residual.channel_kind.as_str())?;
+                dict.set_item("detectors", residual.effect.detectors.to_vec())?;
+                dict.set_item("dem_outputs", residual.effect.dem_outputs.to_vec())?;
+                dict.set_item("tracked_paulis", residual.effect.tracked_paulis.to_vec())?;
+                dict.set_item("magnitude", residual.magnitude)?;
+                dict.set_item("channel_weight", residual.channel_weight)?;
+                dict.set_item("relative_magnitude", residual.relative_magnitude())?;
+                Ok(dict.unbind())
+            })
+            .collect()
     }
 
     /// Returns debug info about contributions for a specific mechanism.
@@ -3681,23 +3737,6 @@ impl PySampleBatch {
         }
     }
 
-    /// Reject a batch that cannot be represented by the legacy `u64` observable
-    /// APIs (more than 64 observable columns). Callers with >64 observables must
-    /// use the wide `LogicalSubgraphDecoder` decode/decode_count paths, which
-    /// return arbitrary-precision Python ints. Call this up front in every
-    /// `u64`-returning public method before [`Self::extract_obs_mask`].
-    fn ensure_narrow_observables(&self) -> PyResult<()> {
-        if self.obs_columns.len() > 64 {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "SampleBatch has {} observable columns, exceeding the 64-observable limit of \
-                 this u64-based API; use the wide LogicalSubgraphDecoder decode/decode_count \
-                 paths (arbitrary-precision int) for more than 64 observables",
-                self.obs_columns.len()
-            )));
-        }
-        Ok(())
-    }
-
     /// Reject raw-measurement batches before treating their rows as syndromes.
     fn ensure_detector_events(&self) -> PyResult<()> {
         if self.raw_measurements {
@@ -3706,27 +3745,6 @@ impl PySampleBatch {
             ));
         }
         Ok(())
-    }
-
-    /// Extract observable mask for one shot (`u64`; observables 0..=63 only).
-    ///
-    /// The caller must have rejected wide batches via
-    /// [`Self::ensure_narrow_observables`] first; with >64 observable columns the
-    /// `1u64 << obs_idx` below would overflow.
-    fn extract_obs_mask(&self, shot: usize) -> u64 {
-        debug_assert!(
-            self.obs_columns.len() <= 64,
-            "extract_obs_mask requires <=64 observable columns; call ensure_narrow_observables first"
-        );
-        let word_idx = shot / 64;
-        let bit_mask = 1u64 << (shot % 64);
-        let mut mask = 0u64;
-        for (obs_idx, col) in self.obs_columns.iter().enumerate() {
-            if col[word_idx] & bit_mask != 0 {
-                mask |= 1u64 << obs_idx;
-            }
-        }
-        mask
     }
 
     /// Extract the observable mask for one shot as a wide [`ObsMask`], with no
@@ -3938,6 +3956,17 @@ impl PySampleBatch {
         self.num_shots
     }
 
+    /// Stored observable-column width, i.e. the length of one row of
+    /// [`observable_flips`] and of every [`get_observable_flips`] value.
+    ///
+    /// This is the constructor's `num_observables` when supplied. Sampler-produced
+    /// columns hold all DEM outputs, which can be a superset of the logical
+    /// observables, so this is a width rather than a promise about the code.
+    #[getter]
+    fn num_observables(&self) -> usize {
+        self.obs_columns.len()
+    }
+
     /// Get the syndrome for shot `i` as a list of u8 values.
     fn get_syndrome(&self, i: usize) -> PyResult<Vec<u8>> {
         if i >= self.num_shots {
@@ -3949,30 +3978,6 @@ impl PySampleBatch {
         let mut buf = vec![0u8; self.num_detectors];
         self.extract_syndrome(i, &mut buf);
         Ok(buf)
-    }
-
-    /// Get the expected observable mask for shot `i` (`u64`; <=64 observables).
-    fn get_observable_mask(&self, i: usize) -> PyResult<u64> {
-        self.ensure_narrow_observables()?;
-        if i >= self.num_shots {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
-                "Shot index {i} out of range (num_shots={})",
-                self.num_shots
-            )));
-        }
-        Ok(self.extract_obs_mask(i))
-    }
-
-    /// Observable mask for shot `i` as a Python ``int`` (arbitrary precision, so
-    /// more than 64 observables are not truncated).
-    fn get_observable_mask_wide(&self, py: Python<'_>, i: usize) -> PyResult<Py<pyo3::PyAny>> {
-        if i >= self.num_shots {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
-                "Shot index {i} out of range (num_shots={})",
-                self.num_shots
-            )));
-        }
-        obsmask_to_py(py, &self.extract_obs_mask_wide(i))
     }
 
     /// Return all detector events as shots-major boolean lists.
@@ -3992,6 +3997,26 @@ impl PySampleBatch {
     /// be a superset of the logical observables.
     fn observable_flips(&self) -> Vec<Vec<bool>> {
         Self::columns_as_rows(&self.obs_columns, self.num_shots)
+    }
+
+    /// Observable flips for shot `i` as an [`ObservableFlips`] value.
+    ///
+    /// This is the single-shot form of [`observable_flips`], and compares
+    /// directly against a decoder result's `observable_flips`. Its length is the
+    /// stored observable-column width, so it matches one row of
+    /// [`observable_flips`] and carries the same caveat about sampler-produced
+    /// columns being a superset of the logical observables.
+    fn get_observable_flips(&self, i: usize) -> PyResult<PyObservableFlips> {
+        if i >= self.num_shots {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "Shot index {i} out of range (num_shots={})",
+                self.num_shots
+            )));
+        }
+        Ok(PyObservableFlips::from_mask_value(
+            self.extract_obs_mask_wide(i),
+            self.obs_columns.len(),
+        ))
     }
 
     /// Decode all samples with the given decoder type and return the error count.
@@ -4061,6 +4086,48 @@ impl PySampleBatch {
             predictions.push(obsmask_to_py(py, &predicted)?);
         }
         Ok(predictions)
+    }
+
+    /// Decode every shot with a decoder under test (DUT) and a reference decoder.
+    ///
+    /// Both decoders receive the same shots in the same order. Each result is
+    /// independently classified as correct, mismatch, or decode error, and a
+    /// decode error is counted for that shot without aborting the comparison.
+    /// Predictions and truth are compared as wide observable masks, with no
+    /// 64-observable limit.
+    ///
+    /// Args:
+    ///     dem: DEM string shared by both decoders.
+    ///     `dut_decoder_type`: Decoder type string for the decoder under test.
+    ///     `reference_decoder_type`: Decoder type string for the reference.
+    ///     alpha: Tail probability for equal-tailed Jeffreys intervals.
+    ///
+    /// Returns:
+    ///     A `DecoderComparisonResult` containing the raw 3x3 counts and
+    ///     headline DUT-only-failure and both-failed proportions.
+    #[pyo3(signature = (dem, dut_decoder_type, reference_decoder_type, alpha=0.05))]
+    fn compare_decoders(
+        &self,
+        dem: &str,
+        dut_decoder_type: &str,
+        reference_decoder_type: &str,
+        alpha: f64,
+    ) -> PyResult<PyDecoderComparisonResult> {
+        let mut dut = create_observable_decoder(dem, dut_decoder_type)?;
+        let mut reference = create_observable_decoder(dem, reference_decoder_type)?;
+        let mut syndrome = vec![0u8; self.num_detectors];
+        let counts = compare_decoder_outcomes(
+            self.num_shots,
+            &mut syndrome,
+            |shot, buffer| {
+                self.extract_syndrome(shot, buffer);
+                self.extract_obs_mask_wide(shot)
+            },
+            dut.as_mut(),
+            reference.as_mut(),
+        );
+        PyDecoderComparisonResult::new(counts, alpha)
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
     }
 
     /// Parallel decode: distributes samples across rayon workers.
@@ -4534,9 +4601,18 @@ impl PyDemSampler {
     fn from_dem_string(dem_string: &str) -> PyResult<Self> {
         use pecos_qec::fault_tolerance::dem_builder::SamplingEngine;
 
+        // Detector and observable counts come from the canonical parser, which also
+        // honours bare `detector D<n>` and `logical_observable L<n>` declarations.
+        // Deriving them from `error(...)` lines alone undercounts: Stim emits
+        // `logical_observable Lk` precisely for logicals that no mechanism flips, and
+        // dropping those made the sampler's width disagree with the decoders' -- which
+        // silently turned every shot into a logical error when the widths were compared.
+        let (num_detectors, num_observables) =
+            pecos_decoder_core::dem::utils::parse_dem_metadata(dem_string).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("invalid DEM: {e}"))
+            })?;
+
         let mut mechanisms = Vec::new();
-        let mut max_det = 0u32;
-        let mut max_obs = 0u32;
 
         for line in dem_string.lines() {
             let line = line.trim();
@@ -4563,13 +4639,11 @@ impl PyDemSampler {
                         pyo3::exceptions::PyValueError::new_err(format!("bad detector: {e}"))
                     })?;
                     dets.push(id);
-                    max_det = max_det.max(id + 1);
                 } else if let Some(l) = tok.strip_prefix('L') {
                     let id: u32 = l.parse().map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("bad observable: {e}"))
                     })?;
                     obs.push(id);
-                    max_obs = max_obs.max(id + 1);
                 }
             }
             if prob > 0.0 {
@@ -4577,8 +4651,7 @@ impl PyDemSampler {
             }
         }
 
-        let engine =
-            SamplingEngine::from_mechanisms(mechanisms, max_det as usize, max_obs as usize);
+        let engine = SamplingEngine::from_mechanisms(mechanisms, num_detectors, num_observables);
         let inner = RustNewDemSampler::from_engine(engine);
         Ok(Self { inner })
     }
@@ -5920,52 +5993,6 @@ impl PyCssUfDecoder {
 ///     ...     "`fusion_blossom_serial`",
 ///     ... )
 ///     >>> obs = decoder.decode(syndrome)
-/// Convert a wide observable mask to a Python integer (arbitrary precision).
-///
-/// `<= 64` observables become a plain `int` from the single `u64` (identical to
-/// the historical return); `> 64` observables become a big `int` built from the
-/// mask's little-endian words, with no truncation.
-fn obsmask_to_py(
-    py: Python<'_>,
-    mask: &pecos_decoder_core::obs_mask::ObsMask,
-) -> PyResult<Py<pyo3::PyAny>> {
-    if let Some(v) = mask.to_u64() {
-        return Ok(v.into_pyobject(py)?.into_any().unbind());
-    }
-    let mut bytes = Vec::with_capacity(mask.words().len() * 8);
-    for &word in mask.words() {
-        bytes.extend_from_slice(&word.to_le_bytes());
-    }
-    let py_bytes = pyo3::types::PyBytes::new(py, &bytes);
-    let int_type = py.get_type::<pyo3::types::PyInt>();
-    Ok(int_type
-        .call_method1("from_bytes", (py_bytes, "little"))?
-        .unbind())
-}
-
-/// Convert a Python integer (arbitrary precision) to a wide observable mask.
-///
-/// Inverse of [`obsmask_to_py`]: reads the int's little-endian bytes and packs
-/// them into `u64` words, so observable indices >= 64 are preserved.
-fn py_to_obsmask(
-    value: &pyo3::Bound<'_, pyo3::PyAny>,
-) -> PyResult<pecos_decoder_core::obs_mask::ObsMask> {
-    let bit_length: usize = value.call_method0("bit_length")?.extract()?;
-    let nbytes = bit_length.div_ceil(8).max(1);
-    let bytes: Vec<u8> = value
-        .call_method1("to_bytes", (nbytes, "little"))?
-        .extract()?;
-    let words: Vec<u64> = bytes
-        .chunks(8)
-        .map(|chunk| {
-            let mut buf = [0u8; 8];
-            buf[..chunk.len()].copy_from_slice(chunk);
-            u64::from_le_bytes(buf)
-        })
-        .collect();
-    Ok(pecos_decoder_core::obs_mask::ObsMask::from_words(&words))
-}
-
 #[pyclass(name = "LogicalSubgraphDecoder", module = "pecos_rslib.qec")]
 pub struct PyLogicalSubgraphDecoder {
     inner: pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder,
@@ -7309,6 +7336,15 @@ fn mechanisms_to_dem_string(mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>) -> Strin
 #[pyfunction]
 fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
     let base = decoder_type.split(':').next().unwrap_or(decoder_type);
+    // "perturbed" wraps an arbitrary inner decoder ("perturbed:K=15,inner=TYPE"),
+    // so its requirement is the inner decoder's. `inner=` takes the rest of the
+    // string, matching how create_observable_decoder parses nested specs.
+    if base == "perturbed" {
+        let inner = decoder_type
+            .split_once("inner=")
+            .map_or("pymatching", |(_, rest)| rest);
+        return decoder_dem_requirement(inner);
+    }
     match base {
         "pymatching"
         | "pymatching_correlated"
@@ -7323,9 +7359,14 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
         | "k_mwpm"
         | "perturbed_fb_corr"
         | "perturbed_fb"
+        | "beamsearch"
+        | "belief_matching"
+        | "belief_matching_correlated"
+        | "belief_matching_mgbp"
+        | "belief_matching_hybrid"
         | "ensemble" => Ok("graphlike".to_string()),
-        "tesseract" | "astar" | "astar_full" | "bp_osd" | "bp_lsd" | "union_find"
-        | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" => Ok("any".to_string()),
+        "tesseract" | "astar" | "astar_full" | "bp_osd" | "bp_lsd" | "belief_find"
+        | "union_find" | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" => Ok("any".to_string()),
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown decoder type: {decoder_type:?}",
         ))),
@@ -8623,6 +8664,7 @@ fn coloration_memory_circuit(
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
 
+    qec.add_class::<PyObservableFlips>()?;
     qec.add_class::<PyFaultLocation>()?;
     qec.add_class::<PyDagFaultInfluenceMap>()?;
     qec.add_class::<PyDagFaultAnalyzer>()?;
@@ -8634,6 +8676,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDetectorErrorModel>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
+    qec.add_class::<PyDecoderComparisonResult>()?;
     qec.add_class::<PyCssUfDecoder>()?;
     qec.add_class::<PyLogicalSubgraphDecoder>()?;
     qec.add_class::<PyWindowedLogicalSubgraphDecoder>()?;

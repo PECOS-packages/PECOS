@@ -2682,7 +2682,7 @@ fn arange(
         )));
     }
 
-    let result = Array::from_array_f64(result_f64.into_dyn()).astype(target_dtype);
+    let result = Array::from_array_f64(result_f64.into_dyn()).astype(target_dtype)?;
     Py::new(py, result)
 }
 
@@ -3139,7 +3139,16 @@ fn ones(
 /// # Arguments
 ///
 /// * `obj` - Python object (list, tuple, or iterable) to convert to array
-/// * `dtype` - Optional data type ('float64', 'complex128', 'int64', or `DType` enum). If not specified, dtype is inferred.
+/// * `dtype` - Optional data type. Integer spelling table:
+///
+///   | Form | 8-bit | 16-bit | 32-bit | 64-bit |
+///   | --- | --- | --- | --- | --- |
+///   | signed long name | `"int8"` | `"int16"` | `"int32"` | `"int64"` |
+///   | unsigned long name | `"uint8"` | `"uint16"` | `"uint32"` | `"uint64"` |
+///   | signed NumPy typestring | `"i1"` | `"i2"` | `"i4"` | `"i8"` |
+///   | unsigned NumPy typestring | `"u1"` | `"u2"` | `"u4"` | `"u8"` |
+///   | PECOS dtype | `dtypes.i8` | `dtypes.i16` | `dtypes.i32` | `dtypes.i64` |
+///   | PECOS unsigned dtype | `dtypes.u8` | `dtypes.u16` | `dtypes.u32` | `dtypes.u64` |
 ///
 /// # Returns
 ///
@@ -3178,22 +3187,46 @@ fn array(
 ) -> PyResult<Py<Array>> {
     use crate::dtypes::DType;
 
-    // Check if obj is already an Array - if so, handle dtype conversion or copy
-    if let Ok(existing_array) = obj.extract::<PyRef<'_, Array>>() {
-        // Parse dtype parameter if provided
-        let target_dtype = if let Some(dt) = dtype {
-            Some(if let Ok(enum_dt) = dt.extract::<DType>() {
-                enum_dt
-            } else if let Ok(s) = dt.extract::<&str>() {
-                DType::from_str(s)?
-            } else {
-                return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                    "dtype must be a string or DType enum",
-                ));
-            })
+    let target_dtype = if let Some(dtype) = dtype {
+        if let Ok(dtype) = dtype.extract::<DType>() {
+            Some(dtype)
+        } else if let Ok(name) = dtype.extract::<&str>() {
+            match name {
+                // NumPy compact typestrings encode byte width, not bit width.
+                "i1" => Some(DType::I8),
+                "i2" => Some(DType::I16),
+                "i4" => Some(DType::I32),
+                "i8" => Some(DType::I64),
+                "u1" => Some(DType::U8),
+                "u2" => Some(DType::U16),
+                "u4" => Some(DType::U32),
+                "u8" => Some(DType::U64),
+                _ => DType::from_str(name).ok(),
+            }
+        } else if let Ok(name) = dtype
+            .getattr("name")
+            .and_then(|name| name.extract::<String>())
+        {
+            DType::from_str(&name).ok()
+        } else if let Ok(name) = dtype
+            .getattr("__name__")
+            .and_then(|name| name.extract::<String>())
+        {
+            DType::from_str(&name).ok()
         } else {
             None
-        };
+        }
+    } else {
+        None
+    };
+
+    // Check if obj is already an Array - if so, handle dtype conversion or copy
+    if let Ok(existing_array) = obj.extract::<PyRef<'_, Array>>() {
+        if dtype.is_some() && target_dtype.is_none() {
+            return Err(PyTypeError::new_err(
+                "dtype is not supported by PECOS Array",
+            ));
+        }
 
         // Get current dtype
         let current_dtype = existing_array.dtype();
@@ -3203,7 +3236,7 @@ fn array(
             && td != current_dtype
         {
             // Perform dtype conversion using the pure Rust astype() method
-            let converted_array = existing_array.astype(td);
+            let converted_array = existing_array.astype(td)?;
             return Py::new(py, converted_array);
         }
 
@@ -3212,33 +3245,26 @@ fn array(
         return Py::new(py, copied_array);
     }
 
+    if let Some(target_dtype) = target_dtype
+        && (obj.hasattr("__array_interface__")? || obj.cast::<pyo3::types::PySequence>().is_ok())
+    {
+        let array = Array::from_python_value(&obj, None)?.astype(target_dtype)?;
+        return Py::new(py, array);
+    }
+
     // Convert input to NumPy array first, then use buffer protocol
     // This allows us to support arbitrary N-dimensional arrays
     // Get NumPy module and call numpy.array() to convert input
     let numpy_mod = py.import("numpy")?;
 
     // Build kwargs for numpy.array() call
-    let kwargs = if let Some(dt) = dtype {
+    let kwargs = if target_dtype.is_none()
+        && let Some(dt) = dtype
+    {
         // dtype was provided - convert DType enum to NumPy-compatible string
         let dict = pyo3::types::PyDict::new(py);
 
-        // Check if dt is a DType enum - if so, convert to numpy string
-        if let Ok(dtype_enum) = dt.extract::<DType>() {
-            // It's our DType enum - convert to numpy-compatible string
-            let numpy_str = dtype_enum.to_numpy_str();
-            dict.set_item("dtype", numpy_str)?;
-        } else if let Ok(dtype_name) = dt.extract::<&str>() {
-            // PECOS spellings such as "u8" deliberately mean the native bit width,
-            // whereas NumPy interprets "u8" as an eight-byte integer.
-            if let Ok(dtype_enum) = DType::from_str(dtype_name) {
-                dict.set_item("dtype", dtype_enum.to_numpy_str())?;
-            } else {
-                dict.set_item("dtype", dt)?;
-            }
-        } else {
-            // It's already a string or numpy dtype - pass through directly
-            dict.set_item("dtype", dt)?;
-        }
+        dict.set_item("dtype", dt)?;
 
         Some(dict)
     } else {
@@ -3251,6 +3277,11 @@ fn array(
     } else {
         numpy_mod.call_method("array", (obj,), None)?
     };
+
+    if let Some(target_dtype) = target_dtype {
+        let array = Array::from_python_value(&np_array, None)?.astype(target_dtype)?;
+        return Py::new(py, array);
+    }
 
     // Now use __array_interface__ protocol to extract the array data
     // Get the dtype string from __array_interface__
@@ -3432,7 +3463,7 @@ fn asarray(
             && td != current_dtype
         {
             // Perform dtype conversion using the pure Rust astype() method
-            let converted_array = existing_array.astype(td);
+            let converted_array = existing_array.astype(td)?;
             return Py::new(py, converted_array);
         }
 
@@ -3525,6 +3556,12 @@ fn dtype_from_argument(arg: &Bound<'_, PyAny>) -> PyResult<crate::dtypes::DType>
     }
     if let Ok(name) = arg.extract::<&str>() {
         return crate::dtypes::DType::from_str(name);
+    }
+    if let Ok(name) = arg
+        .getattr("name")
+        .and_then(|name| name.extract::<String>())
+    {
+        return crate::dtypes::DType::from_str(&name);
     }
     if arg.cast::<PyType>().is_ok() {
         let name: String = arg.getattr("__name__")?.extract()?;
@@ -3686,6 +3723,33 @@ fn normalize_reduction_axis(axis: isize, ndim: usize) -> PyResult<usize> {
     Ok(normalized as usize)
 }
 
+fn uses_zero_dimensional_reduction_axis(
+    a: &Bound<'_, PyAny>,
+    axis: Option<isize>,
+) -> PyResult<bool> {
+    let Some(axis) = axis else {
+        return Ok(false);
+    };
+    let ndim = if let Ok(ndim) = a.getattr("ndim") {
+        ndim.extract::<usize>()?
+    } else {
+        return Ok(false);
+    };
+    if ndim != 0 {
+        return Ok(false);
+    }
+    if matches!(axis, -1 | 0) {
+        return Ok(true);
+    }
+    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+        "axis {axis} is out of bounds for array of dimension 0"
+    )))
+}
+
+fn extract_zero_dimensional_scalar(py: Python<'_>, a: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    Array::from_python_value(a, None)?.extract_scalar(py)
+}
+
 fn checked_unsigned_sum<T>(mut values: impl Iterator<Item = T>) -> PyResult<u64>
 where
     T: Into<u64>,
@@ -3748,6 +3812,11 @@ fn extreme_unsigned_array(
         ($array:expr, $variant:ident, $minimum:expr, $maximum:expr) => {{
             if let Some(axis) = axis {
                 let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                if $array.len_of(Axis(axis)) == 0 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "zero-size array reduction has no identity",
+                    ));
+                }
                 let initial = if find_maximum { $minimum } else { $maximum };
                 let result = $array.fold_axis(Axis(axis), initial, |&current, &value| {
                     if (find_maximum && value > current) || (!find_maximum && value < current) {
@@ -3839,6 +3908,14 @@ fn input_has_unsigned_dtype(a: &Bound<'_, PyAny>) -> bool {
 #[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
 fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
     use num_complex::Complex64;
+
+    if uses_zero_dimensional_reduction_axis(&a, axis)? {
+        let scalar = extract_zero_dimensional_scalar(py, &a)?;
+        if scalar.bind(py).is_instance_of::<pyo3::types::PyBool>() {
+            return i64::from(scalar.bind(py).extract::<bool>()?).into_py_any(py);
+        }
+        return Ok(scalar);
+    }
 
     if let Ok(array) = a.extract::<PyRef<'_, Array>>()
         && matches!(
@@ -4043,6 +4120,10 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
 #[pyo3(signature = (a, axis=None))]
 #[allow(clippy::needless_pass_by_value)]
 fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    if uses_zero_dimensional_reduction_axis(&a, axis)? {
+        return extract_zero_dimensional_scalar(py, &a);
+    }
+
     if let Ok(array) = a.extract::<PyRef<'_, Array>>()
         && matches!(
             array.data,
@@ -4197,6 +4278,10 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
 #[pyo3(signature = (a, axis=None))]
 #[allow(clippy::needless_pass_by_value)]
 fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    if uses_zero_dimensional_reduction_axis(&a, axis)? {
+        return extract_zero_dimensional_scalar(py, &a);
+    }
+
     if let Ok(array) = a.extract::<PyRef<'_, Array>>()
         && matches!(
             array.data,
@@ -4628,6 +4713,11 @@ fn log(py: Python<'_>, x: Bound<'_, PyAny>, base: f64) -> PyResult<Py<PyAny>> {
 fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
     use crate::pecos_array::Array;
 
+    if uses_zero_dimensional_reduction_axis(&a, axis)? {
+        let scalar = extract_zero_dimensional_scalar(py, &a)?;
+        return scalar.bind(py).is_truthy()?.into_py_any(py);
+    }
+
     if let Some(axis_val) = axis {
         // axis reduction: extract array, convert to bool, reduce with all_axis
         let bool_arr = if let Ok(arr) = array_buffer::extract_bool_array(&a) {
@@ -4637,6 +4727,10 @@ fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         } else if let Ok(arr) = array_buffer::extract_i64_array(&a) {
             arr.mapv(|x| x != 0)
         } else if let Ok(arr) = array_buffer::extract_u64_array(&a) {
+            arr.mapv(|x| x != 0)
+        } else if let Ok(arr) = array_buffer::extract_u32_array(&a) {
+            arr.mapv(|x| x != 0)
+        } else if let Ok(arr) = array_buffer::extract_u16_array(&a) {
             arr.mapv(|x| x != 0)
         } else if let Ok(arr) = array_buffer::extract_u8_array(&a) {
             arr.mapv(|x| x != 0)
@@ -4675,6 +4769,12 @@ fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
     if let Ok(arr) = array_buffer::extract_u64_array(&a) {
         return Ok(arr.iter().all(|&x| x != 0).into_py_any(py)?);
     }
+    if let Ok(arr) = array_buffer::extract_u32_array(&a) {
+        return Ok(arr.iter().all(|&x| x != 0).into_py_any(py)?);
+    }
+    if let Ok(arr) = array_buffer::extract_u16_array(&a) {
+        return Ok(arr.iter().all(|&x| x != 0).into_py_any(py)?);
+    }
     if let Ok(arr) = array_buffer::extract_u8_array(&a) {
         return Ok(arr.iter().all(|&x| x != 0).into_py_any(py)?);
     }
@@ -4704,6 +4804,11 @@ fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
 fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
     use crate::pecos_array::Array;
 
+    if uses_zero_dimensional_reduction_axis(&a, axis)? {
+        let scalar = extract_zero_dimensional_scalar(py, &a)?;
+        return scalar.bind(py).is_truthy()?.into_py_any(py);
+    }
+
     if let Some(axis_val) = axis {
         // axis reduction: extract array, convert to bool, reduce with any_axis
         let bool_arr = if let Ok(arr) = array_buffer::extract_bool_array(&a) {
@@ -4713,6 +4818,10 @@ fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         } else if let Ok(arr) = array_buffer::extract_i64_array(&a) {
             arr.mapv(|x| x != 0)
         } else if let Ok(arr) = array_buffer::extract_u64_array(&a) {
+            arr.mapv(|x| x != 0)
+        } else if let Ok(arr) = array_buffer::extract_u32_array(&a) {
+            arr.mapv(|x| x != 0)
+        } else if let Ok(arr) = array_buffer::extract_u16_array(&a) {
             arr.mapv(|x| x != 0)
         } else if let Ok(arr) = array_buffer::extract_u8_array(&a) {
             arr.mapv(|x| x != 0)
@@ -4749,6 +4858,12 @@ fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return Ok(arr.iter().any(|&x| x != 0).into_py_any(py)?);
     }
     if let Ok(arr) = array_buffer::extract_u64_array(&a) {
+        return Ok(arr.iter().any(|&x| x != 0).into_py_any(py)?);
+    }
+    if let Ok(arr) = array_buffer::extract_u32_array(&a) {
+        return Ok(arr.iter().any(|&x| x != 0).into_py_any(py)?);
+    }
+    if let Ok(arr) = array_buffer::extract_u16_array(&a) {
         return Ok(arr.iter().any(|&x| x != 0).into_py_any(py)?);
     }
     if let Ok(arr) = array_buffer::extract_u8_array(&a) {

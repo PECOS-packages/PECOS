@@ -29,6 +29,46 @@ UNSIGNED_DTYPES = (
     ("uint64", "u64", dtypes.uint64, np.uint64),
 )
 
+ARRAY_INTERFACE_DTYPES = (
+    ("bool", np.bool_, [False, True]),
+    ("int8", np.int8, [1, 127]),
+    ("int16", np.int16, [1, 256]),
+    ("int32", np.int32, [1, 256]),
+    ("int64", np.int64, [1, 256]),
+    ("uint8", np.uint8, [1, 255]),
+    ("uint16", np.uint16, [1, 256]),
+    ("uint32", np.uint32, [1, 256]),
+    ("uint64", np.uint64, [1, 256]),
+    ("float32", np.float32, [1.5, 2.5]),
+    ("float64", np.float64, [1.5, 2.5]),
+    ("complex64", np.complex64, [1.5 + 2.25j, 2.5 - 3.25j]),
+    ("complex128", np.complex128, [1.5 + 2.25j, 2.5 - 3.25j]),
+)
+
+SCALAR_DTYPES = (
+    ("bool", np.bool_, True),
+    ("int8", np.int8, 7),
+    ("int16", np.int16, 7),
+    ("int32", np.int32, 7),
+    ("int64", np.int64, 7),
+    ("uint8", np.uint8, 7),
+    ("uint16", np.uint16, 7),
+    ("uint32", np.uint32, 7),
+    ("uint64", np.uint64, 7),
+    ("float32", np.float32, 7.5),
+    ("float64", np.float64, 7.5),
+    ("complex64", np.complex64, 7.5 + 2.25j),
+    ("complex128", np.complex128, 7.5 + 2.25j),
+)
+
+AXIS_REDUCTIONS = (
+    ("sum", num.sum, np.sum),
+    ("max", num.max, np.max),
+    ("min", num.min, np.min),
+    ("any", num.any, np.any),
+    ("all", num.all, np.all),
+)
+
 CONSTRUCTORS: tuple[tuple[str, Callable[[str], Array]], ...] = (
     ("Array", lambda dtype: Array([0, 1], dtype=dtype)),
     ("pecos_rslib.array", lambda dtype: pecos_rslib.array([0, 1], dtype=dtype)),
@@ -47,18 +87,17 @@ SUPPORTED_DTYPES = (
 
 
 @pytest.mark.parametrize(("constructor_name", "constructor"), CONSTRUCTORS)
-@pytest.mark.parametrize(("canonical", "short", "expected", "_numpy_dtype"), UNSIGNED_DTYPES)
-def test_every_integer_constructor_accepts_both_unsigned_spellings(
+@pytest.mark.parametrize(("canonical", "_short", "expected", "_numpy_dtype"), UNSIGNED_DTYPES)
+def test_every_integer_constructor_accepts_long_unsigned_spelling(
     constructor_name: str,
     constructor: Callable[[str], Array],
     canonical: str,
-    short: str,
+    _short: str,
     expected: Any,
     _numpy_dtype: Any,
 ) -> None:
-    """Every constructor that accepts signed widths accepts both unsigned spellings."""
+    """Every constructor that accepts signed widths accepts long unsigned names."""
     assert constructor(canonical).dtype == expected, constructor_name
-    assert constructor(short).dtype == expected, constructor_name
 
 
 @pytest.mark.parametrize(("canonical", "_short", "expected", "_numpy_dtype"), UNSIGNED_DTYPES)
@@ -297,7 +336,7 @@ def test_pecos_reexported_asarray_works() -> None:
     assert pc.asarray([1, 2], dtype=dtypes.uint8).tolist() == [1, 2]
 
 
-@pytest.mark.parametrize("dtype_name", ["uint8", "uint64"])
+@pytest.mark.parametrize("dtype_name", ["uint8", "uint16", "uint32", "uint64"])
 @pytest.mark.parametrize("values", [[1, 0], [0, 0], [1, 1]])
 def test_any_and_all_accept_unsigned_arrays(dtype_name: str, values: list[int]) -> None:
     """Widening the constructors made unsigned arrays reachable by any()/all().
@@ -311,3 +350,256 @@ def test_any_and_all_accept_unsigned_arrays(dtype_name: str, values: list[int]) 
 
     assert num.any(pecos_arr) == bool(numpy_arr.any())
     assert num.all(pecos_arr) == bool(numpy_arr.all())
+
+
+@pytest.mark.parametrize(("_dtype_name", "numpy_dtype", "values"), ARRAY_INTERFACE_DTYPES)
+@pytest.mark.parametrize("constructor", [Array, num.array])
+def test_big_endian_ingest_matches_little_endian_and_round_trips(
+    constructor: Callable[..., Array],
+    _dtype_name: str,
+    numpy_dtype: Any,
+    values: list[Any],
+) -> None:
+    little_endian = np.array(values, dtype=np.dtype(numpy_dtype).newbyteorder("<"))
+    big_endian = np.array(values, dtype=np.dtype(numpy_dtype).newbyteorder(">"))
+
+    little_actual = constructor(little_endian)
+    big_actual = constructor(big_endian)
+
+    assert big_actual.dtype == little_actual.dtype
+    assert big_actual.tolist() == little_actual.tolist() == big_endian.tolist()
+    np.testing.assert_array_equal(np.asarray(big_actual), little_endian)
+
+
+@pytest.mark.parametrize("constructor", [Array, num.array])
+def test_float16_array_interface_remains_rejected(constructor: Callable[..., Array]) -> None:
+    with pytest.raises(TypeError, match="Unsupported dtype"):
+        constructor(np.array([1.5], dtype=np.float16))
+
+
+@pytest.mark.parametrize(("_canonical", "_short", "target", "_numpy_dtype"), UNSIGNED_DTYPES)
+def test_native_array_unsigned_conversions_use_sequence_range_checks(
+    _canonical: str,
+    _short: str,
+    target: Any,
+    _numpy_dtype: Any,
+) -> None:
+    with pytest.raises(OverflowError) as sequence_error:
+        Array([-1], dtype=target)
+
+    source = Array([-1], dtype=dtypes.int64)
+    for conversion in (lambda: Array(source, dtype=target), lambda: source.astype(target)):
+        with pytest.raises(type(sequence_error.value)) as native_error:
+            conversion()
+        assert str(native_error.value) == str(sequence_error.value)
+
+
+def test_native_uint64_to_int64_conversion_rejects_wrap() -> None:
+    maximum = 2**64 - 1
+    with pytest.raises(OverflowError, match=f"value {maximum} is out of range for int64"):
+        Array(Array([maximum], dtype=dtypes.uint64), dtype=dtypes.int64)
+
+
+@pytest.mark.parametrize(("canonical", "_short", "target", "_numpy_dtype"), UNSIGNED_DTYPES)
+@pytest.mark.parametrize("constructor", [Array, pecos_rslib.array, num.array, num.asarray])
+def test_integer_like_elements_share_checked_unsigned_conversion(
+    constructor: Callable[..., Array],
+    canonical: str,
+    _short: str,
+    target: Any,
+    _numpy_dtype: Any,
+) -> None:
+    errors = []
+    for value in (-1, np.int64(-1)):
+        with pytest.raises(OverflowError) as error:
+            constructor([value], dtype=target)
+        errors.append(str(error.value))
+    assert errors[0] == errors[1] == f"value -1 is out of range for {canonical}"
+    assert constructor([False, True], dtype=target).tolist() == [0, 1]
+
+
+@pytest.mark.parametrize(("reduction", "numpy_reduction"), [(num.max, np.max), (num.min, np.min)])
+@pytest.mark.parametrize(("_canonical", "_short", "target", "numpy_dtype"), UNSIGNED_DTYPES)
+def test_empty_unsigned_axis_extreme_raises_like_axisless_case(
+    reduction: Callable[..., Any],
+    numpy_reduction: Callable[..., Any],
+    _canonical: str,
+    _short: str,
+    target: Any,
+    numpy_dtype: Any,
+) -> None:
+    source = num.array(np.empty((2, 0), dtype=numpy_dtype), dtype=target)
+    with pytest.raises(ValueError, match="^zero-size array reduction has no identity$"):
+        reduction(source, axis=1)
+    with pytest.raises(ValueError, match="zero-size array to reduction operation"):
+        numpy_reduction(np.empty((2, 0), dtype=numpy_dtype), axis=1)
+
+
+@pytest.mark.parametrize(("_canonical", "_short", "expected", "numpy_dtype"), UNSIGNED_DTYPES)
+def test_reversed_unsigned_numpy_views_are_copied_in_logical_order(
+    _canonical: str,
+    _short: str,
+    expected: Any,
+    numpy_dtype: Any,
+) -> None:
+    source = np.arange(6, dtype=numpy_dtype)[::-1]
+    actual = Array(source)
+    assert actual.dtype == expected
+    assert actual.tolist() == source.tolist() == [5, 4, 3, 2, 1, 0]
+
+
+def test_numpy_ingest_applies_requested_dtype_with_checked_conversion() -> None:
+    actual = Array(np.array([255], dtype=np.uint8), dtype=dtypes.int16)
+    assert actual.dtype == dtypes.int16
+    assert actual.tolist() == [255]
+
+    with pytest.raises(OverflowError, match="out of range for int8"):
+        Array(np.array([255], dtype=np.uint8), dtype=dtypes.int8)
+
+
+@pytest.mark.parametrize(("_canonical", "_short", "pecos_dtype", "numpy_dtype"), UNSIGNED_DTYPES)
+def test_all_unsigned_reductions_match_numpy(
+    _canonical: str,
+    _short: str,
+    pecos_dtype: Any,
+    numpy_dtype: Any,
+) -> None:
+    values = [[0, 1], [2, 3]]
+    actual = num.array(values, dtype=pecos_dtype)
+    expected = np.array(values, dtype=numpy_dtype)
+    assert num.sum(actual) == int(np.sum(expected))
+    assert num.max(actual) == int(np.max(expected))
+    assert num.min(actual) == int(np.min(expected))
+    assert num.sum(actual, axis=0).tolist() == np.sum(expected, axis=0).tolist()
+    assert num.max(actual, axis=0).tolist() == np.max(expected, axis=0).tolist()
+    assert num.min(actual, axis=0).tolist() == np.min(expected, axis=0).tolist()
+
+
+@pytest.mark.parametrize(("_canonical", "_short", "pecos_dtype", "numpy_dtype"), UNSIGNED_DTYPES)
+def test_all_unsigned_any_all_axis_and_axisless_match_numpy(
+    _canonical: str,
+    _short: str,
+    pecos_dtype: Any,
+    numpy_dtype: Any,
+) -> None:
+    values = [[0, 1], [1, 1]]
+    actual = num.array(values, dtype=pecos_dtype)
+    expected = np.array(values, dtype=numpy_dtype)
+    assert num.any(actual) == bool(np.any(expected))
+    assert num.all(actual) == bool(np.all(expected))
+    assert num.any(actual, axis=1).tolist() == np.any(expected, axis=1).tolist()
+    assert num.all(actual, axis=1).tolist() == np.all(expected, axis=1).tolist()
+
+
+@pytest.mark.parametrize("value", [0, 1, False, True, np.int64(0), np.int64(1)])
+def test_bool_dtype_scalar_likes_match_numpy(value: Any) -> None:
+    assert num.bool_(value) is bool(np.bool_(value))
+
+
+@pytest.mark.parametrize("values", [[], [0, 1]])
+def test_bool_dtype_rejects_ambiguous_native_arrays_like_numpy_truth(values: list[int]) -> None:
+    oracle = np.array(values, dtype=np.uint8)
+    with pytest.raises(ValueError, match="truth value") as numpy_error:
+        bool(oracle)
+    with pytest.raises(type(numpy_error.value)) as pecos_error:
+        num.bool_(Array(values, dtype=dtypes.uint8))
+    assert str(pecos_error.value) == str(numpy_error.value)
+
+
+@pytest.mark.parametrize("value", [0, 1])
+def test_bool_dtype_size_one_native_array_uses_element_truth(value: int) -> None:
+    assert num.bool_(Array([value], dtype=dtypes.uint8)) is bool(np.array([value], dtype=np.uint8))
+
+
+@pytest.mark.parametrize(
+    ("spelling", "expected"),
+    [
+        ("i1", dtypes.int8),
+        ("i2", dtypes.int16),
+        ("i4", dtypes.int32),
+        ("i8", dtypes.int64),
+        ("u1", dtypes.uint8),
+        ("u2", dtypes.uint16),
+        ("u4", dtypes.uint32),
+        ("u8", dtypes.uint64),
+        ("int8", dtypes.int8),
+        ("uint8", dtypes.uint8),
+        ("i64", dtypes.int64),
+        ("u64", dtypes.uint64),
+    ],
+)
+@pytest.mark.parametrize("constructor", [num.array, num.asarray])
+def test_num_array_dtype_spelling_compatibility(
+    constructor: Callable[..., Array], spelling: str, expected: Any
+) -> None:
+    actual = constructor([1], dtype=spelling)
+    assert actual.dtype == expected
+
+
+def test_i8_string_keeps_dev_numpy_typestring_behavior() -> None:
+    assert num.array([128], dtype="i8").tolist() == [128]
+    assert num.array([128], dtype="i8").dtype == dtypes.int64
+
+
+@pytest.mark.parametrize(("_canonical", "_short", "pecos_dtype", "numpy_dtype"), UNSIGNED_DTYPES)
+def test_issubdtype_accepts_classes_instances_and_pecos_dtypes(
+    _canonical: str,
+    _short: str,
+    pecos_dtype: Any,
+    numpy_dtype: Any,
+) -> None:
+    for candidate in (numpy_dtype, np.dtype(numpy_dtype), pecos_dtype):
+        assert num.issubdtype(candidate, num.integer) == np.issubdtype(numpy_dtype, np.integer)
+        assert num.issubdtype(candidate, pecos_dtype) == np.issubdtype(numpy_dtype, numpy_dtype)
+
+
+@pytest.mark.parametrize(("dtype_name", "numpy_dtype", "value"), SCALAR_DTYPES)
+@pytest.mark.parametrize(("reduction_name", "reduction", "numpy_reduction"), AXIS_REDUCTIONS)
+@pytest.mark.parametrize("axis", [0, -1])
+def test_zero_dimensional_reductions_match_numpy(
+    dtype_name: str,
+    numpy_dtype: Any,
+    value: Any,
+    reduction_name: str,
+    reduction: Callable[..., Any],
+    numpy_reduction: Callable[..., Any],
+    axis: int,
+) -> None:
+    numpy_array = np.array(value, dtype=numpy_dtype)
+    pecos_array = num.array(numpy_array)
+    expected = numpy_reduction(numpy_array, axis=axis)
+
+    actual = reduction(pecos_array, axis=axis)
+    assert not isinstance(actual, Array)
+    assert actual == expected.item(), dtype_name
+
+    if reduction_name in {"any", "all"}:
+        method_actual = getattr(pecos_array, reduction_name)(axis=axis)
+        assert not isinstance(method_actual, Array)
+        assert method_actual == expected.item(), dtype_name
+
+
+@pytest.mark.parametrize(("_dtype_name", "numpy_dtype", "value"), SCALAR_DTYPES)
+@pytest.mark.parametrize(("reduction_name", "reduction", "numpy_reduction"), AXIS_REDUCTIONS)
+def test_zero_dimensional_reductions_reject_out_of_range_axis(
+    _dtype_name: str,
+    numpy_dtype: Any,
+    value: Any,
+    reduction_name: str,
+    reduction: Callable[..., Any],
+    numpy_reduction: Callable[..., Any],
+) -> None:
+    numpy_array = np.array(value, dtype=numpy_dtype)
+    pecos_array = num.array(numpy_array)
+    error_message = "axis 1 is out of bounds for array of dimension 0"
+
+    with pytest.raises(ValueError, match=f"^{error_message}$") as numpy_error:
+        numpy_reduction(numpy_array, axis=1)
+    with pytest.raises(ValueError, match=f"^{error_message}$") as pecos_error:
+        reduction(pecos_array, axis=1)
+    assert str(pecos_error.value) == str(numpy_error.value)
+
+    if reduction_name in {"any", "all"}:
+        with pytest.raises(ValueError, match=f"^{error_message}$") as method_error:
+            getattr(pecos_array, reduction_name)(axis=1)
+        assert str(method_error.value) == str(numpy_error.value)

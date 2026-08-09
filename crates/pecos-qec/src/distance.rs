@@ -298,7 +298,7 @@ pub fn calculate_distance(
     code: &StabilizerCodeSpec,
     config: &DistanceSearchConfig,
 ) -> Result<Option<DistanceResult>, StabilizerCodeSpecError> {
-    code.verify_logical_completeness()?;
+    code.verify_as_complete_code()?;
     let max_weight = config.max_weight.unwrap_or(code.num_qubits());
 
     // Build indices once for O(weight) lookups instead of O(num_stabilizers * weight)
@@ -333,7 +333,7 @@ pub fn has_logical_error_at_weight(
     weight: usize,
     config: &DistanceSearchConfig,
 ) -> Result<bool, StabilizerCodeSpecError> {
-    code.verify_logical_completeness()?;
+    code.verify_as_complete_code()?;
     if config.verbose {
         eprintln!("Checking weight {weight}...");
     }
@@ -374,7 +374,7 @@ pub fn find_shortest_logicals(
     config: &DistanceSearchConfig,
     delta: usize,
 ) -> Result<Vec<LogicalOperatorInfo>, StabilizerCodeSpecError> {
-    code.verify_logical_completeness()?;
+    code.verify_as_complete_code()?;
     let max_weight = config.max_weight.unwrap_or(code.num_qubits());
     let mut results = Vec::new();
     let mut found_distance: Option<usize> = None;

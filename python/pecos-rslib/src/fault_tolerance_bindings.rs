@@ -7830,7 +7830,7 @@ impl PyStabilizerDistanceSearchResult {
     #[getter]
     fn lower_bound(&self) -> usize {
         self.result.as_ref().map_or_else(
-            || self.max_weight.unwrap_or(0).saturating_add(1),
+            || self.max_weight.unwrap_or(0) + 1,
             |result| result.distance,
         )
     }
@@ -7905,7 +7905,7 @@ impl PyClassicalDistanceSearchResult {
         match &self.outcome {
             RustClassicalDistanceSearchOutcome::Certified(result) => Some(result.distance),
             RustClassicalDistanceSearchOutcome::BudgetExhausted { max_weight } => {
-                Some(max_weight.saturating_add(1))
+                Some(max_weight + 1)
             }
             RustClassicalDistanceSearchOutcome::NoNonzeroCodeword => None,
         }
@@ -7940,7 +7940,7 @@ impl PyClassicalDistanceSearchResult {
             }
             RustClassicalDistanceSearchOutcome::BudgetExhausted { max_weight } => format!(
                 "ClassicalDistanceSearchResult(certified=False, lower_bound={}, max_weight={max_weight})",
-                max_weight.saturating_add(1)
+                max_weight + 1
             ),
         }
     }

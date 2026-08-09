@@ -205,7 +205,14 @@ pub fn stabilizer_code_distance(
     code: &StabilizerCodeSpec,
     max_weight: usize,
 ) -> Result<StabilizerDistanceSearchOutcome, DistanceProblemError> {
-    code.verify_logical_completeness()?;
+    code.verify_as_complete_code()?;
+    // No qubit-support witness can weigh more than the code's qubit count, so a larger
+    // budget is semantically exhaustive: clamp it. A verified complete spec encodes at
+    // least one logical qubit, and its logical operators weigh at most `num_qubits`, so
+    // a completed search at the clamped budget always certifies — `BudgetExhausted`
+    // therefore always carries a budget below `num_qubits`, keeping the
+    // `lower_bound = max_weight + 1` invariant free of overflow.
+    let max_weight = max_weight.min(code.num_qubits());
     Ok(
         match stabilizer_code_distance_without_logical_completeness(code, max_weight)? {
             Some(result) => StabilizerDistanceSearchOutcome::Certified(result),
@@ -298,6 +305,88 @@ mod tests {
                 panic!("expected certified distance, exhausted weight {max_weight}")
             }
         }
+    }
+
+    #[test]
+    fn logical_anticommuting_with_a_stabilizer_is_rejected_not_certified() {
+        // Frozen qubit 0 tensor the Steane code (true distance 3). The supplied count is
+        // complete (k = 1), but the logical X anticommutes with the frozen-qubit stabilizer
+        // Z0, so an unchecked search certifies the stabilizer Z0 as a weight-1 "logical".
+        let spec = StabilizerCodeSpec::new(
+            8,
+            vec![
+                Zs([0]),
+                Xs([1, 3, 5, 7]),
+                Xs([2, 3, 6, 7]),
+                Xs([4, 5, 6, 7]),
+                Zs([1, 3, 5, 7]),
+                Zs([2, 3, 6, 7]),
+                Zs([4, 5, 6, 7]),
+            ],
+            vec![Zs(1..=7)],
+            vec![Xs([0])],
+        )
+        .unwrap();
+        assert_eq!(
+            stabilizer_code_distance(&spec, 3).unwrap_err(),
+            DistanceProblemError::StabilizerSpec(
+                StabilizerCodeSpecError::LogicalAnticommutesWithStabilizer {
+                    logical: "X0".to_string(),
+                    stabilizer: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_logical_pairs_are_rejected_not_overstated() {
+        // Bare qubit 0 direct-summed with the five-qubit code on qubits 1-5 (true distance
+        // 1 via the bare qubit). Supplying the five-qubit logical pair twice satisfies the
+        // count (k = 2) while hiding the bare logical qubit; an unchecked search reports 3.
+        // X of pair 0 anticommutes with Z of pair 1 (the same coset), violating delta_ij.
+        let five_qubit_stabilizers = vec![
+            Xs([1, 4]) * Zs([2, 3]),
+            Xs([2, 5]) * Zs([3, 4]),
+            Xs([1, 3]) * Zs([4, 5]),
+            Xs([2, 4]) * Zs([1, 5]),
+        ];
+        let spec = StabilizerCodeSpec::new(
+            6,
+            five_qubit_stabilizers,
+            vec![Zs(1..=5), Zs(1..=5)],
+            vec![Xs(1..=5), Xs(1..=5)],
+        )
+        .unwrap();
+        assert_eq!(
+            stabilizer_code_distance(&spec, 3).unwrap_err(),
+            DistanceProblemError::StabilizerSpec(StabilizerCodeSpecError::CrossLogicalAnticommute(
+                0, 1
+            ))
+        );
+    }
+
+    #[test]
+    fn anticommuting_stabilizers_are_rejected_not_certified() {
+        // X0 and Z0 anticommute: there is no common code space, yet independence and the
+        // logical count both pass. An unchecked search certifies distance 1 for a spec
+        // that describes nothing.
+        let spec = StabilizerCodeSpec::new(3, vec![Xs([0]), Zs([0])], vec![Zs([1])], vec![Xs([1])])
+            .unwrap();
+        assert_eq!(
+            stabilizer_code_distance(&spec, 1).unwrap_err(),
+            DistanceProblemError::StabilizerSpec(StabilizerCodeSpecError::StabilizersAnticommute(
+                0, 1
+            ))
+        );
+    }
+
+    #[test]
+    fn maximum_budget_is_clamped_and_always_certifies_a_valid_spec() {
+        // A budget beyond the qubit count is semantically exhaustive, and a verified
+        // complete spec always has a logical of weight <= n, so the search certifies
+        // instead of reporting a budget exhaustion whose lower bound would overflow.
+        let outcome = stabilizer_code_distance(&steane_spec(), usize::MAX).unwrap();
+        assert_eq!(certified(outcome).distance, 3);
     }
 
     #[test]

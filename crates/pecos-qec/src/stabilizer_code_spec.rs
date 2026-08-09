@@ -602,6 +602,27 @@ impl StabilizerCodeSpec {
         Ok(())
     }
 
+    /// Verifies that this spec describes a complete, well-formed stabilizer code
+    /// whose supplied logicals form the code's entire logical basis.
+    ///
+    /// This is the premise every distance search relies on: [`Self::verify`] for
+    /// structural validity plus [`Self::verify_logical_completeness`] for basis
+    /// completeness. Counting alone is not enough — a logical that anticommutes
+    /// with a stabilizer lets the search certify a stabilizer as a "logical"
+    /// (understating distance), and two supplied Z logicals spanning the same
+    /// coset hide a cheaper logical qubit (overstating distance). The cross-pair
+    /// check catches the duplicate-coset case: if `Z2 = Z1 * s` then `X1`
+    /// anticommutes with both `Z1` and `Z2`, violating the `delta_ij` pairing.
+    ///
+    /// # Errors
+    /// Returns the first failing [`StabilizerCodeSpecError`] from the structural
+    /// or completeness checks.
+    pub fn verify_as_complete_code(&self) -> Result<()> {
+        self.verify()?;
+        self.verify_logical_completeness()?;
+        Ok(())
+    }
+
     // ========================================================================
     // Pauli classification
     // ========================================================================

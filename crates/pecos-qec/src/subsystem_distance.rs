@@ -144,7 +144,12 @@ pub fn subsystem_dressed_distance(
         }
     }
     let spec = StabilizerCodeSpec::new(num_qubits, stabilizers, logical_zs, logical_xs)?;
-    spec.verify_stabilizers_commute()?;
+    // Full structural verification, not just stabilizer isotropy: the bare logicals must
+    // commute with the supplied stabilizers and satisfy the canonical delta_ij pairing,
+    // otherwise a stabilizer can masquerade as a logical and understate the dressed
+    // distance. Completeness is deliberately NOT checked here — the gauge-aware count
+    // relation below is the subsystem-correct form.
+    spec.verify()?;
 
     let stabilizer_sequence = PauliSequence::new(spec.stabilizers().to_vec());
     let stabilizer_matrix =
@@ -294,6 +299,32 @@ mod tests {
             .unwrap()
             .expect("distance within budget");
         assert_eq!(result.distance, 2);
+    }
+
+    #[test]
+    fn validation_rejects_a_bare_logical_that_anticommutes_with_a_stabilizer() {
+        // Frozen-ancilla Steane on qubits 0-7 plus gauge qubit 8 with gauges X8/Z8. Every
+        // rank and count check passes (rank(S)=7, rank(G)=9, g=1, k=1, 1+1 = 9-7), and the
+        // bad logical X0 commutes with both gauges — but X0 anticommutes with the frozen
+        // stabilizer Z0, so without the full structural check the search returns dressed
+        // distance 1 for a protected subsystem whose true dressed distance is 3.
+        let mut stabilizers = vec![pauli(&[(Pauli::Z, 0)])];
+        for support in [[1usize, 3, 5, 7], [2, 3, 6, 7], [4, 5, 6, 7]] {
+            stabilizers.push(pauli(&support.map(|q| (Pauli::X, q))));
+            stabilizers.push(pauli(&support.map(|q| (Pauli::Z, q))));
+        }
+        let gauges = vec![pauli(&[(Pauli::X, 8)]), pauli(&[(Pauli::Z, 8)])];
+        let steane_lz = pauli(&(1..=7).map(|q| (Pauli::Z, q)).collect::<Vec<_>>());
+        let bad_lx = pauli(&[(Pauli::X, 0)]);
+        let error =
+            subsystem_dressed_distance(9, stabilizers, &gauges, vec![steane_lz], vec![bad_lx], 3)
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            SubsystemCodeError::Spec(
+                crate::StabilizerCodeSpecError::LogicalAnticommutesWithStabilizer { .. }
+            )
+        ));
     }
 
     #[test]

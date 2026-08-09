@@ -339,7 +339,7 @@ impl DistanceProblem {
         code: &StabilizerCodeSpec,
         use_x_operators: bool,
     ) -> Result<Self, DistanceProblemError> {
-        code.verify_logical_completeness()?;
+        code.verify_as_complete_code()?;
         let num_qubits = code.num_qubits();
         let mut x_checks = Vec::new();
         let mut z_checks = Vec::new();
@@ -390,7 +390,7 @@ impl DistanceProblem {
     /// Returns [`DistanceProblemError::QubitOutOfRange`] if a stabilizer or logical operator acts
     /// outside the code width.
     pub fn from_stabilizer_spec(code: &StabilizerCodeSpec) -> Result<Self, DistanceProblemError> {
-        code.verify_logical_completeness()?;
+        code.verify_as_complete_code()?;
         Self::from_stabilizer_spec_without_logical_completeness(code)
     }
 
@@ -1166,6 +1166,11 @@ pub fn certified_classical_distance(
     if h.rank() == n {
         return Ok(ClassicalDistanceSearchOutcome::NoNonzeroCodeword);
     }
+    // No codeword weighs more than n, so a larger budget is semantically exhaustive:
+    // clamp it. A rank-deficient matrix has a nonzero kernel element of weight at most
+    // n, so a completed search at the clamped budget always certifies, keeping the
+    // budget-exhausted `lower_bound = max_weight + 1` invariant free of overflow.
+    let max_weight = max_weight.min(n);
     let identity_rows = (0..n)
         .map(|column| {
             let mut row = vec![0u8; n];

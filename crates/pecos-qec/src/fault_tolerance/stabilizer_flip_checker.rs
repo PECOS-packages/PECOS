@@ -653,11 +653,13 @@ mod tests {
     use pecos_core::{Xs, Zs};
 
     fn three_qubit_code() -> StabilizerCodeSpec {
+        // The bit-flip code's genuine logical X is transversal: X0 alone anticommutes
+        // with the Z0Z1 stabilizer and is not a logical operator at all.
         StabilizerCodeSpec::builder(3)
             .check(Zs([0, 1]))
             .check(Zs([1, 2]))
             .logical_z(Zs([0, 1, 2]))
-            .logical_x(Xs([0]))
+            .logical_x(Xs([0, 1, 2]))
             .build()
             .unwrap()
     }

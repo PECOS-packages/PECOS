@@ -15,13 +15,13 @@
 //! MWPF solves small LP relaxations internally. This harness decodes a
 //! deterministic stream of sampled-error syndromes on hyperedge-rich DEMs and
 //! records the resulting observable masks, so two builds with different LP
-//! backends (e.g. HiGHS vs a pure-Rust solver) can be compared shot-for-shot.
+//! backends (e.g. `HiGHS` vs a pure-Rust solver) can be compared shot-for-shot.
 //!
 //! Usage:
-//!   dump:    PECOS_MWPF_DIFF_OUT=/path/fixture.txt cargo test -p pecos-mwpf \
-//!                --release -- --include-ignored differential
-//!   compare: PECOS_MWPF_DIFF_IN=/path/fixture.txt cargo test -p pecos-mwpf \
-//!                --release -- --include-ignored differential
+//!   dump:    `PECOS_MWPF_DIFF_OUT=/path/fixture.txt cargo test -p pecos-mwpf \
+//!                --release -- --include-ignored differential`
+//!   compare: `PECOS_MWPF_DIFF_IN=/path/fixture.txt cargo test -p pecos-mwpf \
+//!                --release -- --include-ignored differential`
 
 use std::fmt::Write as _;
 use std::time::Instant;
@@ -38,18 +38,22 @@ impl Lcg {
     fn next_u64(&mut self) -> u64 {
         self.0 = self
             .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         self.0
     }
 
     /// Uniform f64 in [0, 1) from the top 53 bits.
     fn next_f64(&mut self) -> f64 {
-        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+        let bits = self.next_u64() >> 11;
+        let high = u32::try_from(bits >> 32).expect("53-bit value's high word fits u32");
+        let low = u32::try_from(bits & 0xFFFF_FFFF).expect("masked low word fits u32");
+        (f64::from(high) * 4_294_967_296.0 + f64::from(low)) / 9_007_199_254_740_992.0
     }
 
     fn below(&mut self, n: usize) -> usize {
-        (self.next_u64() % n as u64) as usize
+        let n_u64 = u64::try_from(n).expect("usize fits u64 on supported targets");
+        usize::try_from(self.next_u64() % n_u64).expect("value below n fits usize")
     }
 }
 
@@ -140,8 +144,8 @@ fn random_hypergraph_dem(
 
 fn test_dems() -> Vec<Dem> {
     vec![
-        random_hypergraph_dem("hyper24", 24, 16, 0xD5C0DE01),
-        random_hypergraph_dem("hyper48", 48, 36, 0xD5C0DE02),
+        random_hypergraph_dem("hyper24", 24, 16, 0xD5C0_DE01),
+        random_hypergraph_dem("hyper48", 48, 36, 0xD5C0_DE02),
     ]
 }
 
@@ -178,11 +182,13 @@ fn run_all() -> (Vec<String>, f64) {
     for dem in test_dems() {
         let mut decoder = MwpfDecoder::from_dem(&dem.to_dem_text(), MwpfConfig::default())
             .expect("DEM should construct");
-        let mut rng = Lcg(0xFEED0000 ^ dem.num_detectors as u64);
+        let mut rng = Lcg(0xFEED_0000 ^ dem.num_detectors as u64);
         for shot in 0..SHOTS_PER_DEM {
             let syndrome = sample_syndrome(&dem, &mut rng);
             let start = Instant::now();
-            let result = decoder.decode_syndrome(&syndrome).expect("decode should succeed");
+            let result = decoder
+                .decode_syndrome(&syndrome)
+                .expect("decode should succeed");
             decode_seconds += start.elapsed().as_secs_f64();
             lines.push(format!(
                 "{} {} {} {:x}",
@@ -217,7 +223,11 @@ fn differential() {
     if let Some(path) = in_path {
         let fixture = std::fs::read_to_string(&path).expect("fixture should be readable");
         let expected: Vec<&str> = fixture.lines().collect();
-        assert_eq!(expected.len(), lines.len(), "shot count mismatch vs fixture");
+        assert_eq!(
+            expected.len(),
+            lines.len(),
+            "shot count mismatch vs fixture"
+        );
         let mut mismatches: Vec<(usize, &str, &str)> = Vec::new();
         for (i, (e, l)) in expected.iter().zip(lines.iter()).enumerate() {
             if *e != l.as_str() {

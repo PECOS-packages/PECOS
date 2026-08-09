@@ -1,0 +1,13 @@
+[package]
+name = "highs"
+version = "1.6.1"
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Pure-Rust LP compatibility shim for the subset of highs used by mwpf"
+publish = false
+
+[lints]
+workspace = true

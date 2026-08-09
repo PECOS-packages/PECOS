@@ -20,9 +20,8 @@ doctest = false
 [features]
 default = ["wasm"]
 wasm = ["dep:pecos-wasm"]
-# MWPF decoder — pulls in the highs LP solver which requires cmake at build time.
-# Off by default for local dev so cmake is not required. Wheel builds in CI enable
-# this so end users get MWPF support out of the box.
+# MWPF decoder — off by default for local development. Wheel builds in CI enable
+# it so end users get MWPF support out of the box.
 mwpf = ["pecos-decoders/mwpf"]
 # Bundle of pyo3 features that maturin needs for the Python cdylib but that
 # break a plain `cargo test`:
@@ -75,8 +74,8 @@ pecos-wasm = { workspace = true, optional = true }
 # C++ simulator backends
 pecos-cppsparsestab.workspace = true
 
-# Decoders (all backends except mwpf, which requires cmake — opt in via the
-# top-level `mwpf` feature on this crate).
+# Decoders (all backends except mwpf, which remains opt in via the top-level
+# `mwpf` feature on this crate).
 pecos-decoders = { workspace = true, features = [
     "ldpc",
     "fusion-blossom",

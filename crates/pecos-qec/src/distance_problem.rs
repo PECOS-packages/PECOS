@@ -22,7 +22,7 @@
 //! without a proof checker; exactness therefore rests on trusting every solver UNSAT answer below
 //! the returned distance.
 
-use crate::{DetectorErrorModel, ParityCheckMatrix, StabilizerCodeSpec};
+use crate::{DetectorErrorModel, ParityCheckMatrix, StabilizerCodeSpec, StabilizerCodeSpecError};
 use batsat::{BasicSolver, Lit, SolverInterface, lbool};
 use pecos_core::PauliOperator;
 use pecos_quantum::F2Matrix;
@@ -57,6 +57,10 @@ enum WeightMode {
 /// Errors constructing a [`DistanceProblem`].
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum DistanceProblemError {
+    /// The stabilizer specification is not valid for an ordinary-code distance problem.
+    #[error(transparent)]
+    StabilizerSpec(#[from] StabilizerCodeSpecError),
+
     /// The check and logical matrices describe different numbers of variables.
     #[error("distance matrices have different widths: H has {h_width}, L has {l_width}")]
     MatrixWidthMismatch {
@@ -321,6 +325,7 @@ impl DistanceProblem {
         code: &StabilizerCodeSpec,
         use_x_operators: bool,
     ) -> Result<Self, DistanceProblemError> {
+        code.verify_logical_completeness()?;
         let num_qubits = code.num_qubits();
         let mut x_checks = Vec::new();
         let mut z_checks = Vec::new();
@@ -371,6 +376,17 @@ impl DistanceProblem {
     /// Returns [`DistanceProblemError::QubitOutOfRange`] if a stabilizer or logical operator acts
     /// outside the code width.
     pub fn from_stabilizer_spec(code: &StabilizerCodeSpec) -> Result<Self, DistanceProblemError> {
+        code.verify_logical_completeness()?;
+        Self::from_stabilizer_spec_without_logical_completeness(code)
+    }
+
+    /// Constructs the symplectic problem after a caller has applied its own logical-count rule.
+    ///
+    /// Subsystem codes use this only after validating the gauge-aware counting relation, since
+    /// their protected logical count is smaller than `n - rank(S)` by the gauge-qubit count.
+    pub(crate) fn from_stabilizer_spec_without_logical_completeness(
+        code: &StabilizerCodeSpec,
+    ) -> Result<Self, DistanceProblemError> {
         let num_qubits = code.num_qubits();
         let checks = code
             .stabilizers()
@@ -1046,6 +1062,8 @@ pub fn certified_coset_weight(
 ///
 /// Uses the plain symplectic representation `[X | Z]` (phases are irrelevant to weight and to
 /// GF(2) span membership) with the per-qubit-support weight mode, so a `Y` costs one.
+/// This deliberately does not require a complete logical basis: the operation measures one
+/// supplied representative against the stabilizer group and does not use the code's logicals.
 ///
 /// # Errors
 ///
@@ -2050,6 +2068,23 @@ mod tests {
             .unwrap();
         // Raw weight is 5; XXXXX times XZZXI equals IYYIX of qubit-support weight 3.
         assert_eq!(certified.distance, 3);
+    }
+
+    #[test]
+    fn stabilizer_coset_weight_does_not_require_a_complete_logical_basis() {
+        let spec = StabilizerCodeSpec::new(2, Vec::new(), vec![Z(0)], vec![X(0)]).unwrap();
+        assert_eq!(
+            spec.verify_logical_completeness(),
+            Err(StabilizerCodeSpecError::IncompleteLogicalBasis {
+                supplied_logical_pairs: 1,
+                num_logical_qubits: 2,
+            })
+        );
+
+        let certified = certified_stabilizer_coset_weight(&spec, &X(0), 2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(certified.distance, 1);
     }
 
     #[test]

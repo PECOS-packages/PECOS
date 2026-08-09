@@ -747,6 +747,7 @@ pub fn bounded_enumeration_stabilizer_distance(
     code: &StabilizerCodeSpec,
     max_level: usize,
 ) -> Result<Option<BoundedEnumerationDistance>, DistanceProblemError> {
+    code.verify_logical_completeness()?;
     let mechanisms = mechanisms_from_stabilizer_code(code)?;
     let mut h = F2Matrix::zeros(code.stabilizers().len(), mechanisms.len());
     let mut l = F2Matrix::zeros(
@@ -776,6 +777,9 @@ pub fn bounded_enumeration_stabilizer_distance_with_backend<B: LevelEnumerationB
     max_level: usize,
     backend: &mut B,
 ) -> Result<Option<BoundedEnumerationDistance>, BoundedEnumerationBackendError<B::Error>> {
+    code.verify_logical_completeness()
+        .map_err(DistanceProblemError::from)
+        .map_err(BoundedEnumerationBackendError::DistanceProblem)?;
     let mechanisms = mechanisms_from_stabilizer_code(code)
         .map_err(BoundedEnumerationBackendError::DistanceProblem)?;
     let mut h = F2Matrix::zeros(code.stabilizers().len(), mechanisms.len());

@@ -111,8 +111,10 @@ fn single_qubit_pauli(pauli: Pauli, qubit: usize) -> PauliString {
 pub(crate) fn mechanisms_from_stabilizer_code(
     code: &StabilizerCodeSpec,
 ) -> Result<Vec<FaultMechanism>, DistanceProblemError> {
-    // Reuse the symplectic problem constructor for its established out-of-range validation.
-    DistanceProblem::from_stabilizer_spec(code)?;
+    // Reuse the symplectic constructor's established out-of-range validation. Logical
+    // completeness is enforced by each ordinary-code entry point; subsystem distance applies
+    // its gauge-aware count before reaching this shared mechanism construction.
+    DistanceProblem::from_stabilizer_spec_without_logical_completeness(code)?;
     let logicals: Vec<_> = code.logical_zs().iter().chain(code.logical_xs()).collect();
 
     Ok((0..code.num_qubits())
@@ -190,6 +192,15 @@ pub fn stabilizer_code_distance(
     code: &StabilizerCodeSpec,
     max_weight: usize,
 ) -> Result<Option<DistanceResult>, DistanceProblemError> {
+    code.verify_logical_completeness()?;
+    stabilizer_code_distance_without_logical_completeness(code, max_weight)
+}
+
+/// Searches after a caller has validated either ordinary or subsystem logical completeness.
+pub(crate) fn stabilizer_code_distance_without_logical_completeness(
+    code: &StabilizerCodeSpec,
+    max_weight: usize,
+) -> Result<Option<DistanceResult>, DistanceProblemError> {
     let mechanisms = mechanisms_from_stabilizer_code(code)?;
     let num_outputs = u32::try_from(code.logical_zs().len() + code.logical_xs().len())
         .expect("logical count fits in the u32 id space");
@@ -221,8 +232,11 @@ fn matrix_distance_at_weight(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{StabilizerCode, certified_distance};
-    use pecos_core::{PauliOperator, X, Y, Ys, Z};
+    use crate::{
+        StabilizerCode, StabilizerCodeSpecError, bounded_enumeration_stabilizer_distance,
+        bounded_enumeration_x_distance, bounded_enumeration_z_distance, certified_distance,
+    };
+    use pecos_core::{PauliOperator, X, Xs, Y, Ys, Z, Zs};
     use std::time::Instant;
 
     fn steane_spec() -> StabilizerCodeSpec {
@@ -240,6 +254,59 @@ mod tests {
             .logical_x(X(0) & Z(1))
             .build_verified()
             .unwrap()
+    }
+
+    fn incomplete_five_qubit_spec() -> StabilizerCodeSpec {
+        StabilizerCodeSpec::new(
+            5,
+            vec![Xs(1..=4), Zs(1..=4)],
+            vec![Zs([1, 2])],
+            vec![Xs([2, 3])],
+        )
+        .unwrap()
+    }
+
+    fn incomplete_basis_error() -> DistanceProblemError {
+        DistanceProblemError::StabilizerSpec(StabilizerCodeSpecError::IncompleteLogicalBasis {
+            supplied_logical_pairs: 1,
+            num_logical_qubits: 3,
+        })
+    }
+
+    #[test]
+    fn incomplete_logical_basis_is_rejected_by_all_spec_distance_entry_points() {
+        let spec = incomplete_five_qubit_spec();
+
+        assert_eq!(
+            stabilizer_code_distance(&spec, 5).unwrap_err(),
+            incomplete_basis_error()
+        );
+        assert_eq!(
+            DistanceProblem::from_stabilizer_spec(&spec).unwrap_err(),
+            incomplete_basis_error()
+        );
+        assert_eq!(
+            DistanceProblem::from_css_code_x_distance(&spec).unwrap_err(),
+            incomplete_basis_error()
+        );
+        assert_eq!(
+            DistanceProblem::from_css_code_z_distance(&spec).unwrap_err(),
+            incomplete_basis_error()
+        );
+        assert_eq!(x_distance(&spec, 5).unwrap_err(), incomplete_basis_error());
+        assert_eq!(z_distance(&spec, 5).unwrap_err(), incomplete_basis_error());
+        assert_eq!(
+            bounded_enumeration_x_distance(&spec, 5).unwrap_err(),
+            incomplete_basis_error()
+        );
+        assert_eq!(
+            bounded_enumeration_z_distance(&spec, 5).unwrap_err(),
+            incomplete_basis_error()
+        );
+        assert_eq!(
+            bounded_enumeration_stabilizer_distance(&spec, 5).unwrap_err(),
+            incomplete_basis_error()
+        );
     }
 
     #[test]

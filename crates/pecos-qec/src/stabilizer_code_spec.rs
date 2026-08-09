@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use thiserror::Error;
 
 /// Errors that can occur during stabilizer code verification.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum StabilizerCodeSpecError {
     /// Two stabilizer generators anticommute.
     #[error("Stabilizer generators {0} and {1} anticommute")]
@@ -49,6 +49,17 @@ pub enum StabilizerCodeSpecError {
     /// Stabilizer generators are linearly dependent over GF(2).
     #[error("Stabilizer generators are dependent: rank {rank}, count {count}")]
     DependentStabilizers { rank: usize, count: usize },
+
+    /// The supplied logical pairs do not form a complete ordinary-code basis.
+    #[error(
+        "incomplete logical basis: supplied {supplied_logical_pairs} logical pairs, expected {num_logical_qubits}"
+    )]
+    IncompleteLogicalBasis {
+        /// Number of supplied logical X/Z pairs.
+        supplied_logical_pairs: usize,
+        /// Number of logical qubits implied by `n - rank(S)`.
+        num_logical_qubits: usize,
+    },
 
     /// A typed matrix width does not match the builder width.
     #[error("{matrix} matrix has {actual} qubits, expected {expected}")]
@@ -409,6 +420,28 @@ impl StabilizerCodeSpec {
     // ========================================================================
     // Verification methods
     // ========================================================================
+
+    /// Verifies that the supplied logical pairs form a complete ordinary stabilizer-code basis.
+    ///
+    /// This check is intentionally separate from construction and [`verify`](Self::verify):
+    /// stabilizer-only specs are valid inputs to logical discovery, and subsystem codes have
+    /// gauge qubits for which `n - rank(S)` is not the number of protected logical qubits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StabilizerCodeSpecError::IncompleteLogicalBasis`] when the number of supplied
+    /// logical pairs differs from `n - rank(S)`.
+    pub fn verify_logical_completeness(&self) -> Result<()> {
+        let supplied_logical_pairs = self.logical_zs.len();
+        let num_logical_qubits = self.num_logical_qubits();
+        if supplied_logical_pairs != num_logical_qubits {
+            return Err(StabilizerCodeSpecError::IncompleteLogicalBasis {
+                supplied_logical_pairs,
+                num_logical_qubits,
+            });
+        }
+        Ok(())
+    }
 
     /// Verifies that all stabilizer generators commute with each other.
     ///
@@ -1230,6 +1263,7 @@ mod tests {
 
         // Verify the code
         assert!(code.verify().is_ok());
+        assert_eq!(code.verify_logical_completeness(), Ok(()));
     }
 
     #[test]

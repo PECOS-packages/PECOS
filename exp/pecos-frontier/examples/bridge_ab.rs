@@ -101,7 +101,13 @@ fn main() {
                 failures += 1;
                 "logical_fail"
             };
-            println!("{shot},{predicted},{},{status}", entry.truth_logical);
+            let gap = result
+                .runner_up_gap
+                .map_or(String::from("inf"), |g| format!("{g:.6}"));
+            println!(
+                "{shot},{predicted},{},{status},{gap},{:.6}",
+                entry.truth_logical, result.log_evidence
+            );
         } else {
             failures += 1;
             no_path += 1;

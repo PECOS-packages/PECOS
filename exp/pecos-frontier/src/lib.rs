@@ -126,6 +126,14 @@ pub struct BpTrellisConfig {
     pub merge_indistinguishable: bool,
     /// Mechanism processing order.
     pub ordering: TrellisOrdering,
+    /// Escalation ladder used only after a no-path decode.
+    ///
+    /// Each entry pre-builds another decoder with that `k` and otherwise the
+    /// same configuration. Construction cost therefore grows with the number
+    /// of rungs. An empty ladder disables escalation and is the explicit
+    /// default because escalation changes per-shot work; whether a future
+    /// default should enable a ladder is deferred to the evaluation campaign.
+    pub escalation_ks: Vec<usize>,
 }
 
 impl Default for BpTrellisConfig {
@@ -137,6 +145,7 @@ impl Default for BpTrellisConfig {
             bp_score_iterations: 5,
             merge_indistinguishable: true,
             ordering: TrellisOrdering::Deadline,
+            escalation_ks: Vec::new(),
         }
     }
 }
@@ -215,6 +224,10 @@ pub struct FrontierResult {
     pub log_evidence: f64,
     /// Difference between the winning and runner-up unnormalized joint log
     /// masses, if a runner-up exists.
+    ///
+    /// This is retained-mass telemetry, not a certified confidence measure.
+    /// In the M6 BB144 experiment, none of 300 shots retained a runner-up at
+    /// `k = 2`, so the gap is not used to trigger escalation.
     pub runner_up_gap: Option<f64>,
     /// Largest retained frontier size, including the initial boundary state.
     pub peak_retained_states: usize,
@@ -222,8 +235,11 @@ pub struct FrontierResult {
     pub processed_columns: usize,
     /// Number of candidate branch evaluations, counted at entry to
     /// `merge_branch` (two per retained state for every processed column).
+    /// For an escalated [`BpTrellisDecoder`] result, this is the total across
+    /// the base attempt and every attempted rung.
     pub transitions: u64,
-    /// Number of merged boundary states discarded across all pruning calls.
+    /// Number of merged boundary states discarded across all pruning calls in
+    /// the successful rung.
     pub dropped_states: u64,
     /// Log-sum-exp of the log masses of all states discarded by pruning, or
     /// negative infinity when no state was discarded.
@@ -231,12 +247,23 @@ pub struct FrontierResult {
     /// This accounts for retained prefix mass discarded at pruning time. It is
     /// not a bound on true lost posterior mass: a state dropped early would
     /// otherwise have branched through later columns.
+    /// For an escalated [`BpTrellisDecoder`] result, this covers only the
+    /// successful rung.
     pub dropped_log_mass: f64,
     /// Wall-clock seconds spent producing BP-informed suffix scores for this
     /// shot. This is zero when BP scoring is disabled or pruning cannot run.
+    /// For an escalated [`BpTrellisDecoder`] result, this is the total across
+    /// the base attempt and every attempted rung.
     pub bp_seconds: f64,
+    /// Number of escalation rungs attempted before success.
+    ///
+    /// Zero means the base decode succeeded. [`FrontierDecoder`] results and
+    /// successful decodes from a ladder-free [`BpTrellisDecoder`] also report
+    /// zero.
+    pub escalation_rungs_used: u32,
     /// Whether the successful decode was exact or which pruning mechanisms
-    /// discarded at least one state.
+    /// discarded at least one state. For an escalated [`BpTrellisDecoder`]
+    /// result, this is the successful rung's status.
     pub status: FrontierStatus,
     /// Retained unnormalized joint terminal masses, ordered by mass descending
     /// and numeric label ascending. The first entry is the winning label and
@@ -368,6 +395,25 @@ type RawColumn = (Vec<u64>, Vec<u64>, f64);
 type SuffixCompatibilityTables = Vec<Vec<SuffixCompatibility>>;
 type BpSuffixPreparation = (Option<SuffixCompatibilityTables>, f64);
 
+enum FrontierDecodeAttempt {
+    Success(FrontierResult),
+    NoPath {
+        error: DecoderError,
+        transitions: u64,
+        bp_seconds: f64,
+    },
+    Error(DecoderError),
+}
+
+impl FrontierDecodeAttempt {
+    fn into_result(self) -> Result<FrontierResult, DecoderError> {
+        match self {
+            Self::Success(result) => Ok(result),
+            Self::NoPath { error, .. } | Self::Error(error) => Err(error),
+        }
+    }
+}
+
 /// Ordered, pruned dynamic-programming decoder for sparse detector error models.
 #[derive(Clone, Debug)]
 pub struct FrontierDecoder {
@@ -397,6 +443,8 @@ pub struct FrontierDecoder {
 #[derive(Clone, Debug)]
 pub struct BpTrellisDecoder {
     inner: FrontierDecoder,
+    escalation: Vec<FrontierDecoder>,
+    build_seconds: f64,
 }
 
 /// Two-leg Frontier decoder using a processing order and its plain reverse.
@@ -616,8 +664,12 @@ impl FrontierDecoder {
     /// Returns [`DecoderError`] for a dimension mismatch or when the syndrome
     /// is unexplainable with the retained frontier.
     pub fn decode(&mut self, syndrome: &[u8]) -> Result<FrontierResult, DecoderError> {
+        self.decode_attempt(syndrome).into_result()
+    }
+
+    fn decode_attempt(&mut self, syndrome: &[u8]) -> FrontierDecodeAttempt {
         if syndrome.len() != self.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
+            return FrontierDecodeAttempt::Error(DecoderError::InvalidDimensions {
                 expected: self.num_detectors,
                 actual: syndrome.len(),
             });
@@ -630,10 +682,17 @@ impl FrontierDecoder {
             .zip(&self.touched_detectors)
             .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
         {
-            return Err(unexplainable_error());
+            return FrontierDecodeAttempt::NoPath {
+                error: unexplainable_error(),
+                transitions: 0,
+                bp_seconds: 0.0,
+            };
         }
 
-        let (bp_suffix_compatibility, bp_seconds) = self.bp_suffix_compatibility(&observed)?;
+        let (bp_suffix_compatibility, bp_seconds) = match self.bp_suffix_compatibility(&observed) {
+            Ok(preparation) => preparation,
+            Err(error) => return FrontierDecodeAttempt::Error(error),
+        };
 
         let mut initial_syndrome = self.forced_syndrome.clone();
         and_assign(&mut initial_syndrome, &self.touched_detectors);
@@ -676,7 +735,11 @@ impl FrontierDecoder {
             }
 
             if merged.is_empty() {
-                return Err(unexplainable_error());
+                return FrontierDecodeAttempt::NoPath {
+                    error: unexplainable_error(),
+                    transitions,
+                    bp_seconds,
+                };
             }
             let suffix_compatibility = bp_suffix_compatibility
                 .as_ref()
@@ -695,7 +758,11 @@ impl FrontierDecoder {
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
             if frontier.is_empty() {
-                return Err(unexplainable_error());
+                return FrontierDecodeAttempt::NoPath {
+                    error: unexplainable_error(),
+                    transitions,
+                    bp_seconds,
+                };
             }
             peak_retained_states = peak_retained_states.max(frontier.len());
         }
@@ -725,7 +792,7 @@ impl FrontierDecoder {
             }
         };
 
-        Ok(FrontierResult {
+        FrontierDecodeAttempt::Success(FrontierResult {
             predicted: ObsMask::from_words(&winner.key.logical),
             log_evidence,
             runner_up_gap: terminal
@@ -737,6 +804,7 @@ impl FrontierDecoder {
             dropped_states,
             dropped_log_mass,
             bp_seconds,
+            escalation_rungs_used: 0,
             status,
             logical_masses,
         })
@@ -789,31 +857,64 @@ impl BpTrellisDecoder {
     /// Construct a decoder from a sparse detector error model.
     ///
     /// Unlike [`FrontierDecoder`], the default ordering is the explicitly
-    /// computed [`deadline_column_order`], not input order.
+    /// computed [`deadline_column_order`], not input order. Every configured
+    /// escalation rung is constructed here as an independent
+    /// [`FrontierDecoder`], so construction cost scales with the full ladder
+    /// and decode-time escalation performs no model building.
     ///
     /// # Errors
     ///
     /// Returns [`DecoderError`] if ordering generation or the mapped Frontier
     /// configuration fails validation.
     pub fn from_sparse_dem(dem: &SparseDem, config: BpTrellisConfig) -> Result<Self, DecoderError> {
-        let column_order = match config.ordering {
+        let build_started = Instant::now();
+        let BpTrellisConfig {
+            k,
+            delta,
+            score_alpha,
+            bp_score_iterations,
+            merge_indistinguishable,
+            ordering,
+            escalation_ks,
+        } = config;
+        if u32::try_from(escalation_ks.len()).is_err() {
+            return Err(DecoderError::InvalidConfiguration(
+                "escalation ladder has more rungs than escalation_rungs_used can represent".into(),
+            ));
+        }
+        let column_order = match ordering {
             TrellisOrdering::Deadline => Some(deadline_column_order(dem)?),
             TrellisOrdering::BackwardDeadline => Some(backward_deadline_column_order(dem)?),
             TrellisOrdering::TimeOrder => None,
             TrellisOrdering::Explicit(order) => Some(order),
         };
-        let inner = FrontierDecoder::from_sparse_dem(
-            dem,
-            FrontierConfig {
-                k: config.k,
-                delta: config.delta,
-                score_alpha: config.score_alpha,
-                column_order,
-                merge_indistinguishable: config.merge_indistinguishable,
-                bp_score_iterations: config.bp_score_iterations,
-            },
-        )?;
-        Ok(Self { inner })
+        let frontier_config = FrontierConfig {
+            k,
+            delta,
+            score_alpha,
+            column_order,
+            merge_indistinguishable,
+            bp_score_iterations,
+        };
+        let inner = FrontierDecoder::from_sparse_dem(dem, frontier_config.clone())?;
+        let escalation = escalation_ks
+            .into_iter()
+            .map(|rung_k| {
+                FrontierDecoder::from_sparse_dem(
+                    dem,
+                    FrontierConfig {
+                        k: rung_k,
+                        ..frontier_config.clone()
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let build_seconds = build_started.elapsed().as_secs_f64();
+        Ok(Self {
+            inner,
+            escalation,
+            build_seconds,
+        })
     }
 
     /// Parse a Stim-format detector error model and construct a decoder.
@@ -829,20 +930,61 @@ impl BpTrellisDecoder {
 
     /// Decode a dense detector syndrome with the shared trellis engine.
     ///
-    /// Every nonzero byte is treated as a fired detector.
+    /// Every nonzero byte is treated as a fired detector. A no-path base
+    /// attempt is retried at each pre-built escalation rung until one
+    /// succeeds. Any returned prediction, including a pruned or incorrect
+    /// prediction, is final because production decoding has no truth oracle.
+    /// Other errors do not escalate. On success, `transitions` and
+    /// `bp_seconds` cover the full attempted sequence; pruning telemetry and
+    /// status come from the successful rung.
     ///
     /// # Errors
     ///
     /// Returns [`DecoderError`] for a dimension mismatch or when the syndrome
     /// is unexplainable with the retained frontier.
     pub fn decode(&mut self, syndrome: &[u8]) -> Result<FrontierResult, DecoderError> {
-        self.inner.decode(syndrome)
+        let (mut final_error, mut transitions, mut bp_seconds) =
+            match self.inner.decode_attempt(syndrome) {
+                FrontierDecodeAttempt::Success(result) => return Ok(result),
+                FrontierDecodeAttempt::NoPath {
+                    error,
+                    transitions,
+                    bp_seconds,
+                } => (error, transitions, bp_seconds),
+                FrontierDecodeAttempt::Error(error) => return Err(error),
+            };
+
+        let mut escalation_rungs_used = 0_u32;
+        for decoder in &mut self.escalation {
+            escalation_rungs_used = escalation_rungs_used.saturating_add(1);
+            match decoder.decode_attempt(syndrome) {
+                FrontierDecodeAttempt::Success(mut result) => {
+                    result.transitions += transitions;
+                    result.bp_seconds += bp_seconds;
+                    result.escalation_rungs_used = escalation_rungs_used;
+                    return Ok(result);
+                }
+                FrontierDecodeAttempt::NoPath {
+                    error,
+                    transitions: rung_transitions,
+                    bp_seconds: rung_bp_seconds,
+                } => {
+                    final_error = error;
+                    transitions += rung_transitions;
+                    bp_seconds += rung_bp_seconds;
+                }
+                FrontierDecodeAttempt::Error(error) => return Err(error),
+            }
+        }
+
+        Err(final_error)
     }
 
-    /// Wall-clock seconds spent constructing this decoder model.
+    /// Total wall-clock seconds spent constructing the base decoder and every
+    /// escalation-rung model.
     #[must_use]
     pub fn build_seconds(&self) -> f64 {
-        self.inner.build_seconds()
+        self.build_seconds
     }
 }
 
@@ -969,11 +1111,17 @@ impl ObservableDecoder for FrontierDecoder {
 
 impl ObservableDecoder for BpTrellisDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        self.inner.decode_obs(syndrome)
+        Ok(self.decode(syndrome)?.predicted)
     }
 
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        self.inner.decode_to_observables(syndrome)
+        if self.inner.logical_words > 1 {
+            return Err(DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
+            ));
+        }
+        let decoded = self.decode(syndrome)?.predicted;
+        Ok(decoded.words().first().copied().unwrap_or(0))
     }
 }
 
@@ -1641,6 +1789,7 @@ mod tests {
             dropped_states: 0,
             dropped_log_mass: f64::NEG_INFINITY,
             bp_seconds: 0.0,
+            escalation_rungs_used: 0,
             status: FrontierStatus::Exact,
             logical_masses: vec![FrontierLogicalMass {
                 logical: ObsMask::new(),

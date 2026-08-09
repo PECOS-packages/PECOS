@@ -13,7 +13,7 @@
 use pecos_decoder_core::ObservableDecoder;
 use pecos_frontier::{
     BpTrellisConfig, BpTrellisDecoder, DecoderError, FrontierConfig, FrontierDecoder,
-    FrontierResult, SparseDem, TrellisOrdering, backward_deadline_column_order,
+    FrontierResult, ObsMask, SparseDem, TrellisOrdering, backward_deadline_column_order,
     deadline_column_order,
 };
 use std::collections::BTreeMap;
@@ -75,6 +75,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
     assert_eq!(defaults.bp_score_iterations, 5);
     assert!(defaults.merge_indistinguishable);
     assert_eq!(defaults.ordering, TrellisOrdering::Deadline);
+    assert!(defaults.escalation_ks.is_empty());
 
     let dem = defaults_identity_dem();
     let deadline_order = deadline_column_order(&dem).unwrap();
@@ -164,6 +165,7 @@ fn bptrellis_matches_hand_mapped_frontier_for_every_ordering() {
                 bp_score_iterations: 0,
                 merge_indistinguishable: true,
                 ordering,
+                escalation_ks: Vec::new(),
             },
         )
         .unwrap();
@@ -212,4 +214,154 @@ fn bptrellis_explicit_order_validation_propagates() {
 
     assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
     assert!(error.to_string().contains("permutation"));
+}
+
+fn overpruning_escalation_dem() -> SparseDem {
+    // The final mechanism is the only way to fire D2. Matching D0=D1=0 then
+    // requires both less-likely prefixes, which K=2 has already discarded.
+    sparse_dem(
+        vec![
+            (0.4, vec![0], vec![]),
+            (0.4, vec![1], vec![]),
+            (0.1, vec![0, 1, 2], vec![0]),
+        ],
+        3,
+        1,
+    )
+}
+
+fn escalation_config(k: usize, escalation_ks: Vec<usize>) -> BpTrellisConfig {
+    BpTrellisConfig {
+        k,
+        delta: f64::INFINITY,
+        score_alpha: 0.0,
+        bp_score_iterations: 0,
+        merge_indistinguishable: false,
+        ordering: TrellisOrdering::TimeOrder,
+        escalation_ks,
+    }
+}
+
+#[test]
+fn no_path_escalates_to_k16_and_accumulates_transitions() {
+    let dem = overpruning_escalation_dem();
+    let syndrome = [0, 0, 1];
+    let mut base =
+        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(2, Vec::new())).unwrap();
+    assert!(base.decode(&syndrome).is_err());
+
+    let mut bare_k16 =
+        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(16, Vec::new())).unwrap();
+    let bare_result = bare_k16.decode(&syndrome).unwrap();
+
+    let mut ladder =
+        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(2, vec![16])).unwrap();
+    let result = ladder.decode(&syndrome).unwrap();
+
+    assert_eq!(result.predicted, bare_result.predicted);
+    assert_eq!(result.escalation_rungs_used, 1);
+    assert!(result.transitions > bare_result.transitions);
+}
+
+#[test]
+fn exhausted_ladder_propagates_the_final_rung_error() {
+    let dem = overpruning_escalation_dem();
+    let syndrome = [0, 0, 1];
+    let mut bare_final =
+        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(2, Vec::new())).unwrap();
+    let expected = bare_final.decode(&syndrome).unwrap_err();
+
+    let mut ladder =
+        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(1, vec![2])).unwrap();
+    let actual = ladder.decode(&syndrome).unwrap_err();
+
+    assert!(matches!(actual, DecoderError::DecodingFailed(_)));
+    assert_eq!(actual.to_string(), expected.to_string());
+}
+
+#[test]
+fn successful_base_decode_is_bit_identical_with_a_configured_ladder() {
+    let dem = sparse_dem(vec![(0.25, vec![], vec![0])], 0, 1);
+    let mut bare =
+        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(1, Vec::new())).unwrap();
+    let mut ladder =
+        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(1, vec![16])).unwrap();
+
+    let bare_result = bare.decode(&[]).unwrap();
+    let ladder_result = ladder.decode(&[]).unwrap();
+
+    assert_eq!(ladder_result.escalation_rungs_used, 0);
+    assert_eq!(ladder_result, bare_result);
+}
+
+#[test]
+fn wrong_prediction_does_not_escalate() {
+    let dem = sparse_dem(
+        vec![
+            (0.20, vec![0], vec![]),
+            (0.20, vec![0], vec![]),
+            (0.30, vec![0], vec![0]),
+        ],
+        1,
+        1,
+    );
+    let mut exact =
+        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(16, Vec::new())).unwrap();
+    assert!(exact.decode(&[1]).unwrap().predicted.is_zero());
+
+    let mut ladder =
+        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(1, vec![16])).unwrap();
+    let result = ladder.decode(&[1]).unwrap();
+
+    assert_eq!(result.predicted, ObsMask::from_u64(1));
+    assert_eq!(result.escalation_rungs_used, 0);
+}
+
+#[test]
+fn ladder_rung_matches_a_hand_built_decoder_except_accumulated_work() {
+    let dem = sparse_dem(
+        vec![
+            (0.20, vec![0], vec![]),
+            (0.25, vec![0], vec![]),
+            (0.40, vec![1], vec![]),
+            (0.10, vec![0, 1, 2], vec![0]),
+        ],
+        3,
+        1,
+    );
+    let config_for = |k, escalation_ks| BpTrellisConfig {
+        k,
+        delta: f64::INFINITY,
+        score_alpha: 0.0,
+        bp_score_iterations: 0,
+        merge_indistinguishable: true,
+        ordering: TrellisOrdering::Explicit(vec![1, 2, 3, 0]),
+        escalation_ks,
+    };
+    let syndrome = [0, 0, 1];
+    let mut ladder = BpTrellisDecoder::from_sparse_dem(&dem, config_for(2, vec![16])).unwrap();
+    let mut hand_built =
+        BpTrellisDecoder::from_sparse_dem(&dem, config_for(16, Vec::new())).unwrap();
+
+    let mut actual = ladder.decode(&syndrome).unwrap();
+    let expected = hand_built.decode(&syndrome).unwrap();
+
+    assert_eq!(actual.escalation_rungs_used, 1);
+    assert!(actual.transitions > expected.transitions);
+    assert_eq!(
+        actual.processed_columns, 3,
+        "the rung must preserve merging"
+    );
+    actual.transitions = expected.transitions;
+    actual.escalation_rungs_used = 0;
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn bptrellis_escalates_through_observable_decoder_trait_object() {
+    let dem = overpruning_escalation_dem();
+    let decoder = BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(2, vec![16])).unwrap();
+    let mut boxed: Box<dyn ObservableDecoder> = Box::new(decoder);
+
+    assert_eq!(boxed.decode_to_observables(&[0, 0, 1]).unwrap(), 1);
 }

@@ -157,6 +157,7 @@ fn parse_bptrellis_dem_and_config(
     bp_score_iterations: usize,
     merge_indistinguishable: bool,
     ordering: TrellisOrderArgument,
+    escalation_ks: Option<Vec<usize>>,
 ) -> PyResult<(SparseDem, RustBpTrellisConfig)> {
     let dem = SparseDem::from_dem_str(dem_str).map_err(|e| runtime_error(&e))?;
     let ordering = match ordering {
@@ -182,6 +183,7 @@ fn parse_bptrellis_dem_and_config(
             bp_score_iterations,
             merge_indistinguishable,
             ordering,
+            escalation_ks: escalation_ks.unwrap_or_default(),
         },
     ))
 }
@@ -265,7 +267,8 @@ impl PyFrontierResult {
         self.inner.log_evidence
     }
 
-    /// Winner-to-runner-up terminal log-mass gap, if a runner-up exists.
+    /// Winner-to-runner-up retained-mass gap, if a runner-up survives pruning.
+    /// At small K this is often absent and is not an escalation trigger.
     #[getter]
     fn runner_up_gap(&self) -> Option<f64> {
         self.inner.runner_up_gap
@@ -283,31 +286,39 @@ impl PyFrontierResult {
         self.inner.processed_columns
     }
 
-    /// Number of candidate branch evaluations.
+    /// Number of candidate branch evaluations, including all attempted rungs
+    /// for an escalated BP-trellis result.
     #[getter]
     fn transitions(&self) -> u64 {
         self.inner.transitions
     }
 
-    /// Number of merged states discarded across pruning calls.
+    /// Number of merged states discarded by the successful rung.
     #[getter]
     fn dropped_states(&self) -> u64 {
         self.inner.dropped_states
     }
 
-    /// Log-sum-exp of masses discarded at pruning time.
+    /// Log-sum-exp of masses discarded by the successful rung at pruning time.
     #[getter]
     fn dropped_log_mass(&self) -> f64 {
         self.inner.dropped_log_mass
     }
 
-    /// Wall-clock seconds spent producing BP-informed pruning scores.
+    /// Wall-clock seconds spent producing BP-informed pruning scores,
+    /// including all attempted rungs for an escalated BP-trellis result.
     #[getter]
     fn bp_seconds(&self) -> f64 {
         self.inner.bp_seconds
     }
 
-    /// Completeness status of this decode.
+    /// Number of no-path escalation rungs attempted before success.
+    #[getter]
+    fn escalation_rungs_used(&self) -> u32 {
+        self.inner.escalation_rungs_used
+    }
+
+    /// Completeness status of the successful rung.
     #[getter]
     fn status(&self) -> &'static str {
         frontier_status(self.inner.status)
@@ -345,7 +356,9 @@ impl PyFrontierCommitteeResult {
         self.inner.selected.log_evidence
     }
 
-    /// Winner-to-runner-up terminal log-mass gap from the selected leg.
+    /// Winner-to-runner-up retained-mass gap from the selected leg, if a
+    /// runner-up survives pruning. At small K this is often absent and is not
+    /// an escalation trigger.
     #[getter]
     fn runner_up_gap(&self) -> Option<f64> {
         self.inner.selected.runner_up_gap
@@ -508,7 +521,10 @@ impl PyFrontierDecoder {
 ///
 /// This is not a wrap or port of an external project. Its defaults, including
 /// the BB144-validated near-floor `k=8`, are provisional pending broader
-/// validation.
+/// validation. The escalation ladder is explicitly off by default pending the
+/// evaluation campaign. When configured, every rung is built during
+/// construction, and only no-path attempts escalate; a returned prediction is
+/// final even when it is wrong.
 #[pyclass(name = "BpTrellisDecoder", module = "pecos_rslib_exp", unsendable)]
 pub struct PyBpTrellisDecoder {
     inner: RustBpTrellisDecoder,
@@ -520,8 +536,8 @@ impl PyBpTrellisDecoder {
     /// Construct a PECOS BP-guided trellis decoder from a Stim-format DEM.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default()),
-        text_signature = "(dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline')"
+        signature = (dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None),
+        text_signature = "(dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None)"
     )]
     fn from_dem(
         dem: &str,
@@ -531,6 +547,7 @@ impl PyBpTrellisDecoder {
         bp_score_iterations: usize,
         merge_indistinguishable: bool,
         ordering: TrellisOrderArgument,
+        escalation_ks: Option<Vec<usize>>,
     ) -> PyResult<Self> {
         let (dem, config) = parse_bptrellis_dem_and_config(
             dem,
@@ -540,6 +557,7 @@ impl PyBpTrellisDecoder {
             bp_score_iterations,
             merge_indistinguishable,
             ordering,
+            escalation_ks,
         )?;
         let num_detectors = dem.num_detectors;
         let inner =

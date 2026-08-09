@@ -51,6 +51,7 @@ def test_sparse_and_dense_decode_agree() -> None:
     assert dense.dropped_log_mass == float("-inf")
     assert dense.status == "exact"
     assert dense.bp_seconds == 0.0
+    assert dense.escalation_rungs_used == 0
     assert decoder.build_seconds >= 0.0
 
 
@@ -110,6 +111,35 @@ def test_bptrellis_ordering_variants_and_validation() -> None:
 
     with pytest.raises(ValueError, match="invalid ordering"):
         BpTrellisDecoder.from_dem(SMALL_DEM, ordering="not_an_order")
+
+
+def test_bptrellis_escalation_ladder_kwarg_and_result_getter() -> None:
+    dem = """\
+error(0.4) D0
+error(0.4) D1
+error(0.1) D0 D1 D2 L0
+"""
+    bare_k16 = BpTrellisDecoder.from_dem(
+        dem,
+        k=16,
+        bp_score_iterations=0,
+        merge_indistinguishable=False,
+        ordering="time_order",
+        escalation_ks=None,
+    ).decode_syndrome([0, 0, 1])
+    escalated = BpTrellisDecoder.from_dem(
+        dem,
+        k=2,
+        bp_score_iterations=0,
+        merge_indistinguishable=False,
+        ordering="time_order",
+        escalation_ks=[16],
+    ).decode_syndrome([0, 0, 1])
+
+    assert bare_k16.escalation_rungs_used == 0
+    assert escalated.observables_mask == bare_k16.observables_mask == 1
+    assert escalated.escalation_rungs_used == 1
+    assert escalated.transitions > bare_k16.transitions
 
 
 def test_committee_easy_tie_selects_forward() -> None:

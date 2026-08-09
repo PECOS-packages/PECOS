@@ -1501,38 +1501,39 @@ fn bp_score_probability(posterior_llr: f64) -> f64 {
     probability.clamp(BP_SCORE_PROBABILITY_MIN, 1.0 - BP_SCORE_PROBABILITY_MIN)
 }
 
+#[cfg(not(debug_assertions))]
+fn debug_assert_model_invariants(_columns: &[Column], _touched_detectors: &[u64]) {}
+
+#[cfg(debug_assertions)]
 fn debug_assert_model_invariants(columns: &[Column], touched_detectors: &[u64]) {
-    #[cfg(debug_assertions)]
-    {
-        let mut closed_detectors = vec![0; touched_detectors.len()];
-        for column in columns {
-            debug_assert!(
-                closed_detectors
-                    .iter()
-                    .zip(&column.close_mask)
-                    .all(|(&closed, &closing)| closed & closing == 0),
-                "close masks must be disjoint"
-            );
-            or_assign(&mut closed_detectors, &column.close_mask);
-            debug_assert!(
-                closed_detectors
-                    .iter()
-                    .zip(&column.active_mask)
-                    .all(|(&closed, &active)| closed & active == 0),
-                "a detector must not remain active after its closing column"
-            );
-        }
-        debug_assert_eq!(
-            closed_detectors, touched_detectors,
-            "close masks must partition touched detectors"
-        );
+    let mut closed_detectors = vec![0; touched_detectors.len()];
+    for column in columns {
         debug_assert!(
-            columns
-                .last()
-                .is_none_or(|column| column.active_mask.iter().all(|&word| word == 0)),
-            "the final column must have an empty active mask"
+            closed_detectors
+                .iter()
+                .zip(&column.close_mask)
+                .all(|(&closed, &closing)| closed & closing == 0),
+            "close masks must be disjoint"
+        );
+        or_assign(&mut closed_detectors, &column.close_mask);
+        debug_assert!(
+            closed_detectors
+                .iter()
+                .zip(&column.active_mask)
+                .all(|(&closed, &active)| closed & active == 0),
+            "a detector must not remain active after its closing column"
         );
     }
+    debug_assert_eq!(
+        closed_detectors, touched_detectors,
+        "close masks must partition touched detectors"
+    );
+    debug_assert!(
+        columns
+            .last()
+            .is_none_or(|column| column.active_mask.iter().all(|&word| word == 0)),
+        "the final column must have an empty active mask"
+    );
 }
 
 fn suffix_compatibility_score(

@@ -779,7 +779,8 @@ impl PyFusionBlossomDecoder {
             }
         };
 
-        let config = fusion_blossom_solver_config(num_nodes, num_observables, solver_type, max_tree_size);
+        let config =
+            fusion_blossom_solver_config(num_nodes, num_observables, solver_type, max_tree_size);
 
         RustFusionBlossomDecoder::new(config)
             .map(|inner| Self { inner })

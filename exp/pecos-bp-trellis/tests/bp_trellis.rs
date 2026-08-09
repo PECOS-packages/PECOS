@@ -12,8 +12,8 @@
 
 use pecos_bp_trellis::{BpTrellisConfig, BpTrellisDecoder, TrellisOrdering};
 use pecos_decoder_core::ObservableDecoder;
-use pecos_frontier::{
-    DecoderError, FrontierConfig, FrontierDecoder, FrontierResult, ObsMask, SparseDem,
+use pecos_trellis::{
+    DecoderError, ObsMask, SparseDem, TrellisConfig, TrellisDecoder, TrellisResult,
     backward_deadline_column_order, deadline_column_order,
 };
 use std::collections::BTreeMap;
@@ -31,7 +31,7 @@ fn sparse_dem(
     }
 }
 
-fn assert_results_bitwise_equal_except_timing(left: &FrontierResult, right: &FrontierResult) {
+fn assert_results_bitwise_equal_except_timing(left: &TrellisResult, right: &TrellisResult) {
     assert!(left.bp_seconds > 0.0);
     assert!(right.bp_seconds > 0.0);
     let mut left = left.clone();
@@ -85,9 +85,9 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
     );
 
     let mut decoder = BpTrellisDecoder::from_sparse_dem(&dem, defaults).unwrap();
-    let mut explicit_deadline = FrontierDecoder::from_sparse_dem(
+    let mut explicit_deadline = TrellisDecoder::from_sparse_dem(
         &dem,
-        FrontierConfig {
+        TrellisConfig {
             k: 8,
             delta: 100.0,
             score_alpha: 0.8,
@@ -97,9 +97,9 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
         },
     )
     .unwrap();
-    let mut time_order = FrontierDecoder::from_sparse_dem(
+    let mut time_order = TrellisDecoder::from_sparse_dem(
         &dem,
-        FrontierConfig {
+        TrellisConfig {
             k: 8,
             delta: 100.0,
             score_alpha: 0.8,
@@ -127,7 +127,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
 }
 
 #[test]
-fn bptrellis_matches_hand_mapped_frontier_for_every_ordering() {
+fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
     let dem = sparse_dem(
         vec![
             (0.12, vec![0], vec![0]),
@@ -169,9 +169,9 @@ fn bptrellis_matches_hand_mapped_frontier_for_every_ordering() {
             },
         )
         .unwrap();
-        let mut frontier = FrontierDecoder::from_sparse_dem(
+        let mut trellis = TrellisDecoder::from_sparse_dem(
             &dem,
-            FrontierConfig {
+            TrellisConfig {
                 k: 4,
                 delta: 12.0,
                 score_alpha: 0.6,
@@ -185,7 +185,7 @@ fn bptrellis_matches_hand_mapped_frontier_for_every_ordering() {
         for syndrome in [[0, 0], [1, 0], [0, 1], [1, 1]] {
             assert_eq!(
                 decoder.decode(&syndrome).unwrap(),
-                frontier.decode(&syndrome).unwrap()
+                trellis.decode(&syndrome).unwrap()
             );
         }
     }

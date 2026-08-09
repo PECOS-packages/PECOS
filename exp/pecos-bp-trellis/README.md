@@ -10,5 +10,5 @@ project.
 
 **Experimental** (`exp/`): the defaults and optional no-path escalation ladder
 remain provisional pending broader validation. The shared trellis engine lives
-in `pecos-frontier`; this crate contains PECOS's configuration and decoder
+in `pecos-trellis`; this crate contains PECOS's configuration and decoder
 facade.

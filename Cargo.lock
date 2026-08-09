@@ -4158,7 +4158,7 @@ name = "pecos-bp-trellis"
 version = "0.2.0-dev.0"
 dependencies = [
  "pecos-decoder-core",
- "pecos-frontier",
+ "pecos-trellis",
 ]
 
 [[package]]
@@ -4376,6 +4376,7 @@ name = "pecos-frontier"
 version = "0.2.0-dev.0"
 dependencies = [
  "pecos-decoder-core",
+ "pecos-trellis",
  "rand 0.10.2",
  "rand_xoshiro 0.8.1",
  "serde",
@@ -4962,6 +4963,13 @@ dependencies = [
  "pecos-build",
  "pecos-decoder-core",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pecos-trellis"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-decoder-core",
 ]
 
 [[package]]

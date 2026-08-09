@@ -1,29 +1,22 @@
 [package]
-name = "pecos-frontier"
+name = "pecos-trellis"
 version.workspace = true
 edition.workspace = true
-readme = "README.md"
+readme.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Frontier approximate logical maximum-likelihood decoder for PECOS"
+description = "Trellis dynamic-programming engine for coset-mass decoding in PECOS"
 publish = false
 
 [dependencies]
 pecos-decoder-core.workspace = true
-pecos-trellis.workspace = true
 
 [lib]
-name = "pecos_frontier"
-
-[dev-dependencies]
-rand.workspace = true
-rand_xoshiro.workspace = true
-serde.workspace = true
-serde_json.workspace = true
+name = "pecos_trellis"
 
 [lints]
 workspace = true

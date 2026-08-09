@@ -20,14 +20,14 @@
 //! never changes branch probabilities or mass arithmetic. It is not a wrap or
 //! port of an external project.
 //!
-//! The facade owns [`FrontierDecoder`] instances configured with PECOS's
+//! The facade owns [`TrellisDecoder`] instances configured with PECOS's
 //! defaults, ordering semantics, and optional no-path escalation ladder. The
-//! trellis engine remains in `pecos-frontier`.
+//! trellis engine lives in `pecos-trellis`.
 
 use pecos_decoder_core::ObservableDecoder;
-use pecos_frontier::{
-    DecoderError, FrontierConfig, FrontierDecodeAttempt, FrontierDecoder, FrontierResult, ObsMask,
-    SparseDem, backward_deadline_column_order, deadline_column_order,
+use pecos_trellis::{
+    DecoderError, ObsMask, SparseDem, TrellisConfig, TrellisDecodeAttempt, TrellisDecoder,
+    TrellisResult, backward_deadline_column_order, deadline_column_order,
 };
 use std::time::Instant;
 
@@ -101,12 +101,12 @@ impl Default for BpTrellisConfig {
 /// never changes the engine's branch probabilities or mass arithmetic.
 ///
 /// This PECOS decoder is not a wrap or port of an external project. It owns a
-/// [`FrontierDecoder`] configured with PECOS's defaults and ordering semantics
-/// and shares that engine's [`FrontierResult`].
+/// [`TrellisDecoder`] configured with PECOS's defaults and ordering semantics
+/// and shares that engine's [`TrellisResult`].
 #[derive(Clone, Debug)]
 pub struct BpTrellisDecoder {
-    inner: FrontierDecoder,
-    escalation: Vec<FrontierDecoder>,
+    inner: TrellisDecoder,
+    escalation: Vec<TrellisDecoder>,
     has_wide_observables: bool,
     build_seconds: f64,
 }
@@ -114,15 +114,15 @@ pub struct BpTrellisDecoder {
 impl BpTrellisDecoder {
     /// Construct a decoder from a sparse detector error model.
     ///
-    /// Unlike [`FrontierDecoder`], the default ordering is the explicitly
+    /// Unlike [`TrellisDecoder`], the default ordering is the explicitly
     /// computed [`deadline_column_order`], not input order. Every configured
     /// escalation rung is constructed here as an independent
-    /// [`FrontierDecoder`], so construction cost scales with the full ladder
+    /// [`TrellisDecoder`], so construction cost scales with the full ladder
     /// and decode-time escalation performs no model building.
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError`] if ordering generation or the mapped Frontier
+    /// Returns [`DecoderError`] if ordering generation or the mapped trellis
     /// configuration fails validation.
     pub fn from_sparse_dem(dem: &SparseDem, config: BpTrellisConfig) -> Result<Self, DecoderError> {
         let build_started = Instant::now();
@@ -146,7 +146,7 @@ impl BpTrellisDecoder {
             TrellisOrdering::TimeOrder => None,
             TrellisOrdering::Explicit(order) => Some(order),
         };
-        let frontier_config = FrontierConfig {
+        let trellis_config = TrellisConfig {
             k,
             delta,
             score_alpha,
@@ -154,15 +154,15 @@ impl BpTrellisDecoder {
             merge_indistinguishable,
             bp_score_iterations,
         };
-        let inner = FrontierDecoder::from_sparse_dem(dem, frontier_config.clone())?;
+        let inner = TrellisDecoder::from_sparse_dem(dem, trellis_config.clone())?;
         let escalation = escalation_ks
             .into_iter()
             .map(|rung_k| {
-                FrontierDecoder::from_sparse_dem(
+                TrellisDecoder::from_sparse_dem(
                     dem,
-                    FrontierConfig {
+                    TrellisConfig {
                         k: rung_k,
-                        ..frontier_config.clone()
+                        ..trellis_config.clone()
                     },
                 )
             })
@@ -201,29 +201,29 @@ impl BpTrellisDecoder {
     ///
     /// Returns [`DecoderError`] for a dimension mismatch or when the syndrome
     /// is unexplainable with the retained frontier.
-    pub fn decode(&mut self, syndrome: &[u8]) -> Result<FrontierResult, DecoderError> {
+    pub fn decode(&mut self, syndrome: &[u8]) -> Result<TrellisResult, DecoderError> {
         let (mut final_error, mut transitions, mut bp_seconds) =
             match self.inner.decode_attempt(syndrome) {
-                FrontierDecodeAttempt::Success(result) => return Ok(result),
-                FrontierDecodeAttempt::NoPath {
+                TrellisDecodeAttempt::Success(result) => return Ok(result),
+                TrellisDecodeAttempt::NoPath {
                     error,
                     transitions,
                     bp_seconds,
                 } => (error, transitions, bp_seconds),
-                FrontierDecodeAttempt::Error(error) => return Err(error),
+                TrellisDecodeAttempt::Error(error) => return Err(error),
             };
 
         let mut escalation_rungs_used = 0_u32;
         for decoder in &mut self.escalation {
             escalation_rungs_used = escalation_rungs_used.saturating_add(1);
             match decoder.decode_attempt(syndrome) {
-                FrontierDecodeAttempt::Success(mut result) => {
+                TrellisDecodeAttempt::Success(mut result) => {
                     result.transitions += transitions;
                     result.bp_seconds += bp_seconds;
                     result.escalation_rungs_used = escalation_rungs_used;
                     return Ok(result);
                 }
-                FrontierDecodeAttempt::NoPath {
+                TrellisDecodeAttempt::NoPath {
                     error,
                     transitions: rung_transitions,
                     bp_seconds: rung_bp_seconds,
@@ -232,7 +232,7 @@ impl BpTrellisDecoder {
                     transitions += rung_transitions;
                     bp_seconds += rung_bp_seconds;
                 }
-                FrontierDecodeAttempt::Error(error) => return Err(error),
+                TrellisDecodeAttempt::Error(error) => return Err(error),
             }
         }
 

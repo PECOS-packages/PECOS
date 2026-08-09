@@ -232,10 +232,10 @@ Real quantum computers are noisy. PECOS helps you understand how noise affects y
     # Custom depolarizing per operation type
     (
         depolarizing_noise()
-        .with_prep_probability(0.001)  # State preparation error
-        .with_meas_probability(0.002)  # Measurement error
-        .with_p1_probability(0.003)  # Single-qubit gate error
-        .with_p2_probability(0.004)  # Two-qubit gate error
+        .with_p_prep(0.001)  # State preparation error
+        .with_p_meas(0.002)  # Measurement error
+        .with_p1(0.003)  # Single-qubit gate error
+        .with_p2(0.004)  # Two-qubit gate error
     )
 
     # Biased depolarizing (asymmetric error distribution)
@@ -256,10 +256,10 @@ Real quantum computers are noisy. PECOS helps you understand how noise affects y
 
     // Custom depolarizing per operation type
     let _custom = DepolarizingNoiseModel::builder()
-        .with_prep_probability(0.001)  // State preparation error
-        .with_meas_probability(0.002)  // Measurement error
-        .with_p1_probability(0.003)    // Single-qubit gate error
-        .with_p2_probability(0.004);   // Two-qubit gate error
+        .with_p_prep(0.001)  // State preparation error
+        .with_p_meas(0.002)  // Measurement error
+        .with_p1(0.003)    // Single-qubit gate error
+        .with_p2(0.004);   // Two-qubit gate error
 
     // Biased depolarizing (asymmetric error distribution)
     let _biased = BiasedDepolarizingNoiseModel::builder()
@@ -278,11 +278,11 @@ For research or to match specific hardware characteristics, you can create detai
     # Direct builder usage
     noise = (
         GeneralNoiseModelBuilder()
-        .with_prep_probability(0.001)  # State prep error
-        .with_meas_0_probability(0.005)  # Measurement error |0> → |1>
-        .with_meas_1_probability(0.01)  # Measurement error |1> → |0>
-        .with_p1_probability(0.0001)  # Single-qubit gate error
-        .with_p2_probability(0.01)  # Two-qubit gate error
+        .with_p_prep(0.001)  # State prep error
+        .with_p_meas_0(0.005)  # Measurement error |0> → |1>
+        .with_p_meas_1(0.01)  # Measurement error |1> → |0>
+        .with_p1(0.0001)  # Single-qubit gate error
+        .with_p2(0.01)  # Two-qubit gate error
         .with_seed(42)  # Deterministic noise
     )
     ```
@@ -291,14 +291,21 @@ For research or to match specific hardware characteristics, you can create detai
 
     ```rust
     use pecos::noise::GeneralNoiseModelBuilder;
+    use std::collections::BTreeMap;
 
+    let idle_model = BTreeMap::from([
+        ("X".to_string(), 1.0 / 3.0),
+        ("Y".to_string(), 1.0 / 3.0),
+        ("Z".to_string(), 1.0 / 3.0),
+    ]);
     let noise = GeneralNoiseModelBuilder::new()
-        .with_prep_probability(0.001)      // State prep error
-        .with_meas_0_probability(0.005)    // Measurement error |0> → |1>
-        .with_meas_1_probability(0.01)     // Measurement error |1> → |0>
-        .with_p1_probability(0.0001)       // Single-qubit gate error
-        .with_p2_probability(0.01)         // Two-qubit gate error
-        .with_p_idle_linear_rate(0.0001)     // Idle noise rate
+        .with_p_prep(0.001)      // State prep error
+        .with_p_meas_0(0.005)    // Measurement error |0> → |1>
+        .with_p_meas_1(0.01)     // Measurement error |1> → |0>
+        .with_p1(0.0001)       // Single-qubit gate error
+        .with_p2(0.01)         // Two-qubit gate error
+        .with_p_idle_linear(0.0001, &idle_model) // Idle noise rate
+        .with_idle_after_2q(1.0)             // Idle duration after two-qubit gates
         .with_seed(42);                    // Deterministic noise
 
     // Use with sim()
@@ -525,11 +532,11 @@ Here's how to simulate a GHZ state with realistic noise:
     # Create advanced noise model with builder
     noise = (
         GeneralNoiseModelBuilder()
-        .with_prep_probability(0.001)  # 0.1% state prep error
-        .with_p1_probability(0.0001)  # 0.01% single-qubit gate error
-        .with_p2_probability(0.01)  # 1% two-qubit gate error
-        .with_meas_0_probability(0.02)  # 2% false positive rate
-        .with_meas_1_probability(0.03)  # 3% false negative rate
+        .with_p_prep(0.001)  # 0.1% state prep error
+        .with_p1(0.0001)  # 0.01% single-qubit gate error
+        .with_p2(0.01)  # 1% two-qubit gate error
+        .with_p_meas_0(0.02)  # 2% false positive rate
+        .with_p_meas_1(0.03)  # 3% false negative rate
         .with_seed(12345)  # Deterministic noise
     )
 
@@ -560,11 +567,11 @@ Here's how to simulate a GHZ state with realistic noise:
 
         // Create advanced noise model with builder
         let noise = GeneralNoiseModelBuilder::new()
-            .with_prep_probability(0.001)      // 0.1% state prep error
-            .with_p1_probability(0.0001)       // 0.01% single-qubit gate error
-            .with_p2_probability(0.01)         // 1% two-qubit gate error
-            .with_meas_0_probability(0.02)     // 2% false positive rate
-            .with_meas_1_probability(0.03)     // 3% false negative rate
+            .with_p_prep(0.001)      // 0.1% state prep error
+            .with_p1(0.0001)       // 0.01% single-qubit gate error
+            .with_p2(0.01)         // 1% two-qubit gate error
+            .with_p_meas_0(0.02)     // 2% false positive rate
+            .with_p_meas_1(0.03)     // 3% false negative rate
             .with_seed(12345);                 // Deterministic noise
 
         // Run simulation

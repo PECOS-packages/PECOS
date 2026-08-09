@@ -282,16 +282,9 @@ pub struct TwoQubitChannel {
     /// Seepage probability for leaked qubits.
     pub seepage_probability: f64,
 
-    /// Idle noise rate applied after two-qubit gates.
-    ///
-    /// If non-zero, applies stochastic Z errors to involved qubits
-    /// after the gate (for memory sweeping).
-    pub idle_rate: f64,
-
     // Precomputed probability thresholds for fast sampling
     seepage_threshold: u64,
     emission_threshold: u64,
-    idle_threshold: u64,
 }
 
 impl Default for TwoQubitChannel {
@@ -303,10 +296,8 @@ impl Default for TwoQubitChannel {
             emission_ratio: 0.0,
             emission_weights: TwoQubitEmissionWeights::uniform_pauli(),
             seepage_probability: 0.0,
-            idle_rate: 0.0,
             seepage_threshold: 0,
             emission_threshold: 0,
-            idle_threshold: 0,
         }
     }
 }
@@ -316,7 +307,6 @@ impl TwoQubitChannel {
     ///
     /// Precomputes probability thresholds for faster sampling.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         error_probability: f64,
         angle_scaling: AngleScaling,
@@ -324,7 +314,6 @@ impl TwoQubitChannel {
         emission_ratio: f64,
         emission_weights: TwoQubitEmissionWeights,
         seepage_probability: f64,
-        idle_rate: f64,
     ) -> Self {
         Self {
             error_probability,
@@ -333,10 +322,8 @@ impl TwoQubitChannel {
             emission_ratio,
             emission_weights,
             seepage_probability,
-            idle_rate,
             seepage_threshold: PecosRng::probability_threshold(seepage_probability),
             emission_threshold: PecosRng::probability_threshold(emission_ratio),
-            idle_threshold: PecosRng::probability_threshold(idle_rate),
         }
     }
 
@@ -390,16 +377,6 @@ impl TwoQubitChannel {
     #[must_use]
     pub fn with_pauli_weights(mut self, weights: TwoQubitPauliWeights) -> Self {
         self.pauli_weights = weights;
-        self
-    }
-
-    /// Set the idle noise rate applied after two-qubit gates.
-    ///
-    /// This models memory errors (T1/T2) that occur during the gate.
-    #[must_use]
-    pub fn with_idle_rate(mut self, rate: f64) -> Self {
-        self.idle_rate = rate;
-        self.idle_threshold = PecosRng::probability_threshold(rate);
         self
     }
 
@@ -661,19 +638,6 @@ impl TwoQubitChannel {
             response = response.combine(NoiseResponse::MarkUnleaked(unleaked));
         }
 
-        // Apply idle noise after the gate (memory sweeping, using precomputed threshold)
-        if self.idle_rate > 0.0 {
-            let mut idle_gates = SmallVec::new();
-            for &qubit in &[qubit0, qubit1] {
-                if !ctx.is_leaked(qubit) && rng.check_probability(self.idle_threshold) {
-                    idle_gates.push(GateCommand::new(GateType::Z, smallvec::smallvec![qubit]));
-                }
-            }
-            if !idle_gates.is_empty() {
-                response = response.combine(NoiseResponse::inject_gates(idle_gates));
-            }
-        }
-
         response
     }
 }
@@ -681,7 +645,18 @@ impl TwoQubitChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::noise::{ComposableNoiseModel, IdleChannel, PauliWeights};
     use pecos_core::QubitId;
+
+    fn collect_gates(response: NoiseResponse) -> Vec<GateCommand> {
+        match response {
+            NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
+            NoiseResponse::Multiple(responses) => {
+                responses.into_iter().flat_map(collect_gates).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
 
     #[test]
     fn test_depolarizing_channel() {
@@ -720,6 +695,71 @@ mod tests {
         };
 
         assert!(!channel.responds_to(&event));
+    }
+
+    #[test]
+    fn zero_error_probability_keeps_both_dispatch_guards() {
+        let channel = TwoQubitChannel::depolarizing(0.0);
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+
+        assert!(!channel.responds_to(&event));
+        let mut rng = PecosRng::seed_from_u64(5);
+        assert!(
+            channel
+                .try_apply(&event, &mut NoiseContext::new(), &mut rng)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn after_2q_idle_is_independent_of_the_gate_pauli_sample() {
+        let mut weights = [0.0; 15];
+        weights[14] = 1.0;
+        let two_qubit = TwoQubitChannel::depolarizing(0.5)
+            .with_pauli_weights(TwoQubitPauliWeights::custom(weights));
+        let idle = IdleChannel::linear(1.0)
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
+            .with_idle_after_2q(1.0);
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+        let mut model = ComposableNoiseModel::new()
+            .add_channel(two_qubit)
+            .add_channel(idle);
+        let mut saw_pauli_error = false;
+        let mut saw_no_pauli_error = false;
+
+        for seed in 0..64 {
+            let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(seed)));
+            let x_count = gates
+                .iter()
+                .filter(|gate| gate.gate_type == GateType::X)
+                .count();
+            let z_count = gates
+                .iter()
+                .filter(|gate| gate.gate_type == GateType::Z)
+                .count();
+
+            assert_eq!(x_count, 2, "idle missing for seed {seed}");
+            match z_count {
+                0 => saw_no_pauli_error = true,
+                2 => saw_pauli_error = true,
+                _ => panic!("unexpected two-qubit Pauli response for seed {seed}: {gates:?}"),
+            }
+        }
+
+        assert!(saw_pauli_error);
+        assert!(saw_no_pauli_error);
     }
 
     #[test]

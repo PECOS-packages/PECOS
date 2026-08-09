@@ -423,11 +423,11 @@ Add realistic noise to your Guppy simulations:
     # Custom noise model
     noise = (
         GeneralNoiseModelBuilder()
-        .with_prep_probability(0.001)
-        .with_p1_probability(0.0001)
-        .with_p2_probability(0.01)
-        .with_meas_0_probability(0.02)
-        .with_meas_1_probability(0.03)
+        .with_p_prep(0.001)
+        .with_p1(0.0001)
+        .with_p2(0.01)
+        .with_p_meas_0(0.02)
+        .with_p_meas_1(0.03)
     )
 
     results = sim(Guppy(noisy_bell)).qubits(2).quantum(state_vector()).noise(noise).run(1000)

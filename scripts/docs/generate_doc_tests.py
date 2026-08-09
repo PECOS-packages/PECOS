@@ -332,6 +332,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
 
     blocks = []
     preamble_parts: list[str] = []
+    chain_parts: list[str] = []
     setup_code = ""
     block_number = 0
 
@@ -378,19 +379,29 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
         # Regular visible block
         block_number += 1
 
+        # Each generated test runs in a fresh interpreter, so a continuation
+        # block carries state by re-executing the visible blocks before it. A
+        # block without the marker starts a new chain.
+        if attrs["is_continuation"] and chain_parts:
+            body = "\n\n".join([*chain_parts, cleaned_code])
+        else:
+            body = cleaned_code
+            chain_parts = []
+        chain_parts.append(cleaned_code)
+
         # Build full code with preamble
         if preamble_parts:
             preamble = "\n\n".join(preamble_parts)
             # Check for placeholder pattern: // CODE or /* CODE */
             if "// CODE" in preamble:
-                full_code = preamble.replace("// CODE", cleaned_code)
+                full_code = preamble.replace("// CODE", body)
             elif "/* CODE */" in preamble:
-                full_code = preamble.replace("/* CODE */", cleaned_code)
+                full_code = preamble.replace("/* CODE */", body)
             else:
                 # Default: append code after preamble
-                full_code = preamble + "\n\n" + cleaned_code
+                full_code = preamble + "\n\n" + body
         else:
-            full_code = cleaned_code
+            full_code = body
 
         # Add setup code if present
         if setup_code:

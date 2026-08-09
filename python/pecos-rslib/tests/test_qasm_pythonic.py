@@ -109,10 +109,10 @@ class TestPythonicInterface:
         noise_builder = (
             general_noise()
             .with_seed(42)
-            .with_p1_probability(0.001)  # Low single-qubit error
-            .with_p2_probability(0.1)  # High two-qubit error
-            .with_meas_0_probability(0.02)
-            .with_meas_1_probability(0.02)
+            .with_p1(0.001)  # Low single-qubit error
+            .with_p2(0.1)  # High two-qubit error
+            .with_p_meas_0(0.02)
+            .with_p_meas_1(0.02)
         )
 
         results = sim(prog).noise(noise_builder).run(1000).to_dict()

@@ -30,11 +30,11 @@ fn main() {
 
     // Create GeneralNoise with uniform probability for all error types
     let mut noise_builder = GeneralNoiseModel::builder()
-        .with_prep_probability(0.1)
-        .with_meas_0_probability(0.1)
-        .with_meas_1_probability(0.1)
-        .with_p1_probability(0.1)
-        .with_p2_probability(0.1);
+        .with_p_prep(0.1)
+        .with_p_meas_0(0.1)
+        .with_p_meas_1(0.1)
+        .with_p1(0.1)
+        .with_p2(0.1);
 
     // Set seed if provided
     if let Some(seed) = seed_option {

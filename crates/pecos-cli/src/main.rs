@@ -569,11 +569,11 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
                 parse_general_noise_probabilities(args.noise_probability.as_ref());
             builder = builder.noise(
                 GeneralNoiseModelBuilder::new()
-                    .with_prep_probability(prep)
-                    .with_meas_0_probability(meas_0)
-                    .with_meas_1_probability(meas_1)
-                    .with_p1_probability(single_qubit)
-                    .with_p2_probability(two_qubit),
+                    .with_p_prep(prep)
+                    .with_p_meas_0(meas_0)
+                    .with_p_meas_1(meas_1)
+                    .with_p1(single_qubit)
+                    .with_p2(two_qubit),
             );
         }
     }

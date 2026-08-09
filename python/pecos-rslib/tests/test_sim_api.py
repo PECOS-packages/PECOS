@@ -149,12 +149,11 @@ class TestSimAPI:
         program = Qasm.from_string(qasm)
         engine = qasm_engine().program(program)
 
-        # Test with general noise model
-        noise = general_noise()
+        # Preserve the historical demonstration preset for this broad smoke test.
+        noise = general_noise().auto()
         results = sim(program).classical(engine).noise(noise).run(100).to_dict()
 
-        # General noise model may introduce errors even without explicit configuration
-        # Just check that we get results
+        # Just check that we get results.
         assert "c" in results
         assert len(results["c"]) == 100
 

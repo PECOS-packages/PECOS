@@ -143,11 +143,7 @@ class TestQasmSimStructuredConfig:
             .to_sim()
             .seed(42)
             .noise(
-                depolarizing_noise()
-                .with_prep_probability(0.001)
-                .with_meas_probability(0.002)
-                .with_p1_probability(0.003)
-                .with_p2_probability(0.004),
+                depolarizing_noise().with_p_prep(0.001).with_p_meas(0.002).with_p1(0.003).with_p2(0.004),
             )
             .build()
         )
@@ -221,7 +217,7 @@ class TestQasmSimStructuredConfig:
             """
 
         # Create noise using functional API - pass it directly to noise() method
-        noise_builder = general_noise().with_seed(42).with_p1_probability(0.001).with_p2_probability(0.01)
+        noise_builder = general_noise().with_seed(42).with_p1(0.001).with_p2(0.01)
 
         # Use builder pattern instead of config dict
         sim = (
@@ -263,11 +259,11 @@ class TestQasmSimStructuredConfig:
         noise_builder = (
             general_noise()
             .with_seed(42)
-            .with_p1_probability(0.001)
-            .with_p2_probability(0.01)
-            .with_prep_probability(0.001)
-            .with_meas_0_probability(0.002)
-            .with_meas_1_probability(0.002)
+            .with_p1(0.001)
+            .with_p2(0.01)
+            .with_p_prep(0.001)
+            .with_p_meas_0(0.002)
+            .with_p_meas_1(0.002)
             # TODO: Add these methods to Python bindings:
             # .with_noiseless_gates(["H"])
             # .with_p1_pauli_model(x=0.5, y=0.3, z=0.2)

@@ -40,10 +40,10 @@ use std::any::Any;
 ///
 /// // Or use the builder pattern
 /// let noise_model = DepolarizingNoiseModel::builder()
-///     .with_prep_probability(0.01)
-///     .with_meas_probability(0.02)
-///     .with_single_qubit_probability(0.03)
-///     .with_two_qubit_probability(0.04)
+///     .with_p_prep(0.01)
+///     .with_p_meas(0.02)
+///     .with_p1(0.03)
+///     .with_p2(0.04)
 ///     .with_seed(42)
 ///     .build();
 ///
@@ -439,7 +439,19 @@ impl RngManageable for DepolarizingNoiseModel {
     }
 }
 
-/// Builder for creating depolarizing noise models
+/// Builder for creating depolarizing noise models.
+///
+/// The retired descriptive probability setters are intentionally unavailable:
+///
+/// ```compile_fail
+/// use pecos_engines::noise::DepolarizingNoiseModel;
+/// let _ = DepolarizingNoiseModel::builder().with_single_qubit_probability(0.01);
+/// ```
+///
+/// ```compile_fail
+/// use pecos_engines::noise::DepolarizingNoiseModel;
+/// let _ = DepolarizingNoiseModel::builder().with_two_qubit_probability(0.01);
+/// ```
 #[derive(Debug, Clone)]
 pub struct DepolarizingNoiseModelBuilder {
     p_prep: Option<f64>,
@@ -485,46 +497,30 @@ impl DepolarizingNoiseModelBuilder {
 
     /// Set the probability of error during preparation
     #[must_use]
-    pub fn with_prep_probability(mut self, probability: f64) -> Self {
+    pub fn with_p_prep(mut self, probability: f64) -> Self {
         self.p_prep = Some(probability);
         self
     }
 
     /// Set the probability of error during measurement
     #[must_use]
-    pub fn with_meas_probability(mut self, probability: f64) -> Self {
+    pub fn with_p_meas(mut self, probability: f64) -> Self {
         self.p_meas = Some(probability);
         self
     }
 
     /// Set the probability of error after single-qubit gates
     #[must_use]
-    pub fn with_p1_probability(mut self, probability: f64) -> Self {
+    pub fn with_p1(mut self, probability: f64) -> Self {
         self.p1 = Some(probability);
         self
     }
 
-    /// Set the probability of error after single-qubit gates
-    ///
-    /// This is an alias for `with_p1_probability` for API consistency.
-    #[must_use]
-    pub fn with_single_qubit_probability(self, probability: f64) -> Self {
-        self.with_p1_probability(probability)
-    }
-
     /// Set the probability of error after two-qubit gates
     #[must_use]
-    pub fn with_p2_probability(mut self, probability: f64) -> Self {
+    pub fn with_p2(mut self, probability: f64) -> Self {
         self.p2 = Some(probability);
         self
-    }
-
-    /// Set the probability of error after two-qubit gates
-    ///
-    /// This is an alias for `with_p2_probability` for API consistency.
-    #[must_use]
-    pub fn with_two_qubit_probability(self, probability: f64) -> Self {
-        self.with_p2_probability(probability)
     }
 
     /// Set the seed for the random number generator
@@ -697,10 +693,10 @@ mod tests {
     fn test_builder() {
         // Create a noise model with the builder
         let mut noise = DepolarizingNoiseModel::builder()
-            .with_prep_probability(0.1)
-            .with_meas_probability(0.2)
-            .with_p1_probability(0.3)
-            .with_p2_probability(0.4)
+            .with_p_prep(0.1)
+            .with_p_meas(0.2)
+            .with_p1(0.3)
+            .with_p2(0.4)
             .build();
 
         // Create a direct instance with the same probabilities
@@ -781,13 +777,41 @@ mod tests {
     }
 
     #[test]
+    fn field_name_setters_match_pre_removal_alias_bytes() {
+        let mut noise = DepolarizingNoiseModel::builder()
+            .with_p_prep(0.0)
+            .with_p_meas(0.0)
+            .with_p1(1.0)
+            .with_p2(1.0)
+            .with_seed(0x5eed)
+            .build();
+
+        let mut builder = ByteMessage::quantum_operations_builder();
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+
+        let EngineStage::NeedsProcessing(output) = noise.start(builder.build()).unwrap() else {
+            panic!("noise model unexpectedly completed");
+        };
+        assert_eq!(
+            output.as_bytes(),
+            [
+                83, 67, 69, 80, 1, 0, 0, 0, 4, 0, 0, 0, 84, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1,
+                0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 12,
+                0, 0, 0, 50, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0,
+                1, 0, 0, 0,
+            ]
+        );
+    }
+
+    #[test]
     fn test_builder_with_probability() {
         // Create a noise model with the builder
         let mut noise = DepolarizingNoiseModel::builder()
-            .with_prep_probability(0.01)
-            .with_meas_probability(0.02)
-            .with_p1_probability(0.03)
-            .with_p2_probability(0.04)
+            .with_p_prep(0.01)
+            .with_p_meas(0.02)
+            .with_p1(0.03)
+            .with_p2(0.04)
             .build();
 
         // Create a direct instance with the same probabilities

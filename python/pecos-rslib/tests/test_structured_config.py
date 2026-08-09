@@ -17,19 +17,12 @@ class TestDirectMethodChaining:
 
     def test_general_noise_model_builder_basic(self) -> None:
         """Test basic general_noise() usage."""
-        noise = (
-            general_noise()
-            .with_seed(42)
-            .with_p1_probability(0.001)
-            .with_p2_probability(0.01)
-            .with_meas_0_probability(0.002)
-            .with_meas_1_probability(0.002)
-        )
+        noise = general_noise().with_seed(42).with_p1(0.001).with_p2(0.01).with_p_meas_0(0.002).with_p_meas_1(0.002)
 
         # The noise object is already a builder, can be used directly
         # Test that it's a valid builder by checking it has builder methods
         assert hasattr(noise, "with_seed")
-        assert hasattr(noise, "with_p1_probability")
+        assert hasattr(noise, "with_p1")
 
     def test_general_noise_model_builder_validation(self) -> None:
         """Test general_noise() parameter validation."""
@@ -38,11 +31,11 @@ class TestDirectMethodChaining:
         # Test invalid probability values
         # Rust panics raise BaseException
         with pytest.raises(BaseException, match=r".*"):  # Rust panic - any error message
-            builder.with_p1_probability(-0.1)  # Negative probability
+            builder.with_p1(-0.1)  # Negative probability
 
         builder = general_noise()
         with pytest.raises(BaseException, match=r".*"):  # Rust panic - any error message
-            builder.with_p2_probability(1.5)  # > 1 probability
+            builder.with_p2(1.5)  # > 1 probability
 
     def test_direct_noise_builder_with_sim(self) -> None:
         """Test using builders directly with sim()."""
@@ -59,7 +52,7 @@ class TestDirectMethodChaining:
         prog = Qasm.from_string(qasm)
 
         # Create a configured noise builder
-        noise = general_noise().with_seed(42).with_p1_probability(0.001).with_p2_probability(0.01)
+        noise = general_noise().with_seed(42).with_p1(0.001).with_p2(0.01)
 
         # Use the builder directly with sim()
         results = sim(prog).noise(noise).run(1000).to_dict()
@@ -133,14 +126,7 @@ class TestDirectMethodChaining:
         prog = Qasm.from_string(qasm)
 
         # Configure general noise with specific parameters
-        noise = (
-            general_noise()
-            .with_seed(123)
-            .with_p1_probability(0.005)
-            .with_p2_probability(0.02)
-            .with_meas_0_probability(0.01)
-            .with_meas_1_probability(0.01)
-        )
+        noise = general_noise().with_seed(123).with_p1(0.005).with_p2(0.02).with_p_meas_0(0.01).with_p_meas_1(0.01)
 
         results = sim(prog).noise(noise).run(1000).to_dict()
 

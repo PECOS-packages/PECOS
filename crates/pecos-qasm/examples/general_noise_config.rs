@@ -11,6 +11,7 @@ use pecos_engines::noise::{
 use pecos_engines::sim_builder;
 use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
+use std::collections::BTreeMap;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let qasm = r#"
@@ -25,12 +26,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 1: General noise model with detailed configuration
     println!("Example 1: GeneralNoiseModelBuilder with unified API");
+    let idle_model = BTreeMap::from([
+        ("X".to_string(), 1.0 / 3.0),
+        ("Y".to_string(), 1.0 / 3.0),
+        ("Z".to_string(), 1.0 / 3.0),
+    ]);
     let general_noise = GeneralNoiseModel::builder()
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01)
-        .with_prep_probability(0.001)
-        .with_meas_0_probability(0.001)
-        .with_meas_1_probability(0.001)
+        .with_p1(0.001)
+        .with_p2(0.01)
+        .with_p_prep(0.001)
+        .with_p_meas_0(0.001)
+        .with_p_meas_1(0.001)
+        .with_p_idle_linear(0.0001, &idle_model)
+        .with_idle_after_2q(1.0)
         .with_seed(42);
 
     let results = sim_builder()
@@ -56,10 +64,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 3: Custom depolarizing noise with different rates
     println!("\nExample 3: Custom depolarizing noise");
     let custom_depolarizing = DepolarizingNoiseModel::builder()
-        .with_prep_probability(0.001)
-        .with_meas_probability(0.002)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01);
+        .with_p_prep(0.001)
+        .with_p_meas(0.002)
+        .with_p1(0.001)
+        .with_p2(0.01);
 
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))

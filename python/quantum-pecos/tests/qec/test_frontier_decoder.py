@@ -107,7 +107,9 @@ def test_pruning_telemetry_and_status_strings() -> None:
     assert delta.decode_syndrome([]).status == "pruned:delta"
 
     both = FrontierDecoder.from_dem(
-        "error(0.5) L0\nerror(0.1) L1\n", k=3, delta=0.5
+        "error(0.5) L0\nerror(0.1) L1\n",
+        k=3,
+        delta=0.5,
     )
     assert both.decode_syndrome([]).status == "pruned:k+delta"
 

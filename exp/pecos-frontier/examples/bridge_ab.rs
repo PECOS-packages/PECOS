@@ -37,7 +37,8 @@ struct BridgeModel {
 
 #[derive(Deserialize)]
 struct Shot {
-    syndrome: u128,
+    /// Fired detector indices (supports arbitrary detector counts).
+    fired: Vec<u32>,
     truth_logical: u128,
 }
 
@@ -74,10 +75,16 @@ fn main() {
     let mut failures = 0_u32;
     let mut no_path = 0_u32;
     let started = std::time::Instant::now();
+    assert!(
+        model.num_observables <= 128,
+        "bridge truth_logical is u128; wider observables need a format change"
+    );
+    let mut syndrome = vec![0_u8; model.num_detectors];
     for (shot, entry) in model.shots.iter().enumerate() {
-        let syndrome: Vec<u8> = (0..model.num_detectors)
-            .map(|bit| u8::from(entry.syndrome & (1_u128 << bit) != 0))
-            .collect();
+        syndrome.fill(0);
+        for &fired in &entry.fired {
+            syndrome[fired as usize] = 1;
+        }
         if let Ok(result) = decoder.decode(&syndrome) {
             let words = result.predicted.words();
             assert!(words.iter().skip(2).all(|&w| w == 0), "label fits u128");

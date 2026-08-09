@@ -377,7 +377,7 @@ def tesseract_predictions(dem_text: str, detection_events: np.ndarray, *, beam: 
         det_beam=beam,
     )
     results = decoder.decode_batch([row.tolist() for row in detection_events])
-    return np.array([int(result.observables_mask & 1) for result in results], dtype=np.uint8)
+    return np.array([int(result.observable_flips[0]) for result in results], dtype=np.uint8)
 
 
 def pymatching_predictions(dem_text: str, detection_events: np.ndarray, *, correlated: bool) -> np.ndarray:

@@ -30,7 +30,7 @@ def build_lookup_table(batch, num_detectors: int) -> dict[tuple[int, ...], int]:
 
     for i in range(batch.num_shots):
         syn = batch.get_syndrome(i)
-        obs = batch.get_observable_mask(i)
+        obs = batch.get_observable_flips(i).mask
 
         # Convert syndrome to tuple of fired detector indices
         fired = tuple(d for d in range(min(num_detectors, len(syn))) if syn[d])
@@ -50,7 +50,7 @@ def decode_with_lookup(batch, table: dict, num_detectors: int) -> tuple[int, int
     errors = 0
     for i in range(batch.num_shots):
         syn = batch.get_syndrome(i)
-        obs_true = batch.get_observable_mask(i)
+        obs_true = batch.get_observable_flips(i).mask
 
         fired = tuple(d for d in range(min(num_detectors, len(syn))) if syn[d])
         predicted = table.get(fired, 0)  # default: no correction

@@ -183,8 +183,8 @@ assert batch.num_shots == 1000
 decoder = PyMatchingDecoder.from_dem(dem.to_string_decomposed())
 errors = 0
 for shot in range(batch.num_shots):
-    predicted = decoder.decode_syndrome(batch.get_syndrome(shot)).correction[0]
-    actual = batch.get_observable_mask(shot) & 1
+    predicted = decoder.decode_syndrome(batch.get_syndrome(shot)).observable_flips[0]
+    actual = batch.get_observable_flips(shot)[0]
     errors += predicted != actual
 print(f"logical error rate: {errors / batch.num_shots:.4f}")
 ```
@@ -677,11 +677,11 @@ print(error_counts)
 syndrome = batch.get_syndrome(0)
 tesseract = TesseractDecoder.from_dem(dem.to_string(), preset="fast")
 tesseract_result = tesseract.decode_syndrome(syndrome)
-assert tesseract_result.observables_mask >= 0
+assert tesseract_result.observable_flips.mask >= 0
 
 bp_osd = BpOsdDecoder.from_dem(dem.to_string())
 bp_osd_result = bp_osd.decode_syndrome(syndrome)
-assert bp_osd_result.observables_mask >= 0
+assert bp_osd_result.observable_flips.mask >= 0
 ```
 
 For direct PyMatching construction, use the

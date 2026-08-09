@@ -100,7 +100,7 @@ def test_constructors_accept_integer_like_values() -> None:
     """
     numpy = pytest.importorskip("numpy")
 
-    # ``MwpmResult.correction`` and ``TesseractResult.observable_bits`` return list[int].
+    # Integer-oriented callers can still construct flips without first converting to bool.
     assert ObservableFlips.from_bits([1, 0, 1]) == ObservableFlips.from_mask(0b101, 3)
     assert ObservableFlips.from_bits([True, 0, 1]) == ObservableFlips.from_mask(0b101, 3)
     assert ObservableFlips.from_bits(list(numpy.array([1, 0, 1]))) == ObservableFlips.from_mask(0b101, 3)
@@ -143,6 +143,54 @@ def test_sample_batch_observable_metadata_and_shot_bounds() -> None:
         batch.get_observable_flips(2)
 
 
+def test_removed_members_are_absent_and_replacements_match_captured_values() -> None:
+    syndrome = [1, 1]
+    mwpm_result = PyMatchingDecoder.from_dem(_ONE_OBSERVABLE_DEM).decode_syndrome(syndrome)
+    tesseract_result = TesseractDecoder.from_dem(_ONE_OBSERVABLE_DEM).decode_syndrome(syndrome)
+    dem_aware_result = DemAwareDecoder.from_dem(
+        _ONE_OBSERVABLE_DEM,
+        decoder_type="bp_osd",
+    ).decode_syndrome(syndrome)
+    bp_result = BpOsdBuilder(SparseMatrix([[1]]), error_rate=0.1).build().decode_syndrome([0])
+    batch = SampleBatch([[0], [1]], [0, 3])
+
+    removed_members = [
+        (mwpm_result, "correction"),
+        (mwpm_result, "to_list"),
+        (bp_result, "to_list"),
+        (tesseract_result, "observables_mask"),
+        (tesseract_result, "observable_bits"),
+        (dem_aware_result, "observables_mask"),
+        (batch, "get_observable_mask"),
+        (batch, "get_observable_mask_wide"),
+    ]
+    for result, member in removed_members:
+        assert not hasattr(result, member), f"{type(result).__name__}.{member} still exists"
+
+    replacements = {
+        "MwpmResult.correction": list(mwpm_result.observable_flips),
+        "MwpmResult.to_list()": list(mwpm_result.observable_flips),
+        "BpResult.to_list()": bp_result.decoding,
+        "TesseractResult.observables_mask": tesseract_result.observable_flips.mask,
+        "TesseractResult.observable_bits(1)": list(tesseract_result.observable_flips),
+        "DemAwareResult.observables_mask": dem_aware_result.observable_flips.mask,
+        "SampleBatch.get_observable_mask(1)": batch.get_observable_flips(1).mask,
+        "SampleBatch.get_observable_mask_wide(1)": batch.get_observable_flips(1).mask,
+    }
+    assert replacements == {
+        "MwpmResult.correction": [True],
+        "MwpmResult.to_list()": [True],
+        "BpResult.to_list()": [0],
+        "TesseractResult.observables_mask": 1,
+        "TesseractResult.observable_bits(1)": [True],
+        "DemAwareResult.observables_mask": 1,
+        "SampleBatch.get_observable_mask(1)": 3,
+        "SampleBatch.get_observable_mask_wide(1)": 3,
+    }
+    assert not hasattr(bp_result, "observable_flips")
+    assert bp_result.decoding == [0]
+
+
 def test_uniform_loop_preserves_one_observable_error_counts() -> None:
     syndromes = [[0, 0], [1, 0], [0, 1], [1, 1]]
     batch = SampleBatch(syndromes, [0, 1, 0, 1])
@@ -151,22 +199,17 @@ def test_uniform_loop_preserves_one_observable_error_counts() -> None:
         "tesseract": TesseractDecoder.from_dem(_ONE_OBSERVABLE_DEM),
         "bp_osd": BpOsdDecoder.from_dem(_ONE_OBSERVABLE_DEM),
     }
-    old_counts = dict.fromkeys(decoders, 0)
-    new_counts = dict.fromkeys(decoders, 0)
+    error_counts = dict.fromkeys(decoders, 0)
 
     for shot in range(batch.num_shots):
         syndrome = batch.get_syndrome(shot)
-        actual_mask = batch.get_observable_mask(shot) & 1
         actual_flips = batch.get_observable_flips(shot)
         results = {name: decoder.decode_syndrome(syndrome) for name, decoder in decoders.items()}
 
-        old_counts["pymatching"] += results["pymatching"].correction[0] != actual_mask
-        old_counts["tesseract"] += results["tesseract"].observables_mask & 1 != actual_mask
-        old_counts["bp_osd"] += results["bp_osd"].observables_mask & 1 != actual_mask
         for name, result in results.items():
-            new_counts[name] += result.observable_flips != actual_flips
+            error_counts[name] += result.observable_flips != actual_flips
 
-    assert old_counts == new_counts == {"pymatching": 2, "tesseract": 2, "bp_osd": 2}
+    assert error_counts == {"pymatching": 2, "tesseract": 2, "bp_osd": 2}
 
 
 def test_any_observable_and_per_observable_counts_are_distinct() -> None:
@@ -213,3 +256,4 @@ def test_bp_result_does_not_fabricate_observable_flips() -> None:
     result = decoder.decode_syndrome([0])
 
     assert not hasattr(result, "observable_flips")
+    assert result.decoding == [0]

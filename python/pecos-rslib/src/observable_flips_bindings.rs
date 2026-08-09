@@ -165,9 +165,8 @@ impl PyObservableFlips {
 ///
 /// This is the protocol Python itself uses wherever an integer is required, so
 /// `bool` and NumPy integer scalars are accepted on the same footing as `int`.
-/// It matters here because the existing accessors this type bridges from --
-/// `MwpmResult.correction` and `TesseractResult.observable_bits` -- hand back
-/// integers, and observable masks routinely arrive as NumPy scalars.
+/// This also accepts values returned by integer-oriented libraries, while
+/// observable masks routinely arrive as NumPy scalars.
 fn as_index<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
     match value.call_method0("__index__") {
         Ok(index) => Ok(index),

@@ -79,10 +79,10 @@ def test_dense_and_sparse_names_disambiguate_the_same_list() -> None:
     dense_result = decoder.decode_syndrome([1, 0])
     sparse_result = decoder.decode_from_defects([1, 0])
 
-    assert dense_result.observables_mask == 0
+    assert dense_result.observable_flips.mask == 0
     assert dense_result.cost == pytest.approx(2.197224577336219)
     assert not dense_result.low_confidence
-    assert sparse_result.observables_mask == 1
+    assert sparse_result.observable_flips.mask == 1
     assert sparse_result.cost == pytest.approx(4.394449154672438)
     assert not sparse_result.low_confidence
 
@@ -90,12 +90,12 @@ def test_dense_and_sparse_names_disambiguate_the_same_list() -> None:
 def test_renamed_methods_preserve_captured_results() -> None:
     pymatching = PyMatchingDecoder.from_dem(_ENCODING_DEM)
     pymatching_result = pymatching.decode_syndrome([1, 0])
-    assert pymatching_result.correction == [0]
+    assert list(pymatching_result.observable_flips) == [False]
     assert pymatching_result.weight == pytest.approx(4.394449154672439)
 
     fusion_blossom = FusionBlossomDecoder.from_dem(_ENCODING_DEM)
     fusion_blossom_result = fusion_blossom.decode_syndrome([1, 0])
-    assert fusion_blossom_result.correction == [0]
+    assert list(fusion_blossom_result.observable_flips) == [False]
     assert fusion_blossom_result.weight == pytest.approx(2.196)
 
     parity_check_matrix = SparseMatrix([[1, 0], [0, 1]])
@@ -133,10 +133,10 @@ def test_family_from_dem_matches_existing_wrapper(decoder_class: type, decoder_t
     existing_results = [existing_decoder.decode_syndrome(list(syndrome)) for syndrome in _SYNDROMES]
 
     assert all(isinstance(result, DemAwareResult) for result in named_results)
-    named_masks = [result.observables_mask for result in named_results]
-    existing_masks = [result.observables_mask for result in existing_results]
+    named_masks = [result.observable_flips.mask for result in named_results]
+    existing_masks = [result.observable_flips.mask for result in existing_results]
     assert named_masks == existing_masks == _OBSERVABLE_MASKS_BEFORE
-    assert [(result.observables_mask, result.converged, result.iterations) for result in named_results] == (
+    assert [(result.observable_flips.mask, result.converged, result.iterations) for result in named_results] == (
         _FAMILY_RESULTS_BEFORE
     )
     assert isinstance(named_decoder, DemAwareDecoder)
@@ -151,7 +151,7 @@ def test_family_from_dem_matches_existing_wrapper(decoder_class: type, decoder_t
 def test_iterative_family_from_dem_accepts_tuning(decoder_class: type) -> None:
     named_decoder = decoder_class.from_dem(_ENCODING_DEM, error_rate=0.2, max_iter=1)
     named_result = named_decoder.decode_syndrome([0, 1])
-    assert named_result.observables_mask == 1
+    assert named_result.observable_flips.mask == 1
 
 
 def test_each_family_accepts_only_its_real_tuning_surface() -> None:
@@ -223,7 +223,7 @@ def test_invalid_dem_tuning_names_parameter(build: Callable[[], object], paramet
 @pytest.mark.parametrize("decoder_type", [decoder_type for _, decoder_type in _FAMILY_DECODERS])
 def test_decoder_type_still_accepts_all_five_family_values(decoder_type: str) -> None:
     decoder = DemAwareDecoder.from_dem(_ENCODING_DEM, decoder_type=decoder_type)
-    assert decoder.decode_syndrome([0, 1]).observables_mask == 1
+    assert decoder.decode_syndrome([0, 1]).observable_flips.mask == 1
 
 
 def test_legacy_measurement_protocol_decoders_keep_decode() -> None:

@@ -3018,11 +3018,11 @@ class SurfaceDecoder:
                 # Tesseract takes sparse detection indices
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
                 result = decoder.decode_from_defects(detection_indices)
-                # Tesseract returns observables_mask, not per-qubit correction
+                # Tesseract returns observable flips, not per-qubit correction
                 # We return a dummy correction and encode logical flip in first element
                 num_data = self._get_z_check_matrix().shape[1]
                 correction = np.zeros(num_data, dtype=np.uint8)
-                if result.observables_mask & 1:  # L0 flipped
+                if len(result.observable_flips) > 0 and result.observable_flips[0]:  # L0 flipped
                     correction[0] = 1  # Mark that logical was predicted flipped
                 weight = result.cost
             else:
@@ -3032,7 +3032,7 @@ class SurfaceDecoder:
                 if self.decoder_type == DecoderType.FUSION_BLOSSOM:
                     decoder.clear()
 
-                correction = np.array(result.correction, dtype=np.uint8)
+                correction = np.array(list(result.observable_flips), dtype=np.uint8)
                 weight = result.weight
         else:
             # LDPC: use raw syndrome (last round)
@@ -3080,10 +3080,10 @@ class SurfaceDecoder:
                 # Tesseract takes sparse detection indices
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
                 result = decoder.decode_from_defects(detection_indices)
-                # Tesseract returns observables_mask, not per-qubit correction
+                # Tesseract returns observable flips, not per-qubit correction
                 num_data = self._get_x_check_matrix().shape[1]
                 correction = np.zeros(num_data, dtype=np.uint8)
-                if result.observables_mask & 1:  # L0 flipped
+                if len(result.observable_flips) > 0 and result.observable_flips[0]:  # L0 flipped
                     correction[0] = 1  # Mark that logical was predicted flipped
                 weight = result.cost
             else:
@@ -3093,7 +3093,7 @@ class SurfaceDecoder:
                 if self.decoder_type == DecoderType.FUSION_BLOSSOM:
                     decoder.clear()
 
-                correction = np.array(result.correction, dtype=np.uint8)
+                correction = np.array(list(result.observable_flips), dtype=np.uint8)
                 weight = result.weight
         else:
             # LDPC: use raw syndrome (last round)
@@ -3294,11 +3294,11 @@ class SurfaceDecoder:
             if self.decoder_type == DecoderType.TESSERACT:
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
                 result = decoder.decode_from_defects(detection_indices)
-                predicted_obs = result.observables_mask & 1
+                predicted_obs = result.observable_flips[0] if len(result.observable_flips) > 0 else 0
                 weight = result.cost
             else:
                 result = decoder.decode_syndrome(events_flat.tolist())
-                predicted_obs = result.correction[0] if len(result.correction) > 0 else 0
+                predicted_obs = result.observable_flips[0] if len(result.observable_flips) > 0 else 0
                 weight = result.weight
 
             corrected_parity = (final_parity + predicted_obs) % 2
@@ -3390,11 +3390,11 @@ class SurfaceDecoder:
             if self.decoder_type == DecoderType.TESSERACT:
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
                 result = decoder.decode_from_defects(detection_indices)
-                predicted_obs = result.observables_mask & 1
+                predicted_obs = result.observable_flips[0] if len(result.observable_flips) > 0 else 0
                 weight = result.cost
             else:
                 result = decoder.decode_syndrome(events_flat.tolist())
-                predicted_obs = result.correction[0] if len(result.correction) > 0 else 0
+                predicted_obs = result.observable_flips[0] if len(result.observable_flips) > 0 else 0
                 weight = result.weight
 
             corrected_parity = (final_parity + predicted_obs) % 2
@@ -3664,7 +3664,7 @@ def surface_code_memory(
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(shots, seed)
-    num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_mask(shot) != 0)
+    num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_flips(shot).mask != 0)
     num_logical_errors = batch.decode_count(dem, decoder_type) if decode else num_raw_errors
 
     return SimulationResult(

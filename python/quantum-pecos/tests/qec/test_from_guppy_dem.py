@@ -1892,7 +1892,7 @@ def test_constrained_from_guppy_dem_is_consumable_by_pecos_native_decoder() -> N
     # Each shot's syndrome covers exactly the DEM's detectors.
     assert len(batch.get_syndrome(0)) == dem.num_detectors
     # The observable mask fits within ``num_observables`` bits (no stray bits).
-    assert batch.get_observable_mask(0) >> dem.num_observables == 0
+    assert batch.get_observable_flips(0).mask >> dem.num_observables == 0
 
     # PECOS-native Rust-backed matching decoder: DEM is consumable by
     # the actual downstream decoder surface.

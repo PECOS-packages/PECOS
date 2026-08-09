@@ -65,7 +65,7 @@ fn explicit_decode_attribute_error(class_name: &str, name: &str) -> PyErr {
 ///
 /// # Attributes
 ///
-/// * `correction` - The decoded correction/observable flip (list of 0/1 for each observable)
+/// * `observable_flips` - The decoded observable flips
 /// * `weight` - Total weight of the matching (lower is better)
 ///
 /// # Example
@@ -73,7 +73,7 @@ fn explicit_decode_attribute_error(class_name: &str, name: &str) -> PyErr {
 /// ```python
 /// result = decoder.decode_syndrome(syndrome)
 /// if result.weight < threshold:
-///     apply_correction(result.correction)
+///     apply_correction(result.observable_flips)
 /// ```
 #[pyclass(
     name = "MwpmResult",
@@ -91,28 +91,15 @@ pub struct PyMwpmResult {
 
 #[pymethods]
 impl PyMwpmResult {
-    /// The decoded correction (observable flips) as a Python list.
-    #[getter]
-    fn correction(&self) -> Vec<i32> {
-        self.correction_data.iter().map(|&x| i32::from(x)).collect()
-    }
-
     /// The decoded observable flips with their intrinsic observable count.
     #[getter]
     fn observable_flips(&self) -> PyObservableFlips {
         PyObservableFlips::from_u8_bits(&self.correction_data)
     }
 
-    /// Get the correction as a list (alias for correction attribute).
-    ///
-    /// This mirrors `PyMatching`'s `decode()` return value.
-    fn to_list(&self) -> Vec<i32> {
-        self.correction()
-    }
-
     fn __repr__(&self) -> String {
         format!(
-            "MwpmResult(correction={:?}, weight={:.4})",
+            "MwpmResult(observable_flips={:?}, weight={:.4})",
             self.correction_data, self.weight
         )
     }
@@ -174,11 +161,6 @@ impl PyBpResult {
     #[getter]
     fn decoding(&self) -> Vec<i32> {
         self.decoding_data.iter().map(|&x| i32::from(x)).collect()
-    }
-
-    /// Get the decoding as a list.
-    fn to_list(&self) -> Vec<i32> {
-        self.decoding()
     }
 
     fn __repr__(&self) -> String {
@@ -376,7 +358,7 @@ impl PyCheckMatrix {
 /// ```python
 /// syndrome = [1, 0]  # Detection events
 /// result = decoder.decode_syndrome(syndrome)
-/// print(f"Correction: {result.correction}, Weight: {result.weight}")
+/// print(f"Observable flips: {list(result.observable_flips)}, Weight: {result.weight}")
 /// ```
 // Note: unsendable because contains FFI pointers (cxx UniquePtr)
 #[pyclass(
@@ -562,14 +544,14 @@ impl PyPyMatchingDecoder {
     ///
     /// # Returns
     ///
-    /// `MwpmResult` with correction vector and matching weight.
+    /// `MwpmResult` with observable flips and matching weight.
     ///
     /// # Example
     ///
     /// ```python
     /// syndrome = [1, 0, 1, 0]
     /// result = decoder.decode_syndrome(syndrome)
-    /// correction = result.correction  # Observable flips to apply
+    /// observable_flips = result.observable_flips
     /// ```
     fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyMwpmResult> {
         self.inner
@@ -594,8 +576,8 @@ impl PyPyMatchingDecoder {
     /// # Returns
     ///
     /// List of observable predictions (one per shot), where each prediction
-    /// is a list of 0/1 values (one per observable). Use `observables_mask`
-    /// property on each element or just check index 0 for single-observable codes.
+    /// is a list of 0/1 values (one per observable). Check index 0 for
+    /// single-observable codes.
     ///
     /// # Example
     ///
@@ -950,7 +932,7 @@ impl PyFusionBlossomDecoder {
     ///
     /// # Returns
     ///
-    /// `MwpmResult` with correction and weight.
+    /// `MwpmResult` with observable flips and weight.
     fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyMwpmResult> {
         let arr = Array1::from_vec(syndrome);
         self.inner
@@ -1950,7 +1932,7 @@ fn tesseract_config(
 ///
 /// # Attributes
 ///
-/// * `observables_mask` - Bitwise XOR of observables affected by predicted errors
+/// * `observable_flips` - Observables affected by predicted errors
 /// * `cost` - Total cost of the solution
 /// * `low_confidence` - Whether this is a low-confidence prediction
 #[pyclass(
@@ -1960,7 +1942,6 @@ fn tesseract_config(
 )]
 #[derive(Clone)]
 pub struct PyTesseractResult {
-    #[pyo3(get)]
     observables_mask: u64,
     #[pyo3(get)]
     cost: f64,
@@ -1980,17 +1961,10 @@ impl PyTesseractResult {
         )
     }
 
-    /// Get the observable predictions as a list of bits.
-    fn observable_bits(&self, num_observables: usize) -> Vec<i32> {
-        (0..num_observables)
-            .map(|i| ((self.observables_mask >> i) & 1) as i32)
-            .collect()
-    }
-
     fn __repr__(&self) -> String {
         format!(
-            "TesseractResult(observables_mask={}, cost={:.4}, low_confidence={})",
-            self.observables_mask, self.cost, self.low_confidence
+            "TesseractResult(observable_flips=ObservableFlips(num_observables={}, mask={}), cost={:.4}, low_confidence={})",
+            self.num_observables, self.observables_mask, self.cost, self.low_confidence
         )
     }
 }
@@ -2023,7 +1997,7 @@ impl PyTesseractResult {
 /// # Detection events as list of detector indices that fired
 /// detection_indices = [0, 2]
 /// result = decoder.decode_from_defects(detection_indices)
-/// print(f"Observable mask: {result.observables_mask}, Cost: {result.cost}")
+/// print(f"Observable mask: {result.observable_flips.mask}, Cost: {result.cost}")
 /// ```
 #[pyclass(name = "TesseractDecoder", module = "pecos_rslib.decoders", unsendable)]
 pub struct PyTesseractDecoder {
@@ -2098,14 +2072,14 @@ impl PyTesseractDecoder {
     ///
     /// # Returns
     ///
-    /// `TesseractResult` with observables mask, cost, and confidence info.
+    /// `TesseractResult` with observable flips, cost, and confidence info.
     ///
     /// # Example
     ///
     /// ```python
     /// # Detectors 0 and 2 fired
     /// result = decoder.decode_from_defects([0, 2])
-    /// print(f"Observable prediction: {result.observable_bits(1)}")
+    /// print(f"Observable prediction: {list(result.observable_flips)}")
     /// ```
     fn decode_from_defects(&mut self, detections: Vec<u64>) -> PyResult<PyTesseractResult> {
         let detections_arr = ndarray::Array1::from_vec(detections);
@@ -2788,7 +2762,7 @@ impl DemDecoderConfig {
 ///
 /// Parses a DEM string, extracts the check matrix and observable matrix,
 /// creates the inner decoder, and provides `decode_syndrome()` that returns
-/// an `observables_mask` -- the same interface as `PyMatching` and Tesseract.
+/// `observable_flips` -- the same interface as `PyMatching` and Tesseract.
 ///
 /// # Example
 ///
@@ -2797,7 +2771,7 @@ impl DemDecoderConfig {
 ///
 /// decoder = DemAwareDecoder.from_dem(dem_string, decoder_type="bp_osd")
 /// result = decoder.decode_syndrome([0, 1, 1, 0])
-/// print(f"Observable prediction: {result.observables_mask}")
+/// print(f"Observable prediction: {result.observable_flips}")
 /// ```
 #[pyclass(name = "DemAwareDecoder", module = "pecos_rslib.decoders", unsendable)]
 pub struct PyDemAwareDecoder {
@@ -2960,15 +2934,6 @@ impl PyDemAwareResult {
 
 #[pymethods]
 impl PyDemAwareResult {
-    /// Bitmask of predicted observable flips.
-    ///
-    /// A Python integer of arbitrary precision: DEMs with at most 64
-    /// observables yield exactly the value the previous `u64` field held.
-    #[getter]
-    fn observables_mask(&self, py: Python<'_>) -> PyResult<Py<pyo3::PyAny>> {
-        crate::observable_flips_bindings::obsmask_to_py(py, &self.observables)
-    }
-
     /// The decoded observable flips with the decoder's observable count.
     #[getter]
     fn observable_flips(&self) -> PyObservableFlips {
@@ -2977,7 +2942,8 @@ impl PyDemAwareResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "DemAwareResult(observables_mask={}, converged={}, iterations={})",
+            "DemAwareResult(observable_flips=ObservableFlips(num_observables={}, mask={}), converged={}, iterations={})",
+            self.num_observables,
             self.mask_display(),
             self.converged,
             self.iterations
@@ -3043,7 +3009,7 @@ impl PyDemAwareDecoder {
     ///
     /// # Returns
     ///
-    /// `DemAwareResult` with `observables_mask`, `converged`, and `iterations`.
+    /// `DemAwareResult` with `observable_flips`, `converged`, and `iterations`.
     fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyDemAwareResult> {
         let arr = Array1::from_vec(syndrome);
         let (decoding, converged, iterations) = match &mut self.inner {

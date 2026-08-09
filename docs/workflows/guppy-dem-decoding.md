@@ -193,7 +193,7 @@ assert all("error(" in text for text in (raw_text, terminal_graphlike_text, sour
 
 `to_sampler()` draws detector events and observable flips directly from the
 error model, without simulating the circuit. `get_syndrome()` returns one shot's
-detector bits and `get_observable_mask()` the actual logical flips those shots
+detector bits and `get_observable_flips()` the actual logical flips that shot
 incurred — the ground truth that decoder predictions are scored against.
 
 <!--continuation-->
@@ -204,7 +204,7 @@ batch = sampler.sample_batch(2000, seed=1)
 assert batch.num_shots == 2000
 for shot in range(2):
     syndrome = batch.get_syndrome(shot)
-    observable_mask = batch.get_observable_mask(shot)
+    observable_mask = batch.get_observable_flips(shot).mask
     assert len(syndrome) == dem.num_detectors
     print(f"shot {shot}: syndrome={syndrome}, observable_mask={observable_mask}")
 ```
@@ -296,9 +296,8 @@ prediction per shot. A shot counts as a logical error when the predicted
 observable flip disagrees with the flip the sample actually carried.
 
 The result types reconcile their underlying shapes through `observable_flips`.
-PyMatching's per-observable `correction` vector and Tesseract and BP+OSD's
-`observables_mask` bitmasks remain available when the underlying representation
-is useful.
+Its sequence interface exposes per-observable booleans, while `.mask` exposes
+the same flips as an arbitrary-precision integer.
 
 <!--continuation-->
 ```python

@@ -29,29 +29,29 @@ class TestMwpmResult:
 
     def test_result_attributes(self) -> None:
         """Test that MwpmResult has the expected attributes."""
-        from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
+        from pecos_rslib.decoders import CheckMatrix, ObservableFlips, PyMatchingDecoder
 
         matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(matrix)
         result = decoder.decode_syndrome([0, 0])
 
         # Check attributes exist
-        assert hasattr(result, "correction")
+        assert hasattr(result, "observable_flips")
         assert hasattr(result, "weight")
 
         # Check types
-        assert isinstance(result.correction, list)
+        assert isinstance(result.observable_flips, ObservableFlips)
         assert isinstance(result.weight, float)
 
-    def test_result_to_list(self) -> None:
-        """Test MwpmResult.to_list() method."""
+    def test_observable_flips_materializes_to_list(self) -> None:
+        """Test materializing MwpmResult.observable_flips as a list."""
         from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
 
         matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
         decoder = PyMatchingDecoder.from_check_matrix(matrix)
         result = decoder.decode_syndrome([0, 0])
 
-        assert result.to_list() == result.correction
+        assert list(result.observable_flips) == [bool(value) for value in result]
 
     def test_result_indexing(self) -> None:
         """Test MwpmResult supports indexing like a list."""
@@ -61,9 +61,9 @@ class TestMwpmResult:
         decoder = PyMatchingDecoder.from_check_matrix(matrix)
         result = decoder.decode_syndrome([0, 0])
 
-        assert len(result) == len(result.correction)
+        assert len(result) == len(result.observable_flips)
         if len(result) > 0:
-            assert result[0] == result.correction[0]
+            assert bool(result[0]) == result.observable_flips[0]
 
 
 class TestCheckMatrix:
@@ -165,7 +165,7 @@ class TestPyMatchingDecoder:
         decoder = PyMatchingDecoder.from_dem_with_correlations(dem)
 
         result = decoder.decode_syndrome([0, 0, 0])
-        assert result.correction == [0]
+        assert list(result.observable_flips) == [False]
 
 
 class TestFusionBlossomDecoder:

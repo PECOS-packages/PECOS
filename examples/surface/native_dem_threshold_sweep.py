@@ -283,13 +283,9 @@ def _backend_runtime_label(sample_backend: str, native_circuit_source: str = "ab
     raise ValueError(msg)
 
 
-def _predicted_observable_flip(result: object) -> int:
+def _predicted_observable_flip(result: Any) -> int:
     """Extract the predicted logical observable flip from a DEM decoder result."""
-    observables_mask = getattr(result, "observables_mask", None)
-    if observables_mask is not None:
-        return int(observables_mask & 1)
-    correction = getattr(result, "correction", [])
-    return int(correction[0]) if len(correction) > 0 else 0
+    return int(result.observable_flips[0])
 
 
 def _format_rate(value: float | None) -> str:
@@ -633,7 +629,7 @@ def _decode_all_shots(
         batch_results = dem_decoder.decode_batch(syndromes)
         num_errors = 0
         for shot_idx, result in enumerate(batch_results):
-            predicted_flip = int(result.observables_mask & 1)
+            predicted_flip = int(result.observable_flips[0])
             num_errors += int(predicted_flip != true_flips[shot_idx])
         return num_errors
 

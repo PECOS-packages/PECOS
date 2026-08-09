@@ -53,7 +53,7 @@ Python decoder inputs name their encoding explicitly: use
 `decode_syndrome(...)` for a dense detector vector and
 `decode_from_defects(...)` for sparse detector indices. The BP/LDPC classes'
 `from_dem(...)` constructors return a `DemAwareDecoder` wrapper so their results
-include `observables_mask` and their instances retain the DEM dimensions.
+include `observable_flips` and their instances retain the DEM dimensions.
 
 ### Rust Decoders
 

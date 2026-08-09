@@ -19,6 +19,15 @@
 //! solution passes a final primal-feasibility audit; numerical trouble
 //! surfaces as [`LpOutcome::InternalError`], never as a silently wrong
 //! optimum.
+//!
+//! Tolerance contract (deliberately matching reference `HiGHS` defaults,
+//! verified against it on the boundary cases): coefficients with magnitude
+//! at or below 1e-9 are treated as zero (`HiGHS` `small_matrix_value`);
+//! accepted solutions may violate constraints by up to 1e-7 scaled by the
+//! bound (`HiGHS` `primal_feasibility_tolerance`), so models that are
+//! infeasible by less than that margin solve as `Optimal` at the boundary,
+//! exactly as `HiGHS` reports them. Callers needing exact rational
+//! semantics need a different tool.
 
 /// Whether the objective is maximized or minimized.
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -456,8 +465,9 @@ impl Tableau {
             }
             let basic_variable = self.basic[row_index];
             // Exact minimum ratio; ties prefer safe pivots, then lowest basic
-            // index (Bland's leaving rule). A fuzzy ratio comparison is not
-            // transitive and would forfeit the anti-cycling guarantee.
+            // index. The safety preference deviates from pure Bland ordering,
+            // so the classic anti-cycling proof does not strictly apply; the
+            // iteration cap is the termination backstop.
             let replace = best.is_none_or(|(_, best_ratio, best_pivot, best_basic)| {
                 match ratio.partial_cmp(&best_ratio) {
                     Some(std::cmp::Ordering::Less) => true,

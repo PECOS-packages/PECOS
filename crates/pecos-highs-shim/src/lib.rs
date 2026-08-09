@@ -459,6 +459,32 @@ mod tests {
     }
 
     #[test]
+    fn noise_floor_coefficients_are_zero_matching_reference() {
+        // Contract test: a 1e-9 coefficient is at the noise floor and treated
+        // as zero, so the row does not bind and x reaches its upper bound.
+        // Reference HiGHS (small_matrix_value = 1e-9) returns exactly this.
+        let mut model = RowProblem.optimise(Sense::Maximise);
+        let x = model.add_col(1.0, 0.0..=12.0, []);
+        model.add_row(..=0.0, [(x, 1e-9)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        assert_columns(solved.get_solution().columns(), &[12.0]);
+    }
+
+    #[test]
+    fn sub_tolerance_infeasibility_solves_at_boundary_matching_reference() {
+        // Contract test: a model infeasible by less than the feasibility
+        // tolerance solves as Optimal at the boundary, exactly as reference
+        // HiGHS (primal_feasibility_tolerance = 1e-7) reports it.
+        let mut model = RowProblem.optimise(Sense::Maximise);
+        let x = model.add_col(1.0, 0.0.., []);
+        model.add_row(..=-1e-300, [(x, 1.0)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        assert_columns(solved.get_solution().columns(), &[0.0]);
+    }
+
+    #[test]
     fn terminates_at_degenerate_vertex() {
         let mut model = RowProblem.optimise(Sense::Maximise);
         let x = model.add_col(1.0, 0.0.., []);

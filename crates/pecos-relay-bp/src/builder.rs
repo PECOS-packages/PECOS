@@ -26,6 +26,11 @@ use ndarray::ArrayView2;
 /// # Ok(())
 /// # }
 /// ```
+/// Default uniform memory strength for the pre-relay leg. Paper-style value;
+/// the optimum is decoding-graph dependent. Shared with the Python binding so
+/// the defaults cannot drift apart.
+pub const DEFAULT_GAMMA0: f64 = 0.65;
+
 pub struct RelayBpBuilder<'a> {
     check_matrix: ArrayView2<'a, u8>,
     error_priors: Option<Vec<f64>>,
@@ -52,7 +57,12 @@ impl<'a> RelayBpBuilder<'a> {
             max_iter: 200,
             alpha: None,
             alpha_iteration_scaling_factor: 1.0,
-            gamma0: None,
+            // The pre-relay leg needs uniform memory to be paper-representative:
+            // with `n_conv_1` stopping, an unmemoried pre-leg commits the first
+            // syndrome-satisfying (often wrong-coset) solution. Measured on the
+            // BB144 gross-code circuit DEM at p=0.003: 99/1000 logical failures
+            // with `None` vs 1/1000 with 0.65. `None` disables memory.
+            gamma0: Some(DEFAULT_GAMMA0),
             pre_iter: relay_defaults.pre_iter,
             num_sets: relay_defaults.num_sets,
             set_max_iter: relay_defaults.set_max_iter,
@@ -90,7 +100,10 @@ impl<'a> RelayBpBuilder<'a> {
         self
     }
 
-    /// Set memory BP strength (None = disabled)
+    /// Set the pre-relay leg's uniform memory strength (default: `Some(0.65)`;
+    /// `None` disables memory, which severely degrades accuracy on circuit-level
+    /// detector error models — see the field comment in [`Self::new`]). The
+    /// optimal value is decoding-graph dependent.
     #[must_use]
     pub fn gamma0(mut self, gamma0: Option<f64>) -> Self {
         self.gamma0 = gamma0;
@@ -274,6 +287,17 @@ impl<'a> MinSumBpBuilder<'a> {
 mod tests {
     use super::*;
     use ndarray::{Array1, Array2};
+
+    #[test]
+    fn relay_builder_defaults_enable_pre_relay_memory() {
+        let h = Array2::from_shape_vec((2, 3), vec![1, 1, 0, 0, 1, 1]).unwrap();
+        let relay = RelayBpBuilder::new(&h.view());
+        assert_eq!(relay.gamma0, Some(DEFAULT_GAMMA0));
+        // Plain min-sum stays memory-free by default; only the relay builder
+        // carries the paper-style memory default.
+        let min_sum = MinSumBpBuilder::new(&h.view());
+        assert_eq!(min_sum.gamma0, None);
+    }
 
     #[test]
     fn test_relay_builder() {

@@ -1748,8 +1748,8 @@ impl PyTesseractDecoder {
 
 use pecos_decoders::{
     MinSumBpBuilder as RustMinSumBpBuilder, MinSumBpDecoder as RustMinSumBpDecoder,
-    RelayBpBuilder as RustRelayBpBuilder, RelayBpDecoder as RustRelayBpDecoder,
-    StoppingCriterion as RustStoppingCriterion,
+    RELAY_BP_DEFAULT_GAMMA0, RelayBpBuilder as RustRelayBpBuilder,
+    RelayBpDecoder as RustRelayBpDecoder, StoppingCriterion as RustStoppingCriterion,
 };
 
 /// Parse a stopping criterion string into the Rust enum.
@@ -1852,7 +1852,10 @@ impl PyRelayBpBuilder {
             error_priors,
             max_iter: 200,
             alpha: None,
-            gamma0: None,
+            // The pre-relay leg needs uniform memory to be paper-representative
+            // (measured 99/1000 vs 1/1000 failures on the BB144 circuit DEM at
+            // p=0.003 with memory off vs 0.65).
+            gamma0: Some(RELAY_BP_DEFAULT_GAMMA0),
             pre_iter: 80,
             num_sets: 300,
             set_max_iter: 60,
@@ -1879,7 +1882,9 @@ impl PyRelayBpBuilder {
         slf
     }
 
-    /// Set initial damping factor (None = disabled).
+    /// Set the pre-relay leg's uniform memory strength (default: 0.65; None
+    /// disables memory, which severely degrades accuracy on circuit-level
+    /// detector error models). Graph-dependent - tune per code.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -2095,7 +2100,8 @@ impl PyMinSumBpBuilder {
         slf
     }
 
-    /// Set initial damping factor (None = disabled).
+    /// Set the uniform memory strength (default: None = plain min-sum
+    /// without memory).
     ///
     /// Returns:
     ///     Self for method chaining.

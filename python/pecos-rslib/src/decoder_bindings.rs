@@ -1041,6 +1041,24 @@ fn parse_osd_method(s: &str) -> PyResult<RustOsdMethod> {
     }
 }
 
+/// Channel prior for BP-family builders: a single probability applied to every
+/// column, or one probability per column (e.g. per-mechanism DEM priors).
+#[derive(Clone, FromPyObject)]
+enum PyErrorPrior {
+    Scalar(f64),
+    Channel(Vec<f64>),
+}
+
+impl PyErrorPrior {
+    /// Split into the `(error_rate, error_channel)` pair the LDPC core expects.
+    fn as_core_args(&self) -> (Option<f64>, Option<&[f64]>) {
+        match self {
+            Self::Scalar(rate) => (Some(*rate), None),
+            Self::Channel(probs) => (None, Some(probs)),
+        }
+    }
+}
+
 /// Builder for BP+OSD decoder.
 ///
 /// Belief Propagation with Ordered Statistics Decoding post-processing.
@@ -1057,7 +1075,7 @@ fn parse_osd_method(s: &str) -> PyResult<RustOsdMethod> {
 #[pyclass(name = "BpOsdBuilder", module = "pecos_rslib.decoders")]
 pub struct PyBpOsdBuilder {
     pcm: RustSparseMatrix,
-    error_rate: f64,
+    error_rate: PyErrorPrior,
     max_iter: usize,
     bp_method: String,
     schedule: String,
@@ -1072,9 +1090,10 @@ impl PyBpOsdBuilder {
     /// # Arguments
     ///
     /// * `pcm` - Parity check matrix
-    /// * `error_rate` - Channel error probability
+    /// * `error_rate` - Channel error probability: a single float applied to
+    ///   every column, or a sequence with one probability per column
     #[new]
-    fn new(pcm: &PySparseMatrix, error_rate: f64) -> Self {
+    fn new(pcm: &PySparseMatrix, error_rate: PyErrorPrior) -> Self {
         Self {
             pcm: pcm.inner.clone(),
             error_rate,
@@ -1122,10 +1141,11 @@ impl PyBpOsdBuilder {
         let bp_schedule = parse_bp_schedule(&self.schedule)?;
         let osd = parse_osd_method(&self.osd_method)?;
 
+        let (error_rate, error_channel) = self.error_rate.as_core_args();
         RustBpOsdDecoder::new(
             &self.pcm,
-            Some(self.error_rate),
-            None,
+            error_rate,
+            error_channel,
             self.max_iter,
             bp,
             bp_schedule,
@@ -1204,7 +1224,7 @@ impl PyBpOsdDecoder {
 #[pyclass(name = "BpLsdBuilder", module = "pecos_rslib.decoders")]
 pub struct PyBpLsdBuilder {
     pcm: RustSparseMatrix,
-    error_rate: f64,
+    error_rate: PyErrorPrior,
     max_iter: usize,
     bp_method: String,
     schedule: String,
@@ -1218,9 +1238,10 @@ impl PyBpLsdBuilder {
     /// # Arguments
     ///
     /// * `pcm` - Parity check matrix
-    /// * `error_rate` - Channel error probability
+    /// * `error_rate` - Channel error probability: a single float applied to
+    ///   every column, or a sequence with one probability per column
     #[new]
-    fn new(pcm: &PySparseMatrix, error_rate: f64) -> Self {
+    fn new(pcm: &PySparseMatrix, error_rate: PyErrorPrior) -> Self {
         Self {
             pcm: pcm.inner.clone(),
             error_rate,
@@ -1260,10 +1281,11 @@ impl PyBpLsdBuilder {
         let bp = parse_bp_method(&self.bp_method)?;
         let bp_schedule = parse_bp_schedule(&self.schedule)?;
 
+        let (error_rate, error_channel) = self.error_rate.as_core_args();
         RustBpLsdDecoder::new(
             &self.pcm,
-            Some(self.error_rate),
-            None,
+            error_rate,
+            error_channel,
             self.max_iter,
             bp,
             bp_schedule,

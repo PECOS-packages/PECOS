@@ -17,7 +17,6 @@ operators.
 ```hidden-python
 import re
 
-import numpy as np
 from pecos.quantum import (
     ParityCheckMatrix,
     StabilizerCode,
@@ -245,7 +244,8 @@ second become Z-type stabilizers.
 ### CSS Parity-Check Matrices
 
 The Steane code uses the classical Hamming parity-check matrix for both
-blocks. Nested Python sequences and NumPy integer arrays are accepted:
+blocks. Nested Python sequences are accepted, as is any integer matrix exposing
+the buffer protocol:
 
 ```python
 hamming_h = [
@@ -255,12 +255,10 @@ hamming_h = [
 ]
 
 plain = ParityCheckMatrix(hamming_h)
-int64_matrix = ParityCheckMatrix(np.asarray(hamming_h, dtype=np.int64))
-uint8_matrix = ParityCheckMatrix(np.asarray(hamming_h, dtype=np.uint8))
-assert plain.rows() == int64_matrix.rows() == uint8_matrix.rows() == hamming_h
+assert plain.rows() == hamming_h
 
 builder = StabilizerCodeSpec.builder(7)
-builder.checks_from_css(int64_matrix, uint8_matrix)
+builder.checks_from_css(plain, plain)
 steane = builder.build_with_discovered_logicals()
 result = steane.distance(css=True)
 

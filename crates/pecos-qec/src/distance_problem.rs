@@ -65,6 +65,14 @@ pub enum DistanceProblemError {
         /// Number of columns in the logical matrix.
         l_width: usize,
     },
+    /// A coset representative contains an entry outside the binary alphabet.
+    #[error("coset representative entry at index {index} is {value}, expected 0 or 1")]
+    NonBinaryRepresentative {
+        /// Index of the invalid entry.
+        index: usize,
+        /// Invalid value.
+        value: u8,
+    },
     /// A stabilizer or logical operator is not in the required CSS form.
     #[error("stabilizer code spec is not CSS: {component} {index} contains both X and Z support")]
     NonCssOperator {
@@ -684,7 +692,11 @@ impl DistanceProblem {
         for row in 0..self.h.num_rows() {
             let support = Self::row_support(&self.h, row);
             match support.as_slice() {
-                [] => {}
+                [] => {
+                    if self.parity_targets[row] == 1 {
+                        builder.parity_clauses.push(Vec::new());
+                    }
+                }
                 &[variable] => {
                     let sign = if self.parity_targets[row] == 1 { 1 } else { -1 };
                     builder
@@ -886,11 +898,12 @@ impl DistanceProblem {
 
     /// Incrementally certifies distance through `max_weight` using a pluggable SAT solver.
     ///
-    /// The solver is called once per bound from 1 upward. Its SAT assignment must contain only
-    /// the original variables and is checked natively, so SAT soundness does not rely on the
-    /// solver. Every preceding UNSAT result is trusted; that trust is what turns the verified upper
-    /// bound into an exact distance. `Ok(None)` means all bounds through `max_weight` were reported
-    /// UNSAT, establishing only a solver-trusted lower bound greater than `max_weight`.
+    /// A valid all-zero assignment is returned directly. Otherwise, the solver is called once per
+    /// bound from 1 upward. Its SAT assignment must contain only the original variables and is
+    /// checked natively, so SAT soundness does not rely on the solver. Every preceding UNSAT result
+    /// is trusted; that trust is what turns the verified upper bound into an exact distance.
+    /// `Ok(None)` means all bounds through `max_weight` were reported UNSAT, establishing only a
+    /// solver-trusted lower bound greater than `max_weight`.
     ///
     /// # Errors
     ///
@@ -917,6 +930,14 @@ impl DistanceProblem {
     where
         S: FnMut(&Self, usize) -> SolverAnswer,
     {
+        if self.zero_assignment_satisfies() {
+            return Ok(Some(CertifiedDistance {
+                distance: 0,
+                witness: vec![false; self.num_vars],
+                sat_certified: true,
+                unsat_trusted_below: 0,
+            }));
+        }
         for weight in 1..=max_weight {
             match solver(self, weight) {
                 SolverAnswer::Unsat => {}
@@ -955,7 +976,8 @@ impl DistanceProblem {
     ///
     /// # Errors
     ///
-    /// Returns an error if the representative width does not match the group.
+    /// Returns an error if the representative width does not match the group or if an entry is not
+    /// binary.
     pub fn coset_weight_problem(
         group: &ParityCheckMatrix,
         representative: &[u8],
@@ -966,6 +988,13 @@ impl DistanceProblem {
                 h_width: num_vars,
                 l_width: representative.len(),
             });
+        }
+        if let Some((index, &value)) = representative
+            .iter()
+            .enumerate()
+            .find(|&(_, &value)| value > 1)
+        {
+            return Err(DistanceProblemError::NonBinaryRepresentative { index, value });
         }
         let dual_rows = group.matrix().kernel();
         let parity_targets: Vec<u8> = dual_rows
@@ -1010,14 +1039,6 @@ pub fn certified_coset_weight(
     max_weight: usize,
 ) -> Result<Option<CertifiedDistance>, CosetWeightError> {
     let problem = DistanceProblem::coset_weight_problem(group, representative)?;
-    if problem.zero_assignment_satisfies() {
-        return Ok(Some(CertifiedDistance {
-            distance: 0,
-            witness: vec![false; problem.num_vars],
-            sat_certified: true,
-            unsat_trusted_below: 0,
-        }));
-    }
     certified_distance(&problem, max_weight).map_err(CosetWeightError::Certification)
 }
 
@@ -1052,7 +1073,7 @@ pub fn certified_stabilizer_coset_weight(
     };
     let group_rows = group.rows();
     let num_vars = 2 * num_qubits;
-    let dual_rows = F2Matrix::from_rows(group_rows).kernel();
+    let dual_rows = DistanceProblem::matrix_from_rows(group_rows, num_vars).kernel();
     let parity_targets: Vec<u8> = dual_rows
         .iter()
         .map(|dual| {
@@ -1074,14 +1095,6 @@ pub fn certified_stabilizer_coset_weight(
         require_logical_effect: false,
         weight_mode: WeightMode::QubitSupport { num_qubits },
     };
-    if problem.zero_assignment_satisfies() {
-        return Ok(Some(CertifiedDistance {
-            distance: 0,
-            witness: vec![false; num_vars],
-            sat_certified: true,
-            unsat_trusted_below: 0,
-        }));
-    }
     certified_distance(&problem, max_weight).map_err(CosetWeightError::Certification)
 }
 
@@ -1486,6 +1499,29 @@ mod tests {
     }
 
     #[test]
+    fn empty_affine_row_with_target_one_is_encoded_unsatisfiable() {
+        let problem = DistanceProblem {
+            h: F2Matrix::zeros(1, 1),
+            l: F2Matrix::zeros(0, 1),
+            num_vars: 1,
+            weight_mode: WeightMode::Bit,
+            parity_targets: vec![1],
+            require_logical_effect: false,
+        };
+        let encoding = problem.encode(Some(1));
+
+        assert_eq!(encoding.groups[0].clauses, vec![Vec::<i32>::new()]);
+        assert_eq!(
+            solve_with_batsat(&encoding, problem.num_vars),
+            SolverAnswer::Unsat
+        );
+        assert_eq!(
+            problem.verify_witness(&[false]),
+            Err(WitnessError::OddCheck { row: 0 })
+        );
+    }
+
+    #[test]
     fn symplectic_dimacs_encoding_matches_qubit_support_predicate() {
         let problem = DistanceProblem::from_stabilizer_spec(&tiny_non_css_spec()).unwrap();
         assert_eq!(problem.num_vars(), 4);
@@ -1660,6 +1696,24 @@ mod tests {
             .unwrap();
         assert_eq!(result, None);
         assert_eq!(weights, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn certification_handles_valid_zero_weight_problem_at_zero_bound() {
+        let problem =
+            DistanceProblem::coset_weight_problem(&ParityCheckMatrix::zeros(0, 1), &[0]).unwrap();
+        let expected = CertifiedDistance {
+            distance: 0,
+            witness: vec![false],
+            sat_certified: true,
+            unsat_trusted_below: 0,
+        };
+
+        assert_eq!(certified_distance(&problem, 0), Ok(Some(expected.clone())));
+        assert_eq!(
+            problem.certify_distance_with(0, |_, _| panic!("zero-weight problem called solver")),
+            Ok(Some(expected))
+        );
     }
 
     #[test]
@@ -1930,6 +1984,26 @@ mod tests {
     }
 
     #[test]
+    fn coset_weight_rejects_non_binary_representative() {
+        let error = certified_coset_weight(&ParityCheckMatrix::zeros(0, 1), &[3], 1).unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                CosetWeightError::Problem(DistanceProblemError::NonBinaryRepresentative {
+                    index: 0,
+                    value: 3
+                })
+            ),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "coset representative entry at index 0 is 3, expected 0 or 1"
+        );
+    }
+
+    #[test]
     fn coset_weight_agrees_with_brute_force_on_seeded_groups() {
         use rand::rngs::SmallRng;
         use rand::{RngExt, SeedableRng};
@@ -1976,6 +2050,25 @@ mod tests {
             .unwrap();
         // Raw weight is 5; XXXXX times XZZXI equals IYYIX of qubit-support weight 3.
         assert_eq!(certified.distance, 3);
+    }
+
+    #[test]
+    fn empty_stabilizer_group_preserves_symplectic_width() {
+        let spec = StabilizerCodeSpec::new(1, Vec::new(), vec![Z(0)], vec![X(0)]).unwrap();
+
+        let certified = certified_stabilizer_coset_weight(&spec, &X(0), 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(certified.distance, 1);
+
+        let profile = logical_coset_weight_profile(&spec, 1).unwrap();
+        assert_eq!(
+            profile
+                .into_iter()
+                .map(|entry| entry.unwrap().distance)
+                .collect::<Vec<_>>(),
+            vec![1, 1]
+        );
     }
 
     #[test]

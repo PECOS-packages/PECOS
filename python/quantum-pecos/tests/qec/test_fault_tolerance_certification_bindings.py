@@ -22,12 +22,13 @@ from pecos.qec import (
     bounded_enumeration_stabilizer_distance,
     bounded_enumeration_x_distance,
     bounded_enumeration_z_distance,
+    certified_stabilizer_coset_weight,
     connected_cluster_code_distance,
     stabilizer_code_distance,
     x_distance,
     z_distance,
 )
-from pecos.quantum import ParityCheckMatrix, StabilizerCode, StabilizerCodeSpec, TickCircuit
+from pecos.quantum import ParityCheckMatrix, PauliString, StabilizerCode, StabilizerCodeSpec, TickCircuit
 
 
 def _hook_ladder() -> TickCircuit:
@@ -194,6 +195,22 @@ def test_steane_certification_from_checks_and_code_spec() -> None:
     corrupted[0] = not corrupted[0]
     with pytest.raises(ValueError, match="witness violates H row 0"):
         from_checks.verify_witness(corrupted)
+
+
+def test_certified_distance_repr_uses_verified_qubit_support_weight() -> None:
+    code = StabilizerCodeSpec(
+        2,
+        [PauliString.from_dense_str("YY")],
+        [PauliString.from_dense_str("YI")],
+        [PauliString.from_dense_str("XZ")],
+    )
+
+    certified = certified_stabilizer_coset_weight(code, PauliString.from_dense_str("YI"), 2)
+
+    assert certified is not None
+    assert certified.distance == 1
+    assert sum(certified.witness) == 2
+    assert "witness_weight=1" in repr(certified)
 
 
 def test_bounded_enumeration_bindings_certify_and_return_intervals() -> None:

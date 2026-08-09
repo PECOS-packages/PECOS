@@ -7773,10 +7773,7 @@ impl PyCertifiedDistance {
     fn __repr__(&self) -> String {
         format!(
             "CertifiedDistance(distance={}, witness_weight={}, sat_certified={}, unsat_trusted_below={})",
-            self.distance,
-            self.witness.iter().filter(|&&selected| selected).count(),
-            self.sat_certified,
-            self.unsat_trusted_below
+            self.distance, self.distance, self.sat_certified, self.unsat_trusted_below
         )
     }
 }

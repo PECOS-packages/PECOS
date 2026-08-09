@@ -228,6 +228,43 @@ def test_any_observable_and_per_observable_counts_are_distinct() -> None:
     assert per_observable_errors == [1, 1]
 
 
+def test_sampler_and_decoder_agree_on_width_for_declared_unused_observables() -> None:
+    """A declared observable that no mechanism flips must still count toward the width.
+
+    Stim emits ``logical_observable Lk`` precisely for logicals nothing flips. If the
+    sampler derives its width from ``error(...)`` lines alone it reports a narrower
+    batch than the decoder, and because ``ObservableFlips`` equality includes length,
+    every shot then compares unequal -- a silent 100% logical error rate.
+    """
+    from pecos_rslib.qec import DemSampler
+
+    dem = "error(0.001) D0 L0\ndetector D0\nlogical_observable L0\nlogical_observable L1"
+    sampler = DemSampler.from_dem_string(dem)
+    batch = sampler.sample_batch(200, seed=1)
+    decoder = PyMatchingDecoder.from_dem(dem)
+
+    predicted_width = len(decoder.decode_syndrome([0]).observable_flips)
+    assert batch.num_observables == 2
+    assert predicted_width == 2
+
+    errors = sum(
+        decoder.decode_syndrome(batch.get_syndrome(shot)).observable_flips != batch.get_observable_flips(shot)
+        for shot in range(batch.num_shots)
+    )
+    assert errors < batch.num_shots
+
+
+def test_sampler_counts_declared_detectors_and_observables() -> None:
+    """The same undercount applied to bare ``detector D<n>`` declarations."""
+    from pecos_rslib.qec import DemSampler
+
+    dem = "error(0.001) D0 L0\ndetector D0\ndetector D5\nlogical_observable L0\nlogical_observable L1"
+    sampler = DemSampler.from_dem_string(dem)
+
+    assert sampler.num_detectors == 6
+    assert sampler.num_observables == 2
+
+
 def test_wide_observables_are_not_truncated_end_to_end() -> None:
     dem = _wide_dem()
     syndrome = [0, 1]

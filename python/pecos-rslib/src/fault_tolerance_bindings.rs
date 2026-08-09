@@ -4309,9 +4309,18 @@ impl PyDemSampler {
     fn from_dem_string(dem_string: &str) -> PyResult<Self> {
         use pecos_qec::fault_tolerance::dem_builder::SamplingEngine;
 
+        // Detector and observable counts come from the canonical parser, which also
+        // honours bare `detector D<n>` and `logical_observable L<n>` declarations.
+        // Deriving them from `error(...)` lines alone undercounts: Stim emits
+        // `logical_observable Lk` precisely for logicals that no mechanism flips, and
+        // dropping those made the sampler's width disagree with the decoders' -- which
+        // silently turned every shot into a logical error when the widths were compared.
+        let (num_detectors, num_observables) =
+            pecos_decoder_core::dem::utils::parse_dem_metadata(dem_string).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("invalid DEM: {e}"))
+            })?;
+
         let mut mechanisms = Vec::new();
-        let mut max_det = 0u32;
-        let mut max_obs = 0u32;
 
         for line in dem_string.lines() {
             let line = line.trim();
@@ -4338,13 +4347,11 @@ impl PyDemSampler {
                         pyo3::exceptions::PyValueError::new_err(format!("bad detector: {e}"))
                     })?;
                     dets.push(id);
-                    max_det = max_det.max(id + 1);
                 } else if let Some(l) = tok.strip_prefix('L') {
                     let id: u32 = l.parse().map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("bad observable: {e}"))
                     })?;
                     obs.push(id);
-                    max_obs = max_obs.max(id + 1);
                 }
             }
             if prob > 0.0 {
@@ -4352,8 +4359,7 @@ impl PyDemSampler {
             }
         }
 
-        let engine =
-            SamplingEngine::from_mechanisms(mechanisms, max_det as usize, max_obs as usize);
+        let engine = SamplingEngine::from_mechanisms(mechanisms, num_detectors, num_observables);
         let inner = RustNewDemSampler::from_engine(engine);
         Ok(Self { inner })
     }

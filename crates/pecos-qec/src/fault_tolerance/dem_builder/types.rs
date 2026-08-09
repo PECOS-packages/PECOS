@@ -2823,6 +2823,26 @@ fn validate_independent_idle_probabilities(
 /// GF(2) span. The target channel's characters are transformed into independent
 /// mechanism rates with a Walsh-Hadamard solve. The original closed form is
 /// retained for dimension two so existing idle DEM numbers remain byte-exact.
+///
+/// # The boundary fit is not total-variation minimal, deliberately
+///
+/// When an exact rate comes out negative the channel is not representable by
+/// independent mechanisms. That mechanism is then dropped and the remaining two
+/// are solved so the two *retained* target probabilities are reproduced
+/// **exactly**; the mismatch lands on the omitted signature and on the identity,
+/// and is reported as the residual.
+///
+/// This is not the closest fit under total variation, and that is a choice, not
+/// an oversight. For `(pI, pX, pY, pZ) = (0.65, 0.15, 0, 0.20)` this fit gives
+/// `(0.60, 0.15, 0.05, 0.20)` at a TV distance of `0.05`, while the TV-minimal
+/// fit is roughly `(0.65, 0.1147, 0.0353, 0.20)` at `0.0353`. The TV-minimal fit
+/// is closer overall only by silently moving `pX` away from the 0.15 the caller
+/// asked for -- a 24% change in the requested X rate. Preserving the requested
+/// per-Pauli probabilities exactly is worth more here than a smaller aggregate
+/// distance, because those probabilities are the thing the user specified.
+///
+/// The reported residual is the true total-variation distance to the fit that is
+/// actually emitted. It is not a claim of minimality.
 pub(crate) fn fit_exclusive_signatures<Signature, Xor>(
     exclusive: BTreeMap<Signature, f64>,
     xor: Xor,
@@ -7023,6 +7043,48 @@ fn trim_trailing_zeros(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// The boundary fit trades total-variation distance for exact preservation of
+    /// the requested per-Pauli probabilities. Pin both halves of that trade so it
+    /// cannot be "optimized" into a TV-minimal fit without a deliberate decision.
+    ///
+    /// Channel: `(pI, pX, pY, pZ) = (0.65, 0.15, 0, 0.20)`, whose exact Y rate is
+    /// negative, so the fit takes the boundary path.
+    #[test]
+    fn boundary_fit_preserves_requested_rates_rather_than_minimizing_total_variation() {
+        // Emitted fit, from the closed form: aX = 0.20, aZ = 0.25, aY dropped.
+        let (a_x, a_z) = (0.20_f64, 0.25_f64);
+        // Y's signature is X xor Z, so both firing reads as Y.
+        let emitted = [
+            (1.0 - a_x) * (1.0 - a_z), // I
+            a_x * (1.0 - a_z),         // X
+            a_x * a_z,                 // Y
+            (1.0 - a_x) * a_z,         // Z
+        ];
+        let target = [0.65, 0.15, 0.0, 0.20];
+        let tv = |d: [f64; 4]| {
+            0.5 * d
+                .iter()
+                .zip(target)
+                .map(|(a, b)| (a - b).abs())
+                .sum::<f64>()
+        };
+
+        // The requested X and Z probabilities survive exactly. This is the point.
+        assert!((emitted[1] - target[1]).abs() < 1e-12);
+        assert!((emitted[3] - target[3]).abs() < 1e-12);
+
+        // And it is knowingly not the closest fit: the TV-minimal one sits nearer
+        // but only by moving pX off the requested 0.15.
+        let tv_minimal = [
+            0.65,
+            0.114_705_882_352_941_2,
+            0.035_294_117_647_058_82,
+            0.20,
+        ];
+        assert!(tv(tv_minimal) < tv(emitted));
+        assert!((tv_minimal[1] - target[1]).abs() > 0.03);
+    }
 
     fn residual_with_channel_weight(channel_weight: f64) -> NoiseChannelResidual {
         NoiseChannelResidual {

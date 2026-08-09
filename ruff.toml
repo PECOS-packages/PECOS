@@ -17,6 +17,14 @@ split-on-trailing-comma = true
 [lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 
+# PECOS owns its numeric primitives. NumPy is permitted in tests only, as an oracle to
+# compare against -- never as a runtime dependency of shipped code, examples, or scripts.
+# The replacement is the NumPy-compatible layer re-exported from `pecos` itself:
+# `array`, `zeros`, `ones`, `arange`, `array_equal`, `dtypes`, `any`, `all`, and friends.
+# Tests are exempted via per-file-ignores below. Tracking issue: #458.
+[lint.flake8-tidy-imports.banned-api]
+"numpy".msg = "PECOS owns its numerics -- use the NumPy-compatible layer from `pecos` (array, zeros, arange, dtypes, ...). NumPy is allowed in tests only, as an oracle. See issue #458."
+
 [lint.flake8-type-checking]
 strict = true
 
@@ -102,11 +110,32 @@ ignore = [
 [lint.per-file-ignores]
 "**/__init__.py" = ["F401"]  # imported but unused - Expected for __init__.py re-exports
 
+# NumPy is the oracle the test suite compares PECOS's own numerics against, so tests may
+# import it. Everything else must use the NumPy-compatible layer re-exported from `pecos`.
+"**/tests/**" = ["TID251"]
+"**/test_*.py" = ["TID251"]
+"**/conftest.py" = ["TID251"]
+
+# Pre-existing NumPy users, allowed only until #458 migrates them. This list must SHRINK.
+# Do not add to it: new non-test NumPy use is the thing the ban exists to stop.
+# (decode.py's TID251 lives in its existing entry further down, to avoid a duplicate key.)
+"python/quantum-pecos/src/pecos/qec/reliable_observables.py" = ["TID251"]
+"examples/surface/dem_decomposition_diagnostics.py" = ["TID251"]
+"examples/surface/graphlike_dem_projection_benchmark.py" = ["TID251"]
+"examples/surface/native_dem_threshold_sweep.py" = ["TID251"]
+"examples/measurement_throughput_benchmark.ipynb" = ["TID251"]
+"examples/surface_code_experiments.ipynb" = ["TID251"]
+"examples/surface_code_noisy_decoding.ipynb" = ["TID251"]
+"examples/surface_code_threshold.ipynb" = ["TID251"]
+"examples/surface_code_thresholds.ipynb" = ["TID251"]
+"scripts/compare_meas_sampling_pipeline.py" = ["TID251"]
+
 # Standalone offline oracle-fixture generators inside Rust crate test dirs -
 # scripts run via uv, not an importable package
 "crates/*/tests/fixtures/*.py" = [
     "INP001",   # Implicit namespace package - standalone scripts, not a package
     "S311",     # Standard pseudo-random - fixed-seed case sampling, not crypto
+    "TID251",   # NumPy allowed - these generate oracle fixtures for the test suite
 ]
 
 # Main pecos __init__.py - special case for module initialization
@@ -174,6 +203,7 @@ ignore = [
     "N806",     # H variable name - standard parity check matrix notation
     "SLF001",   # Private member access - accessing internal decoder APIs
     "ANN401",   # Any types - required for optional dependency types (pymatching, stim)
+    "TID251",   # NumPy - pre-existing, allowed only until #458 migrates these 114 sites
 ]
 "python/quantum-pecos/src/pecos/qec/dem.py" = [
     "PLC0415",  # Import inside function - lazy import breaks the qec/__init__ <-> decode cycle

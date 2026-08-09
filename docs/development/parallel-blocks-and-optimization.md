@@ -270,7 +270,7 @@ Comprehensive tests are available in:
 Here's a more complex example showing parallel phase gates:
 
 ```python
-import numpy as np
+import math
 from pecos.slr import Main, Parallel, QReg, rad
 from pecos.slr.qeclib import qubit as qb
 
@@ -279,7 +279,7 @@ def qft_layer(q, n, k):
     """Generate parallel controlled rotations for QFT layer k"""
     operations = []
     for j in range(k + 1, n):
-        angle = np.pi / (2 ** (j - k))
+        angle = math.pi / (2 ** (j - k))
         operations.append(qb.CRZ(rad(angle), q[j], q[k]))
     return Parallel(*operations) if len(operations) > 1 else operations[0]
 

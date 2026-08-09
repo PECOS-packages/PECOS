@@ -654,6 +654,39 @@ pub struct PyFusionBlossomDecoder {
     inner: RustFusionBlossomDecoder,
 }
 
+fn fusion_blossom_config(
+    num_nodes: usize,
+    num_observables: usize,
+    solver_type: RustSolverType,
+    max_tree_size: Option<usize>,
+) -> RustFusionBlossomConfig {
+    RustFusionBlossomConfig {
+        num_nodes: Some(num_nodes),
+        num_observables,
+        solver_type,
+        max_tree_size,
+    }
+}
+
+#[cfg(test)]
+mod fusion_blossom_tuning_tests {
+    use super::*;
+
+    #[test]
+    fn max_tree_size_override_reaches_config() {
+        let config = fusion_blossom_config(4, 1, RustSolverType::Serial, Some(1));
+
+        assert_eq!(config.max_tree_size, Some(1));
+    }
+
+    #[test]
+    fn max_tree_size_default_reaches_config() {
+        let config = fusion_blossom_config(4, 1, RustSolverType::Serial, None);
+
+        assert_eq!(config.max_tree_size, None);
+    }
+}
+
 #[pymethods]
 impl PyFusionBlossomDecoder {
     /// Create decoder for manual graph construction.
@@ -663,9 +696,15 @@ impl PyFusionBlossomDecoder {
     /// * `num_nodes` - Number of detector nodes
     /// * `num_observables` - Number of logical observables (default: 1)
     /// * `solver` - Solver type: "serial" or "parallel" (default: "serial")
+    /// * `max_tree_size` - Maximum alternating-tree size before collapse (default: unlimited)
     #[new]
-    #[pyo3(signature = (num_nodes, num_observables=1, solver="serial"))]
-    fn new(num_nodes: usize, num_observables: usize, solver: &str) -> PyResult<Self> {
+    #[pyo3(signature = (num_nodes, num_observables=1, solver="serial", *, max_tree_size=None))]
+    fn new(
+        num_nodes: usize,
+        num_observables: usize,
+        solver: &str,
+        max_tree_size: Option<usize>,
+    ) -> PyResult<Self> {
         let solver_type = match solver {
             "serial" => RustSolverType::Serial,
             "parallel" | "legacy" => RustSolverType::Legacy,
@@ -676,12 +715,7 @@ impl PyFusionBlossomDecoder {
             }
         };
 
-        let config = RustFusionBlossomConfig {
-            num_nodes: Some(num_nodes),
-            num_observables,
-            solver_type,
-            max_tree_size: None,
-        };
+        let config = fusion_blossom_config(num_nodes, num_observables, solver_type, max_tree_size);
 
         RustFusionBlossomDecoder::new(config)
             .map(|inner| Self { inner })
@@ -695,6 +729,7 @@ impl PyFusionBlossomDecoder {
     /// * `check_matrix` - Dense 2D matrix (list of lists) or `CheckMatrix`
     /// * `weights` - Optional weights for each column
     /// * `num_observables` - Number of observables (default: num columns)
+    /// * `max_tree_size` - Maximum alternating-tree size before collapse (default: unlimited)
     ///
     /// # Example
     ///
@@ -703,11 +738,12 @@ impl PyFusionBlossomDecoder {
     /// decoder = FusionBlossomDecoder.from_check_matrix(H)
     /// ```
     #[staticmethod]
-    #[pyo3(signature = (check_matrix, weights=None, num_observables=None))]
+    #[pyo3(signature = (check_matrix, weights=None, num_observables=None, *, max_tree_size=None))]
     fn from_check_matrix(
         check_matrix: Vec<Vec<u8>>,
         weights: Option<Vec<f64>>,
         num_observables: Option<usize>,
+        max_tree_size: Option<usize>,
     ) -> PyResult<Self> {
         let rows = check_matrix.len();
         let cols = if rows > 0 { check_matrix[0].len() } else { 0 };
@@ -719,12 +755,12 @@ impl PyFusionBlossomDecoder {
             }
         }
 
-        let config = RustFusionBlossomConfig {
-            num_nodes: Some(rows),
-            num_observables: num_observables.unwrap_or(cols),
-            solver_type: RustSolverType::Serial,
-            max_tree_size: None,
-        };
+        let config = fusion_blossom_config(
+            rows,
+            num_observables.unwrap_or(cols),
+            RustSolverType::Serial,
+            max_tree_size,
+        );
 
         RustFusionBlossomDecoder::from_check_matrix(&arr, weights.as_deref(), config)
             .map(|inner| Self { inner })

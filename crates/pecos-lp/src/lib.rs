@@ -153,7 +153,7 @@ fn preprocess(
                 if !width.is_finite() {
                     return Err(PreprocessError::Internal);
                 }
-                upper_bounds.push((variable, width.max(0.0)));
+                upper_bounds.push((variable, width));
             }
         } else if column.upper.is_finite() {
             let variable = objective.len();
@@ -248,24 +248,31 @@ fn validate_bounds(lower: f64, upper: f64) -> Result<(), PreprocessError> {
     {
         return Err(PreprocessError::Infeasible);
     }
-    if lower > upper && lower - upper > EPSILON {
+    // Exact: tolerating crossed bounds here would silently rewrite the LP
+    // (clamped widths admit points above the declared upper bound).
+    if lower > upper {
         return Err(PreprocessError::Infeasible);
     }
     Ok(())
 }
 
+// Exact on purpose: an empty row violated by any margin is a constraint the
+// caller wrote; dropping it within a tolerance would rewrite the LP.
 fn zero_satisfies(lower: f64, upper: f64) -> bool {
-    lower <= EPSILON && upper >= -EPSILON
+    lower <= 0.0 && upper >= 0.0
 }
 
 fn solve_standard(problem: StandardProblem) -> LpOutcome {
     let real_variables = problem.objective.len();
     let row_count = problem.inequalities.len();
     let non_artificial_variables = real_variables + row_count;
+    // Any strictly negative RHS goes through phase 1. Treating tiny negatives
+    // as zero here would rewrite the constraint; infeasibility-within-noise is
+    // for the phase-1 verdict to decide, in exactly one place.
     let artificial_count = problem
         .inequalities
         .iter()
-        .filter(|inequality| inequality.bound < -EPSILON)
+        .filter(|inequality| inequality.bound < 0.0)
         .count();
     let total_variables = non_artificial_variables + artificial_count;
     let mut rows = Vec::with_capacity(row_count);
@@ -274,7 +281,7 @@ fn solve_standard(problem: StandardProblem) -> LpOutcome {
 
     for (row_index, inequality) in problem.inequalities.iter().enumerate() {
         let mut row = vec![0.0; total_variables + 1];
-        if inequality.bound < -EPSILON {
+        if inequality.bound < 0.0 {
             for (target, source) in row.iter_mut().zip(&inequality.coefficients) {
                 *target = -*source;
             }
@@ -286,7 +293,7 @@ fn solve_standard(problem: StandardProblem) -> LpOutcome {
         } else {
             row[..real_variables].copy_from_slice(&inequality.coefficients);
             row[real_variables + row_index] = 1.0;
-            row[total_variables] = inequality.bound.max(0.0);
+            row[total_variables] = inequality.bound;
             basic.push(real_variables + row_index);
         }
         rows.push(row);
@@ -336,10 +343,14 @@ fn solve_standard(problem: StandardProblem) -> LpOutcome {
         SimplexResult::IterationLimit => return LpOutcome::InternalError,
     }
 
+    // No epsilon-snapping of solution values: consumers may act on magnitudes
+    // below any snapping threshold (mwpf branches on positivity at 1e-10), so
+    // values are returned as computed. Only sign dust from the tableau's
+    // nonnegativity invariant is clamped.
     let mut standard_values = vec![0.0; real_variables];
     for (row, &basic_variable) in tableau.rows.iter().zip(&tableau.basic) {
         if basic_variable < real_variables {
-            let value = clean(row[tableau.variables]);
+            let value = row[tableau.variables];
             if value < -EPSILON || !value.is_finite() {
                 return LpOutcome::InternalError;
             }
@@ -357,7 +368,11 @@ fn solve_standard(problem: StandardProblem) -> LpOutcome {
             .zip(&standard_values)
             .map(|(coefficient, value)| coefficient * value)
             .sum();
-        if activity - inequality.bound > FEASIBILITY_TOLERANCE * (1.0 + inequality.bound.abs()) {
+        // A NaN activity must fail here: `NaN > tolerance` is false, so the
+        // comparison alone would wave a non-finite solution through.
+        if !activity.is_finite()
+            || activity - inequality.bound > FEASIBILITY_TOLERANCE * (1.0 + inequality.bound.abs())
+        {
             return LpOutcome::InternalError;
         }
     }
@@ -371,7 +386,7 @@ fn solve_standard(problem: StandardProblem) -> LpOutcome {
         if !value.is_finite() {
             return LpOutcome::InternalError;
         }
-        original_values.push(clean(value));
+        original_values.push(value);
     }
     LpOutcome::Optimal(original_values)
 }
@@ -417,40 +432,49 @@ impl Tableau {
         }
     }
 
+    // The minimum ratio is taken over every pivot above EPSILON: skipping a
+    // small-pivot row in favor of a larger pivot can skip the binding
+    // constraint and change the answer, not just the numerics. Entries at or
+    // below EPSILON are treated as zero coefficients — cancellation dust —
+    // matching reference HiGHS, whose small_matrix_value default is also
+    // 1e-9. Within an exact ratio tie, a pivot above PIVOT_TOLERANCE is
+    // preferred so ill-conditioned divisions happen only when a small pivot
+    // is truly binding; the final feasibility audit catches any corruption
+    // those rare divisions cause.
     fn leaving_row(&self, entering: usize) -> Option<usize> {
-        // Prefer pivots above PIVOT_TOLERANCE; only if none exist fall back to
-        // anything above the noise floor, so a column with only tiny positive
-        // entries is not misreported as unbounded.
-        for pivot_floor in [PIVOT_TOLERANCE, EPSILON] {
-            let mut best: Option<(usize, f64, usize)> = None;
-            for (row_index, row) in self.rows.iter().enumerate() {
-                let pivot = row[entering];
-                if pivot <= pivot_floor {
-                    continue;
-                }
-                let rhs = row[self.variables];
-                debug_assert!(rhs >= -EPSILON, "tableau rhs went negative: {rhs}");
-                let ratio = rhs.max(0.0) / pivot;
-                let basic_variable = self.basic[row_index];
-                // Exact minimum ratio, ties broken by lowest basic index
-                // (Bland's leaving rule); a fuzzy tie comparison is not
-                // transitive and forfeits the anti-cycling guarantee.
-                let replace = best.is_none_or(|(_, best_ratio, best_basic)| {
-                    match ratio.partial_cmp(&best_ratio) {
-                        Some(std::cmp::Ordering::Less) => true,
-                        Some(std::cmp::Ordering::Equal) => basic_variable < best_basic,
-                        _ => false,
-                    }
-                });
-                if replace {
-                    best = Some((row_index, ratio, basic_variable));
-                }
+        let mut best: Option<(usize, f64, f64, usize)> = None;
+        for (row_index, row) in self.rows.iter().enumerate() {
+            let pivot = row[entering];
+            if !pivot.is_finite() || pivot <= EPSILON {
+                continue;
             }
-            if let Some((row_index, _, _)) = best {
-                return Some(row_index);
+            let rhs = row[self.variables];
+            debug_assert!(rhs >= -EPSILON, "tableau rhs went negative: {rhs}");
+            let ratio = rhs.max(0.0) / pivot;
+            if !ratio.is_finite() {
+                continue;
+            }
+            let basic_variable = self.basic[row_index];
+            // Exact minimum ratio; ties prefer safe pivots, then lowest basic
+            // index (Bland's leaving rule). A fuzzy ratio comparison is not
+            // transitive and would forfeit the anti-cycling guarantee.
+            let replace = best.is_none_or(|(_, best_ratio, best_pivot, best_basic)| {
+                match ratio.partial_cmp(&best_ratio) {
+                    Some(std::cmp::Ordering::Less) => true,
+                    Some(std::cmp::Ordering::Equal) => {
+                        let candidate_safe = pivot > PIVOT_TOLERANCE;
+                        let incumbent_safe = best_pivot > PIVOT_TOLERANCE;
+                        (candidate_safe && !incumbent_safe)
+                            || (candidate_safe == incumbent_safe && basic_variable < best_basic)
+                    }
+                    _ => false,
+                }
+            });
+            if replace {
+                best = Some((row_index, ratio, pivot, basic_variable));
             }
         }
-        None
+        best.map(|(row_index, _, _, _)| row_index)
     }
 
     // No epsilon-snapping inside tableau arithmetic: zeroing an entry without a
@@ -542,8 +566,4 @@ impl Tableau {
         self.objective = vec![0.0; non_artificial_variables + 1];
         true
     }
-}
-
-fn clean(value: f64) -> f64 {
-    if value.abs() <= EPSILON { 0.0 } else { value }
 }

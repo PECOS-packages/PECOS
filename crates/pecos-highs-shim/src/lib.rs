@@ -390,6 +390,75 @@ mod tests {
     }
 
     #[test]
+    fn preserves_sub_epsilon_optimum_magnitudes() {
+        // mwpf branches on positivity at the 1e-10 scale, so a 5e-10 optimum
+        // must come back as 5e-10, not be snapped to zero.
+        let mut model = RowProblem.optimise(Sense::Maximise);
+        let x = model.add_col(1.0, 0.0.., []);
+        let y = model.add_col(-1.0, 0.0.., []);
+        model.add_row(..=0.0, [(x, -1.0), (y, 1.0)]);
+        model.add_row(..=5e-10, [(x, 1.0), (y, -1.0)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        let columns = solved.get_solution().columns().to_vec();
+        assert!(
+            (columns[0] - columns[1] - 5e-10).abs() < 1e-20,
+            "expected x - y == 5e-10, got {}",
+            columns[0] - columns[1]
+        );
+    }
+
+    #[test]
+    fn small_objective_coefficients_still_optimized() {
+        // A reduced cost of -5e-4 must still trigger a pivot: only true noise
+        // (within ~1e-9) may be treated as optimal.
+        let mut model = RowProblem.optimise(Sense::Maximise);
+        let x = model.add_col(5e-4, 0.0.., []);
+        model.add_row(..=1.0, [(x, 1.0)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        assert_columns(solved.get_solution().columns(), &[1.0]);
+    }
+
+    #[test]
+    fn small_binding_pivot_is_not_skipped() {
+        // The binding row (1e-8 * x <= 1e-8, i.e. x <= 1) has a pivot below
+        // the safe-division preference threshold. Skipping it in favor of the
+        // x <= 2 row would return a wrong Optimal [2.0]; the ratio test must
+        // still honor the binding constraint.
+        let mut model = RowProblem.optimise(Sense::Maximise);
+        let x = model.add_col(1.0, 0.0.., []);
+        model.add_row(..=1e-8, [(x, 1e-8)]);
+        model.add_row(..=2.0, [(x, 1.0)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        assert_columns(solved.get_solution().columns(), &[1.0]);
+    }
+
+    #[test]
+    fn small_pivot_column_is_not_misreported_unbounded() {
+        // The only positive pivot (1e-8) is above the noise floor, so the
+        // constraint is real and the optimum is x = 1e8 — not Unbounded.
+        // (Coefficients at or below 1e-9 are dropped as zero, matching
+        // HiGHS's small_matrix_value default.)
+        let mut model = RowProblem.optimise(Sense::Maximise);
+        let x = model.add_col(1.0, 0.0.., []);
+        model.add_row(..=1.0, [(x, 1e-8)]);
+        let solved = model.solve();
+        assert_eq!(solved.status(), HighsModelStatus::Optimal);
+        assert_columns(solved.get_solution().columns(), &[1e8]);
+    }
+
+    #[test]
+    fn crossed_bounds_are_infeasible() {
+        // lower > upper by any margin describes an empty feasible set; it must
+        // not be silently clamped to a zero-width variable.
+        let mut model = RowProblem.optimise(Sense::Maximise);
+        model.add_col(1.0, 1.0..=0.999_999_999_5, []);
+        assert_eq!(model.solve().status(), HighsModelStatus::Infeasible);
+    }
+
+    #[test]
     fn terminates_at_degenerate_vertex() {
         let mut model = RowProblem.optimise(Sense::Maximise);
         let x = model.add_col(1.0, 0.0.., []);

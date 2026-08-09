@@ -13,5 +13,5 @@ Properties:
   rather than a silently degraded optimum.
 - Zero dependencies.
 
-Used by the `highs` compatibility facade (`crates/pecos-highs`) that lets the
-MWPF decoder build without cmake or a C++ toolchain.
+Used by the `highs` compatibility facade (`crates/pecos-highs-shim`) that lets
+the MWPF decoder build without cmake or a C++ toolchain.

@@ -305,4 +305,4 @@ opt-level = 2
 
 # Replace mwpf's vendored HiGHS wrapper with a pure-Rust LP shim so the mwpf feature does not require cmake.
 [patch."https://github.com/yuewuo/mwpf"]
-highs = { path = "crates/pecos-highs" }
+highs = { path = "crates/pecos-highs-shim" }

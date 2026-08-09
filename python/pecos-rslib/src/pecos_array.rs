@@ -37,7 +37,9 @@ use ndarray::{ArrayD, Axis, Ix2, IxDyn, Slice};
 use num_complex::{Complex32, Complex64};
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyFloat, PyInt, PySequence, PySlice, PySliceIndices, PyTuple, PyType};
+use pyo3::types::{
+    PyBool, PyFloat, PyInt, PyList, PySequence, PySlice, PySliceIndices, PyTuple, PyType,
+};
 
 use crate::dtypes::DType;
 use crate::pauli_bindings::{Pauli, PauliString};
@@ -126,7 +128,7 @@ impl ArrayData {
     }
 
     /// Convert to a boolean array (truthy: non-zero / non-false).
-    fn to_bool_array(&self) -> ArrayD<bool> {
+    pub(crate) fn to_bool_array(&self) -> ArrayD<bool> {
         match self {
             ArrayData::Bool(arr) => arr.clone(),
             ArrayData::I8(arr) => arr.mapv(|x| x != 0),
@@ -186,6 +188,7 @@ struct FlatBuffers {
     paulistrings: Vec<PauliString>,
     bools: Vec<bool>,
     i64s: Vec<i64>,
+    u64s: Vec<u64>,
     elem_type: ElemType,
 }
 
@@ -198,8 +201,58 @@ impl FlatBuffers {
             paulistrings: Vec::new(),
             bools: Vec::new(),
             i64s: Vec::new(),
+            u64s: Vec::new(),
             elem_type,
         }
+    }
+
+    fn target_is_unsigned(&self) -> bool {
+        matches!(
+            self.elem_type,
+            ElemType::U8 | ElemType::U16 | ElemType::U32 | ElemType::U64
+        )
+    }
+
+    fn target_name(&self) -> &'static str {
+        match self.elem_type {
+            ElemType::I8 => "int8",
+            ElemType::I16 => "int16",
+            ElemType::I32 => "int32",
+            ElemType::I64 => "int64",
+            ElemType::U8 => "uint8",
+            ElemType::U16 => "uint16",
+            ElemType::U32 => "uint32",
+            ElemType::U64 => "uint64",
+            _ => "integer dtype",
+        }
+    }
+
+    fn push_signed_integer(&mut self, value: i64) -> PyResult<()> {
+        if self.target_is_unsigned() {
+            self.u64s.push(u64::try_from(value).map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err(format!(
+                    "value {value} is out of range for {}",
+                    self.target_name()
+                ))
+            })?);
+        } else {
+            self.i64s.push(value);
+        }
+        Ok(())
+    }
+
+    fn push_unsigned_integer(&mut self, value: u64) -> PyResult<()> {
+        if self.target_is_unsigned() {
+            self.u64s.push(value);
+        } else {
+            self.i64s.push(i64::try_from(value).map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err(format!(
+                    "value {value} is out of range for {}",
+                    self.target_name()
+                ))
+            })?);
+        }
+        Ok(())
     }
 }
 
@@ -357,16 +410,17 @@ impl Array {
         if let Some(axis_val) = axis {
             let bool_arr = self.data.to_bool_array();
             let ndim = bool_arr.ndim();
-            let normalized = Self::normalize_axis(axis_val, ndim)?;
-            let result =
-                bool_arr.map_axis(ndarray::Axis(normalized), |lane| lane.iter().all(|&x| x));
-            return Ok(Py::new(
-                py,
-                Self {
-                    data: ArrayData::Bool(result),
-                },
-            )?
-            .into_any());
+            if let Some(normalized) = Self::normalize_axis(axis_val, ndim)? {
+                let result =
+                    bool_arr.map_axis(ndarray::Axis(normalized), |lane| lane.iter().all(|&x| x));
+                return Ok(Py::new(
+                    py,
+                    Self {
+                        data: ArrayData::Bool(result),
+                    },
+                )?
+                .into_any());
+            }
         }
 
         // axis=None: reduce entire array to a scalar bool
@@ -412,16 +466,17 @@ impl Array {
         if let Some(axis_val) = axis {
             let bool_arr = self.data.to_bool_array();
             let ndim = bool_arr.ndim();
-            let normalized = Self::normalize_axis(axis_val, ndim)?;
-            let result =
-                bool_arr.map_axis(ndarray::Axis(normalized), |lane| lane.iter().any(|&x| x));
-            return Ok(Py::new(
-                py,
-                Self {
-                    data: ArrayData::Bool(result),
-                },
-            )?
-            .into_any());
+            if let Some(normalized) = Self::normalize_axis(axis_val, ndim)? {
+                let result =
+                    bool_arr.map_axis(ndarray::Axis(normalized), |lane| lane.iter().any(|&x| x));
+                return Ok(Py::new(
+                    py,
+                    Self {
+                        data: ArrayData::Bool(result),
+                    },
+                )?
+                .into_any());
+            }
         }
 
         // axis=None: reduce entire array to a scalar bool
@@ -446,17 +501,19 @@ impl Array {
 
     /// Convert array to a different dtype
     /// This is a pure Rust implementation that does NOT use `NumPy` internally
-    pub fn astype(&self, target_dtype: DType) -> Self {
+    pub fn astype(&self, target_dtype: DType) -> PyResult<Self> {
         use num_complex::Complex;
 
         // If already the target dtype, just clone
         if self.data.dtype() == target_dtype {
-            return Self {
+            return Ok(Self {
                 data: self.data.clone(),
-            };
+            });
         }
 
-        match &self.data {
+        self.validate_cast(target_dtype)?;
+
+        Ok(match &self.data {
             ArrayData::Bool(arr) => match target_dtype {
                 DType::Bool => Self {
                     data: ArrayData::Bool(arr.clone()),
@@ -1036,7 +1093,7 @@ impl Array {
                 },
                 _ => panic!("Cannot convert PauliString array to numeric type"),
             },
-        }
+        })
     }
 
     /// Implement __len__ to return the size of the first dimension
@@ -1084,6 +1141,34 @@ impl Array {
 
     fn __str__(&self) -> String {
         self.format_array()
+    }
+
+    /// Convert the array to nested Python lists with native scalar values.
+    fn tolist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        fn build_nested(
+            array: &Array,
+            py: Python<'_>,
+            indices: &mut Vec<usize>,
+            axis: usize,
+        ) -> PyResult<Py<PyAny>> {
+            if axis == array.data.ndim() {
+                if indices.is_empty() {
+                    return array.extract_scalar(py);
+                }
+                let index = PyTuple::new(py, indices.iter().copied())?;
+                return array.__getitem__(index.as_any());
+            }
+
+            let mut items = Vec::with_capacity(array.data.shape()[axis]);
+            for index in 0..array.data.shape()[axis] {
+                indices.push(index);
+                items.push(build_nested(array, py, indices, axis + 1)?);
+                indices.pop();
+            }
+            Ok(PyList::new(py, items)?.into_any().unbind())
+        }
+
+        build_nested(self, py, &mut Vec::new(), 0)
     }
 
     /// Implement __`array_interface`__ property for `NumPy` compatibility
@@ -1157,7 +1242,7 @@ impl Array {
                 dict.set_item("strides", strides_tuple)?;
             }
             ArrayData::U8(arr) => {
-                dict.set_item("typestr", "u1")?;
+                dict.set_item("typestr", "|u1")?;
                 dict.set_item("data", (arr.as_ptr() as usize, false))?;
                 let strides: Vec<isize> = arr
                     .strides()
@@ -1948,19 +2033,108 @@ impl Array {
 }
 
 impl Array {
-    /// Normalize a possibly-negative axis index and bounds-check it.
-    fn normalize_axis(axis: isize, ndim: usize) -> PyResult<usize> {
-        let normalized = if axis < 0 {
-            (ndim as isize + axis) as usize
-        } else {
-            axis as usize
+    fn validate_cast(&self, target_dtype: DType) -> PyResult<()> {
+        if matches!(target_dtype, DType::Pauli | DType::PauliString)
+            || matches!(self.data, ArrayData::Pauli(_) | ArrayData::PauliString(_))
+        {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "cannot convert {} array to {}",
+                self.data.dtype().to_numpy_str(),
+                target_dtype.to_numpy_str()
+            )));
+        }
+
+        let Some((minimum, maximum_exclusive)) = (match target_dtype {
+            DType::I8 => Some((i128::from(i8::MIN), i128::from(i8::MAX) + 1)),
+            DType::I16 => Some((i128::from(i16::MIN), i128::from(i16::MAX) + 1)),
+            DType::I32 => Some((i128::from(i32::MIN), i128::from(i32::MAX) + 1)),
+            DType::I64 => Some((i128::from(i64::MIN), i128::from(i64::MAX) + 1)),
+            DType::U8 => Some((0, i128::from(u8::MAX) + 1)),
+            DType::U16 => Some((0, i128::from(u16::MAX) + 1)),
+            DType::U32 => Some((0, i128::from(u32::MAX) + 1)),
+            DType::U64 => Some((0, i128::from(u64::MAX) + 1)),
+            _ => None,
+        }) else {
+            return Ok(());
         };
-        if normalized >= ndim {
+
+        let out_of_range = |value: &dyn std::fmt::Display| {
+            pyo3::exceptions::PyOverflowError::new_err(format!(
+                "value {value} is out of range for {}",
+                target_dtype.to_numpy_str()
+            ))
+        };
+
+        macro_rules! validate_signed {
+            ($array:expr) => {
+                for &value in $array {
+                    let value = i128::from(value);
+                    if value < minimum || value >= maximum_exclusive {
+                        return Err(out_of_range(&value));
+                    }
+                }
+            };
+        }
+        macro_rules! validate_unsigned {
+            ($array:expr) => {
+                for &value in $array {
+                    let value = i128::from(value);
+                    if value < minimum || value >= maximum_exclusive {
+                        return Err(out_of_range(&value));
+                    }
+                }
+            };
+        }
+        macro_rules! validate_float {
+            ($array:expr, $value:expr) => {{
+                let minimum = minimum as f64;
+                let maximum_exclusive = maximum_exclusive as f64;
+                for &item in $array {
+                    let value = $value(item);
+                    if !value.is_finite() || value < minimum || value >= maximum_exclusive {
+                        return Err(out_of_range(&value));
+                    }
+                }
+            }};
+        }
+
+        match &self.data {
+            ArrayData::Bool(_) => {}
+            ArrayData::I8(array) => validate_signed!(array),
+            ArrayData::I16(array) => validate_signed!(array),
+            ArrayData::I32(array) => validate_signed!(array),
+            ArrayData::I64(array) => validate_signed!(array),
+            ArrayData::U8(array) => validate_unsigned!(array),
+            ArrayData::U16(array) => validate_unsigned!(array),
+            ArrayData::U32(array) => validate_unsigned!(array),
+            ArrayData::U64(array) => validate_unsigned!(array),
+            ArrayData::F32(array) => validate_float!(array, |value: f32| f64::from(value)),
+            ArrayData::F64(array) => validate_float!(array, |value: f64| value),
+            ArrayData::Complex64(array) => {
+                validate_float!(array, |value: num_complex::Complex<f32>| f64::from(
+                    value.re
+                ));
+            }
+            ArrayData::Complex128(array) => {
+                validate_float!(array, |value: num_complex::Complex<f64>| value.re);
+            }
+            ArrayData::Pauli(_) | ArrayData::PauliString(_) => unreachable!("validated above"),
+        }
+        Ok(())
+    }
+
+    /// Normalize a possibly-negative axis index and bounds-check it.
+    fn normalize_axis(axis: isize, ndim: usize) -> PyResult<Option<usize>> {
+        if ndim == 0 && matches!(axis, -1 | 0) {
+            return Ok(None);
+        }
+        let normalized = if axis < 0 { ndim as isize + axis } else { axis };
+        if normalized < 0 || normalized as usize >= ndim {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "axis {axis} is out of bounds for array of dimension {ndim}"
             )));
         }
-        Ok(normalized)
+        Ok(Some(normalized as usize))
     }
 
     /// Create a new `Array` from `ArrayData`
@@ -1981,14 +2155,21 @@ impl Array {
             if let Some(dt) = dtype {
                 let target_dtype = Self::parse_dtype(dt)?;
                 let target_dtype_obj = Self::elemtype_to_dtype(target_dtype)?;
-                return Ok(arr.astype(target_dtype_obj));
+                return arr.astype(target_dtype_obj);
             }
             return Ok(arr.copy());
         }
 
-        // Then try NumPy array directly (for compatibility with existing NumPy arrays)
-        if let Ok(arr) = Self::try_from_numpy(data) {
-            return Ok(arr);
+        // Then try an array-interface provider directly. Once an object advertises the
+        // protocol, preserve any precise dtype/buffer error instead of masking it as a
+        // generic non-array input error.
+        if data.hasattr("__array_interface__")? {
+            let array = Self::try_from_numpy(data)?;
+            if let Some(dtype) = dtype {
+                let target_dtype = Self::elemtype_to_dtype(Self::parse_dtype(dtype)?)?;
+                return array.astype(target_dtype);
+            }
+            return Ok(array);
         }
 
         // Finally try Python sequence (list/tuple) - parse using pure Rust
@@ -2136,8 +2317,17 @@ impl Array {
                 })
             }
             ElemType::I8 => {
-                // Convert i64 to i8
-                let flat_i8: Vec<i8> = bufs.i64s.iter().map(|&x| x as i8).collect();
+                let flat_i8: Vec<i8> = bufs
+                    .i64s
+                    .into_iter()
+                    .map(|value| {
+                        i8::try_from(value).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {value} is out of range for int8"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
                 let arr = ArrayD::from_shape_vec(shape, flat_i8).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2146,8 +2336,17 @@ impl Array {
                 })
             }
             ElemType::I16 => {
-                // Convert i64 to i16
-                let flat_i16: Vec<i16> = bufs.i64s.iter().map(|&x| x as i16).collect();
+                let flat_i16: Vec<i16> = bufs
+                    .i64s
+                    .into_iter()
+                    .map(|value| {
+                        i16::try_from(value).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {value} is out of range for int16"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
                 let arr = ArrayD::from_shape_vec(shape, flat_i16).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2156,8 +2355,17 @@ impl Array {
                 })
             }
             ElemType::I32 => {
-                // Convert i64 to i32
-                let flat_i32: Vec<i32> = bufs.i64s.iter().map(|&x| x as i32).collect();
+                let flat_i32: Vec<i32> = bufs
+                    .i64s
+                    .into_iter()
+                    .map(|value| {
+                        i32::try_from(value).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {value} is out of range for int32"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
                 let arr = ArrayD::from_shape_vec(shape, flat_i32).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2174,8 +2382,17 @@ impl Array {
                 })
             }
             ElemType::U8 => {
-                // Convert i64 to u8
-                let flat_u8: Vec<u8> = bufs.i64s.iter().map(|&x| x as u8).collect();
+                let flat_u8: Vec<u8> = bufs
+                    .u64s
+                    .into_iter()
+                    .map(|value| {
+                        u8::try_from(value).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {value} is out of range for uint8"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
                 let arr = ArrayD::from_shape_vec(shape, flat_u8).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2184,8 +2401,17 @@ impl Array {
                 })
             }
             ElemType::U16 => {
-                // Convert i64 to u16
-                let flat_u16: Vec<u16> = bufs.i64s.iter().map(|&x| x as u16).collect();
+                let flat_u16: Vec<u16> = bufs
+                    .u64s
+                    .into_iter()
+                    .map(|value| {
+                        u16::try_from(value).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {value} is out of range for uint16"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
                 let arr = ArrayD::from_shape_vec(shape, flat_u16).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2194,8 +2420,17 @@ impl Array {
                 })
             }
             ElemType::U32 => {
-                // Convert i64 to u32
-                let flat_u32: Vec<u32> = bufs.i64s.iter().map(|&x| x as u32).collect();
+                let flat_u32: Vec<u32> = bufs
+                    .u64s
+                    .into_iter()
+                    .map(|value| {
+                        u32::try_from(value).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {value} is out of range for uint32"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
                 let arr = ArrayD::from_shape_vec(shape, flat_u32).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
@@ -2204,9 +2439,7 @@ impl Array {
                 })
             }
             ElemType::U64 => {
-                // Convert i64 to u64
-                let flat_u64: Vec<u64> = bufs.i64s.iter().map(|&x| x as u64).collect();
-                let arr = ArrayD::from_shape_vec(shape, flat_u64).map_err(|e| {
+                let arr = ArrayD::from_shape_vec(shape, bufs.u64s).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
@@ -2342,42 +2575,42 @@ impl Array {
                 }
                 ArrayData::I8(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_signed_integer(i64::from(*val))?;
                     }
                 }
                 ArrayData::I16(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_signed_integer(i64::from(*val))?;
                     }
                 }
                 ArrayData::I32(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_signed_integer(i64::from(*val))?;
                     }
                 }
                 ArrayData::I64(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(*val);
+                        bufs.push_signed_integer(*val)?;
                     }
                 }
                 ArrayData::U8(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_unsigned_integer(u64::from(*val))?;
                     }
                 }
                 ArrayData::U16(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_unsigned_integer(u64::from(*val))?;
                     }
                 }
                 ArrayData::U32(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(i64::from(*val));
+                        bufs.push_unsigned_integer(u64::from(*val))?;
                     }
                 }
                 ArrayData::U64(ndarray) => {
                     for val in ndarray {
-                        bufs.i64s.push(*val as i64);
+                        bufs.push_unsigned_integer(*val)?;
                     }
                 }
                 ArrayData::F32(ndarray) => {
@@ -2470,16 +2703,21 @@ impl Array {
                     bufs.bools.push(val != 0.0);
                 }
             }
-            ElemType::I8
-            | ElemType::I16
-            | ElemType::I32
-            | ElemType::I64
-            | ElemType::U8
-            | ElemType::U16
-            | ElemType::U32
-            | ElemType::U64 => {
-                let val = data.extract::<i64>()?;
-                bufs.i64s.push(val);
+            ElemType::I8 | ElemType::I16 | ElemType::I32 | ElemType::I64 => {
+                let indexed = data.call_method0("__index__")?;
+                if let Ok(value) = indexed.extract::<i64>() {
+                    bufs.push_signed_integer(value)?;
+                } else {
+                    bufs.push_unsigned_integer(indexed.extract::<u64>()?)?;
+                }
+            }
+            ElemType::U8 | ElemType::U16 | ElemType::U32 | ElemType::U64 => {
+                let indexed = data.call_method0("__index__")?;
+                if let Ok(value) = indexed.extract::<u64>() {
+                    bufs.push_unsigned_integer(value)?;
+                } else {
+                    bufs.push_signed_integer(indexed.extract::<i64>()?)?;
+                }
             }
             ElemType::F32 | ElemType::F64 => {
                 let val = data.extract::<f64>()?;
@@ -2550,30 +2788,58 @@ impl Array {
             let val = data.extract::<num_complex::Complex<f64>>()?;
             bufs.complexes.push(val);
         } else {
-            // Priority 3: Check if it's an integer by type name
+            // Priority 3: Normalize Python and NumPy integer-like scalars through
+            // __index__, so every integer source reaches the same checked buffers.
             let type_name = data.get_type().name()?;
-
-            if type_name == "int" {
-                // It's a Python int
-                let ival = data.extract::<i64>()?;
-                match bufs.elem_type {
-                    ElemType::Complex128 | ElemType::Complex64 => {
-                        bufs.complexes
-                            .push(num_complex::Complex::new(ival as f64, 0.0));
+            if let Ok(indexed) = data.call_method0("__index__") {
+                if let Ok(ival) = indexed.extract::<i64>() {
+                    match bufs.elem_type {
+                        ElemType::Complex128 | ElemType::Complex64 => {
+                            bufs.complexes
+                                .push(num_complex::Complex::new(ival as f64, 0.0));
+                        }
+                        ElemType::F64 | ElemType::F32 => {
+                            bufs.f64s.push(ival as f64);
+                        }
+                        ElemType::Bool => {
+                            bufs.bools.push(ival != 0);
+                        }
+                        ElemType::U64 => bufs.u64s.push(u64::try_from(ival).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {ival} is out of range for uint64"
+                            ))
+                        })?),
+                        _ => {
+                            // First value or already in signed integer mode.
+                            bufs.elem_type = ElemType::I64;
+                            bufs.i64s.push(ival);
+                        }
                     }
-                    ElemType::F64 | ElemType::F32 => {
-                        bufs.f64s.push(ival as f64);
-                    }
-                    ElemType::Bool => {
-                        bufs.bools.push(ival != 0);
-                    }
-                    _ => {
-                        // First value or already in int mode
-                        bufs.elem_type = ElemType::I64;
-                        bufs.i64s.push(ival);
-                    }
+                    return Ok(());
                 }
-                return Ok(());
+
+                if let Ok(uval) = indexed.extract::<u64>() {
+                    match bufs.elem_type {
+                        ElemType::Complex128 | ElemType::Complex64 => bufs
+                            .complexes
+                            .push(num_complex::Complex::new(uval as f64, 0.0)),
+                        ElemType::F64 | ElemType::F32 => bufs.f64s.push(uval as f64),
+                        ElemType::Bool => bufs.bools.push(uval != 0),
+                        ElemType::I64 | ElemType::U64 => {
+                            for value in bufs.i64s.drain(..) {
+                                bufs.u64s.push(u64::try_from(value).map_err(|_| {
+                                    pyo3::exceptions::PyOverflowError::new_err(format!(
+                                        "value {value} cannot be combined with uint64 values"
+                                    ))
+                                })?);
+                            }
+                            bufs.elem_type = ElemType::U64;
+                            bufs.u64s.push(uval);
+                        }
+                        _ => bufs.u64s.push(uval),
+                    }
+                    return Ok(());
+                }
             }
 
             // Try as float
@@ -2744,6 +3010,30 @@ impl Array {
                     data: ArrayData::I8(ndarray),
                 })
             }
+            "|u1" | "u1" | "=u1" | "<u1" | ">u1" => {
+                let ndarray = array_buffer::extract_u8_array(array)?;
+                Ok(Self {
+                    data: ArrayData::U8(ndarray),
+                })
+            }
+            "<u2" | ">u2" | "=u2" => {
+                let ndarray = array_buffer::extract_u16_array(array)?;
+                Ok(Self {
+                    data: ArrayData::U16(ndarray),
+                })
+            }
+            "<u4" | ">u4" | "=u4" => {
+                let ndarray = array_buffer::extract_u32_array(array)?;
+                Ok(Self {
+                    data: ArrayData::U32(ndarray),
+                })
+            }
+            "<u8" | ">u8" | "=u8" => {
+                let ndarray = array_buffer::extract_u64_array(array)?;
+                Ok(Self {
+                    data: ArrayData::U64(ndarray),
+                })
+            }
             "<c8" | ">c8" | "=c8" => {
                 let ndarray = array_buffer::extract_complex32_array(array)?;
                 Ok(Self {
@@ -2757,7 +3047,7 @@ impl Array {
                 })
             }
             _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Unsupported dtype: {typestr_str}. Expected one of: f64, i64, complex128, f32, i32, i16, i8, complex64, bool"
+                "Unsupported dtype: {typestr_str}. Supported typestring kinds: 'b', 'i', 'u', 'f', 'c'"
             ))),
         }
     }
@@ -5328,7 +5618,7 @@ impl Array {
 
     /// Extract scalar value from a 0-dimensional array
     /// Returns the actual Python scalar instead of an Array wrapper
-    fn extract_scalar(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    pub(crate) fn extract_scalar(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         if !self.data.shape().is_empty() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "Cannot extract scalar from non-zero-dimensional array",

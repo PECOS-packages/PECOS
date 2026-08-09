@@ -484,7 +484,7 @@ dependencies = [
  "bitflags 2.13.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -925,15 +925,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "cmake"
-version = "0.1.58"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -950,7 +941,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -1890,7 +1881,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2373,7 +2364,6 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.1.5",
- "rayon",
 ]
 
 [[package]]
@@ -2385,6 +2375,7 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
+ "rayon",
 ]
 
 [[package]]
@@ -2462,21 +2453,9 @@ dependencies = [
 
 [[package]]
 name = "highs"
-version = "1.6.1"
-source = "git+https://github.com/yuewuo/mwpf?rev=b8444428f999457208c4b0956f3f1c745a0ec2d5#b8444428f999457208c4b0956f3f1c745a0ec2d5"
+version = "0.2.0-dev.0"
 dependencies = [
- "highs-sys",
- "log",
-]
-
-[[package]]
-name = "highs-sys"
-version = "1.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4da0c52322648e2360a5a8896d23301fa5ed99ed7607c5faf229bd0bbb30d3f"
-dependencies = [
- "bindgen",
- "cmake",
+ "pecos-lp",
 ]
 
 [[package]]
@@ -2954,7 +2933,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi 0.5.2",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4483,6 +4462,10 @@ dependencies = [
  "pecos-build",
  "pecos-core",
 ]
+
+[[package]]
+name = "pecos-lp"
+version = "0.2.0-dev.0"
 
 [[package]]
 name = "pecos-mwpf"
@@ -6149,7 +6132,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6205,7 +6188,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6296,7 +6279,7 @@ checksum = "4b213df2cbfa5f580ed2c0ac3619eda06692a4ff0211f0aebbb4008eaa9724a6"
 dependencies = [
  "fixedbitset 0.5.7",
  "foldhash 0.1.5",
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
  "indexmap 1.9.3",
  "ndarray 0.17.2",
  "num-traits",
@@ -7003,10 +6986,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

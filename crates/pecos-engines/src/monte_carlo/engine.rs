@@ -55,7 +55,7 @@ use super::builder::MonteCarloEngineBuilder;
 /// - **Parallelization**: Distributes shots across multiple worker threads
 /// - **Seed Management**: Hierarchical seeding for reproducible results
 ///   - Base seed → Worker seeds → Component seeds
-/// - **Noise Integration**: Applies noise before quantum operations
+/// - **Noise Integration**: Routes quantum command batches through the configured noise model
 ///
 /// # Tips
 ///
@@ -85,9 +85,8 @@ use super::builder::MonteCarloEngineBuilder;
 /// // For reproducibility
 /// engine.set_seed(42);
 ///
-/// // This would run the simulation but we won't actually run it in the doctest
-/// # let num_shots = 10; // Using a small number for the doctest
-/// # let _results = engine.run(num_shots);
+/// let results = engine.run(10).unwrap();
+/// assert_eq!(results.len(), 10);
 /// ```
 pub struct MonteCarloEngine {
     /// Template `HybridEngine` that is cloned for each worker
@@ -143,11 +142,9 @@ impl MonteCarloEngine {
     /// // Import necessary types for the example
     /// use pecos_engines::monte_carlo::MonteCarloEngine;
     /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
-    /// use pecos_engines::quantum;
-    ///
     /// // Create a Monte Carlo engine with default settings
     /// let classical_engine = Box::new(ExternalClassicalEngine::new());
-    /// let mut engine = MonteCarloEngine::new_with_defaults(classical_engine);
+    /// let engine = MonteCarloEngine::new_with_defaults(classical_engine);
     /// ```
     #[must_use]
     pub fn new_with_defaults(classical_engine: Box<dyn ClassicalControlEngine>) -> Self {
@@ -159,14 +156,16 @@ impl MonteCarloEngine {
             .build()
     }
 
-    /// Create a Monte Carlo engine with a classical engine and a depolarizing noise model.
+    /// Create a Monte Carlo engine with a classical engine and uniform depolarizing noise.
     ///
-    /// This is a convenience method that sets up a `MonteCarloEngine` with a state vector
-    /// quantum engine and a depolarizing noise model with the specified probability.
+    /// This convenience method creates a state-vector quantum engine sized from
+    /// [`ClassicalEngine::num_qubits`] and applies `p` uniformly to preparation,
+    /// measurement, single-qubit, and two-qubit errors.
     ///
     /// # Parameters
     /// - `classical_engine`: The classical engine to use for the simulation.
-    /// - `p`: The probability parameter for the depolarizing noise model (between 0.0 and 1.0).
+    /// - `p`: The uniform depolarizing error probability, in the inclusive range
+    ///   `0.0..=1.0`.
     ///
     /// # Returns
     /// A configured `MonteCarloEngine` ready for use.
@@ -174,18 +173,28 @@ impl MonteCarloEngine {
     /// # Examples
     ///
     /// ```
-    /// // Import necessary types for the example
+    /// use pecos_engines::ByteMessage;
     /// use pecos_engines::monte_carlo::MonteCarloEngine;
     /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
     ///
-    /// // Create a Monte Carlo engine with depolarizing noise
-    /// let classical_engine = Box::new(ExternalClassicalEngine::new());
-    /// let mut engine = MonteCarloEngine::builder()
-    ///     .with_classical_engine(classical_engine)
-    ///     .with_quantum_engine(quantum::new_quantum_engine_with_seed(2, 42))
-    ///     .with_depolarizing_noise(0.01)
+    /// // Prepare |+> on qubit 0, then measure it in the Z basis.
+    /// let circuit = ByteMessage::quantum_operations_builder()
+    ///     .pz(&[0])
+    ///     .h(&[0])
+    ///     .mz(&[0])
     ///     .build();
+    /// let classical_engine = Box::new(ExternalClassicalEngine::new_with_circuit(circuit));
+    ///
+    /// let mut engine =
+    ///     MonteCarloEngine::new_with_depolarizing_noise(classical_engine, 0.1);
+    /// engine.set_seed(42);
+    /// let results = engine.run(10).unwrap();
+    /// assert_eq!(results.len(), 10);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `p` is outside `0.0..=1.0` or is not a number.
     #[must_use]
     pub fn new_with_depolarizing_noise(
         classical_engine: Box<dyn ClassicalControlEngine>,
@@ -204,7 +213,7 @@ impl MonteCarloEngine {
     ///
     /// Setting a seed ensures deterministic behavior across runs with the same seed.
     /// This method sets the seed for:
-    /// - The internal `PecosRng` used for shot distribution
+    /// - The internal `PecosRng` used to draw the base seed for each run
     /// - The template `HybridEngine` (which sets seeds for the noise model and quantum engine)
     ///
     /// # Arguments
@@ -233,15 +242,13 @@ impl MonteCarloEngine {
         Ok(self)
     }
 
-    /// Run a Monte Carlo simulation with the specified number of shots and worker threads.
+    /// Run a Monte Carlo simulation with the configured default worker count.
     ///
-    /// This method executes multiple shots of the quantum program in parallel using
-    /// the configured components. It distributes the shots across the specified number
-    /// of workers and collects the results.
+    /// This method executes `num_shots` shots using the worker count configured on
+    /// the engine and collects their results.
     ///
     /// # Parameters
     /// - `num_shots`: The total number of circuit executions to perform.
-    /// - `num_workers`: The number of worker threads to use for parallel execution.
     ///
     /// # Returns
     /// Aggregated results from all shots.
@@ -251,6 +258,7 @@ impl MonteCarloEngine {
     ///
     /// # Panics
     /// - If `num_shots` is zero.
+    /// - If the configured default worker count is zero.
     pub fn run(&mut self, num_shots: usize) -> Result<ShotVec, PecosError> {
         self.run_with_workers(num_shots, self.default_workers)
     }
@@ -652,13 +660,15 @@ impl MonteCarloEngine {
         Self::run_with_hybrid_engine(hybrid_engine, num_shots, num_workers, seed)
     }
 
-    /// Static method to run a simulation based on a configuration string.
+    /// Run a simulation using a uniform depolarizing probability from a string.
     ///
-    /// This method is intended for use with configuration management systems where
-    /// the engine configuration is specified as a string.
+    /// `config` is parsed as an `f64` and used for preparation, measurement,
+    /// single-qubit, and two-qubit depolarizing error probabilities. The simulation
+    /// uses the default [`ExternalClassicalEngine`], which has an empty circuit.
     ///
     /// # Parameters
-    /// - `config`: Configuration string specifying the engine components.
+    /// - `config`: Uniform depolarizing probability in the inclusive range
+    ///   `0.0..=1.0`.
     /// - `num_shots`: The total number of circuit executions to perform.
     /// - `num_workers`: The number of worker threads to use for parallel execution.
     /// - `seed`: Optional seed for deterministic behavior.
@@ -667,7 +677,13 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `PecosError` if any part of the simulation fails.
+    /// Returns a `PecosError` if `config` cannot be parsed as an `f64` or if the
+    /// simulation fails.
+    ///
+    /// # Panics
+    /// - If the parsed probability is outside `0.0..=1.0` or is not a number.
+    /// - If `num_shots` is zero.
+    /// - If `num_workers` is zero.
     pub fn run_with_config(
         config: &str,
         num_shots: usize,

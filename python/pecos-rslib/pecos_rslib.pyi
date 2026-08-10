@@ -2201,6 +2201,11 @@ class decoders:
             """Set LSD order parameter (default: 0)."""
             ...
 
+        def bits_per_step(self, val: int) -> decoders.BpLsdBuilder:
+            """Set bits added per cluster-growth step (default: 0 = grow all
+            candidate bits each step)."""
+            ...
+
         def build(self) -> decoders.BpLsdDecoder:
             """Build the BP+LSD decoder."""
             ...

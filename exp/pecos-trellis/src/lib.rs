@@ -1169,10 +1169,19 @@ fn set_bit(words: &mut [u64], index: usize) {
 }
 
 fn set_bits(words: &[u64]) -> impl Iterator<Item = usize> + '_ {
+    // Ascending visit order is load-bearing: downstream float reductions sum in
+    // this order and the bitwise parity contract pins it. Skipping zero words
+    // and clearing lowest set bits preserves that order exactly.
     words.iter().enumerate().flat_map(|(word_index, &word)| {
-        (0..WORD_BITS)
-            .filter(move |&bit| word & (1 << bit) != 0)
-            .map(move |bit| word_index * WORD_BITS + bit)
+        let mut remaining = word;
+        std::iter::from_fn(move || {
+            if remaining == 0 {
+                return None;
+            }
+            let bit = remaining.trailing_zeros() as usize;
+            remaining &= remaining - 1;
+            Some(word_index * WORD_BITS + bit)
+        })
     })
 }
 

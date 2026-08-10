@@ -2713,7 +2713,8 @@ class decoders:
 
         Args:
             pcm: Sparse parity check matrix.
-            error_rate: Channel error probability.
+            error_rate: Channel error probability: a single float applied to every column,
+                or one probability per column.
 
         Example:
             >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
@@ -2722,7 +2723,11 @@ class decoders:
             >>> result = decoder.decode_syndrome([0, 0, 0])
         """
 
-        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def __init__(
+            self,
+            pcm: decoders.SparseMatrix,
+            error_rate: float | Sequence[float],
+        ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpOsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
@@ -2789,7 +2794,8 @@ class decoders:
 
         Args:
             pcm: Sparse parity check matrix.
-            error_rate: Channel error probability.
+            error_rate: Channel error probability: a single float applied to every column,
+                or one probability per column.
 
         Example:
             >>> from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
@@ -2798,7 +2804,11 @@ class decoders:
             >>> result = decoder.decode([0, 0, 0])
         """
 
-        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def __init__(
+            self,
+            pcm: decoders.SparseMatrix,
+            error_rate: float | Sequence[float],
+        ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpLsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
@@ -2813,6 +2823,11 @@ class decoders:
 
         def lsd_order(self, val: int) -> decoders.BpLsdBuilder:
             """Set LSD order parameter (default: 0)."""
+            ...
+
+        def bits_per_step(self, val: int) -> decoders.BpLsdBuilder:
+            """Set bits added per cluster-growth step (default: 0 = grow all
+            candidate bits each step)."""
             ...
 
         def build(self) -> decoders.BpLsdDecoder:
@@ -3007,7 +3022,12 @@ class decoders:
             ...
 
         def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Set initial damping factor (None = disabled)."""
+            """Enable memory-BP for the relay ensemble (default: 0.65).
+
+            The pre-relay leg uses this directly and relay legs draw per-leg strengths
+            only when it is set; None disables memory entirely and makes relay
+            ensembling ineffective.
+            """
             ...
 
         def pre_iter(self, val: int) -> decoders.RelayBpBuilder:
@@ -3023,7 +3043,12 @@ class decoders:
             ...
 
         def seed(self, val: int) -> decoders.RelayBpBuilder:
-            """Set random seed for relay parameter sampling (default: 0)."""
+            """Set the run-level random seed for relay strengths (default: 0).
+
+            The RNG advances across decodes, so reused-decoder outcomes depend on
+            decode history. Equal seeds reproduce only the same full shot sequence,
+            not an individual syndrome independently.
+            """
             ...
 
         def stopping(self, val: str) -> decoders.RelayBpBuilder:
@@ -3040,6 +3065,9 @@ class decoders:
         """Relay BP ensemble decoder for qLDPC codes.
 
         Created via ``RelayBpBuilder(...).build()``.
+        Its relay RNG advances across decodes, so a reused decoder's per-shot outcomes
+        depend on decode history. A seed reproduces the same full shot sequence, not
+        each syndrome independently.
         """
 
         @staticmethod

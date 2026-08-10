@@ -4713,7 +4713,6 @@ dependencies = [
  "ndarray 0.16.1",
  "ndarray 0.17.2",
  "pecos-decoder-core",
- "rayon",
  "relay-bp",
  "sprs",
  "thiserror 2.0.18",

@@ -724,7 +724,7 @@ impl HugrEngine {
         }
 
         // Check if this CFG is inside a FuncDefn that's being called
-        self.complete_func_call_if_needed(hugr, cfg_node);
+        self.complete_func_call_if_needed(hugr, cfg_node, final_block);
 
         // Add CFG successors to work queue
         let successors: Vec<_> = hugr.output_neighbours(cfg_node).collect();
@@ -1031,18 +1031,15 @@ impl HugrEngine {
         // across empty-block hops. Edges stay recorded (fill-only is
         // idempotent); they are purged when their target re-activates or
         // their CFG completes.
-        // Only each CFG's LATEST cascade replays: older cascades' edges
-        // point at sources a later iteration may have rewritten, and
-        // fill-only stops overwrites but not wrong FILLS of legitimately
-        // missing ports.
-        let mut latest: std::collections::BTreeMap<Node, u64> = std::collections::BTreeMap::new();
-        for (cfg_node, _, _, cascade) in &self.pending_measurement_propagations {
-            let entry = latest.entry(*cfg_node).or_insert(*cascade);
-            *entry = (*entry).max(*cascade);
-        }
+        // Replay ALL retained cascades. A smaller cascade id does not imply
+        // stale data: consecutive non-empty blocks each start a new cascade,
+        // and an outcome may need to walk an earlier edge before it can walk
+        // the newest one. Superseded loop-generation edges are removed when
+        // their target block reactivates (at recording time above), which is
+        // the actual liveness distinction.
         let pending = self.pending_measurement_propagations.clone();
-        for (cfg_node, from_block, to_block, cascade) in pending {
-            if self.active_cfgs.contains_key(&cfg_node) && latest.get(&cfg_node) == Some(&cascade) {
+        for (cfg_node, from_block, to_block, _) in pending {
+            if self.active_cfgs.contains_key(&cfg_node) {
                 self.propagate_block_outputs(hugr, from_block, to_block, true);
             }
         }

@@ -16,7 +16,7 @@ use crate::engine_system::{
     ClassicalControlEngine, ClassicalEngine, ControlEngine, EngineStage, HybridEngine,
 };
 use crate::hybrid::HybridEngineBuilder;
-use crate::noise::NoiseModel;
+use crate::noise::{DepolarizingNoiseModel, DepolarizingSampledFault, NoiseModel};
 use crate::quantum::{QuantumEngine, StateVecEngine};
 use crate::shot_results::{Data, Shot, ShotVec};
 use log::debug;
@@ -95,6 +95,22 @@ pub struct MonteCarloEngine {
     pub seed: u64,
     /// Default number of worker threads
     pub default_workers: usize,
+    /// If true, collect sampled fault histories during `run`.
+    pub fault_history_enabled: bool,
+}
+
+/// Per-shot sampled-fault history for depolarizing runs.
+pub type DepolarizingFaultHistory = Vec<DepolarizingSampledFault>;
+
+/// Result payload for Monte Carlo runs.
+///
+/// When fault-history tracking is disabled, `fault_histories` is empty.
+#[derive(Debug, Clone)]
+pub struct MonteCarloRunResult {
+    /// Aggregated measurement results.
+    pub results: ShotVec,
+    /// One history vector per shot, in shot order.
+    pub fault_histories: Vec<DepolarizingFaultHistory>,
 }
 
 impl MonteCarloEngine {
@@ -247,7 +263,7 @@ impl MonteCarloEngine {
     ///
     /// # Panics
     /// - If `num_shots` is zero.
-    pub fn run(&mut self, num_shots: usize) -> Result<ShotVec, PecosError> {
+    pub fn run(&mut self, num_shots: usize) -> Result<MonteCarloRunResult, PecosError> {
         self.run_with_workers(num_shots, self.default_workers)
     }
 
@@ -273,7 +289,7 @@ impl MonteCarloEngine {
         &mut self,
         num_shots: usize,
         num_workers: usize,
-    ) -> Result<ShotVec, PecosError> {
+    ) -> Result<MonteCarloRunResult, PecosError> {
         assert!(num_shots > 0, "num_shots cannot be zero");
         assert!(num_workers > 0, "num_workers cannot be zero");
 
@@ -283,6 +299,15 @@ impl MonteCarloEngine {
         let results_vec = Arc::new(Mutex::new(Vec::<(usize, usize, Shot)>::with_capacity(
             num_shots,
         )));
+
+        // Shared fault history collection if enabled
+        let fault_histories_vec = if self.fault_history_enabled {
+            Some(Arc::new(Mutex::new(
+                Vec::<(usize, usize, DepolarizingFaultHistory)>::with_capacity(num_shots),
+            )))
+        } else {
+            None
+        };
 
         // Determine shots per worker and generate deterministic seeds
         let shots_per_worker = distribute_shots(num_shots, num_workers);
@@ -319,6 +344,23 @@ impl MonteCarloEngine {
                 .map(|(worker_idx, shots_this_worker, mut engine)| {
                     if shots_this_worker == 0 {
                         return Ok(());
+                    }
+
+                    // Check that fault history is enabled only if using depolarizing noise
+                    if self.fault_history_enabled {
+                        let noise_model = engine.quantum_system.noise_model_mut();
+                        let depolarizing = noise_model
+                            .as_any_mut()
+                            .downcast_mut::<DepolarizingNoiseModel>()
+                            .ok_or_else(|| {
+                                PecosError::Input(
+                                    "fault_history_enabled requires DepolarizingNoiseModel"
+                                        .to_string(),
+                                )
+                            })?;
+
+                        // Turn on fault history collection
+                        depolarizing.set_sampled_fault_history_enabled(true);
                     }
 
                     // Process all shots for this worker
@@ -359,6 +401,31 @@ impl MonteCarloEngine {
                             shot_idx,
                             shot_result,
                         ));
+
+                        // Extract the fault history from the noise model
+                        if let Some(histories_shared) = &fault_histories_vec {
+                            let history = {
+                                let noise_model = engine.quantum_system.noise_model_mut();
+                                let depolarizing = noise_model
+                                    .as_any_mut()
+                                    .downcast_mut::<DepolarizingNoiseModel>()
+                                    .ok_or_else(|| {
+                                        PecosError::Input(
+                                            "fault_history_enabled requires DepolarizingNoiseModel"
+                                                .to_string(),
+                                        )
+                                    })?;
+                                depolarizing
+                                    .sampled_fault_history()
+                                    .map_or_else(Vec::new, |history| history.to_vec())
+                            };
+                            
+                            // Add history to the history vector
+                            histories_shared
+                                .lock()
+                                .expect("fault histories mutex poisoned")
+                                .push((worker_idx, shot_idx, history));
+                        }
                     }
 
                     Ok(())
@@ -381,8 +448,21 @@ impl MonteCarloEngine {
         let shot_results: Vec<Shot> = results.iter().map(|(_, _, shot)| shot.clone()).collect();
         let combined_results = ShotVec::from_measurements(&shot_results);
 
+        // Sort the fault histories into the shot order
+        let combined_histories = if let Some(histories_shared) = fault_histories_vec {
+            // Sort the histories by worker and shot index to ensure deterministic ordering
+            let mut histories = histories_shared.lock().expect("fault histories mutex poisoned");
+            histories.sort_by(|(w1, s1, _), (w2, s2, _)| w1.cmp(w2).then(s1.cmp(s2)));
+            histories.iter().map(|(_, _, history)| history.clone()).collect::<Vec<DepolarizingFaultHistory>>()
+        } else {
+            Vec::new()
+        };
+
         debug!("Monte Carlo simulation completed successfully");
-        Ok(combined_results)
+        Ok(MonteCarloRunResult {
+            results: combined_results,
+            fault_histories: combined_histories,
+        })
     }
 
     /// Run a simulation using the provided engines directly.
@@ -454,7 +534,7 @@ impl MonteCarloEngine {
             engine.set_seed(s);
         }
 
-        engine.run_with_workers(num_shots, num_workers)
+        Ok(engine.run_with_workers(num_shots, num_workers)?.results)
     }
 
     /// Static method to run a simulation with a classical engine and any noise model.
@@ -598,6 +678,7 @@ impl Clone for MonteCarloEngine {
             rng: self.rng.clone(),
             seed: self.seed,
             default_workers: self.default_workers,
+            fault_history_enabled: self.fault_history_enabled,
         }
     }
 }

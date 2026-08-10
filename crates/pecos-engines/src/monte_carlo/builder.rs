@@ -61,6 +61,8 @@ pub struct MonteCarloEngineBuilder {
     seed: Option<u64>,
     /// Default number of worker threads
     default_workers: usize,
+    /// If true, collect sampled depolarizing fault histories during `run`.
+    fault_history_enabled: bool,
 }
 
 impl MonteCarloEngineBuilder {
@@ -75,7 +77,18 @@ impl MonteCarloEngineBuilder {
             hybrid_engine: None,
             seed: None,
             default_workers: 1,
+            fault_history_enabled: false,
         }
+    }
+
+    /// Enable sampled fault-history capture during `run`.
+    ///
+    /// This currently requires the configured noise model to be
+    /// `DepolarizingNoiseModel`.
+    #[must_use]
+    pub fn fault_history_enabled(mut self) -> Self {
+        self.fault_history_enabled = true;
+        self
     }
 
     /// Helper method to update the hybrid engine builder or create a new one
@@ -370,6 +383,7 @@ impl MonteCarloEngineBuilder {
             rng,
             seed,
             default_workers: self.default_workers,
+            fault_history_enabled: self.fault_history_enabled,
         }
     }
 
@@ -412,6 +426,7 @@ impl MonteCarloEngineBuilder {
             rng: PecosRng::seed_from_u64(seed),
             seed,
             default_workers: self.default_workers,
+            fault_history_enabled: self.fault_history_enabled,
         }
     }
 }

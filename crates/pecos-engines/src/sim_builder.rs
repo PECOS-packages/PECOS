@@ -357,7 +357,7 @@ impl SimBuilder {
     /// Returns an error if the simulation cannot be built or if execution fails
     pub fn run(self, shots: usize) -> Result<ShotVec, PecosError> {
         let mut engine = self.build()?;
-        engine.run(shots)
+        Ok(engine.run(shots)?.results)
     }
 }
 

@@ -56,6 +56,17 @@ pub struct DepolarizingFaultSite{
     pub outcomes: Vec<DepolarizingFaultOutcome>,
 }
 
+/// A single fault-site sampled fault (not a history of faults)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepolarizingSampledFault {
+    /// Deterministic site identifier from traversal order.
+    pub site_uid: usize,
+    /// Outcome index for this fault, excludes 0 (no-fault) outcome.
+    pub outcome_index: u8,
+    /// Human-readable outcome label (for example `X`, `YZ`, `IX`).
+    pub outcome_label: &'static str,
+}
+
 // A fault catalog
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DepolarizingFaultCatalog {
@@ -120,9 +131,13 @@ pub struct DepolarizingNoiseModel {
     /// Scratch gate storage reused across batches to avoid repeated allocations.
     scratch_gates: Vec<Gate>,
     /// If True, then all faults will be cataloged
-    catalog_faults: bool,
+    catalog_faults_enabled: bool,
     /// Stores the catalog of faults
     catalog: Option<DepolarizingFaultCatalog>,
+    /// If True, cache non-identity faults for most recent run
+    sampled_fault_history_enabled: bool,
+    /// Realized non-identity faults from the last `start()` call.
+    sampled_fault_history: Option<Vec<DepolarizingSampledFault>>,
 }
 
 impl ProbabilityValidator for DepolarizingNoiseModel {}
@@ -171,8 +186,10 @@ impl DepolarizingNoiseModel {
             rng: NoiseRng::default(),
             scratch_builder: NoiseUtils::create_quantum_builder(),
             scratch_gates: Vec::new(),
-            catalog_faults: false,
+            catalog_faults_enabled: false,
             catalog: None,
+            sampled_fault_history_enabled: false,
+            sampled_fault_history: None,
         }
     }
 
@@ -220,13 +237,13 @@ impl DepolarizingNoiseModel {
 
     /// Enable or disable depolarizing fault-catalog capture during `start()`.
     pub fn set_catalog_faults_enabled(&mut self, enabled: bool) {
-        self.catalog_faults = enabled;
+        self.catalog_faults_enabled = enabled;
     }
 
     /// Returns whether fault-catalog capture is enabled.
     #[must_use]
     pub fn catalog_faults_enabled(&self) -> bool {
-        self.catalog_faults
+        self.catalog_faults_enabled
     }
 
     /// Returns the catalog captured during `start()`
@@ -238,6 +255,28 @@ impl DepolarizingNoiseModel {
     /// Takes ownership of the last captured catalog.
     pub fn take_fault_catalog(&mut self) -> Option<DepolarizingFaultCatalog> {
         self.catalog.take()
+    }
+
+    /// Enable or disable sampled-fault history capture during `start()`.
+    pub fn set_sampled_fault_history_enabled(&mut self, enabled: bool) {
+        self.sampled_fault_history_enabled = enabled;
+    }
+
+    /// Returns whether sampled-fault history capture is enabled.
+    #[must_use]
+    pub fn sampled_fault_history_enabled(&self) -> bool {
+        self.sampled_fault_history_enabled
+    }
+
+    /// Returns sampled non-identity faults from the last `start()`.
+    #[must_use]
+    pub fn sampled_fault_history(&self) -> Option<&[DepolarizingSampledFault]> {
+        self.sampled_fault_history.as_deref()
+    }
+
+    /// Takes sampled non-identity faults from the last `start()`.
+    pub fn take_sampled_fault_history(&mut self) -> Option<Vec<DepolarizingSampledFault>> {
+        self.sampled_fault_history.take()
     }
 
     /// Build a fault catalog from a quantum-operation message.
@@ -442,7 +481,15 @@ impl DepolarizingNoiseModel {
         p2_threshold: u64,
         builder: &mut ByteMessageBuilder,
         gate: &Gate,
+        // Tracks the fault site unique identifier for the catalog
+        next_fault_site_uid: &mut usize,
+        // TODO Why do these need to be passed in instead of taken from self?
+        sampled_fault_history_enabled: bool,
+        sampled_fault_history: &mut Vec<DepolarizingSampledFault>,
     ) {
+
+        let mut sampled_outcome: Option<(usize, u8, &'static str)> = None;
+
         match gate.gate_type {
             GateType::X
             | GateType::Z
@@ -463,9 +510,17 @@ impl DepolarizingNoiseModel {
             | GateType::Tdg
             | GateType::U
             | GateType::R1XY => {
+                let site_uid = *next_fault_site_uid;
+                *next_fault_site_uid += 1;
+                // Apply ideal gate
                 NoiseUtils::add_gate_to_builder(builder, gate);
                 trace!("Applying single-qubit gate with possible fault");
-                Self::apply_sq_faults(rng, p1_threshold, builder, gate);
+                // Apply noise after the gate and cache the noise event
+                if let Some((outcome_index, outcome_label)) =
+                    Self::apply_sq_faults(rng, p1_threshold, builder, gate)
+                {
+                    sampled_outcome = Some((site_uid, outcome_index, outcome_label));
+                }
             }
             GateType::CX
             | GateType::CY
@@ -484,24 +539,55 @@ impl DepolarizingNoiseModel {
             | GateType::RZZ
             | GateType::RXXRYYRZZ
             | GateType::U2q => {
+                let site_uid = *next_fault_site_uid;
+                *next_fault_site_uid += 1;
+                // Apply ideal gate
                 NoiseUtils::add_gate_to_builder(builder, gate);
                 trace!("Applying two-qubit gate with possible fault");
-                Self::apply_tq_faults(rng, p2_threshold, builder, gate);
+                // Apply noise after the gate and cache the noise event
+                if let Some((outcome_index, outcome_label)) =
+                    Self::apply_tq_faults(rng, p2_threshold, builder, gate)
+                {
+                    sampled_outcome = Some((site_uid, outcome_index, outcome_label));
+                }
             }
             GateType::CCX => {
+                let site_uid = *next_fault_site_uid;
+                *next_fault_site_uid += 1;
+                // Apply ideal gate
                 NoiseUtils::add_gate_to_builder(builder, gate);
                 trace!("Applying three-qubit gate with possible fault");
-                Self::apply_tq_faults(rng, p2_threshold, builder, gate);
+                // Apply noise after the gate and cache the noise event
+                if let Some((outcome_index, outcome_label)) =
+                    Self::apply_tq_faults(rng, p2_threshold, builder, gate)
+                {
+                    sampled_outcome = Some((site_uid, outcome_index, outcome_label));
+                }
             }
             GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
-                trace!("Applying measurement with possible fault");
-                Self::apply_meas_faults(rng, p_meas_threshold, builder, gate);
+                let site_uid = *next_fault_site_uid;
+                *next_fault_site_uid += 1;
+                // Apply the noise before the measurement and cache the noise event
+                if let Some((outcome_index, outcome_label)) =
+                    Self::apply_meas_faults(rng, p_meas_threshold, builder, gate)
+                {
+                    sampled_outcome = Some((site_uid, outcome_index, outcome_label));
+                }
+                // Apply the ideal measurement
                 NoiseUtils::add_gate_to_builder(builder, gate);
             }
             GateType::PZ | GateType::QAlloc => {
+                let site_uid = *next_fault_site_uid;
+                *next_fault_site_uid += 1;
+                // Apply the ideal gate
                 NoiseUtils::add_gate_to_builder(builder, gate);
                 trace!("Applying preparation with possible fault");
-                Self::apply_prep_faults(rng, p_prep_threshold, builder, gate);
+                // Add the noise after the gate and cache the event
+                if let Some((outcome_index, outcome_label)) =
+                    Self::apply_prep_faults(rng, p_prep_threshold, builder, gate)
+                {
+                    sampled_outcome = Some((site_uid, outcome_index, outcome_label));
+                }
             }
             GateType::Channel => unreachable!("channel gates are rejected before noise is applied"),
             GateType::I
@@ -514,6 +600,16 @@ impl DepolarizingNoiseModel {
                 // Just pass through with no added noise.
             }
         }
+
+        if sampled_fault_history_enabled {
+            if let Some((site_uid, outcome_index, outcome_label)) = sampled_outcome {
+                sampled_fault_history.push(DepolarizingSampledFault {
+                    site_uid,
+                    outcome_index,
+                    outcome_label,
+                });
+            }
+        }
     }
 
     fn apply_prep_faults(
@@ -521,12 +617,15 @@ impl DepolarizingNoiseModel {
         p_prep_threshold: u64,
         builder: &mut ByteMessageBuilder,
         gate: &Gate,
-    ) {
+    ) -> Option<(u8, &'static str)> {
         // Use precomputed threshold for fast probability check
         if rng.inner_mut().check_probability(p_prep_threshold) {
             trace!("Applying prep fault on qubits {:?}", gate.qubits);
             NoiseUtils::apply_x(builder, *gate.qubits[0]);
+            return Some((1, "X"));
         }
+
+        None
     }
 
     fn apply_meas_faults(
@@ -534,12 +633,15 @@ impl DepolarizingNoiseModel {
         p_meas_threshold: u64,
         builder: &mut ByteMessageBuilder,
         gate: &Gate,
-    ) {
+    ) -> Option<(u8, &'static str)> {
         // Use precomputed threshold for fast probability check
         if rng.inner_mut().check_probability(p_meas_threshold) {
             trace!("Applying meas fault on qubits {:?}", gate.qubits);
             NoiseUtils::apply_x(builder, *gate.qubits[0]);
+            return Some((1, "X"));
         }
+
+        None
     }
 
     fn apply_sq_faults(
@@ -547,7 +649,7 @@ impl DepolarizingNoiseModel {
         p1_threshold: u64,
         builder: &mut ByteMessageBuilder,
         gate: &Gate,
-    ) {
+    ) -> Option<(u8, &'static str)> {
         // Use fused noise sampling: probability check + Pauli selection in one call
         if let Some(fault_type) = rng.inner_mut().noise_sample_1q(p1_threshold) {
             let qubit = gate.qubits[0];
@@ -556,17 +658,22 @@ impl DepolarizingNoiseModel {
                 0 => {
                     trace!("Applying X fault on qubit {qubit}");
                     NoiseUtils::apply_x(builder, *qubit);
+                    return Some((1, "X"));
                 }
                 1 => {
                     trace!("Applying Y fault on qubit {qubit}");
                     NoiseUtils::apply_y(builder, *qubit);
+                    return Some((2, "Y"));
                 }
                 _ => {
                     trace!("Applying Z fault on qubit {qubit}");
                     NoiseUtils::apply_z(builder, *qubit);
+                    return Some((3, "Z"));
                 }
             }
         }
+
+        None
     }
 
     fn apply_tq_faults(
@@ -574,7 +681,7 @@ impl DepolarizingNoiseModel {
         p2_threshold: u64,
         builder: &mut ByteMessageBuilder,
         gate: &Gate,
-    ) {
+    ) -> Option<(u8, &'static str)> {
         // Use fused noise sampling: probability check + Pauli selection in one call
         if let Some(fault_type) = rng.inner_mut().noise_sample_2q(p2_threshold) {
             let qubit0 = gate.qubits[0];
@@ -585,88 +692,105 @@ impl DepolarizingNoiseModel {
                 0 => {
                     trace!("Applying IX fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_x(builder, *qubit1);
+                    return Some((1, "IX"));
                 }
                 // IY
                 1 => {
                     trace!("Applying IY fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_y(builder, *qubit1);
+                    return Some((2, "IY"));
                 }
                 // IZ
                 2 => {
                     trace!("Applying IZ fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_z(builder, *qubit1);
+                    return Some((3, "IZ"));
                 }
                 // XI
                 3 => {
                     trace!("Applying XI fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_x(builder, *qubit0);
+                    return Some((4, "XI"));
                 }
                 // XX
                 4 => {
                     trace!("Applying XX fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_x(builder, *qubit0);
                     NoiseUtils::apply_x(builder, *qubit1);
+                    return Some((5, "XX"));
                 }
                 // XY
                 5 => {
                     trace!("Applying XY fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_x(builder, *qubit0);
                     NoiseUtils::apply_y(builder, *qubit1);
+                    return Some((6, "XY"));
                 }
                 // XZ
                 6 => {
                     trace!("Applying XZ fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_x(builder, *qubit0);
                     NoiseUtils::apply_z(builder, *qubit1);
+                    return Some((7, "XZ"));
                 }
                 // YI
                 7 => {
                     trace!("Applying YI fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_y(builder, *qubit0);
+                    return Some((8, "YI"));
                 }
                 // YX
                 8 => {
                     trace!("Applying YX fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_y(builder, *qubit0);
                     NoiseUtils::apply_x(builder, *qubit1);
+                    return Some((9, "YX"));
                 }
                 // YY
                 9 => {
                     trace!("Applying YY fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_y(builder, *qubit0);
                     NoiseUtils::apply_y(builder, *qubit1);
+                    return Some((10, "YY"));
                 }
                 // YZ
                 10 => {
                     trace!("Applying YZ fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_y(builder, *qubit0);
                     NoiseUtils::apply_z(builder, *qubit1);
+                    return Some((11, "YZ"));
                 }
                 // ZI
                 11 => {
                     trace!("Applying ZI fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_z(builder, *qubit0);
+                    return Some((12, "ZI"));
                 }
                 // ZX
                 12 => {
                     trace!("Applying ZX fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_z(builder, *qubit0);
                     NoiseUtils::apply_x(builder, *qubit1);
+                    return Some((13, "ZX"));
                 }
                 // ZY
                 13 => {
                     trace!("Applying ZY fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_z(builder, *qubit0);
                     NoiseUtils::apply_y(builder, *qubit1);
+                    return Some((14, "ZY"));
                 }
                 // ZZ
                 _ => {
                     trace!("Applying ZZ fault on qubits {:?}", gate.qubits);
                     NoiseUtils::apply_z(builder, *qubit0);
                     NoiseUtils::apply_z(builder, *qubit1);
+                    return Some((15, "ZZ"));
                 }
             }
         }
+
+        None
     }
 }
 
@@ -846,8 +970,10 @@ impl ControlEngine for DepolarizingNoiseModel {
             return Err(Self::channel_gate_error());
         }
 
+        self.sampled_fault_history = None;
+
         // Initialize an empty fault catalog
-        if self.catalog_faults {
+        if self.catalog_faults_enabled {
             self.catalog = Some(Self::build_fault_catalog_from_gates(
                 &self,
                 &self.scratch_gates,
@@ -873,6 +999,8 @@ impl ControlEngine for DepolarizingNoiseModel {
         let p2_threshold = self.p2_threshold;
         let rng = &mut self.rng;
         let builder = &mut self.scratch_builder;
+        let mut sampled_fault_history = Vec::new();
+        let mut next_fault_site_uid = 0_usize;
 
         for gate in &self.scratch_gates {
             Self::apply_noise_to_gate(
@@ -883,8 +1011,17 @@ impl ControlEngine for DepolarizingNoiseModel {
                 p2_threshold,
                 builder,
                 gate,
+                &mut next_fault_site_uid,
+                self.sampled_fault_history_enabled,
+                &mut sampled_fault_history,
             );
         }
+
+        self.sampled_fault_history = if self.sampled_fault_history_enabled {
+            Some(sampled_fault_history)
+        } else {
+            None
+        };
 
         let noisy_gates = self.scratch_builder.build();
 
@@ -904,6 +1041,7 @@ impl ControlEngine for DepolarizingNoiseModel {
     fn reset(&mut self) -> Result<(), PecosError> {
         // No state to reset
         self.catalog = None;
+        self.sampled_fault_history = None;
         Ok(())
     }
 }
@@ -1219,4 +1357,38 @@ mod tests {
             .expect("catalog should be captured when enabled");
         assert_eq!(catalog.sites.len(), 2);
     }
+
+    #[test]
+    fn test_sampled_fault_history_tracks_non_identity_faults() {
+        // TODO Check what this test is doing
+        let mut noise = DepolarizingNoiseModel::new_uniform(1.0);
+        noise.set_seed(7);
+        noise.set_sampled_fault_history_enabled(true);
+
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.pz(&[0]);
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+        let msg = builder.build();
+
+        let _ = noise.start(msg).expect("noise start should succeed");
+
+        let history = noise
+            .sampled_fault_history()
+            .expect("sampled fault history should exist when enabled");
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[0].site_uid, 0);
+        assert_eq!(history[0].outcome_label, "X");
+        assert_eq!(history[1].site_uid, 1);
+        assert!(matches!(history[1].outcome_label, "X" | "Y" | "Z"));
+        assert_eq!(history[2].site_uid, 2);
+        assert_eq!(history[3].site_uid, 3);
+        assert_eq!(history[3].outcome_label, "X");
+    }
+    // TODO Make a test that checks that the correct sites are being indexed
+
+    // TODO Make a test that ensures the different ways to apply gate noise are consistent
+    // with each other when tracking the fault history. 
 }

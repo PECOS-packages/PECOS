@@ -24,7 +24,9 @@ pub use engine_system::{
     ClassicalControlEngine, ClassicalEngine, ControlEngine, EngineStage, EngineSystem,
 };
 pub use hybrid::HybridEngine;
-pub use monte_carlo::MonteCarloEngine;
+pub use monte_carlo::{
+    DepolarizingFaultHistory, MonteCarloRunResult, MonteCarloEngine,
+};
 pub use noise::{
     DepolarizingNoiseModel, GeneralNoiseModel, GeneralNoiseModelBuilder, NoiseModel,
     PassThroughNoiseModel, PassThroughNoiseModelBuilder,

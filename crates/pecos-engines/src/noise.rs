@@ -27,7 +27,9 @@ pub mod weighted_sampler;
 pub use self::biased_depolarizing::{
     BiasedDepolarizingNoiseModel, BiasedDepolarizingNoiseModelBuilder,
 };
-pub use self::depolarizing::{DepolarizingNoiseModel, DepolarizingNoiseModelBuilder};
+pub use self::depolarizing::{
+    DepolarizingNoiseModel, DepolarizingNoiseModelBuilder, DepolarizingSampledFault,
+};
 pub use self::general::{GeneralNoiseModel, GeneralNoiseModelBuilder, PauliWithAngleScaling};
 pub use self::noise_rng::NoiseRng;
 pub use self::pass_through::{PassThroughNoiseModel, PassThroughNoiseModelBuilder};

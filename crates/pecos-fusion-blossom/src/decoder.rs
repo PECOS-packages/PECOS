@@ -40,7 +40,10 @@ pub struct FusionBlossomConfig {
     pub num_observables: usize,
     /// Solver type to use
     pub solver_type: SolverType,
-    /// Maximum tree size for union-find decoder (currently not supported in Rust API)
+    /// Maximum alternating-tree size before the tree is collapsed.
+    ///
+    /// Smaller values approximate union-find decoding behavior. [`None`] leaves
+    /// the tree size unlimited.
     pub max_tree_size: Option<usize>,
 }
 
@@ -957,18 +960,28 @@ impl FusionBlossomDecoder {
 
             let solver = match self.config.solver_type {
                 SolverType::Legacy => Solver::Legacy(LegacySolverSerial::new(&initializer)),
-                SolverType::Serial => Solver::Serial(SolverSerial::new(&initializer)),
+                SolverType::Serial => {
+                    let solver = SolverSerial::new(&initializer);
+                    if let Some(max_tree_size) = self.config.max_tree_size {
+                        solver.primal_module.write().max_tree_size = max_tree_size;
+                    }
+                    Solver::Serial(solver)
+                }
                 SolverType::Parallel => {
                     let partition_info = self
                         .partition_config
                         .as_ref()
                         .expect("partition_config must be set for Parallel solver")
                         .info();
-                    Solver::Parallel(SolverDualParallel::new(
+                    let solver = SolverDualParallel::new(
                         &initializer,
                         &partition_info,
                         serde_json::json!({}),
-                    ))
+                    );
+                    if let Some(max_tree_size) = self.config.max_tree_size {
+                        solver.primal_module.write().max_tree_size = max_tree_size;
+                    }
+                    Solver::Parallel(solver)
                 }
             };
 
@@ -1252,5 +1265,59 @@ impl FusionBlossomDecoder {
         let edge_indices: Vec<usize> = matched_edges.clone();
         let mask = self.obs_mask_from_edges(&edge_indices);
         Ok(mask)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serial_max_tree_size_override_reaches_solver() {
+        let mut decoder = FusionBlossomDecoder::new(FusionBlossomConfig {
+            num_nodes: Some(4),
+            max_tree_size: Some(1),
+            ..FusionBlossomConfig::default()
+        })
+        .unwrap();
+
+        let Solver::Serial(solver) = decoder.get_or_create_solver() else {
+            panic!("expected serial solver");
+        };
+        assert_eq!(solver.primal_module.read_recursive().max_tree_size, 1);
+    }
+
+    #[test]
+    fn serial_default_max_tree_size_is_unlimited() {
+        let mut decoder = FusionBlossomDecoder::new(FusionBlossomConfig {
+            num_nodes: Some(4),
+            ..FusionBlossomConfig::default()
+        })
+        .unwrap();
+
+        let Solver::Serial(solver) = decoder.get_or_create_solver() else {
+            panic!("expected serial solver");
+        };
+        assert_eq!(
+            solver.primal_module.read_recursive().max_tree_size,
+            usize::MAX
+        );
+    }
+
+    #[test]
+    fn parallel_max_tree_size_override_reaches_solver() {
+        let mut decoder = FusionBlossomDecoder::new(FusionBlossomConfig {
+            num_nodes: Some(4),
+            solver_type: SolverType::Parallel,
+            max_tree_size: Some(1),
+            ..FusionBlossomConfig::default()
+        })
+        .unwrap();
+        decoder.set_partition_config(PartitionConfig::new(4));
+
+        let Solver::Parallel(solver) = decoder.get_or_create_solver() else {
+            panic!("expected parallel solver");
+        };
+        assert_eq!(solver.primal_module.read_recursive().max_tree_size, 1);
     }
 }

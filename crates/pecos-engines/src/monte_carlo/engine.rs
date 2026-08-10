@@ -399,17 +399,11 @@ impl MonteCarloEngine {
             .collect();
 
         // Verify that worker indices and shots per worker match the seed report
-        for worker_index in 0..num_workers {
+        for (worker_index, item) in worker_engines.iter().enumerate().take(num_workers) {
             // check that worker indices agree
-            assert!(
-                seed_report.workers[worker_index].worker_idx == worker_engines[worker_index].0,
-                ".."
-            );
+            assert!(seed_report.workers[worker_index].worker_idx == item.0, "..");
             // check that worker shot counts agree
-            assert!(
-                seed_report.workers[worker_index].shots == worker_engines[worker_index].1,
-                ".."
-            );
+            assert!(seed_report.workers[worker_index].shots == item.1, "..");
         }
 
         // Create a dedicated thread pool for this simulation to avoid contention

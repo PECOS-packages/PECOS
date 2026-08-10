@@ -5,7 +5,8 @@
 #![allow(clippy::case_sensitive_file_extension_comparisons)]
 
 use crate::errors::{Error, Result};
-use sevenz_rust::{Password, SevenZReader};
+use crate::extract::contained_entry_path;
+use sevenz_rust2::{ArchiveReader, Password};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
@@ -369,11 +370,8 @@ fn copy_dir_contents(src: &Path, dest: &Path) -> Result<()> {
 fn extract_windows_exe(archive: &Path, dest: &Path) -> Result<()> {
     println!("Extracting CUDA Toolkit...");
 
-    let file = fs::File::open(archive)?;
-    let len = file.metadata()?.len();
-    let password = Password::empty();
-    let mut reader =
-        SevenZReader::new(file, len, password).map_err(|e| Error::Archive(e.to_string()))?;
+    let mut reader = ArchiveReader::open(archive, Password::empty())
+        .map_err(|e| Error::Archive(e.to_string()))?;
 
     fs::create_dir_all(dest)?;
 
@@ -392,15 +390,20 @@ fn extract_windows_exe(archive: &Path, dest: &Path) -> Result<()> {
                 return Ok(true); // Skip this entry
             }
 
+            // Entry names come from the archive, so they are untrusted input: resolve them
+            // through the containment check before touching the filesystem. Unlike the tar
+            // and zip readers used elsewhere in this crate, ArchiveReader hands the raw name
+            // to the callback without validating it.
+            let entry_path = contained_entry_path(dest, entry_name)
+                .map_err(|error| sevenz_rust2::Error::Other(error.to_string().into()))?;
+
             if entry.is_directory() {
-                let dir_path = dest.join(entry_name);
-                fs::create_dir_all(&dir_path).ok();
+                fs::create_dir_all(&entry_path).ok();
             } else {
-                let file_path = dest.join(entry_name);
-                if let Some(parent) = file_path.parent() {
+                if let Some(parent) = entry_path.parent() {
                     fs::create_dir_all(parent).ok();
                 }
-                let mut output = fs::File::create(&file_path)?;
+                let mut output = fs::File::create(&entry_path)?;
                 io::copy(reader, &mut output)?;
             }
             Ok(true)

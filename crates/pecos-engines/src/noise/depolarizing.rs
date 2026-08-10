@@ -1370,7 +1370,7 @@ mod tests {
 
     #[test]
     fn test_fault_catalog_capture_in_start() {
-        // 
+        // Check that the fault catalog is captured when enabled
         let mut noise = DepolarizingNoiseModel::new_uniform(0.0);
         noise.set_catalog_faults_enabled(true);
 
@@ -1390,6 +1390,7 @@ mod tests {
 
     #[test]
     fn test_sampled_fault_history_tracks_non_identity_faults() {
+        // Checks that when you force errors, they are correctly cached in the sampled fault history
         // TODO Check what this test is doing
         let mut noise = DepolarizingNoiseModel::new_uniform(1.0);
         noise.set_seed(7);
@@ -1420,7 +1421,8 @@ mod tests {
 
     #[test]
     fn test_replay_fault_history_forces_specified_outcome() {
-        // TODO Check that this test is doing something that makes sense
+        // Test that if we specify a fault history, then that is the one that
+        // is executed on replay
         let mut noise = DepolarizingNoiseModel::new_uniform(0.0);
         noise.set_sampled_fault_history_enabled(true);
         noise.set_replay_fault_history(Some(vec![DepolarizingSampledFault {
@@ -1444,17 +1446,190 @@ mod tests {
         assert_eq!(history[0].outcome_index, 5);
         assert_eq!(history[0].outcome_label, "XX");
     }
-    // TODO Make a test that checks that the correct sites are being indexed
 
-    // TODO Make a test that ensures the different ways to apply gate noise are consistent
-    // with each other when tracking the fault history. 
+    #[test]
+    fn test_replay_fault_history_uses_expected_site_indices() {
+        // Check a more complex replay history with multiple sites
+        // and with skipped fault sites
+        let mut noise = DepolarizingNoiseModel::new_uniform(0.0);
+        noise.set_sampled_fault_history_enabled(true);
 
-    // TODO add a test that ensures that fault replay returns the same state
-    // and the same sampled faults as an original simulation does
+        noise.set_replay_fault_history(Some(vec![
+            DepolarizingSampledFault {
+                site_uid: 0,
+                outcome_index: 1,
+                outcome_label: "X",
+            },
+            DepolarizingSampledFault {
+                site_uid: 2,
+                outcome_index: 15,
+                outcome_label: "ZZ",
+            },
+            DepolarizingSampledFault {
+                site_uid: 3,
+                outcome_index: 1,
+                outcome_label: "X",
+            },
+        ]));
 
-    // TODO check that you can create a fault history from a catalog
-    // and that it can be replayed twice to recreate the same results
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.pz(&[0]);
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+        let msg = builder.build();
 
-    // TODO check that if you create an empty fault history and replay
-    // it, you get the same results as the simulation without faults
+        let _ = noise.start(msg).expect("noise start should succeed");
+
+        let history = noise
+            .sampled_fault_history()
+            .expect("history should exist when enabled");
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[0].site_uid, 0);
+        assert_eq!(history[1].site_uid, 2);
+        assert_eq!(history[2].site_uid, 3);
+        assert_eq!(history[0].outcome_label, "X");
+        assert_eq!(history[2].outcome_label, "ZZ");
+        assert_eq!(history[3].outcome_label, "X");
+    }
+
+    #[test]
+    fn test_sampled_and_replayed_histories_match() {
+        // Checks that if we sample a fault history and then replay it, we get the same history back
+        let mut source = DepolarizingNoiseModel::new_uniform(0.5);
+        source.set_seed(11);
+        source.set_sampled_fault_history_enabled(true);
+
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.pz(&[0]);
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+        let msg = builder.build();
+
+        let _ = source
+            .start(msg.clone())
+            .expect("source start should succeed");
+        let sampled_history = source
+            .sampled_fault_history()
+            .expect("sampled history should exist")
+            .to_vec();
+
+        let mut replay = DepolarizingNoiseModel::new_uniform(0.0);
+        replay.set_sampled_fault_history_enabled(true);
+        replay.set_replay_fault_history(Some(sampled_history.clone()));
+        let _ = replay.start(msg).expect("replay start should succeed");
+
+        let replayed_history = replay
+            .sampled_fault_history()
+            .expect("replayed history should exist")
+            .to_vec();
+
+        assert_eq!(replayed_history, sampled_history);
+    }
+
+    #[test]
+    fn test_catalog_derived_history_replay_is_repeatable() {
+
+        let mut noise = DepolarizingNoiseModel::new_uniform(0.4);
+        noise.set_sampled_fault_history_enabled(true);
+
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.pz(&[0]);
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+        let msg = builder.build();
+
+        let catalog = noise
+            .build_fault_catalog_from_message(&msg)
+            .expect("catalog generation should succeed");
+
+        let derived_history: Vec<DepolarizingSampledFault> = catalog
+            .sites
+            .iter()
+            .filter_map(|site| {
+                site.outcomes
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .find(|(_, outcome)| outcome.probability > 0.0)
+                    .and_then(|(idx, outcome)| {
+                        u8::try_from(idx).ok().map(|outcome_index| DepolarizingSampledFault {
+                            site_uid: site.uid,
+                            outcome_index,
+                            outcome_label: outcome.label,
+                        })
+                    })
+            })
+            .collect();
+
+        assert_eq!(derived_history.len(), catalog.sites.len());
+
+        noise.set_replay_fault_history(Some(derived_history.clone()));
+        let first_stage = noise
+            .start(msg.clone())
+            .expect("first replay start should succeed");
+        let first_noisy = match first_stage {
+            EngineStage::NeedsProcessing(noisy) => noisy,
+            EngineStage::Complete(_) => panic!("Expected NeedsProcessing stage"),
+        };
+        let first_history = noise
+            .sampled_fault_history()
+            .expect("first replay history should exist")
+            .to_vec();
+
+        noise.set_replay_fault_history(Some(derived_history));
+        let second_stage = noise
+            .start(msg)
+            .expect("second replay start should succeed");
+        let second_noisy = match second_stage {
+            EngineStage::NeedsProcessing(noisy) => noisy,
+            EngineStage::Complete(_) => panic!("Expected NeedsProcessing stage"),
+        };
+        let second_history = noise
+            .sampled_fault_history()
+            .expect("second replay history should exist")
+            .to_vec();
+
+        assert_eq!(first_noisy.as_bytes(), second_noisy.as_bytes());
+        assert_eq!(first_history, second_history);
+    }
+
+    #[test]
+    fn test_empty_replay_matches_no_fault_run_message() {
+        // Ensures that an empty replay history produces the same output as a run with no faults
+        let mut no_replay = DepolarizingNoiseModel::new_uniform(0.0);
+        let mut with_empty_replay = DepolarizingNoiseModel::new_uniform(0.0);
+        with_empty_replay.set_replay_fault_history(Some(Vec::new()));
+
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.pz(&[0]);
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+        let msg = builder.build();
+
+        let stage_no_replay = no_replay
+            .start(msg.clone())
+            .expect("no-replay start should succeed");
+        let out_no_replay = match stage_no_replay {
+            EngineStage::NeedsProcessing(noisy) => noisy,
+            EngineStage::Complete(_) => panic!("Expected NeedsProcessing stage"),
+        };
+
+        let stage_empty_replay = with_empty_replay
+            .start(msg)
+            .expect("empty-replay start should succeed");
+        let out_empty_replay = match stage_empty_replay {
+            EngineStage::NeedsProcessing(noisy) => noisy,
+            EngineStage::Complete(_) => panic!("Expected NeedsProcessing stage"),
+        };
+
+        assert_eq!(out_no_replay.as_bytes(), out_empty_replay.as_bytes());
+    }
 }

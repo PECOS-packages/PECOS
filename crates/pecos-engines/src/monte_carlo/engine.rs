@@ -917,3 +917,209 @@ impl ControlEngine for ExternalClassicalEngine {
         Engine::reset(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::byte_message::ByteMessageBuilder;
+
+    #[derive(Clone)]
+    struct FixedCircuitClassicalEngine {
+        commands: ByteMessage,
+    }
+
+    impl FixedCircuitClassicalEngine {
+        fn new() -> Self {
+            let mut builder = ByteMessageBuilder::new();
+            let _ = builder.for_quantum_operations();
+            builder.pz(&[0]);
+            builder.x(&[0]);
+            builder.cx(&[(0, 1)]);
+            builder.mz(&[1]);
+
+            Self {
+                commands: builder.build(),
+            }
+        }
+    }
+
+    impl Engine for FixedCircuitClassicalEngine {
+        type Input = ();
+        type Output = Shot;
+
+        fn process(&mut self, _input: Self::Input) -> Result<Self::Output, PecosError> {
+            Ok(Shot::default())
+        }
+
+        fn reset(&mut self) -> Result<(), PecosError> {
+            Ok(())
+        }
+    }
+
+    impl ClassicalEngine for FixedCircuitClassicalEngine {
+        fn num_qubits(&self) -> usize {
+            2
+        }
+
+        fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
+            Ok(self.commands.clone())
+        }
+
+        fn handle_measurements(&mut self, _message: ByteMessage) -> Result<(), PecosError> {
+            Ok(())
+        }
+
+        fn get_results(&self) -> Result<Shot, PecosError> {
+            Ok(Shot::default())
+        }
+
+        fn compile(&self) -> Result<(), PecosError> {
+            Ok(())
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    impl ControlEngine for FixedCircuitClassicalEngine {
+        type Input = ();
+        type Output = Shot;
+        type EngineInput = ByteMessage;
+        type EngineOutput = ByteMessage;
+
+        fn start(&mut self, (): ()) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
+            Ok(EngineStage::NeedsProcessing(self.commands.clone()))
+        }
+
+        fn continue_processing(
+            &mut self,
+            _results: ByteMessage,
+        ) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
+            Ok(EngineStage::Complete(Shot::default()))
+        }
+
+        fn reset(&mut self) -> Result<(), PecosError> {
+            Engine::reset(self)
+        }
+    }
+
+    #[test]
+    fn test_run_returns_results_and_fault_histories_when_enabled() {
+        // Basic test to ensure that when the fault history is enabled
+        // the API looks and works correctly.
+        let classical_engine = Box::new(FixedCircuitClassicalEngine::new());
+        let mut mc = MonteCarloEngine::builder()
+            .with_classical_engine(classical_engine)
+            .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+            .with_depolarizing_noise(1.0)
+            .fault_history_enabled()
+            .build();
+
+        mc.set_seed(1234);
+
+        let run = mc.run(16).expect("run should succeed");
+
+        assert_eq!(run.results.shots.len(), 16);
+        assert_eq!(run.fault_histories.len(), 16);
+
+        for per_shot in &run.fault_histories {
+            assert_eq!(per_shot.len(), 4);
+
+            assert_eq!(per_shot[0].site_uid, 0);
+            assert_eq!(per_shot[0].outcome_index, 1);
+            assert_eq!(per_shot[0].outcome_label, "X");
+
+            assert_eq!(per_shot[1].site_uid, 1);
+            assert!((1..=3).contains(&per_shot[1].outcome_index));
+
+            assert_eq!(per_shot[2].site_uid, 2);
+            assert!((1..=15).contains(&per_shot[2].outcome_index));
+
+            assert_eq!(per_shot[3].site_uid, 3);
+            assert_eq!(per_shot[3].outcome_index, 1);
+            assert_eq!(per_shot[3].outcome_label, "X");
+        }
+    }
+
+    #[test]
+    fn test_run_returns_empty_fault_histories_when_disabled() {
+        let classical_engine = Box::new(FixedCircuitClassicalEngine::new());
+        let mut mc = MonteCarloEngine::builder()
+            .with_classical_engine(classical_engine)
+            .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+            .with_depolarizing_noise(0.5)
+            .build();
+
+        mc.set_seed(1234);
+
+        let run = mc.run(8).expect("run should succeed");
+
+        assert_eq!(run.results.shots.len(), 8);
+        assert!(run.fault_histories.is_empty());
+    }
+
+    #[test]
+    fn test_run_fault_histories_are_seed_deterministic() {
+        let build_engine = || {
+            MonteCarloEngine::builder()
+                .with_classical_engine(Box::new(FixedCircuitClassicalEngine::new()))
+                .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+                .with_depolarizing_noise(0.5)
+                .fault_history_enabled()
+                .with_default_workers(2)
+                .build()
+        };
+
+        let mut mc1 = build_engine();
+        mc1.set_seed(1234);
+        let run1 = mc1.run(20).expect("first run should succeed");
+
+        let mut mc2 = build_engine();
+        mc2.set_seed(1234);
+        let run2 = mc2.run(20).expect("second run should succeed");
+
+        assert_eq!(run1.fault_histories, run2.fault_histories);
+        assert_eq!(run1.results.shots.len(), run2.results.shots.len());
+    }
+
+    #[test]
+    fn test_run_with_fault_histories_replays_sampled_histories() {
+        // Test that runs with specified fault histories produce the same
+        // results as the original sampled run.
+        let mut sampler_mc = MonteCarloEngine::builder()
+            .with_classical_engine(Box::new(FixedCircuitClassicalEngine::new()))
+            .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+            .with_depolarizing_noise(0.5)
+            .fault_history_enabled()
+            .build();
+
+        sampler_mc.set_seed(1234);
+
+        let sampled_run = sampler_mc
+            .run(12)
+            .expect("initial run should succeed");
+        let sampled_histories = sampled_run.fault_histories.clone();
+
+        assert_eq!(sampled_histories.len(), 12);
+
+        // Replay in a zero-noise engine so only forced faults are applied.
+        let mut replay_mc = MonteCarloEngine::builder()
+            .with_classical_engine(Box::new(FixedCircuitClassicalEngine::new()))
+            .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+            .with_depolarizing_noise(0.0)
+            .fault_history_enabled()
+            .build();
+
+        let replay_run = replay_mc
+            .run_with_fault_histories(sampled_histories.clone())
+            .expect("replay run should succeed");
+
+        assert_eq!(replay_run.results.shots.len(), 12);
+        assert_eq!(replay_run.fault_histories, sampled_histories);
+    }
+}

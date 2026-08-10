@@ -194,6 +194,7 @@ def _dem_text(*, detectors_json: str = "[]", observables_json: str = "[]") -> st
 _TWO_QUBIT_DETECTORS_JSON = '[{"id":0,"records":[-2]}]'
 _TWO_QUBIT_OBSERVABLES_JSON = '[{"id":0,"records":[-1]}]'
 _NO_GATE_NOISE = {"p1": 0.0, "p2": 0.0, "p_meas": 0.0, "p_prep": 0.0}
+_DEV_ZERO_RZ_STRIPPED_CONTRIBUTIONS = 0
 
 
 def _two_qubit_dem(**kwargs):
@@ -798,6 +799,36 @@ def test_from_guppy_strip_traced_idles_is_noop_when_trace_has_no_idles() -> None
     assert stripped.to_string() == baseline.to_string()
 
 
+def test_from_guppy_idle_insertion_preserves_zero_rz_fault_site(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    def _trace_with_zero_rz(*_args, **_kwargs):
+        circuit = TickCircuit()
+        circuit.tick().pz([0, 1])
+        circuit.tick().cx([(0, 1)])
+        circuit.tick().rz(0.0, [0])
+        circuit.tick().mz_with_ids([0, 1], [0, 1])
+        return circuit
+
+    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", _trace_with_zero_rz)
+
+    build = build_dem_from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        idle_after_2q_duration=1.0,
+        p1=0.01,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        seed=0,
+    )
+
+    assert build.circuit.gate_counts_by_type().get("RZ") == 1
+    assert build.dem.num_contributions == _DEV_ZERO_RZ_STRIPPED_CONTRIBUTIONS + 1
+
+
 def test_from_guppy_strip_traced_idles_removes_runtime_emitted_idles(monkeypatch: pytest.MonkeyPatch) -> None:
     from pecos_rslib.quantum import TickCircuit
 
@@ -835,6 +866,7 @@ def test_from_guppy_insertion_strips_runtime_idles_by_default(monkeypatch: pytes
     # Insertion implies stripping unless explicitly disabled; keeping the
     # runtime idles doubles the idle content and must change the DEM.
     assert default_strip.to_string() == explicit_strip.to_string()
+    assert default_strip.num_contributions == explicit_strip.num_contributions
     assert keep_runtime_idles.to_string() != default_strip.to_string()
 
 

@@ -7,7 +7,7 @@ use pecos_core::{Angle64, ColorPalette, ColorTriplet, CosetPatterns, FamilyPalet
 use pecos_quantum::TickCircuit;
 use pecos_quantum::pass::{
     AbsorbBasisGates, CancelInverses, CircuitPass, CompactTicks, MergeAdjacentRotations,
-    PassPipeline, PeepholeOptimize, RemoveIdentity, SimplifyRotations,
+    PassPipeline, PeepholeOptimize, SimplifyRotations, StripIdentities,
 };
 use pecos_simulators::GraphState;
 use std::fmt::Write as _;
@@ -448,7 +448,7 @@ fn main() {
         let pipeline = PassPipeline::new()
             .then(AbsorbBasisGates)
             .then(MergeAdjacentRotations)
-            .then(RemoveIdentity)
+            .then(StripIdentities)
             .then(SimplifyRotations)
             .then(CancelInverses)
             .then(PeepholeOptimize)

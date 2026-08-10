@@ -270,8 +270,32 @@ impl DType {
     fn __call__<'py>(&self, py: Python<'py>, value: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         match self {
             DType::Bool => {
-                // Convert to bool and return as Python bool
-                let bool_val = value.extract::<bool>()?;
+                if let Ok(array) = value.extract::<PyRef<'_, crate::pecos_array::Array>>() {
+                    let truth_values = array.data.to_bool_array();
+                    let size = truth_values.len();
+                    if size == 0 {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "The truth value of an empty array is ambiguous. Use `array.size > 0` to check that an array is not empty.",
+                        ));
+                    }
+                    if size != 1 {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()",
+                        ));
+                    }
+                    let bool_val = truth_values
+                        .first()
+                        .copied()
+                        .ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err(
+                                "The truth value of an empty array is ambiguous. Use `array.size > 0` to check that an array is not empty.",
+                            )
+                        })?;
+                    return Ok(PyBool::new(py, bool_val).to_owned().into_any().unbind());
+                }
+
+                // Scalar-likes use normal Python truth-value testing.
+                let bool_val = value.is_truthy()?;
                 Ok(PyBool::new(py, bool_val).to_owned().into_any().unbind())
             }
             DType::F64 => {
@@ -4233,6 +4257,7 @@ pub fn register_dtypes_module(parent_module: &Bound<'_, PyModule>) -> PyResult<(
 
     // Create singleton instances for each dtype (Rust-based names)
     dtypes.add("bool", DType::Bool)?;
+    dtypes.add("bool_", DType::Bool)?;
     // Signed integers
     dtypes.add("i8", DType::I8)?;
     dtypes.add("i16", DType::I16)?;

@@ -1006,7 +1006,7 @@ fn build_noise_model(
         return Ok(Box::new(builder.inner.build()));
     }
     if let Ok(builder) = obj.extract::<PyGeneralNoiseModelBuilder>() {
-        return Ok(Box::new(builder.inner.build()));
+        return Ok(Box::new(builder.validated_inner()?.build()));
     }
     if let Ok(builder) = obj.extract::<PyBiasedDepolarizingNoiseModelBuilder>() {
         return Ok(Box::new(builder.inner.build()));

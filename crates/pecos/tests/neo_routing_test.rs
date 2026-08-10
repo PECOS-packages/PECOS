@@ -176,10 +176,10 @@ fn neo_stack_measurement_noise_rate_matches_engines() {
     let p_meas = 0.2;
     let shots = 4000;
     let noise = pecos_engines::noise::DepolarizingNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_probability(p_meas)
-        .with_p1_probability(0.0)
-        .with_p2_probability(0.0);
+        .with_p_prep(0.0)
+        .with_p_meas(p_meas)
+        .with_p1(0.0)
+        .with_p2(0.0);
 
     let engines = sim(x_measure_qasm())
         .stack(SimStack::Engines)
@@ -274,7 +274,7 @@ fn neo_stack_biased_depolarizing_struct_rate_matches_engines() {
 
 #[test]
 fn neo_stack_general_noise_average_convention_matches() {
-    // The critical convention test: engines' with_average_p1_probability
+    // The critical convention test: engines' with_average_p1
     // stores p1 = 1.5 x average internally (standard depolarizing
     // convention), which the mapping carries one-to-one to neo. With
     // average_p1 = 0.2 the effective depolarizing p1 is 0.3, so the
@@ -284,19 +284,8 @@ fn neo_stack_general_noise_average_convention_matches() {
     let shots = 4000;
     let expected_flip = 0.2;
     let run = |stack: SimStack| {
-        // GeneralNoiseModel defaults are realistic (nonzero emission, prep
-        // leak, idle, and base probabilities); zero everything except the
-        // 1q Pauli channel so the physics is plain depolarizing.
-        let noise = pecos_engines::noise::GeneralNoiseModel::builder()
-            .with_average_p1_probability(0.2)
-            .with_p1_emission_ratio(0.0)
-            .with_p2_emission_ratio(0.0)
-            .with_prep_leak_ratio(0.0)
-            .with_p_idle_linear_rate(0.0)
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_average_p2_probability(0.0);
+        // No-effect defaults leave only the explicitly configured 1q Pauli channel.
+        let noise = pecos_engines::noise::GeneralNoiseModel::builder().with_average_p1(0.2);
         sim(x_measure_qasm())
             .stack(stack)
             .noise(noise)
@@ -321,13 +310,11 @@ fn neo_stack_general_noise_average_convention_matches() {
 
 #[test]
 fn neo_stack_rejects_unmapped_noise() {
-    // A bare GeneralNoiseModel keeps its realistic defaults for prep leak
-    // (0.5) and linear idling (0.001) — physics beyond the simple Pauli
-    // subset, so the mapping must refuse rather than silently change the
-    // model. (Spontaneous emission IS now mapped, so it is the prep-leak
-    // and idle defaults that force the rejection here.)
-    let general =
-        pecos_engines::noise::GeneralNoiseModel::builder().with_average_p1_probability(0.01);
+    // Explicit preparation leakage is beyond the simple Pauli subset, so the mapping must refuse
+    // rather than silently change the model. Spontaneous emission is mapped separately.
+    let general = pecos_engines::noise::GeneralNoiseModel::builder()
+        .with_average_p1(0.01)
+        .with_prep_leak_ratio(0.5);
     let err = sim(deterministic_conditional_qasm())
         .stack(SimStack::Neo)
         .noise(general)
@@ -348,15 +335,14 @@ fn neo_stack_rejects_nonunit_emission_scale() {
     // DIFFERENT emission rate to neo than engines runs. The facade must reject
     // it rather than silently diverge. (Codex batch-4 finding 1.)
     let general = pecos_engines::noise::GeneralNoiseModel::builder()
-        .with_p1_probability(0.3)
+        .with_p1(0.3)
         .with_p1_emission_ratio(0.25)
         .with_emission_scale(2.0)
-        .with_p2_probability(0.0)
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(0.0)
-        .with_meas_1_probability(0.0)
-        .with_prep_leak_ratio(0.0)
-        .with_p_idle_linear_rate(0.0);
+        .with_p2(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(0.0)
+        .with_p_meas_1(0.0)
+        .with_prep_leak_ratio(0.0);
     let err = sim(deterministic_conditional_qasm())
         .stack(SimStack::Neo)
         .noise(general)

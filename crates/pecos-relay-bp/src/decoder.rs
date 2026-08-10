@@ -27,6 +27,8 @@ pub struct RelayBpDecoder {
     inner: relay_bp::bp::relay::RelayDecoder<f64>,
     num_checks: usize,
     num_bits: usize,
+    min_sum_config: MinSumConfig,
+    relay_config: RelayConfig,
 }
 
 impl RelayBpDecoder {
@@ -40,6 +42,7 @@ impl RelayBpDecoder {
         min_sum_config: &MinSumConfig,
         relay_config: &RelayConfig,
     ) -> Result<Self> {
+        min_sum_config.validate()?;
         let num_checks = check_matrix.nrows();
         let num_bits = check_matrix.ncols();
 
@@ -57,6 +60,8 @@ impl RelayBpDecoder {
             inner,
             num_checks,
             num_bits,
+            min_sum_config: min_sum_config.clone(),
+            relay_config: relay_config.clone(),
         })
     }
 
@@ -102,6 +107,24 @@ impl RelayBpDecoder {
     pub fn bit_count(&self) -> usize {
         self.num_bits
     }
+
+    /// Get the maximum number of BP iterations.
+    #[must_use]
+    pub fn max_iter(&self) -> usize {
+        self.min_sum_config.max_iter
+    }
+
+    /// Get the optional min-sum scaling factor.
+    #[must_use]
+    pub fn alpha(&self) -> Option<f64> {
+        self.min_sum_config.alpha
+    }
+
+    /// Get the random seed used for relay parameter sampling.
+    #[must_use]
+    pub fn seed(&self) -> u64 {
+        self.relay_config.seed
+    }
 }
 
 /// Min-sum BP decoder
@@ -112,6 +135,7 @@ pub struct MinSumBpDecoder {
     inner: relay_bp::bp::min_sum::MinSumBPDecoder<f64>,
     num_checks: usize,
     num_bits: usize,
+    config: MinSumConfig,
 }
 
 impl MinSumBpDecoder {
@@ -121,6 +145,7 @@ impl MinSumBpDecoder {
     ///
     /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid.
     pub fn new(check_matrix: &ArrayView2<u8>, config: &MinSumConfig) -> Result<Self> {
+        config.validate()?;
         let num_checks = check_matrix.nrows();
         let num_bits = check_matrix.ncols();
 
@@ -133,6 +158,7 @@ impl MinSumBpDecoder {
             inner,
             num_checks,
             num_bits,
+            config: config.clone(),
         })
     }
 
@@ -178,6 +204,18 @@ impl MinSumBpDecoder {
     pub fn bit_count(&self) -> usize {
         self.num_bits
     }
+
+    /// Get the maximum number of BP iterations.
+    #[must_use]
+    pub fn max_iter(&self) -> usize {
+        self.config.max_iter
+    }
+
+    /// Get the optional min-sum scaling factor.
+    #[must_use]
+    pub fn alpha(&self) -> Option<f64> {
+        self.config.alpha
+    }
 }
 
 #[cfg(test)]
@@ -202,6 +240,32 @@ mod tests {
 
         assert_eq!(result.decoding.len(), 3);
         assert!(result.converged);
+    }
+
+    #[test]
+    fn test_alpha_validation_names_parameter() {
+        let h = repetition_code_matrix();
+        let mut config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
+        config.alpha = Some(f64::NAN);
+
+        let error = MinSumBpDecoder::new(&h.view(), &config)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("alpha"));
+
+        config.alpha = Some(-0.1);
+        let error = MinSumBpDecoder::new(&h.view(), &config)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("alpha"));
+
+        let error = RelayBpDecoder::new(&h.view(), &config, &RelayConfig::default())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("alpha"));
     }
 
     #[test]

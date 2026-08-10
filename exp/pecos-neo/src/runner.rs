@@ -794,8 +794,16 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// Set the noise model.
     ///
     /// Gate definitions are automatically propagated to the noise model's context.
+    ///
+    /// # Panics
+    ///
+    /// Panics during configuration if the noise model declares a rotation-gate
+    /// emission but this runner has no rotation executor.
     #[must_use]
     pub fn with_noise(mut self, mut noise: ComposableNoiseModel) -> Self {
+        noise
+            .validate_runner_gate_support("CircuitRunner", self.rotation_executor.is_some())
+            .unwrap_or_else(|message| panic!("{message}"));
         noise = noise.with_gate_definitions(self.definitions.clone());
         self.noise = Some(noise);
         self
@@ -1185,6 +1193,11 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// Emits the event to the noise model, applies the response to state,
     /// and returns the response. Useful for idle noise between manually-applied
     /// gates, testing noise models, or custom execution loops.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an undeclared noise mechanism injects a gate the runner cannot
+    /// execute. Declared requirements are rejected by [`Self::with_noise`].
     pub fn apply_noise(&mut self, state: &mut S, event: &NoiseEvent<'_>) -> NoiseResponse {
         let Some(ref mut noise) = self.noise else {
             return NoiseResponse::None;
@@ -2231,96 +2244,34 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
     /// Execute a noise gate (injected error).
     ///
-    /// Handles Pauli gates directly. For non-Pauli gates (rotations, Cliffords),
-    /// delegates to the rotation executor if available, otherwise skips.
+    /// # Panics
+    ///
+    /// Panics if neither the Clifford simulator nor the configured rotation
+    /// executor can execute the injected gate. Configuration validation should
+    /// make this unreachable for declared noise mechanisms.
     fn execute_noise_gate(&self, sim: &mut S, gate: &GateCommand) {
         let qubits = gate.qubits.as_slice();
-        match gate.gate_type {
-            GateType::X => {
-                sim.x(qubits);
-            }
-            GateType::Y => {
-                sim.y(qubits);
-            }
-            GateType::Z => {
-                sim.z(qubits);
-            }
-            GateType::H => {
-                sim.h(qubits);
-            }
-            GateType::F => {
-                sim.f(qubits);
-            }
-            GateType::Fdg => {
-                sim.fdg(qubits);
-            }
-            GateType::SX => {
-                sim.sx(qubits);
-            }
-            GateType::SXdg => {
-                sim.sxdg(qubits);
-            }
-            GateType::SY => {
-                sim.sy(qubits);
-            }
-            GateType::SYdg => {
-                sim.sydg(qubits);
-            }
-            GateType::SZ => {
-                sim.sz(qubits);
-            }
-            GateType::SZdg => {
-                sim.szdg(qubits);
-            }
-            GateType::CX => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.cx(&pairs);
-            }
-            GateType::CY => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.cy(&pairs);
-            }
-            GateType::CZ => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.cz(&pairs);
-            }
-            GateType::SXX => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.sxx(&pairs);
-            }
-            GateType::SXXdg => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.sxxdg(&pairs);
-            }
-            GateType::SYY => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.syy(&pairs);
-            }
-            GateType::SYYdg => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.syydg(&pairs);
-            }
-            GateType::SZZ => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.szz(&pairs);
-            }
-            GateType::SZZdg => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.szzdg(&pairs);
-            }
-            GateType::SWAP => {
-                let pairs: Vec<_> = qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                sim.swap(&pairs);
-            }
-            // Non-Clifford gates: delegate to rotation executor
-            other => {
-                if let Some(executor) = self.rotation_executor {
-                    executor(sim, GateId::from(other), gate.angles.as_slice(), qubits);
-                }
-                // If no rotation executor, silently skip (noise channel injected
-                // a gate the simulator can't handle).
-            }
-        }
+        let arity = gate.gate_type.quantum_arity();
+        assert!(
+            !qubits.is_empty() && qubits.len().is_multiple_of(arity),
+            "CircuitRunner invariant violated: injected noise gate {:?} has {} target(s), which \
+             is not a nonzero multiple of its arity {arity}",
+            gate.gate_type,
+            qubits.len()
+        );
+        let gate_id = GateId::from(gate.gate_type);
+        let executed = (gate.gate_type != GateType::Idle
+            && Self::try_execute_clifford(sim, gate_id, qubits))
+            || self
+                .rotation_executor
+                .is_some_and(|executor| executor(sim, gate_id, gate.angles.as_slice(), qubits));
+
+        assert!(
+            executed,
+            "CircuitRunner invariant violated: injected noise gate {:?} could not be executed; \
+             configuration validation should have rejected the emitting noise mechanism",
+            gate.gate_type
+        );
     }
 }
 
@@ -2505,6 +2456,7 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use crate::extensible::{GateCategory, GateSpec, OpBuilder, gates};
+    use crate::noise::GeneralNoiseModelBuilder;
     use crate::noise::single_qubit::SingleQubitChannel;
     use num_complex::Complex64;
     use pecos_core::clifford::Clifford;
@@ -2762,6 +2714,184 @@ mod tests {
 
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
         assert_eq!(outcomes.len(), 1);
+    }
+
+    #[test]
+    fn coherent_idle_without_rotation_support_fails_during_configuration() {
+        let noise = GeneralNoiseModelBuilder::new()
+            .with_p_idle_quadratic(std::f64::consts::PI)
+            .with_p_idle_coherent(true)
+            .build();
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);
+        }))
+        .expect_err("coherent idle noise must require rotation support");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic payload should be a string");
+
+        assert!(message.contains("with_p_idle_coherent(true)"), "{message}");
+        assert!(message.contains("CircuitRunner"), "{message}");
+        assert!(message.contains("CircuitRunner::rotations()"), "{message}");
+        assert!(message.contains("stochastic idle"), "{message}");
+    }
+
+    #[test]
+    fn every_coherent_idle_entry_point_names_its_configuring_setter() {
+        use crate::noise::composite::CompositeNoiseModelBuilder;
+        use crate::noise::{IdleChannel, NoiseModelBuilder};
+
+        let cases = [
+            (
+                "NoiseModelBuilder::with_coherent_idle(..)",
+                NoiseModelBuilder::new()
+                    .with_idle_noise(0.0, 0.25)
+                    .with_coherent_idle(1.0)
+                    .build(),
+            ),
+            (
+                "CompositeNoiseModelBuilder::with_p_idle_coherent(true)",
+                CompositeNoiseModelBuilder::new()
+                    .with_p_idle_quadratic(0.25)
+                    .with_p_idle_coherent(true)
+                    .build(),
+            ),
+            (
+                "IdleChannel::with_coherent_dephasing(true)",
+                ComposableNoiseModel::new().add_channel(
+                    IdleChannel {
+                        quadratic_rate: 0.25,
+                        ..IdleChannel::default()
+                    }
+                    .with_coherent_dephasing(true),
+                ),
+            ),
+        ];
+
+        for (setter, noise) in cases {
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);
+            }))
+            .expect_err("coherent idle noise must require rotation support");
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .expect("panic payload should be a string");
+
+            assert!(message.contains(setter), "{message}");
+            assert!(message.contains("CircuitRunner::rotations()"), "{message}");
+        }
+    }
+
+    #[test]
+    fn coherent_idle_with_rotation_support_applies_rotation() {
+        let commands = CommandBuilder::new()
+            .pz(&[0])
+            .h(&[0])
+            .idle(&[0], 1u64)
+            .h(&[0])
+            .mz(&[0])
+            .build();
+        let noise = GeneralNoiseModelBuilder::new()
+            .with_p_idle_quadratic(std::f64::consts::PI)
+            .with_p_idle_coherent(true)
+            .build();
+
+        let mut state = StateVec::with_seed(1, 42);
+        let mut runner = CircuitRunner::<StateVec>::rotations()
+            .with_noise(noise)
+            .with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
+
+        let outcome = outcomes.get(QubitId(0)).unwrap();
+        assert!(outcome.outcome, "RZ(pi) must turn |+> into |->");
+        assert!(outcome.is_deterministic);
+    }
+
+    #[test]
+    fn composite_coherent_rotation_is_validated_during_configuration() {
+        use crate::noise::composite::prelude::{CompositeChannelBuilder, coherent_rz, prob};
+
+        let noise = ComposableNoiseModel::new().add_channel(CompositeChannelBuilder::idle(
+            "coherent_idle",
+            prob(1.0, coherent_rz(0.25)),
+        ));
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);
+        }))
+        .expect_err("composite coherent rotation must require rotation support");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic payload should be a string");
+
+        assert!(message.contains("InjectCoherentRZ::new(..)"), "{message}");
+        assert!(message.contains("CircuitRunner"), "{message}");
+        assert!(message.contains("CircuitRunner::rotations()"), "{message}");
+        assert!(message.contains("stochastic Pauli"), "{message}");
+    }
+
+    #[test]
+    fn composite_unsupported_gate_is_rejected_with_or_without_rotations() {
+        use crate::noise::composite::prelude::{CompositeChannelBuilder, inject};
+
+        let noise = ComposableNoiseModel::new().add_channel(CompositeChannelBuilder::idle(
+            "unsupported_injection",
+            inject(GateType::PZ),
+        ));
+
+        for with_rotations in [false, true] {
+            let runner = if with_rotations {
+                CircuitRunner::<StateVec>::rotations()
+            } else {
+                CircuitRunner::<StateVec>::new()
+            };
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = runner.with_noise(noise.clone());
+            }))
+            .expect_err("PZ cannot be executed as an injected noise gate");
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .expect("panic payload should be a string");
+
+            assert!(message.contains("Inject::new(..)"), "{message}");
+            assert!(message.contains("PZ"), "{message}");
+            assert!(message.contains("CircuitRunner"), "{message}");
+            assert!(message.contains("stochastic Pauli"), "{message}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "CircuitRunner invariant violated: injected noise gate PZ")]
+    fn unsupported_noise_gate_panics_in_circuit_runner() {
+        let mut state = SparseStab::with_seed(1, 42);
+        CircuitRunner::<SparseStab>::new()
+            .execute_noise_gate(&mut state, &GateCommand::pz(QubitId(0)));
+    }
+
+    #[test]
+    #[should_panic(expected = "CircuitRunner invariant violated: injected noise gate PZ")]
+    fn unsupported_noise_gate_panics_with_rotation_executor() {
+        let mut state = StateVec::with_seed(1, 42);
+        CircuitRunner::<StateVec>::rotations()
+            .execute_noise_gate(&mut state, &GateCommand::pz(QubitId(0)));
+    }
+
+    #[test]
+    #[should_panic(expected = "CircuitRunner invariant violated: injected noise gate CX has 1")]
+    fn malformed_multi_qubit_noise_gate_panics_in_circuit_runner() {
+        let mut state = SparseStab::with_seed(1, 42);
+        CircuitRunner::<SparseStab>::new().execute_noise_gate(
+            &mut state,
+            &GateCommand::new(GateType::CX, smallvec::smallvec![QubitId(0)]),
+        );
     }
 
     #[test]

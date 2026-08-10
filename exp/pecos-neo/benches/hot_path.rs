@@ -648,8 +648,8 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
                     // Setup: parse QASM and create noise model (not timed)
                     let engine = QASMEngine::from_str(bell_qasm).unwrap();
                     let noise = GeneralNoiseModel::builder()
-                        .with_average_p1_probability(0.001)
-                        .with_average_p2_probability(0.01)
+                        .with_average_p1(0.001)
+                        .with_average_p2(0.01)
                         .build();
                     (engine, noise)
                 },

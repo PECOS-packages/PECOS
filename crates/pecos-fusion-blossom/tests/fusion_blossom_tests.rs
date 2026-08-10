@@ -17,6 +17,26 @@ fn test_create_decoder() {
 }
 
 #[test]
+fn test_dem_solver_type_is_applied_and_parallel_fails_at_construction() {
+    let dem = "error(0.1) D0 D1 L0\ndetector D0\ndetector D1\nlogical_observable L0";
+
+    let legacy = FusionBlossomDecoder::from_dem_with_solver_type(dem, SolverType::Legacy).unwrap();
+    assert_eq!(legacy.solver_type(), SolverType::Legacy);
+
+    let correlated =
+        FusionBlossomDecoder::from_dem_correlated_with_solver_type(dem, SolverType::Legacy)
+            .unwrap();
+    assert_eq!(correlated.solver_type(), SolverType::Legacy);
+
+    let error = FusionBlossomDecoder::from_dem_with_solver_type(dem, SolverType::Parallel)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("solver_type"));
+    assert!(error.contains("partition configuration"));
+}
+
+#[test]
 fn test_add_edges() {
     let config = FusionBlossomConfig {
         num_nodes: Some(4),

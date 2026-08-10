@@ -106,6 +106,18 @@ def test_qis_operation_trace_can_be_replayed_or_captured_as_a_tick_circuit(
     assert replayed.get_meta("qis_source_measurement_ids") == "[7]"
 
 
+def test_leakage_measurement_replays_as_accepted_path_mz() -> None:
+    trace = _completed_trace()
+    trace[0]["operations"][-1] = {"Quantum": {"MeasureLeaked": [0, 7]}}
+    trace[0]["lowered_quantum_ops"][-1]["gate_type"] = "MeasureLeaked"
+
+    replayed = pecos.qis_operation_trace_to_tick_circuit(trace)
+
+    assert "MZ" in _gate_names(replayed)
+    assert "MeasureLeaked" not in _gate_names(replayed)
+    assert replayed.get_meta("qis_source_measurement_ids") == "[7]"
+
+
 def test_qis_operation_trace_conversion_rejects_an_incomplete_trace() -> None:
     with pytest.raises(ValueError, match="terminal trace_complete"):
         pecos.qis_operation_trace_to_tick_circuit(_completed_trace()[:-1])
@@ -225,7 +237,8 @@ def test_capture_qis_operation_trace_configures_the_trace_builder(
             calls.append(("seed", seed))
             return self
 
-        def capture_operation_trace(self):
+        def capture_operation_trace(self, shots):
+            calls.append(("shots", shots))
             return iter(trace)
 
     program = object()
@@ -240,6 +253,7 @@ def test_capture_qis_operation_trace_configures_the_trace_builder(
         ("quantum", "trace-backend"),
         ("qubits", 3),
         ("seed", 11),
+        ("shots", 1),
     ]
 
 

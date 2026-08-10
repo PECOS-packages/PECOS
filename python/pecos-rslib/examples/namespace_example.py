@@ -51,10 +51,10 @@ def main() -> None:
     # Configure depolarizing noise
     noise_model = (
         pecos_rslib.noise.depolarizing()
-        .with_prep_probability(0.001)  # State preparation errors
-        .with_meas_probability(0.005)  # Measurement errors
-        .with_p1_probability(0.002)  # Single-qubit gate errors
-        .with_p2_probability(0.01)  # Two-qubit gate errors
+        .with_p_prep(0.001)  # State preparation errors
+        .with_p_meas(0.005)  # Measurement errors
+        .with_p1(0.002)  # Single-qubit gate errors
+        .with_p2(0.01)  # Two-qubit gate errors
     )
 
     # Run simulation using namespace API

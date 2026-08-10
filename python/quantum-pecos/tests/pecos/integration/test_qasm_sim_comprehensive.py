@@ -43,8 +43,10 @@ class TestQasmSimComprehensive:
         measure q -> c;
         """
 
-        # GeneralNoise uses default configuration
-        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(general_noise()).run(1000)
+        # Preserve the historical demonstration preset for this broad integration smoke test.
+        results = (
+            qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(general_noise().auto()).run(1000)
+        )
 
         results_dict = results.to_dict()
         assert isinstance(results_dict, dict)
@@ -258,11 +260,7 @@ class TestQasmSimComprehensive:
             GeneralNoiseModelBuilder(),
             depolarizing_noise().with_uniform_probability(0.1),
             biased_depolarizing_noise().with_uniform_probability(0.033),
-            depolarizing_noise()
-            .with_prep_probability(0.1)
-            .with_meas_probability(0.1)
-            .with_p1_probability(0.1)
-            .with_p2_probability(0.1),
+            depolarizing_noise().with_p_prep(0.1).with_p_meas(0.1).with_p1(0.1).with_p2(0.1),
         ]
 
         for noise_builder in noise_builders:

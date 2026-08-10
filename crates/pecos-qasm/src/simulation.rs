@@ -38,10 +38,10 @@ use pecos_programs::Qasm;
 ///
 /// // Run with noise
 /// let noise_builder = DepolarizingNoiseModel::builder()
-///     .with_p1_probability(0.001)
-///     .with_p2_probability(0.01)
-///     .with_prep_probability(0.001)
-///     .with_meas_probability(0.001);
+///     .with_p1(0.001)
+///     .with_p2(0.01)
+///     .with_p_prep(0.001)
+///     .with_p_meas(0.001);
 ///
 /// let results = qasm_engine()
 ///     .program(Qasm::from_string(qasm))

@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// FFI crates that need a non-Rust toolchain or external SDK to check /
-/// clippy / test.
+/// clippy / test, plus pecos-rslib, which is excluded for build time.
 ///
-/// - pecos-rslib needs cmake (for mwpf via highs-sys) under `--all-features`.
+/// - pecos-rslib is a large pyo3 cdylib that dominates workspace check /
+///   clippy time; it is covered when the caller opts in with `--include-ffi`.
 /// - pecos-rslib-cuda transitively depends on pecos-cuquantum, whose build.rs
 ///   calls `ensure_cutensor()` on Linux -- that will silently download cuTensor
 ///   over the network if it's not already cached in `~/.pecos/deps/`, which we
@@ -133,18 +134,6 @@ fn reject_static_llvm_workspace_test() -> Result<()> {
          LLVM 21.1 static workspace tests can spawn many multi-GB linker jobs. \
          {setup_hint}",
         llvm_path.display()
-    )))
-}
-
-fn require_cmake_for_mwpf(invocation: &str) -> Result<()> {
-    if pecos_build::cmake::find_cmake().is_some() {
-        return Ok(());
-    }
-
-    Err(Error::Config(format!(
-        "{invocation}, which enables the `mwpf` feature and requires cmake. \
-         Install cmake with `pecos install cmake`. See {}",
-        pecos_build::cmake::DOCS_URL
     )))
 }
 
@@ -288,8 +277,8 @@ fn is_tool_available(tool: &str) -> bool {
 /// Run a cargo command and return success status.
 ///
 /// Applies the PECOS build environment (`CMAKE`, `LLVM_SYS_211_PREFIX`,
-/// `SDKROOT`, etc.) so build scripts like highs-sys's cmake-rs invocation
-/// find the PECOS-managed cmake without further plumbing.
+/// `SDKROOT`, etc.) so build scripts that need external tools find the
+/// PECOS-managed installs without further plumbing.
 fn run_cargo_command(args: &[&str]) -> bool {
     run_cargo_command_with_rustflags(args, None)
 }
@@ -323,8 +312,6 @@ fn run_cargo_command_with_rustflags(args: &[&str], rustflags: Option<&str>) -> b
 /// Run cargo check with GPU-aware feature handling
 #[allow(clippy::too_many_lines)]
 fn run_check(include_ffi: bool) -> Result<()> {
-    require_cmake_for_mwpf("`pecos rust check` runs the workspace with `--all-features`")?;
-
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
@@ -407,8 +394,6 @@ fn run_check(include_ffi: bool) -> Result<()> {
 /// Run cargo clippy with GPU-aware feature handling
 #[allow(clippy::too_many_lines)]
 fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
-    require_cmake_for_mwpf("`pecos rust clippy` runs the workspace with `--all-features`")?;
-
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
@@ -508,8 +493,6 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
 
 /// Run cargo test with GPU-aware feature handling
 fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
-    require_cmake_for_mwpf("`pecos rust test` runs `cargo test -p pecos-decoders --all-features`")?;
-
     // Warn about any C++ dependency version differences across crates
     check_dep_consistency();
 

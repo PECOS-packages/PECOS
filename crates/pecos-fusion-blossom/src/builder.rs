@@ -87,7 +87,9 @@ impl FusionBlossomBuilder {
         self
     }
 
-    /// Set the maximum tree size for union-find
+    /// Set the maximum alternating-tree size before it is collapsed.
+    ///
+    /// Smaller values approximate union-find decoding behavior.
     pub fn max_tree_size(mut self, size: usize) -> Self {
         self.max_tree_size = Some(size);
         self

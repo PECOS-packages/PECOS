@@ -59,11 +59,13 @@ from pecos_rslib import (
     any,  # Any element true
     array,  # Array creation
     array_equal,  # Array equality
+    asarray,  # Array conversion without an unnecessary copy
     asin,  # Inverse sine
     asinh,  # Inverse hyperbolic sine
     atan,  # Inverse tangent
     atan2,  # Two-argument inverse tangent
     atanh,  # Inverse hyperbolic tangent
+    bool_,  # Boolean scalar dtype
     complex64,
     complex128,
     cos,  # Cosine
@@ -77,8 +79,10 @@ from pecos_rslib import (
     i32,
     i64,
     inf,  # Infinity
+    integer,  # Abstract integer dtype category
     isclose,  # Approximate equality (element-wise)
     isnan,  # Check for NaN
+    issubdtype,  # Dtype hierarchy test
     kron,  # Kronecker product
     ln,  # Natural logarithm
     log,  # Logarithm with base
@@ -86,6 +90,7 @@ from pecos_rslib import (
     mean,  # Mean/average
     min,  # Minimum value
     nan,  # Not a number
+    nonzero,  # Indices of non-zero elements
     num,
     power,  # Power function
     sin,  # Sine
@@ -100,6 +105,7 @@ from pecos_rslib import (
     u32,
     u64,
     where,  # Conditional selection
+    zeros_like,  # Zeros matching an existing array
 )
 
 # Note: Mathematical constants (pi, e, tau, frac_pi_2, sqrt_2, ln_2, etc.) are NOT imported
@@ -286,6 +292,7 @@ from pecos.exceptions import WasmError
 # Import program wrappers from programs submodule for convenience
 # These can also be accessed via pecos.programs.Qasm, etc.
 from pecos.programs import Guppy, Hugr, PhirJson, ProgramWrapper, Qasm, Qis, Wasm, Wat
+from pecos.qec.surface.decode import NoiseParameters
 from pecos.tracing import (
     capture_qis_operation_trace,
     qis_operation_trace_to_tick_circuit,
@@ -338,6 +345,7 @@ __all__ = [
     "Inexact",
     "Integer",
     "Nanoseconds",
+    "NoiseParameters",
     "Numeric",
     "Pauli",
     "PauliString",

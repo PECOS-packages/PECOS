@@ -90,8 +90,10 @@ pub fn remove_identity(circuit: &mut TickCircuit) {
 
 /// Remove explicit duration-carrying Idle gates.
 ///
-/// This deliberately preserves `I`: [`TickCircuit::fill_idle_gates`] uses
-/// identity gates as single-qubit gate-noise locations.
+/// This deliberately preserves `I`. `Idle` is a duration-carrying scheduling
+/// marker (it is what [`TickCircuit::fill_idle_gates`] inserts); `I` is a
+/// gate, and what noise a gate carries is each noise model's decision.
+/// Removing no-op gates is [`RemoveIdentity`]'s job, opted into separately.
 pub fn strip_idles(circuit: &mut TickCircuit) {
     StripIdles.apply_tick(circuit);
 }
@@ -687,9 +689,10 @@ impl CircuitPass for RemoveIdentity {
 
 /// Remove explicit duration-carrying Idle gates from circuits.
 ///
-/// This deliberately preserves [`GateType::I`]:
-/// [`TickCircuit::fill_idle_gates`] inserts `I` on inactive qubits as a
-/// single-qubit gate-noise location.
+/// This deliberately preserves [`GateType::I`]. `Idle` is a duration-carrying
+/// scheduling marker (what [`TickCircuit::fill_idle_gates`] inserts on
+/// inactive qubits); `I` is a gate, and what noise it carries is each noise
+/// model's decision. Removing no-op gates is [`RemoveIdentity`]'s job.
 pub struct StripIdles;
 
 impl CircuitPass for StripIdles {

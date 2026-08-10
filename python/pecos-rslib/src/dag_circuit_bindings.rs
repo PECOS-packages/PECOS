@@ -2762,8 +2762,10 @@ impl PyTickCircuit {
 
     /// Remove explicit duration-carrying `Idle` gates only.
     ///
-    /// This deliberately preserves `I`: `fill_idle_gates()` inserts `I` on
-    /// inactive qubits as a single-qubit gate-noise location.
+    /// This deliberately preserves `I`. `Idle` is a duration-carrying
+    /// scheduling marker (what `fill_idle_gates()` inserts on inactive
+    /// qubits); `I` is a gate, and what noise it carries is each noise
+    /// model's decision. Removing no-op gates is `remove_identity()`'s job.
     /// Modifies the circuit in place.
     fn strip_idles(&mut self) {
         use pecos_quantum::pass::{CircuitPass, StripIdles};

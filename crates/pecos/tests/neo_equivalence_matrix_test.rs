@@ -160,10 +160,10 @@ impl NoiseCell {
         let builder = sim(Qasm::from_string(qasm)).stack(stack).seed(seed);
         let depol = |p_prep: f64, p_meas: f64, p1: f64, p2: f64| {
             pecos_engines::noise::DepolarizingNoiseModel::builder()
-                .with_prep_probability(p_prep)
-                .with_meas_probability(p_meas)
-                .with_p1_probability(p1)
-                .with_p2_probability(p2)
+                .with_p_prep(p_prep)
+                .with_p_meas(p_meas)
+                .with_p1(p1)
+                .with_p2(p2)
         };
         let results = match *self {
             Self::Meas(p) => builder.noise(depol(0.0, p, 0.0, 0.0)).shots(SHOTS).run(),
@@ -176,19 +176,17 @@ impl NoiseCell {
                 .run(),
             Self::GnmSimple { average_p1, p_meas } => builder
                 .noise(
-                    // GeneralNoiseModel has realistic non-zero defaults;
-                    // zero everything outside the simple Pauli subset so
-                    // the cell physics is exactly known.
+                    // Spell out the zero channels so the cell physics is immediately visible,
+                    // even though GeneralNoiseModel now defaults them off.
                     pecos_engines::noise::GeneralNoiseModel::builder()
-                        .with_average_p1_probability(average_p1)
-                        .with_average_p2_probability(0.0)
+                        .with_average_p1(average_p1)
+                        .with_average_p2(0.0)
                         .with_p1_emission_ratio(0.0)
                         .with_p2_emission_ratio(0.0)
                         .with_prep_leak_ratio(0.0)
-                        .with_p_idle_linear_rate(0.0)
-                        .with_prep_probability(0.0)
-                        .with_meas_0_probability(p_meas)
-                        .with_meas_1_probability(p_meas),
+                        .with_p_prep(0.0)
+                        .with_p_meas_0(p_meas)
+                        .with_p_meas_1(p_meas),
                 )
                 .shots(SHOTS)
                 .run(),
@@ -198,21 +196,19 @@ impl NoiseCell {
                 angle_power,
             } => builder
                 .noise(
-                    // Plain Pauli two-qubit noise with angle scaling; zero
-                    // every other channel and the non-neutral GNM defaults so
-                    // only the angle-scaled RZZ depolarizing noise remains.
+                    // Plain Pauli two-qubit noise with angle scaling; spell out every other
+                    // channel as zero so only angle-scaled RZZ depolarizing noise remains.
                     pecos_engines::noise::GeneralNoiseModel::builder()
-                        .with_p2_probability(p2)
+                        .with_p2(p2)
                         .with_p2_angle_params(a, b, c, d)
                         .with_p2_angle_power(angle_power)
-                        .with_average_p1_probability(0.0)
+                        .with_average_p1(0.0)
                         .with_p1_emission_ratio(0.0)
                         .with_p2_emission_ratio(0.0)
                         .with_prep_leak_ratio(0.0)
-                        .with_p_idle_linear_rate(0.0)
-                        .with_prep_probability(0.0)
-                        .with_meas_0_probability(0.0)
-                        .with_meas_1_probability(0.0),
+                        .with_p_prep(0.0)
+                        .with_p_meas_0(0.0)
+                        .with_p_meas_1(0.0),
                 )
                 .shots(SHOTS)
                 .run(),
@@ -220,11 +216,11 @@ impl NoiseCell {
                 .noise(
                     // Asymmetric record-flip measurement, no gate/prep noise.
                     pecos_engines::noise::BiasedDepolarizingNoiseModel::builder()
-                        .with_prep_probability(0.0)
-                        .with_meas_0_probability(p_meas_0)
-                        .with_meas_1_probability(p_meas_1)
-                        .with_single_qubit_probability(0.0)
-                        .with_two_qubit_probability(0.0),
+                        .with_p_prep(0.0)
+                        .with_p_meas_0(p_meas_0)
+                        .with_p_meas_1(p_meas_1)
+                        .with_p1(0.0)
+                        .with_p2(0.0),
                 )
                 .shots(SHOTS)
                 .run(),

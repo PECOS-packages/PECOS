@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.qec.surface import NoiseModel
+    from pecos.qec.surface import NoiseParameters
 
 # -- Data model ---------------------------------------------------------------
 
@@ -97,7 +97,7 @@ def _decoder_base_name(name: str) -> str:
 def _build_sampler(
     distance: int,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str,
     circuit_source: str,
 ) -> tuple:
@@ -159,7 +159,7 @@ def generate(
     duration_multipliers: list[float],
 ) -> DataShard:
     """Run the full data generation and return a shard."""
-    from pecos.qec.surface import NoiseModel
+    from pecos.qec.surface import NoiseParameters
 
     config = {
         "distances": distances,
@@ -200,7 +200,7 @@ def generate(
 
     for d in distances:
         for p in error_rates:
-            noise = NoiseModel(
+            noise = NoiseParameters(
                 p1=p * p1_scale,
                 p2=p,
                 p_meas=p * p_meas_scale,

@@ -23,10 +23,10 @@ fn test_general_noise_builder_basic() {
     // Create builder with fluent API
     let noise_builder = GeneralNoiseModel::builder()
         .with_seed(42)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.002);
+        .with_p1(0.001)
+        .with_p2(0.01)
+        .with_p_meas_0(0.002)
+        .with_p_meas_1(0.002);
 
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
@@ -70,7 +70,7 @@ fn test_general_noise_builder_with_pauli_models() {
 
     let noise_builder = GeneralNoiseModel::builder()
         .with_seed(42)
-        .with_p1_probability(0.1) // High error rate for testing
+        .with_p1(0.1) // High error rate for testing
         .with_p1_pauli_model(&p1_model);
 
     let results = sim_builder()
@@ -122,13 +122,13 @@ fn test_general_noise_builder_complex_configuration() {
         .with_scale(1.5)
         .with_leakage_scale(0.1)
         .with_emission_scale(0.8)
-        .with_prep_probability(0.001)
-        .with_average_p1_probability(0.0008)
+        .with_p_prep(0.001)
+        .with_average_p1(0.0008)
         .with_p1_pauli_model(&p1_model)
-        .with_average_p2_probability(0.008)
+        .with_average_p2(0.008)
         .with_p2_pauli_model(&p2_model)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.003)
+        .with_p_meas_0(0.002)
+        .with_p_meas_1(0.003)
         .with_noiseless_gate(GateType::H);
 
     let results = sim_builder()
@@ -157,8 +157,8 @@ fn test_general_noise_builder_noiseless_gates() {
 
     let noise_builder = GeneralNoiseModel::builder()
         .with_seed(42)
-        .with_p1_probability(0.5) // Very high error rate
-        .with_p2_probability(0.5) // Very high error rate
+        .with_p1(0.5) // Very high error rate
+        .with_p2(0.5) // Very high error rate
         .with_noiseless_gate(GateType::H) // H gate is noiseless
         .with_noiseless_gate(GateType::MZ); // Measurement is noiseless
 
@@ -188,13 +188,12 @@ fn test_general_noise_builder_with_prep_errors() {
         include "qelib1.inc";
         qreg q[2];
         creg c[2];
-        // No gates, just measure initialized qubits
+        // Explicit preparation followed by measurement
+        reset q;
         measure q -> c;
     "#;
 
-    let noise_builder = GeneralNoiseModel::builder()
-        .with_seed(42)
-        .with_prep_probability(0.1); // 10% prep error
+    let noise_builder = GeneralNoiseModel::builder().with_seed(42).with_p_prep(0.1); // 10% prep error
 
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
@@ -237,8 +236,8 @@ fn test_general_noise_builder_measurement_errors() {
 
     let noise_builder = GeneralNoiseModel::builder()
         .with_seed(42)
-        .with_meas_0_probability(0.05) // 5% chance |0> measured as |1>
-        .with_meas_1_probability(0.10); // 10% chance |1> measured as |0>
+        .with_p_meas_0(0.05) // 5% chance |0> measured as |1>
+        .with_p_meas_1(0.10); // 10% chance |1> measured as |0>
 
     let results = sim_builder()
         .classical(qasm_engine().program(Qasm::from_string(qasm)))
@@ -282,20 +281,24 @@ fn test_general_noise_builder_chaining_all_methods() {
     "#;
 
     // Test that all builder methods can be chained
+    let idle_model = BTreeMap::from([
+        ("X".to_string(), 1.0 / 3.0),
+        ("Y".to_string(), 1.0 / 3.0),
+        ("Z".to_string(), 1.0 / 3.0),
+    ]);
     let noise_builder = GeneralNoiseModel::builder()
         .with_seed(42)
         .with_scale(1.2)
         .with_leakage_scale(0.1)
         .with_emission_scale(0.9)
-        .with_prep_probability(0.001)
-        .with_p1_probability(0.001)
-        .with_average_p1_probability(0.0008)
-        .with_p2_probability(0.01)
-        .with_average_p2_probability(0.008)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.003)
-        .with_p_idle_coherent(false)
-        .with_p_idle_linear_rate(0.0001)
+        .with_p_prep(0.001)
+        .with_p1(0.001)
+        .with_average_p1(0.0008)
+        .with_p2(0.01)
+        .with_average_p2(0.008)
+        .with_p_meas_0(0.002)
+        .with_p_meas_1(0.003)
+        .with_p_idle_linear(0.0001, &idle_model)
         .with_noiseless_gate(GateType::H)
         .with_noiseless_gate(GateType::CX);
 
@@ -326,8 +329,8 @@ fn test_general_noise_builder_with_multiple_noiseless_gates() {
 
     let noise_builder = GeneralNoiseModel::builder()
         .with_seed(42)
-        .with_p1_probability(0.1) // High noise
-        .with_p2_probability(0.1) // High noise
+        .with_p1(0.1) // High noise
+        .with_p2(0.1) // High noise
         .with_noiseless_gate(GateType::H)
         .with_noiseless_gate(GateType::SZ) // S gate
         .with_noiseless_gate(GateType::T)
@@ -381,8 +384,8 @@ fn test_general_noise_builder_comparison_with_sim_builder() {
 
     let noise_builder = GeneralNoiseModel::builder()
         .with_seed(42)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01);
+        .with_p1(0.001)
+        .with_p2(0.01);
 
     // Test full method chaining with simulation builder
     let results = sim_builder()

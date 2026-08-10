@@ -49,11 +49,11 @@ fn compare_biased_and_general(circ: &ByteMessage, quantum: &StateVecEngine) {
     for (p_flip_0, p_flip_1, desc) in configs {
         // Create biased depolarizing noise model with custom settings
         let biased_noise = BiasedDepolarizingNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(p_flip_0) // Probability of flipping 0 to 1
-            .with_meas_1_probability(p_flip_1) // Probability of flipping 1 to 0
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(p_flip_0) // Probability of flipping 0 to 1
+            .with_p_meas_1(p_flip_1) // Probability of flipping 1 to 0
+            .with_p1(0.0)
+            .with_p2(0.0)
             .with_seed(seed)
             .build();
         let mut biased_system =
@@ -61,11 +61,11 @@ fn compare_biased_and_general(circ: &ByteMessage, quantum: &StateVecEngine) {
 
         // Create equivalent general noise model (with gate noise set to 0)
         let general_noise = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(p_flip_0)
-            .with_meas_1_probability(p_flip_1)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(p_flip_0)
+            .with_p_meas_1(p_flip_1)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .with_seed(seed)
             .build();
         let mut general_system =
@@ -155,22 +155,22 @@ fn bell_state_comparison() {
 
     // Create biased depolarizing noise model with custom settings
     let biased_noise = BiasedDepolarizingNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(p_flip_0) // Probability of flipping 0 to 1
-        .with_meas_1_probability(p_flip_1) // Probability of flipping 1 to 0
-        .with_p1_probability(0.0)
-        .with_p2_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(p_flip_0) // Probability of flipping 0 to 1
+        .with_p_meas_1(p_flip_1) // Probability of flipping 1 to 0
+        .with_p1(0.0)
+        .with_p2(0.0)
         .with_seed(seed)
         .build();
     let mut biased_system = QuantumSystem::new(Box::new(biased_noise), Box::new(quantum.clone()));
 
     // Create equivalent general noise model
     let general_noise = GeneralNoiseModel::builder()
-        .with_prep_probability(0.0)
-        .with_meas_0_probability(p_flip_0)
-        .with_meas_1_probability(p_flip_1)
-        .with_p1_probability(0.0)
-        .with_p2_probability(0.0)
+        .with_p_prep(0.0)
+        .with_p_meas_0(p_flip_0)
+        .with_p_meas_1(p_flip_1)
+        .with_p1(0.0)
+        .with_p2(0.0)
         .with_seed(seed)
         .build();
     let mut general_system = QuantumSystem::new(Box::new(general_noise), Box::new(quantum.clone()));

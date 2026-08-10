@@ -162,16 +162,16 @@ pub struct HugrEngine {
     pub(crate) pending_cfg_branches: BTreeMap<(Node, Node), Vec<Node>>,
 
     /// Pending block propagations that need re-propagation after measurement results.
-    /// Stores (`cfg_node`, `from_block`, `to_block`) tuples.
+    /// Stores (`cfg_node`, `from_block`, `to_block`, `cascade`) tuples.
     pub(crate) pending_measurement_propagations: Vec<(Node, Node, Node, u64)>,
 
     /// Monotone id for each `transition_to_cfg_successor` invocation (one
     /// synchronous cascade of block hops). Recorded on each replay edge so
     /// (a) a block revisited WITHIN one cascade does not purge the older
     /// hop into it -- the chain a late measurement value must walk -- while
-    /// a re-entry in a LATER cascade (next loop iteration) does, and (b)
-    /// replay uses only each CFG's latest cascade, never re-filling ports
-    /// from a superseded iteration's sources.
+    /// a re-entry in a LATER cascade (next loop iteration) does. Replay can
+    /// therefore walk every retained edge in order: target reactivation has
+    /// already removed superseded loop-generation edges.
     pub(crate) cfg_transition_cascade: u64,
 
     // === Call/FuncDefn Support ===

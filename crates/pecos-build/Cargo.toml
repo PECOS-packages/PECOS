@@ -32,7 +32,7 @@ tar.workspace = true
 flate2.workspace = true
 bzip2.workspace = true
 xz2.workspace = true
-sevenz-rust.workspace = true
+sevenz-rust2.workspace = true
 zip.workspace = true
 zstd.workspace = true
 

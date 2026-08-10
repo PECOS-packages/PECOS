@@ -63,6 +63,9 @@ pub struct BpTrellisConfig {
     pub delta: f64,
     /// Weight applied to the suffix-compatibility score during pruning.
     pub score_alpha: f64,
+    /// Reserve retention slots for the best-scoring state of each distinct
+    /// logical label before filling the remaining width by score.
+    pub label_diverse_retention: bool,
     /// Number of min-sum BP iterations used only to score pruning candidates.
     pub bp_score_iterations: usize,
     /// Merge probabilistic mechanisms with identical detector and observable
@@ -86,6 +89,7 @@ impl Default for BpTrellisConfig {
             k: 8,
             delta: 100.0,
             score_alpha: 0.8,
+            label_diverse_retention: false,
             bp_score_iterations: 5,
             merge_indistinguishable: true,
             ordering: TrellisOrdering::Deadline,
@@ -132,6 +136,7 @@ impl BpTrellisDecoder {
             k,
             delta,
             score_alpha,
+            label_diverse_retention,
             bp_score_iterations,
             merge_indistinguishable,
             ordering,
@@ -152,6 +157,7 @@ impl BpTrellisDecoder {
             k,
             delta,
             score_alpha,
+            label_diverse_retention,
             column_order,
             merge_indistinguishable,
             bp_score_iterations,

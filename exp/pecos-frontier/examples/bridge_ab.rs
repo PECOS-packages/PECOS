@@ -19,7 +19,7 @@
 //! where mechanism order IS the processing order and `syndrome` packs detector
 //! `i` into bit `i`.
 //!
-//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha>`
+//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha> [bp_score_iterations] [label_diversity]`
 //! Prints one `shot,predicted,truth,status` line per shot plus a summary line.
 
 use pecos_decoder_core::dem::SparseDem;
@@ -44,9 +44,10 @@ struct Shot {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = args
-        .next()
-        .expect("usage: bridge_ab <model.json> <k> <delta> <score_alpha>");
+    let path = args.next().expect(
+        "usage: bridge_ab <model.json> <k> <delta> <score_alpha> \
+             [bp_score_iterations] [label_diversity]",
+    );
     let k: usize = args.next().expect("missing k").parse().expect("k");
     let delta: f64 = args.next().expect("missing delta").parse().expect("delta");
     let score_alpha: f64 = args
@@ -57,6 +58,14 @@ fn main() {
     let bp_score_iterations: usize = args
         .next()
         .map_or(0, |raw| raw.parse().expect("bp_score_iterations"));
+    let label_diverse_retention = args.next().map_or(0, |raw| {
+        raw.parse::<u8>().expect("label_diversity must be 0 or 1")
+    });
+    assert!(
+        label_diverse_retention <= 1,
+        "label_diversity must be 0 or 1"
+    );
+    let label_diverse_retention = label_diverse_retention == 1;
 
     let model: BridgeModel =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read model json"))
@@ -71,6 +80,7 @@ fn main() {
         k,
         delta,
         score_alpha,
+        label_diverse_retention,
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations,
@@ -123,8 +133,9 @@ fn main() {
     let elapsed = started.elapsed().as_secs_f64();
     let trials = u32::try_from(model.shots.len()).expect("shot count fits u32");
     println!(
-        "SUMMARY trials={trials} fail={failures} no_path={no_path} fer={} k={k} delta={delta} alpha={score_alpha} decode_s_mean={}",
+        "SUMMARY trials={trials} fail={failures} no_path={no_path} fer={} k={k} delta={delta} alpha={score_alpha} label_diversity={} decode_s_mean={}",
         f64::from(failures) / f64::from(trials),
+        u8::from(label_diverse_retention),
         elapsed / f64::from(trials),
     );
 }

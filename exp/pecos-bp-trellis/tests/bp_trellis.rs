@@ -72,6 +72,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
     assert_eq!(defaults.k, 8);
     assert_eq!(defaults.delta.to_bits(), 100.0_f64.to_bits());
     assert_eq!(defaults.score_alpha.to_bits(), 0.8_f64.to_bits());
+    assert!(!defaults.label_diverse_retention);
     assert_eq!(defaults.bp_score_iterations, 5);
     assert!(defaults.merge_indistinguishable);
     assert_eq!(defaults.ordering, TrellisOrdering::Deadline);
@@ -91,6 +92,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
             k: 8,
             delta: 100.0,
             score_alpha: 0.8,
+            label_diverse_retention: false,
             column_order: Some(deadline_order),
             merge_indistinguishable: true,
             bp_score_iterations: 5,
@@ -103,6 +105,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
             k: 8,
             delta: 100.0,
             score_alpha: 0.8,
+            label_diverse_retention: false,
             column_order: None,
             merge_indistinguishable: true,
             bp_score_iterations: 5,
@@ -162,6 +165,7 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
                 k: 4,
                 delta: 12.0,
                 score_alpha: 0.6,
+                label_diverse_retention: false,
                 bp_score_iterations: 0,
                 merge_indistinguishable: true,
                 ordering,
@@ -175,6 +179,7 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
                 k: 4,
                 delta: 12.0,
                 score_alpha: 0.6,
+                label_diverse_retention: false,
                 column_order,
                 merge_indistinguishable: true,
                 bp_score_iterations: 0,
@@ -189,6 +194,38 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
             );
         }
     }
+}
+
+#[test]
+fn bptrellis_maps_label_diverse_retention_to_the_engine() {
+    let dem = sparse_dem(
+        vec![
+            (0.1, vec![0], vec![0]),
+            (0.2, vec![1], vec![]),
+            (0.3, vec![0, 1], vec![]),
+        ],
+        2,
+        1,
+    );
+    let mut decoder = BpTrellisDecoder::from_sparse_dem(
+        &dem,
+        BpTrellisConfig {
+            k: 2,
+            delta: f64::INFINITY,
+            score_alpha: 0.0,
+            label_diverse_retention: true,
+            bp_score_iterations: 0,
+            merge_indistinguishable: false,
+            ordering: TrellisOrdering::TimeOrder,
+            escalation_ks: Vec::new(),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        decoder.decode(&[1, 0]).unwrap().predicted,
+        ObsMask::from_u64(1)
+    );
 }
 
 #[test]
@@ -248,6 +285,7 @@ fn escalation_config(k: usize, escalation_ks: Vec<usize>) -> BpTrellisConfig {
         k,
         delta: f64::INFINITY,
         score_alpha: 0.0,
+        label_diverse_retention: false,
         bp_score_iterations: 0,
         merge_indistinguishable: false,
         ordering: TrellisOrdering::TimeOrder,
@@ -346,6 +384,7 @@ fn ladder_rung_matches_a_hand_built_decoder_except_accumulated_work() {
         k,
         delta: f64::INFINITY,
         score_alpha: 0.0,
+        label_diverse_retention: false,
         bp_score_iterations: 0,
         merge_indistinguishable: true,
         ordering: TrellisOrdering::Explicit(vec![1, 2, 3, 0]),

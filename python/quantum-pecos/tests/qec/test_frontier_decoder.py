@@ -142,6 +142,31 @@ error(0.1) D0 D1 D2 L0
     assert escalated.transitions > bare_k16.transitions
 
 
+def test_bptrellis_label_diverse_retention_kwarg() -> None:
+    dem = """\
+error(0.1) D0 L0
+error(0.2) D1
+error(0.3) D0 D1
+"""
+    common = {
+        "k": 2,
+        "delta": float("inf"),
+        "score_alpha": 0.0,
+        "bp_score_iterations": 0,
+        "merge_indistinguishable": False,
+        "ordering": "time_order",
+    }
+    plain = BpTrellisDecoder.from_dem(dem, **common)
+    diverse = BpTrellisDecoder.from_dem(
+        dem,
+        label_diverse_retention=True,
+        **common,
+    )
+
+    assert plain.decode_syndrome([1, 0]).observables_mask == 0
+    assert diverse.decode_syndrome([1, 0]).observables_mask == 1
+
+
 def test_committee_easy_tie_selects_forward() -> None:
     committee = FrontierCommitteeDecoder.from_dem("error(0.1) D0 L0\n", column_order="time_order")
 

@@ -90,10 +90,12 @@ pub fn strip_identities(circuit: &mut TickCircuit) {
 
 /// Remove explicit duration-carrying Idle gates.
 ///
-/// This deliberately preserves `I`. `Idle` is a duration-carrying scheduling
-/// marker (it is what [`TickCircuit::fill_idle_gates`] inserts); `I` is a
-/// gate, and what noise a gate carries is each noise model's decision.
-/// Removing no-op gates is [`StripIdentities`]'s job, opted into separately.
+/// This deliberately preserves `I`. `I` can be thought of as the
+/// zero-duration `Idle`: functionally equivalent, but `Idle` is about time
+/// and `I` is about logic. Zero duration contributes zero idle noise, so
+/// idle stripping has nothing to remove -- while gate-noise models may still
+/// attach noise to `I` as a gate. Removing no-op gates is
+/// [`StripIdentities`]'s job, opted into separately.
 pub fn strip_idles(circuit: &mut TickCircuit) {
     StripIdles.apply_tick(circuit);
 }
@@ -689,10 +691,12 @@ impl CircuitPass for StripIdentities {
 
 /// Remove explicit duration-carrying Idle gates from circuits.
 ///
-/// This deliberately preserves [`GateType::I`]. `Idle` is a duration-carrying
-/// scheduling marker (what [`TickCircuit::fill_idle_gates`] inserts on
-/// inactive qubits); `I` is a gate, and what noise it carries is each noise
-/// model's decision. Removing no-op gates is [`StripIdentities`]'s job.
+/// This deliberately preserves [`GateType::I`], the zero-duration `Idle`:
+/// functionally equivalent, but `Idle` is about time (it is what
+/// [`TickCircuit::fill_idle_gates`] inserts on inactive qubits) and `I` is
+/// about logic. Zero duration contributes zero idle noise, so idle stripping
+/// has nothing to remove; gate-noise models may still attach noise to `I`.
+/// Removing no-op gates is [`StripIdentities`]'s job.
 pub struct StripIdles;
 
 impl CircuitPass for StripIdles {

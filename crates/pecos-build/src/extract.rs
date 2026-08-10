@@ -3,11 +3,55 @@
 //! Provides functions for extracting archives to various locations:
 //! - `extract_archive()` - Extract to a specified directory (for legacy/custom use)
 //! - `extract_to_deps()` - Extract to `~/.pecos/deps/` (recommended for build scripts)
+//! - `contained_entry_path()` - Resolve an archive entry name inside a destination
 
 use crate::errors::{Error, Result};
 use crate::home::{get_deps_dir, get_tmp_dir};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+/// Resolves an archive entry name to a path inside `dest`, rejecting escapes.
+///
+/// Archive entry names are attacker-controlled data: a crafted archive can name an
+/// entry `../../etc/foo` or `/etc/foo` and a naive `dest.join(name)` will then write
+/// outside the extraction directory. Callers must route every entry name through this
+/// function before creating anything on disk.
+///
+/// The `tar` crate validates this inside `unpack`, and the `zip` crate exposes
+/// `enclosed_name` for it, so only archive readers without such a guard need this.
+///
+/// # Errors
+///
+/// Returns [`Error::Archive`] if the entry name is absolute, contains a `..`
+/// component, or contains a Windows prefix such as `C:`.
+pub fn contained_entry_path(dest: &Path, entry_name: &str) -> Result<PathBuf> {
+    // Treat both separators as separating on every platform: a Windows-built archive
+    // read on Unix would otherwise carry "..\\.." through as a single opaque name.
+    let normalized = entry_name.replace('\\', "/");
+    let candidate = Path::new(&normalized);
+
+    for component in candidate.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(Error::Archive(format!(
+                    "archive entry escapes the extraction directory: {entry_name}"
+                )));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(Error::Archive(format!(
+                    "archive entry is an absolute path: {entry_name}"
+                )));
+            }
+        }
+    }
+
+    if candidate.as_os_str().is_empty() {
+        return Err(Error::Archive("archive entry has an empty name".into()));
+    }
+
+    Ok(dest.join(candidate))
+}
 
 /// Extract a tar.gz or tar.bz2 archive
 ///
@@ -132,4 +176,59 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
 pub fn extract_to_deps(data: &[u8], dir_name: &str) -> Result<PathBuf> {
     let deps_dir = get_deps_dir()?;
     extract_archive(data, &deps_dir, Some(dir_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_entry_names_resolve_inside_the_destination() {
+        let path = contained_entry_path(Path::new("/out"), "bin/nvcc").unwrap();
+        assert_eq!(path, Path::new("/out/bin/nvcc"));
+    }
+
+    #[test]
+    fn windows_separators_resolve_component_wise() {
+        let path = contained_entry_path(Path::new("/out"), "bin\\nvcc.exe").unwrap();
+        assert_eq!(path, Path::new("/out/bin/nvcc.exe"));
+    }
+
+    #[test]
+    fn parent_components_are_rejected() {
+        for name in [
+            "../escape",
+            "bin/../../escape",
+            "..\\escape",
+            "bin\\..\\..\\escape",
+        ] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("escapes")),
+                "expected an escape rejection for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn absolute_entry_names_are_rejected() {
+        for name in ["/etc/passwd", "\\windows\\system32\\evil.dll"] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("absolute")),
+                "expected an absolute-path rejection for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_entry_names_are_rejected() {
+        assert!(contained_entry_path(Path::new("/out"), "").is_err());
+    }
+
+    #[test]
+    fn current_directory_components_are_allowed() {
+        let path = contained_entry_path(Path::new("/out"), "./bin/nvcc").unwrap();
+        assert_eq!(path, Path::new("/out/bin/nvcc"));
+    }
 }

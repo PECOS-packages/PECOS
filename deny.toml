@@ -2,6 +2,16 @@
 yanked = "deny"
 unmaintained = "none"
 unsound = "none"
+ignore = [
+    # RUSTSEC-2026-0245: path traversal in sevenz-rust's extraction helpers. There is no
+    # fixed version -- the project is abandoned and its repository deleted. PECOS does not
+    # call the affected helpers (`decompress`/`decompress_file` and their `decompress_impl`
+    # core). The single use site drives `SevenZReader` directly and resolves every entry
+    # name through `pecos_build::extract::contained_entry_path`, which rejects absolute
+    # names and `..` components before anything is written to disk; see
+    # crates/pecos-build/src/cuda/installer.rs. Revisit when the dependency is replaced.
+    { id = "RUSTSEC-2026-0245", reason = "affected helpers unused; entry names validated at the call site" },
+]
 
 [bans]
 multiple-versions = "allow"

@@ -2660,9 +2660,27 @@ class decoders:
 
         def __init__(
             self,
-            check_matrix: decoders.CheckMatrix,
-            weights: list[float] | None = ...,
+            num_nodes: int,
+            num_observables: int = ...,
+            solver: str = ...,
+            *,
+            max_tree_size: int | None = ...,
         ) -> None: ...
+        @staticmethod
+        def from_check_matrix(
+            check_matrix: list[list[int]],
+            weights: list[float] | None = ...,
+            num_observables: int | None = ...,
+            *,
+            max_tree_size: int | None = ...,
+        ) -> decoders.FusionBlossomDecoder: ...
+        @staticmethod
+        def from_standard_code(
+            code_type: str,
+            distance: int,
+            error_rate: float,
+            max_half_weight: int = ...,
+        ) -> decoders.FusionBlossomDecoder: ...
         @staticmethod
         def from_dem(
             dem: str,

@@ -2784,12 +2784,26 @@ impl PyTickCircuit {
         SimplifyRotations.apply_tick(&mut self.inner);
     }
 
-    /// Remove identity gates and zero-angle rotations.
+    /// Remove unitary identity gates (`I` and zero-angle rotations).
     ///
     /// Modifies the circuit in place.
-    fn remove_identity(&mut self) {
-        use pecos_quantum::pass::{CircuitPass, RemoveIdentity};
-        RemoveIdentity.apply_tick(&mut self.inner);
+    fn strip_identities(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, StripIdentities};
+        StripIdentities.apply_tick(&mut self.inner);
+    }
+
+    /// Remove explicit duration-carrying `Idle` gates only.
+    ///
+    /// This deliberately preserves `I`, the zero-duration `Idle`:
+    /// functionally equivalent, but `Idle` is about time (what
+    /// `fill_idle_gates()` inserts on inactive qubits) and `I` is about
+    /// logic. Zero duration contributes zero idle noise, so idle stripping
+    /// has nothing to remove; gate-noise models may still attach noise to
+    /// `I`. Removing no-op gates is `strip_identities()`'s job.
+    /// Modifies the circuit in place.
+    fn strip_idles(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, StripIdles};
+        StripIdles.apply_tick(&mut self.inner);
     }
 
     /// Cancel adjacent inverse gate pairs.

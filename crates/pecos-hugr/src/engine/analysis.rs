@@ -454,8 +454,13 @@ pub fn extract_func_defns(hugr: &Hugr) -> BTreeMap<Node, FuncDefnInfo> {
             }
 
             if let (Some(input_node), Some(output_node)) = (input_node, output_node) {
-                let num_inputs = hugr.num_outputs(input_node);
-                let num_outputs = hugr.num_inputs(output_node);
+                // Use the function signature's data ports. The portgraph
+                // counts on Input/Output include an order port, which never
+                // carries a runtime value and therefore cannot participate in
+                // Call argument or return readiness.
+                let signature = func_defn.signature().body();
+                let num_inputs = signature.input().len();
+                let num_outputs = signature.output().len();
 
                 debug!(
                     "Found FuncDefn {node:?} '{name}' with {num_inputs} inputs, {num_outputs} outputs, cfg={cfg_node:?}"

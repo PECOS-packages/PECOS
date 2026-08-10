@@ -1822,7 +1822,8 @@ class TickCircuit:
     def set_gate_meta(self, tick_idx: int, gate_idx: int, key: str, value: Any) -> None: ...
     def get_gate_meta(self, tick_idx: int, gate_idx: int, key: str) -> Any | None: ...
     def lower_clifford_rotations(self) -> None: ...
-    def remove_identity(self) -> None: ...
+    def strip_identities(self) -> None: ...
+    def strip_idles(self) -> None: ...
     def cancel_inverses(self) -> None: ...
     def merge_adjacent_rotations(self) -> None: ...
     def peephole_optimize(self) -> None: ...
@@ -2804,9 +2805,27 @@ class decoders:
 
         def __init__(
             self,
-            check_matrix: decoders.CheckMatrix,
-            weights: list[float] | None = ...,
+            num_nodes: int,
+            num_observables: int = ...,
+            solver: str = ...,
+            *,
+            max_tree_size: int | None = ...,
         ) -> None: ...
+        @staticmethod
+        def from_check_matrix(
+            check_matrix: list[list[int]],
+            weights: list[float] | None = ...,
+            num_observables: int | None = ...,
+            *,
+            max_tree_size: int | None = ...,
+        ) -> decoders.FusionBlossomDecoder: ...
+        @staticmethod
+        def from_standard_code(
+            code_type: str,
+            distance: int,
+            error_rate: float,
+            max_half_weight: int = ...,
+        ) -> decoders.FusionBlossomDecoder: ...
         @staticmethod
         def from_dem(
             dem: str,

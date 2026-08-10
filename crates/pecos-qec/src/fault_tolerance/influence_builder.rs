@@ -481,6 +481,18 @@ impl<'a> InfluenceBuilder<'a> {
                     | pecos_quantum::GateType::MeasCrosstalkGlobalPayload
                     | pecos_quantum::GateType::MeasCrosstalkLocalPayload
                     | pecos_quantum::GateType::TrackedPauliMeta => {}
+                    gate_type
+                        if matches!(
+                            gate_type,
+                            pecos_quantum::GateType::RX
+                                | pecos_quantum::GateType::RY
+                                | pecos_quantum::GateType::RZ
+                                | pecos_quantum::GateType::RXX
+                                | pecos_quantum::GateType::RYY
+                                | pecos_quantum::GateType::RZZ
+                                | pecos_quantum::GateType::CRZ
+                        ) && op.angles.len() == 1
+                            && op.angles[0].is_zero() => {}
                     // Anything else would be silently mis-analyzed: an ignored
                     // rotation manufactures detectors its backward propagation
                     // then contradicts.
@@ -1451,6 +1463,19 @@ mod tests {
             .map(|_| ())
             .expect_err("RZ is not representable in the symbolic replay");
         assert!(matches!(err, InfluenceBuildError::UnsupportedGate { .. }));
+    }
+
+    #[test]
+    fn a_zero_angle_rotation_is_replayed_as_an_identity() {
+        use pecos_core::Angle64;
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.rz(Angle64::ZERO, &[0]);
+        dag.mz(&[0]);
+
+        InfluenceBuilder::new(&dag)
+            .build()
+            .expect("an exact zero-angle rotation is representable as an identity");
     }
 
     /// A batched measurement node used to be analyzed as measuring only its

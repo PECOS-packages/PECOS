@@ -14,15 +14,19 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
 from dem_decomposition_diagnostics import (
     compare_raw_dems,
     dem_stats,
     terminal_graphlike_projection,
     true_observable_flips,
 )
+from pecos import array, asarray, dtypes
+from pecos import sum as array_sum
+
+if TYPE_CHECKING:
+    from pecos import Array
 
 # SZZ/SZZdg surface diagnostics model Z-frame gates as virtual and p1-free.
 SZZ_Z_FRAME_P1_GATE_RATES = {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
@@ -69,8 +73,8 @@ def timed(label: str, callback: Any) -> tuple[Any, float]:
 
 def decode_with_correlated_pymatching(
     dem_text: str,
-    detection_events: np.ndarray,
-    observable_flips: np.ndarray,
+    detection_events: Array,
+    observable_flips: Array,
 ) -> tuple[int, float, float]:
     from pecos.decoders import PyMatchingDecoder
 
@@ -79,15 +83,15 @@ def decode_with_correlated_pymatching(
         lambda: PyMatchingDecoder.from_dem_with_correlations(dem_text, enable_correlations=True),
     )
 
-    expected = true_observable_flips(observable_flips)
+    expected = asarray(true_observable_flips(observable_flips), dtype=dtypes.uint8)
 
     def decode() -> list[list[int]]:
-        flat = detection_events.astype(np.uint8).flatten().tolist()
+        flat = [value for row in asarray(detection_events, dtype=dtypes.uint8) for value in row]
         return decoder.decode_batch(flat, len(detection_events))
 
     predictions, decode_s = timed("decode batch", decode)
-    predicted = np.array([prediction[0] if prediction else 0 for prediction in predictions], dtype=np.uint8)
-    logical_errors = int(np.sum(predicted != expected))
+    predicted = array([prediction[0] if prediction else 0 for prediction in predictions], dtype=dtypes.uint8)
+    logical_errors = int(array_sum(predicted != expected))
     return logical_errors, decoder_build_s, decode_s
 
 

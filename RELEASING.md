@@ -13,9 +13,9 @@ The version is a literal in many coordinated places. Bump them all:
   `python/selene-plugins/*` packages)
 - Exact-version internal pins: the root's `quantum-pecos[cuda12/13]==...`
   entries and quantum-pecos's `pecos-rslib==...` / `pecos-rslib-llvm==...`
-- Regenerate both lockfiles: `just lock` (runs the pinned uv from
-  `.github/uv.toml` at the root and in `exp/zluppy/`; verify the diffs
-  are version-lines-only)
+- Regenerate all three lockfiles: `just lock` (runs the pinned uv from
+  `.github/uv.toml` at the root and in `exp/zlup/` and `exp/zluppy/`; verify
+  the diffs are version-lines-only)
 
 Verify: `git grep <old-version>` returns nothing outside this file's
 historical note; `uv lock --check` passes;

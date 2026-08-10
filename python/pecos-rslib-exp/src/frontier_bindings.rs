@@ -144,7 +144,6 @@ fn parse_dem_and_config(
             k,
             delta,
             score_alpha,
-            label_diverse_retention: false,
             column_order,
             merge_indistinguishable,
             bp_score_iterations,
@@ -157,7 +156,6 @@ fn parse_bptrellis_dem_and_config(
     k: usize,
     delta: f64,
     score_alpha: f64,
-    label_diverse_retention: bool,
     bp_score_iterations: usize,
     merge_indistinguishable: bool,
     ordering: TrellisOrderArgument,
@@ -184,7 +182,6 @@ fn parse_bptrellis_dem_and_config(
             k,
             delta,
             score_alpha,
-            label_diverse_retention,
             bp_score_iterations,
             merge_indistinguishable,
             ordering,
@@ -541,15 +538,14 @@ impl PyBpTrellisDecoder {
     /// Construct a PECOS BP-guided trellis decoder from a Stim-format DEM.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=8, delta=100.0, score_alpha=0.8, label_diverse_retention=false, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None),
-        text_signature = "(dem, *, k=8, delta=100.0, score_alpha=0.8, label_diverse_retention=False, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None)"
+        signature = (dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None),
+        text_signature = "(dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None)"
     )]
     fn from_dem(
         dem: &str,
         k: usize,
         delta: f64,
         score_alpha: f64,
-        label_diverse_retention: bool,
         bp_score_iterations: usize,
         merge_indistinguishable: bool,
         ordering: TrellisOrderArgument,
@@ -560,7 +556,6 @@ impl PyBpTrellisDecoder {
             k,
             delta,
             score_alpha,
-            label_diverse_retention,
             bp_score_iterations,
             merge_indistinguishable,
             ordering,

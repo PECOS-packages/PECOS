@@ -28,7 +28,7 @@ pub use pecos_decoder_core::dem::SparseDem;
 pub use pecos_decoder_core::errors::DecoderError;
 pub use pecos_decoder_core::obs_mask::ObsMask;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 const WORD_BITS: usize = u64::BITS as usize;
@@ -50,11 +50,6 @@ pub struct TrellisConfig {
     /// Weight applied to the suffix-compatibility score during pruning.
     /// Defaults to `0.8`, chosen to match the parity contract.
     pub score_alpha: f64,
-    /// Reserve retention slots for the best-scoring state of each distinct
-    /// logical label before filling the remaining width by score (experimental;
-    /// default false). The delta window is unchanged: label diversity only
-    /// changes which within-window states fill the `k` slots.
-    pub label_diverse_retention: bool,
     /// Optional permutation of the DEM mechanism indices.
     pub column_order: Option<Vec<usize>>,
     /// Merge probabilistic mechanisms with identical detector and observable
@@ -79,7 +74,6 @@ impl Default for TrellisConfig {
             k: 64,
             delta: 50.0,
             score_alpha: 0.8,
-            label_diverse_retention: false,
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
@@ -647,7 +641,6 @@ impl TrellisDecoder {
                 self.config.k,
                 self.config.delta,
                 self.config.score_alpha,
-                self.config.label_diverse_retention,
                 suffix_compatibility,
                 &observed,
             );
@@ -964,7 +957,6 @@ fn prune(
     k: usize,
     delta: f64,
     score_alpha: f64,
-    label_diverse_retention: bool,
     suffix_compatibility: &[SuffixCompatibility],
     observed: &[u64],
 ) -> PruneResult {
@@ -1011,55 +1003,16 @@ fn prune(
     let mut k_capped = false;
     let mut delta_pruned = false;
 
-    if label_diverse_retention {
-        let within_delta_count = candidates.partition_point(|scored| scored.score >= cutoff);
-        let mut retained_by_index = vec![false; within_delta_count];
-        let mut retained_labels = BTreeSet::new();
-        let mut retained_count = 0;
-
-        for (index, scored) in candidates[..within_delta_count].iter().enumerate() {
-            if retained_labels.insert(scored.candidate.key.logical.clone()) {
-                retained_by_index[index] = true;
-                retained_count += 1;
-                if retained_count == k {
-                    break;
-                }
-            }
-        }
-        if retained_count < k {
-            for is_retained in &mut retained_by_index {
-                if !*is_retained {
-                    *is_retained = true;
-                    retained_count += 1;
-                    if retained_count == k {
-                        break;
-                    }
-                }
-            }
-        }
-
-        for (index, scored) in candidates.into_iter().enumerate() {
-            if retained_by_index.get(index).copied().unwrap_or(false) {
-                retained.insert(scored.candidate.key, scored.candidate.log_mass);
-            } else {
-                dropped_states += 1;
-                dropped_log_mass = logaddexp(dropped_log_mass, scored.candidate.log_mass);
-                k_capped |= index < within_delta_count;
-                delta_pruned |= index >= within_delta_count;
-            }
-        }
-    } else {
-        for (index, scored) in candidates.into_iter().enumerate() {
-            let within_k = index < k;
-            let within_delta = scored.score >= cutoff;
-            if within_k && within_delta {
-                retained.insert(scored.candidate.key, scored.candidate.log_mass);
-            } else {
-                dropped_states += 1;
-                dropped_log_mass = logaddexp(dropped_log_mass, scored.candidate.log_mass);
-                k_capped |= !within_k;
-                delta_pruned |= within_k && !within_delta;
-            }
+    for (index, scored) in candidates.into_iter().enumerate() {
+        let within_k = index < k;
+        let within_delta = scored.score >= cutoff;
+        if within_k && within_delta {
+            retained.insert(scored.candidate.key, scored.candidate.log_mass);
+        } else {
+            dropped_states += 1;
+            dropped_log_mass = logaddexp(dropped_log_mass, scored.candidate.log_mass);
+            k_capped |= !within_k;
+            delta_pruned |= within_k && !within_delta;
         }
     }
 
@@ -1250,8 +1203,8 @@ fn and_not_assign(left: &mut [u64], right: &[u64]) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ObsMask, SparseDem, StateKey, TrellisConfig, TrellisDecoder, bp_score_probability,
-        logaddexp, merge_indistinguishable_columns, prune,
+        SparseDem, TrellisConfig, TrellisDecoder, bp_score_probability, logaddexp,
+        merge_indistinguishable_columns,
     };
     use std::collections::BTreeMap;
 
@@ -1316,100 +1269,5 @@ mod tests {
             bp_score_probability(-1_000.0).to_bits(),
             (1.0 - 1e-6_f64).to_bits()
         );
-    }
-
-    fn label_diversity_dem() -> SparseDem {
-        SparseDem {
-            mechanisms: vec![
-                (0.1, vec![0], vec![0]),
-                (0.2, vec![1], vec![]),
-                (0.3, vec![0, 1], vec![]),
-            ],
-            detector_coords: BTreeMap::new(),
-            num_detectors: 2,
-            num_observables: 1,
-        }
-    }
-
-    #[test]
-    fn label_diverse_retention_changes_the_small_k_decode() {
-        let dem = label_diversity_dem();
-        let config = TrellisConfig {
-            k: 2,
-            delta: f64::INFINITY,
-            score_alpha: 0.0,
-            label_diverse_retention: false,
-            column_order: None,
-            merge_indistinguishable: false,
-            bp_score_iterations: 0,
-        };
-        let mut plain = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
-        let mut diverse = TrellisDecoder::from_sparse_dem(
-            &dem,
-            TrellisConfig {
-                label_diverse_retention: true,
-                ..config
-            },
-        )
-        .unwrap();
-
-        // After the first two mechanisms, plain top-K keeps prefixes 00/L0
-        // and 01/L0. Diversity instead keeps 00/L0 and 10/L1. The final
-        // mechanism and this syndrome make only 01/L0 and 10/L1 feasible,
-        // respectively.
-        let syndrome = [1, 0];
-        let plain_result = plain.decode(&syndrome).unwrap();
-        let diverse_result = diverse.decode(&syndrome).unwrap();
-
-        assert_eq!(plain_result.predicted, ObsMask::from_u64(0));
-        assert_eq!(diverse_result.predicted, ObsMask::from_u64(1));
-        assert_ne!(plain_result.predicted, diverse_result.predicted);
-    }
-
-    #[test]
-    fn label_diverse_retention_is_off_by_default_and_bit_identical() {
-        let dem = label_diversity_dem();
-        let default_config = TrellisConfig::default();
-        assert!(!default_config.label_diverse_retention);
-        let mut default_decoder =
-            TrellisDecoder::from_sparse_dem(&dem, default_config.clone()).unwrap();
-        let mut explicit_off = TrellisDecoder::from_sparse_dem(
-            &dem,
-            TrellisConfig {
-                label_diverse_retention: false,
-                ..default_config
-            },
-        )
-        .unwrap();
-
-        for syndrome in [[0, 0], [0, 1], [1, 0], [1, 1]] {
-            assert_eq!(
-                explicit_off.decode(&syndrome).unwrap(),
-                default_decoder.decode(&syndrome).unwrap()
-            );
-        }
-    }
-
-    #[test]
-    fn label_diversity_never_resurrects_candidates_outside_delta() {
-        let state = |active_syndrome, logical, log_mass| {
-            (
-                StateKey {
-                    active_syndrome: vec![active_syndrome],
-                    logical: vec![logical],
-                },
-                log_mass,
-            )
-        };
-        let frontier = BTreeMap::from([state(0, 0, 0.0), state(1, 0, -0.1), state(2, 1, -10.0)]);
-
-        let result = prune(frontier, 2, 1.0, 0.0, true, &[], &[]);
-
-        assert_eq!(result.retained.len(), 2);
-        assert!(result.retained.keys().all(|key| key.logical == [0]));
-        assert_eq!(result.dropped_states, 1);
-        assert_eq!(result.dropped_log_mass.to_bits(), (-10.0_f64).to_bits());
-        assert!(!result.k_capped);
-        assert!(result.delta_pruned);
     }
 }

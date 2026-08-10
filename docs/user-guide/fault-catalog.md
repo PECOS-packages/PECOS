@@ -28,7 +28,7 @@ print(f"{len(result)} shots, {len(result[0])} measurements each")
 
 If you want to inspect what faults are possible in that circuit:
 
-<!--continuation; requires-module: pecos_rslib_exp-->
+<!--requires-module: pecos_rslib_exp-->
 ```python
 from pecos_rslib_exp import fault_catalog
 
@@ -106,7 +106,6 @@ structural fields like `affected_detectors` will be empty, but
 The expensive work (Pauli propagation, detector mapping) is done once during
 construction. Changing noise is cheap -- it just updates probability fields:
 
-<!--continuation-->
 ```python
 catalog = fault_catalog(circuit)
 
@@ -126,7 +125,6 @@ update existing decoders or plans.
 
 The returned object is sequence-like:
 
-<!--continuation-->
 ```python
 print(len(catalog))
 print(catalog[0])
@@ -419,7 +417,6 @@ catalog.with_noise(&noise);
 
 Iterate locations and alternatives:
 
-<!--continuation-->
 ```rust
 for loc in &catalog.locations {
     println!(
@@ -446,7 +443,6 @@ for loc in &catalog.locations {
 
 Iterate configurations:
 
-<!--continuation-->
 ```rust
 for event in catalog.fault_configurations(2) {
     println!(

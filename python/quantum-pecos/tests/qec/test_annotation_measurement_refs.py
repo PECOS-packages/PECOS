@@ -59,7 +59,7 @@ def test_observable_over_two_measurements_uses_both() -> None:
 # takes detectors from the `detectors` metadata JSON, and
 # `InfluenceBuilder::with_circuit_annotations` routes detector annotations to the
 # sampler path instead. The binding fix corrects that path too, but exercising it
-# needs a sampler-level test; tracked with the rest of the annotation work in #387.
+# needs a sampler-level test.
 
 
 def test_measurement_ref_from_another_circuit_is_rejected() -> None:
@@ -75,3 +75,62 @@ def test_measurement_ref_from_another_circuit_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="does not identify a measurement"):
         tc.observable([(99, 0, 0)])
+
+
+def test_dag_detector_rejects_plain_int_measurement_refs() -> None:
+    """A bare int is ambiguous between a node index and a measurement id.
+
+    Silently reinterpreting it is how annotations end up referencing the wrong
+    measurement, so the binding refuses it outright.
+    """
+    from pecos.quantum import DagCircuit
+
+    dag = DagCircuit()
+    dag.pz([0])
+    ms = dag.mz([0])
+
+    with pytest.raises(TypeError, match="plain ints are"):
+        dag.detector([0])
+    # The tuple refs from mz() still work.
+    dag.detector(ms)
+
+
+def test_dag_detector_rejects_a_forged_tuple_ref() -> None:
+    """A (node, qubit) tuple that names no measurement raises, never guesses."""
+    from pecos.quantum import DagCircuit
+
+    dag = DagCircuit()
+    dag.pz([0])
+    h_node = dag.gate_count()
+    dag.h([0])
+    dag.mz([0])
+
+    with pytest.raises(ValueError, match="does not name a measurement gate"):
+        dag.detector([(h_node, 0)])
+
+
+def test_scrambled_mz_with_ids_annotations_survive_to_the_dag() -> None:
+    """Non-positional ids (the Guppy pattern) name measurements exactly.
+
+    De-aliased: ids 9 and 5 are neither positional nor contiguous, so any
+    consumer that treats the id as an index gives a wrong answer here.
+    """
+    from pecos.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().pz([0, 1])
+    refs = tc.tick().mz_with_ids([0, 1], [9, 5])
+    assert len(refs) == 2
+    tc.detector(refs, label="d")
+    tc.observable([refs[1]], label="o")
+
+    anns = tc.annotations()
+    by_label = {a["label"]: a for a in anns}
+    assert by_label["d"]["measurement_ids"] == [9, 5]
+    assert by_label["o"]["measurement_ids"] == [5]
+
+    dag = tc.to_dag_circuit()
+    dag_anns = dag.annotations()
+    dag_by_label = {a["label"]: a for a in dag_anns}
+    assert dag_by_label["d"]["measurement_ids"] == [9, 5]
+    assert dag_by_label["o"]["measurement_ids"] == [5]

@@ -53,7 +53,7 @@ fn build_minimal_zbasis() -> Vec<Gate> {
 #[test]
 fn test_zbasis_generator_labels() {
     let gates = build_minimal_zbasis();
-    let expanded = expand::expand_circuit(&gates);
+    let expanded = expand::expand_circuit(&gates).expect("supported circuit");
 
     eprintln!(
         "Expanded circuit: {} qubits ({} original + {} aux)",

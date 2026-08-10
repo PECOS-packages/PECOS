@@ -164,7 +164,7 @@ def measure_cell(
     else:
         dem = builder.build_dem(p1=p, p2=p, p_meas=p)
     sc = builder.stab_coords()
-    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=seed)
+    batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(n, seed=seed)
 
     cells: list[Cell] = []
     for inner in inners:

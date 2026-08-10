@@ -102,7 +102,7 @@ impl LookupDecoder {
                     .locations
                     .iter()
                     .find(|l| l.node == loc.node && l.before == loc.before)
-                    .map_or(0.0, |l| l.idle_duration.max(0.0));
+                    .map_or(0.0, |l| l.idle_duration);
                 Some(noise.idle_pauli_probs(duration))
             } else {
                 None
@@ -481,11 +481,14 @@ mod tests {
         dag.pz(&[0]);
         dag.tracked_pauli_labeled("track_x", X(0));
         let meas = dag.mz(&[0]);
-        dag.observable_labeled("obs0", &[meas[0]]);
+        dag.observable_labeled("obs0", &[meas[0]])
+            .expect("refs are from this circuit");
 
         let map = InfluenceBuilder::new(&dag)
-            .with_circuit_annotations(&dag)
-            .build();
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
+            .build()
+            .expect("circuit is replayable");
         assert_eq!(map.num_tracked_paulis(), 1);
         assert_eq!(map.num_observables(), 1);
 
@@ -499,9 +502,12 @@ mod tests {
         dag.pz(&[0, 1]);
         dag.cx(&[(0, 1)]);
         let meas = dag.mz(&[1]);
-        dag.detector(&[meas[0]]);
+        dag.detector(&[meas[0]])
+            .expect("refs are from this circuit");
 
-        let map = InfluenceBuilder::new(&dag).build();
+        let map = InfluenceBuilder::new(&dag)
+            .build()
+            .expect("circuit is replayable");
         assert_eq!(map.num_observables(), 0);
 
         let decoder = LookupDecoder::build(&map, &NoiseConfig::uniform(0.01), 0);

@@ -207,6 +207,15 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
     println!("Circuit uses {} qubits", engine.num_qubits());
     ```
 
+## Capturing the Runtime QIS Operation Trace
+
+PECOS can capture both the source operations and the runtime-scheduled,
+lowered operations produced while Guppy, HUGR, or QIS executes through a
+Selene-compatible runtime. See the
+[Runtime QIS Tracing tutorial](runtime-qis-tracing.md) for trace inspection,
+JSON persistence, replay into a `TickCircuit`, runtime-emitted idle gates, and
+the limitations of tracing a single execution path.
+
 ## Measurement-Based Control Flow
 
 One of HUGR's key advantages is native support for control flow based on measurement results. This is natural in Guppy:
@@ -414,11 +423,11 @@ Add realistic noise to your Guppy simulations:
     # Custom noise model
     noise = (
         GeneralNoiseModelBuilder()
-        .with_prep_probability(0.001)
-        .with_p1_probability(0.0001)
-        .with_p2_probability(0.01)
-        .with_meas_0_probability(0.02)
-        .with_meas_1_probability(0.03)
+        .with_p_prep(0.001)
+        .with_p1(0.0001)
+        .with_p2(0.01)
+        .with_p_meas_0(0.02)
+        .with_p_meas_1(0.03)
     )
 
     results = sim(Guppy(noisy_bell)).qubits(2).quantum(state_vector()).noise(noise).run(1000)

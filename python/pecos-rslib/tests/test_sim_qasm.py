@@ -156,11 +156,7 @@ class TestUnifiedSimApi:
             sim(Qasm.from_string(qasm_bell))
             .seed(42)
             .noise(
-                depolarizing_noise()
-                .with_prep_probability(0.01)
-                .with_meas_probability(0.01)
-                .with_p1_probability(0.001)
-                .with_p2_probability(0.1),
+                depolarizing_noise().with_p_prep(0.01).with_p_meas(0.01).with_p1(0.001).with_p2(0.1),
             )
             .run(1000)
         )
@@ -192,8 +188,8 @@ class TestUnifiedSimApi:
         errors = sum(1 for val in results["c"] if val == 0)
         assert errors > 0
 
-        # General noise
-        shot_vec = sim(Qasm.from_string(qasm)).noise(general_noise()).run(10)
+        # Preserve the historical demonstration preset in this all-model smoke test.
+        shot_vec = sim(Qasm.from_string(qasm)).noise(general_noise().auto()).run(10)
         results = shot_vec.to_dict()
         assert len(results["c"]) == 10
 

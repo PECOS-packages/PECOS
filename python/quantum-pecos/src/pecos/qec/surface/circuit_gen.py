@@ -468,13 +468,13 @@ def compare_dems(
     Returns:
         Dictionary with comparison results
     """
-    from pecos.qec.surface.decode import NoiseModel, generate_surface_code_dem
+    from pecos.qec.surface.decode import NoiseParameters, generate_surface_code_dem
 
     # Generate circuit-level DEM via Stim
     stim_dem = generate_circuit_level_dem(patch, num_rounds, basis, p=p)
 
     # Generate phenomenological DEM
-    noise = NoiseModel(p1=p, p2=p, p_meas=p, p_prep=p)
+    noise = NoiseParameters(p1=p, p2=p, p_meas=p, p_prep=p)
     stab_type = "X" if basis.upper() == "X" else "Z"
     phenom_dem = generate_surface_code_dem(patch, num_rounds, noise, stab_type)
 

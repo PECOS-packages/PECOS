@@ -3,34 +3,40 @@
 
 """Regression tests for the Guppy-to-DEM convenience path."""
 
+import inspect
 import json
+import warnings
 from typing import ClassVar
 
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import barrier, owned, result
-from guppylang.std.quantum import h, measure, qubit, x
-from pecos.guppy import get_num_qubits, make_surface_code
-from pecos.qec import DetectorErrorModel
-from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseModel, SurfacePatch
+from guppylang.std.quantum import cx, h, measure, qubit, x
+from pecos._qis_trace_replay import (
+    _reject_partially_lowered_trace,
+    _replay_lowered_qis_trace_into_tick_circuit,
+    _replay_qis_trace_into_tick_circuit,
+    named_result_traces_from_operation_trace,
+)
+from pecos._traced_circuit import (
+    measurement_ids_in_execution_order,
+    normalize_traced_tick_circuit,
+)
+from pecos.guppy_gen import get_num_qubits, make_surface_code
+from pecos.qec import Detector, DetectorErrorModel, Observable, build_dem_from_guppy, rec
+from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseParameters, SurfacePatch
 from pecos.qec.surface.circuit_builder import (
     generate_tick_circuit_from_patch,
-    normalize_traced_qis_tick_circuit,
 )
 from pecos.qec.surface.decode import (
     _build_surface_tick_circuit_for_native_model,
     _copy_surface_tick_circuit_metadata,
-    _extract_measurement_meas_ids,
     _measurement_index_remap_for_orders,
-    _reject_partially_lowered_trace,
     _remap_surface_record_metadata_json,
-    _replay_lowered_qis_trace_into_tick_circuit,
-    _replay_qis_trace_into_tick_circuit,
     _surface_runtime_measurement_remap_from_result_traces,
     _validate_result_tag_remap_against_traced_measurements,
     capture_guppy_operation_trace,
     generate_circuit_level_dem_from_builder,
-    named_result_traces_from_operation_trace,
     trace_guppy_into_tick_circuit_with_result_traces,
 )
 
@@ -40,6 +46,28 @@ def _single_measurement() -> None:
     q = qubit()
     b = measure(q)
     result("m", b)
+
+
+@guppy
+def _two_qubit_idle_target() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    cx(q0, q1)
+    m0 = measure(q0)
+    m1 = measure(q1)
+    result("m0", m0)
+    result("m1", m1)
+
+
+@guppy
+def _structured_idle_noise_target() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    cx(q0, q1)
+    h(q0)
+    h(q1)
+    result("m0", measure(q0))
+    result("m1", measure(q1))
 
 
 @guppy
@@ -161,6 +189,748 @@ def _dem_text(*, detectors_json: str = "[]", observables_json: str = "[]") -> st
         seed=0,
     )
     return dem.to_string()
+
+
+_TWO_QUBIT_DETECTORS_JSON = '[{"id":0,"records":[-2]}]'
+_TWO_QUBIT_OBSERVABLES_JSON = '[{"id":0,"records":[-1]}]'
+_NO_GATE_NOISE = {"p1": 0.0, "p2": 0.0, "p_meas": 0.0, "p_prep": 0.0}
+_DEV_ZERO_RZ_STRIPPED_CONTRIBUTIONS = 0
+
+
+def _two_qubit_dem(**kwargs):
+    return DetectorErrorModel.from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors_json=_TWO_QUBIT_DETECTORS_JSON,
+        observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+        num_measurements=2,
+        seed=0,
+        **_NO_GATE_NOISE,
+        **kwargs,
+    )
+
+
+def _structured_idle_dem(entrypoint: str, **kwargs):
+    if entrypoint == "from_guppy":
+        return DetectorErrorModel.from_guppy(
+            _structured_idle_noise_target,
+            num_qubits=2,
+            detectors_json=_TWO_QUBIT_DETECTORS_JSON,
+            observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+            num_measurements=2,
+            seed=0,
+            **_NO_GATE_NOISE,
+            **kwargs,
+        )
+    return build_dem_from_guppy(
+        _structured_idle_noise_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        seed=0,
+        **_NO_GATE_NOISE,
+        **kwargs,
+    ).dem
+
+
+def test_all_idle_laws_match_pre_rust_family_dem_bytes() -> None:
+    actual = _structured_idle_dem(
+        "from_guppy",
+        idle_after_2q_duration=2.0,
+        p_idle_x_linear_rate=0.002,
+        p_idle_y_linear_rate=0.003,
+        p_idle_z_linear_rate=0.005,
+        p_idle_x_quadratic_rate=0.0001,
+        p_idle_y_quadratic_rate=0.0002,
+        p_idle_z_quadratic_rate=0.0003,
+        p_idle_x_quadratic_sine_rate=0.01,
+        p_idle_y_quadratic_sine_rate=0.02,
+        p_idle_z_quadratic_sine_rate=0.03,
+    ).to_string()
+
+    assert actual == "detector D0\nlogical_observable L0\nerror(0.013129) L0\nerror(0.019423) D0"
+
+
+def test_z_linear_family_matches_pre_removed_axis_dem_bytes() -> None:
+    actual = _structured_idle_dem(
+        "from_guppy",
+        idle_after_2q_duration=2.0,
+        p_idle_z_linear_rate=0.005,
+    ).to_string()
+
+    assert actual == "detector D0\nlogical_observable L0\nerror(0.01) D0"
+
+
+def test_guppy_dem_entrypoints_do_not_expose_p_idle_shorthand() -> None:
+    assert "p_idle" not in inspect.signature(DetectorErrorModel.from_guppy).parameters
+    assert "p_idle" not in inspect.signature(build_dem_from_guppy).parameters
+
+
+def _noise_model_entrypoint_dem(entrypoint: str, **kwargs):
+    if entrypoint == "from_guppy":
+        return DetectorErrorModel.from_guppy(
+            _structured_idle_noise_target,
+            num_qubits=2,
+            detectors_json=_TWO_QUBIT_DETECTORS_JSON,
+            observables_json=_TWO_QUBIT_OBSERVABLES_JSON,
+            num_measurements=2,
+            **kwargs,
+        )
+    return build_dem_from_guppy(
+        _structured_idle_noise_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        **kwargs,
+    ).dem
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_noise_model_matches_flat_gate_noise(entrypoint: str) -> None:
+    rates = {"p1": 0.003, "p2": 0.007, "p_meas": 0.011, "p_prep": 0.013}
+
+    grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(**rates))
+    flat = _noise_model_entrypoint_dem(entrypoint, **rates)
+
+    assert grouped.to_string() == flat.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_noise_model_matches_flat_pauli_weights(entrypoint: str) -> None:
+    noise_kwargs = {
+        "p1": 0.003,
+        "p1_weights": {"X": 0.6, "Y": 0.3, "Z": 0.1},
+        "p2": 0.007,
+        "p2_weights": {"IX": 0.4, "XI": 0.6},
+        "p_meas": 0.011,
+        "p_prep": 0.013,
+    }
+
+    with pytest.warns(UserWarning, match=r"two-qubit gate .*largest TV 1\.184e-05"):
+        grouped = _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(**noise_kwargs))
+    with pytest.warns(UserWarning, match=r"two-qubit gate .*largest TV 1\.184e-05"):
+        flat = _noise_model_entrypoint_dem(entrypoint, **noise_kwargs)
+
+    assert grouped.to_string() == flat.to_string()
+    assert grouped.idle_noise_residuals == flat.idle_noise_residuals
+    assert len(grouped.idle_noise_residuals) == 1
+    residual = grouped.idle_noise_residuals[0]
+    assert residual["channel_kind"] == "two-qubit gate"
+    assert residual["magnitude"] == pytest.approx(1.1843041548472428e-05)
+    assert residual["channel_weight"] == pytest.approx(0.007)
+    assert residual["relative_magnitude"] == pytest.approx(0.001691863078353204)
+    assert residual["relative_magnitude"] == pytest.approx(
+        residual["magnitude"] / residual["channel_weight"],
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_noise_model_structured_idle_family_matches_flat_axis_rates(entrypoint: str) -> None:
+    rate = 0.03
+    model = {"X": 0.25, "Z": 0.75}
+
+    grouped = _noise_model_entrypoint_dem(
+        entrypoint,
+        noise=NoiseParameters(p_idle_linear=rate, p_idle_linear_model=model),
+        idle_after_2q_duration=2.0,
+    )
+    flat = _noise_model_entrypoint_dem(
+        entrypoint,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        p_idle_x_linear_rate=rate * model["X"],
+        p_idle_z_linear_rate=rate * model["Z"],
+        idle_after_2q_duration=2.0,
+    )
+
+    assert grouped.to_string() == flat.to_string()
+    assert grouped.idle_noise_residuals == []
+    assert flat.idle_noise_residuals == []
+
+
+def test_guppy_build_audit_surfaces_idle_conversion_residuals() -> None:
+    build = build_dem_from_guppy(
+        _structured_idle_noise_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        p_idle_linear=0.03,
+        p_idle_linear_model={"X": 0.25, "Z": 0.75},
+        idle_after_2q_duration=2.0,
+    )
+
+    assert build.audit["idle_noise_residuals"] == build.dem.idle_noise_residuals
+    assert build.audit["idle_noise_residuals"] == []
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("keyword", ["p1", "p2", "p_meas", "p_idle_linear"])
+def test_noise_model_rejects_flat_noise_keyword(entrypoint: str, keyword: str) -> None:
+    with pytest.raises(ValueError, match=keyword):
+        _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(), **{keyword: 0.01})
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("field", ["p_idle", "p2_szz", "p2_szzdg"])
+def test_noise_model_rejects_fields_not_supported_by_guppy_dem(entrypoint: str, field: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        _noise_model_entrypoint_dem(entrypoint, noise=NoiseParameters(**{field: 0.01}))
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_noise_model_combines_with_non_noise_keywords(entrypoint: str) -> None:
+    dem = _noise_model_entrypoint_dem(
+        entrypoint,
+        noise=NoiseParameters(p_idle_linear=0.01),
+        idle_after_2q_duration=1.0,
+        strip_traced_idles=True,
+        seed=17,
+    )
+
+    assert "error(" in dem.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_linear_default_matches_axis_primitives(entrypoint: str) -> None:
+    rate = 0.03
+
+    structured = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, p_idle_linear=rate)
+    primitive = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_x_linear_rate=rate / 3.0,
+        p_idle_y_linear_rate=rate / 3.0,
+        p_idle_z_linear_rate=rate / 3.0,
+    )
+
+    assert structured.to_string() == primitive.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_linear_custom_z_model_matches_axis_primitive(entrypoint: str) -> None:
+    rate = 0.03
+
+    structured = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear=rate,
+        p_idle_linear_model={"Z": 1.0},
+    )
+    primitive = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_z_linear_rate=rate,
+    )
+
+    assert structured.to_string() == primitive.to_string()
+    assert structured.num_contributions > 0
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_linear_model_uses_engines_normalization_tolerance(entrypoint: str) -> None:
+    rate = 0.03
+
+    within_tolerance = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear=rate,
+        p_idle_linear_model={"Z": 1.0 + 5.0e-6},
+    )
+    normalized = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_linear=rate,
+        p_idle_linear_model={"Z": 1.0},
+    )
+
+    assert within_tolerance.to_string() == normalized.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_sin_squared_default_matches_all_axis_sine_primitives(entrypoint: str) -> None:
+    rate = 0.17
+
+    structured = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, p_idle_sin_squared=rate)
+    primitive = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_x_quadratic_sine_rate=rate,
+        p_idle_y_quadratic_sine_rate=rate,
+        p_idle_z_quadratic_sine_rate=rate,
+    )
+
+    assert structured.to_string() == primitive.to_string()
+    assert structured.num_contributions > 0
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_sin_squared_explicit_z_model_matches_z_sine_primitive(entrypoint: str) -> None:
+    rate = 0.17
+
+    structured = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_sin_squared=rate,
+        p_idle_sin_squared_model={"Z": 1.0},
+    )
+    primitive = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_z_quadratic_sine_rate=rate,
+    )
+
+    assert structured.to_string() == primitive.to_string()
+    assert structured.num_contributions > 0
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_sin_squared_custom_model_matches_axis_sine_primitives(entrypoint: str) -> None:
+    rate = 0.17
+
+    structured = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_sin_squared=rate,
+        p_idle_sin_squared_model={"X": 1.0, "Z": 0.5},
+    )
+    primitive = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_x_quadratic_sine_rate=rate,
+        p_idle_z_quadratic_sine_rate=rate / 2.0,
+    )
+
+    assert structured.to_string() == primitive.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize(
+    ("rate_name", "model_name"),
+    [
+        ("p_idle_linear", "p_idle_linear_model"),
+        ("p_idle_sin_squared", "p_idle_sin_squared_model"),
+    ],
+)
+def test_structured_idle_pauli_models_accept_zero_leakage_weight(
+    entrypoint: str,
+    rate_name: str,
+    model_name: str,
+) -> None:
+    dem = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        **{rate_name: 0.03, model_name: {"X": 0.5, "Z": 0.5, "L": 0.0}},
+    )
+
+    assert dem.num_contributions > 0
+    assert dem.idle_noise_residuals == []
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("model", [None, {"not_a_coherent_key": 1.0}])
+def test_structured_idle_coherent_nonzero_rate_is_rejected(
+    entrypoint: str,
+    model: dict[str, float] | None,
+) -> None:
+    with pytest.raises(ValueError, match="standard DEM builder cannot represent coherent idle noise") as exc_info:
+        _structured_idle_dem(entrypoint, p_idle_coherent=0.17, p_idle_coherent_model=model)
+
+    message = str(exc_info.value)
+    assert "standard DEM builder cannot represent coherent idle noise" in message
+    assert "silently stored the Pauli twirl" in message
+    assert "EEG" in message
+    assert "p_idle_sin_squared=rate/2" in message
+    assert "p_idle_sin_squared_model={'Z': 1.0}" in message
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_coherent_zero_rate_is_byte_identical_to_omitting_family(entrypoint: str) -> None:
+    omitted = _structured_idle_dem(entrypoint)
+    zero_rate = _structured_idle_dem(entrypoint, p_idle_coherent=0.0)
+
+    assert zero_rate.to_string() == omitted.to_string()
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_coherent_model_keys_are_validation_only_at_zero_rate(entrypoint: str) -> None:
+    omitted = _structured_idle_dem(entrypoint)
+    zero_rate = _structured_idle_dem(
+        entrypoint,
+        p_idle_coherent=0.0,
+        p_idle_coherent_model={"RX": 1.0, "RY": 2.0, "RZ": 3.0},
+    )
+
+    assert zero_rate.to_string() == omitted.to_string()
+
+
+_LINEAR_IDLE_PRIMITIVES = (
+    "p_idle_linear_rate",
+    "p_idle_x_linear_rate",
+    "p_idle_y_linear_rate",
+    "p_idle_z_linear_rate",
+)
+_SINE_IDLE_PRIMITIVES = (
+    "p_idle_quadratic_sine_rate",
+    "p_idle_x_quadratic_sine_rate",
+    "p_idle_y_quadratic_sine_rate",
+    "p_idle_z_quadratic_sine_rate",
+)
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("primitive", _LINEAR_IDLE_PRIMITIVES)
+def test_structured_idle_linear_rejects_each_low_level_primitive(entrypoint: str, primitive: str) -> None:
+    with pytest.raises(ValueError, match=primitive):
+        _structured_idle_dem(entrypoint, p_idle_linear=0.01, **{primitive: 0.02})
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_linear_model_rejects_low_level_primitive_without_rate(entrypoint: str) -> None:
+    with pytest.raises(ValueError, match="p_idle_z_linear_rate"):
+        _structured_idle_dem(
+            entrypoint,
+            p_idle_linear_model={"Z": 1.0},
+            p_idle_z_linear_rate=0.02,
+        )
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("primitive", _SINE_IDLE_PRIMITIVES)
+def test_structured_idle_sin_squared_rejects_each_sine_primitive(entrypoint: str, primitive: str) -> None:
+    with pytest.raises(ValueError, match=rf"sine-law idle rate.*{primitive}"):
+        _structured_idle_dem(entrypoint, p_idle_sin_squared=0.01, **{primitive: 0.02})
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_sin_squared_model_rejects_sine_primitive_without_rate(entrypoint: str) -> None:
+    with pytest.raises(ValueError, match=r"sine-law idle rate.*p_idle_z_quadratic_sine_rate"):
+        _structured_idle_dem(
+            entrypoint,
+            p_idle_sin_squared_model={"Z": 1.0},
+            p_idle_z_quadratic_sine_rate=0.02,
+        )
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_structured_idle_sin_squared_composes_with_coefficient_quadratic_primitive(entrypoint: str) -> None:
+    dem = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_sin_squared=0.01,
+        p_idle_x_quadratic_rate=0.02,
+    )
+
+    assert dem.num_contributions > 0
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": {"A": 1.0}}, "invalid.*key"),
+        (
+            {"p_idle_linear": 0.01, "p_idle_linear_model": {"X": 0.5, "Z": 0.3, "L": 0.2}},
+            "'L'.*DEM fault propagation is Pauli-only.*engines simulators",
+        ),
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": {"X": 0.4, "Z": 0.4}}, "sum to 1.0"),
+        (
+            {"p_idle_linear": 0.01, "p_idle_linear_model": {"X": 0.5, "Z": 0.6, "L": 0.2}},
+            "sum to 1.0",
+        ),
+        ({"p_idle_linear": 0.01, "p_idle_linear_model": {"X": -0.1, "Z": 1.1}}, "non-negative"),
+        ({"p_idle_linear_model": {"Z": 1.0}}, "requires p_idle_linear"),
+        ({"p_idle_sin_squared": 0.01, "p_idle_sin_squared_model": {"A": 1.0}}, "invalid.*key"),
+        (
+            {"p_idle_sin_squared": 0.01, "p_idle_sin_squared_model": {"X": 0.5, "Z": 0.3, "L": 0.2}},
+            "'L'.*DEM fault propagation is Pauli-only.*engines simulators",
+        ),
+        ({"p_idle_sin_squared": 0.01, "p_idle_sin_squared_model": {"X": -0.1}}, "non-negative"),
+        ({"p_idle_sin_squared_model": {"Z": 1.0}}, "requires p_idle_sin_squared"),
+        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"A": 1.0}}, "invalid.*key"),
+        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"L": 1.0}}, "invalid.*key.*'L'"),
+        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"U": 0.0}}, "invalid.*key.*'U'"),
+        ({"p_idle_coherent": 0.0, "p_idle_coherent_model": {"RZ": -0.1}}, "non-negative"),
+        ({"p_idle_coherent_model": {"RZ": 1.0}}, "requires p_idle_coherent"),
+    ],
+)
+def test_structured_idle_model_validation(entrypoint: str, kwargs: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _structured_idle_dem(entrypoint, **kwargs)
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize(
+    ("alias", "replacement"),
+    [
+        ("p_idle_linear_rate", "p_idle_linear"),
+        ("p_idle_quadratic_rate", "p_idle_sin_squared"),
+        ("p_idle_quadratic_sine_rate", "p_idle_sin_squared"),
+    ],
+)
+def test_legacy_idle_alias_warns_and_remains_functional(entrypoint: str, alias: str, replacement: str) -> None:
+    with pytest.warns(DeprecationWarning, match=rf"{alias}.*{replacement}"):
+        dem = _structured_idle_dem(entrypoint, idle_after_2q_duration=1.0, **{alias: 0.03})
+
+    assert dem.num_contributions > 0
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+@pytest.mark.parametrize("rate_name", ["p_idle_linear", "p_idle_sin_squared", "p_idle_coherent"])
+@pytest.mark.parametrize("bad_rate", [-0.01, float("nan"), float("inf")])
+def test_structured_idle_family_rate_must_be_finite_and_non_negative(
+    entrypoint: str,
+    rate_name: str,
+    bad_rate: float,
+) -> None:
+    with pytest.raises(ValueError, match=rf"{rate_name} must be a finite, non-negative float"):
+        _structured_idle_dem(entrypoint, **{rate_name: bad_rate})
+
+
+@pytest.mark.parametrize("entrypoint", ["from_guppy", "build_dem_from_guppy"])
+def test_sin_squared_idle_model_does_not_require_normalized_multipliers(entrypoint: str) -> None:
+    dem = _structured_idle_dem(
+        entrypoint,
+        idle_after_2q_duration=1.0,
+        p_idle_sin_squared=0.01,
+        p_idle_sin_squared_model={"X": 1.0, "Z": 0.5},
+    )
+
+    assert dem.num_contributions > 0
+
+
+def test_from_guppy_idle_insertion_matches_manual_pass_pipeline() -> None:
+    from pecos.tracing import trace_program_to_tick_circuit
+
+    rate = 0.01
+    reference_circuit = trace_program_to_tick_circuit(_two_qubit_idle_target, 2, seed=0)
+    normalize_traced_tick_circuit(reference_circuit, context="from_guppy idle insertion reference")
+    reference_circuit.insert_idle_after_two_qubit_gates(1.0)
+    reference_circuit.set_meta("detectors", _TWO_QUBIT_DETECTORS_JSON)
+    reference_circuit.set_meta("observables", _TWO_QUBIT_OBSERVABLES_JSON)
+    reference_circuit.set_meta("num_measurements", "2")
+    reference = DetectorErrorModel.from_circuit(
+        reference_circuit,
+        p_idle_x_linear_rate=rate / 3.0,
+        p_idle_y_linear_rate=rate / 3.0,
+        p_idle_z_linear_rate=rate / 3.0,
+        **_NO_GATE_NOISE,
+    )
+
+    composed = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=rate)
+
+    assert composed.to_string() == reference.to_string()
+
+
+def test_from_guppy_inserted_idles_make_idle_noise_effective() -> None:
+    without_idle_noise = _two_qubit_dem(idle_after_2q_duration=1.0)
+    with_idle_noise = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01)
+
+    assert with_idle_noise.to_string() != without_idle_noise.to_string()
+    assert with_idle_noise.num_contributions > without_idle_noise.num_contributions
+
+
+# Every idle-noise parameter the guard must observe; omitting any one from the
+# guard wiring in dem.py must fail the corresponding parametrized case below.
+_ALL_IDLE_NOISE_PARAMS = {
+    "p_idle_linear": 0.01,
+    "p_idle_sin_squared": 0.01,
+    "t1": 100.0,
+    "t2": 100.0,
+    "p_idle_linear_rate": 0.01,
+    "p_idle_quadratic_rate": 0.01,
+    "p_idle_x_linear_rate": 0.01,
+    "p_idle_y_linear_rate": 0.01,
+    "p_idle_z_linear_rate": 0.01,
+    "p_idle_x_quadratic_rate": 0.01,
+    "p_idle_y_quadratic_rate": 0.01,
+    "p_idle_z_quadratic_rate": 0.01,
+    "p_idle_quadratic_sine_rate": 0.01,
+    "p_idle_x_quadratic_sine_rate": 0.01,
+    "p_idle_y_quadratic_sine_rate": 0.01,
+    "p_idle_z_quadratic_sine_rate": 0.01,
+}
+
+
+@pytest.mark.parametrize("idle_param", sorted(_ALL_IDLE_NOISE_PARAMS))
+def test_from_guppy_rejects_idle_noise_without_idle_gates(idle_param: str) -> None:
+    with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
+        _two_qubit_dem(**{idle_param: _ALL_IDLE_NOISE_PARAMS[idle_param]})
+
+
+@pytest.mark.parametrize("bad_duration", [0.0, -1.0, float("nan"), float("inf")])
+def test_from_guppy_rejects_non_positive_idle_duration(bad_duration: float) -> None:
+    with pytest.raises(ValueError, match=r"finite, positive duration"):
+        _two_qubit_dem(idle_after_2q_duration=bad_duration, p_idle_linear=0.01)
+
+
+def test_from_guppy_idle_guard_accepts_inserted_idles_and_idles_without_noise() -> None:
+    with_noise = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01)
+    without_noise = _two_qubit_dem(idle_after_2q_duration=1.0)
+
+    assert with_noise.num_contributions > 0
+    assert without_noise is not None
+
+
+def test_from_guppy_idle_guard_accepts_runtime_emitted_idles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1])
+    circuit.tick().cx([(0, 1)])
+    circuit.tick().idle(1, [0, 1])
+    circuit.tick().mz_with_ids([0, 1], [0, 1])
+    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", lambda *_args, **_kwargs: circuit)
+
+    dem = _two_qubit_dem(p_idle_linear=0.01)
+
+    assert dem.num_contributions > 0
+
+
+def test_from_guppy_strip_traced_idles_is_noop_when_trace_has_no_idles() -> None:
+    baseline = _two_qubit_dem()
+    stripped = _two_qubit_dem(strip_traced_idles=True)
+
+    assert stripped.to_string() == baseline.to_string()
+
+
+def test_from_guppy_idle_insertion_preserves_zero_rz_fault_site(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    def _trace_with_zero_rz(*_args, **_kwargs):
+        circuit = TickCircuit()
+        circuit.tick().pz([0, 1])
+        circuit.tick().cx([(0, 1)])
+        circuit.tick().rz(0.0, [0])
+        circuit.tick().mz_with_ids([0, 1], [0, 1])
+        return circuit
+
+    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", _trace_with_zero_rz)
+
+    build = build_dem_from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        idle_after_2q_duration=1.0,
+        p1=0.01,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        seed=0,
+    )
+
+    assert build.circuit.gate_counts_by_type().get("RZ") == 1
+    assert build.dem.num_contributions == _DEV_ZERO_RZ_STRIPPED_CONTRIBUTIONS + 1
+
+
+def test_from_guppy_strip_traced_idles_removes_runtime_emitted_idles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1])
+    circuit.tick().cx([(0, 1)])
+    circuit.tick().idle(1, [0, 1])
+    circuit.tick().mz_with_ids([0, 1], [0, 1])
+    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", lambda *_args, **_kwargs: circuit)
+
+    # The same runtime-emitted-idle circuit passes the guard when idles are kept
+    # (test_from_guppy_idle_guard_accepts_runtime_emitted_idles); with
+    # strip_traced_idles the guard must find no idle gates left.
+    with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
+        _two_qubit_dem(strip_traced_idles=True, p_idle_linear=0.01)
+
+
+def test_from_guppy_insertion_strips_runtime_idles_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    def _traced_circuit_with_runtime_idles(*_args, **_kwargs):
+        circuit = TickCircuit()
+        circuit.tick().pz([0, 1])
+        circuit.tick().cx([(0, 1)])
+        circuit.tick().idle(1, [0, 1])
+        circuit.tick().mz_with_ids([0, 1], [0, 1])
+        return circuit
+
+    monkeypatch.setattr("pecos.tracing.trace_program_to_tick_circuit", _traced_circuit_with_runtime_idles)
+
+    default_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01)
+    explicit_strip = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01, strip_traced_idles=True)
+    keep_runtime_idles = _two_qubit_dem(idle_after_2q_duration=1.0, p_idle_linear=0.01, strip_traced_idles=False)
+
+    # Insertion implies stripping unless explicitly disabled; keeping the
+    # runtime idles doubles the idle content and must change the DEM.
+    assert default_strip.to_string() == explicit_strip.to_string()
+    assert default_strip.num_contributions == explicit_strip.num_contributions
+    assert keep_runtime_idles.to_string() != default_strip.to_string()
+
+
+def test_build_dem_from_guppy_rejects_idle_noise_without_idle_gates() -> None:
+    for idle_param, value in _ALL_IDLE_NOISE_PARAMS.items():
+        with pytest.raises(ValueError, match=r"idle-noise parameters have no idle gates"):
+            build_dem_from_guppy(
+                _two_qubit_idle_target,
+                num_qubits=2,
+                detectors=[Detector(rec[-2])],
+                observables=[Observable(rec[-1])],
+                **{idle_param: value},
+                **_NO_GATE_NOISE,
+            )
+
+
+def test_build_dem_from_guppy_rejects_non_positive_idle_duration() -> None:
+    with pytest.raises(ValueError, match=r"finite, positive duration"):
+        build_dem_from_guppy(
+            _two_qubit_idle_target,
+            num_qubits=2,
+            detectors=[Detector(rec[-2])],
+            observables=[Observable(rec[-1])],
+            idle_after_2q_duration=0.0,
+            p_idle_linear=0.01,
+            **_NO_GATE_NOISE,
+        )
+
+
+def test_build_dem_from_guppy_strips_then_inserts_idles() -> None:
+    build = build_dem_from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors=[Detector(rec[-2])],
+        observables=[Observable(rec[-1])],
+        strip_traced_idles=True,
+        idle_after_2q_duration=1.0,
+        p_idle_linear=0.01,
+        **_NO_GATE_NOISE,
+    )
+
+    assert build.circuit.gate_counts_by_type().get("Idle") == 2
+    assert build.dem.num_contributions > 0
+
+
+def test_from_guppy_result_tags_coexist_with_idle_insertion() -> None:
+    via_tags = DetectorErrorModel.from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors_json='[{"id":0,"result_tags":["m0"]}]',
+        idle_after_2q_duration=1.0,
+        seed=0,
+        **_NO_GATE_NOISE,
+    )
+    via_records = DetectorErrorModel.from_guppy(
+        _two_qubit_idle_target,
+        num_qubits=2,
+        detectors_json=_TWO_QUBIT_DETECTORS_JSON,
+        idle_after_2q_duration=1.0,
+        seed=0,
+        **_NO_GATE_NOISE,
+    )
+
+    assert via_tags.to_string() == via_records.to_string()
 
 
 def _flat_mz_ids(tc) -> list[int]:
@@ -317,17 +1087,19 @@ def test_lowered_replay_converts_runtime_idle_seconds_to_nanosecond_time_units()
 
 
 def test_noise_model_converts_runtime_idle_rates_from_seconds_to_dem_time_units() -> None:
-    noise = NoiseModel(
-        p1=0.001,
-        p2=0.002,
-        p_meas=0.003,
-        p_prep=0.004,
-        p_idle=9.0,
-        t1=1.5,
-        t2=2.5,
-        p_idle_z_linear_rate=3.0,
-        p_idle_x_quadratic_rate=4.0,
-        p_idle_z_quadratic_sine_rate=5.0,
+    noise = (
+        NoiseParameters(
+            p1=0.001,
+            p2=0.002,
+            p_meas=0.003,
+            p_prep=0.004,
+            p_idle=9.0,
+            t1=1.5,
+            t2=2.5,
+            _p_idle_x_quadratic_rate=4.0,
+        )
+        .with_p_idle_linear(3.0, {"Z": 1.0})
+        .with_p_idle_sin_squared(5.0, {"Z": 1.0})
     )
 
     converted = noise.for_runtime_idle_time_units()
@@ -339,14 +1111,16 @@ def test_noise_model_converts_runtime_idle_rates_from_seconds_to_dem_time_units(
     assert converted.p_idle == pytest.approx(9.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
     assert converted.t1 == pytest.approx(1.5 * RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
     assert converted.t2 == pytest.approx(2.5 * RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
-    assert converted.p_idle_z_linear_rate == pytest.approx(3.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
-    assert converted.p_idle_x_quadratic_rate == pytest.approx(4.0 / (RUNTIME_IDLE_TIME_UNITS_PER_SECOND**2))
-    assert converted.p_idle_z_quadratic_sine_rate == pytest.approx(5.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.idle_memory_rates[2] == pytest.approx(3.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.idle_memory_rates[3] == pytest.approx(4.0 / (RUNTIME_IDLE_TIME_UNITS_PER_SECOND**2))
+    assert converted.idle_memory_rates[8] == pytest.approx(5.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
 
 
 def test_noise_model_rejects_invalid_runtime_idle_time_unit_scale() -> None:
     with pytest.raises(ValueError, match="time_units_per_second"):
-        NoiseModel(p_idle_z_linear_rate=1.0).for_runtime_idle_time_units(time_units_per_second=0.0)
+        NoiseParameters().with_p_idle_linear(1.0, {"Z": 1.0}).for_runtime_idle_time_units(
+            time_units_per_second=0.0,
+        )
 
 
 def test_lowered_replay_preserves_gate_metadata() -> None:
@@ -692,7 +1466,7 @@ def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.Monke
             ],
         },
     ]
-    monkeypatch.setattr("pecos.qec.surface.decode.capture_guppy_operation_trace", lambda *_args, **_kwargs: chunks)
+    monkeypatch.setattr("pecos.tracing.capture_qis_operation_trace", lambda *_args, **_kwargs: chunks)
 
     with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
         DetectorErrorModel.from_guppy(
@@ -744,7 +1518,7 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
             basis,
             circuit_source="traced_qis",
         )
-        normalize_traced_qis_tick_circuit(ref, context="from_guppy surface reference")
+        normalize_traced_tick_circuit(ref, context="from_guppy surface reference")
         ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
         got = DetectorErrorModel.from_guppy(
             make_surface_code(distance=3, num_rounds=3, basis=basis),
@@ -770,7 +1544,7 @@ def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: in
             circuit_source="traced_qis",
             interaction_basis="szz",
         )
-        normalize_traced_qis_tick_circuit(ref, context="from_guppy SZZ surface reference")
+        normalize_traced_tick_circuit(ref, context="from_guppy SZZ surface reference")
         ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
         got = DetectorErrorModel.from_guppy(
             make_surface_code(
@@ -851,7 +1625,7 @@ def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise, check_pla
         circuit_source="traced_qis",
         check_plan=check_plan,
     )
-    normalize_traced_qis_tick_circuit(ref, context="from_guppy constrained surface reference")
+    normalize_traced_tick_circuit(ref, context="from_guppy constrained surface reference")
     ref_dem = DetectorErrorModel.from_circuit(ref, **noise).to_string()
 
     got = DetectorErrorModel.from_guppy(
@@ -1007,7 +1781,7 @@ def test_native_abstract_surface_dem_uses_record_metadata_only_for_r0(basis: str
     assert json.loads(native_tc.get_meta("detectors") or "[]")
     assert json.loads(native_tc.get_meta("observables") or "[]")
 
-    noise = NoiseModel(p1=0.0, p2=0.001, p_meas=0.0, p_prep=0.0)
+    noise = NoiseParameters(p1=0.0, p2=0.001, p_meas=0.0, p_prep=0.0)
     for decompose_errors in (False, True):
         dem_text = generate_circuit_level_dem_from_builder(
             patch,
@@ -1145,12 +1919,12 @@ def test_constrained_from_guppy_dem_is_consumable_by_pecos_native_decoder() -> N
     assert sampler.num_observables == dem.num_observables
     assert dem.num_observables == 1  # one logical observable for a single patch
 
-    batch = sampler.generate_samples(16, 0)
+    batch = sampler.sample_batch(16, 0)
     assert batch.num_shots == 16
     # Each shot's syndrome covers exactly the DEM's detectors.
     assert len(batch.get_syndrome(0)) == dem.num_detectors
     # The observable mask fits within ``num_observables`` bits (no stray bits).
-    assert batch.get_observable_mask(0) >> dem.num_observables == 0
+    assert batch.get_observable_flips(0).mask >> dem.num_observables == 0
 
     # PECOS-native Rust-backed matching decoder: DEM is consumable by
     # the actual downstream decoder surface.
@@ -1347,7 +2121,7 @@ def test_runtime_result_tags_bind_metadata_when_lowered_measurements_reorder() -
         [9, 4, 8, 5, 12, 7, 11, 10, 6],
     )
 
-    assert _extract_measurement_meas_ids(traced_tc) != list(range(13))
+    assert measurement_ids_in_execution_order(traced_tc) != list(range(13))
     _validate_result_tag_remap_against_traced_measurements(
         traced_tc,
         remap,
@@ -1376,7 +2150,7 @@ def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
 
     remap = {0: 3, 1: 10}
 
-    assert _extract_measurement_meas_ids(tc) == [10, 3]
+    assert measurement_ids_in_execution_order(tc) == [10, 3]
     _validate_result_tag_remap_against_traced_measurements(
         tc,
         remap,
@@ -1385,14 +2159,28 @@ def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
 
 
 def test_result_tag_remap_validation_rejects_duplicate_traced_meas_ids() -> None:
-    from pecos_rslib.quantum import TickCircuit
+    # `mz_with_ids` rejects a repeated id, so a duplicate has to be supplied
+    # directly to reach this validator.
+    class FakeGate:
+        gate_type = "MZ"
+        qubits: ClassVar[list[int]] = [0, 1]
+        meas_ids: ClassVar[list[int]] = [7, 7]
 
-    tc = TickCircuit()
-    tc.tick().mz_with_ids([0, 1], [7, 7])
+    class FakeTick:
+        def gate_batches(self):
+            return [FakeGate()]
+
+    class FakeCircuit:
+        def num_ticks(self) -> int:
+            return 1
+
+        def get_tick(self, tick_idx: int):
+            assert tick_idx == 0
+            return FakeTick()
 
     with pytest.raises(ValueError, match="duplicate measured MeasId"):
         _validate_result_tag_remap_against_traced_measurements(
-            tc,
+            FakeCircuit(),
             {0: 7, 1: 8},
             expected_measurements=2,
         )
@@ -1466,7 +2254,7 @@ def test_surface_module_cache_collapses_unconstrained_budget_forms() -> None:
     and any ``budget >= total_ancilla`` resolve to the SAME cached module --
     no redundant codegen for the two ways of saying "unconstrained". A finite
     constrained budget is a distinct entry."""
-    from pecos.guppy.surface import get_surface_code_module
+    from pecos.guppy_gen.surface import get_surface_code_module
 
     d = 3
     total_ancilla = d * d - 1  # all stabilizer ancillas live simultaneously
@@ -1483,3 +2271,264 @@ def test_surface_module_cache_collapses_unconstrained_budget_forms() -> None:
     # A genuinely-constrained budget is a separate cache entry.
     assert constrained is not unconstrained_none
     assert constrained["ancilla_budget"] == 2
+
+
+def test_noise_channel_residual_warning_names_kinds_and_magnitudes() -> None:
+    """Approximated idle and gate channels warn; exact channels stay silent.
+
+    The residual is queryable on the DEM, but a field alone is easy to miss, so the
+    build also warns when it emits the non-negative boundary fit.
+    """
+    from pecos.qec.dem import _warn_on_noise_channel_residuals
+
+    class _Exact:
+        idle_noise_residuals: ClassVar[list[dict[str, object]]] = []
+
+    class _Approximated:
+        idle_noise_residuals: ClassVar[list[dict[str, object]]] = [
+            {
+                "location_index": 3,
+                "channel_kind": "idle",
+                "magnitude": 1.894e-05,
+                "channel_weight": 0.01,
+                "relative_magnitude": 1.894e-03,
+            },
+            {
+                "location_index": 7,
+                "channel_kind": "one-qubit gate",
+                "magnitude": 2.1e-05,
+                "channel_weight": 0.1,
+                "relative_magnitude": 2.1e-04,
+            },
+        ]
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _warn_on_noise_channel_residuals(_Exact())
+    assert caught == []
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _warn_on_noise_channel_residuals(_Approximated())
+    assert len(caught) == 1
+    message = str(caught[0].message)
+    assert "2 categorical noise channel(s) were approximated" in message
+    assert "1 idle (largest relative 1.894e-03; largest TV 1.894e-05)" in message
+    assert "1 one-qubit gate (largest relative 2.100e-04; largest TV 2.100e-05)" in message
+    assert "2.100e-05" in message
+    assert "fractions of each requested channel's total error weight" in message
+    assert "total-variation distances" in message
+    assert "dem.idle_noise_residuals" in message
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _warn_on_noise_channel_residuals(_Approximated(), 0.001)
+    assert len(caught) == 1
+    message = str(caught[0].message)
+    assert "1 categorical noise channel(s) were approximated" in message
+    assert "1 idle" in message
+    assert "one-qubit gate" not in message
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _warn_on_noise_channel_residuals(_Approximated(), 1.894e-03)
+    assert caught == []
+
+
+def _approximated_gate_build(
+    *,
+    p2: float = 0.007,
+    p2_weights: dict[str, float] | None = None,
+    residual_warning_threshold: float | None = None,
+):
+    weights = {"IX": 0.4, "XI": 0.6} if p2_weights is None else p2_weights
+    builder = (
+        DetectorErrorModel.builder()
+        .with_program(_structured_idle_noise_target)
+        .with_qubits(2)
+        .with_detectors([Detector(rec[-2])])
+        .with_observables([Observable(rec[-1])])
+        .with_noise(
+            NoiseParameters(
+                p1=0.0,
+                p2=p2,
+                p2_weights=weights,
+                p_meas=0.0,
+                p_prep=0.0,
+            ),
+        )
+    )
+    if residual_warning_threshold is not None:
+        builder.with_residual_warning_threshold(residual_warning_threshold)
+    return builder.build()
+
+
+def test_residual_warning_threshold_defaults_to_zero() -> None:
+    with pytest.warns(UserWarning, match="1 categorical noise channel"):
+        build = _approximated_gate_build()
+
+    assert len(build.dem.idle_noise_residuals) == 1
+
+
+def test_residual_warning_threshold_above_relative_magnitude_is_quiet() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        build = _approximated_gate_build(residual_warning_threshold=0.002)
+
+    assert build.dem.idle_noise_residuals[0]["relative_magnitude"] < 0.002
+
+
+def test_residual_warning_threshold_below_relative_magnitude_still_warns() -> None:
+    with pytest.warns(UserWarning, match=r"largest relative 1\.692e-03"):
+        build = _approximated_gate_build(residual_warning_threshold=0.001)
+
+    assert build.dem.idle_noise_residuals[0]["relative_magnitude"] > 0.001
+
+
+def test_residual_warning_threshold_never_filters_residual_data() -> None:
+    with pytest.warns(UserWarning, match="1 categorical noise channel"):
+        default_build = _approximated_gate_build()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        tolerant_build = _approximated_gate_build(residual_warning_threshold=0.002)
+
+    default_residuals = default_build.dem.idle_noise_residuals
+    tolerant_residuals = tolerant_build.dem.idle_noise_residuals
+    default_audit_residuals = default_build.audit["idle_noise_residuals"]
+    tolerant_audit_residuals = tolerant_build.audit["idle_noise_residuals"]
+
+    assert len(default_residuals) == 1
+    assert tolerant_residuals == default_residuals
+    assert tolerant_audit_residuals == default_audit_residuals
+    assert tolerant_audit_residuals == tolerant_residuals
+    assert default_audit_residuals == default_residuals
+
+    def encode(residuals: list[dict[str, object]]) -> bytes:
+        return json.dumps(
+            residuals,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+
+    assert encode(tolerant_residuals) == encode(default_residuals)
+    assert encode(tolerant_audit_residuals) == encode(default_audit_residuals)
+
+
+def test_relative_residual_threshold_is_portable_across_channel_weights() -> None:
+    target_relative_magnitude = 0.0002502503129381573
+    configurations = [
+        (0.001, {"IX": 0.5, "XI": 0.5}),
+        (0.1, {"IX": 0.002257285529184556, "XI": 0.9977427144708154}),
+    ]
+    observed_weights = []
+    observed_relative_magnitudes = []
+
+    for p2, p2_weights in configurations:
+        with pytest.warns(UserWarning, match=r"largest relative 2\.503e-04"):
+            warned_build = _approximated_gate_build(
+                p2=p2,
+                p2_weights=p2_weights,
+                residual_warning_threshold=0.0002,
+            )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            quiet_build = _approximated_gate_build(
+                p2=p2,
+                p2_weights=p2_weights,
+                residual_warning_threshold=0.0003,
+            )
+
+        assert quiet_build.dem.idle_noise_residuals == warned_build.dem.idle_noise_residuals
+        residual = quiet_build.dem.idle_noise_residuals[0]
+        observed_weights.append(residual["channel_weight"])
+        observed_relative_magnitudes.append(residual["relative_magnitude"])
+
+    assert observed_weights == pytest.approx([0.001, 0.1])
+    assert observed_relative_magnitudes == pytest.approx(
+        [target_relative_magnitude, target_relative_magnitude],
+        abs=1e-15,
+    )
+
+
+@pytest.mark.parametrize("fraction", [-0.1, float("nan"), float("inf"), float("-inf")])
+def test_residual_warning_threshold_rejects_invalid_fraction(fraction: float) -> None:
+    with pytest.raises(ValueError, match="fraction of the channel's total error weight"):
+        DetectorErrorModel.builder().with_residual_warning_threshold(fraction)
+
+
+def test_residual_warning_threshold_rejects_values_above_one_as_absolute() -> None:
+    with pytest.raises(ValueError, match="not an absolute probability") as exc_info:
+        DetectorErrorModel.builder().with_residual_warning_threshold(1.01)
+
+    assert "fraction of the channel's total error weight" in str(exc_info.value)
+
+
+@guppy
+def _two_qubit_gate_channel_program() -> None:
+    """One CX with a detector on each measurement, for gate-channel conversion checks."""
+    a, b = qubit(), qubit()
+    cx(a, b)
+    result("m0", measure(a))
+    result("m1", measure(b))
+
+
+def test_two_qubit_gate_channel_is_converted_not_emitted_naively() -> None:
+    """The p2 channel is mutually exclusive, so its DEM mechanisms need conversion.
+
+    Fifteen two-qubit Paulis land on three distinct flip signatures here: the three
+    Z-type Paulis are invisible to Z-basis measurement and drop out, and the other
+    twelve merge four-to-one. Within a group the probabilities ADD (the channel picks
+    one Pauli), giving 4 * p2/15 = 5.333e-3 per signature. Emitting that directly would
+    be wrong, because independent mechanisms also fire together; the converted value is
+    5.362e-3, computed independently from the Pauli-channel characters.
+    """
+    build = (
+        DetectorErrorModel.builder()
+        .with_program(_two_qubit_gate_channel_program)
+        .with_qubits(2)
+        .with_detectors([Detector("m0")])
+        .with_observables([Observable("m1")])
+        .with_noise(NoiseParameters().with_p2(0.02))
+        .build()
+    )
+    text = build.dem.to_string()
+
+    # The converted probability, not the summed-but-unconverted 0.005333.
+    assert text.count("error(0.005362)") == 3, text
+    assert "0.005333" not in text, text
+
+    # Fifteen Paulis, three surviving signatures: the Z-type ones are undetectable.
+    assert text.count("error(") == 3, text
+
+    # An exactly representable channel takes no approximation.
+    assert build.dem.idle_noise_residuals == []
+
+
+@guppy
+def _prep_and_measure_program() -> None:
+    """Prepare and measure one qubit, for the prep/measurement exactness check."""
+    q = qubit()
+    result("m0", measure(q))
+
+
+def test_prep_and_measurement_channels_stay_exact() -> None:
+    """Prep and measurement are single Bernoulli events, so they need no conversion.
+
+    Each emits one Pauli at the full probability rather than a set of mutually
+    exclusive ones, so there is nothing to compose and nothing to approximate. This
+    pins that the gate/idle conversion work did not sweep them in.
+    """
+    for setter, probability in (("with_p_prep", 0.02), ("with_p_meas", 0.02)):
+        noise = getattr(NoiseParameters(), setter)(probability)
+        build = (
+            DetectorErrorModel.builder()
+            .with_program(_prep_and_measure_program)
+            .with_qubits(1)
+            .with_detectors([Detector("m0")])
+            .with_observables([])
+            .with_noise(noise)
+            .build()
+        )
+        text = build.dem.to_string()
+        assert f"error({probability})" in text, f"{setter}: {text}"
+        assert build.dem.idle_noise_residuals == [], setter

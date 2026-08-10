@@ -137,7 +137,7 @@ pub struct NoiseModelBuilder {
     p2_emission_weights: TwoQubitEmissionWeights,
     p2_pauli_weights: TwoQubitPauliWeights,
     p2_seepage_prob: f64,
-    p2_idle: f64,
+    idle_after_2q: f64,
 
     // Measurement
     p_meas_0: f64,
@@ -201,7 +201,7 @@ impl NoiseModelBuilder {
             p2_emission_weights: TwoQubitEmissionWeights::uniform_pauli(),
             p2_pauli_weights: TwoQubitPauliWeights::uniform(),
             p2_seepage_prob: 0.0,
-            p2_idle: 0.0,
+            idle_after_2q: 0.0,
 
             // Measurement
             p_meas_0: 0.0,
@@ -267,6 +267,16 @@ impl NoiseModelBuilder {
     pub fn with_p2_scaled(mut self, p2: f64, scaling: AngleScaling) -> Self {
         self.p2 = p2;
         self.p2_angle_scaling = scaling;
+        self
+    }
+
+    /// Set the duration of the idle-noise site applied after each two-qubit gate.
+    ///
+    /// A duration of zero disables these sites. Nonzero sites receive all
+    /// configured linear and quadratic idle mechanisms.
+    #[must_use]
+    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
+        self.idle_after_2q = duration;
         self
     }
 
@@ -541,7 +551,6 @@ impl NoiseModelBuilder {
                 self.p2_emission_ratio,
                 self.p2_emission_weights,
                 self.p2_seepage_prob,
-                self.p2_idle,
             );
             model = model.add_channel(channel);
         }
@@ -573,16 +582,26 @@ impl NoiseModelBuilder {
         }
 
         // Add idle channel
-        if self.p_idle_linear_rate > 0.0 {
-            let mut channel = IdleChannel::linear(self.p_idle_linear_rate);
-            if self.p_idle_coherent {
-                channel = channel
-                    .with_coherent_dephasing(true)
-                    .with_coherent_to_incoherent_factor(self.p_idle_coherent_factor);
-            } else {
-                channel = channel.with_linear_weights(self.p_idle_linear_weights);
-            }
-            model = model.add_channel(channel);
+        if self.p_idle_linear_rate > 0.0
+            || self.p_idle_quadratic_rate > 0.0
+            || self.idle_after_2q > 0.0
+        {
+            let channel = IdleChannel {
+                linear_rate: self.p_idle_linear_rate,
+                linear_weights: self.p_idle_linear_weights,
+                sin_squared_rate: 0.0,
+                sin_squared_model: std::collections::BTreeMap::new(),
+                quadratic_rate: self.p_idle_quadratic_rate,
+                coherent_dephasing: self.p_idle_coherent,
+                coherent_to_incoherent_factor: self.p_idle_coherent_factor,
+                idle_after_2q: self.idle_after_2q,
+            };
+            model = model.add_channel_configured_by(
+                channel,
+                "NoiseModelBuilder::with_coherent_idle(..)",
+                "supply a rotation executor with CircuitRunner::rotations(), or switch to a \
+                 stochastic idle family by removing with_coherent_idle(..)",
+            );
         }
 
         // Add leakage channel (if scale differs from default of 1.0)
@@ -606,9 +625,21 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use crate::noise::composite::prelude::*;
+    use crate::noise::{NoiseEvent, NoiseResponse};
     use crate::runner::CircuitRunner;
     use pecos_core::QubitId;
+    use pecos_random::PecosRng;
     use pecos_simulators::SparseStab;
+
+    fn collect_gates(response: NoiseResponse) -> Vec<crate::command::GateCommand> {
+        match response {
+            NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
+            NoiseResponse::Multiple(responses) => {
+                responses.into_iter().flat_map(collect_gates).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
 
     #[test]
     fn test_simple_depolarizing() {
@@ -648,6 +679,114 @@ mod tests {
     }
 
     #[test]
+    fn after_2q_builder_routes_quadratic_noise_without_a_two_qubit_channel() {
+        let mut model = NoiseModelBuilder::new()
+            .with_idle_noise(0.0, std::f64::consts::PI)
+            .with_idle_after_2q(1.0)
+            .build();
+        assert_eq!(model.channel_names(), ["IdleChannel"]);
+
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+        let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(47)));
+
+        assert_eq!(gates.len(), 2);
+        assert!(gates.iter().all(|gate| gate.gate_type == GateType::Z));
+    }
+
+    #[test]
+    fn idle_builder_routes_weights_and_quadratic_rate_in_coherent_mode() {
+        let mut builder = NoiseModelBuilder::new()
+            .with_idle_noise(1.0, 0.75)
+            .with_coherent_idle(1.0)
+            .with_idle_after_2q(2.0);
+        builder.p_idle_linear_weights = crate::noise::PauliWeights::custom(1.0, 0.0, 0.0);
+        let mut model = builder.build();
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+
+        let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(53)));
+        let x_count = gates
+            .iter()
+            .filter(|gate| gate.gate_type == GateType::X)
+            .count();
+        let rz_angles = gates
+            .iter()
+            .filter(|gate| gate.gate_type == GateType::RZ)
+            .map(|gate| gate.angles[0].to_radians())
+            .collect::<Vec<_>>();
+
+        assert_eq!(x_count, 2);
+        assert_eq!(rz_angles.len(), 2);
+        assert!(rz_angles.iter().all(|angle| (*angle - 1.5).abs() < 1e-15));
+    }
+
+    #[test]
+    fn idle_builder_routes_the_incoherent_conversion_factor() {
+        let mut builder = NoiseModelBuilder::new()
+            .with_idle_noise(0.0, std::f64::consts::FRAC_PI_2)
+            .with_idle_after_2q(1.0);
+        builder.p_idle_coherent_factor = 2.0;
+        let mut model = builder.build();
+        let qubits = std::array::from_fn::<_, 16, _>(QubitId);
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+
+        let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(59)));
+        assert_eq!(gates.len(), qubits.len());
+    }
+
+    #[test]
+    fn after_2q_duration_alone_still_builds_the_idle_policy_channel() {
+        let mut model = NoiseModelBuilder::new().with_idle_after_2q(1.0).build();
+        assert_eq!(model.channel_names(), ["IdleChannel"]);
+
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            qubits: &qubits,
+            angles: &[],
+            gate_id: None,
+        };
+        assert!(
+            model
+                .emit(&event, &mut PecosRng::seed_from_u64(61))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn quadratic_only_configuration_builds_the_idle_channel() {
+        let mut model = NoiseModelBuilder::new()
+            .with_idle_noise(0.0, std::f64::consts::PI)
+            .build();
+        assert_eq!(model.channel_names(), ["IdleChannel"]);
+
+        let qubits = [QubitId(0)];
+        let event = NoiseEvent::IdleTime {
+            qubits: &qubits,
+            duration: 1_u64.into(),
+        };
+        let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(67)));
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::Z);
+    }
+
+    #[test]
     fn test_composed_vs_simple_parity() {
         // Build the same noise model two ways and verify similar behavior
         let p1 = 0.1;
@@ -661,7 +800,7 @@ mod tests {
             .build();
 
         // Simple configuration
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut simple_errors = 0;
         for seed in 0..shots {
             let model = NoiseModelBuilder::new().with_p1(p1).build();

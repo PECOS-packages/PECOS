@@ -181,6 +181,46 @@ mod tests {
     }
 
     #[test]
+    fn test_max_tree_size_changes_matching() {
+        // This syndrome comes from fusion-blossom's max-tree-size regression
+        // case and grows an alternating tree beyond one node.
+        let config_uf = FusionBlossomConfig {
+            num_nodes: None,
+            num_observables: 1,
+            solver_type: SolverType::Serial,
+            max_tree_size: Some(1),
+        };
+
+        let config_mwpm = FusionBlossomConfig {
+            num_nodes: None,
+            num_observables: 1,
+            solver_type: SolverType::Serial,
+            max_tree_size: None,
+        };
+
+        let code = StandardCode::CodeCapacityPlanar {
+            d: 7,
+            p: 0.1,
+            max_half_weight: 500,
+        };
+        let mut decoder_uf = FusionBlossomDecoder::from_standard_code(code, config_uf).unwrap();
+        let mut decoder_mwpm = FusionBlossomDecoder::from_standard_code(code, config_mwpm).unwrap();
+
+        let mut syndrome = vec![0; decoder_uf.num_nodes()];
+        for defect in [10, 11, 19, 21, 29, 34, 37, 40, 43, 49, 50, 51, 53] {
+            syndrome[defect] = 1;
+        }
+        let syndrome = ndarray::Array1::from_vec(syndrome);
+
+        let result_uf = decoder_uf.decode(&syndrome.view()).unwrap();
+        let result_mwpm = decoder_mwpm.decode(&syndrome.view()).unwrap();
+
+        assert!(!result_uf.matched_edges.is_empty());
+        assert!(!result_mwpm.matched_edges.is_empty());
+        assert_ne!(result_uf.matched_edges, result_mwpm.matched_edges);
+    }
+
+    #[test]
     fn test_standard_codes() {
         // Test code capacity planar code
         let code = StandardCode::CodeCapacityPlanar {

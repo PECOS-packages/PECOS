@@ -84,24 +84,32 @@ def test_decode_count_above_64_observables() -> None:
     n = 65
     dem, membership = _wide_dem(n)
     dec = LogicalSubgraphDecoder.from_membership(dem, membership, "pecos_uf:fast")
-    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(2000, seed=1)
+    batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(2000, seed=1)
     count = dec.decode_count(batch)
     assert 0 <= count <= 2000
 
 
-def test_u64_observable_getter_rejects_wide_batch() -> None:
-    # get_observable_mask returns a u64 and cannot represent observable >= 64, so
-    # it rejects a wide batch; get_observable_mask_wide returns the full Python
-    # int. (The decode methods, by contrast, compare wide ObsMasks and do not
-    # reject -- see below.)
+def test_observable_flips_matches_wide_per_shot_masks() -> None:
+    n = 70
+    dem, _ = _wide_dem(n)
+    batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(73, seed=17)
+
+    observable_flips = batch.observable_flips()
+    assert all(len(row) == n for row in observable_flips)
+    for shot, row in enumerate(observable_flips):
+        mask = batch.get_observable_flips(shot).mask
+        assert row == [bool(mask & (1 << observable)) for observable in range(n)]
+
+
+def test_observable_flips_mask_supports_the_formerly_rejected_wide_batch() -> None:
+    # The removed u64 getter rejected this batch. ObservableFlips carries the
+    # full arbitrary-precision Python mask instead.
     n = 65
     _dem, _ = _wide_dem(n)
     syn = [0] * n
     wide = SampleBatch([syn, syn], [1 << 64, 1 << 64])
 
-    with pytest.raises(ValueError, match="64-observable"):
-        wide.get_observable_mask(0)
-    assert wide.get_observable_mask_wide(0) == 1 << 64
+    assert wide.get_observable_flips(0).mask == 1 << 64
 
 
 def test_sample_batch_decode_count_batch_handles_wide_dem() -> None:
@@ -137,7 +145,7 @@ def test_decode_each_returns_python_ints() -> None:
     # the value is not truncated; for the <=64 case it equals the historical u64.
     n = 5
     dem, _ = _wide_dem(n)
-    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(8, seed=1)
+    batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(8, seed=1)
     preds = batch.decode_each(dem, "pymatching")
     assert len(preds) == 8
     assert all(isinstance(p, int) for p in preds)

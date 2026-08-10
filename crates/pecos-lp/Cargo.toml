@@ -1,0 +1,15 @@
+[package]
+name = "pecos-lp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Small dense linear-programming solver (two-phase simplex) for decoder relaxations"
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true

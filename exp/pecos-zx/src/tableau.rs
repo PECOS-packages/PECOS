@@ -459,22 +459,23 @@ pub fn build_unrolled_circuit(
 ) -> DagCircuit {
     let mut target = DagCircuit::new();
 
-    // Replay init
-    for (_node, gate) in init.iter_gates_topo() {
-        target.add_gate_auto_wire(gate.clone());
-    }
-
-    // Replay body num_rounds times
-    for _ in 0..num_rounds {
-        for (_node, gate) in body.iter_gates_topo() {
-            target.add_gate_auto_wire(gate.clone());
+    // A replayed measurement is a new measurement: round 2's ancilla readout is
+    // not round 1's, and the three segments number their measurements from zero
+    // independently. Dropping the source id lets `target` mint one contiguous
+    // numbering of its own.
+    let mut replay = |source: &DagCircuit| {
+        for (_node, gate) in source.iter_gates_topo() {
+            let mut gate = gate.clone();
+            gate.meas_ids.clear();
+            target.add_gate_auto_wire(gate);
         }
-    }
+    };
 
-    // Replay finalize
-    for (_node, gate) in finalize.iter_gates_topo() {
-        target.add_gate_auto_wire(gate.clone());
+    replay(init);
+    for _ in 0..num_rounds {
+        replay(body);
     }
+    replay(finalize);
 
     target
 }

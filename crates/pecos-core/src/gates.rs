@@ -949,6 +949,15 @@ impl Gate {
         )
     }
 
+    /// Create an `MPZ` gate (measure +Z, then prepare |0>) on multiple qubits
+    #[must_use]
+    pub fn mpz(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::MPZ,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
     /// Create a new Idle gate for qubits idling for a specific duration
     ///
     /// # Arguments
@@ -1174,7 +1183,7 @@ impl Gate {
         }
         let is_measurement = matches!(
             self.gate_type,
-            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ
         );
         if is_measurement {
             if !self.meas_ids.is_empty() && self.meas_ids.len() != self.qubits.len() {
@@ -1309,15 +1318,18 @@ mod tests {
     #[test]
     fn test_measurement_batch_compatibility_preserves_measurement_ids() {
         let mut m0 = Gate::mz(&[0]);
-        m0.meas_ids.push(MeasId(4));
+        m0.meas_ids.push(MeasId::from_raw(4));
         let mut m1 = Gate::mz(&[1]);
-        m1.meas_ids.push(MeasId(5));
+        m1.meas_ids.push(MeasId::from_raw(5));
 
         assert!(m0.can_batch_with(&m1));
         m0.append_batch(m1);
 
         assert_eq!(m0.qubits.as_slice(), &[QubitId::from(0), QubitId::from(1)]);
-        assert_eq!(m0.meas_ids.as_slice(), &[MeasId(4), MeasId(5)]);
+        assert_eq!(
+            m0.meas_ids.as_slice(),
+            &[MeasId::from_raw(4), MeasId::from_raw(5)]
+        );
     }
 
     #[test]
@@ -1639,7 +1651,7 @@ mod tests {
         );
 
         let mut measured = Gate::mz(&[0, 1]);
-        measured.meas_ids.push(MeasId(0));
+        measured.meas_ids.push(MeasId::from_raw(0));
         assert!(
             measured
                 .validate()
@@ -1648,7 +1660,7 @@ mod tests {
         );
 
         let mut non_measurement = Gate::x(&[0]);
-        non_measurement.meas_ids.push(MeasId(0));
+        non_measurement.meas_ids.push(MeasId::from_raw(0));
         assert!(
             non_measurement
                 .validate()

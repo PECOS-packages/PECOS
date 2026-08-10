@@ -30,7 +30,7 @@ def build_lookup_table(batch, num_detectors: int) -> dict[tuple[int, ...], int]:
 
     for i in range(batch.num_shots):
         syn = batch.get_syndrome(i)
-        obs = batch.get_observable_mask(i)
+        obs = batch.get_observable_flips(i).mask
 
         # Convert syndrome to tuple of fired detector indices
         fired = tuple(d for d in range(min(num_detectors, len(syn))) if syn[d])
@@ -50,7 +50,7 @@ def decode_with_lookup(batch, table: dict, num_detectors: int) -> tuple[int, int
     errors = 0
     for i in range(batch.num_shots):
         syn = batch.get_syndrome(i)
-        obs_true = batch.get_observable_mask(i)
+        obs_true = batch.get_observable_flips(i).mask
 
         fired = tuple(d for d in range(min(num_detectors, len(syn))) if syn[d])
         predicted = table.get(fired, 0)  # default: no correction
@@ -156,7 +156,7 @@ def main():
 
         sampler_params = {k: v for k, v in noise_params.items() if k in ("p1", "p2", "p_meas", "p_prep")}
         sampler = DemSampler.from_circuit(tc, **sampler_params)
-        train_batch = sampler.generate_samples(args.shots, seed=args.seed)
+        train_batch = sampler.sample_batch(args.shots, seed=args.seed)
 
     t_sample = time.perf_counter() - t0
     print(f"  Sampled in {t_sample:.2f}s")
@@ -198,17 +198,17 @@ def main():
             observable_masks2.append(obs_mask)
         test_batch = SampleBatch(detection_events2, observable_masks2)
     else:
-        test_batch = sampler.generate_samples(test_shots, seed=args.seed + 1000)
+        test_batch = sampler.sample_batch(test_shots, seed=args.seed + 1000)
 
     # Decode with lookup
     errors_lookup, n = decode_with_lookup(test_batch, table, num_dets)
     ler_lookup = errors_lookup / n
 
     # Compare with pymatching
-    from pecos.qec.surface import NoiseModel
+    from pecos.qec.surface import NoiseParameters
     from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
-    noise_obj = NoiseModel(
+    noise_obj = NoiseParameters(
         p1=noise_params["p1"],
         p2=noise_params["p2"],
         p_meas=noise_params["p_meas"],

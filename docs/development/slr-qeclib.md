@@ -6,7 +6,7 @@ This guide covers PECOS's Simple Logical Representation (SLR) and the QEC librar
 
 | Approach | Level | Best For |
 |----------|-------|----------|
-| **Guppy** (`pecos.guppy`) | High-level | General users, QEC experiments, quick prototyping |
+| **Guppy** (`pecos.guppy_gen`) | High-level | General users, QEC experiments, quick prototyping |
 | **SLR** (`pecos.slr`) | Low-level | Developers needing direct control, custom backends, advanced optimization |
 
 **Use Guppy when:**

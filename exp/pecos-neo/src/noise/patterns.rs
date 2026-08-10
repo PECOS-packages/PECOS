@@ -581,7 +581,7 @@ mod tests {
         let model = depolarizing_only(0.5, 0.5);
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
@@ -594,7 +594,7 @@ mod tests {
     fn test_depolarizing_with_measurement() {
         let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut errors = 0;
         for seed in 0..100 {
             // Recreate model for each iteration since ComposableNoiseModel doesn't Clone
@@ -624,7 +624,7 @@ mod tests {
         let model = dephasing_only(0.5, 0.5);
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
@@ -642,7 +642,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
@@ -662,7 +662,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
@@ -680,7 +680,7 @@ mod tests {
         let model = realistic_device_noise(&params);
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);
@@ -699,7 +699,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(model)
             .with_seed(42);

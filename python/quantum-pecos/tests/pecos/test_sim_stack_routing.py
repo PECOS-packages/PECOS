@@ -64,13 +64,7 @@ def test_neo_stack_measurement_noise_rate_matches_engines() -> None:
     shots = 4000
 
     def rate_of_zero(stack: str) -> float:
-        noise = (
-            depolarizing_noise()
-            .with_prep_probability(0.0)
-            .with_meas_probability(p_meas)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
-        )
+        noise = depolarizing_noise().with_p_prep(0.0).with_p_meas(p_meas).with_p1(0.0).with_p2(0.0)
         builder = sim(Qasm.from_string(X_MEASURE)).noise(noise).seed(42)
         if stack == "neo":
             builder = builder.stack("neo")

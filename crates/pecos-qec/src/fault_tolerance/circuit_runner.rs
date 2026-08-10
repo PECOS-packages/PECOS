@@ -62,7 +62,10 @@ pub fn extract_spacetime_locations(
     for (tick_idx, tick) in circuit.iter_ticks() {
         for gate in tick.iter_gate_batches() {
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-            let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
+            let is_measurement = matches!(
+                gate.gate_type,
+                GateType::MZ | GateType::MeasureFree | GateType::MPZ
+            );
 
             locations.push(SpacetimeLocation::new(
                 tick_idx,
@@ -136,6 +139,7 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
     let mut szz_pairs: Vec<(QubitId, QubitId)> = Vec::new();
     let mut szzdg_pairs: Vec<(QubitId, QubitId)> = Vec::new();
     let mut swap_pairs: Vec<(QubitId, QubitId)> = Vec::new();
+    let mut mpz_qubits: Vec<QubitId> = Vec::new();
     let mut mz_qubits: Vec<QubitId> = Vec::new();
     let mut pz_qubits: Vec<QubitId> = Vec::new();
 
@@ -204,6 +208,7 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
                 }
             }
             GateType::MZ | GateType::MeasureFree => mz_qubits.extend(gate.qubits.iter()),
+            GateType::MPZ => mpz_qubits.extend(gate.qubits.iter()),
             GateType::PZ => pz_qubits.extend(gate.qubits.iter()),
             GateType::I => {}
             _ => {
@@ -287,6 +292,9 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
     }
     if !mz_qubits.is_empty() {
         sim.mz(&mz_qubits);
+    }
+    if !mpz_qubits.is_empty() {
+        sim.mpz(&mpz_qubits);
     }
 }
 
@@ -382,6 +390,9 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
         }
         GateType::MZ | GateType::MeasureFree => {
             sim.mz(&qubits);
+        }
+        GateType::MPZ => {
+            sim.mpz(&qubits);
         }
         GateType::PZ => {
             sim.pz(&qubits);

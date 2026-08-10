@@ -14,12 +14,28 @@ This package provides generic operations that can be used across different QEC c
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from importlib import import_module
+
 from pecos.slr.gen_codes.gen_qasm import QASMGenerator
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.gen_codes.language import Language
 
-# QIRGenerator requires llvmlite which is optional
-try:
-    from pecos.slr.gen_codes.gen_qir import QIRGenerator
-except ImportError:
-    QIRGenerator = None
+
+# QIRGenerator requires pecos-rslib-llvm; defer that native import until use.
+def __getattr__(name: str) -> object:
+    if name == "QIRGenerator":
+        try:
+            qir_generator = import_module("pecos.slr.gen_codes.gen_qir").QIRGenerator
+        except ImportError:
+            qir_generator = None
+        globals()[name] = qir_generator
+        return qir_generator
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), "QIRGenerator"})
+
+
+__all__ = ["Generator", "Language", "QASMGenerator", "QIRGenerator"]

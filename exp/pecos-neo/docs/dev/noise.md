@@ -63,8 +63,9 @@ CompositeNoiseModelBuilder::new()
     // Angle-dependent scaling (for RZZ, etc.)
     .with_p2_angle_scaling(AngleScaling::Quadratic)
 
-    // Idle error during two-qubit gate
-    .with_p2_idle_rate(0.001)
+    // Apply configured idle noise for one time unit after each two-qubit gate
+    .with_p_idle_linear(0.001)
+    .with_idle_after_2q(1.0)
 
     // Custom two-qubit Pauli model
     .with_p2_pauli_model(TwoQubitPauliWeights { ... })

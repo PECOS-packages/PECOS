@@ -43,8 +43,8 @@ For circuit-level decoding with MWPM:
 
 from __future__ import annotations
 
-import json
 import math
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -53,8 +53,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+import pecos.tracing as _tracing
+from pecos._traced_circuit import (
+    measurement_ids_in_execution_order,
+    normalize_traced_tick_circuit,
+)
+from pecos.qec._idle_noise import _translate_structured_idle_noise
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
-from pecos.quantum import validate_hosted_operations
 
 if TYPE_CHECKING:
     import stim
@@ -62,6 +67,12 @@ if TYPE_CHECKING:
 
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
+
+
+# Compatibility re-exports for the original surface-code tracing entry points.
+capture_guppy_operation_trace = _tracing.capture_guppy_operation_trace
+trace_guppy_into_tick_circuit = _tracing.trace_guppy_into_tick_circuit
+trace_guppy_into_tick_circuit_with_result_traces = _tracing.trace_guppy_into_tick_circuit_with_result_traces
 
 
 P1Weights = Mapping[str, float] | Sequence[tuple[str, float]]
@@ -129,8 +140,8 @@ PYMATCHING_DECODER_TYPES = {
 
 
 @dataclass
-class NoiseModel:
-    """Circuit-level noise parameters for QEC simulation.
+class NoiseParameters:
+    """Noise parameters consumed during detector error model construction.
 
     Matches the Rust ``NoiseConfig`` type. All parameters are optional
     beyond the four base rates.
@@ -165,19 +176,61 @@ class NoiseModel:
         p_idle: Idle noise rate per time unit (uniform depolarizing).
         t1: T1 relaxation time for idle noise (same units as idle duration).
         t2: T2 dephasing time (must satisfy t2 <= 2*t1).
-        p_idle_linear_rate: Legacy alias for stochastic Z-memory rate linear in idle duration.
-        p_idle_quadratic_rate: Legacy alias for stochastic Z-memory rate quadratic in idle duration.
-        p_idle_x_linear_rate: Stochastic X-memory rate linear in idle duration.
-        p_idle_y_linear_rate: Stochastic Y-memory rate linear in idle duration.
-        p_idle_z_linear_rate: Stochastic Z-memory rate linear in idle duration.
-        p_idle_x_quadratic_rate: Stochastic X-memory rate quadratic in idle duration.
-        p_idle_y_quadratic_rate: Stochastic Y-memory rate quadratic in idle duration.
-        p_idle_z_quadratic_rate: Stochastic Z-memory rate quadratic in idle duration.
-        p_idle_quadratic_sine_rate: Legacy alias for stochastic Z-memory rate
-            with probability ``sin(rate * duration)^2``.
-        p_idle_x_quadratic_sine_rate: Stochastic X-memory sine-law rate.
-        p_idle_y_quadratic_sine_rate: Stochastic Y-memory sine-law rate.
-        p_idle_z_quadratic_sine_rate: Stochastic Z-memory sine-law rate.
+        p_idle_linear: Optional total stochastic idle-noise rate linear in idle
+            duration. By default, the total rate is split equally over X, Y,
+            and Z errors. DEM construction groups non-empty propagated flip
+            signatures before converting distinct signatures to independent
+            mechanisms. Infeasible exact conversions use a non-negative fit
+            and expose their quantified residual on the DEM.
+        p_idle_linear_model: Optional relative weights over ``"X"``, ``"Y"``,
+            ``"Z"``, and ``"L"`` for ``p_idle_linear``. Weights must be finite,
+            non-negative, and sum to 1.0; ``"L"`` must have zero weight because
+            DEM fault propagation is Pauli-only.
+        p_idle_sin_squared: Optional stochastic sine-law idle rate. An axis
+            multiplier ``m`` produces probability
+            ``sin((p_idle_sin_squared * m) * duration)^2``. By default X, Y,
+            and Z each use multiplier 1.0. These mechanisms remain separate
+            from the linear family.
+        p_idle_sin_squared_model: Optional relative-rate multipliers over
+            ``"X"``, ``"Y"``, ``"Z"``, and ``"L"`` for
+            ``p_idle_sin_squared``. Values must be finite and non-negative;
+            ``"L"`` must have zero weight because DEM fault propagation is
+            Pauli-only.
+        p_idle_coherent: Optional coherent-rotation rate. The standard DEM
+            route rejects nonzero coherent idle noise because it cannot
+            represent coherence. Zero has no effect.
+        p_idle_coherent_model: Optional relative-rate multipliers over ``"RX"``,
+            ``"RY"``, and ``"RZ"`` for ``p_idle_coherent``. Values must be
+            finite and non-negative.
+        _p_idle_linear_rate: Internal legacy canonical scalar for stochastic
+            Z-memory noise linear in idle duration.
+        _p_idle_quadratic_rate: Internal legacy canonical scalar for stochastic
+            Z-memory noise quadratic in idle duration.
+        _p_idle_x_linear_rate: Internal canonical X-memory rate linear in idle duration.
+        _p_idle_y_linear_rate: Internal canonical Y-memory rate linear in idle duration.
+        _p_idle_z_linear_rate: Internal canonical Z-memory rate linear in idle duration.
+        _p_idle_x_quadratic_rate: Internal canonical X-memory rate quadratic in idle duration.
+        _p_idle_y_quadratic_rate: Internal canonical Y-memory rate quadratic in idle duration.
+        _p_idle_z_quadratic_rate: Internal canonical Z-memory rate quadratic in idle duration.
+        _p_idle_quadratic_sine_rate: Internal legacy canonical scalar for stochastic
+            Z-memory noise with probability ``sin(rate * duration)^2``.
+        _p_idle_x_quadratic_sine_rate: Internal canonical X-memory sine-law rate.
+        _p_idle_y_quadratic_sine_rate: Internal canonical Y-memory sine-law rate.
+        _p_idle_z_quadratic_sine_rate: Internal canonical Z-memory sine-law rate.
+
+        The internal canonical scalar fields are not user configuration. The
+        three structured family setters normalize into them during construction,
+        then clear the family fields. Migrate removed setters mechanically:
+
+        - ``with_p_idle_z_linear_rate(r)`` becomes
+          ``with_p_idle_linear(r, {"Z": 1.0})``.
+        - ``with_p_idle_x_quadratic_sine_rate(r)`` becomes
+          ``with_p_idle_sin_squared(r, {"X": 1.0})``.
+        - ``with_p_idle_linear_rate(r)`` becomes
+          ``with_p_idle_linear(r, {"Z": 1.0})``. Despite its axis-free name,
+          the removed setter was Z-only. The identically named
+          ``general_noise()`` setter instead configures a total rate split by a
+          model, so values must not be copied between the two interfaces.
 
     Runtime idle units:
         For ``traced_qis`` DEMs, runtime idles are replayed as nanosecond
@@ -197,18 +250,24 @@ class NoiseModel:
     p_idle: float | None = None
     t1: float | None = None
     t2: float | None = None
-    p_idle_linear_rate: float | None = None
-    p_idle_quadratic_rate: float | None = None
-    p_idle_x_linear_rate: float | None = None
-    p_idle_y_linear_rate: float | None = None
-    p_idle_z_linear_rate: float | None = None
-    p_idle_x_quadratic_rate: float | None = None
-    p_idle_y_quadratic_rate: float | None = None
-    p_idle_z_quadratic_rate: float | None = None
-    p_idle_quadratic_sine_rate: float | None = None
-    p_idle_x_quadratic_sine_rate: float | None = None
-    p_idle_y_quadratic_sine_rate: float | None = None
-    p_idle_z_quadratic_sine_rate: float | None = None
+    _p_idle_linear_rate: float | None = None
+    _p_idle_quadratic_rate: float | None = None
+    _p_idle_x_linear_rate: float | None = None
+    _p_idle_y_linear_rate: float | None = None
+    _p_idle_z_linear_rate: float | None = None
+    _p_idle_x_quadratic_rate: float | None = None
+    _p_idle_y_quadratic_rate: float | None = None
+    _p_idle_z_quadratic_rate: float | None = None
+    _p_idle_quadratic_sine_rate: float | None = None
+    _p_idle_x_quadratic_sine_rate: float | None = None
+    _p_idle_y_quadratic_sine_rate: float | None = None
+    _p_idle_z_quadratic_sine_rate: float | None = None
+    p_idle_linear: float | None = None
+    p_idle_linear_model: Mapping[str, float] | None = None
+    p_idle_sin_squared: float | None = None
+    p_idle_sin_squared_model: Mapping[str, float] | None = None
+    p_idle_coherent: float | None = None
+    p_idle_coherent_model: Mapping[str, float] | None = None
 
     def __post_init__(self) -> None:
         """Normalize cache-sensitive inputs after dataclass initialization."""
@@ -218,36 +277,148 @@ class NoiseModel:
             self.p2_szz = _validate_probability("p2_szz", self.p2_szz)
         if self.p2_szzdg is not None:
             self.p2_szzdg = _validate_probability("p2_szzdg", self.p2_szzdg)
+        (
+            self._p_idle_x_linear_rate,
+            self._p_idle_y_linear_rate,
+            self._p_idle_z_linear_rate,
+            self._p_idle_x_quadratic_sine_rate,
+            self._p_idle_y_quadratic_sine_rate,
+            self._p_idle_z_quadratic_sine_rate,
+        ) = _translate_structured_idle_noise(
+            p_idle_linear=self.p_idle_linear,
+            p_idle_linear_model=self.p_idle_linear_model,
+            p_idle_sin_squared=self.p_idle_sin_squared,
+            p_idle_sin_squared_model=self.p_idle_sin_squared_model,
+            p_idle_coherent=self.p_idle_coherent,
+            p_idle_coherent_model=self.p_idle_coherent_model,
+            p_idle_linear_rate=self._p_idle_linear_rate,
+            p_idle_quadratic_rate=self._p_idle_quadratic_rate,
+            p_idle_x_linear_rate=self._p_idle_x_linear_rate,
+            p_idle_y_linear_rate=self._p_idle_y_linear_rate,
+            p_idle_z_linear_rate=self._p_idle_z_linear_rate,
+            p_idle_quadratic_sine_rate=self._p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate=self._p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate=self._p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate=self._p_idle_z_quadratic_sine_rate,
+        )
+        self.p_idle_linear = None
+        self.p_idle_linear_model = None
+        self.p_idle_sin_squared = None
+        self.p_idle_sin_squared_model = None
+        self.p_idle_coherent = None
+        self.p_idle_coherent_model = None
+
+    def with_p1(self, p1: float) -> NoiseParameters:
+        """Return a copy with ``p1`` set to the given value."""
+        return replace(self, p1=p1)
+
+    def with_p1_weights(self, p1_weights: P1Weights | None) -> NoiseParameters:
+        """Return a copy with ``p1_weights`` set to the given value."""
+        return replace(self, p1_weights=p1_weights)
+
+    def with_p2(self, p2: float) -> NoiseParameters:
+        """Return a copy with ``p2`` set to the given value."""
+        return replace(self, p2=p2)
+
+    def with_p2_szz(self, p2_szz: float | None) -> NoiseParameters:
+        """Return a copy with ``p2_szz`` set to the given value."""
+        return replace(self, p2_szz=p2_szz)
+
+    def with_p2_szzdg(self, p2_szzdg: float | None) -> NoiseParameters:
+        """Return a copy with ``p2_szzdg`` set to the given value."""
+        return replace(self, p2_szzdg=p2_szzdg)
+
+    def with_p2_weights(self, p2_weights: P2Weights | None) -> NoiseParameters:
+        """Return a copy with ``p2_weights`` set to the given value."""
+        return replace(self, p2_weights=p2_weights)
+
+    def with_p2_replacement_approximation(
+        self,
+        p2_replacement_approximation: str | None,
+    ) -> NoiseParameters:
+        """Return a copy with ``p2_replacement_approximation`` set to the given value."""
+        return replace(self, p2_replacement_approximation=p2_replacement_approximation)
+
+    def with_p_meas(self, p_meas: float) -> NoiseParameters:
+        """Return a copy with ``p_meas`` set to the given value."""
+        return replace(self, p_meas=p_meas)
+
+    def with_p_prep(self, p_prep: float) -> NoiseParameters:
+        """Return a copy with ``p_prep`` set to the given value."""
+        return replace(self, p_prep=p_prep)
+
+    def with_p_idle(self, p_idle: float | None) -> NoiseParameters:
+        """Return a copy with ``p_idle`` set to the given value."""
+        return replace(self, p_idle=p_idle)
+
+    def with_t1(self, t1: float | None) -> NoiseParameters:
+        """Return a copy with ``t1`` set to the given value."""
+        return replace(self, t1=t1)
+
+    def with_t2(self, t2: float | None) -> NoiseParameters:
+        """Return a copy with ``t2`` set to the given value."""
+        return replace(self, t2=t2)
+
+    # The idle families take their rate and model together: a model without a
+    # rate is inert and rejected, and __post_init__ translates a family into the
+    # canonical per-axis fields and then clears it -- so setting the two halves
+    # in separate calls would make the second call collide with the per-axis
+    # values the first one produced.
+    def with_p_idle_linear(
+        self,
+        p_idle_linear: float | None,
+        model: Mapping[str, float] | None = None,
+    ) -> NoiseParameters:
+        """Return a copy with the linear idle family set to the given rate and model."""
+        return replace(self, p_idle_linear=p_idle_linear, p_idle_linear_model=model)
+
+    def with_p_idle_sin_squared(
+        self,
+        p_idle_sin_squared: float | None,
+        model: Mapping[str, float] | None = None,
+    ) -> NoiseParameters:
+        """Return a copy with the sine-law idle family set to the given rate and model."""
+        return replace(self, p_idle_sin_squared=p_idle_sin_squared, p_idle_sin_squared_model=model)
+
+    def with_p_idle_coherent(
+        self,
+        p_idle_coherent: float | None,
+        model: Mapping[str, float] | None = None,
+    ) -> NoiseParameters:
+        """Return a copy with the coherent idle family set to the given rate and model."""
+        return replace(self, p_idle_coherent=p_idle_coherent, p_idle_coherent_model=model)
 
     @property
     def effective_p_idle_z_linear_rate(self) -> float | None:
-        """Z-axis linear idle rate, accepting the legacy alias."""
-        return self.p_idle_z_linear_rate if self.p_idle_z_linear_rate is not None else self.p_idle_linear_rate
+        """Return the internal Z-axis linear idle rate, accepting the legacy scalar."""
+        return self._p_idle_z_linear_rate if self._p_idle_z_linear_rate is not None else self._p_idle_linear_rate
 
     @property
     def effective_p_idle_z_quadratic_rate(self) -> float | None:
-        """Z-axis quadratic idle rate, accepting the legacy alias."""
-        return self.p_idle_z_quadratic_rate if self.p_idle_z_quadratic_rate is not None else self.p_idle_quadratic_rate
+        """Return the internal Z-axis quadratic idle rate, accepting the legacy scalar."""
+        return (
+            self._p_idle_z_quadratic_rate if self._p_idle_z_quadratic_rate is not None else self._p_idle_quadratic_rate
+        )
 
     @property
     def effective_p_idle_z_quadratic_sine_rate(self) -> float | None:
-        """Z-axis sine-law quadratic idle rate, accepting the legacy alias."""
-        if self.p_idle_z_quadratic_sine_rate is not None:
-            return self.p_idle_z_quadratic_sine_rate
-        return self.p_idle_quadratic_sine_rate
+        """Return the internal Z-axis sine-law rate, accepting the legacy scalar."""
+        if self._p_idle_z_quadratic_sine_rate is not None:
+            return self._p_idle_z_quadratic_sine_rate
+        return self._p_idle_quadratic_sine_rate
 
     @property
     def idle_memory_rates(self) -> tuple[float | None, ...]:
         """All dedicated Pauli idle-memory rates that require explicit idles."""
         return (
-            self.p_idle_x_linear_rate,
-            self.p_idle_y_linear_rate,
+            self._p_idle_x_linear_rate,
+            self._p_idle_y_linear_rate,
             self.effective_p_idle_z_linear_rate,
-            self.p_idle_x_quadratic_rate,
-            self.p_idle_y_quadratic_rate,
+            self._p_idle_x_quadratic_rate,
+            self._p_idle_y_quadratic_rate,
             self.effective_p_idle_z_quadratic_rate,
-            self.p_idle_x_quadratic_sine_rate,
-            self.p_idle_y_quadratic_sine_rate,
+            self._p_idle_x_quadratic_sine_rate,
+            self._p_idle_y_quadratic_sine_rate,
             self.effective_p_idle_z_quadratic_sine_rate,
         )
 
@@ -260,7 +431,7 @@ class NoiseModel:
         self,
         *,
         time_units_per_second: float = RUNTIME_IDLE_TIME_UNITS_PER_SECOND,
-    ) -> NoiseModel:
+    ) -> NoiseParameters:
         """Return a copy whose idle noise is expressed in runtime replay units.
 
         Selene-compatible runtimes emit idle durations in seconds, but the
@@ -284,25 +455,25 @@ class NoiseModel:
             p_idle=_convert_optional_rate(self.p_idle, units),
             t1=_convert_optional_time(self.t1, units),
             t2=_convert_optional_time(self.t2, units),
-            p_idle_linear_rate=_convert_optional_rate(self.p_idle_linear_rate, units),
-            p_idle_x_linear_rate=_convert_optional_rate(self.p_idle_x_linear_rate, units),
-            p_idle_y_linear_rate=_convert_optional_rate(self.p_idle_y_linear_rate, units),
-            p_idle_z_linear_rate=_convert_optional_rate(self.p_idle_z_linear_rate, units),
-            p_idle_quadratic_rate=_convert_optional_rate(self.p_idle_quadratic_rate, units_squared),
-            p_idle_x_quadratic_rate=_convert_optional_rate(self.p_idle_x_quadratic_rate, units_squared),
-            p_idle_y_quadratic_rate=_convert_optional_rate(self.p_idle_y_quadratic_rate, units_squared),
-            p_idle_z_quadratic_rate=_convert_optional_rate(self.p_idle_z_quadratic_rate, units_squared),
-            p_idle_quadratic_sine_rate=_convert_optional_rate(self.p_idle_quadratic_sine_rate, units),
-            p_idle_x_quadratic_sine_rate=_convert_optional_rate(self.p_idle_x_quadratic_sine_rate, units),
-            p_idle_y_quadratic_sine_rate=_convert_optional_rate(self.p_idle_y_quadratic_sine_rate, units),
-            p_idle_z_quadratic_sine_rate=_convert_optional_rate(self.p_idle_z_quadratic_sine_rate, units),
+            _p_idle_linear_rate=_convert_optional_rate(self._p_idle_linear_rate, units),
+            _p_idle_x_linear_rate=_convert_optional_rate(self._p_idle_x_linear_rate, units),
+            _p_idle_y_linear_rate=_convert_optional_rate(self._p_idle_y_linear_rate, units),
+            _p_idle_z_linear_rate=_convert_optional_rate(self._p_idle_z_linear_rate, units),
+            _p_idle_quadratic_rate=_convert_optional_rate(self._p_idle_quadratic_rate, units_squared),
+            _p_idle_x_quadratic_rate=_convert_optional_rate(self._p_idle_x_quadratic_rate, units_squared),
+            _p_idle_y_quadratic_rate=_convert_optional_rate(self._p_idle_y_quadratic_rate, units_squared),
+            _p_idle_z_quadratic_rate=_convert_optional_rate(self._p_idle_z_quadratic_rate, units_squared),
+            _p_idle_quadratic_sine_rate=_convert_optional_rate(self._p_idle_quadratic_sine_rate, units),
+            _p_idle_x_quadratic_sine_rate=_convert_optional_rate(self._p_idle_x_quadratic_sine_rate, units),
+            _p_idle_y_quadratic_sine_rate=_convert_optional_rate(self._p_idle_y_quadratic_sine_rate, units),
+            _p_idle_z_quadratic_sine_rate=_convert_optional_rate(self._p_idle_z_quadratic_sine_rate, units),
         )
 
     @staticmethod
-    def uniform(physical_error_rate: float) -> NoiseModel:
+    def uniform(physical_error_rate: float) -> NoiseParameters:
         """Create a uniform circuit-level noise model from one physical error rate."""
         p = _validate_probability("physical_error_rate", physical_error_rate)
-        return NoiseModel(p1=p, p2=p, p_meas=p, p_prep=p)
+        return NoiseParameters(p1=p, p2=p, p_meas=p, p_prep=p)
 
     @property
     def is_noiseless(self) -> bool:
@@ -326,6 +497,19 @@ class NoiseModel:
             rates.append(self.p_idle)
         rates.extend(rate for rate in self.idle_memory_rates if rate is not None)
         return max(rates)
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve deprecated module attributes lazily."""
+    if name == "NoiseModel":
+        warnings.warn(
+            "NoiseModel is deprecated; use NoiseParameters instead (from pecos import NoiseParameters).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return NoiseParameters
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
 
 
 def _normalize_pauli_weights(weights: P1Weights | P2Weights | None) -> tuple[tuple[str, float], ...] | None:
@@ -353,7 +537,7 @@ def _p2_weights_dict(p2_weights: P2Weights | None) -> dict[str, float] | None:
     return None if normalized is None else dict(normalized)
 
 
-def _p2_gate_rates_dict(noise: NoiseModel) -> dict[str, float] | None:
+def _p2_gate_rates_dict(noise: NoiseParameters) -> dict[str, float] | None:
     rates: dict[str, float] = {}
     if noise.p2_szz is not None:
         rates["SZZ"] = noise.p2_szz
@@ -529,7 +713,7 @@ def generate_repetition_code_dem(
 def generate_surface_code_dem(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     stab_type: str = "Z",
 ) -> str:
     """Generate a phenomenological DEM for surface code decoding.
@@ -898,29 +1082,6 @@ def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[st
     return refs
 
 
-def _extract_measurement_meas_ids(tc: Any) -> list[int]:
-    """Return stable measurement ids in TickCircuit execution order."""
-    ids: list[int] = []
-    for tick_idx in range(tc.num_ticks()):
-        tick = tc.get_tick(tick_idx)
-        if tick is None:
-            continue
-        for gate in tick.gate_batches():
-            gate_type = str(getattr(gate, "gate_type", "")).rsplit(".", maxsplit=1)[-1]
-            if gate_type not in {"MZ", "MeasureFree"}:
-                continue
-            qubits = list(getattr(gate, "qubits", []))
-            meas_ids = list(getattr(gate, "meas_ids", []))
-            if len(meas_ids) != len(qubits):
-                msg = (
-                    f"traced measurement gate {gate_type} in tick {tick_idx} carries "
-                    f"{len(meas_ids)} MeasId(s) for {len(qubits)} qubit(s)"
-                )
-                raise ValueError(msg)
-            ids.extend(int(meas_id) for meas_id in meas_ids)
-    return ids
-
-
 def _validate_result_tag_remap_against_traced_measurements(
     traced_tc: Any,
     measurement_index_remap: Mapping[int, int],
@@ -938,7 +1099,7 @@ def _validate_result_tag_remap_against_traced_measurements(
         )
         raise ValueError(msg)
 
-    traced_meas_ids = _extract_measurement_meas_ids(traced_tc)
+    traced_meas_ids = measurement_ids_in_execution_order(traced_tc)
     if len(traced_meas_ids) != expected_measurements:
         msg = (
             "traced circuit contains "
@@ -963,697 +1124,6 @@ def _validate_result_tag_remap_against_traced_measurements(
             f"measured MeasIds; missing={missing[:8]}, extra={extra[:8]}"
         )
         raise ValueError(msg)
-
-
-def _runtime_idle_seconds_to_time_units(duration_seconds: float) -> Any:
-    """Convert runtime idle seconds into PECOS nanosecond time units."""
-    import math
-
-    from pecos_rslib import TimeUnits
-
-    if not math.isfinite(duration_seconds) or duration_seconds < 0.0:
-        msg = f"Idle duration must be finite and non-negative, got {duration_seconds!r}"
-        raise ValueError(msg)
-
-    units = round(duration_seconds * 1_000_000_000.0)
-    if duration_seconds > 0.0:
-        units = max(1, units)
-    return TimeUnits(units)
-
-
-def _validate_measurement_crosstalk_topology(
-    measurement_crosstalk_topology: str | None,
-) -> str | None:
-    if measurement_crosstalk_topology in (None, "none", "runtime_payloads"):
-        return None
-    if measurement_crosstalk_topology == "global_from_measurements":
-        return measurement_crosstalk_topology
-    msg = "measurement_crosstalk_topology must be None, 'runtime_payloads', or 'global_from_measurements'"
-    raise ValueError(msg)
-
-
-def _should_add_global_measurement_crosstalk_payload(
-    measurement_crosstalk_topology: str | None,
-) -> bool:
-    return _validate_measurement_crosstalk_topology(measurement_crosstalk_topology) == "global_from_measurements"
-
-
-def _replay_qis_trace_into_tick_circuit(
-    operations: list[dict[str, Any]],
-    *,
-    measurement_crosstalk_topology: str | None = None,
-) -> Any:
-    """Replay traced QIS operations into a PECOS TickCircuit."""
-    import heapq
-
-    from pecos_rslib.quantum import TickCircuit
-
-    measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
-        measurement_crosstalk_topology,
-    )
-    tick_circuit = TickCircuit()
-    active_slots: dict[int, int] = {}
-    free_slots: list[int] = []
-    next_slot = 0
-
-    def allocate_slot(program_id: int) -> int:
-        nonlocal next_slot
-        if program_id in active_slots:
-            return active_slots[program_id]
-        if free_slots:
-            slot = heapq.heappop(free_slots)
-        else:
-            slot = next_slot
-            next_slot += 1
-        active_slots[program_id] = slot
-        return slot
-
-    def release_slot(program_id: int) -> None:
-        slot = active_slots.pop(program_id, None)
-        if slot is not None:
-            heapq.heappush(free_slots, slot)
-
-    def mapped_slot(program_id: int, op_name: str) -> int:
-        if program_id not in active_slots:
-            msg = f"Traced QIS op {op_name!r} referenced unmapped program qubit {program_id}"
-            raise ValueError(msg)
-        return active_slots[program_id]
-
-    def scalar_arg(payload: Any, op_name: str) -> int:
-        if isinstance(payload, list):
-            msg = f"Expected scalar payload for {op_name}, got {payload!r}"
-            raise TypeError(msg)
-        return int(payload)
-
-    def tuple_args(payload: Any, op_name: str, arity: int) -> tuple[Any, ...]:
-        if not isinstance(payload, list) or len(payload) != arity:
-            msg = f"Expected {arity} arguments for {op_name}, got {payload!r}"
-            raise ValueError(msg)
-        return tuple(payload)
-
-    for operation in operations:
-        if "AllocateQubit" in operation:
-            program_id = int(operation["AllocateQubit"]["id"])
-            slot = allocate_slot(program_id)
-            tick_circuit.tick().pz([slot])
-            continue
-
-        if "ReleaseQubit" in operation:
-            release_slot(int(operation["ReleaseQubit"]["id"]))
-            continue
-
-        if "AllocateResult" in operation or "RecordOutput" in operation or "Barrier" in operation:
-            continue
-
-        quantum = operation.get("Quantum")
-        if quantum is None or len(quantum) != 1:
-            msg = f"Unsupported traced operation payload: {operation!r}"
-            raise ValueError(msg)
-
-        op_name, payload = next(iter(quantum.items()))
-        tick = tick_circuit.tick()
-
-        if op_name == "H":
-            tick.h([mapped_slot(scalar_arg(payload, op_name), op_name)])
-        elif op_name == "X":
-            tick.x([mapped_slot(scalar_arg(payload, op_name), op_name)])
-        elif op_name == "Y":
-            tick.y([mapped_slot(scalar_arg(payload, op_name), op_name)])
-        elif op_name == "Z":
-            tick.z([mapped_slot(scalar_arg(payload, op_name), op_name)])
-        elif op_name == "S":
-            tick.sz([mapped_slot(scalar_arg(payload, op_name), op_name)])
-        elif op_name == "Sdg":
-            tick.szdg([mapped_slot(scalar_arg(payload, op_name), op_name)])
-        elif op_name == "T":
-            tick.t([mapped_slot(scalar_arg(payload, op_name), op_name)])
-        elif op_name == "Tdg":
-            tick.tdg([mapped_slot(scalar_arg(payload, op_name), op_name)])
-        elif op_name == "RX":
-            theta, program_id = tuple_args(payload, op_name, 2)
-            tick.rx(float(theta), [mapped_slot(int(program_id), op_name)])
-        elif op_name == "RY":
-            theta, program_id = tuple_args(payload, op_name, 2)
-            tick.ry(float(theta), [mapped_slot(int(program_id), op_name)])
-        elif op_name == "RZ":
-            theta, program_id = tuple_args(payload, op_name, 2)
-            tick.rz(float(theta), [mapped_slot(int(program_id), op_name)])
-        elif op_name == "RXY":
-            theta, phi, program_id = tuple_args(payload, op_name, 3)
-            tick.r1xy(float(theta), float(phi), [mapped_slot(int(program_id), op_name)])
-        elif op_name == "Idle":
-            duration, program_id = tuple_args(payload, op_name, 2)
-            tick.idle(
-                _runtime_idle_seconds_to_time_units(float(duration)),
-                [mapped_slot(int(program_id), op_name)],
-            )
-        elif op_name == "CX":
-            control, target = tuple_args(payload, op_name, 2)
-            tick.cx([(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))])
-        elif op_name == "CY":
-            control, target = tuple_args(payload, op_name, 2)
-            tick.cy([(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))])
-        elif op_name == "CZ":
-            control, target = tuple_args(payload, op_name, 2)
-            tick.cz([(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))])
-        elif op_name == "CH":
-            control, target = tuple_args(payload, op_name, 2)
-            tick.ch([(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))])
-        elif op_name == "CRZ":
-            theta, control, target = tuple_args(payload, op_name, 3)
-            tick.crz(
-                float(theta),
-                [(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))],
-            )
-        elif op_name == "CCX":
-            control_a, control_b, target = tuple_args(payload, op_name, 3)
-            tick.ccx(
-                [
-                    (
-                        mapped_slot(int(control_a), op_name),
-                        mapped_slot(int(control_b), op_name),
-                        mapped_slot(int(target), op_name),
-                    ),
-                ],
-            )
-        elif op_name == "ZZ":
-            qubit_a, qubit_b = tuple_args(payload, op_name, 2)
-            tick.szz([(mapped_slot(int(qubit_a), op_name), mapped_slot(int(qubit_b), op_name))])
-        elif op_name == "RZZ":
-            theta, qubit_a, qubit_b = tuple_args(payload, op_name, 3)
-            tick.rzz(
-                float(theta),
-                [(mapped_slot(int(qubit_a), op_name), mapped_slot(int(qubit_b), op_name))],
-            )
-        elif op_name == "Measure":
-            program_id, result_id = tuple_args(payload, op_name, 2)
-            measurement_qubit = mapped_slot(int(program_id), op_name)
-            if _should_add_global_measurement_crosstalk_payload(
-                measurement_crosstalk_topology,
-            ):
-                # Global crosstalk payload qubits are guaranteed not to be
-                # affected; for measurement-induced global crosstalk this is
-                # exactly the measured payload.
-                tick_circuit.tick().add_gate(
-                    "MeasCrosstalkGlobalPayload",
-                    [measurement_qubit],
-                )
-            # Stamp the QIS-provided result_id as the MeasId rather than
-            # discarding it and letting assign_missing_meas_ids() invent
-            # sequential ids (which would be wrong for non-sequential ids).
-            tick.mz_with_ids(
-                [measurement_qubit],
-                [int(result_id)],
-            )
-        elif op_name == "Reset":
-            tick.pz([mapped_slot(scalar_arg(payload, op_name), op_name)])
-        else:
-            msg = f"Unsupported traced QIS quantum op {op_name!r}"
-            raise ValueError(msg)
-
-    # Compact: ASAP-schedule gates into minimal ticks
-    tick_circuit.compact_ticks()
-
-    return tick_circuit
-
-
-def _gate_pairs(qubits: list[int], gate_type: str) -> list[tuple[int, int]]:
-    """Convert a flattened qubit list into disjoint qubit pairs."""
-    if len(qubits) % 2 != 0:
-        msg = f"Lowered gate {gate_type!r} expected an even number of qubits, got {qubits!r}"
-        raise ValueError(msg)
-    return list(zip(qubits[::2], qubits[1::2], strict=True))
-
-
-def _gate_triples(qubits: list[int], gate_type: str) -> list[tuple[int, int, int]]:
-    """Convert a flattened qubit list into disjoint qubit triples."""
-    if len(qubits) % 3 != 0:
-        msg = f"Lowered gate {gate_type!r} expected qubits in triples, got {qubits!r}"
-        raise ValueError(msg)
-    return [(qubits[i], qubits[i + 1], qubits[i + 2]) for i in range(0, len(qubits), 3)]
-
-
-def _lowered_gate_metadata(gate: Mapping[str, Any]) -> dict[str, Any]:
-    """Return validated runtime/source metadata for a lowered trace gate."""
-    metadata = gate.get("metadata")
-    if metadata is None:
-        return {}
-    if not isinstance(metadata, Mapping):
-        msg = f"Lowered gate metadata must be an object, got {metadata!r}"
-        raise TypeError(msg)
-    return {str(key): value for key, value in metadata.items()}
-
-
-def _set_lowered_gate_metadata(tick: Any, metadata: Mapping[str, Any]) -> None:
-    """Attach lowered trace metadata to the gate most recently added to ``tick``."""
-    if not metadata:
-        return
-    tick.metas(metadata)
-
-
-def _replay_lowered_qis_trace_into_tick_circuit(
-    chunks: list[dict[str, Any]],
-    *,
-    measurement_crosstalk_topology: str | None = None,
-) -> Any:
-    """Replay lowered post-Selene ByteMessage gate batches into a TickCircuit.
-
-    The lowered trace emits gates one at a time. We replay each into its own
-    tick, then compact (ASAP schedule) so that gates on disjoint qubits share
-    a tick --- matching the parallel structure of the abstract circuit.
-
-    MeasIds flow from runtime-lowered measurement provenance:
-    ``lowered_quantum_ops`` MZ entries must carry ``measurement_result_ids``.
-    This avoids inferring lowered measurement IDs from raw QIS operation order,
-    which is not stable under runtime scheduling or transport.
-    """
-    from pecos_rslib.quantum import TickCircuit
-
-    measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
-        measurement_crosstalk_topology,
-    )
-    tick_circuit = TickCircuit()
-
-    for chunk in chunks:
-        for gate in chunk.get("lowered_quantum_ops") or []:
-            gate_type = str(gate["gate_type"])
-            qubits = [int(q) for q in gate.get("qubits", [])]
-            angles = [float(theta) for theta in gate.get("angles", [])]
-            params = [float(param) for param in gate.get("params", [])]
-            metadata = _lowered_gate_metadata(gate)
-            tick = tick_circuit.tick()
-
-            if gate_type == "H":
-                tick.h(qubits)
-            elif gate_type == "X":
-                tick.x(qubits)
-            elif gate_type == "Y":
-                tick.y(qubits)
-            elif gate_type == "Z":
-                tick.z(qubits)
-            elif gate_type == "SZ":
-                tick.sz(qubits)
-            elif gate_type == "SZdg":
-                tick.szdg(qubits)
-            elif gate_type == "T":
-                tick.t(qubits)
-            elif gate_type == "Tdg":
-                tick.tdg(qubits)
-            elif gate_type == "PZ":
-                tick.pz(qubits)
-            elif gate_type == "Idle":
-                if len(params) != 1:
-                    msg = f"Lowered Idle gate expected one duration param, got {params!r}"
-                    raise ValueError(msg)
-                tick.idle(_runtime_idle_seconds_to_time_units(params[0]), qubits)
-            elif gate_type == "MZ":
-                meas_ids = gate.get("measurement_result_ids")
-                if not isinstance(meas_ids, list):
-                    msg = (
-                        "Lowered MZ trace is missing measurement_result_ids; "
-                        "rebuild PECOS so runtime-lowered measurements carry "
-                        "their result-id provenance instead of relying on "
-                        "operation-order inference."
-                    )
-                    raise ValueError(msg)
-                if len(meas_ids) != len(qubits):
-                    msg = f"Lowered MZ gate carries {len(meas_ids)} measurement_result_ids for {len(qubits)} qubit(s)"
-                    raise ValueError(msg)
-                if _should_add_global_measurement_crosstalk_payload(
-                    measurement_crosstalk_topology,
-                ):
-                    # Global crosstalk payload qubits are guaranteed not to be
-                    # affected; for measurement-induced global crosstalk this is
-                    # exactly the measured payload.
-                    tick_circuit.tick().add_gate(
-                        "MeasCrosstalkGlobalPayload",
-                        qubits,
-                    )
-                tick.mz_with_ids(qubits, [int(meas_id) for meas_id in meas_ids])
-            elif gate_type == "MeasCrosstalkGlobalPayload":
-                tick.add_gate("MeasCrosstalkGlobalPayload", qubits)
-            elif gate_type == "MeasCrosstalkLocalPayload":
-                tick.add_gate("MeasCrosstalkLocalPayload", qubits)
-            elif gate_type == "RX":
-                tick.rx(angles[0], qubits)
-            elif gate_type == "RY":
-                tick.ry(angles[0], qubits)
-            elif gate_type == "RZ":
-                tick.rz(angles[0], qubits)
-            elif gate_type == "R1XY":
-                tick.r1xy(angles[0], angles[1], qubits)
-            elif gate_type == "CX":
-                tick.cx(_gate_pairs(qubits, gate_type))
-            elif gate_type == "CY":
-                tick.cy(_gate_pairs(qubits, gate_type))
-            elif gate_type == "CZ":
-                tick.cz(_gate_pairs(qubits, gate_type))
-            elif gate_type == "CH":
-                tick.ch(_gate_pairs(qubits, gate_type))
-            elif gate_type == "CRZ":
-                tick.crz(angles[0], _gate_pairs(qubits, gate_type))
-            elif gate_type == "SZZ":
-                tick.szz(_gate_pairs(qubits, gate_type))
-            elif gate_type == "SZZdg":
-                tick.szzdg(_gate_pairs(qubits, gate_type))
-            elif gate_type == "RZZ":
-                tick.rzz(angles[0], _gate_pairs(qubits, gate_type))
-            elif gate_type == "CCX":
-                tick.ccx(_gate_triples(qubits, gate_type))
-            else:
-                msg = f"Unsupported lowered traced gate {gate_type!r}"
-                raise ValueError(msg)
-            _set_lowered_gate_metadata(tick, metadata)
-
-    # Compact: ASAP-schedule gates into minimal ticks
-    tick_circuit.compact_ticks()
-
-    return tick_circuit
-
-
-def _chunk_has_lowerable_op(chunk: dict[str, Any]) -> bool:
-    """True if a chunk carries an operation that lowers to a TickCircuit gate.
-
-    A raw ``Quantum`` op (gate / measure / reset) lowers to a gate, and an
-    ``AllocateQubit`` lowers to a prep (``PZ``) -- both appear in
-    ``lowered_quantum_ops`` after Selene lowering, and both are emitted as
-    gates by the raw replay (see :func:`_replay_qis_trace_into_tick_circuit`).
-    ``AllocateResult``, ``RecordOutput``, ``Barrier``, and ``ReleaseQubit``
-    emit no gate and are pass-through bookkeeping, so a chunk containing only
-    those legitimately has no lowered ops.
-    """
-    return any(
-        isinstance(op, dict) and ("Quantum" in op or "AllocateQubit" in op) for op in (chunk.get("operations") or [])
-    )
-
-
-def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
-    """Fail loud on a mixed/partially-lowered trace.
-
-    The lowered replay consumes a chunk's gates from ``lowered_quantum_ops``
-    only (it reads ``operations`` solely for measurement result ids). So once
-    *any* chunk is lowered, a chunk that carries a lowerable operation (a raw
-    ``Quantum`` gate/measure/reset, or an ``AllocateQubit`` prep) but an empty
-    ``lowered_quantum_ops`` would have those gates silently dropped -- the
-    resulting TickCircuit would be missing operations with no error. A dropped
-    *measurement* is already caught downstream by the meas-count guard in
-    :func:`_replay_lowered_qis_trace_into_tick_circuit`, but a dropped prep or
-    non-measurement gate (H, CX, ...) would pass silently. Reject the
-    incomplete trace here instead of building from a partial gate stream.
-
-    This is the explicit trace-format contract for live
-    ``capture_operation_trace()`` output: lowered and raw forms must not be
-    mixed across chunks. (Per-chunk completeness of lowering is assumed and is
-    exercised end-to-end by the byte-identical surface DEM regressions.)
-    """
-    for idx, chunk in enumerate(chunks):
-        if _chunk_has_lowerable_op(chunk) and chunk.get("lowered_quantum_ops_complete") is not True:
-            msg = (
-                f"Traced chunk {idx} does not attest a complete lowered gate stream. "
-                "Audited DEM construction requires lowered_quantum_ops_complete=true "
-                "from the QIS trace producer; refusing to infer completeness from "
-                "a non-empty lowered_quantum_ops list."
-            )
-            raise ValueError(msg)
-        if _chunk_has_lowerable_op(chunk) and not chunk.get("lowered_quantum_ops"):
-            msg = (
-                f"Traced chunk {idx} carries lowerable operations (a quantum "
-                "gate/measure/reset or an AllocateQubit prep) but no "
-                "lowered_quantum_ops while other chunks are lowered. This "
-                "mixed/partially-lowered trace would silently drop the chunk's "
-                "gates in the lowered replay; refusing to build from an "
-                "incomplete gate stream."
-            )
-            raise ValueError(msg)
-
-
-def _replay_qis_trace_chunks_into_tick_circuit(
-    chunks: list[dict[str, Any]],
-    *,
-    measurement_crosstalk_topology: str | None = None,
-    allow_raw_measurement_id_fallback: bool = False,
-) -> Any:
-    """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
-    measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
-        measurement_crosstalk_topology,
-    )
-    has_lowered_operations = any(chunk.get("lowered_quantum_ops") for chunk in chunks)
-    if (
-        not allow_raw_measurement_id_fallback
-        and not has_lowered_operations
-        and any(_chunk_has_lowerable_op(chunk) for chunk in chunks)
-    ):
-        msg = (
-            "runtime trace does not contain lowered_quantum_ops; refusing to "
-            "build an audited DEM from the raw pre-runtime QIS operation order"
-        )
-        raise ValueError(msg)
-    if not allow_raw_measurement_id_fallback:
-        _validate_audited_trace_stream(chunks)
-    if has_lowered_operations:
-        _reject_partially_lowered_trace(chunks)
-        try:
-            return _replay_lowered_qis_trace_into_tick_circuit(
-                chunks,
-                measurement_crosstalk_topology=measurement_crosstalk_topology,
-            )
-        except ValueError as exc:
-            if "missing measurement_result_ids" not in str(exc):
-                raise
-            if not allow_raw_measurement_id_fallback:
-                msg = (
-                    "runtime-lowered trace is missing measurement_result_ids; "
-                    "refusing to fall back to the raw QIS stream for an audited build"
-                )
-                raise ValueError(msg) from exc
-            # Older local Selene/qis-compiler builds can emit lowered gates
-            # without measurement_result_ids while still carrying the raw QIS
-            # operations, whose Measure payloads include the stable result ids.
-            # Replay the raw operations in that compatibility case instead of
-            # losing provenance.
-
-    operations: list[dict[str, Any]] = []
-    for chunk in chunks:
-        operations.extend(list(chunk.get("operations", [])))
-    return _replay_qis_trace_into_tick_circuit(
-        operations,
-        measurement_crosstalk_topology=measurement_crosstalk_topology,
-    )
-
-
-def _validate_audited_trace_stream(chunks: list[dict[str, Any]]) -> None:
-    """Validate framing and completeness across an audited QIS trace stream."""
-    if not chunks:
-        msg = "audited runtime trace is empty"
-        raise ValueError(msg)
-    engine_trace_id = chunks[0].get("engine_trace_id")
-    shot_index = chunks[0].get("shot_index")
-    if isinstance(engine_trace_id, bool) or not isinstance(engine_trace_id, int):
-        msg = "audited runtime trace is missing a valid engine_trace_id"
-        raise TypeError(msg)
-    if isinstance(shot_index, bool) or not isinstance(shot_index, int):
-        msg = "audited runtime trace is missing a valid shot_index"
-        raise TypeError(msg)
-    for expected_index, chunk in enumerate(chunks):
-        if chunk.get("format") != "pecos_qis_operation_trace_v1":
-            msg = f"audited runtime trace chunk {expected_index} has an unsupported format"
-            raise ValueError(msg)
-        if chunk.get("engine_trace_id") != engine_trace_id or chunk.get("shot_index") != shot_index:
-            msg = "audited runtime trace mixes engine or shot identities"
-            raise ValueError(msg)
-        if chunk.get("chunk_index") != expected_index:
-            msg = (
-                f"audited runtime trace chunk indices must be contiguous; expected {expected_index}, "
-                f"got {chunk.get('chunk_index')!r}"
-            )
-            raise ValueError(msg)
-        operations = chunk.get("operations")
-        if not isinstance(operations, list) or chunk.get("num_operations") != len(operations):
-            msg = f"audited runtime trace chunk {expected_index} has an invalid operation count"
-            raise ValueError(msg)
-    terminal_positions = [index for index, chunk in enumerate(chunks) if chunk.get("stage") == "trace_complete"]
-    if terminal_positions != [len(chunks) - 1]:
-        msg = (
-            "audited runtime trace must contain exactly one terminal trace_complete "
-            f"chunk, as its last chunk; found terminal markers at positions {terminal_positions}"
-        )
-        raise ValueError(msg)
-    terminal = chunks[-1]
-    if terminal.get("operations") or terminal.get("lowered_quantum_ops") or terminal.get("named_result_traces"):
-        msg = (
-            "audited runtime trace terminal chunk must be empty; operations or "
-            "results after the terminal marker cannot be certified"
-        )
-        raise ValueError(msg)
-
-
-def named_result_traces_from_operation_trace(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return runtime `result(...)` provenance records from operation trace chunks."""
-    traces: list[dict[str, Any]] = []
-    for chunk in chunks:
-        traces.extend(trace for trace in (chunk.get("named_result_traces") or []) if isinstance(trace, dict))
-    return traces
-
-
-def source_measurement_ids_from_operation_trace(chunks: list[dict[str, Any]]) -> list[int]:
-    """Return pre-runtime QIS measurement ids in source execution order."""
-    ids: list[int] = []
-    for chunk in chunks:
-        for operation in chunk.get("operations") or []:
-            if not isinstance(operation, Mapping):
-                continue
-            quantum = operation.get("Quantum")
-            if not isinstance(quantum, Mapping):
-                continue
-            measure = quantum.get("Measure")
-            if not isinstance(measure, Sequence) or isinstance(measure, (str, bytes)) or len(measure) != 2:
-                continue
-            ids.append(int(measure[1]))
-    if len(ids) != len(set(ids)):
-        msg = "raw QIS operation trace contains duplicate measurement result ids"
-        raise ValueError(msg)
-    return ids
-
-
-def capture_guppy_operation_trace(
-    program: Any,
-    num_qubits: int,
-    *,
-    seed: int = 0,
-    runtime: object | None = None,
-) -> list[dict[str, Any]]:
-    """Capture a Guppy/QIS program's Selene operation trace chunks."""
-    import pecos_rslib
-
-    import pecos
-
-    # Trace capture records the runtime-lowered QIS operations and result tags;
-    # DEM validation/fault propagation happens after replay.  Use a permissive
-    # trace backend instead of asking stabilizer evolution to validate every
-    # runtime-emitted rotation while we are only collecting provenance.
-    sim_builder = (
-        pecos.sim(program)
-        .classical(pecos.selene_engine(runtime))
-        .quantum(pecos_rslib.coin_toss())
-        .qubits(num_qubits)
-        .seed(seed)
-    )
-    return list(sim_builder.capture_operation_trace())
-
-
-def trace_guppy_into_tick_circuit_with_result_traces(
-    program: Any,
-    num_qubits: int,
-    *,
-    seed: int = 0,
-    runtime: object | None = None,
-    measurement_crosstalk_topology: str | None = None,
-    require_hosted_operation_order: bool = False,
-    max_hosted_tick_separation: int | None = None,
-    allow_raw_measurement_id_fallback: bool = False,
-) -> tuple[Any, list[dict[str, Any]]]:
-    """Trace a Guppy/QIS program into a ``TickCircuit`` plus result-tag provenance."""
-    chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
-        chunks,
-        measurement_crosstalk_topology=measurement_crosstalk_topology,
-        allow_raw_measurement_id_fallback=allow_raw_measurement_id_fallback,
-    )
-    tick_circuit.set_meta(
-        "guppy_source_measurement_ids",
-        json.dumps(source_measurement_ids_from_operation_trace(chunks), separators=(",", ":")),
-    )
-    _validate_trace_hosted_operations_if_requested(
-        tick_circuit,
-        require_hosted_operation_order=require_hosted_operation_order,
-        max_hosted_tick_separation=max_hosted_tick_separation,
-        context="trace_guppy_into_tick_circuit_with_result_traces",
-    )
-    return tick_circuit, named_result_traces_from_operation_trace(chunks)
-
-
-def trace_guppy_into_tick_circuit(
-    program: Any,
-    num_qubits: int,
-    *,
-    seed: int = 0,
-    runtime: object | None = None,
-    measurement_crosstalk_topology: str | None = None,
-    require_hosted_operation_order: bool = False,
-    max_hosted_tick_separation: int | None = None,
-) -> Any:
-    """Trace a Guppy/QIS program's lowered Selene op stream into a ``TickCircuit``.
-
-    Runs ``program`` under the Selene QIS engine with operation tracing enabled
-    and replays the captured (lowered) gate stream into a PECOS ``TickCircuit``.
-    This is the generic core shared by the surface traced-QIS path and the
-    general ``DetectorErrorModel.from_guppy`` entry point.
-
-    Note: this traces ONE ideal execution. Measurement-dependent (dynamic)
-    control flow is therefore *unsupported / undefined* for DEM construction --
-    a single sampled branch is not a static circuit. No reliable runtime-trace
-    heuristic distinguishes that from statically-scheduled post-measurement
-    gates (the surface code legitimately has those), so no guard is attempted;
-    callers must pass straight-line programs.
-
-    Args:
-        program: Anything ``pecos.sim`` accepts -- a ``@guppy`` function, a
-            compiled Guppy program, or a program wrapper.
-        num_qubits: Number of qubits to allocate. QIS/HUGR programs require an
-            explicit qubit count for trace capture.
-        seed: Seed for the (ideal) trace run.
-        runtime: Optional Selene runtime selector/plugin. ``None`` selects the
-            default Selene runtime. Runtime plugin objects are passed through to
-            ``pecos.selene_engine(runtime)``.
-        measurement_crosstalk_topology: Optional measurement-crosstalk replay
-            mode for stamping global measurement-crosstalk payload markers.
-        require_hosted_operation_order: If true, validate generic hosted-operation
-            metadata after trace replay. A gate with ``local_role`` metadata
-            must bind to a later same-``host_id`` host gate sharing a qubit.
-            This catches runtime/compiler lowering that reorders hosted local
-            pulses after the operation they semantically prepare.
-        max_hosted_tick_separation: Optional maximum absolute signed tick
-            separation accepted by the hosted-operation validator.
-
-    Returns:
-        A ``TickCircuit`` with no detector/observable metadata attached; the
-        caller supplies that.
-    """
-    chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
-        chunks,
-        measurement_crosstalk_topology=measurement_crosstalk_topology,
-        allow_raw_measurement_id_fallback=False,
-    )
-    tick_circuit.set_meta(
-        "guppy_source_measurement_ids",
-        json.dumps(source_measurement_ids_from_operation_trace(chunks), separators=(",", ":")),
-    )
-    _validate_trace_hosted_operations_if_requested(
-        tick_circuit,
-        require_hosted_operation_order=require_hosted_operation_order,
-        max_hosted_tick_separation=max_hosted_tick_separation,
-        context="trace_guppy_into_tick_circuit",
-    )
-    return tick_circuit
-
-
-def _validate_trace_hosted_operations_if_requested(
-    tick_circuit: Any,
-    *,
-    require_hosted_operation_order: bool,
-    max_hosted_tick_separation: int | None,
-    context: str,
-) -> None:
-    if not require_hosted_operation_order and max_hosted_tick_separation is None:
-        return
-    validate_hosted_operations(
-        tick_circuit,
-        max_tick_separation=max_hosted_tick_separation,
-        require_host_after_local=require_hosted_operation_order,
-        require_unique_host_id=True,
-        context=context,
-    )
 
 
 def _generate_traced_surface_tick_circuit(
@@ -1715,7 +1185,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
     max_hosted_tick_separation: int | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a surface Guppy program into a ``TickCircuit`` plus result provenance."""
-    from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
+    from pecos.guppy_gen.surface import generate_memory_experiment, get_num_qubits
 
     program = generate_memory_experiment(
         patch,
@@ -2002,29 +1472,29 @@ def _uses_dedicated_idle_noise(
     )
 
 
-def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
+def _noise_uses_dedicated_idle_noise(noise: NoiseParameters) -> bool:
     """Return True when this noise model requires explicit idle locations."""
     return _uses_dedicated_idle_noise(
         p_idle=noise.p_idle,
         t1=noise.t1,
         t2=noise.t2,
-        p_idle_linear_rate=noise.p_idle_linear_rate,
-        p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-        p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-        p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-        p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-        p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-        p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-        p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-        p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
-        p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
-        p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
-        p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+        p_idle_linear_rate=noise._p_idle_linear_rate,
+        p_idle_quadratic_rate=noise._p_idle_quadratic_rate,
+        p_idle_x_linear_rate=noise._p_idle_x_linear_rate,
+        p_idle_y_linear_rate=noise._p_idle_y_linear_rate,
+        p_idle_z_linear_rate=noise._p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate=noise._p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate=noise._p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate=noise._p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate=noise._p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=noise._p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=noise._p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=noise._p_idle_z_quadratic_sine_rate,
     )
 
 
 def _reject_szz_unlowered_physical_noise(
-    noise: NoiseModel,
+    noise: NoiseParameters,
     interaction_basis: str,
     circuit_source: Literal["abstract", "traced_qis"],
 ) -> None:
@@ -2046,7 +1516,7 @@ def _reject_szz_unlowered_physical_noise(
 
 
 def _use_szz_physical_prefixes(
-    noise: NoiseModel,
+    noise: NoiseParameters,
     interaction_basis: str,
     circuit_source: Literal["abstract", "traced_qis"],
 ) -> bool:
@@ -2073,7 +1543,7 @@ def _szz_z_frame_p1_gate_rates(topology: _CachedNativeSurfaceTopology) -> dict[s
 
 def _with_noise_compat(
     builder: Any,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     *,
     p1_gate_rates: Mapping[str, float] | None = None,
 ) -> Any:
@@ -2082,18 +1552,18 @@ def _with_noise_compat(
         "p_idle": noise.p_idle,
         "t1": noise.t1,
         "t2": noise.t2,
-        "p_idle_linear_rate": noise.p_idle_linear_rate,
-        "p_idle_quadratic_rate": noise.p_idle_quadratic_rate,
-        "p_idle_x_linear_rate": noise.p_idle_x_linear_rate,
-        "p_idle_y_linear_rate": noise.p_idle_y_linear_rate,
-        "p_idle_z_linear_rate": noise.p_idle_z_linear_rate,
-        "p_idle_x_quadratic_rate": noise.p_idle_x_quadratic_rate,
-        "p_idle_y_quadratic_rate": noise.p_idle_y_quadratic_rate,
-        "p_idle_z_quadratic_rate": noise.p_idle_z_quadratic_rate,
-        "p_idle_quadratic_sine_rate": noise.p_idle_quadratic_sine_rate,
-        "p_idle_x_quadratic_sine_rate": noise.p_idle_x_quadratic_sine_rate,
-        "p_idle_y_quadratic_sine_rate": noise.p_idle_y_quadratic_sine_rate,
-        "p_idle_z_quadratic_sine_rate": noise.p_idle_z_quadratic_sine_rate,
+        "p_idle_linear_rate": noise._p_idle_linear_rate,
+        "p_idle_quadratic_rate": noise._p_idle_quadratic_rate,
+        "p_idle_x_linear_rate": noise._p_idle_x_linear_rate,
+        "p_idle_y_linear_rate": noise._p_idle_y_linear_rate,
+        "p_idle_z_linear_rate": noise._p_idle_z_linear_rate,
+        "p_idle_x_quadratic_rate": noise._p_idle_x_quadratic_rate,
+        "p_idle_y_quadratic_rate": noise._p_idle_y_quadratic_rate,
+        "p_idle_z_quadratic_rate": noise._p_idle_z_quadratic_rate,
+        "p_idle_quadratic_sine_rate": noise._p_idle_quadratic_sine_rate,
+        "p_idle_x_quadratic_sine_rate": noise._p_idle_x_quadratic_sine_rate,
+        "p_idle_y_quadratic_sine_rate": noise._p_idle_y_quadratic_sine_rate,
+        "p_idle_z_quadratic_sine_rate": noise._p_idle_z_quadratic_sine_rate,
         "p1_weights": _p1_weights_dict(noise.p1_weights),
         "p2_weights": _p2_weights_dict(noise.p2_weights),
     }
@@ -2160,7 +1630,6 @@ def _surface_native_topology(
         _extract_measurement_order,
         _metadata_record_offsets,
         _metadata_uses_record_offsets,
-        normalize_traced_qis_tick_circuit,
     )
 
     resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
@@ -2190,7 +1659,7 @@ def _surface_native_topology(
         # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
         # traced QIS emits parameterized Clifford rotations, while DEM
         # replacement-branch approximations operate on named Clifford gates.
-        normalize_traced_qis_tick_circuit(tc, context="surface traced-QIS native topology")
+        normalize_traced_tick_circuit(tc, context="surface traced-QIS native topology")
     if include_idle_gates:
         # Insert idle gates only when the requested noise model includes a
         # dedicated idle channel. Otherwise inserted idle gates receive ordinary
@@ -2289,7 +1758,7 @@ def _cached_surface_native_topology(
 
 def _dem_string_from_cached_surface_topology(
     topology: _CachedNativeSurfaceTopology,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     *,
     decompose_errors: bool,
     dem_decomposition: NativeDemDecomposition = "source_graphlike",
@@ -2416,7 +1885,7 @@ def _cached_surface_native_dem_string(
     )
     return _dem_string_from_cached_surface_topology(
         topology,
-        NoiseModel(
+        NoiseParameters(
             p1=p1,
             p1_weights=p1_weights,
             p2=p2,
@@ -2429,18 +1898,18 @@ def _cached_surface_native_dem_string(
             p_idle=p_idle,
             t1=t1,
             t2=t2,
-            p_idle_linear_rate=p_idle_linear_rate,
-            p_idle_quadratic_rate=p_idle_quadratic_rate,
-            p_idle_x_linear_rate=p_idle_x_linear_rate,
-            p_idle_y_linear_rate=p_idle_y_linear_rate,
-            p_idle_z_linear_rate=p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
-            p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+            _p_idle_linear_rate=p_idle_linear_rate,
+            _p_idle_quadratic_rate=p_idle_quadratic_rate,
+            _p_idle_x_linear_rate=p_idle_x_linear_rate,
+            _p_idle_y_linear_rate=p_idle_y_linear_rate,
+            _p_idle_z_linear_rate=p_idle_z_linear_rate,
+            _p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+            _p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+            _p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+            _p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+            _p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+            _p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+            _p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
         ),
         decompose_errors=decompose_errors,
         dem_decomposition=dem_decomposition,
@@ -2457,7 +1926,7 @@ def _cached_parsed_dem(dem_str: str) -> Any:
 
 def _build_native_sampler_from_cached_surface_topology(
     topology: _CachedNativeSurfaceTopology,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     *,
     sampling_model: Literal[
         "dem",
@@ -2515,7 +1984,7 @@ def _build_native_sampler_from_cached_surface_topology(
 def generate_circuit_level_dem_from_builder(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str = "Z",
     *,
     decompose_errors: bool = False,
@@ -2600,10 +2069,10 @@ def generate_circuit_level_dem_from_builder(
         DEM string in standard format
 
     Example:
-        >>> from pecos.qec.surface import SurfacePatch, NoiseModel
+        >>> from pecos.qec.surface import SurfacePatch, NoiseParameters
         >>> from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
         >>> patch = SurfacePatch.create(distance=3)
-        >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
+        >>> noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01)
         >>> dem = generate_circuit_level_dem_from_builder(patch, num_rounds=3, noise=noise)
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
@@ -2646,18 +2115,18 @@ def generate_circuit_level_dem_from_builder(
         "p_idle": noise.p_idle,
         "t1": noise.t1,
         "t2": noise.t2,
-        "p_idle_linear_rate": noise.p_idle_linear_rate,
-        "p_idle_quadratic_rate": noise.p_idle_quadratic_rate,
-        "p_idle_x_linear_rate": noise.p_idle_x_linear_rate,
-        "p_idle_y_linear_rate": noise.p_idle_y_linear_rate,
-        "p_idle_z_linear_rate": noise.p_idle_z_linear_rate,
-        "p_idle_x_quadratic_rate": noise.p_idle_x_quadratic_rate,
-        "p_idle_y_quadratic_rate": noise.p_idle_y_quadratic_rate,
-        "p_idle_z_quadratic_rate": noise.p_idle_z_quadratic_rate,
-        "p_idle_quadratic_sine_rate": noise.p_idle_quadratic_sine_rate,
-        "p_idle_x_quadratic_sine_rate": noise.p_idle_x_quadratic_sine_rate,
-        "p_idle_y_quadratic_sine_rate": noise.p_idle_y_quadratic_sine_rate,
-        "p_idle_z_quadratic_sine_rate": noise.p_idle_z_quadratic_sine_rate,
+        "p_idle_linear_rate": noise._p_idle_linear_rate,
+        "p_idle_quadratic_rate": noise._p_idle_quadratic_rate,
+        "p_idle_x_linear_rate": noise._p_idle_x_linear_rate,
+        "p_idle_y_linear_rate": noise._p_idle_y_linear_rate,
+        "p_idle_z_linear_rate": noise._p_idle_z_linear_rate,
+        "p_idle_x_quadratic_rate": noise._p_idle_x_quadratic_rate,
+        "p_idle_y_quadratic_rate": noise._p_idle_y_quadratic_rate,
+        "p_idle_z_quadratic_rate": noise._p_idle_z_quadratic_rate,
+        "p_idle_quadratic_sine_rate": noise._p_idle_quadratic_sine_rate,
+        "p_idle_x_quadratic_sine_rate": noise._p_idle_x_quadratic_sine_rate,
+        "p_idle_y_quadratic_sine_rate": noise._p_idle_y_quadratic_sine_rate,
+        "p_idle_z_quadratic_sine_rate": noise._p_idle_z_quadratic_sine_rate,
         "twirl": twirl,
         "interaction_basis": interaction_basis,
         "check_plan": resolved_plan.plan_id,
@@ -2691,7 +2160,7 @@ def generate_circuit_level_dem_from_builder(
 def generate_circuit_level_dem(
     distance: int,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str = "Z",
 ) -> str:
     """Generate a circuit-level DEM using Stim's surface code generator.
@@ -2715,8 +2184,8 @@ def generate_circuit_level_dem(
         DEM string in Stim format
 
     Example:
-        >>> from pecos.qec.surface import generate_circuit_level_dem, NoiseModel
-        >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
+        >>> from pecos.qec.surface import generate_circuit_level_dem, NoiseParameters
+        >>> noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01)
         >>> dem = generate_circuit_level_dem(distance=3, num_rounds=3, noise=noise, basis="Z")
     """
     import stim
@@ -2747,7 +2216,7 @@ def generate_circuit_level_dem(
 def build_stim_circuit_from_patch(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel | None = None,
+    noise: NoiseParameters | None = None,
     basis: str = "Z",
 ) -> stim.Circuit:
     """Build a Stim circuit from our patch geometry and CNOT schedule.
@@ -2778,11 +2247,11 @@ def build_stim_circuit_from_patch(
     Example:
         >>> from pecos.qec.surface import (
         ...     SurfacePatch,
-        ...     NoiseModel,
+        ...     NoiseParameters,
         ...     build_stim_circuit_from_patch,
         ... )
         >>> patch = SurfacePatch.create(distance=3)
-        >>> noise = NoiseModel(p2=0.01, p_meas=0.01)
+        >>> noise = NoiseParameters(p2=0.01, p_meas=0.01)
         >>> circuit = build_stim_circuit_from_patch(patch, num_rounds=3, noise=noise)
         >>> dem = circuit.detector_error_model()
     """
@@ -2989,7 +2458,7 @@ def build_stim_circuit_from_patch(
 def generate_dem_from_patch(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str = "Z",
     *,
     decompose_errors: bool = True,
@@ -3015,11 +2484,11 @@ def generate_dem_from_patch(
     Example:
         >>> from pecos.qec.surface import (
         ...     SurfacePatch,
-        ...     NoiseModel,
+        ...     NoiseParameters,
         ...     generate_dem_from_patch,
         ... )
         >>> patch = SurfacePatch.create(distance=3)
-        >>> noise = NoiseModel(p2=0.01, p_meas=0.01)
+        >>> noise = NoiseParameters(p2=0.01, p_meas=0.01)
         >>> dem = generate_dem_from_patch(patch, num_rounds=3, noise=noise)
     """
     circuit = build_stim_circuit_from_patch(patch, num_rounds, noise, basis)
@@ -3037,7 +2506,7 @@ class SurfaceDecoder:
         >>> from pecos.qec.surface import SurfacePatch, SurfaceDecoder
         >>> patch = SurfacePatch.create(distance=3)
         >>> # Default: PyMatching MWPM
-        >>> decoder = SurfaceDecoder(patch, num_rounds=3, noise=NoiseModel(p2=0.01, p_meas=0.01))
+        >>> decoder = SurfaceDecoder(patch, num_rounds=3, noise=NoiseParameters(p2=0.01, p_meas=0.01))
         >>> # Alternative: FusionBlossom MWPM
         >>> decoder = SurfaceDecoder(patch, num_rounds=3, decoder_type="fusion_blossom")
         >>> # Alternative: BP+OSD (LDPC)
@@ -3049,7 +2518,7 @@ class SurfaceDecoder:
         self,
         patch: SurfacePatch,
         num_rounds: int = 1,
-        noise: NoiseModel | None = None,
+        noise: NoiseParameters | None = None,
         decoder_type: Literal[
             "pymatching",
             "pymatching_correlated",
@@ -3123,7 +2592,7 @@ class SurfaceDecoder:
 
         self.patch = patch
         self.num_rounds = num_rounds
-        self.noise = noise or NoiseModel(p2=0.01, p_meas=0.01)
+        self.noise = noise or NoiseParameters(p2=0.01, p_meas=0.01)
         self.decoder_type = DecoderType(decoder_type)
         self.use_circuit_level_dem = use_circuit_level_dem
         if circuit_level_dem_mode not in {
@@ -3548,22 +3017,22 @@ class SurfaceDecoder:
             if self.decoder_type == DecoderType.TESSERACT:
                 # Tesseract takes sparse detection indices
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
-                result = decoder.decode(detection_indices)
-                # Tesseract returns observables_mask, not per-qubit correction
+                result = decoder.decode_from_defects(detection_indices)
+                # Tesseract returns observable flips, not per-qubit correction
                 # We return a dummy correction and encode logical flip in first element
                 num_data = self._get_z_check_matrix().shape[1]
                 correction = np.zeros(num_data, dtype=np.uint8)
-                if result.observables_mask & 1:  # L0 flipped
+                if len(result.observable_flips) > 0 and result.observable_flips[0]:  # L0 flipped
                     correction[0] = 1  # Mark that logical was predicted flipped
                 weight = result.cost
             else:
-                result = decoder.decode(events_flat.tolist())
+                result = decoder.decode_syndrome(events_flat.tolist())
 
                 # For FusionBlossom, need to clear state for next decode
                 if self.decoder_type == DecoderType.FUSION_BLOSSOM:
                     decoder.clear()
 
-                correction = np.array(result.correction, dtype=np.uint8)
+                correction = np.array(list(result.observable_flips), dtype=np.uint8)
                 weight = result.weight
         else:
             # LDPC: use raw syndrome (last round)
@@ -3575,7 +3044,10 @@ class SurfaceDecoder:
                 else:
                     raw_syndrome = detection_events.ravel()
 
-            result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+            if self.decoder_type == DecoderType.BP_LSD:
+                result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+            else:
+                result = decoder.decode_syndrome(raw_syndrome.astype(np.uint8).tolist())
             correction = np.array(result.decoding, dtype=np.uint8)
             weight = 0.0 if result.converged else 1.0  # LDPC doesn't have weight
 
@@ -3607,21 +3079,21 @@ class SurfaceDecoder:
             if self.decoder_type == DecoderType.TESSERACT:
                 # Tesseract takes sparse detection indices
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
-                result = decoder.decode(detection_indices)
-                # Tesseract returns observables_mask, not per-qubit correction
+                result = decoder.decode_from_defects(detection_indices)
+                # Tesseract returns observable flips, not per-qubit correction
                 num_data = self._get_x_check_matrix().shape[1]
                 correction = np.zeros(num_data, dtype=np.uint8)
-                if result.observables_mask & 1:  # L0 flipped
+                if len(result.observable_flips) > 0 and result.observable_flips[0]:  # L0 flipped
                     correction[0] = 1  # Mark that logical was predicted flipped
                 weight = result.cost
             else:
-                result = decoder.decode(events_flat.tolist())
+                result = decoder.decode_syndrome(events_flat.tolist())
 
                 # For FusionBlossom, need to clear state for next decode
                 if self.decoder_type == DecoderType.FUSION_BLOSSOM:
                     decoder.clear()
 
-                correction = np.array(result.correction, dtype=np.uint8)
+                correction = np.array(list(result.observable_flips), dtype=np.uint8)
                 weight = result.weight
         else:
             # LDPC: use raw syndrome (last round)
@@ -3633,7 +3105,10 @@ class SurfaceDecoder:
                 else:
                     raw_syndrome = detection_events.ravel()
 
-            result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+            if self.decoder_type == DecoderType.BP_LSD:
+                result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+            else:
+                result = decoder.decode_syndrome(raw_syndrome.astype(np.uint8).tolist())
             correction = np.array(result.decoding, dtype=np.uint8)
             weight = 0.0 if result.converged else 1.0  # LDPC doesn't have weight
 
@@ -3818,12 +3293,12 @@ class SurfaceDecoder:
 
             if self.decoder_type == DecoderType.TESSERACT:
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
-                result = decoder.decode(detection_indices)
-                predicted_obs = result.observables_mask & 1
+                result = decoder.decode_from_defects(detection_indices)
+                predicted_obs = result.observable_flips[0] if len(result.observable_flips) > 0 else 0
                 weight = result.cost
             else:
-                result = decoder.decode(events_flat.tolist())
-                predicted_obs = result.correction[0] if len(result.correction) > 0 else 0
+                result = decoder.decode_syndrome(events_flat.tolist())
+                predicted_obs = result.observable_flips[0] if len(result.observable_flips) > 0 else 0
                 weight = result.weight
 
             corrected_parity = (final_parity + predicted_obs) % 2
@@ -3914,12 +3389,12 @@ class SurfaceDecoder:
 
             if self.decoder_type == DecoderType.TESSERACT:
                 detection_indices = [i for i, v in enumerate(events_flat) if v != 0]
-                result = decoder.decode(detection_indices)
-                predicted_obs = result.observables_mask & 1
+                result = decoder.decode_from_defects(detection_indices)
+                predicted_obs = result.observable_flips[0] if len(result.observable_flips) > 0 else 0
                 weight = result.cost
             else:
-                result = decoder.decode(events_flat.tolist())
-                predicted_obs = result.correction[0] if len(result.correction) > 0 else 0
+                result = decoder.decode_syndrome(events_flat.tolist())
+                predicted_obs = result.observable_flips[0] if len(result.observable_flips) > 0 else 0
                 weight = result.weight
 
             corrected_parity = (final_parity + predicted_obs) % 2
@@ -4064,16 +3539,16 @@ class SimulationResult:
 
 def _memory_noise_model(
     physical_error_rate: float | None,
-    noise_model: NoiseModel | None,
-) -> NoiseModel:
-    """Resolve the surface-memory noise inputs into an explicit NoiseModel."""
+    noise_model: NoiseParameters | None,
+) -> NoiseParameters:
+    """Resolve the surface-memory noise inputs into explicit noise parameters."""
     if noise_model is not None:
         if physical_error_rate is not None:
             msg = "pass either physical_error_rate or noise_model, not both"
             raise ValueError(msg)
         return noise_model
     p = 0.001 if physical_error_rate is None else physical_error_rate
-    return NoiseModel.uniform(p)
+    return NoiseParameters.uniform(p)
 
 
 def _recommended_graphlike_decomposition_for_decoder(decoder_type: str) -> NativeDemDecomposition:
@@ -4087,7 +3562,7 @@ def surface_code_memory(
     *,
     distance: int = 3,
     physical_error_rate: float | None = None,
-    noise_model: NoiseModel | None = None,
+    noise_model: NoiseParameters | None = None,
     shots: int = 1000,
     rounds: int | None = None,
     basis: str = "Z",
@@ -4188,8 +3663,8 @@ def surface_code_memory(
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
-    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(shots, seed)
-    num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_mask(shot) != 0)
+    batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(shots, seed)
+    num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_flips(shot).mask != 0)
     num_logical_errors = batch.decode_count(dem, decoder_type) if decode else num_raw_errors
 
     return SimulationResult(
@@ -4215,7 +3690,7 @@ def run_noisy_memory_experiment(
     num_rounds: int,
     num_shots: int,
     basis: str,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     *,
     decode: bool = True,
     decoder_type: str = "pymatching",
@@ -4248,8 +3723,8 @@ def run_noisy_memory_experiment(
         SimulationResult with error rate statistics
 
     Example:
-        >>> from pecos.qec.surface import run_noisy_memory_experiment, NoiseModel
-        >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        >>> from pecos.qec.surface import run_noisy_memory_experiment, NoiseParameters
+        >>> noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         >>> result = run_noisy_memory_experiment(
         ...     distance=3,
         ...     num_rounds=3,
@@ -4263,7 +3738,7 @@ def run_noisy_memory_experiment(
     from selene_sim import DepolarizingErrorModel, SimpleRuntime, Stim, build
 
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy.surface import get_num_qubits, make_surface_code
+    from pecos.guppy_gen.surface import get_num_qubits, make_surface_code
     from pecos.qec.surface import SurfacePatch
 
     resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
@@ -4457,25 +3932,28 @@ class NativeSampler:
             - observable_flips: shape (num_shots, num_observables)
         """
         if pauli_masks is None:
-            det_events, obs_flips = self.sampler.sample_batch(num_shots, seed)
+            batch = self.sampler.sample_batch(num_shots, seed)
         else:
             if self.pauli_frame_lookup is None:
                 msg = "pauli_masks require build_native_sampler(..., twirl=TwirlConfig())"
                 raise ValueError(msg)
             masks_arr = _pauli_masks_as_int64(pauli_masks)
-            det_events, obs_flips = self.sampler.sample_batch_with_pauli_masks(
+            batch = self.sampler.sample_batch_with_pauli_masks(
                 num_shots,
                 self.pauli_frame_lookup,
                 masks_arr,
                 seed,
             )
-        return np.array(det_events, dtype=bool), np.array(obs_flips, dtype=bool)
+        return (
+            np.array(batch.detector_events(), dtype=bool),
+            np.array(batch.observable_flips(), dtype=bool),
+        )
 
 
 def build_native_sampler(
     patch: SurfacePatch,
     num_rounds: int,
-    noise: NoiseModel,
+    noise: NoiseParameters,
     basis: str = "Z",
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
@@ -4549,9 +4027,9 @@ def build_native_sampler(
         NativeSampler that can generate samples for threshold estimation
 
     Example:
-        >>> from pecos.qec.surface import SurfacePatch, NoiseModel, build_native_sampler
+        >>> from pecos.qec.surface import SurfacePatch, NoiseParameters, build_native_sampler
         >>> patch = SurfacePatch.create(distance=5)
-        >>> noise = NoiseModel(p1=0.001, p2=0.001, p_meas=0.001)
+        >>> noise = NoiseParameters(p1=0.001, p2=0.001, p_meas=0.001)
         >>> sampler = build_native_sampler(patch, num_rounds=5, noise=noise)
         >>> detection_events, observable_flips = sampler.sample(num_shots=10000)
     """
@@ -4628,18 +4106,18 @@ def build_native_sampler(
                 p_idle=noise.p_idle,
                 t1=noise.t1,
                 t2=noise.t2,
-                p_idle_linear_rate=noise.p_idle_linear_rate,
-                p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-                p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-                p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-                p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-                p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-                p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-                p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-                p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
-                p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
-                p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
-                p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+                p_idle_linear_rate=noise._p_idle_linear_rate,
+                p_idle_quadratic_rate=noise._p_idle_quadratic_rate,
+                p_idle_x_linear_rate=noise._p_idle_x_linear_rate,
+                p_idle_y_linear_rate=noise._p_idle_y_linear_rate,
+                p_idle_z_linear_rate=noise._p_idle_z_linear_rate,
+                p_idle_x_quadratic_rate=noise._p_idle_x_quadratic_rate,
+                p_idle_y_quadratic_rate=noise._p_idle_y_quadratic_rate,
+                p_idle_z_quadratic_rate=noise._p_idle_z_quadratic_rate,
+                p_idle_quadratic_sine_rate=noise._p_idle_quadratic_sine_rate,
+                p_idle_x_quadratic_sine_rate=noise._p_idle_x_quadratic_sine_rate,
+                p_idle_y_quadratic_sine_rate=noise._p_idle_y_quadratic_sine_rate,
+                p_idle_z_quadratic_sine_rate=noise._p_idle_z_quadratic_sine_rate,
                 twirl=twirl,
                 interaction_basis=interaction_basis,
                 check_plan=resolved_plan.plan_id,
@@ -4767,7 +4245,7 @@ def decode_native_samples(
         raise ValueError(msg)
     weights = (1 << np.arange(obs_arr.shape[1], dtype=np.uint64)).astype(np.uint64)
     obs_masks = (obs_arr * weights).sum(axis=1).astype(np.uint64).tolist()
-    batch = SampleBatch(det_list, obs_masks)
+    batch = SampleBatch(det_list, obs_masks, num_observables=obs_arr.shape[1])
     return batch.decode_count(dem_str, decoder_type)
 
 
@@ -4790,8 +4268,7 @@ def demask_pauli_frame_records(
         raise ValueError(msg)
     if obs_arr.ndim != 2:
         msg = (
-            f"raw_obs must be 2-D of shape (num_shots, num_observables); "
-            f"got ndim={obs_arr.ndim}, shape={obs_arr.shape}"
+            f"raw_obs must be 2-D of shape (num_shots, num_observables); got ndim={obs_arr.ndim}, shape={obs_arr.shape}"
         )
         raise ValueError(msg)
     if masks_arr.ndim != 2:
@@ -5077,7 +4554,7 @@ def _sample_pauli_sideband_results_from_guppy(
     from selene_sim import SimpleRuntime, Stim, build
 
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
+    from pecos.guppy_gen.surface import generate_memory_experiment, get_num_qubits
 
     if twirl is None or rng is None:
         msg = "sample_pauli_masks_from_guppy requires both twirl and rng to be set"

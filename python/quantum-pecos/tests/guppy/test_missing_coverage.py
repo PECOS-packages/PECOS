@@ -152,13 +152,13 @@ class TestNoiseModels:
         # Custom noise: high prep error, low measurement error
         noise = (
             general_noise()
-            .with_preparation_probability(0.2)  # 20% preparation error
+            .with_p_prep(0.2)  # 20% preparation error
             .with_measurement_probability(
                 0.01,
                 0.01,
             )
-            .with_p1_probability(0.05)  # 5% single-qubit gate error
-            .with_p2_probability(0.1)  # 10% two-qubit gate error
+            .with_p1(0.05)  # 5% single-qubit gate error
+            .with_p2(0.1)  # 10% two-qubit gate error
         )
 
         results = sim(prep_measure_circuit).qubits(1).quantum(state_vector()).seed(456).noise(noise).run(100).to_dict()

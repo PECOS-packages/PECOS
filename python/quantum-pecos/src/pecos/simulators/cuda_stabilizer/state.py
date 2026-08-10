@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib_cuda import CuStabilizer as CuStabilizerRs
 
+from pecos.simulators._cuda_fork_guard import check_fork_poison, mark_cuda_initialized
 from pecos.simulators.cuda_stabilizer import bindings
 from pecos.simulators.sim_class_types import Stabilizer
 
@@ -68,6 +69,7 @@ class CudaStabilizer(Stabilizer):
             num_qubits: Number of qubits to simulate.
             seed: Optional random seed for reproducibility.
         """
+        check_fork_poison()
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."
             raise TypeError(msg)
@@ -78,6 +80,7 @@ class CudaStabilizer(Stabilizer):
         self.num_qubits = num_qubits
 
         # Create the Rust backend
+        mark_cuda_initialized()
         if seed is not None:
             self.backend = CuStabilizerRs.with_seed(num_qubits, seed)
         else:
@@ -85,6 +88,7 @@ class CudaStabilizer(Stabilizer):
 
     def reset(self) -> Self:
         """Reset the quantum state to |0...0>."""
+        check_fork_poison()
         self.backend.reset()
         return self
 

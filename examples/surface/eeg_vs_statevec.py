@@ -93,14 +93,14 @@ def run_comparison(
             t0 = time.perf_counter()
             dem_taylor_str = perturbative_dem(tc, idle_rz=theta)
             sampler_taylor = DemSampler.from_dem_string(dem_taylor_str)
-            batch_taylor = sampler_taylor.generate_samples(num_shots=shots, seed=seed)
+            batch_taylor = sampler_taylor.sample_batch(num_shots=shots, seed=seed)
             taylor_sample_time = time.perf_counter() - t0
 
             # Heisenberg DEM → sampler
             t0 = time.perf_counter()
             dem_heis_str = coherent_dem_exact(tc, idle_rz=theta)
             sampler_heis = DemSampler.from_dem_string(dem_heis_str)
-            batch_heis = sampler_heis.generate_samples(num_shots=shots, seed=seed)
+            batch_heis = sampler_heis.sample_batch(num_shots=shots, seed=seed)
             heis_sample_time = time.perf_counter() - t0
 
             # Compute per-detector rates from DEM samples

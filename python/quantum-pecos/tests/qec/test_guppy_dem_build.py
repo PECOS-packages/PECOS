@@ -12,7 +12,11 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, result
 from guppylang.std.quantum import cx, h, measure, qubit, x
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos._qis_trace_replay import (
+    _replay_qis_trace_chunks_into_tick_circuit,
+    _validate_audited_trace_stream,
+)
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import (
     Detector,
     Observable,
@@ -22,11 +26,7 @@ from pecos.qec import (
     surface_memory_dem_spec,
 )
 from pecos.qec.dem import _generator_certified_result_traces
-from pecos.qec.dem_spec import GuppyDemBuild, _resolve_dem_specs
-from pecos.qec.surface.decode import (
-    _replay_qis_trace_chunks_into_tick_circuit,
-    _validate_audited_trace_stream,
-)
+from pecos.qec.dem_spec import GuppyDemBuild, RecordRef, ResultRef, _resolve_dem_specs
 from pecos_rslib.quantum import TickCircuit
 
 
@@ -132,6 +132,44 @@ def test_real_guppy_rec_and_result_ref_builds_are_byte_identical() -> None:
     assert via_records.dem.to_string() == via_results.dem.to_string()
 
 
+def test_bare_tag_strings_are_shorthand_for_result_ref() -> None:
+    noise = {"p1": 0.01, "p2": 0.02, "p_meas": 0.1, "p_prep": 0.0}
+    via_result_ref = build_dem_from_guppy(
+        _scrambled_tagged_measurements,
+        num_qubits=2,
+        detectors=[Detector(result_ref("a"))],
+        observables=[Observable(result_ref("b"))],
+        **noise,
+    )
+    via_strings = build_dem_from_guppy(
+        _scrambled_tagged_measurements,
+        num_qubits=2,
+        detectors=[Detector("a")],
+        observables=[Observable("b")],
+        **noise,
+    )
+
+    assert via_strings.detectors_json == via_result_ref.detectors_json
+    assert via_strings.observables_json == via_result_ref.observables_json
+    assert via_strings.schema_fingerprint == via_result_ref.schema_fingerprint
+    assert via_strings.dem.to_string() == via_result_ref.dem.to_string()
+
+
+def test_tag_strings_mix_with_rec_and_result_ref_refs() -> None:
+    detector = Detector("a", result_ref("b"), rec[-1])
+
+    assert detector.refs == (ResultRef("a"), ResultRef("b"), RecordRef(-1))
+
+
+def test_tag_string_shorthand_rejects_empty_and_wrong_types() -> None:
+    with pytest.raises(ValueError, match="non-empty string"):
+        Detector("")
+    with pytest.raises(TypeError, match="measurement references must be"):
+        Detector(3.5)
+    with pytest.raises(ValueError, match="at least one measurement"):
+        Observable()
+
+
 def test_trace_once_build_evaluates_runtime_and_rejects_uncertified_named_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -143,7 +181,7 @@ def test_trace_once_build_evaluates_runtime_and_rejects_uncertified_named_result
         return _reordered_trace()
 
     monkeypatch.setattr(
-        "pecos.qec.surface.decode.trace_guppy_into_tick_circuit_with_result_traces",
+        "pecos.tracing._trace_program_to_tick_circuit_with_result_traces",
         fake_trace,
     )
     build = build_dem_from_guppy(
@@ -386,7 +424,7 @@ def test_dynamic_control_is_rejected_before_any_trace_executes(
         raise AssertionError(msg)
 
     monkeypatch.setattr(
-        "pecos.qec.surface.decode.trace_guppy_into_tick_circuit_with_result_traces",
+        "pecos.tracing._trace_program_to_tick_circuit_with_result_traces",
         _trace_must_not_run,
     )
     with pytest.raises(ValueError, match="branching or looping control flow"):
@@ -573,7 +611,7 @@ def test_audited_build_disables_raw_measurement_id_fallback(monkeypatch: pytest.
         return _reordered_trace()
 
     monkeypatch.setattr(
-        "pecos.qec.surface.decode.trace_guppy_into_tick_circuit_with_result_traces",
+        "pecos.tracing._trace_program_to_tick_circuit_with_result_traces",
         fake_trace,
     )
     build_dem_from_guppy(

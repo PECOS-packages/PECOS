@@ -17,7 +17,7 @@
 
 use super::response::CompositeResponse;
 use crate::command::{GateCommand, GateType};
-use crate::noise::NoiseContext;
+use crate::noise::{NoiseContext, NoiseGateRequirement};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -38,6 +38,23 @@ pub trait GateAction: Send + Sync {
 
     /// Human-readable name for visualization.
     fn name(&self) -> &'static str;
+
+    /// Runner capabilities required by gates this action can inject.
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        smallvec::SmallVec::new()
+    }
+}
+
+pub(super) fn injected_gate_requirement(
+    gate_type: GateType,
+    configured_by: &'static str,
+) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+    smallvec![NoiseGateRequirement::new(
+        gate_type,
+        configured_by,
+        "supply a rotation executor with CircuitRunner::rotations() when the gate is a supported \
+         rotation, or replace the gate-injection action with a stochastic Pauli action",
+    )]
 }
 
 /// No-op action - does nothing.
@@ -167,6 +184,10 @@ impl GateAction for Inject {
 
     fn name(&self) -> &'static str {
         "inject"
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        injected_gate_requirement(self.gate_type, "Inject::new(..)")
     }
 }
 
@@ -1099,6 +1120,10 @@ impl GateAction for InjectCoherentRZ {
     fn name(&self) -> &'static str {
         "coherent_rz"
     }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        injected_gate_requirement(GateType::RZ, "InjectCoherentRZ::new(..)")
+    }
 }
 
 // --- Amplitude Damping (T1 Relaxation) ---
@@ -1288,6 +1313,10 @@ impl GateAction for CoherentRotation {
     fn name(&self) -> &'static str {
         "coherent_rotation"
     }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        injected_gate_requirement(self.gate_type, "CoherentRotation::new(..)")
+    }
 }
 
 /// Over-rotation error: adds a fraction of the gate's angle as extra rotation.
@@ -1361,6 +1390,10 @@ impl GateAction for OverRotation {
     fn name(&self) -> &'static str {
         "over_rotation"
     }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        injected_gate_requirement(self.gate_type, "OverRotation::new(..)")
+    }
 }
 
 // --- Correlated Phase Errors (ZZ Dephasing) ---
@@ -1431,6 +1464,15 @@ impl GateAction for ZZDephasing {
     fn name(&self) -> &'static str {
         "zz_dephasing"
     }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        let mut requirements = injected_gate_requirement(GateType::RZ, "ZZDephasing::new(..)");
+        requirements.extend(injected_gate_requirement(
+            GateType::RZZ,
+            "ZZDephasing::new(..)",
+        ));
+        requirements
+    }
 }
 
 /// ZZ dephasing with rate (angle = rate * duration).
@@ -1480,6 +1522,16 @@ impl GateAction for ZZDephasingRate {
 
     fn name(&self) -> &'static str {
         "zz_dephasing_rate"
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        let mut requirements =
+            injected_gate_requirement(GateType::RZ, "ZZDephasing::from_rate(..)");
+        requirements.extend(injected_gate_requirement(
+            GateType::RZZ,
+            "ZZDephasing::from_rate(..)",
+        ));
+        requirements
     }
 }
 

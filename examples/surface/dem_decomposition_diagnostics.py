@@ -377,7 +377,7 @@ def tesseract_predictions(dem_text: str, detection_events: np.ndarray, *, beam: 
         det_beam=beam,
     )
     results = decoder.decode_batch([row.tolist() for row in detection_events])
-    return np.array([int(result.observables_mask & 1) for result in results], dtype=np.uint8)
+    return np.array([int(result.observable_flips[0]) for result in results], dtype=np.uint8)
 
 
 def pymatching_predictions(dem_text: str, detection_events: np.ndarray, *, correlated: bool) -> np.ndarray:
@@ -531,10 +531,10 @@ def run_case(
     pair_analysis: bool,
     pair_analysis_max_effects: int,
 ) -> CaseResult:
-    from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
+    from pecos._traced_circuit import normalize_traced_tick_circuit
+    from pecos.qec.surface import NoiseParameters, SurfacePatch, build_native_sampler
     from pecos.qec.surface.circuit_builder import (
         generate_dem_from_tick_circuit_via_stim,
-        normalize_traced_qis_tick_circuit,
     )
     from pecos.qec.surface.decode import (
         _build_surface_tick_circuit_for_native_model,
@@ -542,7 +542,7 @@ def run_case(
     )
 
     patch = SurfacePatch.create(distance=distance)
-    noise = NoiseModel(p1=p / 30.0, p2=p, p_meas=p / 3.0, p_prep=p / 3.0)
+    noise = NoiseParameters(p1=p / 30.0, p2=p, p_meas=p / 3.0, p_prep=p / 3.0)
     noise_args = {
         "p1": noise.p1,
         "p1_gate_rates": SZZ_Z_FRAME_P1_GATE_RATES if interaction_basis == "szz" else None,
@@ -558,7 +558,7 @@ def run_case(
         circuit_source="traced_qis",
         interaction_basis=interaction_basis,
     )
-    normalize_traced_qis_tick_circuit(tick_circuit, context="DEM decomposition diagnostics")
+    normalize_traced_tick_circuit(tick_circuit, context="DEM decomposition diagnostics")
 
     native_raw = generate_circuit_level_dem_from_builder(
         patch,

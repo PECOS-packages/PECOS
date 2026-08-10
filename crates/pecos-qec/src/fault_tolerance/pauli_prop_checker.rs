@@ -53,7 +53,7 @@ use super::{
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
 use pecos_quantum::TickCircuit;
-use pecos_simulators::{CliffordGateable, PauliProp};
+use pecos_simulators::PauliProp;
 use std::collections::HashSet;
 
 /// Detects which qubits in a circuit are "input qubits" (used but never prepared).
@@ -150,7 +150,7 @@ pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
                 // Check if this is a measurement gate
                 if matches!(
                     gate.gate_type,
-                    GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+                    GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ
                 ) {
                     measured_qubits.insert(q);
                 }
@@ -201,7 +201,10 @@ impl CircuitIO {
                     }
                     if matches!(
                         gate.gate_type,
-                        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree
+                        GateType::MZ
+                            | GateType::MeasureLeaked
+                            | GateType::MeasureFree
+                            | GateType::MPZ
                     ) {
                         measured_qubits.insert(q);
                     }
@@ -268,6 +271,44 @@ fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
     prop
 }
 
+/// Apply a gate to an end-read flip ledger.
+///
+/// The checker classifies faults by reading `contains_x` on measurement
+/// qubits *after* full propagation, so a measurement's outcome flip must stay
+/// readable on the wire until a reset clears it -- including for
+/// `MeasureFree`, whose collapse-accurate crossing would discard the flip
+/// together with the qubit. The Z component is still absorbed at every
+/// measurement: left in the ledger it could rotate into X through later
+/// Cliffords and read back as a phantom flip.
+fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Gate) {
+    match gate.gate_type {
+        // MPZ clears below like the reset it contains: it hands back a live
+        // |0> wire, so a retained entry would spread through later gates as a
+        // phantom -- and would disagree with the gate's own `mz; pz` lowering,
+        // whose explicit PZ clears. Its mid-circuit flips are invisible to
+        // end-reads, exactly as the lowering's always were.
+        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+            for q in &gate.qubits {
+                let qubit = q.index();
+                if prop.contains_z(qubit) {
+                    prop.track_z(&[qubit]);
+                }
+            }
+        }
+        // The shared dispatcher keeps preps transparent and expects walkers
+        // to clear at their own call sites; without this arm a stale ledger
+        // entry would survive a re-preparation and read as a phantom flip.
+        GateType::PZ | GateType::QAlloc | GateType::MPZ => {
+            for q in &gate.qubits {
+                prop.clear_qubit(q.index());
+            }
+        }
+        _ => {
+            apply_gate(prop, gate, Direction::Forward);
+        }
+    }
+}
+
 /// Propagates a Pauli fault through a circuit using `PauliProp`.
 ///
 /// Returns the propagated `PauliProp` state after the circuit.
@@ -297,7 +338,7 @@ pub fn propagate_fault(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
 
         // Apply all gates in this tick
         for gate in tick.iter_gate_batches() {
-            apply_gate(&mut prop, gate.as_gate(), Direction::Forward);
+            apply_gate_flip_ledger(&mut prop, gate.as_gate());
         }
     }
 
@@ -336,7 +377,7 @@ pub fn propagate_faults(circuit: &TickCircuit, faults: &FaultConfiguration) -> P
     for (tick_idx, tick) in circuit.iter_ticks() {
         if tick_idx >= min_tick {
             for gate in tick.iter_gate_batches() {
-                apply_gate(&mut prop, gate.as_gate(), Direction::Forward);
+                apply_gate_flip_ledger(&mut prop, gate.as_gate());
             }
         }
     }
@@ -1013,7 +1054,7 @@ pub fn extract_measurement_rounds(circuit: &TickCircuit) -> Vec<MeasurementRound
 
         for gate in tick.iter_gate_batches() {
             match gate.gate_type {
-                GateType::MZ | GateType::MeasureFree => {
+                GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                     // Z-basis measurement
                     for q in &gate.qubits {
                         z_qubits.push(q.0);
@@ -1039,22 +1080,11 @@ pub fn extract_measurement_rounds(circuit: &TickCircuit) -> Vec<MeasurementRound
 ///
 /// This simulates what the syndrome would be if we stopped propagation at `until_tick`.
 fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: usize) -> PauliProp {
-    let mut prop = PauliProp::new();
-
-    // Initialize with fault
-    for (qubit, pauli_byte) in fault.location.qubits.iter().zip(fault.paulis.iter()) {
-        let qubit_idx = qubit.0;
-        match pauli_byte {
-            1 => prop.track_x(&[qubit_idx]), // X
-            2 => prop.track_z(&[qubit_idx]), // Z
-            3 => {
-                // Y = iXZ
-                prop.track_x(&[qubit_idx]);
-                prop.track_z(&[qubit_idx]);
-            }
-            _ => {} // I
-        }
-    }
+    // The canonical fault encoding (1=X, 2=Y, 3=Z) and the same skip rule as
+    // `propagate_fault`: this walker had drifted into its own encoding (Y and
+    // Z swapped) and its own fault-tick handling, giving the checker several
+    // opinions about one fault.
+    let mut prop = init_pauli_prop_with_fault(fault);
 
     // Propagate through ticks up to and including until_tick
     let fault_tick = fault.location.tick;
@@ -1064,74 +1094,21 @@ fn propagate_until_tick(circuit: &TickCircuit, fault: &PauliFault, until_tick: u
             break;
         }
 
-        // Skip propagation before the fault occurs
-        if tick_idx < fault_tick || (tick_idx == fault_tick && fault.location.before) {
-            continue;
+        if fault.location.before {
+            // Fault is before gates at fault_tick, so propagate from fault_tick onward
+            if tick_idx < fault_tick {
+                continue;
+            }
+        } else {
+            // Fault is after gates at fault_tick, so propagate from fault_tick+1 onward
+            if tick_idx <= fault_tick {
+                continue;
+            }
         }
 
         // Propagate through all gates in this tick
         for gate in tick.iter_gate_batches() {
-            let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-            match gate.gate_type {
-                GateType::CX if qubits.len() >= 2 => {
-                    prop.cx(&[(qubits[0], qubits[1])]);
-                }
-                GateType::CZ if qubits.len() >= 2 => {
-                    prop.cz(&[(qubits[0], qubits[1])]);
-                }
-                GateType::CY if qubits.len() >= 2 => {
-                    prop.cy(&[(qubits[0], qubits[1])]);
-                }
-                GateType::H => {
-                    prop.h(&qubits);
-                }
-                GateType::F => {
-                    prop.f(&qubits);
-                }
-                GateType::Fdg => {
-                    prop.fdg(&qubits);
-                }
-                GateType::SX => {
-                    prop.sx(&qubits);
-                }
-                GateType::SXdg => {
-                    prop.sxdg(&qubits);
-                }
-                GateType::SY => {
-                    prop.sy(&qubits);
-                }
-                GateType::SYdg => {
-                    prop.sydg(&qubits);
-                }
-                GateType::SZ => {
-                    prop.sz(&qubits);
-                }
-                GateType::SZdg => {
-                    prop.szdg(&qubits);
-                }
-                GateType::SWAP if qubits.len() >= 2 => {
-                    prop.swap(&[(qubits[0], qubits[1])]);
-                }
-                GateType::SXX if qubits.len() >= 2 => {
-                    prop.sxx(&[(qubits[0], qubits[1])]);
-                }
-                GateType::SXXdg if qubits.len() >= 2 => {
-                    prop.sxxdg(&[(qubits[0], qubits[1])]);
-                }
-                GateType::SYY if qubits.len() >= 2 => {
-                    prop.syy(&[(qubits[0], qubits[1])]);
-                }
-                GateType::SYYdg if qubits.len() >= 2 => {
-                    prop.syydg(&[(qubits[0], qubits[1])]);
-                }
-                GateType::SZZ if qubits.len() >= 2 => {
-                    prop.szz(&[(qubits[0], qubits[1])]);
-                }
-                GateType::SZZdg if qubits.len() >= 2 => {
-                    prop.szzdg(&[(qubits[0], qubits[1])]);
-                }
-                _ => {}
-            }
+            apply_gate_flip_ledger(&mut prop, gate.as_gate());
         }
     }
 
@@ -2125,7 +2102,7 @@ impl<'a> PauliPropChecker<'a> {
                     // Propagate through circuit
                     for (_tick_idx, tick) in self.circuit.iter_ticks() {
                         for gate in tick.iter_gate_batches() {
-                            apply_gate(&mut prop, gate.as_gate(), Direction::Forward);
+                            apply_gate_flip_ledger(&mut prop, gate.as_gate());
                         }
                     }
 
@@ -2547,6 +2524,7 @@ fn pauli_product(choices: &[u8], count: usize) -> Vec<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_simulators::CliffordGateable;
 
     #[test]
     fn test_init_pauli_prop_with_fault() {
@@ -2592,6 +2570,125 @@ mod tests {
         // Z should now be on both qubits
         assert!(prop.contains_z(0));
         assert!(prop.contains_z(1));
+    }
+
+    /// The flip ledger keeps an `mz_free` outcome flip readable at the
+    /// end-read: the collapse-accurate crossing would discard it with the
+    /// qubit, silently zeroing the syndrome the same measurement recorded.
+    #[test]
+    fn a_measure_free_readout_flip_stays_readable_at_the_end_read() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        circuit.tick().mz_free(&[0]);
+
+        let loc = SpacetimeLocation {
+            tick: 1,
+            qubits: vec![QubitId(0)],
+            before: true,
+            gate_type: GateType::MeasureFree,
+            gate_index: 0,
+        };
+        let fault = PauliFault::new(loc, vec![1]); // X before the readout
+        let prop = propagate_fault(&circuit, &fault);
+
+        assert_eq!(
+            classify_fault(&prop, &[0], &[], &[]),
+            FaultClass::DetectableError,
+            "the X flips the mz_free outcome; the ledger must still show it"
+        );
+    }
+
+    /// An MPZ hands back a live |0> wire: the ledger entry must not survive
+    /// it, or a later CX spreads a flip that is physically absent -- and the
+    /// fused gate would disagree with its own `mz; pz` lowering.
+    #[test]
+    fn an_mpz_clears_the_ledger_like_its_own_lowering() {
+        let build = |fused: bool| {
+            let mut circuit = TickCircuit::new();
+            circuit.tick().pz(&[0, 1]);
+            if fused {
+                circuit.tick().mpz(&[0]);
+            } else {
+                circuit.tick().mz(&[0]);
+                circuit.tick().pz(&[0]);
+            }
+            circuit.tick().cx(&[(0, 1)]);
+            circuit.tick().mz(&[0, 1]);
+
+            let loc = SpacetimeLocation {
+                tick: 1,
+                qubits: vec![QubitId(0)],
+                before: true,
+                gate_type: GateType::MZ,
+                gate_index: 0,
+            };
+            let fault = PauliFault::new(loc, vec![1]);
+            propagate_fault(&circuit, &fault)
+        };
+        let fused = build(true);
+        let split = build(false);
+        for q in [0usize, 1] {
+            assert_eq!(fused.contains_x(q), split.contains_x(q), "X on qubit {q}");
+            assert_eq!(fused.contains_z(q), split.contains_z(q), "Z on qubit {q}");
+        }
+        assert!(
+            !fused.contains_x(1),
+            "the reset absorbed the flip; nothing spreads through the CX"
+        );
+    }
+
+    /// A re-preparation ends the ledger entry: the flip recorded before the
+    /// reset must not read back afterward, and must not spread onward.
+    #[test]
+    fn a_reset_clears_the_ledger_entry() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        circuit.tick().mz(&[0]);
+        circuit.tick().pz(&[0]);
+        circuit.tick().mz(&[0]);
+
+        let loc = SpacetimeLocation {
+            tick: 1,
+            qubits: vec![QubitId(0)],
+            before: true,
+            gate_type: GateType::MZ,
+            gate_index: 0,
+        };
+        let fault = PauliFault::new(loc, vec![1]);
+        let prop = propagate_fault(&circuit, &fault);
+        assert!(
+            !prop.contains_x(0) && !prop.contains_z(0),
+            "the re-preparation must clear the recorded flip from the ledger"
+        );
+    }
+
+    /// The per-round walker shares the ledger crossing: a Y that crossed an
+    /// earlier measurement arrives at the later round as the rotated X
+    /// survivor only. The old identity dispatch carried the whole Y through.
+    #[test]
+    fn until_tick_crosses_measurements_with_the_ledger_rule() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        circuit.tick().mz(&[0]);
+        circuit.tick().h(&[0]);
+        circuit.tick().mz(&[0]);
+
+        let loc = SpacetimeLocation {
+            tick: 1,
+            qubits: vec![QubitId(0)],
+            before: true,
+            gate_type: GateType::MZ,
+            gate_index: 0,
+        };
+        // Y before the first measurement: the Z part is absorbed there, the X
+        // part survives and the H rotates it into Z by the later round.
+        let fault = PauliFault::new(loc, vec![2]);
+        let per_round = propagate_until_tick(&circuit, &fault, 2);
+        assert!(
+            !per_round.contains_x(0),
+            "an intact Y here means the crossing was identity"
+        );
+        assert!(per_round.contains_z(0));
     }
 
     #[test]

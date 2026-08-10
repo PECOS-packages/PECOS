@@ -83,9 +83,11 @@
 //!     .mz(&[1])
 //!     .build();
 //!
-//! // Run without noise
-//! let mut state = SparseStab::new(2);
-//! let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+//! // Run without noise. Measurement randomness comes from the simulator's
+//! // RNG, so seed the simulator for reproducible outcomes; the runner seed
+//! // only governs noise sampling.
+//! let mut state = SparseStab::with_seed(2, 42);
+//! let mut runner = CircuitRunner::<SparseStab>::new();
 //! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 //!
 //! // Outcomes are correlated (Bell state)
@@ -333,7 +335,9 @@ mod tests {
     fn test_prelude_usage() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        // Measurement outcomes draw from the simulator's RNG, so the simulator
+        // must be seeded for determinism; the runner seed does not govern them.
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 
@@ -355,7 +359,7 @@ mod tests {
             .add_channel(SingleQubitChannel::depolarizing(0.0))
             .add_channel(TwoQubitChannel::depolarizing(0.0));
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -384,7 +388,7 @@ mod tests {
             .add_plugin(&DepolarizingPlugin::new(0.0, 0.0))
             .add_plugin(&MeasurementNoisePlugin::symmetric(0.0));
 
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -400,7 +404,9 @@ mod tests {
     fn test_multiple_shots() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut state = SparseStab::new(1);
+        // Measurement outcomes draw from the simulator's RNG, so the simulator
+        // must be seeded for determinism; the runner seed does not govern them.
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
         let mut count_0 = 0;

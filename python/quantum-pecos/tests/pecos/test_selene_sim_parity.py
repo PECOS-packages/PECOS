@@ -25,7 +25,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, comptime, result
 from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
-from pecos.guppy import variant_scoped
+from pecos.guppy_gen import variant_scoped
 
 
 @guppy
@@ -179,7 +179,7 @@ def test_capture_operation_trace_returns_in_memory_batches() -> None:
 def test_capture_operation_trace_includes_named_result_provenance() -> None:
     """Trace capture must preserve result(...) -> measurement-id provenance."""
     import pecos
-    from pecos.qec.surface.decode import named_result_traces_from_operation_trace
+    from pecos._qis_trace_replay import named_result_traces_from_operation_trace
 
     _require_selene_runtime()
 
@@ -198,6 +198,27 @@ def test_capture_operation_trace_includes_named_result_provenance() -> None:
     assert any(chunk.get("stage") == "named_results" for chunk in trace)
     for named_trace in named_traces:
         assert len(named_trace["result_ids"]) == len(named_trace["values"])
+
+
+def test_capture_operation_trace_includes_result_id_keyed_outcomes_per_shot() -> None:
+    """Aggregate-output provenance can correlate values with physical IDs."""
+    import pecos
+    import pecos_rslib
+
+    _require_selene_runtime()
+    trace = (
+        pecos.sim(make_tiny_x_syndrome_memory(1))
+        .classical(pecos.selene_engine())
+        .quantum(pecos_rslib.coin_toss())
+        .qubits(2)
+        .seed(321)
+        .capture_operation_trace(3)
+    )
+
+    terminal = [chunk for chunk in trace if chunk.get("stage") == "trace_complete"]
+    assert len(terminal) == 3
+    assert {chunk["shot_index"] for chunk in terminal} == {1, 2, 3}
+    assert all(set(chunk["measurement_results"]) == {"0", "1"} for chunk in terminal)
 
 
 def _collect_selene_named_results(
@@ -326,7 +347,7 @@ def _run_surface_memory_via_sim(
     seed: int,
 ) -> dict[str, list[list[int]]]:
     import pecos
-    from pecos.guppy import get_num_qubits, make_surface_code
+    from pecos.guppy_gen import get_num_qubits, make_surface_code
 
     _require_selene_runtime()
 
@@ -355,7 +376,7 @@ def _run_surface_memory_via_selene_sim(
     seed: int,
 ) -> dict[str, list[int] | list[list[int]]]:
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy import get_num_qubits, make_surface_code
+    from pecos.guppy_gen import get_num_qubits, make_surface_code
     from selene_sim import build
 
     _configure_selene_caches()
@@ -507,11 +528,7 @@ def test_tiny_syndrome_memory_p2_only_matches_between_selene_backends_statistica
         .quantum(pecos.stabilizer())
         .qubits(2)
         .noise(
-            pecos.depolarizing_noise()
-            .with_p1_probability(0.0)
-            .with_p2_probability(p2)
-            .with_meas_probability(0.0)
-            .with_prep_probability(0.0),
+            pecos.depolarizing_noise().with_p1(0.0).with_p2(p2).with_p_meas(0.0).with_p_prep(0.0),
         )
         .seed(123)
         .run(shots)

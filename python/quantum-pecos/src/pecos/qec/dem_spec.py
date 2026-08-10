@@ -75,11 +75,20 @@ def result_ref(tag: str, *, occurrence: int = 0, element: int | None = None) -> 
 MeasurementRef = RecordRef | ResultRef
 
 
-def _validate_refs(refs: tuple[MeasurementRef, ...]) -> None:
+def _coerce_refs(refs: tuple[MeasurementRef | str, ...]) -> tuple[MeasurementRef, ...]:
+    """Accept a bare tag string as shorthand for ``result_ref(tag)``."""
     if not refs:
         raise ValueError("detectors and observables must reference at least one measurement")
-    if any(not isinstance(ref, (RecordRef, ResultRef)) for ref in refs):
-        raise TypeError("measurement references must be rec[...] or result_ref(...) values")
+    coerced: list[MeasurementRef] = []
+    for ref in refs:
+        if isinstance(ref, str):
+            coerced.append(ResultRef(ref))
+        elif isinstance(ref, (RecordRef, ResultRef)):
+            coerced.append(ref)
+        else:
+            msg = 'measurement references must be rec[...], result_ref(...), or a "tag" string'
+            raise TypeError(msg)
+    return tuple(coerced)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -93,14 +102,17 @@ class Detector:
 
     def __init__(
         self,
-        *refs: MeasurementRef,
+        *refs: MeasurementRef | str,
         id: int | None = None,
         coords: Sequence[float] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Create a detector from typed measurement references."""
-        refs_tuple = tuple(refs)
-        _validate_refs(refs_tuple)
+        """Create a detector from measurement references.
+
+        Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
+        string, which is shorthand for ``result_ref(tag)``.
+        """
+        refs_tuple = _coerce_refs(tuple(refs))
         object.__setattr__(self, "refs", refs_tuple)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "coords", tuple(float(value) for value in coords) if coords is not None else None)
@@ -117,13 +129,16 @@ class Observable:
 
     def __init__(
         self,
-        *refs: MeasurementRef,
+        *refs: MeasurementRef | str,
         id: int | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Create an observable from typed measurement references."""
-        refs_tuple = tuple(refs)
-        _validate_refs(refs_tuple)
+        """Create an observable from measurement references.
+
+        Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
+        string, which is shorthand for ``result_ref(tag)``.
+        """
+        refs_tuple = _coerce_refs(tuple(refs))
         object.__setattr__(self, "refs", refs_tuple)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "metadata", dict(metadata) if metadata is not None else None)
@@ -256,6 +271,7 @@ class GuppyDemBuild:
             "runtime_order_is_canonical": runtime_order == list(range(len(runtime_order))),
             "runtime_order_mismatch_count": sum(index != meas_id for index, meas_id in enumerate(runtime_order)),
             "measurement_ledger": [entry.to_dict() for entry in self.measurement_ledger],
+            "idle_noise_residuals": self.dem.idle_noise_residuals,
         }
 
     def evaluate_runtime_record(self, values: Sequence[int | bool]) -> tuple[list[int], int]:
@@ -574,6 +590,86 @@ def _resolve_dem_specs(
         observables_json=json.dumps(observable_entries, separators=(",", ":")),
         detector_meas_ids=tuple(item[2] for item in resolved_detectors),
         observable_meas_ids=tuple((item[0], item[2]) for item in resolved_observables),
+        ledger=ledger,
+        result_ids_by_tag=result_ids_by_tag,
+        schema_fingerprint=fingerprint,
+    )
+
+
+def _resolved_schema_from_validated_json(
+    detectors_json: str,
+    observables_json: str,
+    *,
+    circuit: Any,
+    result_traces: Sequence[Mapping[str, Any]],
+) -> _ResolvedSchema:
+    """Build audit data from metadata already validated by the Rust DEM builder."""
+    runtime_order = _measurement_ids_in_runtime_order(circuit)
+    result_calls, refs_by_id = _index_result_traces(result_traces)
+    detector_entries = json.loads(detectors_json) if detectors_json.strip() else []
+    observable_entries = json.loads(observables_json) if observables_json.strip() else []
+
+    def normalized_id(raw_id: Any, *, prefix: str) -> int:
+        if isinstance(raw_id, str) and raw_id.startswith(prefix):
+            return int(raw_id[len(prefix) :])
+        return int(raw_id)
+
+    def entry_meas_ids(entry: Mapping[str, Any]) -> tuple[int, ...]:
+        records = entry.get("records", ())
+        if records:
+            return tuple(runtime_order[len(runtime_order) + int(record)] for record in records)
+        return tuple(int(meas_id) for meas_id in entry["meas_ids"])
+
+    resolved_detectors = sorted(
+        (
+            normalized_id(entry["id"] if "id" in entry else entry["detector_id"], prefix="D"),
+            entry_meas_ids(entry),
+        )
+        for entry in detector_entries
+    )
+    resolved_observables = sorted(
+        (
+            normalized_id(entry["id"] if "id" in entry else entry["observable_id"], prefix="L"),
+            entry_meas_ids(entry),
+        )
+        for entry in observable_entries
+    )
+    result_ids_by_tag = tuple(
+        (
+            tag,
+            tuple(result_id for occurrence in range(len(calls)) for result_id in calls[occurrence]),
+        )
+        for tag, calls in sorted(result_calls.items())
+        if calls
+        and sorted(calls) == list(range(len(calls)))
+        and all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
+        and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)
+    )
+    fingerprint_payload = {
+        "detectors": detector_entries,
+        "observables": observable_entries,
+        "runtime_measurement_order": runtime_order,
+        "named_result_measurements": result_ids_by_tag,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode(),
+    ).hexdigest()
+    runtime_ids = set(runtime_order)
+    dense_ids = sorted(runtime_ids) == list(range(len(runtime_order)))
+    ledger = tuple(
+        MeasurementLedgerEntry(
+            meas_id=meas_id,
+            runtime_record_index=runtime_index,
+            canonical_record_index=meas_id if dense_ids else None,
+            result_refs=tuple(refs_by_id.get(meas_id, ())),
+        )
+        for runtime_index, meas_id in enumerate(runtime_order)
+    )
+    return _ResolvedSchema(
+        detectors_json=detectors_json,
+        observables_json=observables_json,
+        detector_meas_ids=tuple(meas_ids for _, meas_ids in resolved_detectors),
+        observable_meas_ids=tuple(resolved_observables),
         ledger=ledger,
         result_ids_by_tag=result_ids_by_tag,
         schema_fingerprint=fingerprint,

@@ -39,6 +39,7 @@ public:
         double weight,
         double error_probability,
         MergeStrategy merge_strategy);
+    void set_all_error_probabilities(double error_probability);
 
     // Graph queries
     size_t get_num_nodes() const;
@@ -124,6 +125,8 @@ void add_boundary_edge(
     double weight,
     double error_probability,
     MergeStrategy merge_strategy);
+void pymatching_set_all_error_probabilities(
+    PyMatchingGraph& graph, double error_probability);
 
 size_t pymatching_get_num_nodes(const PyMatchingGraph& graph);
 size_t pymatching_get_num_detectors(const PyMatchingGraph& graph);

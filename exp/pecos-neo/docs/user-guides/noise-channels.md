@@ -82,8 +82,13 @@ T1/T2 decay during idle periods. Rate scales with duration.
 IdleChannel::linear(0.0001)                   // Rate per time unit
     .with_linear_depolarizing()               // Uniform X/Y/Z
 
-IdleChannel::from_t1_t2(50e-6, 30e-6)        // Physical T1/T2 times
+// T1=50us and total T2=30us when one abstract time unit is 1ns
+IdleChannel::from_t1_t2(50_000.0, 30_000.0)
 ```
+
+`from_t1_t2` uses the first-order Pauli twirl, requires total `T2 <= 2 * T1`, and is valid for
+idle durations much shorter than both coherence times. Use
+`ComposableNoiseModel::with_idle_t1_t2` with a `TimeScale` when supplying physical seconds.
 
 ## Specialized Channels
 

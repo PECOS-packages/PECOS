@@ -81,7 +81,7 @@ yet share an explicit compiler origin-ID ABI.
 This should support calls like:
 
 ```python,notest
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 
 program = make_surface_code(
@@ -145,7 +145,7 @@ The key surface-code use case is Helios-sized rotated surface code memory:
 Important checks:
 
 ```bash
-uv run python -c "from pecos.guppy import make_surface_code, get_num_qubits; from pecos.qec import DetectorErrorModel; print(get_num_qubits(9, ancilla_budget=17)); print(hasattr(DetectorErrorModel, 'from_guppy')); make_surface_code(distance=9, num_rounds=18, basis='Z', ancilla_budget=17); print('ok')"
+uv run python -c "from pecos.guppy_gen import make_surface_code, get_num_qubits; from pecos.qec import DetectorErrorModel; print(get_num_qubits(9, ancilla_budget=17)); print(hasattr(DetectorErrorModel, 'from_guppy')); make_surface_code(distance=9, num_rounds=18, basis='Z', ancilla_budget=17); print('ok')"
 ```
 
 Expected output includes:
@@ -179,7 +179,7 @@ line.
 - Runtime-produced `Idle` gates are preserved in the QIS operation trace and
   replayed into QEC circuits as `TimeUnits` with the convention
   `1 TimeUnit = 1 ns`. They only affect DEMs when an idle-noise parameter such
-  as `p_idle`, `t1/t2`, `p_idle_linear_rate`, or `p_idle_quadratic_rate` is set.
+  as an idle family, `t1`, or `t2` is set.
 - Keep fail-closed regression coverage for entirely raw traces, transformed
   scalar results, and aggregate arrays. Generated adapters may expose direct
   scalar sideband tags while retaining aggregate results for researcher-facing

@@ -26,6 +26,7 @@ from pytket.extensions.cutensornet.structured_state import (
     MPSxGate,
 )
 
+from pecos.simulators._cuda_fork_guard import check_fork_poison, mark_cuda_initialized
 from pecos.simulators.mps_pytket import bindings
 from pecos.simulators.sim_class_types import StateTN
 
@@ -66,6 +67,7 @@ class MPS(StateTN):
             For detailed documentation, see pytket-cutensornet Config class:
             https://docs.quantinuum.com/tket/extensions/pytket-cutensornet/
         """
+        check_fork_poison()
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."
             raise TypeError(msg)
@@ -80,6 +82,7 @@ class MPS(StateTN):
         self.dtype = self.config._complex_t
 
         # cuTensorNet handle initialization
+        mark_cuda_initialized()
         self.libhandle = CuTensorNetHandle()
 
         # Initialise the MPS on state |0>

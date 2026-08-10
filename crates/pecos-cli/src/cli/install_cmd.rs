@@ -5,7 +5,7 @@ use pecos_build::errors::Error;
 use pecos_build::prompt::{PromptMode, confirm};
 
 /// Known installable targets
-const KNOWN_TARGETS: &[&str] = &["cuda", "llvm", "cuquantum", "cmake"];
+const KNOWN_TARGETS: &[&str] = &["cuda", "llvm", "cuquantum", "cmake", "ripgrep"];
 
 /// Run the install command
 pub fn run(
@@ -47,7 +47,7 @@ pub fn run(
             .is_some_and(|p| p.to_string_lossy().contains(".pecos/deps/"));
 
         if let Some(path) = existing.as_ref().filter(|_| !force) {
-            if is_local {
+            if is_local || !has_managed_install(target) {
                 println!(
                     "[{}/{}] {target}: already installed at {}",
                     i + 1,
@@ -89,6 +89,15 @@ pub fn run(
     Ok(())
 }
 
+/// Whether PECOS can install a private copy under `~/.pecos/deps/`.
+fn has_managed_install(target: &str) -> bool {
+    match target {
+        "cuda" | "llvm" | "cuquantum" | "cmake" => true,
+        "ripgrep" => false,
+        _ => unreachable!("target was validated above"),
+    }
+}
+
 /// Find where a target is currently installed (if at all)
 fn find_existing(target: &str) -> Option<std::path::PathBuf> {
     match target {
@@ -96,6 +105,7 @@ fn find_existing(target: &str) -> Option<std::path::PathBuf> {
         "llvm" => pecos_build::llvm::find_llvm(None),
         "cuquantum" => pecos_build::cuquantum::find_cuquantum(),
         "cmake" => pecos_build::cmake::find_cmake(),
+        "ripgrep" => pecos_build::ripgrep::find_ripgrep(),
         _ => None,
     }
 }
@@ -115,6 +125,9 @@ fn install_target(target: &str, force: bool, no_configure: bool, yes: bool) -> R
         }
         "cmake" => {
             pecos_build::cmake::installer::install_cmake(force)?;
+        }
+        "ripgrep" => {
+            pecos_build::ripgrep::install_ripgrep(force)?;
         }
         _ => unreachable!("target was validated above"),
     }

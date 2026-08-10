@@ -60,6 +60,16 @@ pub enum DetectorValidationError {
     UnsupportedGateForDeterminismAnalysis { gate_type: String },
     /// Circuit detector/observable metadata is malformed.
     InvalidMetadata { message: String },
+    /// A detector or observable annotation references a node that cannot be
+    /// resolved to a measurement in the influence map.
+    UnresolvableAnnotationRef {
+        /// "detector" or "observable".
+        output_kind: &'static str,
+        /// Index among that kind's annotations.
+        annotation_index: usize,
+        /// The unresolvable measurement id.
+        meas_id: pecos_core::MeasId,
+    },
 }
 
 impl std::fmt::Display for DetectorValidationError {
@@ -97,6 +107,16 @@ impl std::fmt::Display for DetectorValidationError {
             Self::InvalidMetadata { message } => {
                 write!(f, "Invalid detector/observable metadata: {message}")
             }
+            Self::UnresolvableAnnotationRef {
+                output_kind,
+                annotation_index,
+                meas_id,
+            } => write!(
+                f,
+                "{output_kind} annotation {annotation_index} references MeasId({}), which \
+                 does not resolve to a measurement in the influence map",
+                meas_id.index()
+            ),
         }
     }
 }
@@ -375,6 +395,8 @@ impl DemSampler {
     ///
     /// Returns [`DetectorValidationError`] if any detector references a
     /// non-deterministic measurement or the detectors are linearly dependent.
+    /// Also returned when the `TickCircuit` cannot be converted to a
+    /// `DagCircuit` (two measurements sharing a `MeasId`).
     ///
     /// # Example
     ///
@@ -401,7 +423,11 @@ impl DemSampler {
         circuit: &pecos_quantum::TickCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
-        let dag = pecos_quantum::DagCircuit::from(circuit);
+        let dag = pecos_quantum::DagCircuit::try_from(circuit).map_err(|err| {
+            DetectorValidationError::InvalidMetadata {
+                message: err.to_string(),
+            }
+        })?;
         Self::from_circuit(&dag, noise)
     }
 
@@ -423,8 +449,14 @@ impl DemSampler {
 
         let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
         let annotation_map = InfluenceBuilder::new(circuit)
-            .with_circuit_annotations(circuit)
-            .build();
+            .with_circuit_annotations()
+            .map_err(|err| DetectorValidationError::InvalidMetadata {
+                message: err.to_string(),
+            })?
+            .build()
+            .map_err(|err| DetectorValidationError::InvalidMetadata {
+                message: err.to_string(),
+            })?;
         influence_map.merge_dem_outputs_from(&annotation_map);
 
         // Extract metadata before building (avoids ownership issues with builder methods)
@@ -1102,92 +1134,109 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Observables are converted to measurement-record outputs. Tracked
     /// Paulis remain unmeasured Pauli annotations and are carried
     /// through PECOS metadata only.
-    #[must_use]
-    pub fn with_circuit_annotations(mut self, circuit: &pecos_quantum::DagCircuit) -> Self {
+    /// # Errors
+    ///
+    /// Returns [`DetectorValidationError::UnresolvableAnnotationRef`] when a
+    /// detector or observable annotation references a node that does not
+    /// resolve to a measurement in the influence map. Such references used to
+    /// be dropped silently, producing outputs with missing terms.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a resolved measurement index exceeds `i32` while the
+    /// measurement count fits -- impossible, since every index is below the
+    /// count, which is checked first.
+    pub fn with_circuit_annotations(
+        mut self,
+        circuit: &pecos_quantum::DagCircuit,
+    ) -> Result<Self, DetectorValidationError> {
         use pecos_quantum::AnnotationKind;
 
-        let mut node_to_meas_idx: std::collections::BTreeMap<usize, usize> =
-            std::collections::BTreeMap::new();
-        for (meas_idx, &(node, _qubit, _basis)) in
-            self.influence_map.measurements.iter().enumerate()
-        {
-            node_to_meas_idx.entry(node).or_insert(meas_idx);
+        // A duplicate stamped id would make `meas_index_of` bind to the first
+        // holder -- an ambiguous, silently-wrong bind. Mirrors the guard on
+        // the JSON path (`reject_duplicate_stamped_meas_ids`).
+        let mut seen = std::collections::BTreeSet::new();
+        for mid in &self.influence_map.meas_ids {
+            if !seen.insert(mid.index()) {
+                return Err(DetectorValidationError::InvalidMetadata {
+                    message: format!(
+                        "duplicate stable MeasId {} in the circuit; each \
+                         measurement must have a unique stamped id",
+                        mid.index()
+                    ),
+                });
+            }
         }
 
         let detectors: Vec<&pecos_quantum::PauliAnnotation> = circuit.detectors().collect();
         let observables: Vec<&pecos_quantum::PauliAnnotation> = circuit.observables().collect();
 
-        // Map user-defined detector annotations to auto-detected detector indices
+        // Map each user detector directly to absolute raw-measurement indices --
+        // the coordinate space `detector_records_abs` documents and `sample_dual`
+        // XORs. An earlier version routed through a first-match-by-qubit/basis
+        // auto-detector lookup, which both stored the wrong coordinate space and
+        // rejected legitimate detectors on circuits that measure one qubit more
+        // than once.
         if !detectors.is_empty() {
-            // For each IM measurement index, find which auto-detector contains it
-            let mut meas_idx_to_auto_det: Vec<Option<usize>> =
-                vec![None; self.influence_map.measurements.len()];
-            for (det_idx, det) in self.influence_map.detectors.iter().enumerate() {
-                for meas_id in &det.measurements {
-                    for (im_idx, &(_node, qubit, basis)) in
-                        self.influence_map.measurements.iter().enumerate()
-                    {
-                        if qubit == meas_id.qubit
-                            && basis == meas_id.basis
-                            && meas_idx_to_auto_det[im_idx].is_none()
-                        {
-                            meas_idx_to_auto_det[im_idx] = Some(det_idx);
-                            break;
-                        }
-                    }
+            let mut det_records_abs: Vec<Vec<usize>> = Vec::with_capacity(detectors.len());
+            for (annotation_index, ann) in detectors.iter().enumerate() {
+                let AnnotationKind::Detector {
+                    measurement_ids, ..
+                } = &ann.kind
+                else {
+                    det_records_abs.push(Vec::new());
+                    continue;
+                };
+                let mut resolved = Vec::with_capacity(measurement_ids.len());
+                for &meas_id in measurement_ids {
+                    let Some(im_idx) = self.influence_map.meas_index_of(meas_id) else {
+                        return Err(DetectorValidationError::UnresolvableAnnotationRef {
+                            output_kind: "detector",
+                            annotation_index,
+                            meas_id,
+                        });
+                    };
+                    resolved.push(im_idx);
                 }
+                det_records_abs.push(resolved);
             }
-
-            // Map each user detector: measurement_nodes → IM meas index → auto-detector index
-            let det_records_abs: Vec<Vec<usize>> = detectors
-                .iter()
-                .map(|ann| {
-                    if let AnnotationKind::Detector {
-                        measurement_nodes, ..
-                    } = &ann.kind
-                    {
-                        measurement_nodes
-                            .iter()
-                            .filter_map(|&node| {
-                                let im_idx = node_to_meas_idx.get(&node)?;
-                                meas_idx_to_auto_det[*im_idx]
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    }
-                })
-                .collect();
 
             self.labels.dual_detectors = detectors.iter().map(|a| a.label.clone()).collect();
             self.detector_records_abs = Some(det_records_abs);
         }
 
         if !observables.is_empty() && self.observable_records.is_none() {
-            let records = if let Ok(num_measurements) =
-                i32::try_from(self.influence_map.measurements.len())
-            {
-                observables
-                    .iter()
-                    .map(|ann| {
-                        if let AnnotationKind::Observable { measurement_nodes } = &ann.kind {
-                            measurement_nodes
-                                .iter()
-                                .filter_map(|node| node_to_meas_idx.get(node).copied())
-                                .filter_map(|meas_idx| {
-                                    i32::try_from(meas_idx)
-                                        .ok()
-                                        .map(|meas_idx| meas_idx - num_measurements)
-                                })
-                                .collect()
-                        } else {
-                            Vec::new()
-                        }
-                    })
-                    .collect()
-            } else {
-                vec![Vec::new(); observables.len()]
-            };
+            let num_measurements =
+                i32::try_from(self.influence_map.measurements.len()).map_err(|_| {
+                    DetectorValidationError::InvalidMetadata {
+                        message: format!(
+                            "{} measurements exceed the i32 record-offset range",
+                            self.influence_map.measurements.len()
+                        ),
+                    }
+                })?;
+            let mut records: Vec<Vec<i32>> = Vec::with_capacity(observables.len());
+            for (annotation_index, ann) in observables.iter().enumerate() {
+                let AnnotationKind::Observable { measurement_ids } = &ann.kind else {
+                    records.push(Vec::new());
+                    continue;
+                };
+                let mut resolved = Vec::with_capacity(measurement_ids.len());
+                for &meas_id in measurement_ids {
+                    let Some(meas_idx) = self.influence_map.meas_index_of(meas_id) else {
+                        return Err(DetectorValidationError::UnresolvableAnnotationRef {
+                            output_kind: "observable",
+                            annotation_index,
+                            meas_id,
+                        });
+                    };
+                    let meas_idx = i32::try_from(meas_idx)
+                        .expect("meas_idx < measurements.len(), which fits in i32");
+                    resolved.push(meas_idx - num_measurements);
+                }
+                records.push(resolved);
+            }
+            let records = records;
             self.observable_records = Some(records);
         }
 
@@ -1207,7 +1256,7 @@ impl<'a> DemSamplerBuilder<'a> {
             self.labels.tracked_pauli_labels = tracked_pauli_labels;
         }
 
-        self
+        Ok(self)
     }
 
     /// Set the measurement order for legacy circuits without `MeasId` on gates.
@@ -1232,6 +1281,27 @@ impl<'a> DemSamplerBuilder<'a> {
         // measurement count would resolve in a different (shorter/longer) frame
         // at sample time and silently misbind. (See sampler-JSON validation.)
         if let Some(ref order) = self.measurement_order {
+            // A supplied order feeds the qubit-occurrence heuristic, which
+            // needs per-qubit chronology on both sides. Minted (positional)
+            // ids keep it; external non-positional ids can reorder a qubit's
+            // measurements in the map, and the caller's record order is then
+            // not recoverable.
+            let n = self.influence_map.meas_ids.len();
+            let mut seen = vec![false; n];
+            let positional = self
+                .influence_map
+                .meas_ids
+                .iter()
+                .all(|mid| seen.get_mut(mid.index()).map(|slot| *slot = true).is_some())
+                && seen.into_iter().all(|s| s);
+            if !positional {
+                return Err(DetectorValidationError::InvalidMetadata {
+                    message: "measurement_order cannot be combined with a circuit \
+                              whose stable MeasIds are non-positional; the \
+                              caller's record order is not recoverable"
+                        .to_string(),
+                });
+            }
             let expected = self.influence_map.measurements.len();
             if order.len() != expected {
                 return Err(DetectorValidationError::InvalidMetadata {
@@ -1439,7 +1509,7 @@ pub(crate) fn compute_location_probs_from_noise(
             #[allow(clippy::match_same_arms)]
             match loc.gate_type {
                 GateType::PZ | GateType::QAlloc => noise.p_prep,
-                GateType::MZ | GateType::MeasureFree => noise.p_meas,
+                GateType::MZ | GateType::MeasureFree | GateType::MPZ => noise.p_meas,
                 GateType::CX
                 | GateType::CZ
                 | GateType::CY
@@ -1455,7 +1525,7 @@ pub(crate) fn compute_location_probs_from_noise(
                 | GateType::RZZ => noise.p2_rate_for_gate(loc.gate_type),
                 GateType::Idle => {
                     if noise.uses_dedicated_idle_noise() {
-                        let duration = loc.idle_duration.max(0.0);
+                        let duration = loc.idle_duration;
                         noise.idle_pauli_probs(duration).total()
                     } else {
                         0.0
@@ -1483,6 +1553,94 @@ pub(crate) fn gate_location_prob_from_locations(
 
 #[cfg(test)]
 mod tests {
+    /// The reviewer's happy-path witness for the rewritten detector mapping:
+    /// `detector_records_abs` must hold absolute raw-measurement indices, so a
+    /// single-measurement detector's event equals that measurement's flip on
+    /// every shot. The old auto-detector hop stored detector ids in the field,
+    /// which reads the wrong measurement whenever the numberings differ.
+    ///
+    /// `raw_measurements` is FLIP space, so the discriminator is statistical:
+    /// noise makes the two measurements' flips independent, and the test
+    /// asserts its own non-vacuity by requiring measurement 1's flip to vary
+    /// AND to disagree with measurement 0's on at least one shot. A fixture
+    /// where the compared streams never differ proves nothing -- the first
+    /// version of this test had exactly that hole, twice.
+    #[test]
+    fn dual_output_detector_events_xor_the_named_raw_measurements() {
+        use pecos_quantum::DagCircuit;
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.mz(&[0]); // raw measurement 0
+        dag.pz(&[1]);
+        let named = dag.mz(&[1]); // raw measurement 1 -- the detector's target
+        dag.detector(&named).expect("refs are from this circuit");
+
+        let im =
+            crate::fault_tolerance::propagator::DagFaultAnalyzer::new(&dag).build_influence_map();
+        let sampler = DemSamplerBuilder::new(&im)
+            .with_uniform_noise(0.3)
+            .raw_measurements()
+            .with_circuit_annotations(&dag)
+            .expect("the annotation resolves")
+            .build()
+            .expect("the detector is valid");
+
+        let mut rng = PecosRng::seed_from_u64(42);
+        let (mut saw_one_flip, mut saw_one_clear, mut saw_disagreement) = (false, false, false);
+        for _ in 0..64 {
+            let shot = sampler
+                .sample_dual(&mut rng)
+                .expect("annotations enable dual output");
+            assert_eq!(
+                shot.detector_events[0], shot.raw_measurements[1],
+                "the detector names raw measurement 1; reading any other \
+                 numbering lands on a different flip stream"
+            );
+            saw_one_flip |= shot.raw_measurements[1];
+            saw_one_clear |= !shot.raw_measurements[1];
+            saw_disagreement |= shot.raw_measurements[0] != shot.raw_measurements[1];
+        }
+        assert!(
+            saw_one_flip && saw_one_clear && saw_disagreement,
+            "vacuity check: measurement 1's flip must vary and must disagree \
+             with measurement 0 at least once, or the equality above proves nothing"
+        );
+    }
+
+    /// An observable annotation referencing an id absent from the influence
+    /// map used to be silently dropped, thinning the observable. It is now an
+    /// error naming the annotation and the id.
+    #[test]
+    fn an_unresolvable_observable_ref_is_an_error() {
+        use pecos_quantum::DagCircuit;
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.mz(&[0]);
+        dag.add_annotation(pecos_quantum::PauliAnnotation {
+            pauli: pecos_core::PauliString::zs(&[0usize]),
+            kind: pecos_quantum::AnnotationKind::Observable {
+                measurement_ids: vec![pecos_core::MeasId::from_raw(99)],
+            },
+            label: None,
+        });
+        let im =
+            crate::fault_tolerance::propagator::DagFaultAnalyzer::new(&dag).build_influence_map();
+
+        let err = DemSamplerBuilder::new(&im)
+            .with_uniform_noise(0.01)
+            .with_circuit_annotations(&dag)
+            .map(|_| ())
+            .expect_err("node 99 resolves to no measurement");
+        assert!(matches!(
+            err,
+            DetectorValidationError::UnresolvableAnnotationRef {
+                output_kind: "observable",
+                meas_id,
+                ..
+            } if meas_id == pecos_core::MeasId::from_raw(99)
+        ));
+    }
+
     use super::*;
     use crate::fault_tolerance::InfluenceBuilder;
     use pecos_quantum::DagCircuit;
@@ -1506,7 +1664,10 @@ mod tests {
     #[test]
     fn raw_mode_output_length_matches_measurements() {
         let circuit = repetition_code(2);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.01)
@@ -1524,7 +1685,10 @@ mod tests {
     #[test]
     fn zero_noise_raw_mode_deterministic_measurements_are_zero() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.0)
@@ -1543,7 +1707,10 @@ mod tests {
     #[test]
     fn raw_mode_matches_dem_sampler_from_influence_map() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let p = 0.01;
         let num_shots = 20_000;
@@ -1573,7 +1740,9 @@ mod tests {
     #[test]
     fn detector_mode_output_length_matches_definitions() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .build()
+            .expect("circuit is replayable");
 
         // Define 2 simple detectors (last two measurements)
         let detector_records = vec![vec![-1i32], vec![-2]];
@@ -1596,7 +1765,9 @@ mod tests {
     #[test]
     fn detector_mode_accepts_observable_aliases() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .build()
+            .expect("circuit is replayable");
 
         let records_sampler = DemSamplerBuilder::new(&im)
             .with_detector_records(vec![vec![-1]])
@@ -1664,8 +1835,10 @@ mod tests {
         circuit.mz(&[0]);
 
         let im = InfluenceBuilder::new(&circuit)
-            .with_circuit_annotations(&circuit)
-            .build();
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_noise(0.03, 0.0, 0.02, 0.0)
@@ -1692,11 +1865,15 @@ mod tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let meas = circuit.mz(&[0]);
-        circuit.observable_labeled("obs0", &[meas[0]]);
+        circuit
+            .observable_labeled("obs0", &[meas[0]])
+            .expect("refs are from this circuit");
 
         let im = InfluenceBuilder::new(&circuit)
-            .with_circuit_annotations(&circuit)
-            .build();
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_noise(0.0, 0.0, 1.0, 0.0)
@@ -1809,8 +1986,12 @@ mod tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let meas = circuit.mz(&[0]);
-        circuit.detector_labeled("det0", &[meas[0]]);
-        circuit.observable_labeled("obs0", &[meas[0]]);
+        circuit
+            .detector_labeled("det0", &[meas[0]])
+            .expect("refs are from this circuit");
+        circuit
+            .observable_labeled("obs0", &[meas[0]])
+            .expect("refs are from this circuit");
         circuit.tracked_pauli_labeled("tracked_x0", X(0));
         circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
         circuit.set_attr(
@@ -1837,8 +2018,10 @@ mod tests {
         assert_eq!(sample_once(&from_dem), (vec![true], vec![true]));
 
         let influence_map = InfluenceBuilder::new(&circuit)
-            .with_circuit_annotations(&circuit)
-            .build();
+            .with_circuit_annotations()
+            .expect("annotations resolve against the circuit")
+            .build()
+            .expect("circuit is replayable");
         let from_builder = DemSamplerBuilder::new(&influence_map)
             .with_noise(0.0, 0.0, 1.0, 0.0)
             .with_detector_records(vec![vec![-1]])
@@ -1922,7 +2105,9 @@ mod tests {
         circuit.pz(&[0]);
         circuit.h(&[0]);
         circuit.mz(&[0]);
-        let im = InfluenceBuilder::new(&circuit).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.01)
@@ -2020,7 +2205,10 @@ mod tests {
     #[test]
     fn high_noise_produces_nonzero_rates_both_modes() {
         let circuit = repetition_code(2);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let p = 0.1;
         let num_shots = 5_000;
@@ -2055,7 +2243,10 @@ mod tests {
     #[test]
     fn dual_output_returns_none_without_definitions() {
         let circuit = repetition_code(2);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         let sampler = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.01)
@@ -2070,7 +2261,10 @@ mod tests {
     #[test]
     fn dual_output_produces_both_views() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         // Define detectors: first and second measurements
         let det_defs = vec![vec![0usize], vec![1]];
@@ -2094,7 +2288,10 @@ mod tests {
     #[test]
     fn dual_output_detector_events_consistent_with_raw() {
         let circuit = repetition_code(3);
-        let im = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]).build();
+        let im = InfluenceBuilder::new(&circuit)
+            .with_z(&[0, 1, 2])
+            .build()
+            .expect("circuit is replayable");
 
         // Detector = XOR of measurements 0 and 1
         let det_defs = vec![vec![0usize, 1]];

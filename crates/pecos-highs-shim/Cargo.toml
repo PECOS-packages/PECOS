@@ -1,0 +1,16 @@
+[package]
+name = "highs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Pure-Rust compatibility facade for the subset of the highs API used by mwpf, backed by pecos-lp"
+publish = false
+
+[dependencies]
+pecos-lp.workspace = true
+
+[lints]
+workspace = true

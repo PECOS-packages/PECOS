@@ -134,7 +134,7 @@ enum Commands {
 
     /// Set up build environment (detect and install missing dependencies)
     ///
-    /// Interactively checks for LLVM, CUDA, and cuQuantum and offers to
+    /// Interactively checks for LLVM, CUDA, cuQuantum, cmake, and ripgrep and offers to
     /// install each one that is missing. Use --yes to accept all prompts
     /// (for CI) or --no to decline all (for a lite build).
     ///
@@ -161,6 +161,10 @@ enum Commands {
         #[arg(long)]
         skip_cmake: bool,
 
+        /// Skip ripgrep setup (ripgrep is required by dependency integrity checks)
+        #[arg(long)]
+        skip_ripgrep: bool,
+
         /// Suppress output when all dependencies are already found
         #[arg(short, long)]
         quiet: bool,
@@ -180,7 +184,7 @@ enum Commands {
         #[arg(long, conflicts_with = "yes")]
         no: bool,
     },
-    /// Install optional dependencies (cuda, llvm, cuquantum)
+    /// Install optional dependencies (cuda, llvm, cuquantum, cmake, ripgrep)
     ///
     /// Example: pecos install cuda cuquantum
     Install {
@@ -565,11 +569,11 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
                 parse_general_noise_probabilities(args.noise_probability.as_ref());
             builder = builder.noise(
                 GeneralNoiseModelBuilder::new()
-                    .with_prep_probability(prep)
-                    .with_meas_0_probability(meas_0)
-                    .with_meas_1_probability(meas_1)
-                    .with_p1_probability(single_qubit)
-                    .with_p2_probability(two_qubit),
+                    .with_p_prep(prep)
+                    .with_p_meas_0(meas_0)
+                    .with_p_meas_1(meas_1)
+                    .with_p1(single_qubit)
+                    .with_p2(two_qubit),
             );
         }
     }
@@ -725,6 +729,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             skip_llvm,
             skip_cuda,
             skip_cmake,
+            skip_ripgrep,
             quiet,
         } => {
             let mode = if *yes {
@@ -734,7 +739,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 pecos_build::prompt::PromptMode::Interactive
             };
-            cli::setup_cmd::run(mode, *skip_llvm, *skip_cuda, *skip_cmake, *quiet)?;
+            cli::setup_cmd::run(
+                mode,
+                *skip_llvm,
+                *skip_cuda,
+                *skip_cmake,
+                *skip_ripgrep,
+                *quiet,
+            )?;
         }
         Commands::Migrate { yes, no } => {
             let mode = if *yes {

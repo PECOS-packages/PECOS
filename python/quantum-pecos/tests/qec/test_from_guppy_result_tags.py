@@ -30,7 +30,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import cx, h, measure, qubit
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 
 

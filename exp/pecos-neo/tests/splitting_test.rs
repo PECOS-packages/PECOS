@@ -24,9 +24,9 @@ fn test_apply_split_decisions_prune() {
     let mut world: World<SparseStab> = World::new(42);
 
     // Create some entities
-    let e1 = world.spawn_with_simulator(SparseStab::new(1));
-    let e2 = world.spawn_with_simulator(SparseStab::new(1));
-    let e3 = world.spawn_with_simulator(SparseStab::new(1));
+    let e1 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
+    let e2 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
+    let e3 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
 
     assert_eq!(world.active_entities().len(), 3);
 
@@ -46,7 +46,7 @@ fn test_apply_split_decisions_split() {
     let mut world: World<SparseStab> = World::new(42);
 
     // Create one entity
-    let e1 = world.spawn_with_simulator(SparseStab::new(1));
+    let e1 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
 
     assert_eq!(world.active_entities().len(), 1);
 
@@ -71,9 +71,9 @@ fn test_apply_split_decisions_split() {
 fn test_apply_split_decisions_mixed() {
     let mut world: World<SparseStab> = World::new(42);
 
-    let e1 = world.spawn_with_simulator(SparseStab::new(1));
-    let e2 = world.spawn_with_simulator(SparseStab::new(1));
-    let e3 = world.spawn_with_simulator(SparseStab::new(1));
+    let e1 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
+    let e2 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
+    let e3 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
 
     // e1: keep, e2: prune, e3: split into 3
     let decisions = vec![(e1, 1), (e2, 0), (e3, 3)];
@@ -88,9 +88,9 @@ fn test_resample_by_weight_preserves_total_weight() {
     let mut world: World<SparseStab> = World::new(42);
 
     // Create entities with different weights
-    let e1 = world.spawn_with_simulator(SparseStab::new(1));
-    let e2 = world.spawn_with_simulator(SparseStab::new(1));
-    let e3 = world.spawn_with_simulator(SparseStab::new(1));
+    let e1 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
+    let e2 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
+    let e3 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
 
     // Set weights: e1=1.0, e2=2.0, e3=3.0, total=6.0
     world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(1.0);
@@ -123,9 +123,9 @@ fn test_resample_by_weight_respects_probabilities() {
     for trial in 0..trials {
         let mut world: World<SparseStab> = World::new(trial);
 
-        let e1 = world.spawn_with_simulator(SparseStab::new(1));
-        let e2 = world.spawn_with_simulator(SparseStab::new(1));
-        let e3 = world.spawn_with_simulator(SparseStab::new(1));
+        let e1 = world.spawn_with_simulator(SparseStab::with_seed(1, trial));
+        let e2 = world.spawn_with_simulator(SparseStab::with_seed(1, trial));
+        let e3 = world.spawn_with_simulator(SparseStab::with_seed(1, trial));
 
         // Weights: e1=1, e2=2, e3=7 (e3 should be selected ~70% of time)
         world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(1.0);
@@ -221,7 +221,7 @@ fn test_entity_transfer() {
     let mut world2: World<SparseStab> = World::new(43);
 
     // Create entity in world1 with specific weight
-    let e1 = world1.spawn_with_simulator(SparseStab::new(1));
+    let e1 = world1.spawn_with_simulator(SparseStab::with_seed(1, 42));
     world1.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(5.0);
 
     assert_eq!(world1.active_entities().len(), 1);
@@ -251,7 +251,9 @@ fn test_redistribution_at_sync_points() {
             let mut worker = WorkerState::new(id, 42);
             // Each worker gets 5 entities with varying weights
             for i in 0..5 {
-                let e = worker.world.spawn_with_simulator(SparseStab::new(1));
+                let e = worker
+                    .world
+                    .spawn_with_simulator(SparseStab::with_seed(1, 42));
                 worker.world.weights.get_mut(e).unwrap().weight =
                     SampleWeight::from_linear(f64::from(i + 1));
             }
@@ -316,7 +318,9 @@ fn test_subset_simulation_workflow() {
         .map(|id| {
             let mut worker = WorkerState::new(id, 42 + id as u64);
             for _ in 0..entities_per_worker {
-                worker.world.spawn_with_simulator(SparseStab::new(1));
+                worker
+                    .world
+                    .spawn_with_simulator(SparseStab::with_seed(1, 42 + id as u64));
             }
             worker
         })
@@ -495,7 +499,9 @@ fn test_redistribution_exact_weight_preservation() {
         .map(|id| {
             let mut worker = WorkerState::new(id, 100 + id as u64);
             for i in 0..10 {
-                let e = worker.world.spawn_with_simulator(SparseStab::new(1));
+                let e = worker
+                    .world
+                    .spawn_with_simulator(SparseStab::with_seed(1, 100 + id as u64));
                 // Set varying weights
                 worker.world.weights.get_mut(e).unwrap().weight =
                     SampleWeight::from_linear(0.1 * f64::from(i + 1));
@@ -535,11 +541,15 @@ fn test_redistribution_extreme_weights() {
         .collect();
 
     // One entity with very high weight, rest with very low
-    let e1 = workers[0].world.spawn_with_simulator(SparseStab::new(1));
+    let e1 = workers[0]
+        .world
+        .spawn_with_simulator(SparseStab::with_seed(1, 42));
     workers[0].world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(100.0);
 
     for _ in 0..9 {
-        let e = workers[0].world.spawn_with_simulator(SparseStab::new(1));
+        let e = workers[0]
+            .world
+            .spawn_with_simulator(SparseStab::with_seed(1, 42));
         workers[0].world.weights.get_mut(e).unwrap().weight = SampleWeight::from_linear(0.001);
     }
 
@@ -574,9 +584,9 @@ fn test_resampling_statistical_correctness() {
     for trial in 0..trials {
         let mut world: World<SparseStab> = World::new(1000 + trial);
 
-        let e1 = world.spawn_with_simulator(SparseStab::new(1));
-        let e2 = world.spawn_with_simulator(SparseStab::new(1));
-        let e3 = world.spawn_with_simulator(SparseStab::new(1));
+        let e1 = world.spawn_with_simulator(SparseStab::with_seed(1, 1000 + trial));
+        let e2 = world.spawn_with_simulator(SparseStab::with_seed(1, 1000 + trial));
+        let e3 = world.spawn_with_simulator(SparseStab::with_seed(1, 1000 + trial));
 
         // Weights: 1, 3, 6 (proportions: 0.1, 0.3, 0.6)
         world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(1.0);
@@ -637,7 +647,7 @@ fn test_entity_state_preservation_through_transfer() {
     let mut world1: World<SparseStab> = World::new(42);
 
     // Create entity and modify its simulator state
-    let e1 = world1.spawn_with_simulator(SparseStab::new(2));
+    let e1 = world1.spawn_with_simulator(SparseStab::with_seed(2, 42));
 
     // Apply some gates to create a non-trivial state
     if let Some(sim_comp) = world1.simulators.get_mut(e1) {
@@ -685,7 +695,7 @@ fn test_splitting_weight_invariants() {
     let mut world: World<SparseStab> = World::new(42);
 
     // Create entity with weight 1.0
-    let e1 = world.spawn_with_simulator(SparseStab::new(1));
+    let e1 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
     let initial_weight = world.total_weight();
     assert!((initial_weight - 1.0).abs() < 1e-10);
 
@@ -743,7 +753,7 @@ fn test_resampling_edge_cases() {
     assert_eq!(count, 0, "Empty world should return 0");
 
     // Test resampling to 0 entities
-    let e = world.spawn_with_simulator(SparseStab::new(1));
+    let e = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
     assert!(world.is_alive(e));
 
     let count = world.resample_by_weight(0, &mut rng);
@@ -760,7 +770,9 @@ fn test_redistribution_determinism() {
             .map(|id| {
                 let mut worker = WorkerState::new(id, 42);
                 for i in 0..5 {
-                    let e = worker.world.spawn_with_simulator(SparseStab::new(1));
+                    let e = worker
+                        .world
+                        .spawn_with_simulator(SparseStab::with_seed(1, 42));
                     worker.world.weights.get_mut(e).unwrap().weight =
                         SampleWeight::from_linear(f64::from(i + 1));
                 }
@@ -847,7 +859,7 @@ fn test_quantum_circuit_subset_simulation() {
 
     for sample in 0..num_samples {
         let mut syndrome_detections = 0;
-        let mut state = SparseStab::new(2);
+        let mut state = SparseStab::with_seed(2, 42);
         let mut runner =
             CircuitRunner::<SparseStab>::new().with_rng(PecosRng::seed_from_u64(sample));
 
@@ -888,7 +900,7 @@ fn test_quantum_circuit_subset_simulation() {
 
     // Spawn entities (trajectories)
     for _ in 0..num_samples {
-        world.spawn_with_simulator(SparseStab::new(2));
+        world.spawn_with_simulator(SparseStab::with_seed(2, 12345));
     }
 
     // Track syndrome detections per entity

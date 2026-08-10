@@ -148,6 +148,9 @@ fn build_zx_body_circuit(body: &DagCircuit, num_rounds: usize) -> DagCircuit {
                     *q = new_q;
                 }
             }
+            // Each round measures a fresh ancilla, so it is a fresh
+            // measurement; carrying the body's id would name them all the same.
+            new_gate.meas_ids.clear();
             target.add_gate_auto_wire(new_gate);
         }
     }

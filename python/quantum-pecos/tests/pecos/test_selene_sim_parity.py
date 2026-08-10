@@ -200,6 +200,27 @@ def test_capture_operation_trace_includes_named_result_provenance() -> None:
         assert len(named_trace["result_ids"]) == len(named_trace["values"])
 
 
+def test_capture_operation_trace_includes_result_id_keyed_outcomes_per_shot() -> None:
+    """Aggregate-output provenance can correlate values with physical IDs."""
+    import pecos
+    import pecos_rslib
+
+    _require_selene_runtime()
+    trace = (
+        pecos.sim(make_tiny_x_syndrome_memory(1))
+        .classical(pecos.selene_engine())
+        .quantum(pecos_rslib.coin_toss())
+        .qubits(2)
+        .seed(321)
+        .capture_operation_trace(3)
+    )
+
+    terminal = [chunk for chunk in trace if chunk.get("stage") == "trace_complete"]
+    assert len(terminal) == 3
+    assert {chunk["shot_index"] for chunk in terminal} == {1, 2, 3}
+    assert all(set(chunk["measurement_results"]) == {"0", "1"} for chunk in terminal)
+
+
 def _collect_selene_named_results(
     instance: object,
     *,
@@ -507,11 +528,7 @@ def test_tiny_syndrome_memory_p2_only_matches_between_selene_backends_statistica
         .quantum(pecos.stabilizer())
         .qubits(2)
         .noise(
-            pecos.depolarizing_noise()
-            .with_p1_probability(0.0)
-            .with_p2_probability(p2)
-            .with_meas_probability(0.0)
-            .with_prep_probability(0.0),
+            pecos.depolarizing_noise().with_p1(0.0).with_p2(p2).with_p_meas(0.0).with_p_prep(0.0),
         )
         .seed(123)
         .run(shots)

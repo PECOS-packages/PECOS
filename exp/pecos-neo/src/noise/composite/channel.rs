@@ -19,7 +19,7 @@
 use super::Primitive;
 use super::batch::GeometricSampler;
 use super::response::CompositeResponse;
-use crate::noise::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
+use crate::noise::{NoiseChannel, NoiseContext, NoiseEvent, NoiseGateRequirement, NoiseResponse};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
 use smallvec::smallvec;
@@ -434,6 +434,10 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
 
     fn priority(&self) -> i32 {
         self.priority
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.primitive.gate_requirements()
     }
 
     fn clone_box(&self) -> Box<dyn NoiseChannel> {
@@ -907,6 +911,10 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
         self.priority
     }
 
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.primitive.gate_requirements()
+    }
+
     fn clone_box(&self) -> Box<dyn NoiseChannel> {
         Box::new(self.clone())
     }
@@ -1153,6 +1161,10 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<
 
     fn priority(&self) -> i32 {
         self.priority
+    }
+
+    fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+        self.primitive.gate_requirements()
     }
 
     fn clone_box(&self) -> Box<dyn NoiseChannel> {

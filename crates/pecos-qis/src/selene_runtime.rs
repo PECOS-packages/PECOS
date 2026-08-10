@@ -265,6 +265,9 @@ pub struct SeleneRuntime {
     /// Reverse lookup for measurement operations emitted by the runtime plugin.
     runtime_to_program_results: BTreeMap<u64, usize>,
 
+    /// Program results produced by leakage-aware measurements.
+    leakage_results: BTreeSet<usize>,
+
     /// End timestamp of the last scheduled physical operation per runtime qubit.
     last_gate_time_end_nanos: Vec<u64>,
 
@@ -308,6 +311,7 @@ impl SeleneRuntime {
             program_to_runtime_qubits: BTreeMap::new(),
             program_to_runtime_results: BTreeMap::new(),
             runtime_to_program_results: BTreeMap::new(),
+            leakage_results: BTreeSet::new(),
             last_gate_time_end_nanos: Vec::new(),
             pending_shot_start: None,
             active_shot: None,
@@ -484,6 +488,7 @@ impl SeleneRuntime {
         self.program_to_runtime_qubits.clear();
         self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
+        self.leakage_results.clear();
         self.last_gate_time_end_nanos.clear();
         Ok(())
     }
@@ -855,6 +860,44 @@ impl SeleneRuntime {
         self.force_runtime_result(runtime_result)
     }
 
+    fn call_runtime_measure_leaked(
+        &mut self,
+        runtime_qubit: u64,
+        program_result: usize,
+    ) -> Result<()> {
+        let lib = self
+            .library
+            .as_ref()
+            .ok_or_else(|| RuntimeError::FfiError("Selene runtime is not loaded".to_string()))?;
+        let instance = self.instance.ok_or_else(|| {
+            RuntimeError::FfiError("Selene runtime is not initialized".to_string())
+        })?;
+
+        let runtime_result = unsafe {
+            let measure_fn = lib
+                .get::<unsafe extern "C" fn(RuntimeInstance, u64, *mut u64) -> i32>(
+                    b"selene_runtime_measure_leaked",
+                )
+                .map_err(|e| {
+                    RuntimeError::FfiError(format!("Missing leakage measurement function: {e}"))
+                })?;
+            let mut runtime_result = 0;
+            let errno = measure_fn(instance, runtime_qubit, &raw mut runtime_result);
+            if errno != 0 {
+                return Err(RuntimeError::FfiError(format!(
+                    "measure_leaked failed with errno {errno}"
+                )));
+            }
+            runtime_result
+        };
+
+        self.program_to_runtime_results
+            .insert(program_result, runtime_result);
+        self.runtime_to_program_results
+            .insert(runtime_result, program_result);
+        self.force_runtime_result(runtime_result)
+    }
+
     fn force_runtime_result(&self, runtime_result: u64) -> Result<()> {
         let lib = self
             .library
@@ -989,6 +1032,9 @@ impl SeleneRuntime {
                 QuantumOp::RZZ(*theta, map(*qubit_1)?, map(*qubit_2)?)
             }
             QuantumOp::Measure(qubit, result_id) => QuantumOp::Measure(map(*qubit)?, *result_id),
+            QuantumOp::MeasureLeaked(qubit, result_id) => {
+                QuantumOp::MeasureLeaked(map(*qubit)?, *result_id)
+            }
             QuantumOp::Reset(qubit) => QuantumOp::Reset(map(*qubit)?),
         })
     }
@@ -1015,6 +1061,13 @@ impl SeleneRuntime {
             QuantumOp::Measure(qubit, result_id) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_measure(runtime_qubit, *result_id)?;
+                self.program_to_runtime_qubits.remove(qubit);
+                self.runtime_qfree(runtime_qubit)?;
+            }
+            QuantumOp::MeasureLeaked(qubit, result_id) => {
+                self.leakage_results.insert(*result_id);
+                let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
+                self.call_runtime_measure_leaked(runtime_qubit, *result_id)?;
                 self.program_to_runtime_qubits.remove(qubit);
                 self.runtime_qfree(runtime_qubit)?;
             }
@@ -1297,6 +1350,10 @@ impl SeleneRuntime {
             (
                 QuantumOp::Measure(source_qubit, source_result),
                 QuantumOp::Measure(lowered_qubit, lowered_result),
+            )
+            | (
+                QuantumOp::MeasureLeaked(source_qubit, source_result),
+                QuantumOp::MeasureLeaked(lowered_qubit, lowered_result),
             ) => source_qubit == lowered_qubit && source_result == lowered_result,
             _ => false,
         }
@@ -1332,6 +1389,7 @@ impl SeleneRuntime {
             | QuantumOp::RXY(_, _, qubit)
             | QuantumOp::Idle(_, qubit)
             | QuantumOp::Measure(qubit, _)
+            | QuantumOp::MeasureLeaked(qubit, _)
             | QuantumOp::Reset(qubit) => {
                 qubits.insert(*qubit);
             }
@@ -1470,15 +1528,30 @@ impl SeleneRuntime {
                 RuntimeScheduledOp::Measure {
                     qubit_id,
                     result_id,
+                } => {
+                    let qubit = self.runtime_qubit_to_usize(qubit_id)?;
+                    let program_result = self.runtime_result_to_program_result(result_id)?;
+                    self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
+                    if self.leakage_results.contains(&program_result) {
+                        // The pinned runtime ABI allocates both Boolean and
+                        // leakage-aware futures through `runtime_measure`.
+                        // Restore the source result kind after scheduling so
+                        // PECOS executes MeasureLeaked and can produce 2.
+                        lowered_ops.push(QuantumOp::MeasureLeaked(qubit, program_result));
+                    } else {
+                        lowered_ops.push(QuantumOp::Measure(qubit, program_result));
+                    }
+                    self.mark_gate_end(qubit, end_time);
                 }
-                | RuntimeScheduledOp::MeasureLeaked {
+                RuntimeScheduledOp::MeasureLeaked {
                     qubit_id,
                     result_id,
                 } => {
                     let qubit = self.runtime_qubit_to_usize(qubit_id)?;
                     let program_result = self.runtime_result_to_program_result(result_id)?;
+                    self.leakage_results.insert(program_result);
                     self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
-                    lowered_ops.push(QuantumOp::Measure(qubit, program_result));
+                    lowered_ops.push(QuantumOp::MeasureLeaked(qubit, program_result));
                     self.mark_gate_end(qubit, end_time);
                 }
                 RuntimeScheduledOp::Reset { qubit_id } => {
@@ -1578,6 +1651,7 @@ impl Clone for SeleneRuntime {
             program_to_runtime_qubits: self.program_to_runtime_qubits.clone(),
             program_to_runtime_results: self.program_to_runtime_results.clone(),
             runtime_to_program_results: self.runtime_to_program_results.clone(),
+            leakage_results: self.leakage_results.clone(),
             last_gate_time_end_nanos: self.last_gate_time_end_nanos.clone(),
             pending_shot_start: self.pending_shot_start,
             active_shot: self.active_shot,
@@ -1650,8 +1724,11 @@ fn operation_capacity_with_mode(
 }
 
 fn include_quantum_result_capacity(qop: &QuantumOp, num_results: &mut usize) {
-    if let QuantumOp::Measure(_, result) = qop {
-        include_result(num_results, *result);
+    match qop {
+        QuantumOp::Measure(_, result) | QuantumOp::MeasureLeaked(_, result) => {
+            include_result(num_results, *result);
+        }
+        _ => {}
     }
 }
 
@@ -1686,7 +1763,7 @@ fn include_quantum_op_capacity(qop: &QuantumOp, num_qubits: &mut usize, num_resu
             include_qubit(num_qubits, *qubit_2);
             include_qubit(num_qubits, *qubit_3);
         }
-        QuantumOp::Measure(qubit, result) => {
+        QuantumOp::Measure(qubit, result) | QuantumOp::MeasureLeaked(qubit, result) => {
             include_qubit(num_qubits, *qubit);
             include_result(num_results, *result);
         }
@@ -1877,6 +1954,15 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn provide_measurements(&mut self, measurements: BTreeMap<usize, bool>) -> Result<()> {
+        self.provide_measurement_outcomes(
+            measurements
+                .into_iter()
+                .map(|(result_id, value)| (result_id, u32::from(value)))
+                .collect(),
+        )
+    }
+
+    fn provide_measurement_outcomes(&mut self, measurements: BTreeMap<usize, u32>) -> Result<()> {
         debug!(
             "Received {} measurement results, num_results={}, allocated_results={:?}",
             measurements.len(),
@@ -1890,18 +1976,44 @@ impl QisRuntime for SeleneRuntime {
                 "Measurement result {} = {} (num_results={})",
                 result_id, value, self.num_results
             );
-            self.state.measurements.insert(*result_id, *value);
+            if *value <= 1 {
+                self.state.measurements.insert(*result_id, *value == 1);
+            }
 
             if let Some(runtime_result_id) = self.program_to_runtime_results.get(result_id) {
                 if let Some(lib) = &self.library
                     && let Some(instance) = self.instance
                 {
                     unsafe {
-                        if let Ok(set_result_fn) =
+                        if self.leakage_results.contains(result_id) {
+                            if let Ok(set_result_fn) =
+                                lib.get::<unsafe extern "C" fn(*mut c_void, u64, u64) -> i32>(
+                                    b"selene_runtime_set_u64_result",
+                                )
+                            {
+                                let errno =
+                                    set_result_fn(instance, *runtime_result_id, u64::from(*value));
+                                if errno != 0 {
+                                    return Err(RuntimeError::FfiError(format!(
+                                        "selene_runtime_set_u64_result failed with errno {errno} \
+                                         for result {result_id}"
+                                    )));
+                                }
+                            }
+                        } else if let Ok(set_result_fn) =
                             lib.get::<unsafe extern "C" fn(*mut c_void, u64, bool) -> i32>(
                                 b"selene_runtime_set_bool_result",
                             )
                         {
+                            let bool_value = match *value {
+                                0 => false,
+                                1 => true,
+                                _ => {
+                                    return Err(RuntimeError::ExecutionError(format!(
+                                        "ordinary measurement result {result_id} has non-Boolean outcome {value}"
+                                    )));
+                                }
+                            };
                             // A delivery FAILURE is fatal: the scheduler
                             // would otherwise proceed on stale/default state
                             // while the QIS worker advances on the real bit,
@@ -1909,7 +2021,7 @@ impl QisRuntime for SeleneRuntime {
                             // An ABSENT symbol stays legal -- a runtime that
                             // never conditions on results has no delivery to
                             // fail.
-                            let errno = set_result_fn(instance, *runtime_result_id, *value);
+                            let errno = set_result_fn(instance, *runtime_result_id, bool_value);
                             if errno != 0 {
                                 return Err(RuntimeError::FfiError(format!(
                                     "selene_runtime_set_bool_result failed with errno {errno} \
@@ -1925,8 +2037,10 @@ impl QisRuntime for SeleneRuntime {
                 );
             }
 
-            if let Some(interface) = &mut self.interface {
-                interface.store_result(*result_id, *value);
+            if let Some(interface) = &mut self.interface
+                && *value <= 1
+            {
+                interface.store_result(*result_id, *value == 1);
             }
         }
 
@@ -1999,6 +2113,7 @@ impl QisRuntime for SeleneRuntime {
         self.program_to_runtime_qubits.clear();
         self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
+        self.leakage_results.clear();
         self.last_gate_time_end_nanos.clear();
         self.pending_shot_start = Some((shot_id, seed));
         self.apply_pending_shot_start()?;
@@ -2057,6 +2172,7 @@ impl QisRuntime for SeleneRuntime {
         self.program_to_runtime_qubits.clear();
         self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
+        self.leakage_results.clear();
         self.last_gate_time_end_nanos.clear();
         self.pending_shot_start = None;
         self.active_shot = None;

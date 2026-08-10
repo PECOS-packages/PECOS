@@ -13,17 +13,11 @@ class TestCustomNoiseModels:
         )
 
         # Test depolarizing noise builder
-        dep = depolarizing_noise().with_p1_probability(0.05)
+        dep = depolarizing_noise().with_p1(0.05)
         assert dep is not None
 
         # Test depolarizing noise with multiple parameters
-        dep_custom = (
-            depolarizing_noise()
-            .with_prep_probability(0.002)
-            .with_meas_probability(0.001)
-            .with_p1_probability(0.003)
-            .with_p2_probability(0.002)
-        )
+        dep_custom = depolarizing_noise().with_p_prep(0.002).with_p_meas(0.001).with_p1(0.003).with_p2(0.002)
         assert dep_custom is not None
 
         # Test BiasedDepolarizingNoise
@@ -106,11 +100,7 @@ class TestCustomNoiseModels:
             .program(Qasm.from_string(qasm_valid))
             .to_sim()
             .noise(
-                depolarizing_noise()
-                .with_prep_probability(0.1)
-                .with_meas_probability(0.2)
-                .with_p1_probability(0.3)
-                .with_p2_probability(0.4),
+                depolarizing_noise().with_p_prep(0.1).with_p_meas(0.2).with_p1(0.3).with_p2(0.4),
             )
             .build()
         )

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from pecos.qec.surface import (
     GuppyRngMaskConfig,
-    NoiseModel,
+    NoiseParameters,
     SurfacePatch,
     TwirlConfig,
     build_memory_circuit,
@@ -178,7 +178,7 @@ def test_demask_helper_cancels_known_pauli_frame_xor() -> None:
     sampler = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(),
     )
@@ -213,7 +213,7 @@ def test_native_sampler_accepts_harvested_uint8_pauli_masks() -> None:
     sampler = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(),
     )
@@ -234,7 +234,7 @@ def test_sample_batch_with_pauli_masks_returns_sample_batch() -> None:
     sampler = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(),
     )
@@ -286,21 +286,21 @@ def test_canonical_frame_output_reuses_raw_abstract_sampler_topology() -> None:
     raw = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(),
     )
     canonical = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(frame_output="canonical"),
     )
     scaled = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(twirl_probability=0.5),
     )
@@ -351,7 +351,7 @@ def test_abstract_twirl_builders_reject_unsupported_config(
         build_native_sampler(
             patch,
             num_rounds=2,
-            noise=NoiseModel(),
+            noise=NoiseParameters(),
             basis="Z",
             twirl=twirl,
         )
@@ -360,7 +360,7 @@ def test_abstract_twirl_builders_reject_unsupported_config(
         generate_circuit_level_dem_from_builder(
             patch,
             num_rounds=2,
-            noise=NoiseModel(),
+            noise=NoiseParameters(),
             basis="Z",
             twirl=twirl,
         )
@@ -368,7 +368,7 @@ def test_abstract_twirl_builders_reject_unsupported_config(
 
 def test_twirl_sine_law_idle_noise_builds_dem_and_sampler() -> None:
     patch = SurfacePatch.create(distance=3)
-    noise = NoiseModel(p_idle_x_quadratic_sine_rate=0.03)
+    noise = NoiseParameters().with_p_idle_sin_squared(0.03, {"X": 1.0})
     twirl = TwirlConfig()
 
     dem = generate_circuit_level_dem_from_builder(
@@ -398,17 +398,17 @@ def test_twirl_sine_law_idle_noise_builds_dem_and_sampler() -> None:
 @pytest.mark.parametrize(
     ("label", "noise"),
     [
-        ("depolarizing", NoiseModel(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)),
-        ("uniform_idle", NoiseModel(p_idle=0.002)),
-        ("t1_t2", NoiseModel(t1=1000.0, t2=800.0)),
-        ("linear_idle", NoiseModel(p_idle_linear_rate=0.001)),
-        ("quadratic_idle", NoiseModel(p_idle_quadratic_rate=0.01)),
-        ("sine_law_idle", NoiseModel(p_idle_x_quadratic_sine_rate=0.03)),
+        ("depolarizing", NoiseParameters(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)),
+        ("uniform_idle", NoiseParameters(p_idle=0.002)),
+        ("t1_t2", NoiseParameters(t1=1000.0, t2=800.0)),
+        ("linear_idle", NoiseParameters().with_p_idle_linear(0.001, {"Z": 1.0})),
+        ("z_sine_law_idle", NoiseParameters().with_p_idle_sin_squared(0.01, {"Z": 1.0})),
+        ("x_sine_law_idle", NoiseParameters().with_p_idle_sin_squared(0.03, {"X": 1.0})),
     ],
 )
 def test_twirling_does_not_change_canonical_dem(
     label: str,
-    noise: NoiseModel,
+    noise: NoiseParameters,
 ) -> None:
     del label
     patch = SurfacePatch.create(distance=3)
@@ -434,7 +434,7 @@ def test_twirling_does_not_change_canonical_dem(
 
 def test_gate_local_twirling_does_not_change_canonical_dem() -> None:
     patch = SurfacePatch.create(distance=3)
-    noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)
+    noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)
 
     untwirled = generate_circuit_level_dem_from_builder(
         patch,

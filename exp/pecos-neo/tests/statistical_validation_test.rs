@@ -482,8 +482,8 @@ fn test_neo_vs_engines_noisy_comparison() {
 
     // pecos-engines noise model
     let engines_noise = GeneralNoiseModel::builder()
-        .with_average_p1_probability(p1 / 1.5)
-        .with_average_p2_probability(p2 / 1.25)
+        .with_average_p1(p1 / 1.5)
+        .with_average_p2(p2 / 1.25)
         .build();
 
     let engine = QASMEngine::from_str(qasm).unwrap();

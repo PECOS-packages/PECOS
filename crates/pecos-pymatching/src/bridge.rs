@@ -119,6 +119,11 @@ pub(crate) mod ffi {
             merge_strategy: MergeStrategy,
         ) -> Result<()>;
 
+        fn pymatching_set_all_error_probabilities(
+            graph: Pin<&mut PyMatchingGraph>,
+            error_probability: f64,
+        );
+
         // ===== Graph Queries =====
 
         /// Get the number of nodes in the graph.

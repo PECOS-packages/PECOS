@@ -85,6 +85,23 @@ impl MinSumConfig {
         }
     }
 
+    /// Validate min-sum tuning parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns a configuration error if a scaling value is not finite or is negative.
+    pub fn validate(&self) -> crate::errors::Result<()> {
+        if self
+            .alpha
+            .is_some_and(|alpha| !alpha.is_finite() || alpha < 0.0)
+        {
+            return Err(crate::errors::RelayBpError::Configuration(
+                "alpha must be finite and non-negative".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Convert to relay-bp's internal config type.
     ///
     /// This creates an `ndarray_016::Array1<f64>` (relay-bp's pinned ndarray 0.16),

@@ -465,6 +465,82 @@ impl MonteCarloEngine {
         })
     }
 
+    /// Runs by specifying a set of fault histories. There should be on
+    /// fault history per shot.
+    ///
+    /// # Errors
+    /// Returns [`PecosError::Input`] when the configured noise model is not
+    /// [`DepolarizingNoiseModel`].
+    pub fn run_with_fault_histories(
+        &mut self,
+        fault_histories: Vec<DepolarizingFaultHistory>,
+    ) -> Result<MonteCarloRunResult, PecosError> {
+        if fault_histories.is_empty() {
+            return Err(PecosError::Input(
+                "run_with_fault_histories requires at least one fault history".to_string(),
+            ));
+        }
+
+        let num_shots = fault_histories.len();
+        let mut worker_engine = self.hybrid_engine_template.clone();
+        let worker_seed = derive_seed(self.rng.next_u64(), "specified_history_worker_0");
+        worker_engine.set_seed(worker_seed);
+
+        let mut shots = Vec::with_capacity(num_shots);
+        let mut applied_histories = Vec::with_capacity(num_shots);
+
+        for history in fault_histories {
+            worker_engine.reset()?;
+
+            // Set the fault history in the noise model for this shot
+            {
+                let noise_model = worker_engine.quantum_system.noise_model_mut();
+                // Throw an error for now if it is not depolarizing noise
+                let depolarizing = noise_model
+                    .as_any_mut()
+                    .downcast_mut::<DepolarizingNoiseModel>()
+                    .ok_or_else(|| {
+                        PecosError::Input(
+                            "run_with_specified_fault_histories requires DepolarizingNoiseModel"
+                                .to_string(),
+                        )
+                    })?;
+                depolarizing.set_sampled_fault_history_enabled(true);
+                depolarizing.set_replay_fault_history(Some(history));
+            }
+
+            // Run the simulation for this shot
+            let shot = worker_engine.run_shot()?;
+
+            // Extract the applied fault history from the noise model after execution
+            let applied_history = {
+                let noise_model = worker_engine.quantum_system.noise_model_mut();
+                let depolarizing = noise_model
+                    .as_any_mut()
+                    .downcast_mut::<DepolarizingNoiseModel>()
+                    .ok_or_else(|| {
+                        PecosError::Input(
+                            "run_with_specified_fault_histories requires DepolarizingNoiseModel"
+                                .to_string(),
+                        )
+                    })?;
+                let applied = depolarizing
+                    .sampled_fault_history()
+                    .map_or_else(Vec::new, |faults| faults.to_vec());
+                depolarizing.clear_replay_fault_history();
+                applied
+            };
+
+            shots.push(shot);
+            applied_histories.push(applied_history);
+        }
+
+        Ok(MonteCarloRunResult {
+            results: ShotVec::from_measurements(&shots),
+            fault_histories: applied_histories,
+        })
+    }
+
     /// Run a simulation using the provided engines directly.
     ///
     /// This convenience method creates a `HybridEngine` from the provided components

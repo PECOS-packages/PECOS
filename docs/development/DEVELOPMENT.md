@@ -133,6 +133,39 @@ just check-all
 
 Note: For the Rust side of the project, you can use `cargo` to run tests, benchmarks, formatting, etc.
 
+## Native Numeric Migration Pattern
+
+Runtime code imports numeric primitives from the public `pecos` surface. NumPy remains in tests as an oracle.
+
+```python
+from pecos import Array, array, asarray, dtypes, sum as array_sum, zeros
+```
+
+Map the dtype used by the migrated code as follows:
+
+| NumPy dtype | PECOS dtype |
+|-------------|-------------|
+| `np.uint8`  | `dtypes.uint8` |
+
+Use `Array` in annotations and enter the native layer with `asarray()` when an external API returns an array-like
+object. Constructors and casts take PECOS dtypes, for example `zeros(size, dtype=dtypes.uint8)` and
+`array(values, dtype=dtypes.uint8)`.
+
+`Array.flatten()` preserves row-major order and returns an independent `Array` copy:
+
+```python
+flat = values.flatten().tolist()
+```
+
+`Array.ravel()` also returns a copy. This intentionally differs from NumPy, whose `ravel()` may return a view.
+
+Elementwise comparison returns a boolean `Array`, and `array_sum()` accepts it directly -- counting
+mismatches needs no cast:
+
+```python
+logical_errors = int(array_sum(predicted != expected))
+```
+
 ## Dependency and Security Checks
 
 Use the Justfile recipes below so local checks match CI:

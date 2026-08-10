@@ -20,7 +20,7 @@ import pytest
 
 import pecos as pc
 import pecos_rslib
-from pecos_rslib import Array, dtypes, num
+from pecos_rslib import Array, Pauli, PauliString, dtypes, num
 
 UNSIGNED_DTYPES = (
     ("uint8", "u8", dtypes.uint8, np.uint8),
@@ -539,6 +539,241 @@ def test_num_array_dtype_spelling_compatibility(
 def test_i8_string_keeps_dev_numpy_typestring_behavior() -> None:
     assert num.array([128], dtype="i8").tolist() == [128]
     assert num.array([128], dtype="i8").dtype == dtypes.int64
+
+
+SHAPE_METHOD_DTYPES = (
+    (dtypes.bool, np.bool_),
+    (dtypes.int8, np.int8),
+    (dtypes.int64, np.int64),
+    (dtypes.uint8, np.uint8),
+    (dtypes.uint64, np.uint64),
+    (dtypes.float32, np.float32),
+    (dtypes.float64, np.float64),
+    (dtypes.complex128, np.complex128),
+)
+
+SHAPE_METHOD_CASES = (
+    ((6,), (2, 3)),
+    ((2, 3), (3, 2)),
+    ((1, 2, 3), (3, 2)),
+    ((2, 0, 3), (0, 6)),
+    ((1, 1, 1), (1,)),
+)
+
+
+def shape_method_values(shape: tuple[int, ...], numpy_dtype: Any) -> np.ndarray[Any, Any]:
+    size = int(np.prod(shape, dtype=np.int64))
+    values = np.arange(size, dtype=np.float64).reshape(shape)
+    if numpy_dtype is np.bool_:
+        values = values % 2 == 0
+    elif numpy_dtype is np.complex128:
+        values = values + 0.5j
+    return values.astype(numpy_dtype)
+
+
+def fill_value_for_dtype(numpy_dtype: Any) -> Any:
+    if numpy_dtype is np.bool_:
+        return False
+    if numpy_dtype is np.complex128:
+        return 3 + 2j
+    return 3
+
+
+@pytest.mark.parametrize(("pecos_dtype", "numpy_dtype"), SHAPE_METHOD_DTYPES)
+@pytest.mark.parametrize(("source_shape", "target_shape"), SHAPE_METHOD_CASES)
+def test_array_shape_methods_match_numpy_across_ranks_sizes_and_dtypes(
+    pecos_dtype: Any,
+    numpy_dtype: Any,
+    source_shape: tuple[int, ...],
+    target_shape: tuple[int, ...],
+) -> None:
+    source = shape_method_values(source_shape, numpy_dtype)
+    actual = Array(source, dtype=pecos_dtype)
+
+    assert actual.flatten().tolist() == source.flatten().tolist()
+    assert actual.ravel().tolist() == source.ravel().tolist()
+    assert actual.reshape(target_shape).tolist() == source.reshape(target_shape).tolist()
+
+    expected_fill = source.copy()
+    expected_fill.fill(fill_value_for_dtype(numpy_dtype))
+    assert actual.fill(fill_value_for_dtype(numpy_dtype)) is None
+    assert actual.tolist() == expected_fill.tolist()
+
+
+@pytest.mark.parametrize("method_name", ["flatten", "ravel"])
+def test_flatten_and_ravel_return_independent_copies(method_name: str) -> None:
+    original = Array([0, 1, 2, 3, 4, 5], dtype=dtypes.int64)
+    result = getattr(original, method_name)()
+
+    result[0] = 99
+
+    assert result.tolist() == [99, 1, 2, 3, 4, 5]
+    assert original.tolist() == [0, 1, 2, 3, 4, 5]
+
+
+@pytest.mark.parametrize("method_name", ["flatten", "ravel"])
+def test_flatten_and_ravel_use_logical_c_order_for_transposed_arrays(method_name: str) -> None:
+    source = np.arange(12, dtype=np.int64).reshape(3, 4).T
+    actual = Array(source).T
+    expected = np.asarray(source).T
+
+    assert getattr(actual, method_name)().tolist() == getattr(expected, method_name)().tolist()
+
+
+@pytest.mark.parametrize("target_shape", [(3, 8), (2, 3, 4), (24,), (1, 4, 2, 3)])
+def test_reshape_valid_shapes_match_numpy(target_shape: tuple[int, ...]) -> None:
+    source = np.arange(24, dtype=np.int64).reshape(2, 3, 4)
+    actual = Array(source)
+
+    assert actual.reshape(target_shape).tolist() == source.reshape(target_shape).tolist()
+    assert actual.reshape(*target_shape).tolist() == source.reshape(*target_shape).tolist()
+
+
+@pytest.mark.parametrize("target_shape", [(-1,), (2, -1), (-1, 3, 2)])
+def test_reshape_minus_one_inference_matches_numpy(target_shape: tuple[int, ...]) -> None:
+    source = np.arange(24, dtype=np.int64).reshape(2, 3, 4)
+    actual = Array(source)
+    expected = source.reshape(target_shape)
+
+    result = actual.reshape(target_shape)
+    assert result.shape == expected.shape
+    assert result.tolist() == expected.tolist()
+
+
+def test_reshape_minus_one_infers_zero_for_empty_array_like_numpy() -> None:
+    source = np.empty((2, 0, 3), dtype=np.float64)
+    actual = Array(source)
+
+    assert actual.reshape(-1).shape == source.reshape(-1).shape == (0,)
+
+
+def test_reshape_mismatched_element_count_names_size_and_requested_shape() -> None:
+    actual = Array([[0, 1, 2], [3, 4, 5]], dtype=dtypes.int64)
+
+    with pytest.raises(ValueError, match="size 6.*requested shape") as error:
+        actual.reshape(4, 2)
+
+    assert "size 6" in str(error.value)
+    assert "requested shape (4, 2)" in str(error.value)
+
+
+def test_reshape_rejects_two_inferred_dimensions() -> None:
+    with pytest.raises(ValueError, match="only specify one unknown dimension"):
+        Array([0, 1, 2, 3]).reshape(-1, -1)
+
+
+def test_reshape_rejects_inference_that_does_not_divide_evenly() -> None:
+    with pytest.raises(ValueError, match="size 5.*requested shape") as error:
+        Array([0, 1, 2, 3, 4]).reshape(2, -1)
+
+    assert "size 5" in str(error.value)
+    assert "requested shape (2, -1)" in str(error.value)
+
+
+@pytest.mark.parametrize("bad_shape", [1.5, "6", True, (2, 1.5)])
+def test_reshape_rejects_non_integer_shape(bad_shape: object) -> None:
+    with pytest.raises(TypeError, match="shape dimensions must be integers"):
+        Array([0, 1, 2, 3, 4, 5]).reshape(bad_shape)
+
+
+def test_reshape_rejects_no_shape_arguments() -> None:
+    with pytest.raises(TypeError, match="at least one shape argument"):
+        Array([1]).reshape()
+
+
+def test_reshape_empty_tuple_matches_numpy_scalar_shape() -> None:
+    actual = Array([7]).reshape(())
+    expected = np.array([7]).reshape(())
+
+    assert actual.shape == expected.shape == ()
+    assert actual.tolist() == expected.tolist() == 7
+
+
+def test_fill_is_in_place_returns_none_and_sets_every_element() -> None:
+    actual = Array([[1, 2], [3, 4]], dtype=dtypes.int64)
+
+    result = actual.fill(7)
+
+    assert result is None
+    assert actual.tolist() == [[7, 7], [7, 7]]
+
+
+@pytest.mark.parametrize(("dtype", "value"), [(dtypes.uint8, 256), (dtypes.uint64, -1)])
+def test_fill_rejects_unsigned_out_of_range_without_mutation(dtype: Any, value: int) -> None:
+    actual = Array([1, 2, 3], dtype=dtype)
+
+    with pytest.raises(OverflowError, match="out of range"):
+        actual.fill(value)
+
+    assert actual.tolist() == [1, 2, 3]
+
+
+def test_fill_rejects_wrong_type_without_mutation() -> None:
+    actual = Array([1, 2, 3], dtype=dtypes.int64)
+
+    with pytest.raises(TypeError):
+        actual.fill("not an integer")
+
+    assert actual.tolist() == [1, 2, 3]
+
+
+def test_fill_rejects_non_scalar_without_mutation() -> None:
+    actual = Array([1, 2, 3], dtype=dtypes.int64)
+
+    with pytest.raises(TypeError, match="fill value must be a scalar"):
+        actual.fill([4, 5])
+
+    assert actual.tolist() == [1, 2, 3]
+
+
+def test_fill_integer_into_float_array_matches_measured_numpy_behavior() -> None:
+    actual = Array([1.5, 2.5], dtype=dtypes.float32)
+    expected = np.array([1.5, 2.5], dtype=np.float32)
+
+    actual_result = actual.fill(3)
+    expected_result = expected.fill(3)
+
+    assert actual_result is expected_result is None
+    assert actual.tolist() == expected.tolist() == [3.0, 3.0]
+
+
+def test_ravel_docstring_states_copy_divergence_from_numpy() -> None:
+    docstring = Array.ravel.__doc__
+    assert docstring is not None
+    assert "differs from NumPy" in docstring
+    assert "always returns an independent" in docstring
+
+
+@pytest.mark.parametrize("shape", [(2, 12), (3, 2, 4), (24,)])
+def test_reshape_round_trips_and_flatten_restores_original_shape(shape: tuple[int, ...]) -> None:
+    source = np.arange(24, dtype=np.int64).reshape(2, 3, 4)
+    actual = Array(source)
+
+    assert actual.reshape(shape).reshape(actual.shape).tolist() == actual.tolist()
+    assert actual.flatten().reshape(actual.shape).tolist() == actual.tolist()
+
+
+def test_pauli_shape_methods_and_fill_are_supported() -> None:
+    actual = Array([[Pauli.I, Pauli.X], [Pauli.Y, Pauli.Z]])
+
+    assert actual.flatten().tolist() == [Pauli.I, Pauli.X, Pauli.Y, Pauli.Z]
+    assert actual.ravel().tolist() == [Pauli.I, Pauli.X, Pauli.Y, Pauli.Z]
+    assert actual.reshape(4, 1).tolist() == [[Pauli.I], [Pauli.X], [Pauli.Y], [Pauli.Z]]
+    assert actual.fill(Pauli.Z) is None
+    assert actual.tolist() == [[Pauli.Z, Pauli.Z], [Pauli.Z, Pauli.Z]]
+
+
+def test_pauli_string_shape_methods_and_fill_are_supported() -> None:
+    x = PauliString.from_dense_str("X")
+    y = PauliString.from_dense_str("Y")
+    z = PauliString.from_dense_str("Z")
+    actual = Array([[x, y], [z, x]])
+
+    assert actual.flatten().tolist() == [x, y, z, x]
+    assert actual.ravel().tolist() == [x, y, z, x]
+    assert actual.reshape(4, 1).tolist() == [[x], [y], [z], [x]]
+    assert actual.fill(z) is None
+    assert actual.tolist() == [[z, z], [z, z]]
 
 
 @pytest.mark.parametrize(("_canonical", "_short", "pecos_dtype", "numpy_dtype"), UNSIGNED_DTYPES)

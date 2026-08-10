@@ -1,3 +1,4 @@
+use pecos_engines::ByteMessage;
 use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
 use pecos_engines::monte_carlo::engine::{MonteCarloEngine, SeedReport};
 
@@ -69,13 +70,21 @@ fn seed_report_from_json_str_parses_valid_report() {
     assert_eq!(report.workers[1].seed, 435);
 }
 
-/// Tests `run_with_workers_seed_report` method.
+/// Tests `run_with_workers_report_seeds` method.
 /// Ensures the method kicks the job off correctly and creates a
 /// `SeedReport` with the right properties.
 #[test]
 fn run_with_seed_report_returns_expected_worker_metadata() {
     fn make_test_monte_carlo_engine() -> MonteCarloEngine {
-        MonteCarloEngine::new_with_defaults(Box::new(ExternalClassicalEngine::new()))
+        let circuit = ByteMessage::quantum_operations_builder()
+            .pz(&[0])
+            .h(&[0])
+            .mz(&[0])
+            .build();
+        MonteCarloEngine::new_with_depolarizing_noise(
+            Box::new(ExternalClassicalEngine::new_with_circuit(circuit)),
+            0.1,
+        )
     }
 
     let mut engine = make_test_monte_carlo_engine();
@@ -85,7 +94,7 @@ fn run_with_seed_report_returns_expected_worker_metadata() {
     let num_workers = 2;
 
     let (_shots, report) = engine
-        .run_with_workers_seed_report(num_shots, num_workers, false)
+        .run_with_workers_report_seeds(num_shots, num_workers)
         .unwrap();
 
     assert_eq!(report.root_seed, 42);
@@ -100,13 +109,22 @@ fn run_with_seed_report_returns_expected_worker_metadata() {
     assert_eq!(report.workers[1].worker_idx, 1);
 }
 
-/// Tests seed determinism.
-/// The two runs with the same seed ('a' and 'b') should agree.
-/// The run with a different seed ('c') should disagree with the others.
+/// Tests seed-report determinism.
+/// The two runs with the same root seed (`a` and `b`) should report the same
+/// base and worker seeds. The run with a different root seed (`c`) should
+/// report different worker seeds.
 #[test]
 fn run_with_seed_report_is_deterministic_for_same_seed_workers_and_shots() {
     fn make_test_monte_carlo_engine() -> MonteCarloEngine {
-        MonteCarloEngine::new_with_defaults(Box::new(ExternalClassicalEngine::new()))
+        let circuit = ByteMessage::quantum_operations_builder()
+            .pz(&[0])
+            .h(&[0])
+            .mz(&[0])
+            .build();
+        MonteCarloEngine::new_with_depolarizing_noise(
+            Box::new(ExternalClassicalEngine::new_with_circuit(circuit)),
+            0.1,
+        )
     }
 
     let mut engine_a = make_test_monte_carlo_engine();
@@ -117,11 +135,11 @@ fn run_with_seed_report_is_deterministic_for_same_seed_workers_and_shots() {
     engine_b.set_seed(42);
     engine_c.set_seed(43);
 
-    let (_shots_a, report_a) = engine_a.run_with_workers_seed_report(10, 2, false).unwrap();
+    let (_shots_a, report_a) = engine_a.run_with_workers_report_seeds(10, 2).unwrap();
 
-    let (_shots_b, report_b) = engine_b.run_with_workers_seed_report(10, 2, false).unwrap();
+    let (_shots_b, report_b) = engine_b.run_with_workers_report_seeds(10, 2).unwrap();
 
-    let (_shots_c, report_c) = engine_c.run_with_workers_seed_report(10, 2, false).unwrap();
+    let (_shots_c, report_c) = engine_c.run_with_workers_report_seeds(10, 2).unwrap();
 
     assert_eq!(report_a.root_seed, report_b.root_seed);
     assert_eq!(report_a.base_seed, report_b.base_seed);
@@ -139,41 +157,59 @@ fn run_with_seed_report_is_deterministic_for_same_seed_workers_and_shots() {
     }
 }
 
-/// Tests that rerunning a job from the seed report produces
-/// the same results as the original job.
+/// Verifies that replaying a seed report reproduces the original noisy
+/// measurement results.
 #[test]
 fn rerun_from_seed_report_reproduces_original_results() {
     fn make_test_monte_carlo_engine() -> MonteCarloEngine {
-        MonteCarloEngine::new_with_defaults(Box::new(ExternalClassicalEngine::new()))
+        let circuit = ByteMessage::quantum_operations_builder()
+            .pz(&[0])
+            .h(&[0])
+            .mz(&[0])
+            .build();
+        MonteCarloEngine::new_with_depolarizing_noise(
+            Box::new(ExternalClassicalEngine::new_with_circuit(circuit)),
+            0.1,
+        )
     }
 
     let mut original_engine = make_test_monte_carlo_engine();
     original_engine.set_seed(42);
 
     let (original_results, report) = original_engine
-        .run_with_workers_seed_report(20, 2, false)
+        .run_with_workers_report_seeds(20, 2)
         .unwrap();
 
     let mut replay_engine = make_test_monte_carlo_engine();
 
-    let replayed_results = replay_engine.rerun_from_seed_report(&report).unwrap();
+    let replayed_results = replay_engine
+        .run_with_workers_from_seed_report(&report)
+        .unwrap();
 
     assert_eq!(replayed_results, original_results);
 }
 
-/// Tests that rerunning a job from a saved string seed report
-/// produces the same results as the original job.
+/// Verifies the same noisy-result replay after serializing and deserializing
+/// the seed report.
 #[test]
 fn rerun_from_seed_report_loaded_from_json_reproduces_original_results() {
     fn make_test_monte_carlo_engine() -> MonteCarloEngine {
-        MonteCarloEngine::new_with_defaults(Box::new(ExternalClassicalEngine::new()))
+        let circuit = ByteMessage::quantum_operations_builder()
+            .pz(&[0])
+            .h(&[0])
+            .mz(&[0])
+            .build();
+        MonteCarloEngine::new_with_depolarizing_noise(
+            Box::new(ExternalClassicalEngine::new_with_circuit(circuit)),
+            0.1,
+        )
     }
 
     let mut original_engine = make_test_monte_carlo_engine();
     original_engine.set_seed(42);
 
     let (original_results, report) = original_engine
-        .run_with_workers_seed_report(20, 2, false)
+        .run_with_workers_report_seeds(20, 2)
         .unwrap();
 
     let json = serde_json::to_string(&report).unwrap();
@@ -182,7 +218,7 @@ fn rerun_from_seed_report_loaded_from_json_reproduces_original_results() {
     let mut replay_engine = make_test_monte_carlo_engine();
 
     let replayed_results = replay_engine
-        .rerun_from_seed_report(&loaded_report)
+        .run_with_workers_from_seed_report(&loaded_report)
         .unwrap();
 
     assert_eq!(replayed_results, original_results);

@@ -6,7 +6,7 @@
 
 use crate::errors::{Error, Result};
 use crate::extract::contained_entry_path;
-use sevenz_rust::{Password, SevenZReader};
+use sevenz_rust2::{ArchiveReader, Password};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
@@ -370,11 +370,8 @@ fn copy_dir_contents(src: &Path, dest: &Path) -> Result<()> {
 fn extract_windows_exe(archive: &Path, dest: &Path) -> Result<()> {
     println!("Extracting CUDA Toolkit...");
 
-    let file = fs::File::open(archive)?;
-    let len = file.metadata()?.len();
-    let password = Password::empty();
-    let mut reader =
-        SevenZReader::new(file, len, password).map_err(|e| Error::Archive(e.to_string()))?;
+    let mut reader = ArchiveReader::open(archive, Password::empty())
+        .map_err(|e| Error::Archive(e.to_string()))?;
 
     fs::create_dir_all(dest)?;
 
@@ -395,10 +392,10 @@ fn extract_windows_exe(archive: &Path, dest: &Path) -> Result<()> {
 
             // Entry names come from the archive, so they are untrusted input: resolve them
             // through the containment check before touching the filesystem. Unlike the tar
-            // and zip readers used elsewhere in this crate, SevenZReader hands the raw name
+            // and zip readers used elsewhere in this crate, ArchiveReader hands the raw name
             // to the callback without validating it.
             let entry_path = contained_entry_path(dest, entry_name)
-                .map_err(|error| sevenz_rust::Error::other(error.to_string()))?;
+                .map_err(|error| sevenz_rust2::Error::Other(error.to_string().into()))?;
 
             if entry.is_directory() {
                 fs::create_dir_all(&entry_path).ok();

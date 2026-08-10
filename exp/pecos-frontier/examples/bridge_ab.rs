@@ -90,7 +90,10 @@ fn main() {
         for &fired in &entry.fired {
             syndrome[fired as usize] = 1;
         }
-        if let Ok(result) = decoder.decode(&syndrome) {
+        let shot_started = std::time::Instant::now();
+        let outcome = decoder.decode(&syndrome);
+        let shot_seconds = shot_started.elapsed().as_secs_f64();
+        if let Ok(result) = outcome {
             let words = result.predicted.words();
             assert!(words.iter().skip(2).all(|&w| w == 0), "label fits u128");
             let predicted = u128::from(words.first().copied().unwrap_or(0))
@@ -105,13 +108,16 @@ fn main() {
                 .runner_up_gap
                 .map_or(String::from("inf"), |g| format!("{g:.6}"));
             println!(
-                "{shot},{predicted},{},{status},{gap},{:.6}",
+                "{shot},{predicted},{},{status},{gap},{:.6},{shot_seconds:.6}",
                 entry.truth_logical, result.log_evidence
             );
         } else {
             failures += 1;
             no_path += 1;
-            println!("{shot},,{},no_path", entry.truth_logical);
+            println!(
+                "{shot},,{},no_path,,,{shot_seconds:.6}",
+                entry.truth_logical
+            );
         }
     }
     let elapsed = started.elapsed().as_secs_f64();

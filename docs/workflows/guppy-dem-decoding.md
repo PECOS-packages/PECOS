@@ -255,7 +255,7 @@ from pecos.tracing import trace_program_to_tick_circuit
 tick_circuit = trace_program_to_tick_circuit(rep_code_memory, 7)
 
 # strip_idles() removes only duration-carrying Idle gates, clearing the
-# runtime-emitted convention before insertion. remove_identity() is a separate
+# runtime-emitted convention before insertion. strip_identities() is a separate
 # unitary optimization for I and zero-angle rotations; it also removes their
 # gate-noise locations, so call it only when that optimization is intended.
 tick_circuit.strip_idles()

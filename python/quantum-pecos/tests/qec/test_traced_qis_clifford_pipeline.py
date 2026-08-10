@@ -257,7 +257,7 @@ def test_tick_circuit_identity_pass_bindings_are_separate():
     tc.strip_idles()
     assert _gate_names(tc) == ["I", "RZ"]
 
-    tc.remove_identity()
+    tc.strip_identities()
 
     assert _gate_names(tc) == []
 

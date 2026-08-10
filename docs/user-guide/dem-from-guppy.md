@@ -453,8 +453,8 @@ requested noise.
 Both `DetectorErrorModel.from_guppy` and `build_dem_from_guppy` accept two
 passes for controlling those locations:
 
-- `strip_traced_idles=True` removes identity-like gates from the normalized
-  trace, including `I`, `Idle`, and zero-angle rotations.
+- `strip_traced_idles=True` removes only `Idle` gates from the normalized
+  trace. It preserves `I` and zero-angle rotations as gate-noise locations.
 - `idle_after_2q_duration=<positive float>` inserts an `Idle` of that duration
   on both qubits after every two-qubit gate.
 
@@ -717,7 +717,7 @@ source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
   `get_num_qubits(...)` for the built-in generators.
 - **Idle noise needs idle gates.** The default simple runtime does not emit
   explicit idles. Use `idle_after_2q_duration` to insert them, optionally after
-  `strip_traced_idles` removes runtime-provided identity-like gates. Passing
+  `strip_traced_idles` removes runtime-provided `Idle` gates. Passing
   idle-noise parameters without any final `Idle` gates raises `ValueError`; see
   [Idle Noise](#idle-noise).
 - **Hand-authored tracked-Pauli observables are rejected** in

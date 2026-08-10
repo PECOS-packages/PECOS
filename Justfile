@@ -1174,6 +1174,7 @@ build-native: (build "native")
 [group('setup')]
 lock:
     uvx uv@{{uv-pin}} lock --project .
+    uvx uv@{{uv-pin}} lock --project exp/zlup
     uvx uv@{{uv-pin}} lock --project exp/zluppy
 
 # Regenerate all lockfiles from scratch

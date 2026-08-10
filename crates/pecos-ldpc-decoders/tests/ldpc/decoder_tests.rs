@@ -496,20 +496,26 @@ mod bp_lsd_decoder_tests {
         let flat: Vec<u8> = dense.iter().flatten().copied().collect();
         let arr = ndarray::Array2::from_shape_vec((rows, cols), flat).unwrap();
         let pcm = SparseMatrix::from_dense(&arr.view());
-        // Syndrome of a genuine weight-2 error so clusters must grow.
+        // A high-weight error: BP cannot resolve it in the iteration budget
+        // below, so decoding falls through to LSD with clusters that must
+        // genuinely grow — the path the fix is about.
         let mut syndrome = vec![0_u8; rows];
-        for col in [7, 63] {
+        for col in [3, 7, 11, 19, 24, 31, 38, 44, 51, 63, 72, 88, 91, 95] {
             for (row, dense_row) in dense.iter().enumerate() {
                 syndrome[row] ^= dense_row[col];
             }
         }
         let syndrome = Array1::from_vec(syndrome);
         for bits_per_step in [0, 1] {
+            // Two BP iterations cannot converge on this syndrome, so the C++
+            // bridge falls through to LSD — which is the path the fix is
+            // about. Without this, BP converges and LSD never runs, and the
+            // test proves nothing.
             let mut decoder = BpLsdDecoder::new(
                 &pcm,
                 Some(0.05),
                 None,
-                30,
+                2,
                 BpMethod::MinimumSum,
                 BpSchedule::Parallel,
                 0.625,
@@ -523,6 +529,10 @@ mod bp_lsd_decoder_tests {
             )
             .unwrap();
             let result = decoder.decode(&syndrome.view()).unwrap();
+            assert!(
+                !result.converged,
+                "BP converged, so LSD never ran and this test cannot see the defect"
+            );
             // The correction must reproduce the observed syndrome.
             let mut reproduced = vec![0_u8; rows];
             for (col, &bit) in result.decoding.iter().enumerate() {

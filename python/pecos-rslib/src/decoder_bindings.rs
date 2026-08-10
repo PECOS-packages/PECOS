@@ -1553,7 +1553,9 @@ impl PyTesseractDecoder {
     ///
     /// * `dem` - Detector error model in Stim format
     /// * `preset` - Configuration preset: "default", "fast", or "accurate"
-    /// * `det_beam` - Detector beam size (default: `u16::MAX` for infinite)
+    /// * `det_beam` - Detector beam size (default: 5, upstream Tesseract's
+    ///   `DEFAULT_DET_BEAM`; pass 65535 or `preset="accurate"` for an
+    ///   unbounded beam)
     /// * `beam_climbing` - Enable beam climbing heuristic
     /// * `verbose` - Enable verbose output
     ///

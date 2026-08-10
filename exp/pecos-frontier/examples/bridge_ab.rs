@@ -19,8 +19,10 @@
 //! where mechanism order IS the processing order and `syndrome` packs detector
 //! `i` into bit `i`.
 //!
-//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha>`
-//! Prints one `shot,predicted,truth,status` line per shot plus a summary line.
+//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha> [bp_score_iterations]`
+//! Prints one `shot,predicted,truth,status,gap,log_evidence,seconds` line per
+//! shot (no-path rows leave the gap and evidence fields empty) plus a summary
+//! line.
 
 use pecos_decoder_core::dem::SparseDem;
 use pecos_frontier::{FrontierConfig, FrontierDecoder};

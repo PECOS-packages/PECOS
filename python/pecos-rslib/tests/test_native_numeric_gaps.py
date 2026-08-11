@@ -552,6 +552,17 @@ SHAPE_METHOD_DTYPES = (
     (dtypes.complex128, np.complex128),
 )
 
+INTEGER_DTYPES = (
+    ("int8", dtypes.int8),
+    ("int16", dtypes.int16),
+    ("int32", dtypes.int32),
+    ("int64", dtypes.int64),
+    ("uint8", dtypes.uint8),
+    ("uint16", dtypes.uint16),
+    ("uint32", dtypes.uint32),
+    ("uint64", dtypes.uint64),
+)
+
 SHAPE_METHOD_CASES = (
     ((6,), (2, 3)),
     ((2, 3), (3, 2)),
@@ -629,6 +640,22 @@ def test_reshape_valid_shapes_match_numpy(target_shape: tuple[int, ...]) -> None
     assert actual.reshape(*target_shape).tolist() == source.reshape(*target_shape).tolist()
 
 
+def test_reshape_sequence_and_varargs_forms_match_numpy() -> None:
+    source = np.arange(4, dtype=np.int64)
+    actual = Array(source)
+
+    for target_shape in ([2, 2], (2, 2)):
+        result = actual.reshape(target_shape)
+        expected = source.reshape(target_shape)
+        assert result.shape == expected.shape
+        assert result.tolist() == expected.tolist()
+
+    result = actual.reshape(2, 2)
+    expected = source.reshape(2, 2)
+    assert result.shape == expected.shape
+    assert result.tolist() == expected.tolist()
+
+
 @pytest.mark.parametrize("target_shape", [(-1,), (2, -1), (-1, 3, 2)])
 def test_reshape_minus_one_inference_matches_numpy(target_shape: tuple[int, ...]) -> None:
     source = np.arange(24, dtype=np.int64).reshape(2, 3, 4)
@@ -660,6 +687,14 @@ def test_reshape_mismatched_element_count_names_size_and_requested_shape() -> No
 def test_reshape_rejects_two_inferred_dimensions() -> None:
     with pytest.raises(ValueError, match="only specify one unknown dimension"):
         Array([0, 1, 2, 3]).reshape(-1, -1)
+
+
+def test_reshape_rejects_non_minus_one_negative_dimension() -> None:
+    """PECOS documents literal -1 inference; NumPy accepts any single negative value."""
+    assert np.arange(4).reshape(-2).tolist() == [0, 1, 2, 3]
+
+    with pytest.raises(ValueError, match="negative dimensions are not allowed"):
+        Array([0, 1, 2, 3]).reshape(-2)
 
 
 def test_reshape_rejects_inference_that_does_not_divide_evenly() -> None:
@@ -698,6 +733,37 @@ def test_fill_is_in_place_returns_none_and_sets_every_element() -> None:
     assert actual.tolist() == [[7, 7], [7, 7]]
 
 
+@pytest.mark.parametrize(("dtype_name", "dtype"), INTEGER_DTYPES)
+def test_fill_rejects_float_for_every_integer_dtype_without_mutation(dtype_name: str, dtype: Any) -> None:
+    actual = Array([1, 2, 3], dtype=dtype)
+
+    with pytest.raises(TypeError) as error:
+        actual.fill(3.75)
+
+    assert "value 3.75" in str(error.value)
+    assert f"{dtype_name} array requires an integer" in str(error.value)
+    assert "cast explicitly" in str(error.value)
+    assert actual.tolist() == [1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    "constructor",
+    [Array, pecos_rslib.array, num.array, num.asarray, pc.array, pc.asarray],
+)
+def test_float_to_integer_constructor_matches_fill_error(
+    constructor: Callable[..., Array],
+) -> None:
+    actual = Array([1], dtype=dtypes.uint8)
+    with pytest.raises(TypeError) as fill_error:
+        actual.fill(1.5)
+
+    with pytest.raises(TypeError) as constructor_error:
+        constructor([1.5], dtype=dtypes.uint8)
+
+    assert str(constructor_error.value) == str(fill_error.value)
+    assert actual.tolist() == [1]
+
+
 @pytest.mark.parametrize(("dtype", "value"), [(dtypes.uint8, 256), (dtypes.uint64, -1)])
 def test_fill_rejects_unsigned_out_of_range_without_mutation(dtype: Any, value: int) -> None:
     actual = Array([1, 2, 3], dtype=dtype)
@@ -715,6 +781,18 @@ def test_fill_rejects_wrong_type_without_mutation() -> None:
         actual.fill("not an integer")
 
     assert actual.tolist() == [1, 2, 3]
+
+
+def test_bool_fill_rejects_string_truthiness() -> None:
+    """PECOS rejects truthiness coercion because NumPy invents a boolean value."""
+    expected = np.array([False], dtype=np.bool_)
+    expected.fill("x")
+    assert expected.tolist() == [True]
+
+    actual = Array([False], dtype=dtypes.bool)
+    with pytest.raises(TypeError):
+        actual.fill("x")
+    assert actual.tolist() == [False]
 
 
 def test_fill_rejects_non_scalar_without_mutation() -> None:
@@ -737,11 +815,31 @@ def test_fill_integer_into_float_array_matches_measured_numpy_behavior() -> None
     assert actual.tolist() == expected.tolist() == [3.0, 3.0]
 
 
+def test_uint64_fill_overflow_names_rejected_value() -> None:
+    value = 2**64
+    actual = Array([1], dtype=dtypes.uint64)
+
+    with pytest.raises(OverflowError, match=str(value)):
+        actual.fill(value)
+
+    assert actual.tolist() == [1]
+
+
 def test_ravel_docstring_states_copy_divergence_from_numpy() -> None:
     docstring = Array.ravel.__doc__
     assert docstring is not None
     assert "differs from NumPy" in docstring
     assert "always returns an independent" in docstring
+
+
+def test_fill_and_reshape_docstrings_state_deliberate_divergences() -> None:
+    fill_docstring = Array.fill.__doc__
+    reshape_docstring = Array.reshape.__doc__
+    assert fill_docstring is not None
+    assert reshape_docstring is not None
+    assert "do not fill by truthiness" in fill_docstring
+    assert "do not parse strings" in fill_docstring
+    assert "only the literal -1" in reshape_docstring
 
 
 @pytest.mark.parametrize("shape", [(2, 12), (3, 2, 4), (24,)])

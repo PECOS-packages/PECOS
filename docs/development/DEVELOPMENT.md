@@ -161,9 +161,15 @@ flat = values.flatten().tolist()
 assert flat == [1, 0, 0, 1]
 ```
 
-`Array.ravel()` and `Array.reshape()` also return copies. This intentionally differs from NumPy,
-whose `ravel()` and `reshape()` may return views: `Array` owns its buffer and has no view
-representation, so an honest copy is preferred over a silently-copying "view".
+`Array` deliberately differs from NumPy at three boundaries:
+
+- `ravel()` and `reshape()` always return copies. NumPy may return views, but `Array` owns its
+  buffer and has no view representation, so an honest copy is preferred over a silently-copying
+  "view".
+- `reshape()` infers a dimension only from the literal `-1`. Other negative dimensions are
+  rejected, even though NumPy treats any single negative dimension as inferred.
+- `fill()` does not coerce values by truthiness or parse numeric strings. Convert values
+  explicitly instead of relying on behavior such as a non-empty string becoming `True`.
 
 Elementwise comparison returns a boolean `Array`, and `array_sum()` accepts it directly -- counting
 mismatches needs no cast:

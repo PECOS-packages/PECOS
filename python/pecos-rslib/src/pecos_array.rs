@@ -380,6 +380,9 @@ impl Array {
     /// The value is converted through the same checked, explicit-dtype path as
     /// the `Array` constructor. Invalid types raise `TypeError`, and integers
     /// outside the dtype's range raise `OverflowError` rather than wrapping.
+    /// Unlike NumPy, boolean arrays do not fill by truthiness and complex arrays
+    /// do not parse strings: values such as `"x"`, `0j`, and `"1+2j"` must be
+    /// converted explicitly before calling `fill`.
     ///
     /// Args:
     ///     value: Scalar value to assign to every element.
@@ -461,9 +464,10 @@ impl Array {
 
     /// Return a row-major copy with a new shape.
     ///
-    /// The shape may be passed as a tuple or as separate integer arguments.
+    /// The shape may be passed as a sequence or as separate integer arguments.
     /// At most one dimension may be -1, in which case it is inferred from the
-    /// current element count.
+    /// current element count. Unlike NumPy, only the literal -1 denotes an
+    /// inferred dimension; all other negative dimensions are rejected.
     #[pyo3(signature = (*shape))]
     fn reshape(&self, shape: &Bound<'_, PyTuple>) -> PyResult<Self> {
         let requested_shape = Self::parse_reshape_shape(shape)?;
@@ -2138,8 +2142,10 @@ impl Array {
 
         let dimensions: Vec<Bound<'_, PyAny>> = if shape.len() == 1 {
             let first = shape.get_item(0)?;
-            if let Ok(tuple) = first.cast::<PyTuple>() {
-                tuple.iter().collect()
+            if let Ok(sequence) = first.cast::<PySequence>() {
+                (0..sequence.len()?)
+                    .map(|index| sequence.get_item(index))
+                    .collect::<PyResult<_>>()?
             } else {
                 vec![first]
             }
@@ -2933,6 +2939,40 @@ impl Array {
         target_type: ElemType,
         bufs: &mut FlatBuffers,
     ) -> PyResult<()> {
+        let indexed = if matches!(
+            target_type,
+            ElemType::I8
+                | ElemType::I16
+                | ElemType::I32
+                | ElemType::I64
+                | ElemType::U8
+                | ElemType::U16
+                | ElemType::U32
+                | ElemType::U64
+        ) {
+            Some(match data.call_method0("__index__") {
+                Ok(indexed) => indexed,
+                Err(error)
+                    if error.is_instance_of::<pyo3::exceptions::PyAttributeError>(data.py()) =>
+                {
+                    let value = data.repr()?.to_string_lossy().into_owned();
+                    let type_name = data.get_type().name()?.to_string();
+                    let target_name = bufs.target_name();
+                    let article = if target_name.starts_with('i') {
+                        "an"
+                    } else {
+                        "a"
+                    };
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "value {value} is a {type_name}; {article} {target_name} array requires an integer -- cast explicitly"
+                    )));
+                }
+                Err(error) => return Err(error),
+            })
+        } else {
+            None
+        };
+
         match target_type {
             ElemType::Bool => {
                 // Try bool first, then convert from int
@@ -2946,19 +2986,39 @@ impl Array {
                 }
             }
             ElemType::I8 | ElemType::I16 | ElemType::I32 | ElemType::I64 => {
-                let indexed = data.call_method0("__index__")?;
+                let indexed = indexed.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "internal error normalizing integer value",
+                    )
+                })?;
                 if let Ok(value) = indexed.extract::<i64>() {
                     bufs.push_signed_integer(value)?;
+                } else if let Ok(value) = indexed.extract::<u64>() {
+                    bufs.push_unsigned_integer(value)?;
                 } else {
-                    bufs.push_unsigned_integer(indexed.extract::<u64>()?)?;
+                    let value = indexed.repr()?.to_string_lossy().into_owned();
+                    return Err(pyo3::exceptions::PyOverflowError::new_err(format!(
+                        "value {value} is out of range for {}",
+                        bufs.target_name()
+                    )));
                 }
             }
             ElemType::U8 | ElemType::U16 | ElemType::U32 | ElemType::U64 => {
-                let indexed = data.call_method0("__index__")?;
+                let indexed = indexed.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "internal error normalizing integer value",
+                    )
+                })?;
                 if let Ok(value) = indexed.extract::<u64>() {
                     bufs.push_unsigned_integer(value)?;
+                } else if let Ok(value) = indexed.extract::<i64>() {
+                    bufs.push_signed_integer(value)?;
                 } else {
-                    bufs.push_signed_integer(indexed.extract::<i64>()?)?;
+                    let value = indexed.repr()?.to_string_lossy().into_owned();
+                    return Err(pyo3::exceptions::PyOverflowError::new_err(format!(
+                        "value {value} is out of range for {}",
+                        bufs.target_name()
+                    )));
                 }
             }
             ElemType::F32 | ElemType::F64 => {

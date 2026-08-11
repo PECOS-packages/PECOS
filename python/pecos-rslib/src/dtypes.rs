@@ -516,7 +516,11 @@ impl DType {
             "paulistring" => Ok(DType::PauliString),
             // Common aliases
             "double" => Ok(DType::F64),
-            "float" => Ok(DType::F32),
+            // Python's builtin `float` is 64-bit, and the `dtypes.float` member is
+            // registered as F64; mapping the *name* to F32 here made
+            // `asarray(x, dtype=float)` and `dtype="float"` silently halve precision
+            // while `dtype=dtypes.float` did not. See #483.
+            "float" => Ok(DType::F64),
             "long" | "int" => Ok(DType::I64),
             _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "Unknown dtype: {s}"

@@ -146,6 +146,7 @@ Map the dtype used by the migrated code as follows:
 | NumPy dtype | PECOS dtype |
 |-------------|-------------|
 | `np.uint8`  | `dtypes.uint8` |
+| `np.float64` or `float` | `dtypes.float64` |
 
 Use `Array` in annotations and enter the native layer with `asarray()` when an external API returns an array-like
 object. Constructors and casts take PECOS dtypes, for example `zeros(size, dtype=dtypes.uint8)` and
@@ -170,6 +171,15 @@ assert flat == [1, 0, 0, 1]
   rejected, even though NumPy treats any single negative dimension as inferred.
 - `fill()` does not coerce values by truthiness or parse numeric strings. Convert values
   explicitly instead of relying on behavior such as a non-empty string becoming `True`.
+
+Three more migration boundaries currently need local workarounds:
+
+- Advanced indexed assignment and boolean-mask reads are not available yet (#482). Use scalar
+  assignment or explicit selection locally, and collapse the workaround when indexed access lands.
+- Elementwise `Array ^ Array` is not available yet (#458). For arrays already known to contain only
+  binary values, elementwise inequality has the same result; do not use that substitution for general integers.
+- Spell NumPy's `dtype=float` as `dtype=dtypes.float64`, especially with `asarray()`, to preserve
+  NumPy's 64-bit width explicitly.
 
 Elementwise comparison returns a boolean `Array`, and `array_sum()` accepts it directly -- counting
 mismatches needs no cast:

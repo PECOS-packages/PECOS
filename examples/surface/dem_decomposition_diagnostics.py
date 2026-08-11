@@ -21,9 +21,13 @@ import re
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from pecos import array, asarray, dtypes, zeros
+from pecos import sum as array_sum
+
+if TYPE_CHECKING:
+    from pecos import Array
 
 ERROR_RE = re.compile(r"error\(([^)]+)\)\s*(.*)")
 DET_RE = re.compile(r"\bD(\d+)\b")
@@ -343,32 +347,35 @@ def strip_logical_observable_lines(dem_text: str) -> str:
     return "\n".join(line for line in dem_text.splitlines() if not line.startswith("logical_observable"))
 
 
-def true_observable_flips(observable_flips: np.ndarray) -> np.ndarray:
+def true_observable_flips(observable_flips: Array) -> Array:
+    observable_flips = asarray(observable_flips)
     if observable_flips.ndim == 1:
-        return observable_flips.astype(np.uint8)
+        return observable_flips.astype(dtypes.uint8)
     if observable_flips.shape[1] == 0:
-        return np.zeros(observable_flips.shape[0], dtype=np.uint8)
-    return observable_flips[:, 0].astype(np.uint8)
+        return zeros(observable_flips.shape[0], dtype=dtypes.uint8)
+    return observable_flips[:, 0].astype(dtypes.uint8)
 
 
-def dense_effect_arrays(effects: dict[str, float]) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray]:
+def dense_effect_arrays(effects: dict[str, float]) -> tuple[list[str], Array, Array, Array]:
     """Convert effect keys into dense detector rows and observable flips."""
     keys = list(effects)
-    probabilities = np.array([effects[key] for key in keys], dtype=float)
+    probabilities = array([effects[key] for key in keys], dtype=dtypes.float64)
     max_detector = max((int(detector) for key in keys for detector in DET_RE.findall(key)), default=-1)
-    detection_events = np.zeros((len(keys), max_detector + 1), dtype=np.uint8)
-    observable_flips = np.zeros(len(keys), dtype=np.uint8)
+    detection_events = zeros((len(keys), max_detector + 1), dtype=dtypes.uint8)
+    observable_flips = zeros(len(keys), dtype=dtypes.uint8)
 
     for index, key in enumerate(keys):
         detectors = [int(detector) for detector in DET_RE.findall(key)]
         if detectors:
-            detection_events[index, detectors] = 1
+            # Collapse to one indexed assignment when Array fancy assignment lands in #482.
+            for detector in detectors:
+                detection_events[index, detector] = 1
         observable_flips[index] = 1 if "0" in OBS_RE.findall(key) else 0
 
     return keys, probabilities, detection_events, observable_flips
 
 
-def tesseract_predictions(dem_text: str, detection_events: np.ndarray, *, beam: int) -> np.ndarray:
+def tesseract_predictions(dem_text: str, detection_events: Array, *, beam: int) -> Array:
     from pecos.decoders import TesseractDecoder
 
     decoder = TesseractDecoder.from_dem(
@@ -377,10 +384,10 @@ def tesseract_predictions(dem_text: str, detection_events: np.ndarray, *, beam: 
         det_beam=beam,
     )
     results = decoder.decode_batch([row.tolist() for row in detection_events])
-    return np.array([int(result.observable_flips[0]) for result in results], dtype=np.uint8)
+    return array([int(result.observable_flips[0]) for result in results], dtype=dtypes.uint8)
 
 
-def pymatching_predictions(dem_text: str, detection_events: np.ndarray, *, correlated: bool) -> np.ndarray:
+def pymatching_predictions(dem_text: str, detection_events: Array, *, correlated: bool) -> Array:
     from pecos.decoders import PyMatchingDecoder
 
     if correlated:
@@ -388,34 +395,34 @@ def pymatching_predictions(dem_text: str, detection_events: np.ndarray, *, corre
     else:
         decoder = PyMatchingDecoder.from_dem(dem_text)
     predictions = decoder.decode_batch(
-        detection_events.astype(np.uint8).flatten().tolist(),
+        detection_events.astype(dtypes.uint8).flatten().tolist(),
         len(detection_events),
     )
-    return np.array([prediction[0] if prediction else 0 for prediction in predictions], dtype=np.uint8)
+    return array([prediction[0] if prediction else 0 for prediction in predictions], dtype=dtypes.uint8)
 
 
 def decode_with_tesseract(
     dem_text: str,
-    detection_events: np.ndarray,
-    observable_flips: np.ndarray,
+    detection_events: Array,
+    observable_flips: Array,
     *,
     beam: int,
 ) -> int:
     expected = true_observable_flips(observable_flips)
     predicted = tesseract_predictions(dem_text, detection_events, beam=beam)
-    return int(np.sum(predicted != expected))
+    return int(array_sum(predicted != expected))
 
 
 def decode_with_pymatching(
     dem_text: str,
-    detection_events: np.ndarray,
-    observable_flips: np.ndarray,
+    detection_events: Array,
+    observable_flips: Array,
     *,
     correlated: bool,
 ) -> int:
     expected = true_observable_flips(observable_flips)
     predicted = pymatching_predictions(dem_text, detection_events, correlated=correlated)
-    return int(np.sum(predicted != expected))
+    return int(array_sum(predicted != expected))
 
 
 def _timed_decode(label: str, callback: Any, shots: int) -> DecodeSummary:
@@ -444,22 +451,23 @@ def two_fault_pair_analysis(
     if len(keys) > max_effects:
         return None
 
-    pair_rows: list[np.ndarray] = []
+    pair_rows: list[Array] = []
     pair_observables: list[int] = []
     pair_weights: list[float] = []
     for left in range(len(keys)):
         for right in range(left + 1, len(keys)):
-            pair_rows.append(detection_events[left] ^ detection_events[right])
+            # Collapse this binary XOR workaround when Array XOR support lands under #458.
+            pair_rows.append(asarray(detection_events[left] != detection_events[right], dtype=dtypes.uint8))
             pair_observables.append(int(observable_flips[left] ^ observable_flips[right]))
             pair_weights.append(float(probabilities[left] * probabilities[right]))
 
     if not pair_rows:
         return []
 
-    pair_detection_events = np.asarray(pair_rows, dtype=np.uint8)
-    pair_observable_flips = np.asarray(pair_observables, dtype=np.uint8)
-    weights = np.asarray(pair_weights, dtype=float)
-    total_weight = float(np.sum(weights))
+    pair_detection_events = asarray(pair_rows, dtype=dtypes.uint8)
+    pair_observable_flips = asarray(pair_observables, dtype=dtypes.uint8)
+    weights = asarray(pair_weights, dtype=dtypes.float64)
+    total_weight = float(array_sum(weights))
 
     predictions = {
         "native_raw_tesseract_b5": tesseract_predictions(native_raw, pair_detection_events, beam=5),
@@ -500,8 +508,17 @@ def two_fault_pair_analysis(
     for name, predicted in predictions.items():
         wrong = predicted != pair_observable_flips
         disagree = predicted != reference
-        wrong_mass = float(np.sum(weights[wrong]))
-        disagree_mass = float(np.sum(weights[disagree]))
+        # Collapse these selections to boolean-mask indexing when #482 covers Array reads.
+        wrong_weights = asarray(
+            [weight for weight, selected in zip(weights, wrong, strict=True) if selected],
+            dtype=dtypes.float64,
+        )
+        disagree_weights = asarray(
+            [weight for weight, selected in zip(weights, disagree, strict=True) if selected],
+            dtype=dtypes.float64,
+        )
+        wrong_mass = float(array_sum(wrong_weights))
+        disagree_mass = float(array_sum(disagree_weights))
         summaries.append(
             PairAnalysisSummary(
                 decoder=name,
@@ -510,8 +527,8 @@ def two_fault_pair_analysis(
                 wrong_probability_fraction=wrong_mass / total_weight if total_weight else 0.0,
                 disagree_tesseract_probability_mass=disagree_mass,
                 disagree_tesseract_probability_fraction=disagree_mass / total_weight if total_weight else 0.0,
-                wrong_count=int(np.sum(wrong)),
-                disagree_tesseract_count=int(np.sum(disagree)),
+                wrong_count=int(array_sum(wrong)),
+                disagree_tesseract_count=int(array_sum(disagree)),
             ),
         )
     return summaries

@@ -151,19 +151,30 @@ Use `Array` in annotations and enter the native layer with `asarray()` when an e
 object. Constructors and casts take PECOS dtypes, for example `zeros(size, dtype=dtypes.uint8)` and
 `array(values, dtype=dtypes.uint8)`.
 
-`Array.flatten()` preserves row-major order and returns an independent `Array` copy:
+`Array.flatten()` preserves row-major order and returns an independent copy:
 
 ```python
+from pecos import array, dtypes
+
+values = array([[1, 0], [0, 1]], dtype=dtypes.uint8)
 flat = values.flatten().tolist()
+assert flat == [1, 0, 0, 1]
 ```
 
-`Array.ravel()` also returns a copy. This intentionally differs from NumPy, whose `ravel()` may return a view.
+`Array.ravel()` and `Array.reshape()` also return copies. This intentionally differs from NumPy,
+whose `ravel()` and `reshape()` may return views: `Array` owns its buffer and has no view
+representation, so an honest copy is preferred over a silently-copying "view".
 
 Elementwise comparison returns a boolean `Array`, and `array_sum()` accepts it directly -- counting
 mismatches needs no cast:
 
 ```python
+from pecos import array, dtypes, sum as array_sum
+
+predicted = array([1, 0, 1], dtype=dtypes.uint8)
+expected = array([1, 1, 1], dtype=dtypes.uint8)
 logical_errors = int(array_sum(predicted != expected))
+assert logical_errors == 1
 ```
 
 ## Dependency and Security Checks

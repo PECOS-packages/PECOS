@@ -1,6 +1,6 @@
 [project]
 name = "pecos-workspace"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 requires-python = ">=3.10"
 # Meta-package; runtime deps live in the member packages. Test/example/dev
 # tooling is declared in [dependency-groups] below.
@@ -10,8 +10,8 @@ dependencies = []
 # Keep these in sync with the cuda dependency groups below. The extras support
 # `uv sync --extra cuda13`; the groups support `uv run --group cuda13 ...`.
 # Pick the extra matching your CUDA major -- do not install both.
-cuda13 = ["quantum-pecos[cuda13]==0.9.0.dev3"]
-cuda12 = ["quantum-pecos[cuda12]==0.9.0.dev3"]
+cuda13 = ["quantum-pecos[cuda13]==0.10.0.dev0"]
+cuda12 = ["quantum-pecos[cuda12]==0.10.0.dev0"]
 
 [tool.uv.workspace]
 members = [
@@ -70,10 +70,10 @@ numpy-compat = [ # NumPy/SciPy compatibility tests - verify compatibility with s
   "scipy>=1.1.0",
 ]
 cuda13 = [ # CUDA 13 Python packages for GPU-accelerated simulations (requires CUDA toolkit)
-  "quantum-pecos[cuda13]==0.9.0.dev3",
+  "quantum-pecos[cuda13]==0.10.0.dev0",
 ]
 cuda12 = [ # CUDA 12 Python packages for GPU-accelerated simulations
-  "quantum-pecos[cuda12]==0.9.0.dev3",
+  "quantum-pecos[cuda12]==0.10.0.dev0",
 ]
 
 [tool.uv]

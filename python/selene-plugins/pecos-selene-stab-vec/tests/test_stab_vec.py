@@ -45,7 +45,7 @@ class TestStabVecBasic:
         def main() -> None:
             q = qubit()
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=42)
@@ -61,7 +61,7 @@ class TestStabVecBasic:
             q = qubit()
             h(q)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=123)
@@ -84,8 +84,8 @@ class TestStabVecBellState:
             cx(q0, q1)
             b0 = measure(q0).read()
             b1 = measure(q1).read()
-            result("q0", b0.read())
-            result("q1", b1.read())
+            result("q0", b0)
+            result("q1", b1)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=999)
@@ -108,7 +108,7 @@ class TestStabVecArbitraryRotations:
             rz(q, pi / 4)
             h(q)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=42)
@@ -127,7 +127,7 @@ class TestStabVecArbitraryRotations:
             rz(q, pi / 8)
             h(q)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=42)
@@ -143,7 +143,7 @@ class TestStabVecArbitraryRotations:
             q = qubit()
             rx(q, pi / 3)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=42)
@@ -159,7 +159,7 @@ class TestStabVecArbitraryRotations:
             q = qubit()
             ry(q, pi / 3)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=42)
@@ -178,8 +178,8 @@ class TestStabVecArbitraryRotations:
             crz(q0, q1, pi / 4)
             b0 = measure(q0).read()
             b1 = measure(q1).read()
-            result("q0", b0.read())
-            result("q1", b1.read())
+            result("q0", b0)
+            result("q1", b1)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=42)
@@ -204,7 +204,7 @@ class TestStabVecReset:
             # Flip to |1> via H-measure-H pattern isn't clean, so test reset directly
             reset(q)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=42)
@@ -222,7 +222,7 @@ class TestStabVecReset:
             reset(q)
             h(q)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabVecPlugin(random_seed=42)

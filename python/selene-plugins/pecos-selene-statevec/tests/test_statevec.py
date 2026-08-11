@@ -46,7 +46,7 @@ class TestStateVecBasic:
         def main() -> None:
             q = qubit()
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StateVecPlugin(random_seed=42)
@@ -63,7 +63,7 @@ class TestStateVecBasic:
             q = qubit()
             h(q)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StateVecPlugin(random_seed=123)
@@ -88,8 +88,8 @@ class TestStateVecBellState:
             cx(q0, q1)
             b0 = measure(q0).read()
             b1 = measure(q1).read()
-            result("q0", b0.read())
-            result("q1", b1.read())
+            result("q0", b0)
+            result("q1", b1)
 
         runner = build(main.compile())
         simulator = StateVecPlugin(random_seed=999)
@@ -115,7 +115,7 @@ class TestStateVecArbitraryRotations:
             rz(q, pi / 4)
             h(q)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StateVecPlugin(random_seed=42)
@@ -137,7 +137,7 @@ class TestStateVecArbitraryRotations:
             rz(q, pi / 8)
             h(q)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StateVecPlugin(random_seed=42)

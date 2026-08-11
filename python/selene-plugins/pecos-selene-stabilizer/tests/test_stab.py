@@ -45,7 +45,7 @@ class TestStabilizerBasic:
         def main() -> None:
             q = qubit()
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabilizerPlugin(random_seed=42)
@@ -62,7 +62,7 @@ class TestStabilizerBasic:
             q = qubit()
             h(q)
             bit = measure(q).read()
-            result("outcome", bit.read())
+            result("outcome", bit)
 
         runner = build(main.compile())
         simulator = StabilizerPlugin(random_seed=123)
@@ -87,8 +87,8 @@ class TestStabilizerBellState:
             cx(q0, q1)
             b0 = measure(q0).read()
             b1 = measure(q1).read()
-            result("q0", b0.read())
-            result("q1", b1.read())
+            result("q0", b0)
+            result("q1", b1)
 
         runner = build(main.compile())
         simulator = StabilizerPlugin(random_seed=999)

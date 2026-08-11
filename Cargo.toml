@@ -277,11 +277,20 @@ style = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 # Dependency version conflicts we can't control
-multiple-crate-versions = "allow"
+multiple_crate_versions = "allow"
 # Physics/math code uses short, domain-standard variable names (sx/sz, x/z/r/s/p)
-similar-names = "allow"
-many-single-char-names = "allow"
-too-many-lines = "allow"         # ~114 hits across 11 crates -- sim algorithms, tests, benchmarks
+similar_names = "allow"
+many_single_char_names = "allow"
+too_many_lines = "allow"         # ~114 hits across 11 crates -- sim algorithms, tests, benchmarks
+# New Clippy lints in Rust nightly 1.99 flag established numeric and SIMD-heavy
+# implementations; defer broader, behavior-sensitive rewrites to a dedicated cleanup.
+assert_is_empty = "allow"
+chunks_exact_to_as_chunks = "allow"
+drain_collect = "allow"
+manual_is_variant_and = "allow"
+manual_midpoint = "allow"
+manual_slice_fill = "allow"
+clone_on_copy = "allow" # `cxx::bridge` derives `Clone` for its generated FFI structs.
 
 # Simulation-heavy crates run at opt-level 2 even in dev/test builds:
 # statistical validation tests (e.g. the surface-code LER equivalence

@@ -116,7 +116,7 @@ impl Default for CompileArgs {
     }
 }
 
-/// Process HUGR by applying the required QSystem and LLVM passes.
+/// Process HUGR by applying the required `QSystem` and LLVM passes.
 fn process_hugr(hugr: &mut Hugr, platform: QSystemPlatform) -> Result<()> {
     QSystemRebasePass::defaults(platform).run(hugr)?;
     QSystemLLVMPass::default().run(hugr)?;
@@ -690,6 +690,56 @@ pub fn compile_hugr_bytes_to_bitcode_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn private_helper_name(helper: &str, suffix: usize) -> String {
+        format!("__hugr__.{helper}.{suffix}")
+    }
+
+    #[test]
+    fn helper_declarations_merge_to_one_public_symbol() {
+        let context = Context::create();
+        let module = context.create_module("helpers");
+        let i64_type = context.i64_type();
+        let pair = context.struct_type(&[i64_type.into(), i64_type.into()], false);
+        let ty = pair.fn_type(&[i64_type.into(), i64_type.into()], false);
+        module.add_function(
+            &private_helper_name(RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL, 1),
+            ty,
+            None,
+        );
+        module.add_function(
+            &private_helper_name(RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL, 2),
+            ty,
+            None,
+        );
+
+        normalize_pecos_helper_symbols_in_module(&module).unwrap();
+        assert!(
+            module
+                .get_function(RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL)
+                .is_some()
+        );
+        assert!(
+            !module
+                .to_string()
+                .contains("pecos_qis_runtime_barrier_qubits2_hugr.2")
+        );
+    }
+
+    #[test]
+    fn wrong_helper_signature_fails_loud() {
+        let context = Context::create();
+        let module = context.create_module("helpers");
+        let i64_type = context.i64_type();
+        module.add_function(
+            &private_helper_name(RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL, 1),
+            i64_type.fn_type(&[i64_type.into()], false),
+            None,
+        );
+
+        let err = normalize_pecos_helper_symbols_in_module(&module).unwrap_err();
+        assert!(err.to_string().contains("pecos-qis-ffi ABI"));
+    }
 
     #[test]
     fn normalize_trace_metadata_helper_symbol() {

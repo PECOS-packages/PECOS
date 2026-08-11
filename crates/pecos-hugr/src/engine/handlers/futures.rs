@@ -58,6 +58,9 @@ impl HugrEngine {
                             } => outcome != 0,
                             FutureState::Resolved {
                                 int_valued: true, ..
+                            }
+                            | FutureState::Pending {
+                                int_valued: true, ..
                             } => {
                                 debug!(
                                     "measurement.Read at {node:?}: future has non-Boolean output, deferring"
@@ -78,14 +81,6 @@ impl HugrEngine {
                                     return HandlerOutcome::Defer;
                                 };
                                 outcome != 0
-                            }
-                            FutureState::Pending {
-                                int_valued: true, ..
-                            } => {
-                                debug!(
-                                    "measurement.Read at {node:?}: future has non-Boolean output, deferring"
-                                );
-                                return HandlerOutcome::Defer;
                             }
                         }
                     }

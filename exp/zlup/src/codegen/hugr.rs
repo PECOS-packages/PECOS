@@ -28,9 +28,8 @@ use tket::hugr::builder::{
     BuildError, DFGBuilder, Dataflow, DataflowHugr, DataflowSubContainer, SubContainer,
 };
 use tket::hugr::envelope::EnvelopeConfig;
-use tket::hugr::extension::prelude::qb_t;
+use tket::hugr::extension::prelude::{bool_t, qb_t};
 use tket::hugr::types::Signature;
-use tket::hugr::types::bool_t;
 use tket::hugr::{Hugr, Wire, type_row};
 
 use crate::ast::{

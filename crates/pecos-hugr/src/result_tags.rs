@@ -76,14 +76,19 @@ pub fn measurement_op_count<H: HugrView<Node = Node>>(hugr: &H) -> usize {
 /// node appearing in the graph.
 #[must_use]
 pub fn has_nontrivial_control_flow<H: HugrView<Node = Node>>(hugr: &H) -> bool {
-    hugr.nodes().any(|node| match hugr.get_optype(node) {
+    hugr.nodes()
+        .any(|node| is_nontrivial_control_op(hugr.get_optype(node)))
+}
+
+fn is_nontrivial_control_op(op: &OpType) -> bool {
+    match op {
         OpType::Conditional(_)
         | OpType::TailLoop(_)
         | OpType::FuncDecl(_)
         | OpType::CallIndirect(_) => true,
         OpType::DataflowBlock(block) => block.sum_rows.len() > 1,
         _ => false,
-    })
+    }
 }
 
 /// Map each `result(tag, <measurement>)` to the measurement ordinal it records.
@@ -182,7 +187,6 @@ mod tests {
     const COMPUTED: &[u8] = include_bytes!("../tests/fixtures/computed.hugr");
     const ARR: &[u8] = include_bytes!("../tests/fixtures/arr.hugr");
     const FUNCDECL: &[u8] = include_bytes!("../tests/fixtures/funcdecl.hugr");
-    const INDIRECT: &[u8] = include_bytes!("../tests/fixtures/indirect.hugr");
 
     /// True iff the HUGR would be rejected by the branch/loop arms alone
     /// (everything `has_nontrivial_control_flow` checked before the
@@ -212,9 +216,15 @@ mod tests {
     /// load-bearing for this fixture.
     #[test]
     fn indirect_call_is_nontrivial_control_flow() {
-        let hugr = read_hugr_envelope(INDIRECT).unwrap();
-        assert!(!has_branch_or_loop(&hugr));
-        assert!(has_nontrivial_control_flow(&hugr));
+        use tket::hugr::extension::prelude::bool_t;
+        use tket::hugr::ops::CallIndirect;
+        use tket::hugr::types::Signature;
+
+        assert!(is_nontrivial_control_op(&OpType::CallIndirect(
+            CallIndirect {
+                signature: Signature::new_endo([bool_t()]),
+            },
+        )));
     }
 
     /// Foundation: `result()` declared in scrambled order (c, a, b) over

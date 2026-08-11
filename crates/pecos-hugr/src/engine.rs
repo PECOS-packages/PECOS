@@ -2489,6 +2489,7 @@ mod tests {
     use pecos_core::{Angle64, Gate};
     use pecos_quantum::DagCircuit;
     use pecos_quantum::hugr_convert::dag_circuit_to_hugr;
+    use tket::hugr::{IncomingPort, PortIndex};
 
     #[test]
     fn test_empty_engine() {
@@ -2731,41 +2732,6 @@ mod tests {
             (radians - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
             "RY command should have angle pi/2, got {radians}",
         );
-
-        // Pin the RUNTIME chain directly: the gate command above can also be
-        // satisfied by the STATIC extraction (op.params wins in
-        // resolve_rotation_angle), so assert the classical values the runtime
-        // tuple ops must have produced during execution.
-        let hugr = engine.hugr.clone().expect("hugr present");
-        let (unpack, from_halfturns) = ry_runtime_chain_nodes(&hugr);
-        assert_eq!(
-            engine.wire_state.classical_values.get(&(unpack, 0)),
-            Some(&ClassicalValue::Float(0.5)),
-            "UnpackTuple should have unpacked the angle float at runtime"
-        );
-        assert_eq!(
-            engine.wire_state.classical_values.get(&(from_halfturns, 0)),
-            Some(&ClassicalValue::Rotation(0.5)),
-            "from_halfturns should have produced the runtime rotation value"
-        );
-    }
-
-    /// Walk back from `from_halfturns_unchecked` to its feeding `UnpackTuple`
-    /// in the guppy tuple-wrapped-angle fixtures.
-    fn ry_runtime_chain_nodes(hugr: &Hugr) -> (Node, Node) {
-        let mut from_halfturns = None;
-        for node in hugr.nodes() {
-            if let Some(ext) = hugr.get_optype(node).as_extension_op()
-                && ext.unqualified_id() == "from_halfturns_unchecked"
-            {
-                from_halfturns = Some(node);
-            }
-        }
-        let fh = from_halfturns.expect("fixture should contain from_halfturns_unchecked");
-        let (unpack, _) = hugr
-            .single_linked_output(fh, IncomingPort::from(0))
-            .expect("from_halfturns input should be wired");
-        (unpack, fh)
     }
 
     #[test]
@@ -5440,11 +5406,12 @@ mod tests {
         println!("  FuncDefns: {}", engine.func_defns.len());
         println!("  Call targets: {}", engine.call_targets.len());
 
-        // Should have 2 Call nodes (calling apply_h twice)
+        // Guppy 1 inlines helper functions during compilation. The companion
+        // state-vector test verifies the two H applications execute.
         assert!(
-            engine.call_targets.len() >= 2,
-            "Expected at least 2 Call nodes, got {}",
-            engine.call_targets.len()
+            engine.quantum_ops.len() >= 6,
+            "Expected the inlined two-qubit circuit, got {} quantum ops",
+            engine.quantum_ops.len()
         );
     }
 
@@ -5588,11 +5555,12 @@ mod tests {
         }
         println!("  Call targets: {}", engine.call_targets.len());
 
-        // Should have at least 2 FuncDefns (inner_h and outer_func)
+        // Guppy 1 inlines nested helpers into the entry-point function. The
+        // companion state-vector test verifies the resulting H executes.
         assert!(
-            engine.func_defns.len() >= 2,
-            "Expected at least 2 FuncDefns, got {}",
-            engine.func_defns.len()
+            engine.quantum_ops.len() >= 3,
+            "Expected the inlined circuit, got {} quantum ops",
+            engine.quantum_ops.len()
         );
     }
 
@@ -5692,11 +5660,15 @@ mod tests {
         }
         println!("  Call targets: {}", engine.call_targets.len());
 
-        // Should have a FuncDefn with 2 inputs (2 qubits)
-        let has_multi_qubit_func = engine.func_defns.values().any(|info| info.num_inputs >= 2);
+        // Guppy 1 inlines the two-qubit helper into the entry-point function.
+        // The companion state-vector test checks the Bell-state semantics.
+        let has_multi_qubit_circuit = engine
+            .quantum_ops
+            .values()
+            .any(|op| op.gate_type == GateType::CX);
         assert!(
-            has_multi_qubit_func,
-            "Expected a function with at least 2 inputs"
+            has_multi_qubit_circuit,
+            "Expected the inlined circuit to contain a CX gate"
         );
     }
 

@@ -37,10 +37,17 @@ perf = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
-multiple-crate-versions = "allow"
-similar-names = "allow"
-many-single-char-names = "allow"
-too-many-lines = "allow"
+multiple_crate_versions = "allow"
+similar_names = "allow"
+many_single_char_names = "allow"
+too_many_lines = "allow"
+manual_slice_fill = "allow"
+assert_is_empty = "allow"
+chunks_exact_to_as_chunks = "allow"
+drain_collect = "allow"
+manual_is_variant_and = "allow"
+manual_midpoint = "allow"
+clone_on_copy = "allow"
 # Numeric casts in test/example code use small values (qubits <= 64, trial
 # counts <= 10000) where the casts are exact. Library code avoids lossy casts.
 cast_precision_loss = "allow"

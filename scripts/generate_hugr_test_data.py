@@ -18,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
     from guppylang import guppy
-    from guppylang.std.builtins import owned
-    from guppylang.std.quantum import cx, h, measure, pi, qubit, rz, x
+    from guppylang.std.angles import angle
+    from guppylang.std.builtins import array, owned, result
+    from guppylang.std.quantum import ch, cx, h, measure, pi, qubit, rx, ry, rz, x
 except ImportError as e:
     print(f"Error: Could not import guppylang: {e}")
     print("Please install guppylang: uv pip install guppylang")
@@ -401,6 +402,75 @@ def generate_multi_qubit_function_hugr() -> str:
     return compiled.to_str()
 
 
+def generate_ch_gate_hugr() -> str:
+    """Generate a controlled-H circuit used by execution regression tests."""
+
+    @guppy
+    def ch_gate() -> tuple[bool, bool]:
+        control = qubit()
+        target = qubit()
+        x(control)
+        ch(control, target)
+        return measure(control).read(), measure(target).read()
+
+    return ch_gate.compile().to_str()
+
+
+def generate_forloop_h_hugr() -> str:
+    """Generate a fixed-trip loop with one Hadamard per iteration."""
+
+    @guppy
+    def forloop_h() -> bool:
+        q = qubit()
+        for _ in range(3):
+            h(q)
+        return measure(q).read()
+
+    return forloop_h.compile().to_str()
+
+
+def generate_rx_pi_tuple_const_hugr() -> str:
+    """Generate an Rx(pi) fixture with Guppy 1's measurement representation."""
+
+    @guppy
+    def rx_pi_tuple_const() -> bool:
+        q = qubit()
+        rx(q, pi)
+        return measure(q).read()
+
+    return rx_pi_tuple_const.compile().to_str()
+
+
+def generate_ry_angle_tuple_hugr() -> str:
+    """Generate an Ry(pi/2) fixture with a tuple-wrapped angle."""
+
+    @guppy
+    def ry_angle_tuple() -> bool:
+        q = qubit()
+        ry(q, angle(0.5))
+        return measure(q).read()
+
+    return ry_angle_tuple.compile().to_str()
+
+
+def generate_conditional_x_hugr() -> str:
+    """Generate a measured conditional-X circuit for engine tests."""
+
+    @guppy
+    def conditional_x() -> tuple[bool, bool]:
+        control = qubit()
+        target = qubit()
+        h(control)
+        control_measurement = measure(control).read()
+        if control_measurement:
+            x(target)
+        target_measurement = measure(target).read()
+        result("c", array(control_measurement, target_measurement))
+        return control_measurement, target_measurement
+
+    return conditional_x.compile().to_str()
+
+
 def main() -> int:
     """Generate all test data files."""
     # Determine output directory
@@ -428,6 +498,11 @@ def main() -> int:
         "multiple_function_calls.hugr",
         "nested_function_calls.hugr",
         "multi_qubit_function.hugr",
+        "ch_gate.hugr",
+        "forloop_h_test.hugr",
+        "rx_pi_tuple_const.hugr",
+        "ry_angle_tuple.hugr",
+        "conditional_x.hugr",
     ]
     for filename in all_files:
         old_file = output_dir / filename
@@ -633,6 +708,30 @@ def main() -> int:
     except Exception as e:
         print(f"  Error generating multi-qubit function: {e}")
         return 1
+
+    additional_fixtures = {
+        "ch_gate.hugr": generate_ch_gate_hugr,
+        "forloop_h_test.hugr": generate_forloop_h_hugr,
+        "rx_pi_tuple_const.hugr": generate_rx_pi_tuple_const_hugr,
+        "ry_angle_tuple.hugr": generate_ry_angle_tuple_hugr,
+        "conditional_x.hugr": generate_conditional_x_hugr,
+    }
+    for filename, generate in additional_fixtures.items():
+        print(f"\nGenerating {filename}...")
+        try:
+            hugr_str = generate()
+            output_file = output_dir / filename
+            output_file.write_text(hugr_str)
+            print(f"  Created: {output_file} ({len(hugr_str)} chars)")
+        except Exception as e:
+            print(f"  Error generating {filename}: {e}")
+            return 1
+
+    for filename in all_files:
+        output_file = output_dir / filename
+        contents = output_file.read_text()
+        if not contents.endswith("\n"):
+            output_file.write_text(f"{contents}\n")
 
     print("\nSuccessfully generated all HUGR test data files!")
     print("\nNext steps:")

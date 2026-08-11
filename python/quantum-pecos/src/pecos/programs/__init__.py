@@ -136,7 +136,7 @@ class Guppy:
         if self._program is None:
             hugr_package = self._func.compile()
             # Use the BINARY HUGR envelope (Model format). The Selene/QIS engine's
-            # HUGR reader does not accept hugr-py 0.16's S-expression *text* envelope
+            # HUGR reader does not accept the S-expression *text* envelope
             # (`to_str`) -- loading it fails with "Failed to read HUGR" -- whereas the
             # binary Model form round-trips cleanly, including CFG loops (while
             # statements). (The `Hugr.from_bytes` sim loader is more permissive and

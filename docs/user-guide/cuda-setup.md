@@ -65,7 +65,7 @@ CUDA or cuQuantum layer. When a marked parent forks, PECOS also emits a one-time
 
 - **Operating System**: Linux (Ubuntu 20.04+, Pop!_OS, or other distributions)
   - Windows users: Use WSL2 (Windows Subsystem for Linux)
-- **Python**: 3.10, 3.11, or 3.12
+- **Python**: 3.12, 3.13, or 3.14
 - **CUDA Toolkit**: Version 13.x (recommended) or 12.x
 
 ### Supported CUDA Versions

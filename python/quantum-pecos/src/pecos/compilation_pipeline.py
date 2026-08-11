@@ -62,7 +62,7 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
         raise RuntimeError(msg) from e
 
     # Serialize the Package as the BINARY HUGR envelope (Model format). The Selene/QIS
-    # engine's HUGR reader rejects hugr-py 0.16's S-expression *text* envelope
+    # engine's HUGR reader rejects the S-expression *text* envelope
     # (`to_str`) with "Failed to read HUGR", whereas the binary Model form round-trips
     # cleanly, including CFG loops (while statements).
     hugr_bytes = compiled.to_bytes()

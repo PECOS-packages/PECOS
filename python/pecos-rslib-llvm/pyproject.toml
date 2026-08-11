@@ -1,6 +1,6 @@
 [project]
 name = "pecos-rslib-llvm"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 description = "LLVM IR generation Python bindings for PECOS (llvmlite-compatible API, Rust implementation)."
 authors = [
     {name = "The PECOS Developers"},

@@ -1,6 +1,6 @@
 [project]
 name = "pecos-rslib-exp"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 description = "Python bindings for experimental PECOS simulators (StabMps, Mast)."
 authors = [
     {name = "The PECOS Developers"},

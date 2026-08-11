@@ -10,7 +10,8 @@ from guppylang.std.quantum import cx, h, measure, qubit
 
 @guppy.declare
 def pecos_qis_runtime_barrier_qubits2_hugr(
-    q0: qubit @ owned, q1: qubit @ owned
+    q0: qubit @ owned,
+    q1: qubit @ owned,
 ) -> tuple[qubit, qubit]: ...
 
 

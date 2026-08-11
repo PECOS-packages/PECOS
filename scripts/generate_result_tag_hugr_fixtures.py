@@ -7,7 +7,6 @@ from guppylang import guppy
 from guppylang.std.builtins import array, comptime, result
 from guppylang.std.quantum import (
     collect_measurements,
-    h,
     measure,
     measure_array,
     qubit,
@@ -41,7 +40,7 @@ def computed() -> None:
     m0 = measure(q0).read()
     m1 = measure(q1).read()
     result("eq", m0 == m1)
-    result("const", True)
+    result("const", True)  # noqa: FBT003 - the fixture must capture a constant.
 
 
 @guppy

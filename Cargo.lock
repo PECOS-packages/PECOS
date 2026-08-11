@@ -4570,6 +4570,7 @@ dependencies = [
  "pecos-qis-ffi-types",
  "pecos-random",
  "rand 0.10.2",
+ "selene-core",
  "selene-simple-runtime",
  "selene-soft-rz-runtime",
  "serde",

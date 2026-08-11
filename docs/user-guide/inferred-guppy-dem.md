@@ -145,16 +145,16 @@ def repetition_memory() -> None:
     a0 = qubit()
     cx(d0, a0)
     cx(d1, a0)
-    s0 = measure(a0)
+    s0 = measure(a0).read()
     result("DETECTOR", s0)
 
     a1 = qubit()
     cx(d0, a1)
     cx(d1, a1)
-    s1 = measure(a1)
+    s1 = measure(a1).read()
     result("DETECTOR", s0 ^ s1)
 
-    m0, m1 = measure(d0), measure(d1)
+    m0, m1 = measure(d0).read(), measure(d1).read()
     result("DETECTOR", s1 ^ m0 ^ m1)
     result("obs", m0)
 

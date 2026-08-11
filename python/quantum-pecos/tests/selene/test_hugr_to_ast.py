@@ -61,7 +61,7 @@ class TestBasicConversion:
         def single_h() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(single_h)
 
@@ -97,7 +97,7 @@ class TestBasicConversion:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(bell)
 
@@ -130,7 +130,7 @@ class TestBasicConversion:
             x(q)
             y(q)
             z(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(multi_gate)
 
@@ -155,7 +155,7 @@ class TestBasicConversion:
             q1 = qubit()
             cx(q0, q1)
             cz(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(two_qubit)
 
@@ -176,7 +176,7 @@ class TestProgramMetadata:
         def my_quantum_circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(my_quantum_circuit)
         assert ast.name.endswith("my_quantum_circuit")
@@ -188,7 +188,7 @@ class TestProgramMetadata:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(circuit, allocator_name="qubits")
 
@@ -212,7 +212,7 @@ class TestSlotReferences:
             q = qubit()
             h(q)
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(circuit)
 
@@ -231,7 +231,7 @@ class TestSlotReferences:
             q0 = qubit()
             q1 = qubit()
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(circuit)
 
@@ -257,7 +257,7 @@ class TestMinimalCircuits:
         @guppy
         def minimal() -> bool:
             q = qubit()
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(minimal)
 
@@ -277,7 +277,7 @@ class TestGuppyToAstWrapper:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(circuit)
 
@@ -295,7 +295,7 @@ class TestGuppyToAstWrapper:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         # Using guppy_to_ast
         ast1 = guppy_to_ast(circuit)
@@ -326,7 +326,7 @@ class TestAstValidation:
             h(q0)
             cx(q0, q1)
             t(q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(circuit)
 
@@ -348,7 +348,7 @@ class TestAstCodeGeneration:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(circuit)
         qasm = generate(ast, "qasm")
@@ -368,7 +368,7 @@ class TestAstCodeGeneration:
             q = qubit()
             h(q)
             s(q)  # Use S gate (Clifford) instead of T (non-Clifford)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(circuit)
         stim = generate(ast, "stim")
@@ -389,11 +389,11 @@ class TestConditionalCircuits:
         def conditional() -> bool:
             q = qubit()
             h(q)
-            result = measure(q)
+            result = measure(q).read()
             q2 = qubit()
             if result:
                 x(q2)
-            return measure(q2)
+            return measure(q2).read()
 
         ast = guppy_to_ast(conditional)
 
@@ -426,7 +426,7 @@ class TestLoopCircuits:
             while count < 3:
                 x(q)
                 count = count + 1
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(simple_loop)
 
@@ -462,8 +462,8 @@ class TestNestedConditionalCircuits:
             q1 = qubit()
             h(q0)
             h(q1)
-            r0 = measure(q0)
-            r1 = measure(q1)
+            r0 = measure(q0).read()
+            r1 = measure(q1).read()
 
             q2 = qubit()
             if r0:
@@ -472,7 +472,7 @@ class TestNestedConditionalCircuits:
                 else:
                     z(q2)
 
-            return measure(q2)
+            return measure(q2).read()
 
         ast = guppy_to_ast(nested_conditional)
 

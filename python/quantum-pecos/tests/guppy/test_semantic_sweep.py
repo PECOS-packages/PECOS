@@ -53,7 +53,7 @@ def test_euclidean_matrix() -> None:
         ok = ok and (-9) // 2 == -5
         if ok:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(euclid_matrix)
 
@@ -71,7 +71,7 @@ def test_shift_chain() -> None:
         ok = ok and (7 >> 3) == 0
         if ok:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(shift_chain)
 
@@ -92,7 +92,7 @@ def test_comparison_chain_negatives() -> None:
         ok = ok and (a + 8) == b
         if ok:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(cmp_chain)
 
@@ -109,7 +109,7 @@ def test_nested_loop_accumulation() -> None:
                 count = count + 1
         if count == 12:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(nested_accumulate)
 
@@ -127,7 +127,7 @@ def test_zero_iteration_inner_loop() -> None:
                 count = count + 100
         if count == 3:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(zero_inner)
 
@@ -145,7 +145,7 @@ def test_while_countdown() -> None:
             steps = steps + 1
         if n == 0 and steps == 5:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(countdown)
 
@@ -158,14 +158,14 @@ def test_measurement_correlated_branch() -> None:
         q1 = qubit()
         q2 = qubit()
         h(q1)
-        m1 = measure(q1)
+        m1 = measure(q1).read()
         if m1:
             x(q2)
-        m2 = measure(q2)
+        m2 = measure(q2).read()
         q3 = qubit()
         if m1 == m2:
             x(q3)
-        return measure(q3)
+        return measure(q3).read()
 
     _expect_all_ones(correlated, shots=10)
 
@@ -182,7 +182,7 @@ def test_function_call_arithmetic() -> None:
         q = qubit()
         if double(21) == 42 and double(-3) == -6:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(call_arith)
 
@@ -197,7 +197,7 @@ def test_tuple_roundtrip() -> None:
         a, b = pair
         if a + b == 7 and a * b == 12:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(tuple_roundtrip)
 
@@ -215,7 +215,7 @@ def test_sequential_loops_shared_state() -> None:
             total = total + 10
         if total == 26:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(sequential_loops)
 
@@ -238,7 +238,7 @@ def test_branch_chain_on_loop_counter() -> None:
                 high = high + 1
         if low == 2 and mid == 2 and high == 2:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(branch_chain)
 
@@ -254,7 +254,7 @@ def test_mixed_arithmetic_expression() -> None:
         ok = ok and (2 + 3) * (7 - 4) == 15
         if ok:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     _expect_all_ones(mixed_expr)
 
@@ -267,13 +267,13 @@ def test_measured_bits_in_arithmetic() -> None:
         q1 = qubit()
         q2 = qubit()
         x(q1)  # deterministic 1
-        m1 = measure(q1)  # 1
-        m2 = measure(q2)  # 0
+        m1 = measure(q1).read()  # 1
+        m2 = measure(q2).read()  # 0
         total = int(m1) + int(m1) + int(m2)
         q3 = qubit()
         if total == 2:
             x(q3)
-        return measure(q3)
+        return measure(q3).read()
 
     _expect_all_ones(bits_arith)
 
@@ -287,12 +287,12 @@ def test_loop_carrying_measured_state() -> None:
         for _i in range(3):
             q = qubit()
             x(q)
-            if measure(q):
+            if measure(q).read():
                 count = count + 1
         q_out = qubit()
         if count == 3:
             x(q_out)
-        return measure(q_out)
+        return measure(q_out).read()
 
     _expect_all_ones(loop_measures)
 
@@ -308,7 +308,7 @@ def test_result_label_containing_reserved_words() -> None:
     def labeled() -> None:
         q = qubit()
         x(q)
-        result("my_result_Report_Op", measure(q))
+        result("my_result_Report_Op", measure(q).read())
 
     results = sim(Guppy(labeled)).qubits(2).quantum(state_vector()).seed(7).run(3).to_dict()
     assert results["my_result_Report_Op"] == [1, 1, 1], f"keys: {sorted(results)}"

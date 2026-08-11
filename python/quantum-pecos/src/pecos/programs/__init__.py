@@ -51,7 +51,7 @@ Example:
     ... def my_circuit():
     ...     q = qubit()
     ...     h(q)
-    ...     return measure(q)
+    ...     return measure(q).read()
     ...
     >>>
     >>> results = sim(Guppy(my_circuit)).run(1000)
@@ -114,7 +114,7 @@ class Guppy:
         ...     q0, q1 = qubit(), qubit()
         ...     h(q0)
         ...     cx(q0, q1)
-        ...     return measure(q0), measure(q1)
+        ...     return measure(q0).read(), measure(q1).read()
         ...
         >>>
         >>> from pecos import sim, Guppy

@@ -39,7 +39,7 @@ Examples::
     ...     q1 = qubit()
     ...     h(q0)
     ...     cx(q0, q1)
-    ...     return measure(q0), measure(q1)
+    ...     return measure(q0).read(), measure(q1).read()
     ...
     >>>
     >>> ast = guppy_to_ast(bell)
@@ -51,11 +51,11 @@ Examples::
     ... def conditional() -> bool:
     ...     q = qubit()
     ...     h(q)
-    ...     result = measure(q)
+    ...     result = measure(q).read()
     ...     q2 = qubit()
     ...     if result:
     ...         x(q2)
-    ...     return measure(q2)
+    ...     return measure(q2).read()
     ...
     >>>
     >>> ast = guppy_to_ast(conditional)
@@ -71,7 +71,7 @@ Examples::
     ...     while count < 3:
     ...         x(q)
     ...         count = count + 1
-    ...     return measure(q)
+    ...     return measure(q).read()
     ...
     >>>
     >>> ast = guppy_to_ast(loop_circuit)
@@ -1243,7 +1243,7 @@ def hugr_to_ast(
         ... def simple() -> bool:
         ...     q = qubit()
         ...     h(q)
-        ...     return measure(q)
+        ...     return measure(q).read()
         ...
         >>> package = simple.compile()
         >>> ast = hugr_to_ast(package.modules[0])
@@ -1285,11 +1285,11 @@ def guppy_to_ast(
         def conditional() -> bool:
             q = qubit()
             h(q)
-            result = measure(q)
+            result = measure(q).read()
             q2 = qubit()
             if result:
                 x(q2)
-            return measure(q2)
+            return measure(q2).read()
 
         ast = guppy_to_ast(conditional)
         # ast now contains an IfStmt for the conditional

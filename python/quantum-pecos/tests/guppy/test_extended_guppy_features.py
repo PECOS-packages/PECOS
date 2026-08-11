@@ -115,7 +115,7 @@ class TestPhaseAndRotationGates:
             h(q1)  # Create |+⟩
             s(q1)  # Apply S gate
             h(q1)  # Should give different result than without S
-            r1 = measure(q1)
+            r1 = measure(q1).read()
 
             # T gate test: T is sqrt(S)
             q2 = qubit()
@@ -123,7 +123,7 @@ class TestPhaseAndRotationGates:
             t(q2)
             t(q2)  # T² = S
             h(q2)
-            r2 = measure(q2)
+            r2 = measure(q2).read()
 
             return r1, r2
 
@@ -154,7 +154,7 @@ class TestPhaseAndRotationGates:
             tdg(q)
 
             h(q)  # Should return to |0⟩
-            return measure(q)
+            return measure(q).read()
 
         result = tester.test_function(inverse_phase_test, shots=100)
         if result["success"]:
@@ -170,14 +170,14 @@ class TestPhaseAndRotationGates:
             # Test RY gate - rotate by pi/2 should create superposition
             q1 = qubit()
             ry(q1, pi / 2)
-            r1 = measure(q1)
+            r1 = measure(q1).read()
 
             # Test RZ gate - phase rotation doesn't affect |0⟩ state
             q2 = qubit()
             h(q2)  # Create superposition
             rz(q2, pi / 4)  # Apply phase
             h(q2)  # Back to computational basis
-            r2 = measure(q2)
+            r2 = measure(q2).read()
 
             return r1, r2
 
@@ -213,7 +213,7 @@ class TestMultiQubitGates:
             q2 = qubit()
             x(q1)  # Set control to |1⟩
             cy(q1, q2)  # Apply Y to q2 since control is |1⟩
-            r1 = measure(q2)  # Should be |1⟩
+            r1 = measure(q2).read()  # Should be |1⟩
             discard(q1)  # Control no longer needed (linearity)
 
             # Test CZ gate
@@ -223,8 +223,8 @@ class TestMultiQubitGates:
             x(q4)  # Set target to |1⟩
             cz(q3, q4)  # Apply controlled-Z
             h(q3)  # Hadamard to see effect
-            r2 = measure(q3)
-            r3 = measure(q4)
+            r2 = measure(q3).read()
+            r3 = measure(q4).read()
 
             return r1, r2, r3
 
@@ -318,7 +318,7 @@ class TestClassicalDataTypes:
             cx(q1, q2)
 
             # Pack into tuple
-            results = (measure(q1), measure(q2))
+            results = (measure(q1).read(), measure(q2).read())
 
             # Unpack tuple
             a, b = results
@@ -375,7 +375,7 @@ class TestControlFlow:
                     q = qubit()
                     if i > j:  # Only true for some iterations
                         x(q)
-                    if measure(q):
+                    if measure(q).read():
                         count += 1
 
             return count
@@ -412,7 +412,7 @@ class TestControlFlow:
             while count == 0 and tries < 10:
                 q = qubit()
                 h(q)  # 50% chance of |1>
-                if measure(q):
+                if measure(q).read():
                     count = 1
                 tries += 1
 
@@ -435,7 +435,7 @@ class TestControlFlow:
             for i in range(5):
                 q = qubit()
                 x(q)
-                if measure(q):  # Always True
+                if measure(q).read():  # Always True
                     return i  # Return early
 
             return -1  # Should never reach here
@@ -508,7 +508,7 @@ class TestQuantumAlgorithms:
             # Measure in X basis (apply H before measuring)
             h(control)
 
-            r = measure(control)
+            r = measure(control).read()
             discard(target)  # linearity: target is no longer needed
             return r
 
@@ -538,7 +538,7 @@ class TestQuantumAlgorithms:
             cx(q1, q2)
 
             # Both should measure the same due to entanglement
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         @guppy
         def state_comparison_different() -> tuple[bool, bool, bool]:
@@ -559,9 +559,9 @@ class TestQuantumAlgorithms:
             cx(q2, q3)
 
             # Measure all qubits
-            m1 = measure(q1)
-            m2 = measure(q2)
-            m3 = measure(q3)
+            m1 = measure(q1).read()
+            m2 = measure(q2).read()
+            m3 = measure(q3).read()
 
             return m1, m2, m3
 
@@ -576,7 +576,7 @@ class TestQuantumAlgorithms:
             s(q)  # Add phase
             h(q)  # Interfere
 
-            return measure(q)
+            return measure(q).read()
 
         # Test simple state comparison
         result_simple = tester.test_function(state_comparison_simple, shots=1000)
@@ -649,7 +649,7 @@ class TestErrorHandling:
             q = qubit()
             x(q)  # Put qubit in |1⟩
             reset(q)  # Reset to |0⟩
-            return measure(q)  # Should always be False
+            return measure(q).read()  # Should always be False
 
         result = tester.test_function(reset_test, shots=100)
         if result["success"]:
@@ -666,7 +666,7 @@ class TestErrorHandling:
             q2 = qubit()
             x(q1)  # Put q1 in |1⟩
             discard(q1)  # Discard q1
-            return measure(q2)  # Measure q2, should be |0⟩
+            return measure(q2).read()  # Measure q2, should be |0⟩
 
         result = tester.test_function(discard_test, shots=100)
         if result["success"]:
@@ -681,7 +681,7 @@ class TestErrorHandling:
         def empty_circuit() -> bool:
             # Just allocate and measure
             q = qubit()
-            return measure(q)
+            return measure(q).read()
 
         result = tester.test_function(empty_circuit, shots=100)
         if result["success"]:
@@ -742,7 +742,7 @@ class TestPerformance:
                 sdg(q)
                 h(q)
 
-            return measure(q)
+            return measure(q).read()
 
         result = tester.test_function(deep_circuit_test, shots=100)
         if result["success"]:
@@ -765,7 +765,7 @@ def generate_extended_feature_report() -> None:
     def simple_test() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     result = tester.test_function(simple_test, shots=10)
 

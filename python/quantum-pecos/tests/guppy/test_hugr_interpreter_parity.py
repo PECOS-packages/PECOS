@@ -201,7 +201,7 @@ class TestSimpleCircuitParity:
         def hadamard_test() -> None:
             q = qubit()
             h(q)
-            result("m0", measure(q))
+            result("m0", measure(q).read())
 
         # Run on both paths with same seed
         direct_results = run_with_direct_hugr(hadamard_test, num_qubits=1, shots=1000)
@@ -221,7 +221,7 @@ class TestSimpleCircuitParity:
         @guppy
         def measure_zero() -> None:
             q = qubit()
-            result("m0", measure(q))
+            result("m0", measure(q).read())
 
         direct_results = run_with_direct_hugr(measure_zero, num_qubits=1, shots=100)
         selene_results = run_with_selene_llvm(measure_zero, num_qubits=1, shots=100)
@@ -240,7 +240,7 @@ class TestSimpleCircuitParity:
         def measure_one() -> None:
             q = qubit()
             x(q)
-            result("m0", measure(q))
+            result("m0", measure(q).read())
 
         direct_results = run_with_direct_hugr(measure_one, num_qubits=1, shots=100)
         selene_results = run_with_selene_llvm(measure_one, num_qubits=1, shots=100)
@@ -261,8 +261,8 @@ class TestSimpleCircuitParity:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            result("m0", measure(q0))
-            result("m1", measure(q1))
+            result("m0", measure(q0).read())
+            result("m1", measure(q1).read())
 
         direct_results = run_with_direct_hugr(bell_state, num_qubits=2, shots=100)
         selene_results = run_with_selene_llvm(bell_state, num_qubits=2, shots=100)
@@ -290,11 +290,11 @@ class TestConditionalCircuitParity:
         def conditional_x_zero() -> None:
             q1 = qubit()
             q2 = qubit()
-            r1 = measure(q1)  # Always False
+            r1 = measure(q1).read()  # Always False
             if r1:
                 x(q2)
             result("m0", r1)
-            result("m1", measure(q2))  # Should be False
+            result("m1", measure(q2).read())  # Should be False
 
         direct_results = run_with_direct_hugr(
             conditional_x_zero,
@@ -325,11 +325,11 @@ class TestConditionalCircuitParity:
             q1 = qubit()
             q2 = qubit()
             x(q1)
-            r1 = measure(q1)  # Always True
+            r1 = measure(q1).read()  # Always True
             if r1:
                 x(q2)
             result("m0", r1)
-            result("m1", measure(q2))  # Should be True
+            result("m1", measure(q2).read())  # Should be True
 
         direct_results = run_with_direct_hugr(
             conditional_x_one,
@@ -377,7 +377,7 @@ class TestLoopCircuits:
             while not r:
                 q = qubit()
                 h(q)
-                r = measure(q)
+                r = measure(q).read()
             result("m0", r)
 
         # Use more qubits since each loop iteration allocates a new qubit
@@ -401,7 +401,7 @@ class TestLoopCircuits:
             while not r:
                 q = qubit()
                 h(q)
-                r = measure(q)
+                r = measure(q).read()
             result("m0", r)
 
         results = run_with_selene_llvm(repeat_until_one, num_qubits=20, shots=100)
@@ -418,7 +418,7 @@ class TestLoopCircuits:
             for _i in range(5):
                 q = qubit()
                 h(q)
-                if measure(q):
+                if measure(q).read():
                     count = count + 1
             result("m0", count)
 
@@ -444,9 +444,9 @@ class TestGHZStates:
             h(q0)
             cx(q0, q1)
             cx(q1, q2)
-            result("m0", measure(q0))
-            result("m1", measure(q1))
-            result("m2", measure(q2))
+            result("m0", measure(q0).read())
+            result("m1", measure(q1).read())
+            result("m2", measure(q2).read())
 
         direct_results = run_with_direct_hugr(ghz_3, num_qubits=3, shots=100)
         selene_results = run_with_selene_llvm(ghz_3, num_qubits=3, shots=100)
@@ -481,8 +481,8 @@ class TestControlledGatesParity:
             control = qubit()  # |0>
             target = qubit()  # |0>
             ch(control, target)  # CH: target unchanged when control=0
-            result("m0", measure(control))
-            result("m1", measure(target))
+            result("m0", measure(control).read())
+            result("m1", measure(target).read())
 
         direct_results = run_with_direct_hugr(ch_control_zero, num_qubits=2, shots=100)
         selene_results = run_with_selene_llvm(ch_control_zero, num_qubits=2, shots=100)
@@ -511,8 +511,8 @@ class TestControlledGatesParity:
             x(control)  # |1>
             target = qubit()  # |0>
             ch(control, target)  # CH: H applied to target when control=1
-            result("m0", measure(control))
-            result("m1", measure(target))
+            result("m0", measure(control).read())
+            result("m1", measure(target).read())
 
         direct_results = run_with_direct_hugr(ch_control_one, num_qubits=2, shots=1000)
         selene_results = run_with_selene_llvm(ch_control_one, num_qubits=2, shots=1000)
@@ -555,7 +555,7 @@ class TestQubitReuseParity:
             discard(q1)  # Discard (may be reused)
             q2 = qubit()  # Get new qubit (might be same physical qubit)
             x(q2)  # X on |0> should give |1>
-            result("m0", measure(q2))  # Should always be 1
+            result("m0", measure(q2).read())  # Should always be 1
 
         direct_results = run_with_direct_hugr(
             discard_and_reuse,
@@ -582,10 +582,10 @@ class TestQubitReuseParity:
         def measure_and_reuse() -> None:
             q1 = qubit()
             x(q1)  # |1>
-            r1 = measure(q1)  # Measure and free
+            r1 = measure(q1).read()  # Measure and free
 
             q2 = qubit()  # Get new qubit
-            r2 = measure(q2)  # Should be 0 (fresh |0>)
+            r2 = measure(q2).read()  # Should be 0 (fresh |0>)
 
             result("m0", r1)
             result("m1", r2)
@@ -625,10 +625,10 @@ class TestSequentialMeasurementsParity:
         def two_measures() -> None:
             q1 = qubit()
             x(q1)  # |1>
-            r1 = measure(q1)
+            r1 = measure(q1).read()
 
             q2 = qubit()  # |0>
-            r2 = measure(q2)
+            r2 = measure(q2).read()
 
             result("m0", r1)
             result("m1", r2)
@@ -658,20 +658,20 @@ class TestSequentialMeasurementsParity:
             q1 = qubit()
             h(q1)
             x(q1)
-            r1 = measure(q1)  # H+X on |0> -> |-> = 50/50
+            r1 = measure(q1).read()  # H+X on |0> -> |-> = 50/50
 
             q2 = qubit()
             y(q2)
-            r2 = measure(q2)  # Y|0> = i|1> -> always 1
+            r2 = measure(q2).read()  # Y|0> = i|1> -> always 1
 
             q3 = qubit()
             z(q3)
-            r3 = measure(q3)  # Z|0> = |0> -> always 0
+            r3 = measure(q3).read()  # Z|0> = |0> -> always 0
 
             q4 = qubit()
             x(q4)
             z(q4)
-            r4 = measure(q4)  # X then Z on |0> = -|1> -> always 1
+            r4 = measure(q4).read()  # X then Z on |0> = -|1> -> always 1
 
             result("m0", r1)
             result("m1", r2)
@@ -718,7 +718,7 @@ class TestSeleneReferenceValidation:
         def hadamard_test() -> None:
             q = qubit()
             h(q)
-            result("m", measure(q))
+            result("m", measure(q).read())
 
         # Run on true Selene reference
         reference_results = run_with_selene_reference(
@@ -739,7 +739,7 @@ class TestSeleneReferenceValidation:
         def x_gate_test() -> None:
             q = qubit()
             x(q)
-            result("m", measure(q))
+            result("m", measure(q).read())
 
         # Run on true Selene reference
         reference_results = run_with_selene_reference(
@@ -762,8 +762,8 @@ class TestSeleneReferenceValidation:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            result("m0", measure(q0))
-            result("m1", measure(q1))
+            result("m0", measure(q0).read())
+            result("m1", measure(q1).read())
 
         # Run on true Selene reference
         reference_results = run_with_selene_reference(
@@ -787,7 +787,7 @@ class TestSeleneReferenceValidation:
             while not r:
                 q = qubit()
                 h(q)
-                r = measure(q)
+                r = measure(q).read()
             result("final", r)
 
         # Run on true Selene reference - it should handle loops correctly

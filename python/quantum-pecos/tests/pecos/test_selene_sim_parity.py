@@ -46,7 +46,7 @@ def make_repeated_single_bit_results(num_rounds: int) -> object:
     def repeated_single_bit_results() -> None:
         for _ in range(comptime(num_rounds)):
             q = qubit()
-            bit = measure(q)
+            bit = measure(q).read()
             result("synx", array(bit))
 
     return guppy(variant_scoped(repeated_single_bit_results, num_rounds))
@@ -64,7 +64,7 @@ def make_tiny_x_syndrome_memory(num_rounds: int) -> object:
             h(anc)
             cx(anc, data)
             h(anc)
-            bit = measure(anc)
+            bit = measure(anc).read()
             result("synx", array(bit))
 
         h(data)
@@ -90,10 +90,10 @@ def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
             h(anc)
             cx(anc, data)
             h(anc)
-            _ = measure(anc)
+            _ = measure(anc).read()
 
         h(data)
-        _ = measure(data)
+        _ = measure(data).read()
 
     return guppy(variant_scoped(tiny_x_syndrome_memory_raw, num_rounds))
 
@@ -103,11 +103,11 @@ def alloc_reuse_probe() -> None:
     """Measure |1>, then allocate again and verify the fresh qubit is |0>."""
     q = qubit()
     x(q)
-    b1 = measure(q)
+    b1 = measure(q).read()
     result("m1", array(b1))
 
     q2 = qubit()
-    b2 = measure(q2)
+    b2 = measure(q2).read()
     result("m2", array(b2))
 
 

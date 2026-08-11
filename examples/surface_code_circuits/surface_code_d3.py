@@ -112,14 +112,14 @@ def syndrome_extraction(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     h(ax3)
 
     # Measure ancillas
-    sx0 = measure(ax0)
-    sx1 = measure(ax1)
-    sx2 = measure(ax2)
-    sx3 = measure(ax3)
-    sz0 = measure(az0)
-    sz1 = measure(az1)
-    sz2 = measure(az2)
-    sz3 = measure(az3)
+    sx0 = measure(ax0).read()
+    sx1 = measure(ax1).read()
+    sx2 = measure(ax2).read()
+    sx3 = measure(ax3).read()
+    sz0 = measure(az0).read()
+    sz1 = measure(az1).read()
+    sz2 = measure(az2).read()
+    sz3 = measure(az3).read()
 
     synx = array(sx0, sx1, sx2, sx3)
     synz = array(sz0, sz1, sz2, sz3)

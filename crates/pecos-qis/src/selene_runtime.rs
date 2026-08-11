@@ -8,6 +8,7 @@ use log::{debug, trace};
 use pecos_qis_ffi_types::{
     LoweredQuantumOp, Operation, OperationCollector, QuantumOp, TraceMetadata,
 };
+use selene_core::runtime::plugin::RuntimePluginDescriptorV1;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{CString, c_void};
 use std::mem::ManuallyDrop;
@@ -68,18 +69,26 @@ struct SourceTraceMetadata {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct SeleneRuntimeGetOperationInterface {
-    rzz: extern "C" fn(RuntimeGetOperationInstance, u64, u64, f64),
-    rxy: extern "C" fn(RuntimeGetOperationInstance, u64, f64, f64),
-    rz: extern "C" fn(RuntimeGetOperationInstance, u64, f64),
-    measure: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
-    measure_leaked: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
-    reset: extern "C" fn(RuntimeGetOperationInstance, u64),
-    custom: extern "C" fn(RuntimeGetOperationInstance, usize, *const c_void, usize),
-    set_batch_time: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    measure: unsafe extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    measure_leaked: unsafe extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    reset: unsafe extern "C" fn(RuntimeGetOperationInstance, u64),
+    custom: unsafe extern "C" fn(RuntimeGetOperationInstance, usize, *const c_void, usize),
+    set_batch_time: unsafe extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    rzz: unsafe extern "C" fn(RuntimeGetOperationInstance, u64, u64, f64),
+    rxy: unsafe extern "C" fn(RuntimeGetOperationInstance, u64, f64, f64),
+    rz: unsafe extern "C" fn(RuntimeGetOperationInstance, u64, f64),
+    rpp: unsafe extern "C" fn(RuntimeGetOperationInstance, u64, u64, f64, f64),
 }
 
-extern "C" fn runtime_batch_rxy(
+#[repr(C)]
+struct SeleneRuntimeGetOperationHandle {
+    instance: RuntimeGetOperationInstance,
+    interface: SeleneRuntimeGetOperationInterface,
+}
+
+unsafe extern "C" fn runtime_batch_rxy(
     instance: RuntimeGetOperationInstance,
     qubit_id: u64,
     theta: f64,
@@ -94,7 +103,11 @@ extern "C" fn runtime_batch_rxy(
     batch.invoked = true;
 }
 
-extern "C" fn runtime_batch_rz(instance: RuntimeGetOperationInstance, qubit_id: u64, theta: f64) {
+unsafe extern "C" fn runtime_batch_rz(
+    instance: RuntimeGetOperationInstance,
+    qubit_id: u64,
+    theta: f64,
+) {
     let batch = unsafe { &mut *(instance.cast::<RuntimeOperationBatch>()) };
     batch
         .operations
@@ -102,7 +115,7 @@ extern "C" fn runtime_batch_rz(instance: RuntimeGetOperationInstance, qubit_id: 
     batch.invoked = true;
 }
 
-extern "C" fn runtime_batch_rzz(
+unsafe extern "C" fn runtime_batch_rzz(
     instance: RuntimeGetOperationInstance,
     qubit_id_1: u64,
     qubit_id_2: u64,
@@ -117,7 +130,7 @@ extern "C" fn runtime_batch_rzz(
     batch.invoked = true;
 }
 
-extern "C" fn runtime_batch_measure(
+unsafe extern "C" fn runtime_batch_measure(
     instance: RuntimeGetOperationInstance,
     qubit_id: u64,
     result_id: u64,
@@ -130,7 +143,7 @@ extern "C" fn runtime_batch_measure(
     batch.invoked = true;
 }
 
-extern "C" fn runtime_batch_measure_leaked(
+unsafe extern "C" fn runtime_batch_measure_leaked(
     instance: RuntimeGetOperationInstance,
     qubit_id: u64,
     result_id: u64,
@@ -143,7 +156,7 @@ extern "C" fn runtime_batch_measure_leaked(
     batch.invoked = true;
 }
 
-extern "C" fn runtime_batch_reset(instance: RuntimeGetOperationInstance, qubit_id: u64) {
+unsafe extern "C" fn runtime_batch_reset(instance: RuntimeGetOperationInstance, qubit_id: u64) {
     let batch = unsafe { &mut *(instance.cast::<RuntimeOperationBatch>()) };
     batch
         .operations
@@ -151,7 +164,7 @@ extern "C" fn runtime_batch_reset(instance: RuntimeGetOperationInstance, qubit_i
     batch.invoked = true;
 }
 
-extern "C" fn runtime_batch_custom(
+unsafe extern "C" fn runtime_batch_custom(
     instance: RuntimeGetOperationInstance,
     _tag: usize,
     _data: *const c_void,
@@ -162,7 +175,7 @@ extern "C" fn runtime_batch_custom(
     batch.invoked = true;
 }
 
-extern "C" fn runtime_batch_set_time(
+unsafe extern "C" fn runtime_batch_set_time(
     instance: RuntimeGetOperationInstance,
     start_time_nanos: u64,
     duration_nanos: u64,
@@ -173,16 +186,29 @@ extern "C" fn runtime_batch_set_time(
     batch.invoked = true;
 }
 
+unsafe extern "C" fn runtime_batch_rpp(
+    instance: RuntimeGetOperationInstance,
+    _qubit_id_1: u64,
+    _qubit_id_2: u64,
+    _theta: f64,
+    _phi: f64,
+) {
+    let batch = unsafe { &mut *(instance.cast::<RuntimeOperationBatch>()) };
+    batch.operations.push(RuntimeScheduledOp::Custom);
+    batch.invoked = true;
+}
+
 static RUNTIME_OPERATION_CALLBACKS: SeleneRuntimeGetOperationInterface =
     SeleneRuntimeGetOperationInterface {
-        rzz: runtime_batch_rzz,
-        rxy: runtime_batch_rxy,
-        rz: runtime_batch_rz,
         measure: runtime_batch_measure,
         measure_leaked: runtime_batch_measure_leaked,
         reset: runtime_batch_reset,
         custom: runtime_batch_custom,
         set_batch_time: runtime_batch_set_time,
+        rzz: runtime_batch_rzz,
+        rxy: runtime_batch_rxy,
+        rz: runtime_batch_rz,
+        rpp: runtime_batch_rpp,
     };
 
 /// Selene runtime implementation
@@ -288,6 +314,32 @@ unsafe impl Send for SeleneRuntime {}
 unsafe impl Sync for SeleneRuntime {}
 
 impl SeleneRuntime {
+    /// Load the Selene 0.3 runtime-plugin descriptor from a library.
+    ///
+    /// Selene 0.3 intentionally exposes its ABI through one descriptor entry
+    /// point instead of exporting every runtime callback as a global symbol.
+    unsafe fn runtime_plugin_descriptor(
+        library: &libloading::Library,
+    ) -> Result<&RuntimePluginDescriptorV1> {
+        let get_descriptor = unsafe {
+            library.get::<unsafe extern "C" fn() -> *const RuntimePluginDescriptorV1>(
+                b"selene_runtime_get_plugin_descriptor_v1",
+            )
+        }
+        .map_err(|e| {
+            RuntimeError::FfiError(format!(
+                "runtime plugin does not export its Selene 0.3 descriptor: {e}"
+            ))
+        })?;
+        let descriptor = unsafe { get_descriptor() };
+        if descriptor.is_null() {
+            return Err(RuntimeError::FfiError(
+                "runtime plugin returned a null Selene 0.3 descriptor".to_string(),
+            ));
+        }
+        Ok(unsafe { &*descriptor })
+    }
+
     /// Create a new Selene runtime with the given plugin path
     pub fn new(plugin_path: impl AsRef<Path>) -> Self {
         Self {
@@ -394,12 +446,7 @@ impl SeleneRuntime {
                     .map_err(|e| RuntimeError::FfiError(format!("Failed to load plugin: {e}")))?,
             );
 
-            // Initialize runtime instance
-            let init_fn: libloading::Symbol<
-                unsafe extern "C" fn(*mut *mut c_void, u64, u64, u32, *const *const i8) -> i32,
-            > = lib
-                .get(b"selene_runtime_init")
-                .map_err(|e| RuntimeError::FfiError(format!("Missing init function: {e}")))?;
+            let descriptor = Self::runtime_plugin_descriptor(&lib)?;
 
             let c_args = self
                 .init_args
@@ -420,7 +467,7 @@ impl SeleneRuntime {
             };
 
             let mut instance: *mut c_void = std::ptr::null_mut();
-            let errno = init_fn(
+            let errno = (descriptor.init_fn)(
                 &raw mut instance,
                 plugin_num_qubits as u64,
                 0, // start time
@@ -469,9 +516,7 @@ impl SeleneRuntime {
             && let Some(instance) = self.instance
         {
             unsafe {
-                if let Ok(exit_fn) =
-                    lib.get::<unsafe extern "C" fn(*mut c_void) -> i32>(b"selene_runtime_exit")
-                {
+                if let Some(exit_fn) = Self::runtime_plugin_descriptor(lib)?.exit_fn {
                     let errno = exit_fn(instance);
                     if errno != 0 {
                         return Err(RuntimeError::ExecutionError(format!(
@@ -509,15 +554,7 @@ impl SeleneRuntime {
             // plugin that cannot receive shot boundaries cannot run its own
             // per-shot validation, so a missing symbol fails closed (both
             // PECOS-built runtimes export the full lifecycle).
-            let shot_start_fn = lib
-                .get::<unsafe extern "C" fn(*mut c_void, u64, u64) -> i32>(
-                    b"selene_runtime_shot_start",
-                )
-                .map_err(|e| {
-                    RuntimeError::FfiError(format!(
-                        "runtime plugin does not export selene_runtime_shot_start: {e}"
-                    ))
-                })?;
+            let shot_start_fn = Self::runtime_plugin_descriptor(lib)?.shot_start_fn;
             let errno = shot_start_fn(instance, shot_id, seed.unwrap_or(0));
             if errno != 0 {
                 return Err(RuntimeError::ExecutionError(format!(
@@ -677,11 +714,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let qalloc_fn = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, *mut u64) -> i32>(
-                    b"selene_runtime_qalloc",
-                )
-                .map_err(|e| RuntimeError::FfiError(format!("Missing qalloc function: {e}")))?;
+            let qalloc_fn = Self::runtime_plugin_descriptor(lib)?.qalloc_fn;
             let mut runtime_qubit = 0;
             let errno = qalloc_fn(instance, &raw mut runtime_qubit);
             if errno != 0 {
@@ -707,9 +740,7 @@ impl SeleneRuntime {
         };
 
         unsafe {
-            let qfree_fn = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, u64) -> i32>(b"selene_runtime_qfree")
-                .map_err(|e| RuntimeError::FfiError(format!("Missing qfree function: {e}")))?;
+            let qfree_fn = Self::runtime_plugin_descriptor(lib)?.qfree_fn;
             let errno = qfree_fn(instance, runtime_qubit);
             if errno != 0 {
                 return Err(RuntimeError::FfiError(format!(
@@ -731,11 +762,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let rxy_fn = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, u64, f64, f64) -> i32>(
-                    b"selene_runtime_rxy_gate",
-                )
-                .map_err(|e| RuntimeError::FfiError(format!("Missing rxy function: {e}")))?;
+            let rxy_fn = Self::runtime_plugin_descriptor(lib)?.rxy_gate_fn;
             let errno = rxy_fn(instance, runtime_qubit, theta, phi);
             if errno != 0 {
                 return Err(RuntimeError::FfiError(format!(
@@ -757,11 +784,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let rz_fn = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, u64, f64) -> i32>(
-                    b"selene_runtime_rz_gate",
-                )
-                .map_err(|e| RuntimeError::FfiError(format!("Missing rz function: {e}")))?;
+            let rz_fn = Self::runtime_plugin_descriptor(lib)?.rz_gate_fn;
             let errno = rz_fn(instance, runtime_qubit, theta);
             if errno != 0 {
                 return Err(RuntimeError::FfiError(format!(
@@ -788,11 +811,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let rzz_fn = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, u64, u64, f64) -> i32>(
-                    b"selene_runtime_rzz_gate",
-                )
-                .map_err(|e| RuntimeError::FfiError(format!("Missing rzz function: {e}")))?;
+            let rzz_fn = Self::runtime_plugin_descriptor(lib)?.rzz_gate_fn;
             let errno = rzz_fn(instance, runtime_qubit_1, runtime_qubit_2, theta);
             if errno != 0 {
                 return Err(RuntimeError::FfiError(format!(
@@ -814,9 +833,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let reset_fn = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, u64) -> i32>(b"selene_runtime_reset")
-                .map_err(|e| RuntimeError::FfiError(format!("Missing reset function: {e}")))?;
+            let reset_fn = Self::runtime_plugin_descriptor(lib)?.reset_fn;
             let errno = reset_fn(instance, runtime_qubit);
             if errno != 0 {
                 return Err(RuntimeError::FfiError(format!(
@@ -838,11 +855,7 @@ impl SeleneRuntime {
         })?;
 
         let runtime_result = unsafe {
-            let measure_fn = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, u64, *mut u64) -> i32>(
-                    b"selene_runtime_measure",
-                )
-                .map_err(|e| RuntimeError::FfiError(format!("Missing measure function: {e}")))?;
+            let measure_fn = Self::runtime_plugin_descriptor(lib)?.measure_fn;
             let mut runtime_result = 0;
             let errno = measure_fn(instance, runtime_qubit, &raw mut runtime_result);
             if errno != 0 {
@@ -874,13 +887,7 @@ impl SeleneRuntime {
         })?;
 
         let runtime_result = unsafe {
-            let measure_fn = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, u64, *mut u64) -> i32>(
-                    b"selene_runtime_measure_leaked",
-                )
-                .map_err(|e| {
-                    RuntimeError::FfiError(format!("Missing leakage measurement function: {e}"))
-                })?;
+            let measure_fn = Self::runtime_plugin_descriptor(lib)?.measure_leaked_fn;
             let mut runtime_result = 0;
             let errno = measure_fn(instance, runtime_qubit, &raw mut runtime_result);
             if errno != 0 {
@@ -908,13 +915,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let force_fn = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, u64) -> i32>(
-                    b"selene_runtime_force_result",
-                )
-                .map_err(|e| {
-                    RuntimeError::FfiError(format!("Missing force_result function: {e}"))
-                })?;
+            let force_fn = Self::runtime_plugin_descriptor(lib)?.force_result_fn;
             let errno = force_fn(instance, runtime_result);
             if errno != 0 {
                 return Err(RuntimeError::FfiError(format!(
@@ -936,13 +937,7 @@ impl SeleneRuntime {
         })?;
 
         unsafe {
-            let Ok(global_barrier_fn) = lib
-                .get::<unsafe extern "C" fn(RuntimeInstance, u64) -> i32>(
-                    b"selene_runtime_global_barrier",
-                )
-            else {
-                return Ok(false);
-            };
+            let global_barrier_fn = Self::runtime_plugin_descriptor(lib)?.global_barrier_fn;
             let errno = global_barrier_fn(instance, sleep_time);
             if errno != 0 {
                 return Err(RuntimeError::FfiError(format!(
@@ -1099,21 +1094,18 @@ impl SeleneRuntime {
                 })?;
 
                 unsafe {
-                    let get_next_fn = lib
-                        .get::<unsafe extern "C" fn(
-                            RuntimeInstance,
-                            RuntimeGetOperationInstance,
-                            *const SeleneRuntimeGetOperationInterface,
-                        ) -> i32>(b"selene_runtime_get_next_operations")
-                        .map_err(|e| {
-                            RuntimeError::FfiError(format!(
-                                "Missing get_next_operations function: {e}"
-                            ))
-                        })?;
+                    let get_next_fn: unsafe extern "C" fn(
+                        RuntimeInstance,
+                        SeleneRuntimeGetOperationHandle,
+                    ) -> i32 = std::mem::transmute(
+                        Self::runtime_plugin_descriptor(lib)?.get_next_operations_fn,
+                    );
                     get_next_fn(
                         instance,
-                        (&raw mut batch).cast::<c_void>(),
-                        &raw const RUNTIME_OPERATION_CALLBACKS,
+                        SeleneRuntimeGetOperationHandle {
+                            instance: (&raw mut batch).cast::<c_void>(),
+                            interface: RUNTIME_OPERATION_CALLBACKS,
+                        },
                     )
                 }
             };
@@ -1985,26 +1977,20 @@ impl QisRuntime for SeleneRuntime {
                     && let Some(instance) = self.instance
                 {
                     unsafe {
+                        let descriptor = Self::runtime_plugin_descriptor(lib)?;
                         if self.leakage_results.contains(result_id) {
-                            if let Ok(set_result_fn) =
-                                lib.get::<unsafe extern "C" fn(*mut c_void, u64, u64) -> i32>(
-                                    b"selene_runtime_set_u64_result",
-                                )
-                            {
-                                let errno =
-                                    set_result_fn(instance, *runtime_result_id, u64::from(*value));
-                                if errno != 0 {
-                                    return Err(RuntimeError::FfiError(format!(
-                                        "selene_runtime_set_u64_result failed with errno {errno} \
-                                         for result {result_id}"
-                                    )));
-                                }
+                            let errno = (descriptor.set_u64_result_fn)(
+                                instance,
+                                *runtime_result_id,
+                                u64::from(*value),
+                            );
+                            if errno != 0 {
+                                return Err(RuntimeError::FfiError(format!(
+                                    "selene_runtime_set_u64_result failed with errno {errno} \
+                                     for result {result_id}"
+                                )));
                             }
-                        } else if let Ok(set_result_fn) =
-                            lib.get::<unsafe extern "C" fn(*mut c_void, u64, bool) -> i32>(
-                                b"selene_runtime_set_bool_result",
-                            )
-                        {
+                        } else {
                             let bool_value = match *value {
                                 0 => false,
                                 1 => true,
@@ -2021,7 +2007,11 @@ impl QisRuntime for SeleneRuntime {
                             // An ABSENT symbol stays legal -- a runtime that
                             // never conditions on results has no delivery to
                             // fail.
-                            let errno = set_result_fn(instance, *runtime_result_id, bool_value);
+                            let errno = (descriptor.set_bool_result_fn)(
+                                instance,
+                                *runtime_result_id,
+                                bool_value,
+                            );
                             if errno != 0 {
                                 return Err(RuntimeError::FfiError(format!(
                                     "selene_runtime_set_bool_result failed with errno {errno} \
@@ -2128,7 +2118,7 @@ impl QisRuntime for SeleneRuntime {
         // `take()` clears the active shot unconditionally: a clone that
         // inherited `active_shot` without a loaded plugin has no FFI shot to
         // end, but must not carry the stale identity forward.
-        if let Some((shot_id, seed)) = self.active_shot.take()
+        if let Some((_shot_id, _seed)) = self.active_shot.take()
             && let Some(lib) = &self.library
             && let Some(instance) = self.instance
         {
@@ -2136,16 +2126,8 @@ impl QisRuntime for SeleneRuntime {
                 // Missing shot_end fails closed like the other lifecycle
                 // hooks: the plugin's own finalization validation is part of
                 // what shot completion certifies.
-                let shot_end_fn = lib
-                    .get::<unsafe extern "C" fn(*mut c_void, u64, u64) -> i32>(
-                        b"selene_runtime_shot_end",
-                    )
-                    .map_err(|e| {
-                        RuntimeError::FfiError(format!(
-                            "runtime plugin does not export selene_runtime_shot_end: {e}"
-                        ))
-                    })?;
-                let errno = shot_end_fn(instance, shot_id, seed);
+                let shot_end_fn = Self::runtime_plugin_descriptor(lib)?.shot_end_fn;
+                let errno = shot_end_fn(instance);
                 if errno != 0 {
                     return Err(RuntimeError::FfiError(format!(
                         "selene_runtime_shot_end failed with errno {errno}"

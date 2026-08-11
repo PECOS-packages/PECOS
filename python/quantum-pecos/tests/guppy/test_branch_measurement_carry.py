@@ -69,7 +69,7 @@ def test_measurement_value_crosses_dynamic_branch() -> None:
     def main() -> None:
         flag_q = qubit()
         h(flag_q)
-        flag = measure(flag_q)
+        flag = measure(flag_q).read()
 
         q = qubit()
         bit = measure_and_reset(q)

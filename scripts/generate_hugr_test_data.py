@@ -40,8 +40,8 @@ def generate_bell_state_hugr() -> str:
         cx(q0, q1)
 
         # Measure both qubits
-        m0 = measure(q0)
-        m1 = measure(q1)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
 
         return m0, m1
 
@@ -61,7 +61,7 @@ def generate_single_hadamard_hugr() -> str:
         """Apply Hadamard gate to a single qubit."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR Package
     compiled = single_hadamard.compile()
@@ -86,9 +86,9 @@ def generate_ghz_state_hugr() -> str:
         cx(q1, q2)
 
         # Measure all qubits
-        m0 = measure(q0)
-        m1 = measure(q1)
-        m2 = measure(q2)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
+        m2 = measure(q2).read()
 
         return m0, m1, m2
 
@@ -119,7 +119,7 @@ def generate_rz_x_hugr() -> str:
         q1 = qubit()
         rz(q0, pi)
         x(q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     compiled = rz_x_circuit.compile()
     return compiled.to_str()
@@ -150,14 +150,14 @@ def generate_simple_conditional_hugr() -> str:
         h(q0)
 
         # Measure q0
-        m0 = measure(q0)
+        m0 = measure(q0).read()
 
         # Conditionally apply X to q1
         if m0:
             x(q1)
 
         # Measure q1
-        m1 = measure(q1)
+        m1 = measure(q1).read()
 
         return m0, m1
 
@@ -187,14 +187,14 @@ def generate_conditional_h_hugr() -> str:
 
         # Put control in superposition and measure
         h(q_control)
-        m_control = measure(q_control)
+        m_control = measure(q_control).read()
 
         # Conditionally apply H to result qubit
         if m_control:
             h(q_result)
 
         # Measure result qubit
-        m_result = measure(q_result)
+        m_result = measure(q_result).read()
 
         return m_control, m_result
 
@@ -227,7 +227,7 @@ def generate_conditional_branch_hugr() -> str:
         q1 = qubit()
 
         # Measure q0 (will be 0 since it starts in |0⟩)
-        m0 = measure(q0)
+        m0 = measure(q0).read()
 
         # Apply different gates based on measurement
         if m0:
@@ -236,7 +236,7 @@ def generate_conditional_branch_hugr() -> str:
             h(q1)  # This branch will be taken
 
         # Measure q1
-        m1 = measure(q1)
+        m1 = measure(q1).read()
 
         return m0, m1
 
@@ -268,7 +268,7 @@ def generate_simple_while_loop_hugr() -> str:
         while not result:
             q = qubit()
             h(q)
-            result = measure(q)
+            result = measure(q).read()
         return result
 
     compiled = simple_while_loop.compile()
@@ -299,7 +299,7 @@ def generate_function_call_hugr() -> str:
         """Main function that calls apply_h."""
         q = qubit()
         q = apply_h(q)
-        return measure(q)
+        return measure(q).read()
 
     compiled = function_call_main.compile()
     return compiled.to_str()
@@ -330,7 +330,7 @@ def generate_multiple_function_calls_hugr() -> str:
         q1 = qubit()
         q0 = apply_h_multi(q0)
         q1 = apply_h_multi(q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     compiled = multiple_calls_main.compile()
     return compiled.to_str()
@@ -364,7 +364,7 @@ def generate_nested_function_calls_hugr() -> str:
         """Main: call outer_func."""
         q = qubit()
         q = outer_func(q)
-        return measure(q)
+        return measure(q).read()
 
     compiled = nested_calls_main.compile()
     return compiled.to_str()
@@ -395,7 +395,7 @@ def generate_multi_qubit_function_hugr() -> str:
         q1 = qubit()
         h(q0)
         q0, q1 = apply_cx_func(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     compiled = multi_qubit_main.compile()
     return compiled.to_str()

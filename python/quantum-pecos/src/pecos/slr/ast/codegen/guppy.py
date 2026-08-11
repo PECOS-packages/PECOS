@@ -1295,10 +1295,10 @@ class AstToGuppy:
             local = linearity.consume(slot)
             if index < len(node.results):
                 result = self._render_bit_ref(node.results[index])
-                lines.append(f"{self.context.indent()}{result} = measure({local})")
+                lines.append(f"{self.context.indent()}{result} = measure({local}).read()")
             else:
                 temp = self.context.temp("measurement")
-                lines.append(f"{self.context.indent()}{temp} = measure({local})")
+                lines.append(f"{self.context.indent()}{temp} = measure({local}).read()")
         return lines
 
     def _emit_assign(self, node: AssignOp) -> list[str]:

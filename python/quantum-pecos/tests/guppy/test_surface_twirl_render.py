@@ -249,7 +249,7 @@ def test_twirl_source_unrolls_rng_masks_and_runtime_paulis(patch: SurfacePatch) 
     assert "def _pcg32_next4(state: nat, inc: nat) -> tuple[nat, int]:" in src
     assert "def seeded_pcg32_with_quantum_entropy(seed: int) -> tuple[nat, nat]:" in src
     assert "entropy_q = qubit()" in src
-    assert "if measure(entropy_q):" in src
+    assert "if measure(entropy_q).read():" in src
     assert src.count("rng_state, rng_inc = seeded_pcg32_with_quantum_entropy(42)") == 2
     assert src.count('result("frame_mode:raw", True)') == 2
     assert "rng_state, active_draw_m_0_0 = _pcg32_next32(rng_state, rng_inc)" in src
@@ -294,7 +294,7 @@ def test_canonical_frame_output_emits_raw_sibling_tags(patch: SurfacePatch) -> N
     assert 'result("frame_mode:canonical", True)' in src
     assert "fx_0 = False" in src
     assert "fz_0 = False" in src
-    assert "sx0_raw = measure(ax0)" in src
+    assert "sx0_raw = measure(ax0).read()" in src
     assert "sx0 = sx0_raw != sx0_flip" in src
     assert 'result("raw:sx0:bit:0", sx0_raw)' in src
     assert 'result("raw:final", final_raw)' in src

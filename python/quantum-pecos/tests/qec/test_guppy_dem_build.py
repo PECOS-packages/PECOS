@@ -36,8 +36,8 @@ def _scrambled_tagged_measurements() -> None:
     qb = qubit()
     h(qb)
     cx(qb, qa)
-    a = measure(qa)
-    b = measure(qb)
+    a = measure(qa).read()
+    b = measure(qb).read()
     result("b", b)
     result("a", a)
 
@@ -45,7 +45,7 @@ def _scrambled_tagged_measurements() -> None:
 @guppy
 def _transformed_measurement_result() -> None:
     q = qubit()
-    measured = measure(q)
+    measured = measure(q).read()
     result("not_m", not measured)
 
 
@@ -53,15 +53,15 @@ def _transformed_measurement_result() -> None:
 def _aggregate_measurement_result() -> None:
     qa = qubit()
     qb = qubit()
-    a = measure(qa)
-    b = measure(qb)
+    a = measure(qa).read()
+    b = measure(qb).read()
     result("pair", array(a, b))
 
 
 @guppy
 def _mixed_supported_result_occurrences() -> None:
     q = qubit()
-    measured = measure(q)
+    measured = measure(q).read()
     result("same", not measured)
     result("same", measured)
 
@@ -71,9 +71,9 @@ def _measurement_feedback_without_named_results() -> None:
     q0 = qubit()
     q1 = qubit()
     h(q0)
-    if measure(q0):
+    if measure(q0).read():
         x(q1)
-    _ = measure(q1)
+    _ = measure(q1).read()
 
 
 def _reordered_trace() -> tuple[TickCircuit, list[dict[str, object]]]:

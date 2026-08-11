@@ -16,7 +16,7 @@ class TestRotationExtension:
             q = qubit()
             # Use angle arithmetic - this should generate rotation operations
             rz(q, pi / 4 + pi / 8)  # Should involve angle addition
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_angle_ops.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -33,7 +33,7 @@ class TestRotationExtension:
             q = qubit()
             rz(q, pi / 2)  # First rotation
             rz(q, pi / 4)  # Second rotation
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_multi_angles.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -49,7 +49,7 @@ class TestRotationExtension:
         def test_rotation_compat() -> bool:
             q = qubit()
             rz(q, pi * 2.0)  # Full rotation
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_rotation_compat.compile()
         pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -67,7 +67,7 @@ class TestRotationExtension:
             # Complex angle expression
             angle = pi / 3 + pi / 6  # Should be pi/2
             rz(q, angle)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_complex_angles.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -83,7 +83,7 @@ class TestRotationExtension:
         def simple_rotation() -> bool:
             q = qubit()
             rz(q, pi / 8)
-            return measure(q)
+            return measure(q).read()
 
         hugr = simple_rotation.compile()
         try:

@@ -133,8 +133,8 @@ def test_bell_state_compilation_parity() -> None:
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        m0 = measure(q0)
-        m1 = measure(q1)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
         return m0, m1
 
     # Compile to HUGR
@@ -156,7 +156,7 @@ def test_single_hadamard_compilation_parity() -> None:
         """Apply Hadamard and measure."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR
     hugr = hadamard_test.compile()
@@ -181,9 +181,9 @@ def test_ghz_state_compilation_parity() -> None:
         h(q0)
         cx(q0, q1)
         cx(q1, q2)
-        m0 = measure(q0)
-        m1 = measure(q1)
-        m2 = measure(q2)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
+        m2 = measure(q2).read()
         return m0, m1, m2
 
     # Compile to HUGR
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         """Simple test circuit with H gate and measurement."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     hugr = test_circuit.compile()
 

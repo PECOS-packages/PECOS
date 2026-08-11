@@ -33,7 +33,7 @@ def demo_simple_api() -> None:
         """Generate a random bit using quantum superposition."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     @guppy
     def bell_state() -> tuple[bool, bool]:
@@ -42,7 +42,7 @@ def demo_simple_api() -> None:
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     @guppy
     def ghz_state() -> tuple[bool, bool, bool]:
@@ -51,7 +51,7 @@ def demo_simple_api() -> None:
         h(q0)
         cx(q0, q1)
         cx(q1, q2)
-        return measure(q0), measure(q1), measure(q2)
+        return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
     try:
         # Import the simple API
@@ -171,7 +171,7 @@ def demo_comparison_with_qasm() -> None:
     print("def my_circuit() -> bool:")
     print("    q = qubit()")
     print("    h(q)")
-    print("    return measure(q)")
+    print("    return measure(q).read()")
     print("")
     print("results = run_guppy(my_circuit, shots=1000)")
     print("```")

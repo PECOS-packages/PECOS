@@ -160,7 +160,7 @@ def _render_inline_pcg32() -> list[str]:
         "    for i in range(32):",
         "        entropy_q = qubit()",
         "        h(entropy_q)",
-        "        if measure(entropy_q):",
+        "        if measure(entropy_q).read():",
         "            entropy = entropy | (nat(1) << nat(i))",
         "    return seeded_pcg32_from_sequence(seed, entropy)",
         "",
@@ -992,12 +992,12 @@ def generate_guppy_source(
                 raw_var = f"sx{stab.index}_raw"
                 flip_var = f"sx{stab.index}_flip"
                 flip_expr = _xor_expr(f"frame_z[{q}]" for q in stab.data_qubits)
-                lines.append(f"    {raw_var} = measure(ax{stab.index})")
+                lines.append(f"    {raw_var} = measure(ax{stab.index}).read()")
                 lines.append(f"    {flip_var} = {flip_expr}")
                 lines.append(f"    sx{stab.index} = {raw_var} != {flip_var}")
                 lines.append(f'    result("raw:sx{stab.index}:bit:{idx}", {raw_var})')
             else:
-                lines.append(f"    sx{stab.index} = measure(ax{stab.index})")
+                lines.append(f"    sx{stab.index} = measure(ax{stab.index}).read()")
             lines.append(f'    result("sx{stab.index}:meas:{idx}", sx{stab.index})')
             idx += 1
         for stab in geom.z_stabilizers:
@@ -1005,12 +1005,12 @@ def generate_guppy_source(
                 raw_var = f"sz{stab.index}_raw"
                 flip_var = f"sz{stab.index}_flip"
                 flip_expr = _xor_expr(f"frame_x[{q}]" for q in stab.data_qubits)
-                lines.append(f"    {raw_var} = measure(az{stab.index})")
+                lines.append(f"    {raw_var} = measure(az{stab.index}).read()")
                 lines.append(f"    {flip_var} = {flip_expr}")
                 lines.append(f"    sz{stab.index} = {raw_var} != {flip_var}")
                 lines.append(f'    result("raw:sz{stab.index}:bit:{idx}", {raw_var})')
             else:
-                lines.append(f"    sz{stab.index} = measure(az{stab.index})")
+                lines.append(f"    sz{stab.index} = measure(az{stab.index}).read()")
             lines.append(f'    result("sz{stab.index}:meas:{idx}", sz{stab.index})')
             idx += 1
     else:
@@ -1108,7 +1108,7 @@ def generate_guppy_source(
                 anc = batch_anc_var[(stab_type, stab_idx)]
                 syn_var = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
                 tag_prefix = syn_var
-                lines.append(f"    {syn_var} = measure({anc})")
+                lines.append(f"    {syn_var} = measure({anc}).read()")
                 lines.append(f'    result("{tag_prefix}:meas:{idx}", {syn_var})')
                 idx += 1
 
@@ -1222,10 +1222,10 @@ def generate_guppy_source(
             lines.append("    # Measure init ancillas")
             for idx, stab in enumerate(stabs):
                 if stab_type == "X":
-                    lines.append(f"    sx{stab.index} = measure(ax{stab.index})")
+                    lines.append(f"    sx{stab.index} = measure(ax{stab.index}).read()")
                     lines.append(f'    result("sx{stab.index}:init:meas:{idx}", sx{stab.index})')
                 else:
-                    lines.append(f"    sz{stab.index} = measure(az{stab.index})")
+                    lines.append(f"    sz{stab.index} = measure(az{stab.index}).read()")
                     lines.append(f'    result("sz{stab.index}:init:meas:{idx}", sz{stab.index})')
         else:
             batches = batched_stabilizers(
@@ -1306,7 +1306,7 @@ def generate_guppy_source(
                 for selected_type, stab_idx in init_batch:
                     anc = batch_anc_var[(selected_type, stab_idx)]
                     syn_var = f"sx{stab_idx}" if selected_type == "X" else f"sz{stab_idx}"
-                    lines.append(f"    {syn_var} = measure({anc})")
+                    lines.append(f"    {syn_var} = measure({anc}).read()")
                     lines.append(f'    result("{syn_var}:init:meas:{idx}", {syn_var})')
                     idx += 1
 
@@ -1343,7 +1343,7 @@ def generate_guppy_source(
                 _szz_physical_axis_for_memory_data("Z", i),
                 f"d{i}",
             )
-        z_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
+        z_meas = ", ".join(f"measure(d{i}).read()" for i in range(num_data))
         lines.append(f"    return array({z_meas})")
     else:
         lines.append("    return measure_array(surf.data)")
@@ -1365,7 +1365,7 @@ def generate_guppy_source(
                 _szz_physical_axis_for_memory_data("X", i),
                 f"d{i}",
             )
-        x_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
+        x_meas = ", ".join(f"measure(d{i}).read()" for i in range(num_data))
         lines.append(f"    return array({x_meas})")
     else:
         lines.append(f"    for i in range({num_data}):")
@@ -1462,11 +1462,11 @@ def generate_guppy_source(
             target.append(f"{indent}# Measure ancillas")
             idx = 0
             for stab in geom.x_stabilizers:
-                target.append(f"{indent}sx{stab.index} = measure(ax{stab.index})")
+                target.append(f"{indent}sx{stab.index} = measure(ax{stab.index}).read()")
                 target.append(f'{indent}result("sx{stab.index}:meas:{idx}", sx{stab.index})')
                 idx += 1
             for stab in geom.z_stabilizers:
-                target.append(f"{indent}sz{stab.index} = measure(az{stab.index})")
+                target.append(f"{indent}sz{stab.index} = measure(az{stab.index}).read()")
                 target.append(f'{indent}result("sz{stab.index}:meas:{idx}", sz{stab.index})')
                 idx += 1
         else:
@@ -1521,7 +1521,7 @@ def generate_guppy_source(
                 for stab_type, stab_idx in batch:
                     anc = batch_anc_var[(stab_type, stab_idx)]
                     syn_var = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
-                    target.append(f"{indent}{syn_var} = measure({anc})")
+                    target.append(f"{indent}{syn_var} = measure({anc}).read()")
                     target.append(f'{indent}result("{syn_var}:meas:{idx}", {syn_var})')
                     idx += 1
 
@@ -2015,11 +2015,11 @@ def _append_gate_local_measure(
     frame_vars: tuple[str, str] | None,
 ) -> None:
     if frame_vars is None:
-        lines.append(f"{indent}{bit_var} = measure({qubit_expr})")
+        lines.append(f"{indent}{bit_var} = measure({qubit_expr}).read()")
     else:
         raw_var = f"{bit_var}_raw"
         frame_x, _frame_z = frame_vars
-        lines.append(f"{indent}{raw_var} = measure({qubit_expr})")
+        lines.append(f"{indent}{raw_var} = measure({qubit_expr}).read()")
         lines.append(f"{indent}{bit_var} = {raw_var} != {frame_x}")
         lines.append(f'{indent}result("{raw_tag}", {raw_var})')
     lines.append(f'{indent}result("{result_tag}", {bit_var})')

@@ -44,7 +44,7 @@ from pecos.qec.surface.decode import (
 @guppy
 def _single_measurement() -> None:
     q = qubit()
-    b = measure(q)
+    b = measure(q).read()
     result("m", b)
 
 
@@ -53,8 +53,8 @@ def _two_qubit_idle_target() -> None:
     q0 = qubit()
     q1 = qubit()
     cx(q0, q1)
-    m0 = measure(q0)
-    m1 = measure(q1)
+    m0 = measure(q0).read()
+    m1 = measure(q1).read()
     result("m0", m0)
     result("m1", m1)
 
@@ -66,8 +66,8 @@ def _structured_idle_noise_target() -> None:
     cx(q0, q1)
     h(q0)
     h(q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 @guppy
@@ -75,10 +75,10 @@ def _measurement_feedback() -> None:
     q0 = qubit()
     q1 = qubit()
     h(q0)
-    b0 = measure(q0)
+    b0 = measure(q0).read()
     if b0:
         x(q1)
-    b1 = measure(q1)
+    b1 = measure(q1).read()
     result("b0", b0)
     result("b1", b1)
 
@@ -95,7 +95,7 @@ def _metadata_before_h_gate() -> None:
     q = pecos_qis_trace_metadata_qubit_hugr(q, "host_id", "probe:host")
     q = pecos_qis_trace_metadata_qubit_hugr(q, "local_role", "basis_prefix")
     h(q)
-    _ = measure(q)
+    _ = measure(q).read()
 
 
 @guppy
@@ -105,8 +105,8 @@ def _barrier_between_single_qubit_gates() -> None:
     h(q0)
     barrier(q0, q1)
     h(q1)
-    _ = measure(q0)
-    _ = measure(q1)
+    _ = measure(q0).read()
+    _ = measure(q1).read()
 
 
 def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2468,8 +2468,8 @@ def _two_qubit_gate_channel_program() -> None:
     """One CX with a detector on each measurement, for gate-channel conversion checks."""
     a, b = qubit(), qubit()
     cx(a, b)
-    result("m0", measure(a))
-    result("m1", measure(b))
+    result("m0", measure(a).read())
+    result("m1", measure(b).read())
 
 
 def test_two_qubit_gate_channel_is_converted_not_emitted_naively() -> None:
@@ -2508,7 +2508,7 @@ def test_two_qubit_gate_channel_is_converted_not_emitted_naively() -> None:
 def _prep_and_measure_program() -> None:
     """Prepare and measure one qubit, for the prep/measurement exactness check."""
     q = qubit()
-    result("m0", measure(q))
+    result("m0", measure(q).read())
 
 
 def test_prep_and_measurement_channels_stay_exact() -> None:

@@ -44,7 +44,7 @@ class TestStabilizerBasic:
         @guppy
         def main() -> None:
             q = qubit()
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit.read())
 
         runner = build(main.compile())
@@ -61,7 +61,7 @@ class TestStabilizerBasic:
         def main() -> None:
             q = qubit()
             h(q)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit.read())
 
         runner = build(main.compile())
@@ -85,8 +85,8 @@ class TestStabilizerBellState:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            b0 = measure(q0)
-            b1 = measure(q1)
+            b0 = measure(q0).read()
+            b1 = measure(q1).read()
             result("q0", b0.read())
             result("q1", b1.read())
 

@@ -98,7 +98,7 @@ class TestNoiseModels:
         def noisy_circuit() -> bool:
             q = qubit()
             x(q)  # Just X gate to flip to |1⟩ deterministically
-            return measure(q)
+            return measure(q).read()
 
         # Test with no noise - should be deterministic
         results_ideal = sim(Guppy(noisy_circuit)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
@@ -125,7 +125,7 @@ class TestNoiseModels:
             q0, q1 = qubit(), qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         # Test with biased noise
         noise = biased_depolarizing_noise().with_uniform_probability(
@@ -147,7 +147,7 @@ class TestNoiseModels:
             q = qubit()  # Preparation
             h(q)
             x(q)
-            return measure(q)  # Measurement
+            return measure(q).read()  # Measurement
 
         # Custom noise: high prep error, low measurement error
         noise = (
@@ -197,11 +197,11 @@ class TestArrayOperations:
             # q4 stays |0⟩
 
             # Measure all qubits
-            m0 = measure(q0)
-            m1 = measure(q1)
-            m2 = measure(q2)
-            m3 = measure(q3)
-            m4 = measure(q4)
+            m0 = measure(q0).read()
+            m1 = measure(q1).read()
+            m2 = measure(q2).read()
+            m3 = measure(q3).read()
+            m4 = measure(q4).read()
 
             return m0, m1, m2, m3, m4
 
@@ -238,7 +238,7 @@ class TestArrayOperations:
             # Create new qubit to return something
             q = qubit()
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         # Should run without errors
         results = sim(Guppy(discard_array_test)).qubits(10).quantum(state_vector()).seed(42).run(10).to_dict()
@@ -314,7 +314,7 @@ class TestAdvancedControlFlow:
                 q = qubit()  # Create fresh qubit for each iteration
                 h(q)
                 # Directly add measurement result
-                m = measure(q)
+                m = measure(q).read()
                 if m:
                     count = count + 1
 
@@ -345,21 +345,21 @@ class TestAdvancedControlFlow:
         def conditional_quantum_0() -> bool:
             q = qubit()
             # n = 0: Do nothing - return |0⟩
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def conditional_quantum_1() -> bool:
             q = qubit()
             # n = 1: Return |1⟩
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def conditional_quantum_2() -> bool:
             q = qubit()
             # n = 2: Superposition
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Test case n=0
         results = sim(conditional_quantum_0).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
@@ -386,7 +386,7 @@ class TestAdvancedControlFlow:
             h(q1)
 
             # Early return - measure consumes the qubit
-            return measure(q1)
+            return measure(q1).read()
 
         @guppy
         def early_return_test_false() -> bool:
@@ -397,9 +397,9 @@ class TestAdvancedControlFlow:
             q2 = qubit()
             cx(q1, q2)
             # Measure q2 to consume it
-            measure(q2)  # Can't use _ in Guppy
+            measure(q2).read()  # Can't use _ in Guppy
 
-            return measure(q1)
+            return measure(q1).read()
 
         # Test both paths
         results_true = sim(early_return_test_true).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
@@ -426,7 +426,7 @@ class TestQuantumEngines:
             q0, q1 = qubit(), qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         # Use state vector engine (already set by quantum())
         results = (
@@ -458,7 +458,7 @@ class TestQuantumEngines:
             x(q)  # Pauli X
             h(q)  # Hadamard
             # The sequence H-X-H = Z, so Z|0⟩ = |0⟩
-            return measure(q)
+            return measure(q).read()
 
         # Test with state vector engine (compatible with all gate decompositions)
         results = sim(Guppy(clifford_circuit)).qubits(1).quantum(state_vector()).seed(42).run(100).to_dict()
@@ -538,7 +538,7 @@ class TestQuantumErrorHandling:
             h(q1)
 
             # Measure first qubit
-            m1 = measure(q1)
+            m1 = measure(q1).read()
 
             # Conditional quantum operation based on measurement
             q2 = qubit()
@@ -552,7 +552,7 @@ class TestQuantumErrorHandling:
                 success = True
 
             # Always measure q2 to properly consume it
-            m2 = measure(q2)
+            m2 = measure(q2).read()
 
             return success, m2
 
@@ -603,7 +603,7 @@ class TestQuantumErrorHandling:
             h(q)  # Put in superposition
 
             # Measurement collapses the state
-            return measure(q)
+            return measure(q).read()
 
             # Return the measurement result
 
@@ -625,11 +625,11 @@ class TestQuantumErrorHandling:
             # Create two qubits in different states
             q1 = qubit()
             x(q1)  # Set to |1⟩
-            m1 = measure(q1)
+            m1 = measure(q1).read()
 
             # Create a fresh qubit in |0⟩ state (simulating reset)
             q2 = qubit()  # Fresh qubits start in |0⟩
-            m2 = measure(q2)
+            m2 = measure(q2).read()
 
             return m1, m2
 

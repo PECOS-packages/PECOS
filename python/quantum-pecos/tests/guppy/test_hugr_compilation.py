@@ -180,7 +180,7 @@ attributes #0 = { "EntryPoint" }
             """Simple quantum circuit."""
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Test compilation
         try:

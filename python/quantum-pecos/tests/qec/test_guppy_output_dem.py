@@ -19,7 +19,7 @@ def _measure_three_into_array() -> array[bool, 3]:
     q0 = qubit()
     q1 = qubit()
     q2 = qubit()
-    return array(measure(q0), measure(q1), measure(q2))
+    return array(measure(q0).read(), measure(q1).read(), measure(q2).read())
 
 
 @guppy
@@ -38,9 +38,9 @@ def _computed_parity_outputs() -> None:
 def _raw_results_incomplete() -> None:
     q0 = qubit()
     q1 = qubit()
-    m0 = measure(q0)
+    m0 = measure(q0).read()
     result("raw measurements", m0)
-    m1 = measure(q1)
+    m1 = measure(q1).read()
     result("DETECTOR", m0 ^ m1)
     result("obs", m0)
 

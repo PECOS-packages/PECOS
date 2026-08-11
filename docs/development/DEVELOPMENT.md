@@ -154,14 +154,23 @@ object. Constructors and casts take PECOS dtypes, for example `zeros(size, dtype
 `Array` has no `flatten()` method. For a known two-dimensional array, preserve row-major order explicitly:
 
 ```python
+from pecos import asarray, dtypes
+
+values = [[1, 0], [0, 1]]
 flat = [value for row in asarray(values, dtype=dtypes.uint8) for value in row]
+assert flat == [1, 0, 0, 1]
 ```
 
 Elementwise comparison returns a boolean `Array`, and `array_sum()` accepts it directly -- counting
 mismatches needs no cast:
 
 ```python
+from pecos import array, dtypes, sum as array_sum
+
+predicted = array([1, 0, 1], dtype=dtypes.uint8)
+expected = array([1, 1, 1], dtype=dtypes.uint8)
 logical_errors = int(array_sum(predicted != expected))
+assert logical_errors == 1
 ```
 
 ## Dependency and Security Checks

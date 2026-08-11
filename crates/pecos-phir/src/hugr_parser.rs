@@ -277,9 +277,10 @@ impl HugrToPhirConverter {
 
     /// Find the container node whose children are the quantum operations.
     ///
-    /// Guppy-compiled HUGRs use: `Module -> FuncDefn -> CFG -> DataflowBlock`.
-    /// Other tools may use: `Module -> FuncDefn -> DFG`.
-    /// Handles both structures.
+    /// Older Guppy HUGRs use: `Module -> FuncDefn -> CFG -> DataflowBlock`.
+    /// Other tools may use: `Module -> FuncDefn -> DFG`, while Guppy 1 can
+    /// place straight-line operations directly under the entry `FuncDefn`.
+    /// Handles all three structures.
     fn find_operations_container(hugr: &Hugr) -> Option<Node> {
         // First: look for FuncDefn and check its children
         for node in hugr.nodes() {
@@ -299,6 +300,11 @@ impl HugrToPhirConverter {
                         _ => {}
                     }
                 }
+                // Guppy 1 inlines the entry program directly in the
+                // function definition instead of wrapping it in a DFG/CFG.
+                // `FuncDefn` is itself a dataflow container, so its children
+                // can be scheduled by the same topological traversal.
+                return Some(node);
             }
         }
 

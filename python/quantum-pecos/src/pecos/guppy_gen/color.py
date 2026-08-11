@@ -60,7 +60,7 @@ def generate_color_code_source(code: "ColorCode488") -> str:
         "",
         "from guppylang import guppy",
         "from guppylang.std.builtins import array, owned, result",
-        "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x",
+        "from guppylang.std.quantum import cx, discard, h, measure, collect_measurements, measure_array, qubit, x",
         "from guppylang.std.qsystem import measure_and_reset",
         "",
         "",
@@ -105,7 +105,7 @@ def generate_color_code_source(code: "ColorCode488") -> str:
         lines.extend(
             [
                 "    h(ax)",
-                "    return measure_and_reset(ax)",
+                "    return measure_and_reset(ax).read()",
                 "",
                 "",
             ],
@@ -127,7 +127,7 @@ def generate_color_code_source(code: "ColorCode488") -> str:
         lines.extend(f"    cx(data[{q}], az)" for q in stab.qubits)
         lines.extend(
             [
-                "    return measure_and_reset(az)",
+                "    return measure_and_reset(az).read()",
                 "",
                 "",
             ],
@@ -221,7 +221,7 @@ def generate_color_code_source(code: "ColorCode488") -> str:
             "@guppy",
             f"def measure_z_basis(code: ColorCode_{d} @ owned) -> array[bool, {num_data}]:",
             '    """Destructively measure in Z basis."""',
-            "    return measure_array(code.data)",
+            "    return collect_measurements(measure_array(code.data))",
             "",
             "",
             "@guppy",
@@ -229,7 +229,7 @@ def generate_color_code_source(code: "ColorCode488") -> str:
             '    """Destructively measure in X basis."""',
             f"    for i in range({num_data}):",
             "        h(code.data[i])",
-            "    return measure_array(code.data)",
+            "    return collect_measurements(measure_array(code.data))",
             "",
             "",
         ],

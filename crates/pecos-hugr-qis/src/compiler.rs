@@ -49,7 +49,7 @@ use tket::hugr::llvm::utils::fat::FatExt as _;
 use tket::hugr::llvm::{
     CodegenExtsBuilder,
     custom::CodegenExtsMap,
-    emit::{EmitHugr, Namer},
+    emit::{EmitDebugInfo, EmitHugr, Namer},
 };
 use tket::hugr::ops::DataflowParent;
 use tket::hugr::{Hugr, HugrView, Node};
@@ -61,7 +61,7 @@ use tket_qsystem::llvm::{
     debug::DebugCodegenExtension, prelude::QISPreludeCodegen, qsystem::QSystemCodegenExtension,
     random::RandomCodegenExtension, result::ResultsCodegenExtension, utils::UtilsCodegenExtension,
 };
-use tket_qsystem::{QSystemPass, QSystemPlatform};
+use tket_qsystem::{QSystemLLVMPass, QSystemPlatform, QSystemRebasePass};
 
 // Import read_hugr_envelope from utils module
 use crate::utils::read_hugr_envelope;
@@ -116,12 +116,10 @@ impl Default for CompileArgs {
     }
 }
 
-/// Process HUGR by applying required passes.
-///
-/// Note: `QSystemPass` internally calls `inline_constant_functions` when the
-/// `llvm` feature is enabled, so we don't need to call it separately.
+/// Process HUGR by applying the required QSystem and LLVM passes.
 fn process_hugr(hugr: &mut Hugr, platform: QSystemPlatform) -> Result<()> {
-    QSystemPass::defaults(platform).run(hugr)?;
+    QSystemRebasePass::defaults(platform).run(hugr)?;
+    QSystemLLVMPass::default().run(hugr)?;
     Ok(())
 }
 
@@ -197,12 +195,14 @@ fn get_hugr_llvm_module<'c>(
 ) -> Result<Module<'c>> {
     let module = context.create_module(module_name);
     let emit = EmitHugr::new(context, module, namer, exts);
-    Ok(emit
+    let (module, _debug_info) = emit
         .emit_module(
             hugr.try_fat(hugr.module_root())
                 .expect("module root must be a valid fat node"),
+            EmitDebugInfo::Exclude,
         )?
-        .finish())
+        .finish();
+    Ok(module)
 }
 
 /// Given an LLVM context and hugr, compile to an LLVM module

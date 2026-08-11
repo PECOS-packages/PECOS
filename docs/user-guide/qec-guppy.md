@@ -361,7 +361,7 @@ You can write QEC circuits directly in Guppy without using the factory functions
 ```python
 from guppylang import guppy
 from guppylang.std.builtins import array
-from guppylang.std.quantum import qubit, cx, measure, measure_array
+from guppylang.std.quantum import qubit, cx, collect_measurements, measure, measure_array
 
 
 @guppy.struct
@@ -396,7 +396,7 @@ def rep_code_experiment() -> tuple[array[bool, 3], RepSyndrome]:
     """Run one round of the 3-qubit repetition code."""
     data = array(qubit(), qubit(), qubit())
     syndrome = extract_rep_syndrome(data)
-    results = measure_array(data)
+    results = collect_measurements(measure_array(data))
     return results, syndrome
 
 

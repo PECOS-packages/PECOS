@@ -1022,7 +1022,10 @@ def _index_surface_result_trace_ids(
         if _is_surface_sideband_result_tag(name):
             continue
         if len(values) != len(result_ids):
-            if not result_ids and name in {"synx", "synz"}:
+            if not result_ids and (
+                name in {"init_synx", "init_synz", "synx", "synz"}
+                or name.startswith("final:meas:")
+            ):
                 # Per-measurement scalar tags are the authoritative syndrome
                 # provenance. The aggregate array is intentionally unbound
                 # when those scalar reads have already been consumed.

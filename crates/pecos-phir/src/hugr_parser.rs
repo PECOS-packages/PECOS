@@ -71,7 +71,6 @@ pub fn parse_hugr_bytes_to_phir(hugr_bytes: &[u8]) -> Result<ModuleOp> {
         tket::extension::rotation::ROTATION_EXTENSION.clone(),
         tket::extension::TKET_EXTENSION.clone(),
         tket::extension::TKET1_EXTENSION.clone(),
-        tket::extension::bool::BOOL_EXTENSION.clone(),
         tket::extension::debug::DEBUG_EXTENSION.clone(),
         gpu::EXTENSION.clone(),
         wasm::EXTENSION.clone(),

@@ -318,14 +318,14 @@ def test_array_result_label_containing_reserved_words() -> None:
     """Array results carry [String, BoundedNat] type args; the label must
     still come from the typed String arg."""
     from guppylang.std.builtins import array
-    from guppylang.std.quantum import measure_array
+    from guppylang.std.quantum import collect_measurements, measure_array
 
     @guppy
     def labeled_array() -> None:
         qs = array(qubit() for _ in range(2))
         x(qs[0])
         x(qs[1])
-        result("my_result_Report", measure_array(qs))
+        result("my_result_Report", collect_measurements(measure_array(qs)))
 
     results = sim(Guppy(labeled_array)).qubits(3).quantum(state_vector()).seed(7).run(2).to_dict()
     assert results["my_result_Report"] == [[1, 1], [1, 1]], f"keys: {sorted(results)}"

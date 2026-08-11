@@ -14,7 +14,7 @@ from collections.abc import Callable
 
 from guppylang import guppy
 from guppylang.std.builtins import array, owned, result
-from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
+from guppylang.std.quantum import collect_measurements, cx, h, measure, measure_array, qubit, x
 
 
 @guppy.struct
@@ -133,7 +133,7 @@ def syndrome_extraction(surf: SurfaceCode_3x3) -> Syndrome_3x3:
 @guppy
 def measure_z_basis(surf: SurfaceCode_3x3 @ owned) -> array[bool, 9]:
     """Destructively measure in Z basis."""
-    return measure_array(surf.data)
+    return collect_measurements(measure_array(surf.data))
 
 
 @guppy
@@ -141,7 +141,7 @@ def measure_x_basis(surf: SurfaceCode_3x3 @ owned) -> array[bool, 9]:
     """Destructively measure in X basis."""
     for i in range(9):
         h(surf.data[i])
-    return measure_array(surf.data)
+    return collect_measurements(measure_array(surf.data))
 
 
 # === Logical Operators ===

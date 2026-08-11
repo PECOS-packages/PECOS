@@ -28,6 +28,85 @@ use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::{ClassicalValue, FutureState};
 
 impl HugrEngine {
+    /// Handle `tket.measurement` operations emitted by current Guppy versions.
+    pub(crate) fn handle_measurement_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
+        match op_name {
+            "Read" => {
+                let Some(input) = self.get_input_value(hugr, node, 0) else {
+                    debug!("measurement.Read at {node:?}: result not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                let value = match input {
+                    ClassicalValue::Bool(value) => value,
+                    ClassicalValue::Future(future_id) => {
+                        let Some(state) = self.extension_state.futures.get(&future_id).cloned()
+                        else {
+                            debug!(
+                                "measurement.Read at {node:?}: unknown future {future_id}, deferring"
+                            );
+                            return HandlerOutcome::Defer;
+                        };
+                        match state {
+                            FutureState::Resolved {
+                                outcome,
+                                int_valued: false,
+                            } => outcome != 0,
+                            FutureState::Resolved {
+                                int_valued: true, ..
+                            } => {
+                                debug!(
+                                    "measurement.Read at {node:?}: future has non-Boolean output, deferring"
+                                );
+                                return HandlerOutcome::Defer;
+                            }
+                            FutureState::Pending {
+                                measurement_index,
+                                int_valued: false,
+                                ..
+                            } => {
+                                let Some(&outcome) =
+                                    self.measurement_state.outcomes.get(&measurement_index)
+                                else {
+                                    debug!(
+                                        "measurement.Read at {node:?}: future result not ready, deferring"
+                                    );
+                                    return HandlerOutcome::Defer;
+                                };
+                                outcome != 0
+                            }
+                            FutureState::Pending {
+                                int_valued: true, ..
+                            } => {
+                                debug!(
+                                    "measurement.Read at {node:?}: future has non-Boolean output, deferring"
+                                );
+                                return HandlerOutcome::Defer;
+                            }
+                        }
+                    }
+                    _ => {
+                        debug!("measurement.Read at {node:?}: input is not a Boolean, deferring");
+                        return HandlerOutcome::Defer;
+                    }
+                };
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Bool(value));
+                // A Conditional may expand as soon as its tag is available,
+                // before its other measurement-derived inputs resolve. Copy
+                // this newly available value into any such active Case.
+                self.repropagate_active_case_inputs(hugr);
+                HandlerOutcome::Processed
+            }
+            _ => HandlerOutcome::Defer,
+        }
+    }
+
     /// Handle tket.futures operations.
     pub(crate) fn handle_futures_op(
         &mut self,
@@ -49,7 +128,7 @@ impl HugrEngine {
                     debug!("futures.Read at {node:?}: future not ready, deferring");
                     return HandlerOutcome::Defer;
                 };
-                let Some(state) = self.extension_state.futures.get(&future_id) else {
+                let Some(state) = self.extension_state.futures.get(&future_id).cloned() else {
                     debug!("futures.Read at {node:?}: unknown future {future_id}, deferring");
                     return HandlerOutcome::Defer;
                 };
@@ -68,8 +147,9 @@ impl HugrEngine {
                         outcome,
                         int_valued,
                     } => {
-                        let value = to_value(*outcome, *int_valued);
+                        let value = to_value(outcome, int_valued);
                         self.wire_state.classical_values.insert((node, 0), value);
+                        self.repropagate_active_case_inputs(hugr);
                         debug!("Read future {future_id} -> {outcome}");
                         HandlerOutcome::Processed
                     }
@@ -78,12 +158,12 @@ impl HugrEngine {
                         int_valued,
                         ..
                     } => {
-                        if let Some((_, qubit)) =
-                            self.measurement_state.mappings.get(*measurement_index)
-                            && let Some(&result) = self.measurement_state.results.get(qubit)
+                        if let Some(&result) =
+                            self.measurement_state.outcomes.get(&measurement_index)
                         {
-                            let value = to_value(result, *int_valued);
+                            let value = to_value(result, int_valued);
                             self.wire_state.classical_values.insert((node, 0), value);
+                            self.repropagate_active_case_inputs(hugr);
                             debug!("Read future {future_id} from measurement -> {result}");
                             HandlerOutcome::Processed
                         } else {

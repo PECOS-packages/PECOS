@@ -76,7 +76,7 @@ def test_struct_helper_and_array_measurement_returns() -> None:
         h(ax)
         cx(ax, data[0])
         h(ax)
-        return measure_and_reset(ax)
+        return measure_and_reset(ax).read()
 
     @guppy
     def initialize(patch: Patch, ax: qubit) -> array[bool, 2]:

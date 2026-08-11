@@ -695,9 +695,9 @@ dependencies = [
 
 [[package]]
 name = "capnp"
-version = "0.25.6"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4777a3bc19b8f8e5fb2d0196c6b5dfcbbcc8b2fe08ae57f873f2f35f15cfc210"
+checksum = "58ddce707ad9fb2ae92770523cd0e17a0cf34e79b66a9ca4db2dd993535fe718"
 dependencies = [
  "embedded-io 0.7.1",
 ]
@@ -2460,9 +2460,9 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hugr"
-version = "0.27.1"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91648ee98355c1d502a0d466eec0b67ca2612f81ef5d261e62fca8aa567ab52"
+checksum = "bdf82d7df5459b76cf6818f5b0df72f4ccfafc60678736301b35aa908da8b903"
 dependencies = [
  "hugr-core",
  "hugr-llvm",
@@ -2471,9 +2471,9 @@ dependencies = [
 
 [[package]]
 name = "hugr-core"
-version = "0.27.1"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbea3356943ad488326fcea465519c25d03ab792198331610d1292c324d209b8"
+checksum = "9e6c737d774c8d4847822a8c4543404c588fb0a3dd9f5418a15c4132c8000230"
 dependencies = [
  "base64",
  "cgmath",
@@ -2484,7 +2484,7 @@ dependencies = [
  "html-escape",
  "hugr-model",
  "indexmap 2.14.0",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "ordered-float",
  "pastey",
  "petgraph 0.8.3",
@@ -2509,9 +2509,9 @@ dependencies = [
 
 [[package]]
 name = "hugr-llvm"
-version = "0.27.1"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de92b58fa5e8e0c2d03aab5a6a9cd50b4021ad5e3c0ca68d6ffeb604833337ca"
+checksum = "4e2728f7db705358c65f4f4efe98c1f86024227380eb53fa4c4b291731927916"
 dependencies = [
  "anyhow",
  "cc",
@@ -2520,25 +2520,26 @@ dependencies = [
  "hugr-core",
  "inkwell",
  "insta",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "petgraph 0.8.3",
  "portgraph",
+ "rand 0.10.2",
  "rstest 0.26.1",
  "strum 0.28.0",
 ]
 
 [[package]]
 name = "hugr-model"
-version = "0.27.1"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9699c56c272a729b110e989d799e63beb6f077b5bcc118cd76c088453693615e"
+checksum = "f7108e9a20434b90d6f8770f078331233ad5fd5d3289a1d95dca2fd265d2c5d6"
 dependencies = [
  "base64",
  "bumpalo",
  "capnp",
  "derive_more 2.1.1",
  "indexmap 2.14.0",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "ordered-float",
  "pest",
  "pest_derive",
@@ -2934,6 +2935,15 @@ name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]
@@ -7078,9 +7088,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tket"
-version = "0.19.1"
+version = "0.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7eefc9cb074d14be796d68958003bb9bfcb73ae423896ce378f35d456a59c69b"
+checksum = "118f46fa4a3cf414af79c125e66a770f29fed3a799e02c5cca95789a56316d20"
 dependencies = [
  "anyhow",
  "ascent",
@@ -7095,7 +7105,7 @@ dependencies = [
  "hugr",
  "hugr-core",
  "indexmap 2.14.0",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy_static",
  "num-rational",
  "pastey",
@@ -7132,9 +7142,9 @@ dependencies = [
 
 [[package]]
 name = "tket-qsystem"
-version = "0.25.1"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab9b375e3877e9f9235431183ab5c7a191924972b5f6bc43ee14c3d7be089241"
+checksum = "2e5304bc4462759177968822de5e24907c154f8afc1045ecf0d8e5a75081038c"
 dependencies = [
  "anyhow",
  "delegate",
@@ -7142,7 +7152,7 @@ dependencies = [
  "hugr",
  "hugr-core",
  "indexmap 2.14.0",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "lazy_static",
  "serde",
  "smol_str",

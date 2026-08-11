@@ -11,7 +11,7 @@
 //! that HUGR ordinal coincides with the QIS-trace `result_id`/`MeasId` order
 //! is a separate property of the Guppy -> HUGR / Guppy -> trace pipelines
 //! agreeing on measurement ordering. Within the narrow scope this module
-//! supports (straight-line `result_bool <- tket.bool:read <-
+//! supports (straight-line `result_bool <- read <-
 //! Measure/MeasureFree`), that correspondence is **committed-test verified**
 //! end-to-end by
 //! `tests/qec/test_from_guppy_result_tags.py::test_result_tags_match_positional_records`
@@ -91,8 +91,9 @@ pub fn has_nontrivial_control_flow<H: HugrView<Node = Node>>(hugr: &H) -> bool {
 /// **Sound by construction, narrow by design.** Only the canonical pattern
 /// `result(tag, <a single raw measurement bit>)` is recognized: a
 /// `tket.result:result_bool` op whose value input is *exactly*
-/// `tket.bool:read` of a measurement op. The compiled chain is verified to be
-/// precisely `result_bool <- tket.bool:read <- Measure/MeasureFree`.
+/// a direct measurement read. Guppy 1.0 emits `tket.measurement:Read`; older
+/// HUGRs emit `tket.bool:read`. The compiled chain is verified to be precisely
+/// `result_bool <- read <- Measure/MeasureFree`.
 ///
 /// Any other shape is **deliberately represented as an unsupported occurrence**
 /// (``None``) rather than guessed at -- e.g. computed values
@@ -125,7 +126,7 @@ pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
             .map(|(s, _)| s)
     };
 
-    // Pass 2: accept only result_bool <- tket.bool:read <- measurement.
+    // Pass 2: accept only result_bool <- direct measurement read <- measurement.
     let mut out: BTreeMap<String, Vec<Option<usize>>> = BTreeMap::new();
     for node in hugr.nodes() {
         let op = hugr.get_optype(node);
@@ -151,7 +152,9 @@ pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
             .filter(|&read| {
                 matches!(
                     extension_ids(hugr.get_optype(read)),
-                    Some((e, ref n)) if e == "tket.bool" && n == "read"
+                    Some((e, ref n))
+                        if (e == "tket.bool" && n == "read")
+                            || (e == "tket.measurement" && n == "Read")
                 )
             })
             .and_then(|read| src_op(read, 0))

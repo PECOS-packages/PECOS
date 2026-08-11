@@ -24,13 +24,13 @@ use thiserror::Error;
 use std::io::Cursor;
 
 use tket::TketOp;
-use tket::extension::bool::bool_type;
 use tket::hugr::builder::{
     BuildError, DFGBuilder, Dataflow, DataflowHugr, DataflowSubContainer, SubContainer,
 };
 use tket::hugr::envelope::EnvelopeConfig;
 use tket::hugr::extension::prelude::qb_t;
 use tket::hugr::types::Signature;
+use tket::hugr::types::bool_t;
 use tket::hugr::{Hugr, Wire, type_row};
 
 use crate::ast::{
@@ -1533,7 +1533,7 @@ impl HugrCodegen {
         }
 
         // Create signature: no inputs, N bool outputs (measurement results)
-        let bool_row: Vec<_> = (0..self.total_qubits).map(|_| bool_type()).collect();
+        let bool_row: Vec<_> = (0..self.total_qubits).map(|_| bool_t()).collect();
         let signature = Signature::new(vec![], bool_row);
 
         // Create builder

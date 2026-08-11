@@ -136,7 +136,7 @@ def generate_surface_transversal_source(d: int) -> str:
         "",
         "from guppylang import guppy",
         "from guppylang.std.builtins import array, owned, result, comptime",
-        "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x",
+        "from guppylang.std.quantum import cx, discard, h, measure, collect_measurements, measure_array, qubit, x",
         "from guppylang.std.qsystem import measure_and_reset",
         "",
         "",
@@ -180,7 +180,7 @@ def generate_surface_transversal_source(d: int) -> str:
         lines.extend(
             [
                 "    h(ax)",
-                "    return measure_and_reset(ax)",
+                "    return measure_and_reset(ax).read()",
                 "",
                 "",
             ],
@@ -201,7 +201,7 @@ def generate_surface_transversal_source(d: int) -> str:
         lines.extend(f"    cx(data[{q}], az)" for q in stab.data_qubits)
         lines.extend(
             [
-                "    return measure_and_reset(az)",
+                "    return measure_and_reset(az).read()",
                 "",
                 "",
             ],
@@ -306,7 +306,7 @@ def generate_surface_transversal_source(d: int) -> str:
             "@guppy",
             f"def measure_z_basis(surf: {info['struct_name']} @ owned) -> array[bool, {num_data}]:",
             '    """Destructively measure in Z basis."""',
-            "    return measure_array(surf.data)",
+            "    return collect_measurements(measure_array(surf.data))",
             "",
             "",
         ],
@@ -332,7 +332,7 @@ def generate_color_transversal_source(d: int) -> str:
         "",
         "from guppylang import guppy",
         "from guppylang.std.builtins import array, owned, result, comptime",
-        "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x",
+        "from guppylang.std.quantum import cx, discard, h, measure, collect_measurements, measure_array, qubit, x",
         "from guppylang.std.qsystem import measure_and_reset",
         "",
         "",
@@ -376,7 +376,7 @@ def generate_color_transversal_source(d: int) -> str:
         lines.extend(
             [
                 "    h(ax)",
-                "    return measure_and_reset(ax)",
+                "    return measure_and_reset(ax).read()",
                 "",
                 "",
             ],
@@ -397,7 +397,7 @@ def generate_color_transversal_source(d: int) -> str:
         lines.extend(f"    cx(data[{q}], az)" for q in stab.qubits)
         lines.extend(
             [
-                "    return measure_and_reset(az)",
+                "    return measure_and_reset(az).read()",
                 "",
                 "",
             ],
@@ -502,7 +502,7 @@ def generate_color_transversal_source(d: int) -> str:
             "@guppy",
             f"def measure_z_basis(code: {info['struct_name']} @ owned) -> array[bool, {num_data}]:",
             '    """Destructively measure in Z basis."""',
-            "    return measure_array(code.data)",
+            "    return collect_measurements(measure_array(code.data))",
             "",
             "",
         ],

@@ -246,7 +246,7 @@ class TestQubitArrays:
     def test_qubit_array_creation_and_access(self, tester: ExtendedGuppyTester) -> None:
         """Test creating and accessing qubit arrays."""
         from guppylang.std.builtins import array
-        from guppylang.std.quantum import measure_array
+        from guppylang.std.quantum import collect_measurements, measure_array
 
         @guppy
         def array_test() -> tuple[bool, bool, bool, bool]:
@@ -259,7 +259,7 @@ class TestQubitArrays:
 
             # Measure all (elements cannot move out of a subscript;
             # measure the array and index the copyable bits)
-            bits = measure_array(qubits)
+            bits = collect_measurements(measure_array(qubits))
             return bits[0], bits[1], bits[2], bits[3]
 
         result = tester.test_function(array_test, shots=100)
@@ -272,7 +272,7 @@ class TestQubitArrays:
     def test_qubit_array_loops(self, tester: ExtendedGuppyTester) -> None:
         """Test looping over qubit arrays."""
         from guppylang.std.builtins import array
-        from guppylang.std.quantum import measure_array
+        from guppylang.std.quantum import collect_measurements, measure_array
 
         @guppy
         def array_loop_test() -> int:
@@ -283,7 +283,7 @@ class TestQubitArrays:
                 h(qubits[i])
 
             # Count how many measure to |1⟩
-            bits = measure_array(qubits)
+            bits = collect_measurements(measure_array(qubits))
             count = 0
             for i in range(5):
                 if bits[i]:
@@ -466,7 +466,7 @@ class TestQuantumAlgorithms:
     def test_ghz_state_creation(self, tester: ExtendedGuppyTester) -> None:
         """Test GHZ state creation for multiple qubits."""
         from guppylang.std.builtins import array
-        from guppylang.std.quantum import measure_array
+        from guppylang.std.quantum import collect_measurements, measure_array
 
         @guppy
         def create_ghz3() -> tuple[bool, bool, bool]:
@@ -477,7 +477,7 @@ class TestQuantumAlgorithms:
             cx(qubits[0], qubits[1])
             cx(qubits[1], qubits[2])
 
-            bits = measure_array(qubits)
+            bits = collect_measurements(measure_array(qubits))
             return bits[0], bits[1], bits[2]
 
         result = tester.test_function(create_ghz3, shots=100)

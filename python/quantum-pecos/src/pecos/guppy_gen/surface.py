@@ -336,7 +336,8 @@ def generate_guppy_source(
             "from guppylang import guppy",
             "from guppylang.std.builtins import array, owned, result",
             "from guppylang.std.num import nat",
-            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x, y, z",
+            "from guppylang.std.quantum import cx, discard, h, qubit, x, y, z",
+            "from guppylang.std.quantum import collect_measurements, measure, measure_array",
         ]
     elif interaction_basis == "szz":
         imports = [
@@ -346,7 +347,8 @@ def generate_guppy_source(
             "from guppylang.std.angles import angle",
             "from guppylang.std.builtins import array, owned, result",
             "from guppylang.std.qsystem.functional import phased_x, rz, zz_phase",
-            "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x, y, z",
+            "from guppylang.std.quantum import discard, h, qubit, s, sdg, v, vdg, x, y, z",
+            "from guppylang.std.quantum import collect_measurements, measure, measure_array",
         ]
     else:
         imports = [
@@ -354,7 +356,8 @@ def generate_guppy_source(
             "",
             "from guppylang import guppy",
             "from guppylang.std.builtins import array, owned, result",
-            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x, z",
+            "from guppylang.std.quantum import cx, discard, h, qubit, x, z",
+            "from guppylang.std.quantum import collect_measurements, measure, measure_array",
         ]
 
     lines = [
@@ -1346,7 +1349,7 @@ def generate_guppy_source(
         z_meas = ", ".join(f"measure(d{i}).read()" for i in range(num_data))
         lines.append(f"    return array({z_meas})")
     else:
-        lines.append("    return measure_array(surf.data)")
+        lines.append("    return collect_measurements(measure_array(surf.data))")
     lines.extend(
         [
             "",
@@ -1370,7 +1373,7 @@ def generate_guppy_source(
     else:
         lines.append(f"    for i in range({num_data}):")
         lines.append("        h(surf.data[i])")
-        lines.append("    return measure_array(surf.data)")
+        lines.append("    return collect_measurements(measure_array(surf.data))")
     lines.extend(["", ""])
 
     # Generate logical operators
@@ -2236,7 +2239,7 @@ def _render_gate_local_twirled_memory_block(
                 body.append(f"{indent}h(surf.data[{q}])")
                 frame_x, frame_z = data_frames[q]
                 _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_final_d{q}")
-        body.append(f"{indent}final_raw = measure_array(surf.data)")
+        body.append(f"{indent}final_raw = collect_measurements(measure_array(surf.data))")
         body.append(f'{indent}result("raw:final", final_raw)')
         for q in range(num_data):
             frame_x, _frame_z = data_frames[q]

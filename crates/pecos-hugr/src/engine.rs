@@ -42,7 +42,7 @@ use pecos_core::{Angle64, QubitId};
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::prelude::*;
 use tket::hugr::ops::OpType;
-use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
+use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::loader::load_hugr_from_bytes;
 
@@ -61,7 +61,7 @@ use analysis::{
     collect_descendants, extract_call_targets, extract_cfgs, extract_classical_ops,
     extract_conditionals, extract_func_defns, extract_quantum_ops, extract_tailloops,
     find_nodes_inside_cases, find_nodes_inside_cfg_blocks, find_nodes_inside_func_defns,
-    find_nodes_inside_tailloops,
+    find_nodes_inside_tailloops, find_output_node,
 };
 /// A HUGR interpreter engine that directly executes HUGR programs.
 ///
@@ -524,6 +524,34 @@ impl HugrEngine {
                 }
             }
 
+            // Guppy 1 starts array construction with source extension ops
+            // such as `collections.borrow_arr.new_all_borrowed`. These have
+            // no incoming edge to wake them, unlike `QAlloc`. Seed only
+            // sources outside nested execution containers; their descendants
+            // are owned and activated by the enclosing control-flow handler.
+            let is_nested_container_child = |node: Node| {
+                let mut parent = hugr.get_parent(node);
+                while let Some(container) = parent {
+                    match hugr.get_optype(container) {
+                        OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_) => {
+                            return true;
+                        }
+                        OpType::FuncDefn(_) if container != hugr.entrypoint() => return true,
+                        _ => parent = hugr.get_parent(container),
+                    }
+                }
+                false
+            };
+            for node in hugr.nodes() {
+                if hugr.get_optype(node).as_extension_op().is_some()
+                    && hugr.input_neighbours(node).next().is_none()
+                    && !is_nested_container_child(node)
+                    && !self.work_queue.contains(node)
+                {
+                    self.work_queue.push_back(node);
+                }
+            }
+
             // Also add TailLoop nodes that have no quantum predecessors pending
             // (but skip TailLoops inside FuncDefn bodies, CFG blocks, etc.)
             for node in self.tailloops.keys() {
@@ -673,8 +701,6 @@ impl HugrEngine {
         debug!("Work queue has {} items", self.work_queue.len());
 
         let mut operation_count = 0;
-        let mut hit_measurement = false;
-
         while let Some(current_node) = self.work_queue.pop_front() {
             if let Some(fault) = self.execution_error.take() {
                 return Err(PecosError::Generic(fault));
@@ -767,42 +793,68 @@ impl HugrEngine {
                     // themselves queue unconditionally (they handle input
                     // propagation during expansion).
                     let mut act = activation::ContainerActivation::new();
+                    let is_inside_nested_tailloop = |node: Node| {
+                        let mut parent = hugr.get_parent(node);
+                        while let Some(container) = parent {
+                            if container == current_node {
+                                return false;
+                            }
+                            if matches!(hugr.get_optype(container), OpType::TailLoop(_)) {
+                                return true;
+                            }
+                            parent = hugr.get_parent(container);
+                        }
+                        false
+                    };
                     let submit =
                         |act: &mut activation::ContainerActivation,
                          node: Node,
                          policy: activation::QueuePolicy| {
-                            if self.nodes_inside_tailloops.contains(&node) {
+                            if self.nodes_inside_tailloops.contains(&node)
+                                && is_inside_nested_tailloop(node)
+                            {
                                 act.ungate_block_only(node);
                             } else {
                                 act.queue(node, policy);
                             }
                         };
                     for &op_node in &block_info.quantum_ops {
+                        act.reset_processed(op_node);
                         submit(&mut act, op_node, activation::QueuePolicy::IfReady);
                     }
-                    for child in hugr.children(entry_block) {
-                        if matches!(hugr.get_optype(child), OpType::Call(_)) {
-                            submit(&mut act, child, activation::QueuePolicy::IfReady);
-                        }
+                    for &call_node in &block_info.call_nodes {
+                        // This set also includes nested CFGs reached through
+                        // structural DFGs; they share Call's input-readiness
+                        // and completion behavior at the block boundary.
+                        act.reset_processed(call_node);
+                        submit(&mut act, call_node, activation::QueuePolicy::IfReady);
                     }
                     for &cond_node in &block_info.conditional_nodes {
+                        act.reset_processed(cond_node);
                         submit(&mut act, cond_node, activation::QueuePolicy::Always);
                     }
                     for &op_node in &block_info.bool_ops {
+                        act.reset_processed(op_node);
                         submit(&mut act, op_node, activation::QueuePolicy::Always);
                     }
-                    for child in hugr.children(entry_block) {
-                        if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
-                            submit(&mut act, child, activation::QueuePolicy::Always);
-                        }
-                        if self.classical_ops.contains_key(&child) {
-                            submit(&mut act, child, activation::QueuePolicy::IfReady);
-                        }
+                    for &op_node in &block_info.load_constants {
+                        act.reset_processed(op_node);
+                        submit(&mut act, op_node, activation::QueuePolicy::Always);
                     }
-                    for &op_node in &block_info.extension_ops {
+                    for &op_node in &block_info.classical_ops {
+                        act.reset_processed(op_node);
                         submit(&mut act, op_node, activation::QueuePolicy::IfReady);
                     }
+                    for &op_node in &block_info.extension_ops {
+                        act.reset_processed(op_node);
+                        // Extension handlers defer until their inputs exist.
+                        // Queue them at activation so a chain of Guppy
+                        // array conversions is registered for retry instead
+                        // of being skipped before its producer materializes.
+                        submit(&mut act, op_node, activation::QueuePolicy::Always);
+                    }
                     for &tl_node in &block_info.tailloop_nodes {
+                        act.reset_processed(tl_node);
                         act.queue(tl_node, activation::QueuePolicy::Always);
                     }
                     self.run_activation(&hugr, &act);
@@ -841,7 +893,9 @@ impl HugrEngine {
                             "CFG {current_node:?}: entry block {entry_block:?} has no ops, transitioning to successor"
                         );
                         let successors = block_info.successors.clone();
-                        if successors.len() == 1 {
+                        if successors.is_empty() {
+                            self.complete_cfg_execution(&hugr, current_node, entry_block);
+                        } else if successors.len() == 1 {
                             debug!(
                                 "[TRACE] Single successor {:?}, transitioning",
                                 successors[0]
@@ -1073,6 +1127,7 @@ impl HugrEngine {
                                 call_node: current_node,
                                 func_defn_node,
                                 type_args,
+                                frame_ops: BTreeSet::new(),
                             },
                         );
 
@@ -1111,78 +1166,102 @@ impl HugrEngine {
                         if !self.work_queue.contains(cfg_node) {
                             self.work_queue.push_front(cfg_node);
                         }
+                        // Guppy may place loop-bound and iterator setup
+                        // operations directly in the FuncDefn body, feeding
+                        // its CFG. They are not children of a DataflowBlock,
+                        // so CFG activation does not queue them; execute
+                        // them before entering the CFG.
+                        for &node in descendants.iter().rev() {
+                            if node != func_info.input_node
+                                && node != func_info.output_node
+                                && node != cfg_node
+                                && !self.nodes_inside_cfg_blocks.contains(&node)
+                                && !self.nodes_inside_cases.contains(&node)
+                                && !self.nodes_inside_tailloops.contains(&node)
+                                && (self.classical_ops.contains_key(&node)
+                                    || matches!(hugr.get_optype(node), OpType::LoadConstant(_))
+                                    || hugr.get_optype(node).as_extension_op().is_some())
+                                && !self.work_queue.contains(node)
+                            {
+                                self.work_queue.push_front(node);
+                            }
+                        }
                         // Don't mark Call as processed yet - wait for the
                         // FuncDefn's CFG to complete; the Call is completed
                         // in complete_func_call_if_needed.
                         continue;
                     }
 
-                    // No CFG: the body is a plain dataflow region. The
-                    // engine only executes CFG-bodied functions, so anything
-                    // beyond a pure Input->Output passthrough is
-                    // unsupported -- fail loud rather than leaving the Call
-                    // stranded outside every completion and stall check
-                    // (which silently truncates downstream results).
-                    debug!("Call {current_node:?}: FuncDefn has no CFG, treating as passthrough");
-                    // The per-port wiring checks below are vacuous for a
-                    // zero-output function, so check the body shape first:
-                    // any child beyond Input/Output (and inert Const
-                    // statics) is real work this path would silently skip.
-                    if let Some(extra) = hugr.children(func_defn_node).find(|c| {
-                        *c != func_info.input_node
-                            && *c != func_info.output_node
-                            && !matches!(hugr.get_optype(*c), OpType::Const(_))
-                    }) {
-                        return Err(PecosError::Generic(format!(
-                            "Call {current_node:?} targets FuncDefn {func_defn_node:?} \
-                             with no CFG and a non-passthrough body (contains \
-                             {extra:?}); plain dataflow function bodies are not \
-                             supported by the HUGR engine"
-                        )));
+                    // No CFG: execute the plain dataflow body as a call frame.
+                    // Guppy 1 uses this shape for ordinary helper functions.
+                    let type_args = if let OpType::Call(call_op) = hugr.get_optype(current_node) {
+                        call_op.type_args.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut descendants = BTreeSet::new();
+                    collect_descendants(&hugr, func_defn_node, &mut descendants);
+                    let mut frame_ops = BTreeSet::new();
+                    for node in &descendants {
+                        if matches!(
+                            hugr.get_optype(*node),
+                            OpType::Input(_) | OpType::Output(_) | OpType::Const(_)
+                        ) {
+                            continue;
+                        }
+                        // Nested control-flow containers activate their own
+                        // children. Scheduling those children with the outer
+                        // dataflow frame would run every conditional branch
+                        // (including Guppy's unreachable bounds-check panic).
+                        let mut parent = hugr.get_parent(*node);
+                        let mut nested_control_flow = false;
+                        while let Some(container) = parent {
+                            if container == func_defn_node {
+                                break;
+                            }
+                            if matches!(
+                                hugr.get_optype(container),
+                                OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_)
+                            ) {
+                                nested_control_flow = true;
+                                break;
+                            }
+                            parent = hugr.get_parent(container);
+                        }
+                        if nested_control_flow {
+                            continue;
+                        }
+                        frame_ops.insert(*node);
                     }
-                    for port in 0..func_info.num_outputs {
-                        let out_port = IncomingPort::from(port);
-                        let Some((src_node, src_port)) =
-                            hugr.single_linked_output(func_info.output_node, out_port)
-                        else {
-                            return Err(PecosError::Generic(format!(
-                                "Call {current_node:?} targets FuncDefn {func_defn_node:?} \
-                                 whose Output port {port} is unwired; the caller's output \
-                                 would silently go missing"
-                            )));
+                    let mut act = activation::ContainerActivation::new();
+                    for node in &descendants {
+                        self.nodes_inside_func_defns.remove(node);
+                        act.reset(*node);
+                        self.executed_containers.remove(node);
+                    }
+                    act.keep_wires(func_info.input_node);
+                    act.reset_wires(current_node);
+                    for &node in &frame_ops {
+                        let policy = match hugr.get_optype(node) {
+                            OpType::Conditional(_)
+                            | OpType::TailLoop(_)
+                            | OpType::LoadConstant(_)
+                            | OpType::DFG(_) => activation::QueuePolicy::Always,
+                            _ => activation::QueuePolicy::IfReady,
                         };
-                        if src_node != func_info.input_node {
-                            return Err(PecosError::Generic(format!(
-                                "Call {current_node:?} targets FuncDefn {func_defn_node:?} \
-                                 with no CFG and a non-passthrough body (output {port} fed \
-                                 by {src_node:?}); plain dataflow function bodies are not \
-                                 supported by the HUGR engine"
-                            )));
-                        }
-                        let func_input_wire = (func_info.input_node, src_port.index());
-                        if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&func_input_wire)
-                        {
-                            self.wire_state
-                                .wire_to_qubit
-                                .insert((current_node, port), qubit_id);
-                        }
-                        if let Some(value) = self
-                            .wire_state
-                            .classical_values
-                            .get(&func_input_wire)
-                            .cloned()
-                        {
-                            self.wire_state
-                                .classical_values
-                                .insert((current_node, port), value);
-                        }
+                        act.queue(node, policy);
                     }
-                    self.processed.insert(current_node);
-                    self.check_scan_frame_completion(&hugr, current_node);
-                    self.check_case_completion(&hugr, current_node);
-                    self.check_cfg_block_completion(&hugr, current_node);
-                    self.check_tailloop_body_completion(&hugr, current_node);
-                    self.queue_ready_successors(&hugr, current_node);
+                    self.active_calls.insert(
+                        current_node,
+                        ActiveCallInfo {
+                            call_node: current_node,
+                            func_defn_node,
+                            type_args,
+                            frame_ops,
+                        },
+                    );
+                    self.run_activation(&hugr, &act);
+                    self.check_plain_func_call_completion(&hugr, current_node);
                 }
                 continue;
             }
@@ -1212,6 +1291,7 @@ impl HugrEngine {
                 // Output (e.g. a loop's continue-flag bool) -- check
                 // completion so outputs propagate only with values present.
                 self.check_scan_frame_completion(&hugr, current_node);
+                self.check_plain_func_call_completion(&hugr, current_node);
                 self.check_case_completion(&hugr, current_node);
                 self.check_cfg_block_completion(&hugr, current_node);
 
@@ -1280,6 +1360,7 @@ impl HugrEngine {
                 // complete (cases may contain only classical ops, e.g. sum
                 // construction for an iterator's continue/break value)
                 self.check_scan_frame_completion(&hugr, current_node);
+                self.check_plain_func_call_completion(&hugr, current_node);
                 self.check_case_completion(&hugr, current_node);
 
                 // Check if this classical op completion allows a CFG block to complete
@@ -1320,6 +1401,7 @@ impl HugrEngine {
                 // Check if this extension op completion allows a Case to
                 // complete (cases may contain only classical/extension ops)
                 self.check_scan_frame_completion(&hugr, current_node);
+                self.check_plain_func_call_completion(&hugr, current_node);
                 self.check_case_completion(&hugr, current_node);
 
                 // Check if this extension op completion allows a CFG block to complete
@@ -1377,15 +1459,14 @@ impl HugrEngine {
             self.deferred_nodes.remove(&current_node);
 
             // Emit the gate operation
-            if self.emit_quantum_gate(&hugr, current_node, &op, &qubits)? {
-                hit_measurement = true;
-            }
+            self.emit_quantum_gate(&hugr, current_node, &op, &qubits)?;
 
             self.processed.insert(current_node);
             operation_count += 1;
 
             // Check if this operation completes any active Case
             self.check_scan_frame_completion(&hugr, current_node);
+            self.check_plain_func_call_completion(&hugr, current_node);
             self.check_case_completion(&hugr, current_node);
 
             // Check if this operation completes any active CFG block
@@ -1397,10 +1478,9 @@ impl HugrEngine {
             // Add ready successors to work queue
             self.queue_ready_successors(&hugr, current_node);
 
-            // Break after measurement to wait for results
-            if hit_measurement {
-                break;
-            }
+            // A measurement only blocks consumers of its classical result.
+            // Keep draining independent quantum work so the backend receives
+            // one complete batch and can size its state before execution.
         }
 
         if let Some(fault) = self.execution_error.take() {
@@ -1413,6 +1493,17 @@ impl HugrEngine {
         // emitting anything. Judging by operation_count dropped a batch
         // whose only commands were handler-emitted.
         if operation_count == 0 && self.message_builder.message_count() == 0 {
+            // A nested conditional/tail-loop can settle the final operation
+            // of a plain dataflow function without passing through the
+            // ordinary operation-completion hooks. Give completed frames one
+            // final chance to publish their returns before declaring a stall.
+            let active_calls: Vec<_> = self.active_calls.keys().copied().collect();
+            for call_node in active_calls {
+                self.check_plain_func_call_completion(&hugr, call_node);
+            }
+            if !self.work_queue.is_empty() {
+                return self.process_hugr_impl();
+            }
             // No progress at all this batch: this is the engine's
             // completion claim. Any still-active control flow or starved
             // deferred node at this point means execution stalled
@@ -1449,6 +1540,34 @@ impl HugrEngine {
                 "active CFGs: {:?}",
                 self.active_cfgs.keys().collect::<Vec<_>>()
             ));
+            let active_block_ops: Vec<String> = self
+                .active_cfgs
+                .values()
+                .filter_map(|active_cfg| {
+                    self.cfgs
+                        .get(&active_cfg.cfg_node)
+                        .and_then(|cfg| cfg.blocks.get(&active_cfg.current_block))
+                        .map(|block| {
+                            let pending: Vec<_> = block
+                                .quantum_ops
+                                .iter()
+                                .chain(&block.call_nodes)
+                                .chain(&block.conditional_nodes)
+                                .chain(&block.bool_ops)
+                                .chain(&block.extension_ops)
+                                .chain(&block.tailloop_nodes)
+                                .chain(&block.classical_ops)
+                                .chain(&block.load_constants)
+                                .filter(|&&node| !self.node_settled(node))
+                                .collect();
+                            format!(
+                                "CFG {:?} active block {:?}: unsettled {:?}",
+                                active_cfg.cfg_node, active_cfg.current_block, pending
+                            )
+                        })
+                })
+                .collect();
+            stalled.extend(active_block_ops);
         }
         if !self.active_cases.is_empty() {
             stalled.push(format!(
@@ -1459,7 +1578,7 @@ impl HugrEngine {
         if !self.active_calls.is_empty() {
             stalled.push(format!(
                 "active Calls: {:?}",
-                self.active_calls.keys().collect::<Vec<_>>()
+                self.active_calls.keys().collect::<Vec<_>>(),
             ));
         }
         if !self.pending_call_returns.is_empty() {
@@ -1481,7 +1600,17 @@ impl HugrEngine {
             ));
         }
         if !self.deferred_nodes.is_empty() {
-            stalled.push(format!("starved deferred nodes: {:?}", self.deferred_nodes));
+            let deferred: Vec<_> = self
+                .deferred_nodes
+                .iter()
+                .map(|node| {
+                    self.hugr.as_ref().map_or_else(
+                        || format!("{node:?}"),
+                        |hugr| format!("{node:?} ({:?})", hugr.get_optype(*node)),
+                    )
+                })
+                .collect();
+            stalled.push(format!("starved deferred nodes: {deferred:?}"));
         }
         if !self.pending_conditionals.is_empty() {
             stalled.push(format!(
@@ -1945,6 +2074,35 @@ impl Default for HugrEngine {
     }
 }
 
+impl HugrEngine {
+    /// Capture an entrypoint's direct Output values for pure-classical
+    /// programs. Guppy 1 can lower such a function directly to a DFG rather
+    /// than placing its body in a CFG, so CFG completion alone is not a
+    /// universal return-capture point.
+    fn capture_entrypoint_returns(&mut self) {
+        if !self.return_values.is_empty() {
+            return;
+        }
+        let Some(hugr) = self.hugr.as_deref() else {
+            return;
+        };
+        let entrypoint = hugr.entrypoint();
+        let Some(output) = find_output_node(hugr, entrypoint) else {
+            return;
+        };
+        let arity = match hugr.get_optype(entrypoint) {
+            OpType::FuncDefn(func) => func.signature().body().output().len(),
+            _ => hugr.num_inputs(output),
+        };
+        let values: Vec<_> = (0..arity)
+            .map(|port| self.get_input_value(hugr, output, port))
+            .collect();
+        if values.iter().any(Option::is_some) {
+            self.return_values = values;
+        }
+    }
+}
+
 impl ClassicalEngine for HugrEngine {
     fn num_qubits(&self) -> usize {
         // If we've already assigned qubit IDs (during command generation),
@@ -2015,6 +2173,27 @@ impl ClassicalEngine for HugrEngine {
                     {
                         debug!("Measurement result: qubit {qubit_id:?} = {value}");
                         self.measurement_state.results.insert(*qubit_id, value);
+                        self.measurement_state.outcomes.insert(global_idx, value);
+
+                        // A qubit may be measured repeatedly (notably in a
+                        // Guppy `for` loop). Preserve each lazy Future's
+                        // own outcome at its measurement index rather than
+                        // resolving every future through the latest value
+                        // stored for that qubit.
+                        for state in self.extension_state.futures.values_mut() {
+                            if let crate::engine::types::FutureState::Pending {
+                                measurement_index,
+                                int_valued,
+                                ..
+                            } = state
+                                && *measurement_index == global_idx
+                            {
+                                *state = crate::engine::types::FutureState::Resolved {
+                                    outcome: value,
+                                    int_valued: *int_valued,
+                                };
+                            }
+                        }
 
                         // Record the classical value on the measurement's output wire
                         if let Some(&wire_key) = self.measurement_state.output_wires.get(meas_node)
@@ -2203,6 +2382,7 @@ impl ControlEngine for HugrEngine {
             debug!("Commands generated, returning NeedsProcessing");
             Ok(EngineStage::NeedsProcessing(commands))
         } else {
+            self.capture_entrypoint_returns();
             debug!("No commands, returning Complete");
             Ok(EngineStage::Complete(self.get_results()?))
         }
@@ -2220,6 +2400,7 @@ impl ControlEngine for HugrEngine {
             debug!("More commands generated, returning NeedsProcessing");
             Ok(EngineStage::NeedsProcessing(commands))
         } else {
+            self.capture_entrypoint_returns();
             debug!("No more commands, returning Complete");
             Ok(EngineStage::Complete(self.get_results()?))
         }

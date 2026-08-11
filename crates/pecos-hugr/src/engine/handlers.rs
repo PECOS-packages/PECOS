@@ -18,7 +18,7 @@
 //!
 //! - [`result`]: Result capture operations (`tket.result`)
 //! - [`qsystem`]: Quantum system operations (`tket.qsystem`, `tket.qsystem.random`, `tket.qsystem.utils`)
-//! - [`futures`]: Future/lazy measurement operations (`tket.futures`)
+//! - [`futures`]: Future/lazy measurement operations (`tket.futures`, `tket.measurement`)
 //! - [`classical`]: Classical logic operations (`tket.bool`)
 //! - [`arithmetic`]: Arithmetic operations (`arithmetic.float`, `arithmetic.int`, `arithmetic.conversions`)
 //! - [`array`]: Array operations (`collections.array`)
@@ -107,6 +107,7 @@ impl HugrEngine {
     /// - `tket.qsystem.random`: Random number generation
     /// - `tket.qsystem.utils`: Utility operations (shot tracking)
     /// - `tket.futures`: Future/lazy measurement operations
+    /// - `tket.measurement`: Read a measurement token into a Boolean
     /// - `tket.debug`: Debug operations
     /// - `tket.bool`: Boolean logic operations
     /// - `tket.rotation`: Rotation type operations
@@ -140,10 +141,11 @@ impl HugrEngine {
 
         match ext_name {
             "tket.result" => self.handle_result_op(hugr, node, &op_name),
-            "tket.qsystem" => self.handle_qsystem_op(hugr, node, &op_name),
+            "tket.qsystem" | "tket.qsystem.helios" => self.handle_qsystem_op(hugr, node, &op_name),
             "tket.qsystem.random" => self.handle_random_op(hugr, node, &op_name),
             "tket.qsystem.utils" => self.handle_utils_op(hugr, node, &op_name),
             "tket.futures" => self.handle_futures_op(hugr, node, &op_name),
+            "tket.measurement" => self.handle_measurement_op(hugr, node, &op_name),
             "tket.debug" => self.handle_debug_op(hugr, node, &op_name),
             "tket.bool" => self.handle_bool_op(hugr, node, &op_name),
             "tket.rotation" => self.handle_rotation_op(hugr, node, &op_name),

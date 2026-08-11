@@ -82,6 +82,11 @@ pub struct MeasurementState {
     pub mappings: Vec<(Node, QubitId)>,
     /// Measurement results stored by qubit ID.
     pub results: BTreeMap<QubitId, u32>,
+    /// Measurement results stored by their immutable emission order.
+    ///
+    /// A qubit can be measured more than once, so `results` alone cannot
+    /// resolve a lazy future for an earlier measurement.
+    pub outcomes: BTreeMap<usize, u32>,
     /// Map from measurement node to the wire key where its classical output goes.
     pub output_wires: BTreeMap<Node, WireKey>,
     /// Number of measurements processed so far.
@@ -853,6 +858,9 @@ pub struct ActiveCallInfo {
     /// variables inside the called body (e.g. `prelude.load_nat` of a
     /// generic bounded-nat parameter such as a loop bound).
     pub type_args: Vec<tket::hugr::types::TypeArg>,
+    /// Operations in a plain dataflow function body. Empty for CFG-bodied
+    /// functions, whose completion is driven by the CFG exit.
+    pub frame_ops: BTreeSet<Node>,
 }
 
 // --- TailLoop Control Flow Types ---

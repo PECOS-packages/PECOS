@@ -57,8 +57,8 @@ from pecos.qec import infer_guppy_dem_annotations
 
 @guppy
 def parity_readout() -> None:
-    m0 = measure(qubit())
-    m1 = measure(qubit())
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
 
     # Emit each physical result exactly once under the raw tag.
     result("raw measurements", m0)
@@ -132,7 +132,7 @@ four physical measurements.
 <!--test-name: inferred_guppy_dem_round_arrays-->
 ```python
 from guppylang import guppy
-from guppylang.std.builtins import array, result
+from guppylang.std.builtins import result
 from guppylang.std.quantum import cx, measure, qubit
 
 from pecos.qec import infer_guppy_dem_annotations
@@ -207,9 +207,9 @@ from pecos.qec import infer_guppy_dem_annotations
 
 @guppy
 def reordered_readout() -> None:
-    m0 = measure(qubit())
-    m1 = measure(qubit())
-    m2 = measure(qubit())
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
+    m2 = measure(qubit()).read()
     result("DETECTOR", m2 ^ m0)
     result("obs", m1)
     result("raw measurements", array(m2, m0, m1))
@@ -250,13 +250,16 @@ from pecos.qec import infer_guppy_dem_annotations
 
 @guppy
 def tagged_readout() -> None:
-    m0 = measure(qubit())
-    m1 = measure(qubit())
-    m2 = measure(qubit())
-    result("physical", array(m0, m1, m2))
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
+    m2 = measure(qubit()).read()
+    result("physical", m0)
+    result("physical", m1)
+    result("physical", m2)
     result("events", m0 ^ m1)
     result("logical_z", m0)
-    result("logical_x", array(m1, m2))
+    result("logical_x", m1)
+    result("logical_x", m2)
 
 
 inferred = infer_guppy_dem_annotations(

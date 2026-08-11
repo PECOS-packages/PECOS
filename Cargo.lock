@@ -59,12 +59,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aliasable"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "250f629c0161ad8107cf89319e990051fae62832fd343083bea452d93e2205fd"
-
-[[package]]
 name = "alloca"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3962,30 +3956,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ouroboros"
-version = "0.18.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e0f050db9c44b97a94723127e6be766ac5c340c48f2c4bb3ffa11713744be59"
-dependencies = [
- "aliasable",
- "ouroboros_macro",
- "static_assertions",
-]
-
-[[package]]
-name = "ouroboros_macro"
-version = "0.18.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c7028bdd3d43083f6d8d4d5187680d0d3560d54df4cc9d752005268b41e64d0"
-dependencies = [
- "heck 0.4.1",
- "proc-macro2",
- "proc-macro2-diagnostics",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
 name = "owo-colors"
 version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5339,19 +5309,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro2-diagnostics"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
- "version_check",
- "yansi",
-]
-
-[[package]]
 name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6358,32 +6315,33 @@ dependencies = [
 
 [[package]]
 name = "selene-core"
-version = "0.2.2"
-source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee5d4825e2dfc6500941d0540c3ff06988a#01300ee5d4825e2dfc6500941d0540c3ff06988a"
+version = "0.3.0"
+source = "git+https://github.com/Quantinuum/selene.git?rev=458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511#458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511"
 dependencies = [
  "anyhow",
  "delegate",
  "derive_more 2.1.1",
  "libloading 0.8.9",
- "ouroboros",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "selene-simple-runtime"
-version = "0.2.6"
-source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee5d4825e2dfc6500941d0540c3ff06988a#01300ee5d4825e2dfc6500941d0540c3ff06988a"
+version = "0.3.0-alpha.3"
+source = "git+https://github.com/Quantinuum/selene.git?rev=458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511#458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511"
 dependencies = [
  "anyhow",
+ "clap 4.6.1",
  "selene-core",
 ]
 
 [[package]]
 name = "selene-soft-rz-runtime"
-version = "0.2.6"
-source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee5d4825e2dfc6500941d0540c3ff06988a#01300ee5d4825e2dfc6500941d0540c3ff06988a"
+version = "0.3.0-alpha.3"
+source = "git+https://github.com/Quantinuum/selene.git?rev=458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511#458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511"
 dependencies = [
  "anyhow",
+ "clap 4.6.1",
  "selene-core",
 ]
 

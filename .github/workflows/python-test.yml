@@ -237,7 +237,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            python-version: "3.10"
+            python-version: "3.12"
             artifact-name: python-compat-smoke-ubuntu
             build-llvm: true
             build-quantum-pecos: true
@@ -390,7 +390,7 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact-name: python-compat-smoke-ubuntu
-            python-version: "3.10"
+            python-version: "3.12"
             include-llvm: true
             include-pecos: true
           - os: ubuntu-latest

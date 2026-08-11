@@ -14,7 +14,59 @@ use super::{CUQUANTUM_VERSION, config, get_pecos_cuquantum_dir, is_valid_cuquant
 struct CuQuantumDownload {
     url: String,
     filename: String,
-    sha256: Option<&'static str>,
+    /// Expected SHA256 of the archive. Required: an unverified multi-hundred-megabyte
+    /// archive is extracted into `~/.pecos`, so there is no safe "skip" path.
+    sha256: &'static str,
+}
+
+/// SHA256 checksums for the [`CUQUANTUM_VERSION`] archives, by platform key and CUDA major.
+///
+/// NVIDIA publishes these in the release manifest alongside the redistributable archives.
+/// To refresh when bumping [`CUQUANTUM_VERSION`], read the `sha256` fields from
+/// `https://developer.download.nvidia.com/compute/cuquantum/redist/redistrib_<release>.json`
+/// (the release label omits the trailing build component, so `25.11.1.11` is published as
+/// `redistrib_25.11.1.json`). Values must come from that manifest, never from a local
+/// download, so that a substituted archive cannot certify itself.
+const CUQUANTUM_CHECKSUMS: &[(&str, u32, &str)] = &[
+    (
+        "linux-x86_64",
+        12,
+        "77138174ece7a9a9108e2d44b8ea1e1f2e29874544ea940e13c0d607ad15a358",
+    ),
+    (
+        "linux-x86_64",
+        13,
+        "dfc063a88547636b316b9682a6834c5fbd2dfd7e823c5fc58857c4251d2ab3c2",
+    ),
+    (
+        "linux-sbsa",
+        12,
+        "3d3cb33268d97cbe48eea426ea44238ed55c622279fd694f0cf32e47c4564454",
+    ),
+    (
+        "linux-sbsa",
+        13,
+        "14a44b09d384c27dd36eae9d9858c90140e6422bbd80bda1041ded96ec3c7223",
+    ),
+];
+
+/// Looks up the published checksum for a platform and CUDA major version.
+fn checksum_for(platform: &str, cuda_major: u32) -> Result<&'static str> {
+    CUQUANTUM_CHECKSUMS
+        .iter()
+        .find(|(key, major, _)| *key == platform && *major == cuda_major)
+        .map(|(_, _, hash)| *hash)
+        .ok_or_else(|| {
+            Error::CuQuantum(format!(
+                "no published cuQuantum {CUQUANTUM_VERSION} archive for {platform} with CUDA {cuda_major}; \
+                 supported combinations are {}",
+                CUQUANTUM_CHECKSUMS
+                    .iter()
+                    .map(|(key, major, _)| format!("{key}/CUDA {major}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })
 }
 
 /// Detect CUDA major version from installed CUDA
@@ -42,8 +94,8 @@ fn get_download_info() -> Result<CuQuantumDownload> {
     // cuQuantum download URLs follow pattern:
     // https://developer.download.nvidia.com/compute/cuquantum/redist/cuquantum/linux-x86_64/cuquantum-linux-x86_64-25.03.0.11_cuda12-archive.tar.xz
     //
-    // Note: NVIDIA does not publish SHA256 checksums for cuQuantum downloads.
-    // Checksums would need to be computed manually after downloading.
+    // Each supported platform must have a published checksum in CUQUANTUM_CHECKSUMS;
+    // checksum_for rejects any combination NVIDIA does not publish.
 
     match (os, arch) {
         ("linux", "x86_64") => Ok(CuQuantumDownload {
@@ -53,8 +105,7 @@ fn get_download_info() -> Result<CuQuantumDownload> {
             filename: format!(
                 "cuquantum-linux-x86_64-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.tar.xz"
             ),
-            // NVIDIA does not publish checksums; these would need manual verification
-            sha256: None,
+            sha256: checksum_for("linux-x86_64", cuda_major)?,
         }),
         ("linux", "aarch64") => Ok(CuQuantumDownload {
             url: format!(
@@ -63,17 +114,15 @@ fn get_download_info() -> Result<CuQuantumDownload> {
             filename: format!(
                 "cuquantum-linux-sbsa-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.tar.xz"
             ),
-            sha256: None,
+            sha256: checksum_for("linux-sbsa", cuda_major)?,
         }),
-        ("windows", "x86_64") => Ok(CuQuantumDownload {
-            url: format!(
-                "https://developer.download.nvidia.com/compute/cuquantum/redist/cuquantum/windows-x86_64/cuquantum-windows-x86_64-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.zip"
-            ),
-            filename: format!(
-                "cuquantum-windows-x86_64-{CUQUANTUM_VERSION}_cuda{cuda_major}-archive.zip"
-            ),
-            sha256: None,
-        }),
+        // NVIDIA publishes no windows-x86_64 archive for this release: the whole
+        // redist/cuquantum/windows-x86_64/ path returns 404, so the previous download URL
+        // could never succeed. Fail with the reason instead of a bare download error.
+        ("windows", "x86_64") => Err(Error::CuQuantum(format!(
+            "NVIDIA does not publish a Windows cuQuantum archive for {CUQUANTUM_VERSION}; \
+             install cuQuantum through the NVIDIA-provided channels for Windows"
+        ))),
         ("macos", _) => Err(Error::CuQuantum(
             "cuQuantum is not supported on macOS (NVIDIA GPUs not supported)".into(),
         )),
@@ -149,12 +198,12 @@ pub fn install_cuquantum(force: bool) -> Result<PathBuf> {
         println!("Using cached download: {}", archive_path.display());
     } else {
         download_cuquantum(&download_info.url, &archive_path)?;
-
-        // Verify checksum if available
-        if let Some(expected_sha256) = download_info.sha256 {
-            verify_checksum(&archive_path, expected_sha256)?;
-        }
     }
+
+    // Verify on every install, not only after a fresh download: the cache lives on disk
+    // between runs, so a truncated or tampered cached archive must not be trusted just
+    // because some earlier run put it there.
+    verify_checksum(&archive_path, download_info.sha256)?;
 
     // Extract cuQuantum
     extract_cuquantum(&archive_path, &cuquantum_dir)?;
@@ -419,4 +468,60 @@ pub fn ensure_cuquantum() -> Result<PathBuf> {
 pub fn needs_install() -> bool {
     !is_valid_cuquantum_installation(&get_pecos_cuquantum_dir().unwrap_or_default())
         && super::find_cuquantum().is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn published_platforms_resolve_to_their_checksums() {
+        assert_eq!(
+            checksum_for("linux-x86_64", 12).unwrap(),
+            "77138174ece7a9a9108e2d44b8ea1e1f2e29874544ea940e13c0d607ad15a358"
+        );
+        assert_eq!(
+            checksum_for("linux-sbsa", 13).unwrap(),
+            "14a44b09d384c27dd36eae9d9858c90140e6422bbd80bda1041ded96ec3c7223"
+        );
+    }
+
+    #[test]
+    fn unpublished_combinations_are_rejected_with_the_supported_list() {
+        // CUDA 11 is not published for this release, and neither is Windows.
+        let error = checksum_for("linux-x86_64", 11).unwrap_err().to_string();
+        assert!(error.contains("no published cuQuantum"), "{error}");
+        assert!(error.contains("linux-x86_64/CUDA 12"), "{error}");
+        assert!(checksum_for("windows-x86_64", 12).is_err());
+    }
+
+    /// Guards against transcription damage when the table is refreshed by hand: every
+    /// entry must be a 64-character lowercase hex digest.
+    #[test]
+    fn every_checksum_is_well_formed() {
+        for (platform, cuda_major, hash) in CUQUANTUM_CHECKSUMS {
+            assert_eq!(
+                hash.len(),
+                64,
+                "{platform}/CUDA {cuda_major} digest is not 64 characters"
+            );
+            assert!(
+                hash.chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+                "{platform}/CUDA {cuda_major} digest is not lowercase hex: {hash}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_table_has_no_duplicate_entries() {
+        let mut keys: Vec<_> = CUQUANTUM_CHECKSUMS
+            .iter()
+            .map(|(platform, major, _)| (*platform, *major))
+            .collect();
+        keys.sort_unstable();
+        let before = keys.len();
+        keys.dedup();
+        assert_eq!(before, keys.len(), "duplicate platform/CUDA entries");
+    }
 }

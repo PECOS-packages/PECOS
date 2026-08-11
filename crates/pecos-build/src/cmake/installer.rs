@@ -262,8 +262,15 @@ fn verify_checksum(file_path: &PathBuf, archive_name: &str) -> Result<()> {
             }
         }
         _ => {
-            println!("Skipped (checksum not available for {archive_name})");
-            Ok(())
+            // Every archive this installer can select has an entry above, so a miss means
+            // the table and the platform matching have drifted apart. Downloading a cmake
+            // archive and running it unverified is not an acceptable outcome for a
+            // bookkeeping mistake, so fail instead of continuing.
+            println!("FAILED");
+            Err(Error::Config(format!(
+                "no published checksum recorded for {archive_name}; \
+                 add it to CMAKE_CHECKSUMS when changing the cmake version or platform set"
+            )))
         }
     }
 }

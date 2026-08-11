@@ -19,7 +19,33 @@ use super::{CUDA_VERSION, get_pecos_cuda_dir, is_valid_cuda_installation};
 struct CudaDownload {
     url: String,
     filename: String,
+    /// Expected SHA256 of the archive, when one is published.
+    ///
+    /// This is `None` for every current target because NVIDIA publishes only MD5 digests
+    /// for the CUDA *local installers* (`.../<version>/docs/sidebar/md5sum.txt`); there is
+    /// no `sha256sum.txt` beside it. When no digest is recorded the installer prints a
+    /// prominent warning rather than silently proceeding -- see
+    /// [`warn_archive_is_unverified`].
+    ///
+    /// Two ways to close this properly, both deliberately left as follow-ups because each
+    /// changes more than checksum bookkeeping:
+    /// - Verify NVIDIA's published MD5. Sound against substitution here (that needs a
+    ///   second-preimage, not a collision) but requires an MD5 implementation.
+    /// - Install from the CUDA *redistributable* components instead of the multi-gigabyte
+    ///   local installer. `.../compute/cuda/redist/redistrib_<version>.json` publishes
+    ///   SHA256 for each component, and this installer already discards everything except
+    ///   nvcc, cudart, and cublas -- which redist ships separately.
     sha256: Option<&'static str>,
+}
+
+/// Warns, unmissably, that an archive is about to be used without integrity verification.
+fn warn_archive_is_unverified(filename: &str) {
+    println!();
+    println!("WARNING: {filename} is being used without checksum verification.");
+    println!("         NVIDIA publishes no SHA256 digest for the CUDA local installers, so");
+    println!("         its integrity rests entirely on the HTTPS transport. A corrupted or");
+    println!("         substituted archive will not be detected here.");
+    println!();
 }
 
 /// Get download URL for the current platform
@@ -105,11 +131,14 @@ pub fn install_cuda(force: bool) -> Result<PathBuf> {
         println!("Using cached download: {}", archive_path.display());
     } else {
         download_cuda(&download_info.url, &archive_path)?;
+    }
 
-        // Verify checksum if available
-        if let Some(expected_sha256) = download_info.sha256 {
-            verify_checksum(&archive_path, expected_sha256)?;
-        }
+    // Verify on every install, not only after a fresh download: the cache persists between
+    // runs, so a truncated or tampered cached archive must not be trusted merely because an
+    // earlier run left it there.
+    match download_info.sha256 {
+        Some(expected_sha256) => verify_checksum(&archive_path, expected_sha256)?,
+        None => warn_archive_is_unverified(&download_info.filename),
     }
 
     // Extract CUDA

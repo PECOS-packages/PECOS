@@ -41,6 +41,7 @@ impl MastSimulator {
     }
 }
 
+#[allow(clippy::unnecessary_wraps, clippy::unused_self)]
 impl MastSimulator {
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
         self.simulator =

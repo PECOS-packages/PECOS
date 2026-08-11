@@ -103,8 +103,7 @@ reinstall-package = [
 
 [tool.black]
 line-length = 120
-# Target the minimum supported Python (matches `requires-python = ">=3.12"`
-# above and `target-version = "py312"` in ruff.toml) so black produces code
+# Target the minimum supported Python so black produces code
 # that parses cleanly on every interpreter in the support range -- otherwise
 # black auto-targets the newest version satisfying requires-python and can
 # emit 3.14-only syntax that 3.12/3.13 can't parse.

@@ -54,6 +54,7 @@ impl StateVecSimulator {
     }
 }
 
+#[allow(clippy::unnecessary_wraps, clippy::unused_self)]
 impl StateVecSimulator {
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
         // Create a fresh simulator with the given seed for deterministic behavior

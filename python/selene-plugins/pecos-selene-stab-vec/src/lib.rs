@@ -44,6 +44,7 @@ impl StabVecSimulator {
     }
 }
 
+#[allow(clippy::unnecessary_wraps, clippy::unused_self)]
 impl StabVecSimulator {
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
         self.simulator = StabVec::new_with_seed(Self::to_usize(self.n_qubits), seed);

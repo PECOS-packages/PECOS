@@ -1,7 +1,9 @@
 # Define rules, plugins, and configurations for the ruff linter.
 # For more details on rules see: https://docs.astral.sh/ruff/rules
 
-target-version = "py312"
+# Keep Ruff's syntax baseline conservative while Python 3.12-only modernization
+# is rolled out separately from the dependency upgrade.
+target-version = "py310"
 line-length = 120
 # preview = true
 

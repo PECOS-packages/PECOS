@@ -41,6 +41,7 @@ impl StabMpsSimulator {
     }
 }
 
+#[allow(clippy::unnecessary_wraps, clippy::unused_self)]
 impl StabMpsSimulator {
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
         self.simulator = StabMps::builder(Self::to_usize(self.n_qubits))

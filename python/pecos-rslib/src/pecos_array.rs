@@ -375,6 +375,106 @@ impl Array {
         }
     }
 
+    /// Fill the array in place with a scalar value.
+    ///
+    /// The value is converted through the same checked, explicit-dtype path as
+    /// the `Array` constructor. Invalid types raise `TypeError`, and integers
+    /// outside the dtype's range raise `OverflowError` rather than wrapping.
+    /// Unlike NumPy, boolean arrays do not fill by truthiness and complex arrays
+    /// do not parse strings: values such as `"x"`, `0j`, and `"1+2j"` must be
+    /// converted explicitly before calling `fill`.
+    ///
+    /// Args:
+    ///     value: Scalar value to assign to every element.
+    ///
+    /// Returns:
+    ///     None.
+    fn fill(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let py = value.py();
+        let singleton = PyTuple::new(py, [value])?;
+        let dtype = Py::new(py, self.data.dtype())?;
+        let converted =
+            Self::from_nested_sequence(singleton.as_any(), Some(dtype.bind(py).as_any()))?;
+        if converted.data.size() != 1 {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "fill value must be a scalar",
+            ));
+        }
+
+        macro_rules! fill_array {
+            ($array:expr, $converted:expr) => {{
+                let scalar = $converted.first().cloned().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "internal error converting fill value",
+                    )
+                })?;
+                $array.fill(scalar);
+                Ok(())
+            }};
+        }
+
+        match (&mut self.data, converted.data) {
+            (ArrayData::Bool(array), ArrayData::Bool(converted)) => {
+                fill_array!(array, converted)
+            }
+            (ArrayData::I8(array), ArrayData::I8(converted)) => fill_array!(array, converted),
+            (ArrayData::I16(array), ArrayData::I16(converted)) => fill_array!(array, converted),
+            (ArrayData::I32(array), ArrayData::I32(converted)) => fill_array!(array, converted),
+            (ArrayData::I64(array), ArrayData::I64(converted)) => fill_array!(array, converted),
+            (ArrayData::U8(array), ArrayData::U8(converted)) => fill_array!(array, converted),
+            (ArrayData::U16(array), ArrayData::U16(converted)) => fill_array!(array, converted),
+            (ArrayData::U32(array), ArrayData::U32(converted)) => fill_array!(array, converted),
+            (ArrayData::U64(array), ArrayData::U64(converted)) => fill_array!(array, converted),
+            (ArrayData::F32(array), ArrayData::F32(converted)) => fill_array!(array, converted),
+            (ArrayData::F64(array), ArrayData::F64(converted)) => fill_array!(array, converted),
+            (ArrayData::Complex64(array), ArrayData::Complex64(converted)) => {
+                fill_array!(array, converted)
+            }
+            (ArrayData::Complex128(array), ArrayData::Complex128(converted)) => {
+                fill_array!(array, converted)
+            }
+            (ArrayData::Pauli(array), ArrayData::Pauli(converted)) => {
+                fill_array!(array, converted)
+            }
+            (ArrayData::PauliString(array), ArrayData::PauliString(converted)) => {
+                fill_array!(array, converted)
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "internal error converting fill value to array dtype",
+            )),
+        }
+    }
+
+    /// Return a one-dimensional copy in row-major (C) order.
+    ///
+    /// Like `numpy.ndarray.flatten`, the returned `Array` always owns an
+    /// independent buffer. Mutating it never changes the original array.
+    fn flatten(&self) -> PyResult<Self> {
+        self.reshape_to_shape(&[self.data.size()])
+    }
+
+    /// Return a one-dimensional copy in row-major (C) order.
+    ///
+    /// This intentionally differs from NumPy: `numpy.ravel` returns a view
+    /// when possible, while PECOS `Array.ravel` always returns an independent
+    /// copy because `Array` owns its buffer.
+    fn ravel(&self) -> PyResult<Self> {
+        self.flatten()
+    }
+
+    /// Return a row-major copy with a new shape.
+    ///
+    /// The shape may be passed as a sequence or as separate integer arguments.
+    /// At most one dimension may be -1, in which case it is inferred from the
+    /// current element count. Unlike NumPy, only the literal -1 denotes an
+    /// inferred dimension; all other negative dimensions are rejected.
+    #[pyo3(signature = (*shape))]
+    fn reshape(&self, shape: &Bound<'_, PyTuple>) -> PyResult<Self> {
+        let requested_shape = Self::parse_reshape_shape(shape)?;
+        let resolved_shape = Self::resolve_reshape_shape(self.data.size(), &requested_shape)?;
+        self.reshape_to_shape(&resolved_shape)
+    }
+
     /// Check if all elements in the array are True (for boolean arrays)
     /// or non-zero (for numeric arrays).
     ///
@@ -2033,6 +2133,154 @@ impl Array {
 }
 
 impl Array {
+    fn parse_reshape_shape(shape: &Bound<'_, PyTuple>) -> PyResult<Vec<isize>> {
+        if shape.is_empty() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "reshape() takes at least one shape argument",
+            ));
+        }
+
+        let dimensions: Vec<Bound<'_, PyAny>> = if shape.len() == 1 {
+            let first = shape.get_item(0)?;
+            if let Ok(sequence) = first.cast::<PySequence>() {
+                (0..sequence.len()?)
+                    .map(|index| sequence.get_item(index))
+                    .collect::<PyResult<_>>()?
+            } else {
+                vec![first]
+            }
+        } else {
+            shape.iter().collect()
+        };
+
+        dimensions
+            .into_iter()
+            .map(|dimension| {
+                if dimension.is_instance_of::<PyBool>() {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "shape dimensions must be integers",
+                    ));
+                }
+                dimension.extract::<isize>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("shape dimensions must be integers")
+                })
+            })
+            .collect()
+    }
+
+    fn reshape_shape_string(shape: &[isize]) -> String {
+        match shape {
+            [] => "()".to_string(),
+            [dimension] => format!("({dimension},)"),
+            dimensions => format!(
+                "({})",
+                dimensions
+                    .iter()
+                    .map(isize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+
+    fn reshape_size_error(size: usize, shape: &[isize]) -> PyErr {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "cannot reshape array of size {size} into requested shape {}",
+            Self::reshape_shape_string(shape)
+        ))
+    }
+
+    fn resolve_reshape_shape(size: usize, requested: &[isize]) -> PyResult<Vec<usize>> {
+        let mut inferred_axis = None;
+        let mut known_size = 1_usize;
+
+        for (axis, &dimension) in requested.iter().enumerate() {
+            match dimension {
+                -1 => {
+                    if inferred_axis.replace(axis).is_some() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "can only specify one unknown dimension",
+                        ));
+                    }
+                }
+                dimension if dimension < 0 => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "negative dimensions are not allowed",
+                    ));
+                }
+                dimension => {
+                    let dimension = usize::try_from(dimension)
+                        .map_err(|_| Self::reshape_size_error(size, requested))?;
+                    known_size = known_size
+                        .checked_mul(dimension)
+                        .ok_or_else(|| Self::reshape_size_error(size, requested))?;
+                }
+            }
+        }
+
+        let inferred_size = if inferred_axis.is_some() {
+            if known_size == 0 || !size.is_multiple_of(known_size) {
+                return Err(Self::reshape_size_error(size, requested));
+            }
+            Some(size / known_size)
+        } else {
+            if known_size != size {
+                return Err(Self::reshape_size_error(size, requested));
+            }
+            None
+        };
+
+        requested
+            .iter()
+            .enumerate()
+            .map(|(axis, &dimension)| {
+                if inferred_axis == Some(axis) {
+                    inferred_size.ok_or_else(|| Self::reshape_size_error(size, requested))
+                } else {
+                    usize::try_from(dimension)
+                        .map_err(|_| Self::reshape_size_error(size, requested))
+                }
+            })
+            .collect()
+    }
+
+    fn reshape_to_shape(&self, shape: &[usize]) -> PyResult<Self> {
+        macro_rules! reshape_array {
+            ($array:expr, $variant:ident) => {{
+                let reshaped = $array
+                    .as_standard_layout()
+                    .into_owned()
+                    .into_shape_with_order(IxDyn(shape))
+                    .map_err(|error| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "internal error reshaping array: {error}"
+                        ))
+                    })?;
+                Ok(Self {
+                    data: ArrayData::$variant(reshaped),
+                })
+            }};
+        }
+
+        match &self.data {
+            ArrayData::Bool(array) => reshape_array!(array, Bool),
+            ArrayData::I8(array) => reshape_array!(array, I8),
+            ArrayData::I16(array) => reshape_array!(array, I16),
+            ArrayData::I32(array) => reshape_array!(array, I32),
+            ArrayData::I64(array) => reshape_array!(array, I64),
+            ArrayData::U8(array) => reshape_array!(array, U8),
+            ArrayData::U16(array) => reshape_array!(array, U16),
+            ArrayData::U32(array) => reshape_array!(array, U32),
+            ArrayData::U64(array) => reshape_array!(array, U64),
+            ArrayData::F32(array) => reshape_array!(array, F32),
+            ArrayData::F64(array) => reshape_array!(array, F64),
+            ArrayData::Complex64(array) => reshape_array!(array, Complex64),
+            ArrayData::Complex128(array) => reshape_array!(array, Complex128),
+            ArrayData::Pauli(array) => reshape_array!(array, Pauli),
+            ArrayData::PauliString(array) => reshape_array!(array, PauliString),
+        }
+    }
+
     fn validate_cast(&self, target_dtype: DType) -> PyResult<()> {
         if matches!(target_dtype, DType::Pauli | DType::PauliString)
             || matches!(self.data, ArrayData::Pauli(_) | ArrayData::PauliString(_))
@@ -2691,6 +2939,40 @@ impl Array {
         target_type: ElemType,
         bufs: &mut FlatBuffers,
     ) -> PyResult<()> {
+        let indexed = if matches!(
+            target_type,
+            ElemType::I8
+                | ElemType::I16
+                | ElemType::I32
+                | ElemType::I64
+                | ElemType::U8
+                | ElemType::U16
+                | ElemType::U32
+                | ElemType::U64
+        ) {
+            Some(match data.call_method0("__index__") {
+                Ok(indexed) => indexed,
+                Err(error)
+                    if error.is_instance_of::<pyo3::exceptions::PyAttributeError>(data.py()) =>
+                {
+                    let value = data.repr()?.to_string_lossy().into_owned();
+                    let type_name = data.get_type().name()?.to_string();
+                    let target_name = bufs.target_name();
+                    let article = if target_name.starts_with('i') {
+                        "an"
+                    } else {
+                        "a"
+                    };
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "value {value} is a {type_name}; {article} {target_name} array requires an integer -- cast explicitly"
+                    )));
+                }
+                Err(error) => return Err(error),
+            })
+        } else {
+            None
+        };
+
         match target_type {
             ElemType::Bool => {
                 // Try bool first, then convert from int
@@ -2704,19 +2986,39 @@ impl Array {
                 }
             }
             ElemType::I8 | ElemType::I16 | ElemType::I32 | ElemType::I64 => {
-                let indexed = data.call_method0("__index__")?;
+                let indexed = indexed.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "internal error normalizing integer value",
+                    )
+                })?;
                 if let Ok(value) = indexed.extract::<i64>() {
                     bufs.push_signed_integer(value)?;
+                } else if let Ok(value) = indexed.extract::<u64>() {
+                    bufs.push_unsigned_integer(value)?;
                 } else {
-                    bufs.push_unsigned_integer(indexed.extract::<u64>()?)?;
+                    let value = indexed.repr()?.to_string_lossy().into_owned();
+                    return Err(pyo3::exceptions::PyOverflowError::new_err(format!(
+                        "value {value} is out of range for {}",
+                        bufs.target_name()
+                    )));
                 }
             }
             ElemType::U8 | ElemType::U16 | ElemType::U32 | ElemType::U64 => {
-                let indexed = data.call_method0("__index__")?;
+                let indexed = indexed.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "internal error normalizing integer value",
+                    )
+                })?;
                 if let Ok(value) = indexed.extract::<u64>() {
                     bufs.push_unsigned_integer(value)?;
+                } else if let Ok(value) = indexed.extract::<i64>() {
+                    bufs.push_signed_integer(value)?;
                 } else {
-                    bufs.push_signed_integer(indexed.extract::<i64>()?)?;
+                    let value = indexed.repr()?.to_string_lossy().into_owned();
+                    return Err(pyo3::exceptions::PyOverflowError::new_err(format!(
+                        "value {value} is out of range for {}",
+                        bufs.target_name()
+                    )));
                 }
             }
             ElemType::F32 | ElemType::F64 => {

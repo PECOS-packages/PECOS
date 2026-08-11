@@ -151,15 +151,25 @@ Use `Array` in annotations and enter the native layer with `asarray()` when an e
 object. Constructors and casts take PECOS dtypes, for example `zeros(size, dtype=dtypes.uint8)` and
 `array(values, dtype=dtypes.uint8)`.
 
-`Array` has no `flatten()` method. For a known two-dimensional array, preserve row-major order explicitly:
+`Array.flatten()` preserves row-major order and returns an independent copy:
 
 ```python
-from pecos import asarray, dtypes
+from pecos import array, dtypes
 
-values = [[1, 0], [0, 1]]
-flat = [value for row in asarray(values, dtype=dtypes.uint8) for value in row]
+values = array([[1, 0], [0, 1]], dtype=dtypes.uint8)
+flat = values.flatten().tolist()
 assert flat == [1, 0, 0, 1]
 ```
+
+`Array` deliberately differs from NumPy at three boundaries:
+
+- `ravel()` and `reshape()` always return copies. NumPy may return views, but `Array` owns its
+  buffer and has no view representation, so an honest copy is preferred over a silently-copying
+  "view".
+- `reshape()` infers a dimension only from the literal `-1`. Other negative dimensions are
+  rejected, even though NumPy treats any single negative dimension as inferred.
+- `fill()` does not coerce values by truthiness or parse numeric strings. Convert values
+  explicitly instead of relying on behavior such as a non-empty string becoming `True`.
 
 Elementwise comparison returns a boolean `Array`, and `array_sum()` accepts it directly -- counting
 mismatches needs no cast:

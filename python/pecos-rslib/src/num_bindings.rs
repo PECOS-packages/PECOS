@@ -3246,7 +3246,15 @@ fn array(
     }
 
     if let Some(target_dtype) = target_dtype
-        && (obj.hasattr("__array_interface__")? || obj.cast::<pyo3::types::PySequence>().is_ok())
+        && obj.cast::<pyo3::types::PySequence>().is_ok()
+    {
+        let target_dtype_object = Py::new(py, target_dtype)?;
+        let array = Array::from_python_value(&obj, Some(target_dtype_object.bind(py).as_any()))?;
+        return Py::new(py, array);
+    }
+
+    if let Some(target_dtype) = target_dtype
+        && obj.hasattr("__array_interface__")?
     {
         let array = Array::from_python_value(&obj, None)?.astype(target_dtype)?;
         return Py::new(py, array);

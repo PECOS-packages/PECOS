@@ -3081,7 +3081,7 @@ wheels = [
 
 [[package]]
 name = "pecos-rslib"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/pecos-rslib" }
 
 [package.dev-dependencies]
@@ -3112,7 +3112,7 @@ test = [{ name = "pytest", specifier = ">=9.0" }]
 
 [[package]]
 name = "pecos-rslib-cuda"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/pecos-rslib-cuda" }
 
 [package.dev-dependencies]
@@ -3128,12 +3128,12 @@ test = [{ name = "pytest", specifier = ">=9.0" }]
 
 [[package]]
 name = "pecos-rslib-exp"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/pecos-rslib-exp" }
 
 [[package]]
 name = "pecos-rslib-llvm"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/pecos-rslib-llvm" }
 
 [package.dev-dependencies]
@@ -3149,7 +3149,7 @@ test = [{ name = "pytest", specifier = ">=9.0" }]
 
 [[package]]
 name = "pecos-selene-mast"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/selene-plugins/pecos-selene-mast" }
 dependencies = [
     { name = "selene-core" },
@@ -3173,7 +3173,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "pecos-selene-stab-mps"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/selene-plugins/pecos-selene-stab-mps" }
 dependencies = [
     { name = "selene-core" },
@@ -3197,7 +3197,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "pecos-selene-stab-vec"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/selene-plugins/pecos-selene-stab-vec" }
 dependencies = [
     { name = "selene-core" },
@@ -3221,7 +3221,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "pecos-selene-stabilizer"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/selene-plugins/pecos-selene-stabilizer" }
 dependencies = [
     { name = "selene-core" },
@@ -3245,7 +3245,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "pecos-selene-statevec"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/selene-plugins/pecos-selene-statevec" }
 dependencies = [
     { name = "selene-core" },
@@ -3269,7 +3269,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "pecos-workspace"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { virtual = "." }
 
 [package.optional-dependencies]
@@ -4211,7 +4211,7 @@ wheels = [
 
 [[package]]
 name = "quantum-pecos"
-version = "0.9.0.dev3"
+version = "0.10.0.dev0"
 source = { editable = "python/quantum-pecos" }
 dependencies = [
     { name = "guppylang" },

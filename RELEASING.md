@@ -2,7 +2,7 @@
 
 The final PyPI push is deliberately **manual**: artifact building and testing
 are automated, but a human runs the upload and confirms each package. This
-sequence was last exercised for `0.9.0.dev1`.
+sequence was last exercised for `0.10.0.dev0`.
 
 ## 1. Version bump (its own PR)
 
@@ -13,9 +13,9 @@ The version is a literal in many coordinated places. Bump them all:
   `python/selene-plugins/*` packages)
 - Exact-version internal pins: the root's `quantum-pecos[cuda12/13]==...`
   entries and quantum-pecos's `pecos-rslib==...` / `pecos-rslib-llvm==...`
-- Regenerate both lockfiles: `just lock` (runs the pinned uv from
-  `.github/uv.toml` at the root and in `exp/zluppy/`; verify the diffs
-  are version-lines-only)
+- Regenerate all three lockfiles: `just lock` (runs the pinned uv from
+  `.github/uv.toml` at the root and in `exp/zlup/` and `exp/zluppy/`; verify
+  the diffs are version-lines-only)
 
 Verify: `git grep <old-version>` returns nothing outside this file's
 historical note; `uv lock --check` passes;
@@ -51,14 +51,23 @@ ref.
 ## 4. Download the bundle and dry-run
 
 ```
-gh run download <tag-run-id> -n pecos-distribution -D pecos-distribution
-./scripts/publish-wheels.sh --dry-run -f pecos-distribution
+gh run download <tag-run-id> -n pecos-distribution -D pecos-distribution-<version>
+./scripts/publish-wheels.sh --dry-run -f pecos-distribution-<version>
 ```
 
 (`-f` accepts the extracted directory `gh` produces, or the original zip.)
 
+Download into a version-suffixed directory. A previous release's bundle left in
+a plain `pecos-distribution/` would mix two versions in one directory, and the
+preflight -- complete set, consistent version, only expected files -- is the
+only thing standing between that and a stray upload.
+
 The dry run must show a real `twine check ... PASSED` per file (twine must be
-installed, e.g. `uv tool install twine`).
+installed, e.g. `uv tool install twine`). The script prints only a
+`Distribution checks passed` summary and swallows `twine check` output unless it
+fails, so confirm the per-file result directly:
+`uvx twine check pecos-distribution-<version>/*/*.whl pecos-distribution-<version>/*/*.tar.gz`
+and check the `PASSED` count equals the file count.
 
 ## 5. Publish (the manual step)
 

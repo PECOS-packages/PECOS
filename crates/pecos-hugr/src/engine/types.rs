@@ -98,6 +98,7 @@ impl MeasurementState {
     pub fn reset(&mut self) {
         self.mappings.clear();
         self.results.clear();
+        self.outcomes.clear();
         self.output_wires.clear();
         self.processed_count = 0;
     }
@@ -1009,5 +1010,15 @@ mod tests {
 
         let f = rng.next_f64();
         assert!((0.0..1.0).contains(&f)); // Should be in [0, 1)
+    }
+
+    #[test]
+    fn test_measurement_state_reset_clears_outcomes() {
+        let mut state = MeasurementState::default();
+        state.outcomes.insert(0, 1);
+
+        state.reset();
+
+        assert!(state.outcomes.is_empty());
     }
 }

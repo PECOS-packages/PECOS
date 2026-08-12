@@ -132,7 +132,7 @@ four physical measurements.
 <!--test-name: inferred_guppy_dem_round_arrays-->
 ```python
 from guppylang import guppy
-from guppylang.std.builtins import result
+from guppylang.std.builtins import array, result
 from guppylang.std.quantum import cx, measure, qubit
 
 from pecos.qec import infer_guppy_dem_annotations

@@ -1450,15 +1450,29 @@ impl Array {
     }
 
     /// Implement indexed and slice assignment.
-    fn __setitem__(&mut self, index: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn __setitem__(
+        mut slf: PyRefMut<'_, Self>,
+        index: &Bound<'_, PyAny>,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        // PyO3 has already mutably borrowed `self` before entering this method, so
+        // extracting the same Python object as an immutable Array would expose an
+        // internal borrow error. Snapshot it while the mutable borrow is available.
+        let value_snapshot = (slf.as_ptr() == value.as_ptr()).then(|| slf.copy());
+
         if let Ok(tuple) = index.cast::<PyTuple>() {
-            let shape: Vec<usize> = self.data.shape().to_vec();
+            let shape: Vec<usize> = slf.data.shape().to_vec();
             let index_ops = Self::parse_tuple_index(tuple, &shape)?;
-            self.apply_mixed_indexing_assignment(&index_ops, &shape, value)?;
+            slf.apply_mixed_indexing_assignment(
+                &index_ops,
+                &shape,
+                value,
+                value_snapshot.as_ref(),
+            )?;
             Ok(())
         } else if let Ok(slice) = index.cast::<PySlice>() {
             // Single slice: arr[start:stop:step] = value
-            let shape = self.data.shape();
+            let shape: Vec<usize> = slf.data.shape().to_vec();
             if shape.len() != 1 {
                 return Err(pyo3::exceptions::PyNotImplementedError::new_err(
                     "Slice assignment only works on 1D arrays for now",
@@ -1467,12 +1481,22 @@ impl Array {
 
             let (start, stop, step) = Self::parse_slice(slice, shape[0])?;
 
-            // Apply 1D slice assignment (now supports arbitrary steps)
-            self.apply_1d_slice_assignment_with_step(start, stop, step, value)?;
+            if value_snapshot.is_some() {
+                let index_ops = vec![IndexOp::Slice(start, stop, step)];
+                slf.apply_mixed_indexing_assignment(
+                    &index_ops,
+                    &shape,
+                    value,
+                    value_snapshot.as_ref(),
+                )?;
+            } else {
+                // Apply 1D slice assignment (now supports arbitrary steps)
+                slf.apply_1d_slice_assignment_with_step(start, stop, step, value)?;
+            }
             Ok(())
         } else if let Ok(idx) = index.extract::<isize>() {
             // Integer indexing: arr[i] = value
-            let shape = self.data.shape();
+            let shape = slf.data.shape();
 
             // Only 1D arrays support integer indexing with a single integer
             if shape.len() != 1 {
@@ -1495,7 +1519,7 @@ impl Array {
             let idx_usize = normalized_idx as usize;
 
             // Assign the value based on array dtype
-            match &mut self.data {
+            match &mut slf.data {
                 ArrayData::Bool(arr) => {
                     let val: bool = value.extract()?;
                     arr[idx_usize] = val;
@@ -1559,14 +1583,14 @@ impl Array {
             }
             Ok(())
         } else if index.extract::<PyRef<Array>>().is_ok() || index.cast::<PySequence>().is_ok() {
-            let shape: Vec<usize> = self.data.shape().to_vec();
+            let shape: Vec<usize> = slf.data.shape().to_vec();
             if shape.is_empty() {
                 return Err(pyo3::exceptions::PyIndexError::new_err(
                     "Cannot index a zero-dimensional array",
                 ));
             }
             let index_ops = vec![Self::parse_fancy_index(index, 0, shape[0])?];
-            self.apply_mixed_indexing_assignment(&index_ops, &shape, value)
+            slf.apply_mixed_indexing_assignment(&index_ops, &shape, value, value_snapshot.as_ref())
         } else {
             // Unsupported index type
             Err(pyo3::exceptions::PyTypeError::new_err(
@@ -2084,6 +2108,32 @@ impl Array {
             .collect())
     }
 
+    /// Return the dimensionality when every leaf in a non-empty sequence is boolean.
+    fn bool_sequence_ndim(value: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
+        if value.is_instance_of::<PyBool>() {
+            return Ok(Some(0));
+        }
+        let Ok(sequence) = value.cast::<PySequence>() else {
+            return Ok(None);
+        };
+        let length = sequence.len()?;
+        if length == 0 {
+            return Ok(None);
+        }
+
+        let mut child_ndim = None;
+        for position in 0..length {
+            let Some(ndim) = Self::bool_sequence_ndim(&sequence.get_item(position)?)? else {
+                return Ok(None);
+            };
+            if child_ndim.is_some_and(|expected| expected != ndim) {
+                return Ok(None);
+            }
+            child_ndim = Some(ndim);
+        }
+        Ok(child_ndim.map(|ndim| ndim + 1))
+    }
+
     /// Parse a sequence or bool Array used to index one axis.
     fn parse_fancy_index(
         index: &Bound<'_, PyAny>,
@@ -2115,6 +2165,14 @@ impl Array {
         let items = (0..length)
             .map(|position| sequence.get_item(position))
             .collect::<PyResult<Vec<_>>>()?;
+
+        if let Some(ndim) = Self::bool_sequence_ndim(index)?
+            && ndim > 1
+        {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                "Boolean mask indexing supports only one-dimensional masks; got {ndim} dimensions"
+            )));
+        }
         let is_bool_mask = !items.is_empty()
             && items
                 .iter()
@@ -2177,7 +2235,39 @@ impl Array {
                 ));
             }
         }
+
+        if Self::has_separated_advanced_indices(&index_ops) {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "Integer and fancy indices separated by a slice are not supported because NumPy moves the advanced-index result axis",
+            ));
+        }
         Ok(index_ops)
+    }
+
+    /// NumPy moves the advanced result axes to the front when advanced indices
+    /// are separated by a basic slice. The current axis-order resolver cannot
+    /// represent that layout, so reject it instead of returning transposed data.
+    fn has_separated_advanced_indices(index_ops: &[IndexOp]) -> bool {
+        let Some(fancy_axis) = index_ops
+            .iter()
+            .position(|op| matches!(op, IndexOp::Fancy(_)))
+        else {
+            return false;
+        };
+
+        index_ops.iter().enumerate().any(|(integer_axis, op)| {
+            if !matches!(op, IndexOp::Integer(_)) {
+                return false;
+            }
+            let (start, end) = if integer_axis < fancy_axis {
+                (integer_axis, fancy_axis)
+            } else {
+                (fancy_axis, integer_axis)
+            };
+            index_ops[start + 1..end]
+                .iter()
+                .any(|op| matches!(op, IndexOp::Slice(..)))
+        })
     }
 
     fn parse_reshape_shape(shape: &Bound<'_, PyTuple>) -> PyResult<Vec<isize>> {
@@ -6125,16 +6215,34 @@ impl Array {
     }
 
     /// Convert an assignment value through the constructor/fill checked-dtype path.
-    fn checked_assignment_value(&self, value: &Bound<'_, PyAny>) -> PyResult<(Self, bool)> {
+    fn checked_assignment_value(
+        &self,
+        value: &Bound<'_, PyAny>,
+        value_snapshot: Option<&Self>,
+    ) -> PyResult<(Self, bool)> {
+        if let Some(snapshot) = value_snapshot {
+            return Ok((snapshot.copy(), snapshot.data.shape().is_empty()));
+        }
+
         let py = value.py();
         let dtype = Py::new(py, self.data.dtype())?;
-        if value.hasattr("__array_interface__")? {
-            let converted = Self::from_python_value(value, Some(dtype.bind(py).as_any()))?;
+        if let Ok(array) = value.extract::<PyRef<Array>>() {
+            let converted = array.astype(self.data.dtype())?;
             let is_scalar = converted.data.shape().is_empty();
             return Ok((converted, is_scalar));
         }
-        let is_scalar =
-            value.extract::<PyRef<Array>>().is_err() && value.cast::<PySequence>().is_err();
+        if value.hasattr("__array_interface__")? {
+            let converted = if matches!(self.data, ArrayData::Pauli(_) | ArrayData::PauliString(_))
+            {
+                let sequence = value.call_method0("tolist")?;
+                Self::from_nested_sequence(sequence.as_any(), Some(dtype.bind(py).as_any()))?
+            } else {
+                Self::from_python_value(value, Some(dtype.bind(py).as_any()))?
+            };
+            let is_scalar = converted.data.shape().is_empty();
+            return Ok((converted, is_scalar));
+        }
+        let is_scalar = value.cast::<PySequence>().is_err();
         let converted = if is_scalar {
             let singleton = PyTuple::new(py, [value])?;
             Self::from_nested_sequence(singleton.as_any(), Some(dtype.bind(py).as_any()))?
@@ -6219,8 +6327,9 @@ impl Array {
         index_ops: &[IndexOp],
         shape: &[usize],
         value: &Bound<'_, PyAny>,
+        value_snapshot: Option<&Self>,
     ) -> PyResult<()> {
-        let (converted, is_scalar) = self.checked_assignment_value(value)?;
+        let (converted, is_scalar) = self.checked_assignment_value(value, value_snapshot)?;
         let selection = Self::assignment_ranges(index_ops, shape)?;
 
         macro_rules! assign_variant {

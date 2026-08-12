@@ -971,6 +971,7 @@ def _surface_runtime_measurement_remap_from_result_traces(
     """
     num_measurements = int(abstract_tc.get_meta("num_measurements"))
     scalar_trace_ids, array_trace_ids = _index_surface_result_trace_ids(result_traces)
+    _validate_surface_array_slot_provenance(result_traces, array_trace_ids)
     abstract_refs = _surface_abstract_measurement_result_refs(abstract_tc)
     if len(abstract_refs) != num_measurements:
         msg = f"expected {num_measurements} abstract measurement refs, got {len(abstract_refs)}"
@@ -1005,6 +1006,32 @@ def _surface_runtime_measurement_remap_from_result_traces(
         )
         raise ValueError(msg)
     return remap
+
+
+def _validate_surface_array_slot_provenance(
+    result_traces: Sequence[Mapping[str, Any]],
+    array_trace_ids: Mapping[str, list[list[int]]],
+) -> None:
+    """Compare collected-array IDs against any emitted per-element evidence."""
+    for trace in result_traces:
+        name = trace.get("name")
+        values = trace.get("values")
+        result_ids = trace.get("result_ids")
+        if not isinstance(name, str) or not isinstance(values, list) or not isinstance(result_ids, list):
+            continue
+        base_name, separator, element_text = name.rpartition(":meas:")
+        if not separator or not element_text.isdecimal() or len(values) != 1 or len(result_ids) != 1:
+            continue
+        base_arrays = array_trace_ids.get(base_name)
+        element = int(element_text)
+        if not base_arrays or element >= len(base_arrays[0]):
+            continue
+        if int(result_ids[0]) != base_arrays[0][element]:
+            msg = (
+                f"runtime result tag {base_name!r}[{element}] has measurement id {base_arrays[0][element]}, "
+                f"but {name!r} certifies {result_ids[0]}"
+            )
+            raise ValueError(msg)
 
 
 def _index_surface_result_trace_ids(

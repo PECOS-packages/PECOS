@@ -411,12 +411,35 @@ class TestConditionalCircuits:
         then_gates = [s for s in if_stmt.then_body if isinstance(s, GateOp)]
         assert len(then_gates) == 1
         assert then_gates[0].gate == GateKind.X
+        assert [target.index for target in then_gates[0].targets] == [1]
 
         # The function-level return measurement follows the CFG rather than
         # being silently discarded. Both measurements need a declared result.
         assert isinstance(ast.body[-1], MeasureOp)
+        assert [target.index for target in ast.body[-1].targets] == [1]
         assert ast.body.index(if_stmt) < len(ast.body) - 1
         assert len([decl for decl in ast.declarations if isinstance(decl, RegisterDecl)]) == 2
+
+    def test_conditional_postlude_preserves_two_qubit_targets(self) -> None:
+        """Post-CFG gates and return measurements retain each wire's slot."""
+
+        @guppy
+        def conditional_two_qubit_postlude() -> tuple[bool, bool]:
+            control = measure(qubit()).read()
+            q0 = qubit()
+            q1 = qubit()
+            if control:
+                x(q0)
+            cx(q0, q1)
+            return measure(q0).read(), measure(q1).read()
+
+        ast = guppy_to_ast(conditional_two_qubit_postlude)
+        cx_gates = [stmt for stmt in ast.body if isinstance(stmt, GateOp) and stmt.gate == GateKind.CX]
+        assert len(cx_gates) == 1
+        assert [target.index for target in cx_gates[0].targets] == [1, 2]
+
+        return_measurements = [stmt for stmt in ast.body if isinstance(stmt, MeasureOp)][-2:]
+        assert [[target.index for target in stmt.targets] for stmt in return_measurements] == [[1], [2]]
 
 
 class TestLoopCircuits:
@@ -463,12 +486,11 @@ class TestLoopCircuits:
         assert isinstance(ast.body[-1], MeasureOp)
 
 
-class TestNestedConditionalCircuits:
-    """Tests for nested conditional circuit conversion."""
+class TestUnsupportedConditionalCircuits:
+    """Tests for CFG forms deliberately rejected until recursive lowering exists."""
 
-    def test_nested_conditional_circuit(self) -> None:
-        """Test conversion of a nested conditional circuit."""
-        from pecos.slr.ast.nodes import WhileStmt
+    def test_nested_conditional_circuit_is_rejected(self) -> None:
+        """Nested conditionals cannot be lowered safely by the flat converter."""
 
         @guppy
         def nested_conditional() -> bool:
@@ -488,29 +510,5 @@ class TestNestedConditionalCircuits:
 
             return measure(q2).read()
 
-        ast = guppy_to_ast(nested_conditional)
-
-        # Should have 3 qubits
-        alloc_decls = [d for d in ast.declarations if isinstance(d, AllocatorDecl)]
-        assert len(alloc_decls) == 1
-        assert alloc_decls[0].capacity == 3
-
-        # Should have an outer IfStmt
-        outer_if_stmts = [s for s in ast.body if isinstance(s, IfStmt)]
-        assert len(outer_if_stmts) == 1
-
-        # The outer then body should contain a nested IfStmt
-        outer_if = outer_if_stmts[0]
-        inner_if_stmts = [s for s in outer_if.then_body if isinstance(s, IfStmt)]
-        assert len(inner_if_stmts) == 1
-
-        # The inner IfStmt should have X in then and Z in else
-        inner_if = inner_if_stmts[0]
-        inner_then_gates = [s for s in inner_if.then_body if isinstance(s, GateOp)]
-        assert len(inner_then_gates) == 1
-        assert inner_then_gates[0].gate == GateKind.X
-
-        assert inner_if.else_body is not None
-        inner_else_gates = [s for s in inner_if.else_body if isinstance(s, GateOp)]
-        assert len(inner_else_gates) == 1
-        assert inner_else_gates[0].gate == GateKind.Z
+        with pytest.raises(UnsupportedHugrStructureError, match="sequential or nested conditionals"):
+            guppy_to_ast(nested_conditional)

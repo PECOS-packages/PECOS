@@ -143,6 +143,37 @@ def test_direct_array_outputs_preserve_runtime_result_id_order() -> None:
     assert inferred.raw_binding == "runtime_result_ids"
 
 
+def test_direct_array_outputs_reject_permuted_runtime_result_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A complete direct-ID list is valid only in certified source order."""
+    from pecos.qec import guppy_output_dem
+
+    original = guppy_output_dem._named_trace_items  # noqa: SLF001
+
+    def permuted_named_trace_items(trace: object) -> list[dict[str, object]]:
+        items = original(trace)
+        rewritten: list[dict[str, object]] = []
+        for item in items:
+            if item.get("name") == "physical" and item.get("result_ids") == [0, 1, 2]:
+                rewritten.append({**item, "result_ids": [1, 0, 2]})
+            else:
+                rewritten.append(item)
+        return rewritten
+
+    monkeypatch.setattr(guppy_output_dem, "_named_trace_items", permuted_named_trace_items)
+    with pytest.raises(ValueError, match="certified source order"):
+        infer_guppy_dem_annotations(
+            _direct_array_outputs,
+            num_qubits=3,
+            raw_tag="physical",
+            detector_tag="events",
+            observable_tags=("logical_z", "logical_x"),
+            probe_shots=32,
+            provenance_shots=16,
+            validation_rows=8,
+            seed=19,
+        )
+
+
 def test_raw_tag_must_cover_canonical_qis_measurement_order() -> None:
     with pytest.raises(ValueError, match="must expose every physical measurement exactly once"):
         infer_guppy_dem_annotations(

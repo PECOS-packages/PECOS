@@ -894,6 +894,17 @@ def _generator_certified_result_traces(
 
     for source_index, slot in enumerate(entries):
         runtime_result_id = runtime_ids_by_slot.get(slot)
+        if runtime_result_id is None:
+            # Guppy v1 may expose an element's available provenance only on
+            # the collected base array ``tag``. Resolve that exact element
+            # before comparing it to the certified source order. Surface's
+            # ``final`` aggregate is deliberately excluded: its QIS IDs are
+            # physical lowering order, while its named slots are data-qubit
+            # semantic order and the scalar IDs may legitimately be absent.
+            tag, value_index = slot
+            base_tag, separator, element_text = tag.rpartition(":meas:")
+            if separator and base_tag != "final" and element_text.isdecimal() and value_index == 0:
+                runtime_result_id = runtime_ids_by_slot.get((base_tag, int(element_text)))
         expected_result_id = source_measurement_ids[source_index]
         if runtime_result_id is not None and runtime_result_id != expected_result_id:
             msg = (

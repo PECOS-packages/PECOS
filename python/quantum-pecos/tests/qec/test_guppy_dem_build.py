@@ -766,6 +766,26 @@ def test_generator_layout_allows_guppy_v1_array_without_scalar_ids() -> None:
     assert [trace["result_ids"] for trace in traces] == [[4], [9]]
 
 
+def test_generator_layout_checks_synthetic_array_slots_against_base_array_ids() -> None:
+    """Guppy v1 array provenance remains ordered even with synthetic tags."""
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
+    traces = [
+        {"name": "physical:meas:0", "values": [False], "result_ids": []},
+        {"name": "physical:meas:1", "values": [True], "result_ids": []},
+        {"name": "physical", "values": [False, True], "result_ids": [9, 4]},
+    ]
+
+    with pytest.raises(ValueError, match="generator-certified layout requires 4"):
+        _generator_certified_result_traces(
+            (("physical:meas:0", 0), ("physical:meas:1", 0)),
+            circuit,
+            traces,
+            required_tags=["physical:meas:0", "physical:meas:1"],
+        )
+
+
 def test_generated_surface_layout_certificate_rejects_permutation() -> None:
     program = make_surface_code(3, 1, "Z")
     digest, layout = program.__pecos_named_measurement_layout_v2__

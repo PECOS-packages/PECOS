@@ -2142,6 +2142,31 @@ def test_runtime_result_tags_bind_metadata_when_lowered_measurements_reorder() -
     assert observables == [{"id": 0, "meas_ids": [4 + q for q in logical_z_qubits]}]
 
 
+def test_surface_result_tags_reject_permuted_runtime_ids() -> None:
+    """A dense but permuted result-ID list is not authoritative provenance."""
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis="Z")
+    result_traces = [
+        {"name": f"sx{index}:init:meas:{index}", "values": [False], "result_ids": [index]} for index in range(4)
+    ]
+    result_traces.append(
+        {
+            "name": "final",
+            "values": [False] * 9,
+            "result_ids": [5, 4, *range(6, 13)],
+        },
+    )
+    result_traces.extend(
+        [
+            {"name": "final:meas:0", "values": [False], "result_ids": [4]},
+            {"name": "final:meas:1", "values": [False], "result_ids": [5]},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="certifies"):
+        _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
+
+
 def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
     from pecos_rslib.quantum import TickCircuit
 

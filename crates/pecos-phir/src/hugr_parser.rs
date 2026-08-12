@@ -282,30 +282,28 @@ impl HugrToPhirConverter {
     /// place straight-line operations directly under the entry `FuncDefn`.
     /// Handles all three structures.
     fn find_operations_container(hugr: &Hugr) -> Option<Node> {
-        // First: look for FuncDefn and check its children
-        for node in hugr.nodes() {
-            if matches!(hugr.get_optype(node), OpType::FuncDefn(_)) {
-                for child in hugr.children(node) {
-                    match hugr.get_optype(child) {
-                        // Direct DFG body (e.g. from tket or manual construction)
-                        OpType::DFG(_) => return Some(child),
-                        // CFG body (Guppy output): find the first DataflowBlock
-                        OpType::CFG(_) => {
-                            for cfg_child in hugr.children(child) {
-                                if matches!(hugr.get_optype(cfg_child), OpType::DataflowBlock(_)) {
-                                    return Some(cfg_child);
-                                }
+        // Prefer the declared entrypoint: modules can contain helpers before
+        // the function representing the program being parsed.
+        let entrypoint = hugr.entrypoint();
+        if matches!(hugr.get_optype(entrypoint), OpType::FuncDefn(_)) {
+            for child in hugr.children(entrypoint) {
+                match hugr.get_optype(child) {
+                    // Direct DFG body (e.g. from tket or manual construction)
+                    OpType::DFG(_) => return Some(child),
+                    // CFG body (Guppy output): find the first DataflowBlock
+                    OpType::CFG(_) => {
+                        for cfg_child in hugr.children(child) {
+                            if matches!(hugr.get_optype(cfg_child), OpType::DataflowBlock(_)) {
+                                return Some(cfg_child);
                             }
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
-                // Guppy 1 inlines the entry program directly in the
-                // function definition instead of wrapping it in a DFG/CFG.
-                // `FuncDefn` is itself a dataflow container, so its children
-                // can be scheduled by the same topological traversal.
-                return Some(node);
             }
+            // Guppy 1 inlines the entry program directly in the function
+            // definition instead of wrapping it in a DFG/CFG.
+            return Some(entrypoint);
         }
 
         // Fallback: find any DFG or DataflowBlock

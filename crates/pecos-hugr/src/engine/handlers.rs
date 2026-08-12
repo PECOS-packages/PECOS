@@ -141,7 +141,9 @@ impl HugrEngine {
 
         match ext_name {
             "tket.result" => self.handle_result_op(hugr, node, &op_name),
-            "tket.qsystem" | "tket.qsystem.helios" => self.handle_qsystem_op(hugr, node, &op_name),
+            "tket.qsystem" | "tket.qsystem.helios" | "tket.qsystem.sol" => {
+                self.handle_qsystem_op(hugr, node, &op_name)
+            }
             "tket.qsystem.random" => self.handle_random_op(hugr, node, &op_name),
             "tket.qsystem.utils" => self.handle_utils_op(hugr, node, &op_name),
             "tket.futures" => self.handle_futures_op(hugr, node, &op_name),

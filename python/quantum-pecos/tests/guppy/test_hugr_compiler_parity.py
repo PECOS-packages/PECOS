@@ -223,18 +223,16 @@ def test_existing_hugr_files_parity() -> None:
             # Binary envelope format - both compilers can use this
             equivalent, msg = compare_compilers(hugr_bytes, hugr_bytes)
             if not equivalent and "Conflicting signature" in msg:
-                pytest.skip(f"Skipping {hugr_file.name} - legacy extension signatures")
+                continue
             assert equivalent, f"HUGR file {hugr_file.name} compilation differs: {msg}"
         else:
             # Try to decode as JSON/text
             try:
                 hugr_bytes.decode("utf-8")
                 # For text format, skip since we need binary for Selene
-                pytest.skip(
-                    f"Skipping {hugr_file.name} - text format, need binary for Selene",
-                )
+                continue
             except UnicodeDecodeError:
-                pytest.skip(f"Skipping {hugr_file.name} - unknown binary format")
+                continue
 
 
 if __name__ == "__main__":

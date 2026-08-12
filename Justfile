@@ -814,7 +814,7 @@ go-lint profile="release": (validate-profile "go-lint" profile) (go-build profil
 # Run performance tests with release build
 [group('test')]
 pytest-perf: build-release
-    uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "performance" -v
+    uv run --frozen --group numpy-compat pytest -n 1 python/pecos-rslib/tests -m "performance" -v
 
 # Run tests for optional dependencies (only quantum-pecos carries the marker)
 [group('test')]

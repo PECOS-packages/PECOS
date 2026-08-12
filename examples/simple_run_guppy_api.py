@@ -217,7 +217,7 @@ def demo_error_handling() -> None:
     # Test with invalid backend
     @guppy
     def simple() -> bool:
-        return measure(qubit())
+        return measure(qubit()).read()
 
     try:
         run_guppy(simple, shots=10, backend="invalid_backend")

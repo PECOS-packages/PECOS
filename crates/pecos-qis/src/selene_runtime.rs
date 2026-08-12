@@ -8,10 +8,10 @@ use log::{debug, trace};
 use pecos_qis_ffi_types::{
     LoweredQuantumOp, Operation, OperationCollector, QuantumOp, TraceMetadata,
 };
-use selene_core::runtime::plugin::RuntimePluginDescriptorV1;
+use selene_core::runtime::{RuntimeAPIVersion, plugin::RuntimePluginDescriptorV1};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{CString, c_void};
-use std::mem::ManuallyDrop;
+use std::mem::{ManuallyDrop, size_of};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -44,6 +44,12 @@ enum RuntimeScheduledOp {
     },
     Reset {
         qubit_id: u64,
+    },
+    Rpp {
+        qubit_id_1: u64,
+        qubit_id_2: u64,
+        theta: f64,
+        phi: f64,
     },
     Custom,
 }
@@ -188,13 +194,18 @@ unsafe extern "C" fn runtime_batch_set_time(
 
 unsafe extern "C" fn runtime_batch_rpp(
     instance: RuntimeGetOperationInstance,
-    _qubit_id_1: u64,
-    _qubit_id_2: u64,
-    _theta: f64,
-    _phi: f64,
+    qubit_id_1: u64,
+    qubit_id_2: u64,
+    theta: f64,
+    phi: f64,
 ) {
     let batch = unsafe { &mut *(instance.cast::<RuntimeOperationBatch>()) };
-    batch.operations.push(RuntimeScheduledOp::Custom);
+    batch.operations.push(RuntimeScheduledOp::Rpp {
+        qubit_id_1,
+        qubit_id_2,
+        theta,
+        phi,
+    });
     batch.invoked = true;
 }
 
@@ -320,24 +331,47 @@ impl SeleneRuntime {
     /// point instead of exporting every runtime callback as a global symbol.
     unsafe fn runtime_plugin_descriptor(
         library: &libloading::Library,
-    ) -> Result<&RuntimePluginDescriptorV1> {
-        let get_descriptor = unsafe {
-            library.get::<unsafe extern "C" fn() -> *const RuntimePluginDescriptorV1>(
-                b"selene_runtime_get_plugin_descriptor_v1",
-            )
-        }
-        .map_err(|e| {
-            RuntimeError::FfiError(format!(
-                "runtime plugin does not export its Selene 0.3 descriptor: {e}"
-            ))
-        })?;
-        let descriptor = unsafe { get_descriptor() };
-        if descriptor.is_null() {
+    ) -> Result<RuntimePluginDescriptorV1> {
+        let descriptor = if let Ok(symbol) =
+            unsafe { library.get::<*const c_void>(b"selene_runtime_plugin_descriptor_v1") }
+        {
+            unsafe { symbol.try_as_raw_ptr() }
+                .map(|ptr| ptr.cast_const().cast::<RuntimePluginDescriptorV1>())
+        } else {
+            unsafe {
+                library.get::<unsafe extern "C" fn() -> *const RuntimePluginDescriptorV1>(
+                    b"selene_runtime_get_plugin_descriptor_v1",
+                )
+            }
+            .ok()
+            .map(|accessor| unsafe { accessor() })
+        };
+        let Some(descriptor) = descriptor.filter(|descriptor| !descriptor.is_null()) else {
             return Err(RuntimeError::FfiError(
-                "runtime plugin returned a null Selene 0.3 descriptor".to_string(),
+                "runtime plugin does not expose a Selene 0.3 descriptor".to_string(),
             ));
+        };
+
+        // Read only the header until the plugin establishes that its full
+        // descriptor is present. This prevents a short older descriptor from
+        // being materialized as the current ABI type.
+        let struct_size = unsafe { std::ptr::read_unaligned(descriptor.cast::<u64>()) };
+        let expected_size = size_of::<RuntimePluginDescriptorV1>() as u64;
+        if struct_size < expected_size {
+            return Err(RuntimeError::FfiError(format!(
+                "runtime plugin descriptor is too small for Selene 0.3: expected at least {expected_size} bytes, got {struct_size}"
+            )));
         }
-        Ok(unsafe { &*descriptor })
+
+        let descriptor = unsafe { std::ptr::read_unaligned(descriptor) };
+        RuntimeAPIVersion::from(descriptor.api_version)
+            .validate()
+            .map_err(|error| {
+                RuntimeError::FfiError(format!(
+                    "runtime plugin has an incompatible Selene API version: {error}"
+                ))
+            })?;
+        Ok(descriptor)
     }
 
     /// Create a new Selene runtime with the given plugin path
@@ -1551,6 +1585,16 @@ impl SeleneRuntime {
                     lowered_ops.push(QuantumOp::Reset(qubit));
                     self.mark_gate_end(qubit, end_time);
                 }
+                RuntimeScheduledOp::Rpp {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta,
+                    phi,
+                } => {
+                    return Err(RuntimeError::ExecutionError(format!(
+                        "Selene runtime emitted unsupported RPP operation on qubits {qubit_id_1} and {qubit_id_2} (theta={theta}, phi={phi})"
+                    )));
+                }
                 RuntimeScheduledOp::Custom => {}
             }
         }
@@ -2231,6 +2275,26 @@ mod tests {
             ops,
             vec![QuantumOp::Idle(20e-9, 0), QuantumOp::RXY(1.0, 0.5, 0)]
         );
+    }
+
+    #[test]
+    fn test_runtime_batch_rpp_fails_loudly() {
+        let mut runtime = SeleneRuntime::new("/path/to/selene.so");
+        let error = runtime
+            .convert_runtime_batch(RuntimeOperationBatch {
+                start_time_nanos: 0,
+                duration_nanos: 5,
+                invoked: true,
+                operations: vec![RuntimeScheduledOp::Rpp {
+                    qubit_id_1: 0,
+                    qubit_id_2: 1,
+                    theta: 1.0,
+                    phi: 0.5,
+                }],
+            })
+            .expect_err("RPP must not be silently discarded");
+
+        assert!(error.to_string().contains("unsupported RPP"));
     }
 
     #[test]

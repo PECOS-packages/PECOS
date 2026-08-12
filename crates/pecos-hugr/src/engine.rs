@@ -41,7 +41,7 @@ use pecos_core::gate_type::GateType;
 use pecos_core::{Angle64, QubitId};
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::prelude::*;
-use tket::hugr::ops::OpType;
+use tket::hugr::ops::{OpTrait, OpType};
 use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::loader::load_hugr_from_bytes;
@@ -666,6 +666,16 @@ impl HugrEngine {
     /// - `Ok(None)` - No operations to process (empty or complete)
     #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
     fn process_hugr_impl(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        loop {
+            let batch = self.process_hugr_batch()?;
+            if batch.is_some() || self.work_queue.is_empty() {
+                return Ok(batch);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
+    fn process_hugr_batch(&mut self) -> Result<Option<ByteMessage>, PecosError> {
         // A fault raised by a completion cascade (e.g. during measurement
         // handling) must surface even when the queue is empty -- check
         // BEFORE the early returns below, or the message is discarded and
@@ -1502,7 +1512,7 @@ impl HugrEngine {
                 self.check_plain_func_call_completion(&hugr, call_node);
             }
             if !self.work_queue.is_empty() {
-                return self.process_hugr_impl();
+                return Ok(None);
             }
             // No progress at all this batch: this is the engine's
             // completion claim. Any still-active control flow or starved
@@ -2092,7 +2102,10 @@ impl HugrEngine {
         };
         let arity = match hugr.get_optype(entrypoint) {
             OpType::FuncDefn(func) => func.signature().body().output().len(),
-            _ => hugr.num_inputs(output),
+            _ => hugr
+                .get_optype(output)
+                .dataflow_signature()
+                .map_or(0, |signature| signature.input_count()),
         };
         let values: Vec<_> = (0..arity)
             .map(|port| self.get_input_value(hugr, output, port))

@@ -737,6 +737,35 @@ def test_generator_layout_rejects_source_runtime_identity_mismatch() -> None:
         )
 
 
+def test_generator_layout_rejects_permuted_array_runtime_result_ids() -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
+
+    with pytest.raises(ValueError, match="generator-certified layout requires 4"):
+        _generator_certified_result_traces(
+            (("physical", 0), ("physical", 1)),
+            circuit,
+            [{"name": "physical", "values": [False, True], "result_ids": [9, 4]}],
+            required_tags=["physical"],
+        )
+
+
+def test_generator_layout_allows_guppy_v1_array_without_scalar_ids() -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
+
+    traces = _generator_certified_result_traces(
+        (("physical", 0), ("physical", 1)),
+        circuit,
+        [{"name": "physical", "values": [False, True], "result_ids": []}],
+        required_tags=["physical"],
+    )
+
+    assert [trace["result_ids"] for trace in traces] == [[4], [9]]
+
+
 def test_generated_surface_layout_certificate_rejects_permutation() -> None:
     program = make_surface_code(3, 1, "Z")
     digest, layout = program.__pecos_named_measurement_layout_v2__

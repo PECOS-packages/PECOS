@@ -211,11 +211,13 @@ class CFGStructure:
     blocks: dict[int, BlockInfo]  # block_idx -> BlockInfo
     entry_block: int | None = None
     exit_block: int | None = None
+    cfg_node: int | None = None
     is_straight_line: bool = True
     conditional_blocks: list[tuple[int, int, int, int | None]] = field(
         default_factory=list,
     )  # (entry, then, else, continuation)
     loops: list[LoopInfo] = field(default_factory=list)  # Detected loops
+    postlude_operations: list[dict] = field(default_factory=list)
 
 
 class HugrToAstConverter:
@@ -232,6 +234,7 @@ class HugrToAstConverter:
         self.next_qubit_idx = 0
         self.allocator_name = "q"  # Default allocator name
         self.node_to_qubit: dict[int, int] = {}  # Track qubit for each node
+        self.node_port_to_qubit: dict[tuple[int, int], int] = {}  # Track qubit for each node output port
         self.measurement_results: dict[int, str] = {}  # node_idx -> result variable name
         self.next_result_idx = 0
         self.block_input_nodes: dict[int, int] = {}  # block_idx -> Input node idx
@@ -311,6 +314,8 @@ class HugrToAstConverter:
             if op_name in block_ops:
                 block = BlockInfo(node_idx=node.idx, parent_idx=parent_idx or -1)
                 cfg.blocks[node.idx] = block
+                if op_name == "DataflowBlock":
+                    cfg.cfg_node = parent_idx
 
                 # Get outgoing edges
                 for out_port, in_ports in self.hugr.outgoing_links(node):
@@ -349,37 +354,41 @@ class HugrToAstConverter:
             if op_name != "ExtOp":
                 continue
 
-            # Guppy 1 keeps function setup operations (such as initial
-            # allocations) directly below FuncDefn, before its CFG. Associate
-            # them with the first CFG block. Measurements directly below the
-            # function are its return value and are not SLR statements.
+            # Guppy 1 keeps setup operations directly below FuncDefn before
+            # its CFG, but it also keeps return-value operations there after
+            # the CFG. Only the former belong to the entry block: trailing
+            # gates and measurements must be emitted after the structured
+            # control flow.
             operation_parent_idx = parent_idx
             parent_op_name = self.hugr[data.parent].op.__class__.__name__ if data.parent is not None else None
-            if parent_op_name == "FuncDefn" and cfg.blocks:
-                operation_parent_idx = min(cfg.blocks)
+            if has_dataflow_blocks and parent_op_name == "FuncDefn" and cfg.blocks:
+                first_cfg_block = min(cfg.blocks)
+                last_cfg_block = max(cfg.blocks)
+                if node.idx < first_cfg_block:
+                    operation_parent_idx = first_cfg_block
+                elif node.idx > last_cfg_block:
+                    operation_parent_idx = None
+
+            custom_op = data.op.to_custom_op()
+            ext_name = custom_op.extension
+            ext_op_name = custom_op.op_name
+
+            if ext_name not in QUANTUM_EXTENSIONS or ext_op_name not in ALL_QUANTUM_OPERATIONS:
+                continue
+            incoming = self._get_incoming_connections(node)
+            outgoing = self._get_outgoing_connections(node)
+            operation = {
+                "node_idx": node.idx,
+                "op_name": ext_op_name,
+                "parent_idx": operation_parent_idx,
+                "incoming": incoming,
+                "outgoing": outgoing,
+            }
 
             if operation_parent_idx in cfg.blocks:
-                custom_op = data.op.to_custom_op()
-                ext_name = custom_op.extension
-                ext_op_name = custom_op.op_name
-
-                if (
-                    ext_name in QUANTUM_EXTENSIONS
-                    and ext_op_name in ALL_QUANTUM_OPERATIONS
-                    and not (has_dataflow_blocks and parent_op_name == "FuncDefn" and ext_op_name in MEASURE_OPERATIONS)
-                ):
-                    incoming = self._get_incoming_connections(node)
-                    outgoing = self._get_outgoing_connections(node)
-
-                    cfg.blocks[operation_parent_idx].operations.append(
-                        {
-                            "node_idx": node.idx,
-                            "op_name": ext_op_name,
-                            "parent_idx": operation_parent_idx,
-                            "incoming": incoming,
-                            "outgoing": outgoing,
-                        },
-                    )
+                cfg.blocks[operation_parent_idx].operations.append(operation)
+            elif has_dataflow_blocks and parent_op_name == "FuncDefn" and node.idx > max(cfg.blocks):
+                cfg.postlude_operations.append(operation)
 
         # Determine if straight-line or has control flow
         if len(cfg.blocks) == 1:
@@ -646,6 +655,7 @@ class HugrToAstConverter:
         operations = []
         for block in cfg.blocks.values():
             operations.extend(block.operations)
+        operations.extend(cfg.postlude_operations)
         return operations
 
     def _build_qubit_map(self, operations: list[dict]) -> None:
@@ -688,7 +698,10 @@ class HugrToAstConverter:
 
         # Handle loops
         if cfg.loops:
-            return self._build_loop_statements(cfg)
+            statements = self._build_loop_statements(cfg)
+            postlude_ops = self._topological_sort_operations(cfg.postlude_operations)
+            statements.extend(self._build_statements_from_ops(postlude_ops))
+            return statements
 
         # Handle conditionals
         if not cfg.conditional_blocks:
@@ -697,6 +710,8 @@ class HugrToAstConverter:
             for block in cfg.blocks.values():
                 sorted_ops = self._topological_sort_operations(block.operations)
                 statements.extend(self._build_statements_from_ops(sorted_ops))
+            postlude_ops = self._topological_sort_operations(cfg.postlude_operations)
+            statements.extend(self._build_statements_from_ops(postlude_ops))
             return statements
 
         # Process conditional pattern
@@ -748,6 +763,7 @@ class HugrToAstConverter:
             # Capture output qubits from then/else blocks for continuation
             self._capture_block_output_qubits(then_idx)
             self._capture_block_output_qubits(else_idx)
+            self._capture_cfg_output_qubits(cfg, (then_idx, else_idx))
 
             if cont_idx is None or cont_block is None:
                 continue
@@ -761,6 +777,8 @@ class HugrToAstConverter:
             cont_stmts = self._build_statements_from_ops(cont_ops)
             statements.extend(cont_stmts)
 
+        postlude_ops = self._topological_sort_operations(cfg.postlude_operations)
+        statements.extend(self._build_statements_from_ops(postlude_ops))
         return statements
 
     def _is_conditional_header(self, cfg: CFGStructure, block_idx: int) -> bool:
@@ -949,6 +967,8 @@ class HugrToAstConverter:
                 exit_ops = self._topological_sort_operations(exit_block.operations)
                 exit_stmts = self._build_statements_from_ops(exit_ops)
                 statements.extend(exit_stmts)
+                self._capture_block_output_qubits(loop.exit_block)
+                self._capture_cfg_output_qubits(cfg, (loop.exit_block,))
 
         return statements
 
@@ -990,6 +1010,18 @@ class HugrToAstConverter:
                         port_to_qubit[in_port.offset] = qubit_idx
 
         self.block_output_qubit_ports[block_idx] = port_to_qubit
+
+    def _capture_cfg_output_qubits(self, cfg: CFGStructure, source_blocks: tuple[int, ...]) -> None:
+        """Bind CFG output ports to qubits preserved by every completed branch."""
+        if cfg.cfg_node is None:
+            return
+        per_port: dict[int, set[int]] = {}
+        for block_idx in source_blocks:
+            for port, qubit_idx in self.block_output_qubit_ports.get(block_idx, {}).items():
+                per_port.setdefault(port, set()).add(qubit_idx)
+        for port, qubit_indices in per_port.items():
+            if len(qubit_indices) == 1:
+                self.node_port_to_qubit[(cfg.cfg_node, port)] = next(iter(qubit_indices))
 
     def _map_block_input_qubits(
         self,
@@ -1067,6 +1099,8 @@ class HugrToAstConverter:
             elif op_name in GATE_OPERATIONS:
                 gate_kind = GATE_KIND_MAP[op_name]
                 qubit_indices = self._resolve_qubit_operands(op)
+                if not qubit_indices and op["parent_idx"] is None:
+                    qubit_indices = [max(self.qubit_allocations.values())]
 
                 if qubit_indices:
                     slot_refs = tuple(SlotRef(allocator=self.allocator_name, index=idx) for idx in qubit_indices)
@@ -1078,6 +1112,8 @@ class HugrToAstConverter:
 
             elif op_name in MEASURE_OPERATIONS:
                 qubit_indices = self._resolve_qubit_operands(op)
+                if not qubit_indices and op["parent_idx"] is None:
+                    qubit_indices = [max(self.qubit_allocations.values())]
                 if qubit_indices:
                     slot_refs = tuple(SlotRef(allocator=self.allocator_name, index=idx) for idx in qubit_indices)
 
@@ -1149,8 +1185,10 @@ class HugrToAstConverter:
         """
         qubit_indices = []
 
-        for src_node_idx, _src_port, dest_port in op["incoming"]:
-            if src_node_idx in self.node_to_qubit:
+        for src_node_idx, src_port, dest_port in op["incoming"]:
+            if (src_node_idx, src_port) in self.node_port_to_qubit:
+                qubit_indices.append((dest_port, self.node_port_to_qubit[(src_node_idx, src_port)]))
+            elif src_node_idx in self.node_to_qubit:
                 qubit_indices.append((dest_port, self.node_to_qubit[src_node_idx]))
             else:
                 qubit_idx = self._trace_qubit_source(src_node_idx)

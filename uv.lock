@@ -625,8 +625,8 @@ name = "cuda-core"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder" },
-    { name = "numpy" },
+    { name = "cuda-pathfinder", marker = "extra == 'extra-13-quantum-pecos-cuda12' or extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "numpy", marker = "extra == 'extra-13-quantum-pecos-cuda12' or extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d8/66/15fb7128617e8086f93782c3a80f380c44a3ca87e35102f49fba9226917d/cuda_core-0.7.0-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:133f996d7dabe61624dab10c5ef56bb5217270fe53ca4ab26edf8ee14c67df8e", size = 30344605, upload-time = "2026-04-08T17:03:17.476Z" },
@@ -656,8 +656,8 @@ name = "cudensitymat-cu12"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cutensor-cu12" },
-    { name = "cutensornet-cu12" },
+    { name = "cutensor-cu12", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cutensornet-cu12", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/95/5e/e61594390456fc210c75f305ef8bd474fc8eb930e86435eb395ff9b108dd/cudensitymat_cu12-0.6.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:745a0fa66df4d3d05cb14acc7bf74d00aed7e34cd69c74933dd904fed17dc665", size = 45015051, upload-time = "2026-06-29T20:37:23.044Z" },
@@ -669,8 +669,8 @@ name = "cudensitymat-cu13"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cutensor-cu13" },
-    { name = "cutensornet-cu13" },
+    { name = "cutensor-cu13", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cutensornet-cu13", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b5/ca/23b382158370b89753035b0f15dd453b69595da0c4faa07ad0cbf724bb14/cudensitymat_cu13-0.6.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:4d346da09a53ca5be572811df0d962ebf7d3815a8fdc68fbec594a68f2522050", size = 30399721, upload-time = "2026-06-29T20:38:17.413Z" },
@@ -700,8 +700,8 @@ name = "cupy-cuda12x"
 version = "14.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder" },
-    { name = "numpy" },
+    { name = "cuda-pathfinder", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "numpy", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a3/6e/290ee2d7cc4ad63d66e67acfd7ff3026f2b648dd04449a1bf88ffaa36b1e/cupy_cuda12x-14.1.1-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:7aae7d3bed37985e2aa39f0914b88ad90dbd3a6141d3e8198d73fce65859013c", size = 144383812, upload-time = "2026-06-01T04:52:23.799Z" },
@@ -722,8 +722,8 @@ name = "cupy-cuda13x"
 version = "14.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder" },
-    { name = "numpy" },
+    { name = "cuda-pathfinder", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "numpy", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/df/33e14f4648910db90d9aa3ac03c7012eec2e5d05a7ab69ec74a7864d6354/cupy_cuda13x-14.1.1-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:9226f3279c64aa6f07a79ba0081f3275a99a36c2db3f836f4b687dd8d77fa8bc", size = 73276230, upload-time = "2026-06-01T04:54:10.208Z" },
@@ -744,15 +744,15 @@ name = "cuquantum-python-cu12"
 version = "26.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", version = "12.9.7", source = { registry = "https://pypi.org/simple" } },
-    { name = "cudensitymat-cu12" },
-    { name = "cupauliprop-cu12" },
-    { name = "cupy-cuda12x" },
-    { name = "custabilizer-cu12" },
-    { name = "custatevec-cu12" },
-    { name = "cutensornet-cu12" },
-    { name = "numpy" },
-    { name = "nvmath-python" },
+    { name = "cuda-bindings", version = "12.9.7", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cudensitymat-cu12", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cupauliprop-cu12", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cupy-cuda12x", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "custabilizer-cu12", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "custatevec-cu12", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cutensornet-cu12", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "numpy", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "nvmath-python", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/78/be6a5d5b4e96683088d265db09d3d0f4c4191419a61cc71aa7b1826ae04c/cuquantum_python_cu12-26.6.0-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:0419509cfaa2d06c7e7d1fac29ec6dae87479e4e4d0dd367491ebd3a3ec9cf75", size = 9247941, upload-time = "2026-06-29T20:47:32.205Z" },
@@ -768,15 +768,15 @@ name = "cuquantum-python-cu13"
 version = "26.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", version = "13.3.1", source = { registry = "https://pypi.org/simple" } },
-    { name = "cudensitymat-cu13" },
-    { name = "cupauliprop-cu13" },
-    { name = "cupy-cuda13x" },
-    { name = "custabilizer-cu13" },
-    { name = "custatevec-cu13" },
-    { name = "cutensornet-cu13" },
-    { name = "numpy" },
-    { name = "nvmath-python" },
+    { name = "cuda-bindings", version = "13.3.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cudensitymat-cu13", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cupauliprop-cu13", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cupy-cuda13x", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "custabilizer-cu13", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "custatevec-cu13", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cutensornet-cu13", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "numpy", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "nvmath-python", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/19/54/1546bffb037888466c1bdcea862fb3116a5397fec13d7c54275d58414511/cuquantum_python_cu13-26.6.0-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:9b1ed0f9de6af606a6f5e03a19d08ac4d3bbc012892e6001a974023f1bb3bbd7", size = 9247802, upload-time = "2026-06-29T20:49:50.042Z" },
@@ -848,7 +848,7 @@ name = "cutensornet-cu12"
 version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cutensor-cu12" },
+    { name = "cutensor-cu12", marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7d/e5/903ae715142696da56b159d38cb88496c99c73a25610fe70382321104141/cutensornet_cu12-2.13.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:50d1de21be4d25ca72ecd249505d12a7fe4e217c83ffdc47ef5355fc75e6cc21", size = 3235639, upload-time = "2026-06-29T20:35:14.451Z" },
@@ -860,7 +860,7 @@ name = "cutensornet-cu13"
 version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cutensor-cu13" },
+    { name = "cutensor-cu13", marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/63/c8a9f65cebec4db71818c06afd99e3a696cf892825da81bf235dc3304e8f/cutensornet_cu13-2.13.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:c57906ea213188bef0dd87fc31cae9689214e9194baf5c9445783c9730ff086e", size = 3048405, upload-time = "2026-06-29T20:35:57.385Z" },
@@ -922,6 +922,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c9/02/bd72be9134d25ed783ecbbc38a539ffaefbf90c78418c7fb7229600dbac7/distlib-0.4.3.tar.gz", hash = "sha256:f152097224a0ae24be5a0f6bae1b9359af82133bce63f98a95f86cae1aede9ed", size = 615141, upload-time = "2026-06-12T08:04:52.847Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/02/08/9c41fb51ab5b43eb21674aff13df270e8ba6c4b29c8624e328dc7a9482af/distlib-0.4.3-py2.py3-none-any.whl", hash = "sha256:4b0ce306c966eb73bc3a7b6abad017c556dadd92c44701562cd528ac7fde4d5b", size = 470628, upload-time = "2026-06-12T08:04:50.506Z" },
+]
+
+[[package]]
+name = "execnet"
+version = "2.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/89/780e11f9588d9e7128a3f87788354c7946a9cbb1401ad38a48c4db9a4f07/execnet-2.1.2.tar.gz", hash = "sha256:63d83bfdd9a23e35b9c6a3261412324f964c2ec8dcd8d3c6916ee9373e0befcd", size = 166622, upload-time = "2025-11-12T09:56:37.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/84/02fc1827e8cdded4aa65baef11296a9bbe595c474f0d6d758af082d849fd/execnet-2.1.2-py3-none-any.whl", hash = "sha256:67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec", size = 40708, upload-time = "2025-11-12T09:56:36.333Z" },
 ]
 
 [[package]]
@@ -2270,9 +2279,9 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cuda-bindings", version = "12.9.7", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-quantum-pecos-cuda12' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
     { name = "cuda-bindings", version = "13.3.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
-    { name = "cuda-core" },
-    { name = "cuda-pathfinder" },
-    { name = "numpy" },
+    { name = "cuda-core", marker = "extra == 'extra-13-quantum-pecos-cuda12' or extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "cuda-pathfinder", marker = "extra == 'extra-13-quantum-pecos-cuda12' or extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "numpy", marker = "extra == 'extra-13-quantum-pecos-cuda12' or extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
     { name = "pywin32", marker = "(sys_platform == 'win32' and extra == 'extra-13-quantum-pecos-cuda12') or (sys_platform == 'win32' and extra == 'extra-13-quantum-pecos-cuda13') or (sys_platform != 'win32' and extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (sys_platform != 'win32' and extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13') or (extra == 'extra-13-quantum-pecos-cuda12' and extra == 'extra-13-quantum-pecos-cuda13') or (extra == 'extra-13-quantum-pecos-cuda12' and extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'extra-13-quantum-pecos-cuda12' and extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13') or (extra != 'extra-13-quantum-pecos-cuda13' and extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra != 'extra-13-quantum-pecos-cuda13' and extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
@@ -2431,7 +2440,7 @@ test = [
 requires-dist = [
     { name = "guppylang", marker = "extra == 'test'", specifier = "~=1.0.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
-    { name = "selene-core", specifier = ">=0.2" },
+    { name = "selene-core", specifier = "~=0.3.0" },
     { name = "selene-sim", marker = "extra == 'test'", specifier = "~=0.3.0" },
 ]
 provides-extras = ["test"]
@@ -2455,7 +2464,7 @@ test = [
 requires-dist = [
     { name = "guppylang", marker = "extra == 'test'", specifier = "~=1.0.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
-    { name = "selene-core", specifier = ">=0.2" },
+    { name = "selene-core", specifier = "~=0.3.0" },
     { name = "selene-sim", marker = "extra == 'test'", specifier = "~=0.3.0" },
 ]
 provides-extras = ["test"]
@@ -2479,7 +2488,7 @@ test = [
 requires-dist = [
     { name = "guppylang", marker = "extra == 'test'", specifier = "~=1.0.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
-    { name = "selene-core", specifier = ">=0.2" },
+    { name = "selene-core", specifier = "~=0.3.0" },
     { name = "selene-sim", marker = "extra == 'test'", specifier = "~=0.3.0" },
 ]
 provides-extras = ["test"]
@@ -2503,7 +2512,7 @@ test = [
 requires-dist = [
     { name = "guppylang", marker = "extra == 'test'", specifier = "~=1.0.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
-    { name = "selene-core", specifier = ">=0.2" },
+    { name = "selene-core", specifier = "~=0.3.0" },
     { name = "selene-sim", marker = "extra == 'test'", specifier = "~=0.3.0" },
 ]
 provides-extras = ["test"]
@@ -2527,7 +2536,7 @@ test = [
 requires-dist = [
     { name = "guppylang", marker = "extra == 'test'", specifier = "~=1.0.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
-    { name = "selene-core", specifier = ">=0.2" },
+    { name = "selene-core", specifier = "~=0.3.0" },
     { name = "selene-sim", marker = "extra == 'test'", specifier = "~=0.3.0" },
 ]
 provides-extras = ["test"]
@@ -2580,6 +2589,7 @@ test = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
     { name = "qir-qis" },
     { name = "stim" },
 ]
@@ -2621,6 +2631,7 @@ test = [
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pytest-cov", specifier = "==7.1.0" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "qir-qis", specifier = "==0.1.8" },
     { name = "stim", specifier = "==1.15.0" },
 ]
@@ -3072,6 +3083,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-xdist"
+version = "3.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "execnet" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/b4/439b179d1ff526791eb921115fca8e44e596a13efeda518b9d845a619450/pytest_xdist-3.8.0.tar.gz", hash = "sha256:7e578125ec9bc6050861aa93f2d59f1d8d085595d6551c2c90b6f4fad8d3a9f1", size = 88069, upload-time = "2025-07-01T13:30:59.346Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/31/d4e37e9e550c2b92a9cbc2e4d0b7420a27224968580b5a447f420847c975/pytest_xdist-3.8.0-py3-none-any.whl", hash = "sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88", size = 46396, upload-time = "2025-07-01T13:30:56.632Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -3133,8 +3157,8 @@ name = "pytket-cutensornet"
 version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "networkx" },
-    { name = "pytket" },
+    { name = "networkx", marker = "extra == 'extra-13-quantum-pecos-cuda12' or extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "pytket", marker = "extra == 'extra-13-quantum-pecos-cuda12' or extra == 'extra-13-quantum-pecos-cuda13' or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d6/fd/2159cd0f1aa74854926b381a512928bd2af79d430f989f4e781e24edd367/pytket_cutensornet-0.12.1-py3-none-any.whl", hash = "sha256:3376c0b737f8713f9e34d4b9e461aeff4c8e46a47b6214c63f9d0e62a277cbbb", size = 90007, upload-time = "2026-01-07T15:16:46.961Z" },

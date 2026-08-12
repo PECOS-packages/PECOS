@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 description = "PECOS StabMps simulator plugin for the Selene quantum emulator"
 license = "Apache-2.0"
 dependencies = [
-    "selene-core>=0.2",
+    "selene-core~=0.3.0",
 ]
 
 [project.optional-dependencies]

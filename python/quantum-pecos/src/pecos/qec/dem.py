@@ -58,7 +58,7 @@ from pecos.qec.dem_spec import (
 )
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
+    from typing import Self
 
     from pecos.qec.dem_spec import Detector, Observable
     from pecos.qec.surface.decode import NoiseParameters
@@ -868,11 +868,39 @@ def _generator_certified_result_traces(
         raise ValueError(msg)
 
     # The program-bound generator certificate is the authoritative binding.
-    # Guppy 1 lowers an array-valued `result()` through collection operations,
-    # so the runtime trace does not retain a scalar result ID for every output
-    # slot. The validated layout still binds each slot to the corresponding
-    # source measurement, while the arity checks above ensure the program's
-    # emitted runtime outputs agree with that layout.
+    # Guppy 1 may omit scalar IDs for collected output arrays, so absent IDs
+    # are not an error. When the runtime does provide scalar or array IDs,
+    # however, they are independent evidence and must agree slot-for-slot
+    # with the generator-certified layout. In particular, this catches a
+    # reversed array provenance record without trusting it as the source of
+    # the binding.
+    runtime_ids_by_slot: dict[tuple[str, int], int] = {}
+    runtime_offsets: dict[str, int] = {}
+    for trace in runtime_result_traces:
+        tag = trace.get("name")
+        values = trace.get("values")
+        result_ids = trace.get("result_ids")
+        if not isinstance(tag, str) or not isinstance(values, list):
+            continue
+        offset = runtime_offsets.get(tag, 0)
+        runtime_offsets[tag] = offset + len(values)
+        if not isinstance(result_ids, list) or len(result_ids) != len(values):
+            continue
+        for element, result_id in enumerate(result_ids):
+            if isinstance(result_id, bool) or not isinstance(result_id, int) or result_id < 0:
+                msg = f"runtime result trace {tag!r}[{offset + element}] has an invalid measurement id"
+                raise ValueError(msg)
+            runtime_ids_by_slot[(tag, offset + element)] = result_id
+
+    for source_index, slot in enumerate(entries):
+        runtime_result_id = runtime_ids_by_slot.get(slot)
+        expected_result_id = source_measurement_ids[source_index]
+        if runtime_result_id is not None and runtime_result_id != expected_result_id:
+            msg = (
+                f"runtime result trace {slot[0]!r}[{slot[1]}] has measurement id {runtime_result_id}, "
+                f"but the generator-certified layout requires {expected_result_id}"
+            )
+            raise ValueError(msg)
 
     return [
         {

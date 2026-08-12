@@ -47,7 +47,7 @@ import math
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from enum import Enum
+from enum import StrEnum
 from functools import cache
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -112,7 +112,7 @@ def _validate_probability(name: str, value: float) -> float:
     return probability
 
 
-class DecoderType(str, Enum):
+class DecoderType(StrEnum):
     """Available decoder backends."""
 
     PYMATCHING = "pymatching"

@@ -6,7 +6,7 @@ description = "PECOS StabVec simulator plugin for the Selene quantum emulator"
 readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
-    "selene-core>=0.2",
+    "selene-core~=0.3.0",
 ]
 
 [project.optional-dependencies]

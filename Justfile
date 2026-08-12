@@ -290,12 +290,12 @@ pytest *args:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{args}}" ]; then
-        uv run --frozen pytest {{args}}
+        uv run --frozen pytest -n auto {{args}}
     else
-        uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
-        uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-        uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
-        uv run --frozen pytest python/selene-plugins
+        uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+        uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+        uv run --frozen pytest -n auto python/selene-plugins
     fi
 
 # Run the substantive PR Python lane after building the test-only native bindings it needs.
@@ -306,9 +306,9 @@ python-ci-core profile="debug": (validate-profile "python-ci-core" profile) (pyt
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
 [group('test')]
 pytest-ci-core:
-    uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
-    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-    uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
+    uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+    uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
 
 # Build and import the core Python packages on a target platform/interpreter.
 [group('test')]
@@ -630,7 +630,7 @@ docs-build:
 [group('docs')]
 docs-test:
     uv run --frozen python scripts/docs/generate_doc_tests.py
-    uv run --frozen pytest python/quantum-pecos/tests/docs/generated -v -k "not rust" -m "not slow"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests/docs/generated -v -k "not rust" -m "not slow"
 
 # =============================================================================
 # Deps Management (prefer `just setup` or `pecos install <target>`)
@@ -814,17 +814,17 @@ go-lint profile="release": (validate-profile "go-lint" profile) (go-build profil
 # Run performance tests with release build
 [group('test')]
 pytest-perf: build-release
-    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "performance" -v
+    uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "performance" -v
 
 # Run tests for optional dependencies (only quantum-pecos carries the marker)
 [group('test')]
 pytest-dep:
-    uv run --frozen pytest python/quantum-pecos/tests -m "optional_dependency"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "optional_dependency"
 
 # Run the slower integration lane (excluded from the default fast lane)
 [group('test')]
 pytest-slow:
-    uv run --frozen pytest python/quantum-pecos/tests -m "slow and not optional_dependency"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "slow and not optional_dependency"
 
 
 

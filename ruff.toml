@@ -1,9 +1,9 @@
 # Define rules, plugins, and configurations for the ruff linter.
 # For more details on rules see: https://docs.astral.sh/ruff/rules
 
-# Keep Ruff's syntax baseline conservative while Python 3.12-only modernization
-# is rolled out separately from the dependency upgrade.
-target-version = "py310"
+# Match the project-wide Python floor. PEP 695 conversion is intentionally
+# deferred because it is unrelated to dropping Python 3.10/3.11 support.
+target-version = "py312"
 line-length = 120
 # preview = true
 
@@ -107,6 +107,10 @@ ignore = [
 
     # tryceratops
     "TRY002", # Custom exceptions
+
+    "UP040", # PEP 695 type aliases are deferred from the Python-floor migration
+    "UP046", # PEP 695 generic classes are deferred from the Python-floor migration
+    "UP047", # PEP 695 generic functions are deferred from the Python-floor migration
 ]
 
 [lint.per-file-ignores]

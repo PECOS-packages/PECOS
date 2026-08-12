@@ -10,7 +10,7 @@ import json
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, output
-from guppylang.std.quantum import measure, qubit
+from guppylang.std.quantum import collect_measurements, measure, measure_array, qubit
 from pecos.qec import infer_guppy_dem_annotations
 
 
@@ -53,6 +53,19 @@ def _reordered_raw_array() -> None:
     output("DETECTOR", m2 ^ m0)
     output("raw measurements", array(m2, m0, m1))
     output("obs", m1)
+
+
+@guppy
+def _direct_array_outputs() -> None:
+    """Emit direct measurements in arrays without an intermediate return value."""
+    bits = collect_measurements(measure_array(array(qubit(), qubit(), qubit())))
+    m0 = bits[0]
+    m1 = bits[1]
+    m2 = bits[2]
+    output("physical", bits)
+    output("events", m0 ^ m1)
+    output("logical_z", m0)
+    output("logical_x", array(m1, m2))
 
 
 def test_infers_computed_detector_and_observable_parities_and_builds_dem() -> None:
@@ -109,6 +122,25 @@ def test_correlated_provenance_preserves_reordered_raw_identity() -> None:
     assert inferred.detector_supports == ((2, 0),)
     assert inferred.observable_supports == ((1,),)
     assert inferred.raw_binding == "probe_correlated_result_ids"
+
+
+def test_direct_array_outputs_preserve_runtime_result_id_order() -> None:
+    inferred = infer_guppy_dem_annotations(
+        _direct_array_outputs,
+        num_qubits=3,
+        raw_tag="physical",
+        detector_tag="events",
+        observable_tags=("logical_z", "logical_x"),
+        probe_shots=32,
+        provenance_shots=16,
+        validation_rows=8,
+        seed=19,
+    )
+
+    assert inferred.raw_measurement_ids == (0, 1, 2)
+    assert inferred.detector_supports == ((0, 1),)
+    assert inferred.observable_supports == ((0,), (1,), (2,))
+    assert inferred.raw_binding == "runtime_result_ids"
 
 
 def test_raw_tag_must_cover_canonical_qis_measurement_order() -> None:

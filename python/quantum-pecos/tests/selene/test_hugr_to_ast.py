@@ -39,6 +39,8 @@ try:
         MeasureOp,
         PrepareOp,
         Program,
+        RegisterDecl,
+        WhileStmt,
     )
 
     HAS_HUGR_TO_AST = True
@@ -410,13 +412,18 @@ class TestConditionalCircuits:
         assert len(then_gates) == 1
         assert then_gates[0].gate == GateKind.X
 
+        # The function-level return measurement follows the CFG rather than
+        # being silently discarded. Both measurements need a declared result.
+        assert isinstance(ast.body[-1], MeasureOp)
+        assert ast.body.index(if_stmt) < len(ast.body) - 1
+        assert len([decl for decl in ast.declarations if isinstance(decl, RegisterDecl)]) == 2
+
 
 class TestLoopCircuits:
     """Tests for loop circuit conversion."""
 
     def test_simple_loop(self) -> None:
         """Test conversion of a simple loop circuit."""
-        from pecos.slr.ast.nodes import WhileStmt
 
         @guppy
         def simple_loop() -> bool:
@@ -426,6 +433,7 @@ class TestLoopCircuits:
             while count < 3:
                 x(q)
                 count = count + 1
+            z(q)
             return measure(q).read()
 
         ast = guppy_to_ast(simple_loop)
@@ -447,6 +455,12 @@ class TestLoopCircuits:
 
         # X gate should target qubit 0
         assert body_gates[0].targets[0].index == 0
+
+        # Operations after the loop remain after the structured WhileStmt,
+        # followed by the function-level return measurement.
+        assert isinstance(ast.body[-2], GateOp)
+        assert ast.body[-2].gate == GateKind.Z
+        assert isinstance(ast.body[-1], MeasureOp)
 
 
 class TestNestedConditionalCircuits:

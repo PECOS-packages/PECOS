@@ -328,7 +328,7 @@ If you prefer using Conda instead of uv/pip, NVIDIA officially recommends it:
 
 ```bash
 # Create conda environment
-conda create -n pecos-cuda python=3.11
+conda create -n pecos-cuda python=3.12
 conda activate pecos-cuda
 
 # Install cuQuantum via conda-forge

@@ -723,6 +723,13 @@ fn trace_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, bool)> {
 /// `ConstInt { ... value: V ... }`.
 #[cfg(feature = "hugr")]
 fn extract_const_float(const_op: &tket::hugr::ops::Const) -> Option<(f64, bool)> {
+    // Guppy 1 emits rotations as `tket.rotation.ConstRotation`, whose value is
+    // represented in half turns rather than radians.
+    if let Some(rotation) = const_op.get_custom_value::<tket::extension::rotation::ConstRotation>()
+    {
+        return Some((rotation.half_turns(), true));
+    }
+
     let debug_str = format!("{const_op:?}");
 
     // Pattern: F64(number)
@@ -1102,6 +1109,16 @@ mod tests {
             hugr_name_to_quantum_op("Rx", arbitrary),
             Some(QuantumOp::RX(Angle64::from_radians(1.23)))
         );
+    }
+
+    #[cfg(feature = "hugr")]
+    #[test]
+    fn test_extract_const_rotation_in_half_turns() {
+        use tket::extension::rotation::ConstRotation;
+        use tket::hugr::ops::Const;
+
+        let rotation = Const::new(ConstRotation::PI.into());
+        assert_eq!(extract_const_float(&rotation), Some((1.0, true)));
     }
 
     #[test]

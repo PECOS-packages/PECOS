@@ -24,6 +24,7 @@ use thiserror::Error;
 use std::io::Cursor;
 
 use tket::TketOp;
+use tket::extension::measurement::MeasurementOp;
 use tket::hugr::builder::{
     BuildError, DFGBuilder, Dataflow, DataflowHugr, DataflowSubContainer, SubContainer,
 };
@@ -1570,7 +1571,7 @@ impl HugrCodegen {
             )?;
         }
 
-        // Measure and free all qubits using MeasureFree, collect bool results
+        // Measure and free all qubits, then read the resulting measurements as bools.
         let output_wires: Vec<Wire> = (0..self.total_qubits)
             .map(|global_idx| {
                 // Find which allocator this belongs to
@@ -1581,14 +1582,20 @@ impl HugrCodegen {
                         let local_idx = global_idx - alloc.start_index;
                         let qubit_ref = QubitRef::new(name.clone(), local_idx);
                         if let Some(&wire) = qubit_wires.get(&qubit_ref) {
-                            // MeasureFree consumes qubit and produces bool
-                            let measure_result = builder
+                            // MeasureFree consumes a qubit and produces a Measurement.
+                            let measurement = builder
                                 .add_dataflow_op(TketOp::MeasureFree, vec![wire])
                                 .map_err(|e| HugrError::BuilderError(e.to_string()))
                                 .ok()?
                                 .outputs()
                                 .next()?;
-                            return Some(measure_result);
+                            let bool_result = builder
+                                .add_dataflow_op(MeasurementOp::Read, vec![measurement])
+                                .map_err(|e| HugrError::BuilderError(e.to_string()))
+                                .ok()?
+                                .outputs()
+                                .next()?;
+                            return Some(bool_result);
                         }
                     }
                 }
@@ -1705,7 +1712,7 @@ impl HugrCodegen {
                             name: format!("{}[{}]", qubit.allocator, qubit.index),
                         })?;
 
-                // Measure produces (qubit, bool)
+                // Measure produces (qubit, Measurement).
                 let outputs: Vec<Wire> = builder
                     .add_dataflow_op(TketOp::Measure, vec![wire])
                     .map_err(|e| HugrError::BuilderError(e.to_string()))?
@@ -1717,8 +1724,18 @@ impl HugrCodegen {
                     qubit_wires.insert(qubit.clone(), qubit_wire);
                 }
 
-                // Store classical result (second output)
-                if let Some(&bool_wire) = outputs.get(1) {
+                // Read the measurement result into a classical bool.
+                if let Some(&measurement_wire) = outputs.get(1) {
+                    let bool_wire = builder
+                        .add_dataflow_op(MeasurementOp::Read, vec![measurement_wire])
+                        .map_err(|e| HugrError::BuilderError(e.to_string()))?
+                        .outputs()
+                        .next()
+                        .ok_or_else(|| {
+                            HugrError::BuilderError(
+                                "Measurement read produced no output".to_string(),
+                            )
+                        })?;
                     classical_wires.insert(result_var.clone(), bool_wire);
                 }
             }

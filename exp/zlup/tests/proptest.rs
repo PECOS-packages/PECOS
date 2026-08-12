@@ -207,6 +207,15 @@ proptest! {
         rest in "[a-zA-Z0-9_]{0,30}"
     ) {
         let ident = format!("{}{}", first, rest);
+        prop_assume!(!matches!(
+            ident.as_str(),
+            "fn" | "pub" | "inline" | "comptime" | "mut" | "struct" | "enum"
+                | "union" | "packed" | "set" | "if" | "else" | "for" | "switch"
+                | "tick" | "return" | "break" | "continue" | "defer" | "errdefer"
+                | "and" | "or" | "orelse" | "try" | "catch" | "true" | "false"
+                | "none" | "undefined" | "Self" | "test" | "error" | "type" | "anytype"
+                | "unit" | "qubit" | "bit" | "alias" | "turns" | "rad"
+        ));
         let source = format!("{} := 42;", ident);
         let result = zlup::parse(&source);
         prop_assert!(result.is_ok(), "Failed to parse identifier: {}", ident);

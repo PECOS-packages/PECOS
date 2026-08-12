@@ -61,6 +61,22 @@ SCALAR_DTYPES = (
     ("complex128", np.complex128, 7.5 + 2.25j),
 )
 
+INDEX_ASSIGNMENT_DTYPES = (
+    ("bool", dtypes.bool, np.bool_, True, [True, False, True]),
+    ("int8", dtypes.int8, np.int8, 7, [2, 3, 4]),
+    ("int64", dtypes.int64, np.int64, 7, [2, 3, 4]),
+    ("uint8", dtypes.uint8, np.uint8, 7, [2, 3, 4]),
+    ("uint64", dtypes.uint64, np.uint64, 7, [2, 3, 4]),
+    ("float64", dtypes.float64, np.float64, 7.5, [2.5, 3.5, 4.5]),
+    (
+        "complex128",
+        dtypes.complex128,
+        np.complex128,
+        7.5 + 1.25j,
+        [2.5 + 1j, 3.5 - 2j, 4.5 + 3j],
+    ),
+)
+
 AXIS_REDUCTIONS = (
     ("sum", num.sum, np.sum),
     ("max", num.max, np.max),
@@ -959,6 +975,250 @@ def test_zero_dimensional_default_axis_reductions_match_numpy(dtype_name: str) -
     else:
         assert num.max(pecos_arr) == complex(np.max(np_arr))
         assert num.min(pecos_arr) == complex(np.min(np_arr))
+
+
+@pytest.mark.parametrize(
+    ("dtype_name", "pecos_dtype", "numpy_dtype", "scalar", "sequence"),
+    INDEX_ASSIGNMENT_DTYPES,
+)
+def test_indexed_assignment_1d_matches_numpy(
+    dtype_name: str,
+    pecos_dtype: Any,
+    numpy_dtype: Any,
+    scalar: Any,
+    sequence: list[Any],
+) -> None:
+    expected = np.zeros(5, dtype=numpy_dtype)
+    actual = Array([0] * 5, dtype=pecos_dtype)
+
+    expected[[0, -1]] = scalar
+    actual[[0, -1]] = scalar
+    np.testing.assert_array_equal(np.asarray(actual), expected, err_msg=dtype_name)
+
+    duplicate_indices = [1, 3, 1]
+    expected[duplicate_indices] = sequence
+    actual[duplicate_indices] = sequence
+    np.testing.assert_array_equal(np.asarray(actual), expected, err_msg=dtype_name)
+    assert actual[duplicate_indices].tolist() == expected[duplicate_indices].tolist()
+
+    expected[[]] = scalar
+    actual[[]] = scalar
+    expected[[]] = []
+    actual[[]] = []
+    np.testing.assert_array_equal(np.asarray(actual), expected, err_msg=dtype_name)
+
+
+@pytest.mark.parametrize(
+    ("dtype_name", "pecos_dtype", "numpy_dtype", "scalar", "sequence"),
+    INDEX_ASSIGNMENT_DTYPES,
+)
+def test_indexed_assignment_2d_matches_numpy(
+    dtype_name: str,
+    pecos_dtype: Any,
+    numpy_dtype: Any,
+    scalar: Any,
+    sequence: list[Any],
+) -> None:
+    expected = np.zeros((2, 4), dtype=numpy_dtype)
+    actual = Array([[0] * 4 for _ in range(2)], dtype=pecos_dtype)
+
+    expected[0, [0, -1]] = scalar
+    actual[0, [0, -1]] = scalar
+    expected[1, [0, 2, 0]] = sequence
+    actual[1, [0, 2, 0]] = sequence
+
+    np.testing.assert_array_equal(np.asarray(actual), expected, err_msg=dtype_name)
+    assert actual[1, [0, 2]].tolist() == expected[1, [0, 2]].tolist()
+
+
+def test_indexed_assignment_rejects_out_of_bounds_with_index_and_length() -> None:
+    actual = Array([0, 0, 0], dtype=dtypes.int64)
+
+    with pytest.raises(IndexError, match=r"index 3 .* length 3"):
+        actual[[0, 3]] = 1
+    actual_2d = Array([[0, 0, 0], [0, 0, 0]], dtype=dtypes.int64)
+    with pytest.raises(IndexError, match=r"index -4 .* length 3"):
+        actual_2d[1, [-4]] = 1
+
+
+def test_indexed_assignment_rejects_mismatched_rhs_length() -> None:
+    actual = Array([0, 0, 0], dtype=dtypes.int64)
+
+    with pytest.raises(ValueError, match=r"selection has shape \[2\].*source has shape \[1\]"):
+        actual[[0, 2]] = [7]
+
+
+def test_indexed_assignment_uses_checked_value_conversion() -> None:
+    actual = Array([0, 0], dtype=dtypes.uint8)
+
+    with pytest.raises(OverflowError, match=r"value 256 is out of range for uint8"):
+        actual[[0, 1]] = 256
+    with pytest.raises(OverflowError, match=r"value 256 is out of range for uint8"):
+        actual[[0, 1]] = [1, 256]
+
+
+@pytest.mark.parametrize(
+    "mask",
+    [
+        [True, True, True, True],
+        [False, False, False, False],
+        [False, True, False, True],
+    ],
+)
+@pytest.mark.parametrize("as_array", [False, True])
+def test_boolean_mask_reads_match_numpy(mask: list[bool], as_array: bool) -> None:
+    values = np.array([10, 20, 30, 40], dtype=np.int64)
+    actual = Array(values)
+    actual_mask: Any = Array(mask, dtype=dtypes.bool) if as_array else mask
+
+    np.testing.assert_array_equal(np.asarray(actual[actual_mask]), values[np.array(mask)])
+
+
+@pytest.mark.parametrize("as_array", [False, True])
+def test_boolean_mask_length_mismatch_raises(as_array: bool) -> None:
+    actual = Array([10, 20, 30], dtype=dtypes.int64)
+    mask: Any = Array([True, False], dtype=dtypes.bool) if as_array else [True, False]
+
+    with pytest.raises(IndexError, match=r"mask length 2 .* axis 0 length 3"):
+        _ = actual[mask]
+
+
+def test_one_dimensional_boolean_mask_selects_rows_like_numpy() -> None:
+    values = np.arange(12, dtype=np.int64).reshape(3, 4)
+    mask = [True, False, True]
+
+    actual = Array(values)[Array(mask, dtype=dtypes.bool)]
+    np.testing.assert_array_equal(np.asarray(actual), values[np.array(mask)])
+
+
+def test_multidimensional_boolean_mask_is_explicitly_unsupported() -> None:
+    values = Array([[1, 2], [3, 4]], dtype=dtypes.int64)
+    mask = Array([[True, False], [False, True]], dtype=dtypes.bool)
+
+    with pytest.raises(NotImplementedError, match="only one-dimensional masks"):
+        _ = values[mask]
+
+
+def test_nested_list_boolean_mask_is_explicitly_unsupported() -> None:
+    values = Array([[1, 2], [3, 4]], dtype=dtypes.int64)
+    mask = [[True, False], [False, True]]
+
+    with pytest.raises(NotImplementedError, match=r"only one-dimensional masks; got 2 dimensions"):
+        _ = values[mask]
+
+
+def test_boolean_mask_assignment_falls_out_of_indexed_assignment() -> None:
+    expected = np.zeros(4, dtype=np.uint8)
+    actual = Array([0, 0, 0, 0], dtype=dtypes.uint8)
+    mask = [False, True, False, True]
+
+    expected[np.array(mask)] = [3, 5]
+    actual[Array(mask, dtype=dtypes.bool)] = [3, 5]
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+def test_detection_events_detector_sequence_assignment() -> None:
+    detection_events = num.zeros((3, 6), dtype=dtypes.uint8)
+    index = 1
+    detectors = [0, 2, 5]
+
+    detection_events[index, detectors] = 1
+
+    assert detection_events.tolist() == [
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 1, 0, 0, 1],
+        [0, 0, 0, 0, 0, 0],
+    ]
+
+
+@pytest.mark.parametrize("index_form", ["sequence", "tuple", "bool_sequence", "bool_array"])
+def test_indexed_assignment_round_trip(index_form: str) -> None:
+    if index_form == "tuple":
+        actual = Array([[0, 0, 0], [0, 0, 0]], dtype=dtypes.int64)
+        actual[1, [0, 2]] = [7, 9]
+        assert actual[1, [0, 2]].tolist() == [7, 9]
+        return
+
+    actual = Array([0, 0, 0], dtype=dtypes.int64)
+    index: Any
+    if index_form == "sequence":
+        index = [0, 2]
+    elif index_form == "bool_sequence":
+        index = [True, False, True]
+    else:
+        index = Array([True, False, True], dtype=dtypes.bool)
+    actual[index] = [7, 9]
+    assert actual[index].tolist() == [7, 9]
+
+
+def test_separated_advanced_indices_are_explicitly_unsupported() -> None:
+    values = np.arange(18, dtype=np.int64).reshape(2, 3, 3)
+    actual = Array(values)
+    index = (1, slice(0, 2), [0, 2])
+
+    # NumPy moves the advanced-index dimension to the front for this layout.
+    assert values[index].shape == (2, 2)
+    with pytest.raises(NotImplementedError, match="separated by a slice"):
+        _ = actual[index]
+    with pytest.raises(NotImplementedError, match="separated by a slice"):
+        actual[index] = np.arange(4, dtype=np.int64).reshape(2, 2)
+
+    unequal_length_index = (1, slice(0, 3), [0, 2])
+    assert values[unequal_length_index].shape == (2, 3)
+    with pytest.raises(NotImplementedError, match="separated by a slice"):
+        _ = actual[unequal_length_index]
+
+
+def test_contiguous_advanced_indices_continue_to_match_numpy() -> None:
+    expected = np.arange(18, dtype=np.int64).reshape(2, 3, 3)
+    actual = Array(expected)
+    index = (slice(0, 2), 1, [0, 2])
+
+    np.testing.assert_array_equal(np.asarray(actual[index]), expected[index])
+    expected[index] = [[100, 101], [102, 103]]
+    actual[index] = [[100, 101], [102, 103]]
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+@pytest.mark.parametrize(
+    ("index", "expected"),
+    [
+        ([1, 0, 3, 2], [1, 0, 3, 2]),
+        (slice(None, None, -1), [3, 2, 1, 0]),
+    ],
+)
+def test_direct_self_assignment_snapshots_rhs(index: Any, expected: list[int]) -> None:
+    actual = Array([0, 1, 2, 3], dtype=dtypes.int64)
+
+    actual[index] = actual
+
+    assert actual.tolist() == expected
+
+
+def test_pauli_indexed_assignment_accepts_array_like_rhs() -> None:
+    actual = Array([Pauli.I, Pauli.I, Pauli.I])
+    native_rhs = Array([Pauli.X, Pauli.Z])
+    numpy_rhs = np.array([Pauli.Y, Pauli.X], dtype=object)
+
+    actual[[0, 2]] = native_rhs
+    assert actual.tolist() == [Pauli.X, Pauli.I, Pauli.Z]
+    actual[[1, 2]] = numpy_rhs
+    assert actual.tolist() == [Pauli.X, Pauli.Y, Pauli.X]
+
+
+def test_pauli_string_indexed_assignment_accepts_array_like_rhs() -> None:
+    identity = PauliString.from_dense_str("I")
+    x = PauliString.from_dense_str("X")
+    y = PauliString.from_dense_str("Y")
+    z = PauliString.from_dense_str("Z")
+    actual = Array([identity, identity, identity])
+    native_rhs = Array([x, z])
+    numpy_rhs = np.array([y, x], dtype=object)
+
+    actual[[0, 2]] = native_rhs
+    assert actual.tolist() == [x, identity, z]
+    actual[[1, 2]] = numpy_rhs
+    assert actual.tolist() == [x, y, x]
 
 
 @pytest.mark.parametrize(

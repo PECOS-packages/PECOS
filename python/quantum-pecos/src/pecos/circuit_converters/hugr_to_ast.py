@@ -200,7 +200,7 @@ class LoopInfo:
 
     header_block: int  # The loop header block (receives back-edge)
     body_blocks: list[int]  # Blocks that form the loop body
-    exit_block: int  # Block to go to when loop exits
+    exit_block: int | None  # Block to go to when loop exits
     back_edge_source: int  # Block that has the back-edge to header
 
 
@@ -212,7 +212,7 @@ class CFGStructure:
     entry_block: int | None = None
     exit_block: int | None = None
     is_straight_line: bool = True
-    conditional_blocks: list[tuple[int, int, int, int]] = field(
+    conditional_blocks: list[tuple[int, int, int, int | None]] = field(
         default_factory=list,
     )  # (entry, then, else, continuation)
     loops: list[LoopInfo] = field(default_factory=list)  # Detected loops
@@ -297,12 +297,18 @@ class HugrToAstConverter:
         """
         cfg = CFGStructure(blocks={})
 
-        # Find all DataflowBlocks and ExitBlock
+        # Guppy 1 keeps straight-line functions directly below ``FuncDefn``;
+        # control-flow functions still use nested ``DataflowBlock`` nodes.
+        # Prefer the latter when present so the CFG entry remains unchanged.
+        has_dataflow_blocks = any(data.op.__class__.__name__ == "DataflowBlock" for _, data in self.hugr.nodes())
+        block_ops = {"DataflowBlock"} if has_dataflow_blocks else {"FuncDefn"}
+
+        # Find all blocks and ExitBlock
         for node, data in self.hugr.nodes():
             op_name = data.op.__class__.__name__
             parent_idx = data.parent.idx if data.parent else None
 
-            if op_name == "DataflowBlock":
+            if op_name in block_ops:
                 block = BlockInfo(node_idx=node.idx, parent_idx=parent_idx or -1)
                 cfg.blocks[node.idx] = block
 
@@ -343,20 +349,33 @@ class HugrToAstConverter:
             if op_name != "ExtOp":
                 continue
 
-            if parent_idx in cfg.blocks:
+            # Guppy 1 keeps function setup operations (such as initial
+            # allocations) directly below FuncDefn, before its CFG. Associate
+            # them with the first CFG block. Measurements directly below the
+            # function are its return value and are not SLR statements.
+            operation_parent_idx = parent_idx
+            parent_op_name = self.hugr[data.parent].op.__class__.__name__ if data.parent is not None else None
+            if parent_op_name == "FuncDefn" and cfg.blocks:
+                operation_parent_idx = min(cfg.blocks)
+
+            if operation_parent_idx in cfg.blocks:
                 custom_op = data.op.to_custom_op()
                 ext_name = custom_op.extension
                 ext_op_name = custom_op.op_name
 
-                if ext_name in QUANTUM_EXTENSIONS and ext_op_name in ALL_QUANTUM_OPERATIONS:
+                if (
+                    ext_name in QUANTUM_EXTENSIONS
+                    and ext_op_name in ALL_QUANTUM_OPERATIONS
+                    and not (has_dataflow_blocks and parent_op_name == "FuncDefn" and ext_op_name in MEASURE_OPERATIONS)
+                ):
                     incoming = self._get_incoming_connections(node)
                     outgoing = self._get_outgoing_connections(node)
 
-                    cfg.blocks[parent_idx].operations.append(
+                    cfg.blocks[operation_parent_idx].operations.append(
                         {
                             "node_idx": node.idx,
                             "op_name": ext_op_name,
-                            "parent_idx": parent_idx,
+                            "parent_idx": operation_parent_idx,
                             "incoming": incoming,
                             "outgoing": outgoing,
                         },
@@ -395,6 +414,7 @@ class HugrToAstConverter:
 
                     # Verify it's a loop header (has incoming from before and after)
                     has_forward_incoming = any(inc < target for inc in target_block.incoming_blocks)
+                    has_forward_incoming |= target == min(cfg.blocks)
                     has_back_edge = block_idx in target_block.incoming_blocks
 
                     if has_forward_incoming and has_back_edge:
@@ -493,6 +513,8 @@ class HugrToAstConverter:
         for _port, target, _tport in header_block.outgoing_edges:
             if target in cfg.blocks and target not in body_set:
                 return target
+            if target == cfg.exit_block:
+                return target
 
         return None
 
@@ -536,6 +558,29 @@ class HugrToAstConverter:
                 cfg.conditional_blocks.append(
                     (cfg.entry_block, then_block, else_block, cont_block),
                 )
+            elif all(self._reaches_exit(cfg, branch) for branch in (then_block, else_block)):
+                cfg.conditional_blocks.append(
+                    (cfg.entry_block, then_block, else_block, None),
+                )
+
+    def _reaches_exit(self, cfg: CFGStructure, start_block: int) -> bool:
+        """Return whether a CFG path from ``start_block`` reaches its exit block."""
+        visited = set()
+        stack = [start_block]
+
+        while stack:
+            current = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            if current not in cfg.blocks:
+                continue
+            for _port, target, _tport in cfg.blocks[current].outgoing_edges:
+                if target == cfg.exit_block:
+                    return True
+                if target in cfg.blocks:
+                    stack.append(target)
+        return False
 
     def _find_eventual_targets(self, cfg: CFGStructure, start_block: int) -> set[int]:
         """Find all blocks eventually reachable from a starting block.
@@ -659,7 +704,7 @@ class HugrToAstConverter:
             entry_block = cfg.blocks[entry_idx]
             cfg.blocks[then_idx]
             cfg.blocks[else_idx]
-            cont_block = cfg.blocks[cont_idx]
+            cont_block = cfg.blocks[cont_idx] if cont_idx is not None else None
 
             # Process entry block operations (before the conditional)
             entry_ops = self._topological_sort_operations(entry_block.operations)
@@ -704,6 +749,9 @@ class HugrToAstConverter:
             self._capture_block_output_qubits(then_idx)
             self._capture_block_output_qubits(else_idx)
 
+            if cont_idx is None or cont_block is None:
+                continue
+
             # Map continuation block's Input to source qubits (from either branch)
             # Use then block's outputs as reference (they should match else block)
             self._map_block_input_qubits(then_idx, cont_idx, cfg)
@@ -735,7 +783,7 @@ class HugrToAstConverter:
         self,
         cfg: CFGStructure,
         block_idx: int,
-        stop_at: int,
+        stop_at: int | None,
     ) -> list[Statement]:
         """Build statements for a branch, handling nested conditionals.
 
@@ -966,6 +1014,11 @@ class HugrToAstConverter:
 
         source_ports = self.block_output_qubit_ports.get(source_block_idx, {})
         if not source_ports:
+            # Guppy 1 can carry a function-level qubit into a CFG without an
+            # explicit block-output link. With one allocated qubit this mapping
+            # is unambiguous.
+            if len(self.qubit_allocations) == 1:
+                self.node_to_qubit[input_node_idx] = next(iter(self.qubit_allocations.values()))
             return
 
         # Find which output port of source block connects to target block

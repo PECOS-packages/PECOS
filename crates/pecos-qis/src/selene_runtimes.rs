@@ -20,8 +20,6 @@ const SIMPLE_RUNTIME_DEFAULT_INIT_ARGS: &[&str] = &[
 const SOFT_RZ_RUNTIME_DEFAULT_INIT_ARGS: &[&str] = &[
     "--duration-ns-rxy=0",
     "--duration-ns-rzz=0",
-    "--duration-ns-rz=0",
-    "--duration-ns-rpp=0",
     "--duration-ns-measure=0",
     "--duration-ns-reset=0",
     "--duration-ns-measure-leaked=0",
@@ -425,7 +423,7 @@ mod tests {
                 .iter()
                 .all(|arg| arg.starts_with("--duration-ns-") && arg.ends_with("=0"))
         );
-        assert_eq!(SOFT_RZ_RUNTIME_DEFAULT_INIT_ARGS.len(), 8);
+        assert_eq!(SOFT_RZ_RUNTIME_DEFAULT_INIT_ARGS.len(), 6);
         assert_eq!(
             SOFT_RZ_RUNTIME_DEFAULT_INIT_ARGS.last(),
             Some(&"--max-batch-size=1")

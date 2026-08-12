@@ -59,9 +59,9 @@ def test_no_twirl_source_has_no_rng_or_mask_tags(patch: SurfacePatch) -> None:
     assert "RNG(" not in src
     assert "random_int_bounded" not in src
     assert "seeded_pcg32_with_quantum_entropy(" not in src
-    assert 'result("pauli_mask' not in src
+    assert 'output("pauli_mask' not in src
     assert "for _t in range(comptime(num_rounds)):" in src
-    assert 'result("final"' in src
+    assert 'output("final"' in src
 
 
 def test_szz_source_uses_signed_zz_phase_template(patch: SurfacePatch) -> None:
@@ -145,7 +145,7 @@ def test_szz_source_keeps_reusable_memory_body_and_flushes_helper_frame(patch: S
     assert "# Flush SZZ data frame before syndrome return" in src
     assert "# Flush SZZ data frame before init_z_basis return" in src
     assert "# Flush SZZ data frame before init_x_basis return" in src
-    assert 'result("final", final)' in src
+    assert 'output("final", final)' in src
 
 
 def test_szz_runtime_barriers_precede_data_prefix_and_host(patch: SurfacePatch) -> None:
@@ -155,7 +155,7 @@ def test_szz_runtime_barriers_precede_data_prefix_and_host(patch: SurfacePatch) 
         szz_runtime_barriers=True,
     )
 
-    assert "from guppylang.std.builtins import array, owned, result" in src
+    assert "from guppylang.std.builtins import array, owned, output" in src
     assert _SZZ_RUNTIME_BARRIER_HELPER in src
     assert _SZZ_RUNTIME_BARRIER_CALL not in generate_guppy_source(
         patch,
@@ -251,7 +251,7 @@ def test_twirl_source_unrolls_rng_masks_and_runtime_paulis(patch: SurfacePatch) 
     assert "entropy_q = qubit()" in src
     assert "if measure(entropy_q).read():" in src
     assert src.count("rng_state, rng_inc = seeded_pcg32_with_quantum_entropy(42)") == 2
-    assert src.count('result("frame_mode:raw", True)') == 2
+    assert src.count('output("frame_mode:raw", True)') == 2
     assert "rng_state, active_draw_m_0_0 = _pcg32_next32(rng_state, rng_inc)" in src
     assert "active_0_0 = active_draw_m_0_0 < nat(4294967296)" in src
     assert "rng_state, m_draw_0_0 = _pcg32_next4(rng_state, rng_inc)" in src
@@ -265,8 +265,8 @@ def test_twirl_source_unrolls_rng_masks_and_runtime_paulis(patch: SurfacePatch) 
     assert "    z(surf.data[0])" in src
 
     for r in range(2):
-        assert src.count(f'result("{pauli_mask_round_tag(r)}"') == 2
-        assert f'result("{pauli_active_round_tag(r)}"' not in src
+        assert src.count(f'output("{pauli_mask_round_tag(r)}"') == 2
+        assert f'output("{pauli_active_round_tag(r)}"' not in src
     assert src.count("# === Round 2 (final, no twirl after) ===") == 2
 
 
@@ -280,7 +280,7 @@ def test_scaled_twirl_source_emits_activation_tags_and_threshold(patch: SurfaceP
 
     assert "active_0_0 = active_draw_m_0_0 < nat(2147483648)" in src
     assert "rng_state, m_draw_0_0 = _pcg32_next4(rng_state, rng_inc)" in src
-    assert f'result("{pauli_active_round_tag(0)}", array(active_0_0' in src
+    assert f'output("{pauli_active_round_tag(0)}", array(active_0_0' in src
 
 
 def test_canonical_frame_output_emits_raw_sibling_tags(patch: SurfacePatch) -> None:
@@ -291,14 +291,14 @@ def test_canonical_frame_output_emits_raw_sibling_tags(patch: SurfacePatch) -> N
         num_rounds=2,
     )
 
-    assert 'result("frame_mode:canonical", True)' in src
+    assert 'output("frame_mode:canonical", True)' in src
     assert "fx_0 = False" in src
     assert "fz_0 = False" in src
     assert "sx0_raw = measure(ax0).read()" in src
     assert "sx0 = sx0_raw != sx0_flip" in src
-    assert 'result("raw:sx0:bit:0", sx0_raw)' in src
-    assert 'result("raw:final", final_raw)' in src
-    assert 'result("final", array(final_0' in src
+    assert 'output("raw:sx0:bit:0", sx0_raw)' in src
+    assert 'output("raw:final", final_raw)' in src
+    assert 'output("final", array(final_0' in src
 
 
 def test_gate_local_twirl_source_emits_gate_tags_and_ancilla_frame_tracking(
@@ -311,8 +311,8 @@ def test_gate_local_twirl_source_emits_gate_tags_and_ancilla_frame_tracking(
         num_rounds=2,
     )
 
-    assert 'result("frame_mode:canonical", True)' in src
-    assert f'result("{pauli_mask_gate_tag(0)}", array(' in src
+    assert 'output("frame_mode:canonical", True)' in src
+    assert f'output("{pauli_mask_gate_tag(0)}", array(' in src
     assert "rng_state, active_draw_m_g0_o0 = _pcg32_next32(rng_state, rng_inc)" in src
     assert "rng_state, m_draw_g0_o0 = _pcg32_next4(rng_state, rng_inc)" in src
     assert "x(ax" in src
@@ -320,7 +320,7 @@ def test_gate_local_twirl_source_emits_gate_tags_and_ancilla_frame_tracking(
     assert "frame_x_ax" in src
     assert "frame_z_az" in src
     assert "raw:sx" in src
-    assert 'result("pauli_mask:round:' not in src
+    assert 'output("pauli_mask:round:' not in src
 
 
 def test_scaled_gate_local_source_emits_activation_tags(patch: SurfacePatch) -> None:
@@ -332,7 +332,7 @@ def test_scaled_gate_local_source_emits_activation_tags(patch: SurfacePatch) -> 
     )
 
     assert "active_g0_o0 = active_draw_m_g0_o0 < nat(1073741824)" in src
-    assert f'result("{pauli_active_gate_tag(0)}", array(active_g0_o0, active_g0_o1))' in src
+    assert f'output("{pauli_active_gate_tag(0)}", array(active_g0_o0, active_g0_o1))' in src
 
 
 def test_twirl_validation_requires_rng_and_num_rounds(patch: SurfacePatch) -> None:

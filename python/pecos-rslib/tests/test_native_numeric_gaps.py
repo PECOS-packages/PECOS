@@ -959,3 +959,41 @@ def test_zero_dimensional_default_axis_reductions_match_numpy(dtype_name: str) -
     else:
         assert num.max(pecos_arr) == complex(np.max(np_arr))
         assert num.min(pecos_arr) == complex(np.min(np_arr))
+
+
+@pytest.mark.parametrize(
+    ("alias", "expected"),
+    [
+        (float, "float64"),
+        ("float", "float64"),
+        ("double", "float64"),
+        (int, "int64"),
+        ("int", "int64"),
+        (bool, "bool"),
+        (complex, "complex128"),
+        ("complex", "complex128"),
+    ],
+)
+def test_dtype_aliases_resolve_to_the_same_width_as_python(alias: object, expected: str) -> None:
+    """Builtin and string dtype aliases must match Python's own widths.
+
+    `from_str("float")` returned F32 while the `dtypes.float` member was F64, so
+    `asarray(x, dtype=float)` silently halved precision -- the module disagreed
+    with itself depending on which spelling reached it (#483).
+    """
+    assert str(pc.asarray([1], dtype=alias).dtype) == expected
+
+
+@pytest.mark.parametrize("alias", [float, "float", "double"])
+def test_float_aliases_preserve_double_precision(alias: object) -> None:
+    """A value needing more than 24 bits of mantissa must survive."""
+    value = 1.0 + 2**-30
+    assert pc.asarray([value], dtype=alias).tolist() == [value]
+    assert np.asarray([value], dtype=float).tolist() == [value]
+
+
+def test_dtype_member_and_builtin_agree_for_every_alias() -> None:
+    """The member spelling and the builtin must never diverge again."""
+    for name, builtin in [("float", float), ("int", int), ("bool", bool), ("complex", complex)]:
+        member = getattr(dtypes, name)
+        assert str(pc.asarray([1], dtype=member).dtype) == str(pc.asarray([1], dtype=builtin).dtype)

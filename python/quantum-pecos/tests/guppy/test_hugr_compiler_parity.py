@@ -222,8 +222,6 @@ def test_existing_hugr_files_parity() -> None:
         if hugr_bytes.startswith(b"HUGRiHJv"):
             # Binary envelope format - both compilers can use this
             equivalent, msg = compare_compilers(hugr_bytes, hugr_bytes)
-            if not equivalent and "Conflicting signature" in msg:
-                continue
             assert equivalent, f"HUGR file {hugr_file.name} compilation differs: {msg}"
         else:
             # Try to decode as JSON/text

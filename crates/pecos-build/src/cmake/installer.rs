@@ -142,6 +142,10 @@ fn download_and_verify_with_retry(url: &str, dest: &PathBuf, archive_name: &str)
     const MAX_RETRIES: u32 = 5;
     const BASE_DELAY_SECS: u64 = 10;
 
+    // Resolve the expected digest before spending a download on it; a missing entry is a
+    // constant-only failure that no retry can fix.
+    let expected = expected_checksum(archive_name)?;
+
     for attempt in 1..=MAX_RETRIES {
         if attempt > 1 {
             let delay_secs = BASE_DELAY_SECS * (1 << (attempt - 2));
@@ -171,7 +175,7 @@ fn download_and_verify_with_retry(url: &str, dest: &PathBuf, archive_name: &str)
             ));
         }
 
-        match verify_checksum(dest, archive_name) {
+        match verify_checksum(dest, expected) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 if attempt < MAX_RETRIES {
@@ -230,7 +234,27 @@ fn download(url: &str, dest: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn verify_checksum(file_path: &PathBuf, archive_name: &str) -> Result<()> {
+/// Looks up the recorded checksum for an archive.
+///
+/// Resolved before any download so that a table that has drifted from the platform
+/// matching fails immediately: the answer depends only on constants, so retrying the
+/// download cannot change it, and letting the retry loop see this error would cost five
+/// downloads and minutes of backoff before reporting a bookkeeping mistake.
+fn expected_checksum(archive_name: &str) -> Result<&'static str> {
+    CMAKE_CHECKSUMS
+        .iter()
+        .find(|(name, _)| *name == archive_name)
+        .map(|(_, hash)| *hash)
+        .filter(|hash| !hash.is_empty())
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "no published checksum recorded for {archive_name}; \
+                 add it to CMAKE_CHECKSUMS when changing the cmake version or platform set"
+            ))
+        })
+}
+
+fn verify_checksum(file_path: &PathBuf, expected: &str) -> Result<()> {
     print!("Verifying checksum... ");
     io::Write::flush(&mut io::stdout())?;
 
@@ -243,35 +267,15 @@ fn verify_checksum(file_path: &PathBuf, archive_name: &str) -> Result<()> {
         s
     });
 
-    let expected = CMAKE_CHECKSUMS
-        .iter()
-        .find(|(name, _)| *name == archive_name)
-        .map(|(_, hash)| *hash);
-
-    match expected {
-        Some(hash) if !hash.is_empty() => {
-            if computed == hash {
-                println!("OK");
-                Ok(())
-            } else {
-                println!("FAILED");
-                Err(Error::Sha256Mismatch {
-                    expected: hash.to_string(),
-                    actual: computed,
-                })
-            }
-        }
-        _ => {
-            // Every archive this installer can select has an entry above, so a miss means
-            // the table and the platform matching have drifted apart. Downloading a cmake
-            // archive and running it unverified is not an acceptable outcome for a
-            // bookkeeping mistake, so fail instead of continuing.
-            println!("FAILED");
-            Err(Error::Config(format!(
-                "no published checksum recorded for {archive_name}; \
-                 add it to CMAKE_CHECKSUMS when changing the cmake version or platform set"
-            )))
-        }
+    if computed == expected {
+        println!("OK");
+        Ok(())
+    } else {
+        println!("FAILED");
+        Err(Error::Sha256Mismatch {
+            expected: expected.to_string(),
+            actual: computed,
+        })
     }
 }
 
@@ -377,5 +381,37 @@ fn verify_runtime(cmake_dir: &Path) -> Result<()> {
         Err(Error::Config(
             "cmake --version exited with non-zero status".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_selectable_archive_has_a_recorded_checksum() {
+        // These names must stay in step with get_download_url's match arms; drift between
+        // the two is exactly what expected_checksum exists to catch before downloading.
+        for name in [
+            "cmake-3.31.12-linux-x86_64.tar.gz",
+            "cmake-3.31.12-linux-aarch64.tar.gz",
+            "cmake-3.31.12-macos-universal.tar.gz",
+            "cmake-3.31.12-windows-x86_64.zip",
+            "cmake-3.31.12-windows-arm64.zip",
+        ] {
+            assert!(
+                expected_checksum(name).is_ok(),
+                "{name} has no recorded checksum"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecorded_archive_fails_before_any_download() {
+        let error = expected_checksum("cmake-9.9.9-linux-x86_64.tar.gz").unwrap_err();
+        assert!(
+            error.to_string().contains("no published checksum recorded"),
+            "{error}"
+        );
     }
 }

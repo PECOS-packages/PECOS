@@ -193,17 +193,21 @@ pub fn install_cuquantum(force: bool) -> Result<PathBuf> {
 
     let archive_path = cache_dir.join(&download_info.filename);
 
-    // Download if not already cached
-    if archive_path.exists() {
-        println!("Using cached download: {}", archive_path.display());
-    } else {
-        download_cuquantum(&download_info.url, &archive_path)?;
-    }
-
     // Verify on every install, not only after a fresh download: the cache lives on disk
     // between runs, so a truncated or tampered cached archive must not be trusted just
-    // because some earlier run put it there.
-    verify_checksum(&archive_path, download_info.sha256)?;
+    // because some earlier run put it there. A cached archive that fails is discarded and
+    // re-fetched once, so a partial or corrupt file cannot wedge every later run -- the
+    // same recovery `download.rs` and the cmake installer already perform.
+    if archive_path.exists() {
+        println!("Using cached download: {}", archive_path.display());
+        if let Err(error) = verify_checksum(&archive_path, download_info.sha256) {
+            println!("Cached archive failed verification ({error}); discarding it.");
+            fs::remove_file(&archive_path)?;
+            fetch_and_verify(&download_info, &archive_path)?;
+        }
+    } else {
+        fetch_and_verify(&download_info, &archive_path)?;
+    }
 
     // Extract cuQuantum
     extract_cuquantum(&archive_path, &cuquantum_dir)?;
@@ -301,13 +305,42 @@ fn download_cuquantum(url: &str, dest: &Path) -> Result<()> {
 }
 
 /// Verify file checksum
+/// Downloads to a `.part` sibling, verifies it, and only then moves it into place.
+///
+/// Nothing is ever published at the cache path until its checksum matches, so an
+/// interrupted download, a killed process, or two installs racing on the same cache
+/// cannot leave a file that later runs mistake for a verified archive.
+fn fetch_and_verify(download_info: &CuQuantumDownload, archive_path: &Path) -> Result<()> {
+    let partial_path = archive_path.with_extension("part");
+    download_cuquantum(&download_info.url, &partial_path)?;
+
+    if let Err(error) = verify_checksum(&partial_path, download_info.sha256) {
+        // Leave no unverified bytes behind for the next run to trip over.
+        let _ = fs::remove_file(&partial_path);
+        return Err(error);
+    }
+
+    fs::rename(&partial_path, archive_path)?;
+    Ok(())
+}
+
 fn verify_checksum(file_path: &Path, expected: &str) -> Result<()> {
     print!("Verifying checksum... ");
     io::stdout().flush()?;
 
-    let data = fs::read(file_path)?;
+    // Hash incrementally: these archives are ~200 MB and verification now runs on every
+    // install, so reading the whole file into memory first would allocate that much each
+    // time -- needlessly, and worst on the memory-constrained SBSA target.
+    let mut file = fs::File::open(file_path)?;
     let mut hasher = Sha256::new();
-    Digest::update(&mut hasher, &data);
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = io::Read::read(&mut file, &mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        Digest::update(&mut hasher, &buffer[..read]);
+    }
     let computed_hash = hasher.finalize().iter().fold(String::new(), |mut s, b| {
         use std::fmt::Write;
         write!(s, "{b:02x}").unwrap();

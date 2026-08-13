@@ -16,8 +16,6 @@
 
 use anyhow::{Error, Result, anyhow};
 use std::path::Path;
-use tket::extension::rotation::ROTATION_EXTENSION;
-use tket::extension::{TKET_EXTENSION, TKET1_EXTENSION};
 use tket::hugr::Hugr;
 use tket::hugr::envelope::read_envelope;
 use tket::hugr::extension::{ExtensionRegistry, prelude};
@@ -29,7 +27,7 @@ use tket_qsystem::extension::{futures as qsystem_futures, qsystem, result as qsy
 
 /// Extension registry matching the one used by pecos-hugr-qis and selene.
 static REGISTRY: std::sync::LazyLock<ExtensionRegistry> = std::sync::LazyLock::new(|| {
-    ExtensionRegistry::new([
+    let mut extensions = vec![
         prelude::PRELUDE.to_owned(),
         int_types::EXTENSION.to_owned(),
         int_ops::EXTENSION.to_owned(),
@@ -45,15 +43,11 @@ static REGISTRY: std::sync::LazyLock<ExtensionRegistry> = std::sync::LazyLock::n
         qsystem_futures::EXTENSION.to_owned(),
         qsystem_result::EXTENSION.to_owned(),
         qsystem::EXTENSION.to_owned(),
-        ROTATION_EXTENSION.to_owned(),
-        TKET_EXTENSION.to_owned(),
-        TKET1_EXTENSION.to_owned(),
-        tket::extension::debug::DEBUG_EXTENSION.to_owned(),
-        tket::extension::guppy::GUPPY_EXTENSION.to_owned(),
-        tket::extension::measurement::MEASUREMENT_EXTENSION.to_owned(),
         tket_qsystem::extension::gpu::EXTENSION.to_owned(),
         tket_qsystem::extension::wasm::EXTENSION.to_owned(),
-    ])
+    ];
+    extensions.extend(tket::extension::tket_extensions());
+    ExtensionRegistry::new(extensions)
 });
 
 /// Load a HUGR from bytes (binary envelope format).

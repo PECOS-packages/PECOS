@@ -2,11 +2,25 @@
 
 import pecos_rslib_llvm
 from guppylang import guppy
-from guppylang.std.quantum import measure, pi, qubit, rz
+from guppylang.std.quantum import angle, measure, pi, qubit, rz
 
 
 class TestRotationExtension:
     """Test rotation extension operations."""
+
+    def test_global_phase_lowering_loads(self) -> None:
+        """A full-turn RZ lowers to tket.global_phase in Guppy v1."""
+
+        @guppy
+        def test_global_phase() -> bool:
+            q = qubit()
+            rz(q, angle(2.0))
+            return measure(q).read()
+
+        hugr = test_global_phase.compile()
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+
+        assert "qmain" in output
 
     def test_rotation_with_angle_arithmetic(self) -> None:
         """Test rotation gates with angle arithmetic."""

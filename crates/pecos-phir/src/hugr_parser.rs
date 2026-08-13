@@ -51,8 +51,9 @@ pub fn parse_hugr_bytes_to_phir(hugr_bytes: &[u8]) -> Result<ModuleOp> {
     };
     use tket_qsystem::extension::{futures, gpu, qsystem, result, wasm};
 
-    // Create extension registry with all required extensions
-    let extensions = ExtensionRegistry::new([
+    // Include all tket-owned extensions so Guppy output remains loadable as
+    // tket adds lowering forms such as global phase and modifiers.
+    let mut extensions = vec![
         prelude::PRELUDE.clone(),
         int_types::EXTENSION.clone(),
         int_ops::EXTENSION.clone(),
@@ -68,13 +69,11 @@ pub fn parse_hugr_bytes_to_phir(hugr_bytes: &[u8]) -> Result<ModuleOp> {
         futures::EXTENSION.clone(),
         result::EXTENSION.clone(),
         qsystem::EXTENSION.clone(),
-        tket::extension::rotation::ROTATION_EXTENSION.clone(),
-        tket::extension::TKET_EXTENSION.clone(),
-        tket::extension::TKET1_EXTENSION.clone(),
-        tket::extension::debug::DEBUG_EXTENSION.clone(),
         gpu::EXTENSION.clone(),
         wasm::EXTENSION.clone(),
-    ]);
+    ];
+    extensions.extend(tket::extension::tket_extensions());
+    let extensions = ExtensionRegistry::new(extensions);
 
     if hugr_bytes.is_empty() {
         return Err(PhirError::internal("Empty HUGR input".to_string()));
@@ -159,7 +158,7 @@ impl HugrToPhirConverter {
         // control flow would silently lose every other block (commonly
         // dropping the measurements -> empty results). Reject it up front so
         // callers fall back to `HugrEngine` instead of getting wrong output.
-        Self::reject_control_flow(hugr)?;
+        Self::reject_control_flow(hugr, hugr.entrypoint())?;
 
         let mut module = ModuleOp::new("hugr_module");
 
@@ -254,8 +253,8 @@ impl HugrToPhirConverter {
     /// under any CFG means real control flow, which this straight-line
     /// converter cannot represent: it keeps only the first block. Returning an
     /// error here turns that silent data loss into a clean failure.
-    fn reject_control_flow(hugr: &Hugr) -> Result<()> {
-        for node in hugr.nodes() {
+    fn reject_control_flow(hugr: &Hugr, entrypoint: Node) -> Result<()> {
+        for node in std::iter::once(entrypoint).chain(hugr.descendants(entrypoint)) {
             // `topological_children` only traverses direct children of the
             // selected container. Conditional regions and calls can therefore
             // be accepted while their contained operations are silently
@@ -267,6 +266,7 @@ impl HugrToPhirConverter {
                     | OpType::Call(_)
                     | OpType::CallIndirect(_)
                     | OpType::LoadFunction(_)
+                    | OpType::TailLoop(_)
             ) {
                 return Err(PhirError::Parse(Box::new(
                     crate::error::ParseError::Unsupported {

@@ -8,12 +8,22 @@ on:
     paths:
       - 'pyproject.toml'
       - 'python/**/pyproject.toml'
+      - 'exp/**/pyproject.toml'
+      - 'Cargo.toml'
+      - 'python/**/Cargo.toml'
+      - 'exp/**/Cargo.toml'
+      - '.github/workflows/python-release.yml'
       - 'scripts/check_python_workspace.py'
       - '.github/workflows/python-version-consistency.yml'
   pull_request:
     paths:
       - 'pyproject.toml'
       - 'python/**/pyproject.toml'
+      - 'exp/**/pyproject.toml'
+      - 'Cargo.toml'
+      - 'python/**/Cargo.toml'
+      - 'exp/**/Cargo.toml'
+      - '.github/workflows/python-release.yml'
       - 'scripts/check_python_workspace.py'
       - '.github/workflows/python-version-consistency.yml'
 

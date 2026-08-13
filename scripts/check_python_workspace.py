@@ -5,30 +5,32 @@
 
 This check is intentionally narrower than a full packaging linter. It guards
 the invariants that tend to drift in this repository: package versions,
-workspace membership, internal dependency pins, and uv workspace sources.
+workspace membership, Python-version metadata, release ABI targets, internal
+dependency pins, and uv workspace sources.
 """
 
 from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
-    try:
-        import tomli as tomllib  # type: ignore[no-redef]
-    except ModuleNotFoundError:
-        print("error: Python 3.11+ or the 'tomli' package is required", file=sys.stderr)
-        sys.exit(2)
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
+MINIMUM_PYTHON = "3.12"
+EXPECTED_PYTHON_CLASSIFIERS = {"3", "3.12", "3.13", "3.14"}
+ABI3_MANIFESTS = (
+    REPO_ROOT / "python/pecos-rslib/Cargo.toml",
+    REPO_ROOT / "python/pecos-rslib-llvm/Cargo.toml",
+    REPO_ROOT / "python/pecos-rslib-cuda/Cargo.toml",
+    REPO_ROOT / "python/pecos-rslib-exp/Cargo.toml",
+    REPO_ROOT / "exp/zluppy/Cargo.toml",
+)
+RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/python-release.yml"
 
 
 @dataclass(frozen=True)
@@ -190,6 +192,62 @@ def check_cuda_extra_group(root_data: dict[str, Any], errors: list[str]) -> None
             )
 
 
+def check_python_floor(path: Path, data: dict[str, Any], errors: list[str]) -> None:
+    """Ensure Python package and wheel metadata agree on the supported floor."""
+    project = data.get("project", {})
+    if not isinstance(project, dict):
+        return
+
+    requires_python = project.get("requires-python")
+    normalized_requirement = re.sub(r"\s+", "", requires_python) if isinstance(requires_python, str) else ""
+    if normalized_requirement != f">={MINIMUM_PYTHON}":
+        fail(
+            errors,
+            f"{rel(path)}: [project].requires-python must be >={MINIMUM_PYTHON!s}",
+        )
+
+    classifiers = project.get("classifiers", [])
+    if not isinstance(classifiers, list):
+        fail(errors, f"{rel(path)}: [project].classifiers must be a list")
+        return
+    python_classifiers: set[str] = set()
+    for classifier in classifiers:
+        if not isinstance(classifier, str):
+            continue
+        version = classifier.removeprefix("Programming Language :: Python :: ")
+        if classifier.startswith("Programming Language :: Python :: ") and (
+            version == "3" or re.fullmatch(r"\d+\.\d+", version)
+        ):
+            python_classifiers.add(version)
+    if python_classifiers and python_classifiers != EXPECTED_PYTHON_CLASSIFIERS:
+        fail(
+            errors,
+            f"{rel(path)}: Python classifiers must be {sorted(EXPECTED_PYTHON_CLASSIFIERS)!r}",
+        )
+
+
+def check_release_python_abi(errors: list[str]) -> None:
+    """Keep ABI3, cibuildwheel, and the release smoke test on one floor."""
+    expected_abi3 = f"abi3-py{MINIMUM_PYTHON.replace('.', '')}"
+    for manifest in ABI3_MANIFESTS:
+        abi3_features = set(re.findall(r"abi3-py\d+", manifest.read_text()))
+        if abi3_features != {expected_abi3}:
+            fail(
+                errors,
+                f"{rel(manifest)}: ABI3 feature must be exactly {expected_abi3!r}, found {sorted(abi3_features)!r}",
+            )
+
+    workflow = RELEASE_WORKFLOW.read_text()
+    cibw_target = f'CIBW_BUILD: "cp{MINIMUM_PYTHON.replace(".", "")}-*"'
+    if workflow.count(cibw_target) != 2:
+        fail(errors, f"{rel(RELEASE_WORKFLOW)}: expected two {cibw_target!r} release-wheel targets")
+
+    python_abi = MINIMUM_PYTHON.replace(".", "")
+    smoke_interpreter = f"/opt/python/cp{python_abi}-cp{python_abi}/bin/python"
+    if workflow.count(smoke_interpreter) != 4:
+        fail(errors, f"{rel(RELEASE_WORKFLOW)}: expected four {smoke_interpreter!r} smoke commands")
+
+
 def main() -> int:
     errors: list[str] = []
 
@@ -203,6 +261,16 @@ def main() -> int:
 
     all_packages = [root, *packages]
     workspace_names = {pkg.normalized_name for pkg in all_packages}
+
+    project_paths = [
+        ROOT_PYPROJECT,
+        *package_paths,
+        REPO_ROOT / "exp/zluppy/pyproject.toml",
+        REPO_ROOT / "exp/zlup/pyproject.toml",
+    ]
+    for path in project_paths:
+        check_python_floor(path, load_toml(path), errors)
+    check_release_python_abi(errors)
 
     for pkg in all_packages:
         if pkg.version != root.version:

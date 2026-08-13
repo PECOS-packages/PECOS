@@ -5,6 +5,17 @@
 
 use crate::errors::DecoderError;
 
+fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
+    max_index.map_or(Ok(0), |index| {
+        let count = u64::from(index) + 1;
+        usize::try_from(count).map_err(|_| {
+            DecoderError::InvalidConfiguration(format!(
+                "{kind} count for index {index} does not fit usize on this platform"
+            ))
+        })
+    })
+}
+
 /// Trait for decoders that can be constructed from detector error models
 pub trait DemDecoder: super::Decoder {
     /// Configuration type for DEM construction
@@ -173,8 +184,20 @@ pub mod utils {
             }
         }
 
-        let detector_count = max_detector.map_or(0, |m| m + 1);
-        let observable_count = max_observable.map_or(0, |m| m + 1);
+        let detector_count = max_detector.map_or(Ok(0), |index| {
+            index.checked_add(1).ok_or_else(|| {
+                DecoderError::InvalidConfiguration(format!(
+                    "detector count for index {index} does not fit usize on this platform"
+                ))
+            })
+        })?;
+        let observable_count = max_observable.map_or(Ok(0), |index| {
+            index.checked_add(1).ok_or_else(|| {
+                DecoderError::InvalidConfiguration(format!(
+                    "observable count for index {index} does not fit usize on this platform"
+                ))
+            })
+        })?;
 
         Ok((detector_count, observable_count))
     }
@@ -398,8 +421,8 @@ impl SparseDem {
         Ok(Self {
             mechanisms,
             detector_coords,
-            num_detectors: max_detector.map_or(0, |m| m as usize + 1),
-            num_observables: max_observable.map_or(0, |m| m as usize + 1),
+            num_detectors: dimension_count(max_detector, "detector")?,
+            num_observables: dimension_count(max_observable, "observable")?,
         })
     }
 }
@@ -552,8 +575,8 @@ impl DemCheckMatrix {
             mechanisms.push((probability, detectors, observables));
         }
 
-        let num_detectors = max_detector.map_or(0, |m| m as usize + 1);
-        let num_observables = max_observable.map_or(0, |m| m as usize + 1);
+        let num_detectors = dimension_count(max_detector, "detector")?;
+        let num_observables = dimension_count(max_observable, "observable")?;
         let num_mechanisms = mechanisms.len();
 
         // Build matrices.
@@ -839,8 +862,8 @@ impl DemMatchingGraph {
             fault_id += 1;
         }
 
-        let num_detectors = max_detector.map_or(0, |m| m as usize + 1);
-        let num_observables = max_observable.map_or(0, |m| m as usize + 1);
+        let num_detectors = dimension_count(max_detector, "detector")?;
+        let num_observables = dimension_count(max_observable, "observable")?;
 
         let edges = Self::merge_parallel_edges(edges);
 
@@ -1260,6 +1283,30 @@ mod tests {
         );
         let (dets, _obs) = utils::parse_dem_metadata(dem).unwrap();
         assert_eq!(dets, 8, "parse_dem_metadata must count bare detector D7");
+    }
+
+    #[test]
+    fn sparse_dem_max_u32_detector_index_is_platform_checked() {
+        let dem = "error(0.01) D4294967295\n";
+        let parsed = SparseDem::from_dem_str(dem);
+
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert_eq!(parsed.unwrap().num_detectors, 4_294_967_296);
+            assert_eq!(utils::parse_dem_metadata(dem).unwrap().0, 4_294_967_296);
+        }
+
+        #[cfg(target_pointer_width = "32")]
+        {
+            // On 32-bit targets, the promoted u64 count reaches the fallible
+            // usize::try_from branch instead of wrapping or panicking.
+            let error = parsed.unwrap_err();
+            assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
+            assert!(error.to_string().contains("4294967295"));
+
+            let metadata_error = utils::parse_dem_metadata(dem).unwrap_err();
+            assert!(metadata_error.to_string().contains("4294967295"));
+        }
     }
 
     #[test]

@@ -64,10 +64,22 @@ SCALAR_DTYPES = (
 INDEX_ASSIGNMENT_DTYPES = (
     ("bool", dtypes.bool, np.bool_, True, [True, False, True]),
     ("int8", dtypes.int8, np.int8, 7, [2, 3, 4]),
+    ("int16", dtypes.int16, np.int16, 7, [2, 3, 4]),
+    ("int32", dtypes.int32, np.int32, 7, [2, 3, 4]),
     ("int64", dtypes.int64, np.int64, 7, [2, 3, 4]),
     ("uint8", dtypes.uint8, np.uint8, 7, [2, 3, 4]),
+    ("uint16", dtypes.uint16, np.uint16, 7, [2, 3, 4]),
+    ("uint32", dtypes.uint32, np.uint32, 7, [2, 3, 4]),
     ("uint64", dtypes.uint64, np.uint64, 7, [2, 3, 4]),
+    ("float32", dtypes.float32, np.float32, 7.5, [2.5, 3.5, 4.5]),
     ("float64", dtypes.float64, np.float64, 7.5, [2.5, 3.5, 4.5]),
+    (
+        "complex64",
+        dtypes.complex64,
+        np.complex64,
+        7.5 + 1.25j,
+        [2.5 + 1j, 3.5 - 2j, 4.5 + 3j],
+    ),
     (
         "complex128",
         dtypes.complex128,
@@ -159,14 +171,18 @@ def test_array_class_accepts_unsigned_numpy_buffers(
 
 
 @pytest.mark.parametrize("constructor", [num.zeros, num.ones])
-def test_constructor_supported_dtype_message_is_complete(constructor: Callable[..., Array]) -> None:
+def test_constructor_supported_dtype_message_is_complete(
+    constructor: Callable[..., Array],
+) -> None:
     with pytest.raises(ValueError, match="^unsupported dtype: not-a-dtype") as exc_info:
         constructor(1, dtype="not-a-dtype")
     assert str(exc_info.value) == (f"unsupported dtype: not-a-dtype. Supported: {SUPPORTED_DTYPES}")
 
 
 @pytest.mark.parametrize("constructor", [num.array, num.asarray])
-def test_array_typestring_error_lists_unsigned_kind(constructor: Callable[..., Array]) -> None:
+def test_array_typestring_error_lists_unsigned_kind(
+    constructor: Callable[..., Array],
+) -> None:
     with pytest.raises(TypeError) as exc_info:
         constructor(["2026-01-01"], dtype="datetime64[D]")
     assert str(exc_info.value).endswith("Supported typestring kinds: 'b', 'i', 'u', 'f', 'c'")
@@ -223,7 +239,11 @@ def test_unsigned_arithmetic_directly() -> None:
 
 def test_unsigned_comparison_directly() -> None:
     result = num.array([0, 254, 255], dtype=dtypes.uint8)
-    assert (result == num.array([0, 254, 255], dtype=dtypes.uint8)).tolist() == [True, True, True]
+    assert (result == num.array([0, 254, 255], dtype=dtypes.uint8)).tolist() == [
+        True,
+        True,
+        True,
+    ]
 
 
 def test_unsigned_buffer_export_directly() -> None:
@@ -388,7 +408,9 @@ def test_big_endian_ingest_matches_little_endian_and_round_trips(
 
 
 @pytest.mark.parametrize("constructor", [Array, num.array])
-def test_float16_array_interface_remains_rejected(constructor: Callable[..., Array]) -> None:
+def test_float16_array_interface_remains_rejected(
+    constructor: Callable[..., Array],
+) -> None:
     with pytest.raises(TypeError, match="Unsupported dtype"):
         constructor(np.array([1.5], dtype=np.float16))
 
@@ -404,7 +426,10 @@ def test_native_array_unsigned_conversions_use_sequence_range_checks(
         Array([-1], dtype=target)
 
     source = Array([-1], dtype=dtypes.int64)
-    for conversion in (lambda: Array(source, dtype=target), lambda: source.astype(target)):
+    for conversion in (
+        lambda: Array(source, dtype=target),
+        lambda: source.astype(target),
+    ):
         with pytest.raises(type(sequence_error.value)) as native_error:
             conversion()
         assert str(native_error.value) == str(sequence_error.value)
@@ -513,7 +538,9 @@ def test_bool_dtype_scalar_likes_match_numpy(value: Any) -> None:
 
 
 @pytest.mark.parametrize("values", [[], [0, 1]])
-def test_bool_dtype_rejects_ambiguous_native_arrays_like_numpy_truth(values: list[int]) -> None:
+def test_bool_dtype_rejects_ambiguous_native_arrays_like_numpy_truth(
+    values: list[int],
+) -> None:
     oracle = np.array(values, dtype=np.uint8)
     with pytest.raises(ValueError, match="truth value") as numpy_error:
         bool(oracle)
@@ -639,7 +666,9 @@ def test_flatten_and_ravel_return_independent_copies(method_name: str) -> None:
 
 
 @pytest.mark.parametrize("method_name", ["flatten", "ravel"])
-def test_flatten_and_ravel_use_logical_c_order_for_transposed_arrays(method_name: str) -> None:
+def test_flatten_and_ravel_use_logical_c_order_for_transposed_arrays(
+    method_name: str,
+) -> None:
     source = np.arange(12, dtype=np.int64).reshape(3, 4).T
     actual = Array(source).T
     expected = np.asarray(source).T
@@ -673,7 +702,9 @@ def test_reshape_sequence_and_varargs_forms_match_numpy() -> None:
 
 
 @pytest.mark.parametrize("target_shape", [(-1,), (2, -1), (-1, 3, 2)])
-def test_reshape_minus_one_inference_matches_numpy(target_shape: tuple[int, ...]) -> None:
+def test_reshape_minus_one_inference_matches_numpy(
+    target_shape: tuple[int, ...],
+) -> None:
     source = np.arange(24, dtype=np.int64).reshape(2, 3, 4)
     actual = Array(source)
     expected = source.reshape(target_shape)
@@ -859,7 +890,9 @@ def test_fill_and_reshape_docstrings_state_deliberate_divergences() -> None:
 
 
 @pytest.mark.parametrize("shape", [(2, 12), (3, 2, 4), (24,)])
-def test_reshape_round_trips_and_flatten_restores_original_shape(shape: tuple[int, ...]) -> None:
+def test_reshape_round_trips_and_flatten_restores_original_shape(
+    shape: tuple[int, ...],
+) -> None:
     source = np.arange(24, dtype=np.int64).reshape(2, 3, 4)
     actual = Array(source)
 
@@ -1091,20 +1124,25 @@ def test_one_dimensional_boolean_mask_selects_rows_like_numpy() -> None:
     np.testing.assert_array_equal(np.asarray(actual), values[np.array(mask)])
 
 
-def test_multidimensional_boolean_mask_is_explicitly_unsupported() -> None:
-    values = Array([[1, 2], [3, 4]], dtype=dtypes.int64)
-    mask = Array([[True, False], [False, True]], dtype=dtypes.bool)
+@pytest.mark.parametrize("mask_ndim", [2, 3])
+@pytest.mark.parametrize("as_array", [False, True])
+def test_multidimensional_boolean_mask_read_and_write_match_numpy(mask_ndim: int, as_array: bool) -> None:
+    shape = (2, 3, 4)
+    expected = np.arange(np.prod(shape), dtype=np.int64).reshape(shape)
+    actual = Array(expected)
+    mask_shape = shape[:mask_ndim]
+    mask = np.arange(np.prod(mask_shape)).reshape(mask_shape) % 2 == 0
+    actual_mask: Any = Array(mask) if as_array else mask.tolist()
 
-    with pytest.raises(NotImplementedError, match="only one-dimensional masks"):
-        _ = values[mask]
+    expected_selection = expected[mask]
+    actual_selection = np.asarray(actual[actual_mask])
+    assert actual_selection.shape == expected_selection.shape
+    np.testing.assert_array_equal(actual_selection, expected_selection)
 
-
-def test_nested_list_boolean_mask_is_explicitly_unsupported() -> None:
-    values = Array([[1, 2], [3, 4]], dtype=dtypes.int64)
-    mask = [[True, False], [False, True]]
-
-    with pytest.raises(NotImplementedError, match=r"only one-dimensional masks; got 2 dimensions"):
-        _ = values[mask]
+    replacement = np.arange(expected_selection.size, dtype=np.int64).reshape(expected_selection.shape)
+    expected[mask] = replacement
+    actual[actual_mask] = replacement
+    np.testing.assert_array_equal(np.asarray(actual), expected)
 
 
 def test_boolean_mask_assignment_falls_out_of_indexed_assignment() -> None:
@@ -1151,22 +1189,235 @@ def test_indexed_assignment_round_trip(index_form: str) -> None:
     assert actual[index].tolist() == [7, 9]
 
 
-def test_separated_advanced_indices_are_explicitly_unsupported() -> None:
+def test_separated_advanced_indices_read_and_write_match_numpy() -> None:
     values = np.arange(18, dtype=np.int64).reshape(2, 3, 3)
     actual = Array(values)
     index = (1, slice(0, 2), [0, 2])
 
     # NumPy moves the advanced-index dimension to the front for this layout.
     assert values[index].shape == (2, 2)
-    with pytest.raises(NotImplementedError, match="separated by a slice"):
-        _ = actual[index]
-    with pytest.raises(NotImplementedError, match="separated by a slice"):
-        actual[index] = np.arange(4, dtype=np.int64).reshape(2, 2)
+    assert actual[index].shape == values[index].shape
+    np.testing.assert_array_equal(np.asarray(actual[index]), values[index])
+    replacement = np.arange(4, dtype=np.int64).reshape(2, 2) + 100
+    values[index] = replacement
+    actual[index] = replacement
+    np.testing.assert_array_equal(np.asarray(actual), values)
 
     unequal_length_index = (1, slice(0, 3), [0, 2])
     assert values[unequal_length_index].shape == (2, 3)
-    with pytest.raises(NotImplementedError, match="separated by a slice"):
-        _ = actual[unequal_length_index]
+    assert actual[unequal_length_index].shape == (2, 3)
+    np.testing.assert_array_equal(np.asarray(actual[unequal_length_index]), values[unequal_length_index])
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        (1, slice(0, 2), [0, 2], slice(1, 5, 2)),
+        ([0, 1], slice(0, 3), [1, 3], slice(None)),
+    ],
+)
+def test_separated_advanced_indices_in_four_dimensions_match_numpy(
+    index: tuple[Any, ...],
+) -> None:
+    shape = (2, 3, 4, 5)
+    expected = np.arange(np.prod(shape), dtype=np.int64).reshape(shape)
+    actual = Array(expected)
+    expected_selection = expected[index]
+
+    assert actual[index].shape == expected_selection.shape
+    np.testing.assert_array_equal(np.asarray(actual[index]), expected_selection)
+    replacement = np.arange(expected_selection.size, dtype=np.int64).reshape(expected_selection.shape)
+    expected[index] = replacement
+    actual[index] = replacement
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+@pytest.mark.parametrize(
+    ("index", "expected_shape"),
+    [
+        ((slice(None), [0, 2, 1], [1, 3, 0], slice(None)), (2, 3, 5)),
+        ((slice(None), [0, 2, 1], slice(None), [1, 3, 4]), (3, 2, 4)),
+    ],
+    ids=["adjacent", "separated"],
+)
+def test_advanced_index_axis_placement_matches_numpy_shape(
+    index: tuple[Any, ...], expected_shape: tuple[int, ...]
+) -> None:
+    values = np.arange(2 * 3 * 4 * 5, dtype=np.int64).reshape(2, 3, 4, 5)
+    actual = Array(values)
+
+    assert values[index].shape == expected_shape
+    assert actual[index].shape == expected_shape
+    np.testing.assert_array_equal(np.asarray(actual[index]), values[index])
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        ([0, 2], [1, 3]),
+        ([[0], [2]], [[1, 3, 0]]),
+    ],
+    ids=["equal-shape", "broadcastable-shapes"],
+)
+def test_multiple_advanced_indices_read_and_write_match_numpy(
+    index: tuple[Any, ...],
+) -> None:
+    shape = (3, 4, 5)
+    expected = np.arange(np.prod(shape), dtype=np.int64).reshape(shape)
+    actual = Array(expected)
+    expected_selection = expected[index]
+
+    assert actual[index].shape == expected_selection.shape
+    np.testing.assert_array_equal(np.asarray(actual[index]), expected_selection)
+    replacement = np.arange(expected_selection.size, dtype=np.int64).reshape(expected_selection.shape)
+    expected[index] = replacement
+    actual[index] = replacement
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+@pytest.mark.parametrize("as_native", [False, True])
+def test_multidimensional_integer_array_index_matches_numpy(as_native: bool) -> None:
+    expected = np.arange(3 * 4, dtype=np.int64).reshape(3, 4)
+    actual = Array(expected)
+    index = np.array([[0], [2]], dtype=np.int32)
+    actual_index: Any = Array(index) if as_native else index
+
+    assert actual[actual_index].shape == expected[index].shape
+    np.testing.assert_array_equal(np.asarray(actual[actual_index]), expected[index])
+    replacement = np.full(expected[index].shape, -1, dtype=np.int64)
+    expected[index] = replacement
+    actual[actual_index] = replacement
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+@pytest.mark.parametrize(
+    ("shape", "index"),
+    [
+        ((5,), ([0, -1, 2],)),
+        ((3, 4), (1, [0, -1, 2])),
+        ((2, 3, 4), (slice(None), 1, [0, -1, 2])),
+        ((2, 3, 4, 5), ([0, 1], slice(None), 2, [0, -1])),
+    ],
+)
+def test_scalar_and_sequence_assignment_through_four_dimensions(shape: tuple[int, ...], index: tuple[Any, ...]) -> None:
+    expected = np.zeros(shape, dtype=np.int64)
+    actual = Array(expected)
+
+    expected[index] = 7
+    actual[index] = 7
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+    replacement = np.arange(expected[index].size, dtype=np.int64).reshape(expected[index].shape)
+    expected[index] = replacement
+    actual[index] = replacement
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+@pytest.mark.parametrize("ndim", [3, 4])
+def test_boolean_row_mask_assignment_through_four_dimensions(ndim: int) -> None:
+    shape = (4, *([3] * (ndim - 1)))
+    expected = np.arange(np.prod(shape), dtype=np.int64).reshape(shape)
+    actual = Array(expected)
+    mask = np.array([False, True, False, True])
+    replacement = np.full(expected[mask].shape, -1, dtype=np.int64)
+
+    expected[mask] = replacement
+    actual[Array(mask)] = replacement
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+@pytest.mark.parametrize(
+    ("shape", "index"),
+    [
+        ((0,), ([],)),
+        ((0, 3), ([], slice(None))),
+        ((3, 0), ([0, 2], slice(None))),
+    ],
+)
+def test_empty_and_zero_length_advanced_selections_match_numpy(shape: tuple[int, ...], index: tuple[Any, ...]) -> None:
+    expected = np.zeros(shape, dtype=np.int64)
+    actual = Array(expected)
+
+    assert actual[index].shape == expected[index].shape
+    np.testing.assert_array_equal(np.asarray(actual[index]), expected[index])
+    actual[index] = np.empty(expected[index].shape, dtype=np.int64)
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+def test_all_false_multidimensional_mask_matches_numpy() -> None:
+    expected = np.arange(12, dtype=np.int64).reshape(3, 4)
+    actual = Array(expected)
+    mask = np.zeros((3, 4), dtype=np.bool_)
+
+    assert actual[Array(mask)].shape == expected[mask].shape == (0,)
+    actual[Array(mask)] = np.empty((0,), dtype=np.int64)
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+@pytest.mark.parametrize(
+    ("target", "source"),
+    [
+        ([3, 2, 1, 0], [0, 1, 2, 3]),
+        ([0, 1, 2, 3], [3, 2, 1, 0]),
+    ],
+)
+def test_selection_based_aliasing_and_overlap_match_numpy(target: list[int], source: list[int]) -> None:
+    expected = np.arange(4, dtype=np.int64)
+    actual = Array(expected)
+
+    expected[target] = expected[source]
+    actual[target] = actual[source]
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        np.arange(24, dtype=np.int64).reshape(4, 6).T,
+        np.arange(48, dtype=np.int64).reshape(6, 8)[::2, 1::2],
+    ],
+    ids=["transpose", "stepped-slice"],
+)
+def test_advanced_assignment_on_noncontiguous_input_matches_numpy(
+    values: np.ndarray[Any, Any],
+) -> None:
+    expected = values.copy(order="K")
+    actual = Array(values)
+    index = ([0, expected.shape[0] - 1], [0, expected.shape[1] - 1])
+
+    expected[index] = [100, 200]
+    actual[index] = [100, 200]
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+def test_advanced_indices_reject_nonbroadcastable_shapes() -> None:
+    actual = Array(np.arange(3 * 4, dtype=np.int64).reshape(3, 4))
+
+    with pytest.raises(IndexError, match=r"could not be broadcast.*\[2\].*\[3\]"):
+        _ = actual[[0, 1], [0, 1, 2]]
+    with pytest.raises(IndexError, match=r"could not be broadcast.*\[2\].*\[3\]"):
+        actual[[0, 1], [0, 1, 2]] = 0
+
+
+def test_advanced_indices_check_bounds_before_execution() -> None:
+    actual = Array(np.arange(3 * 4, dtype=np.int64).reshape(3, 4))
+
+    with pytest.raises(IndexError, match=r"index 4 .* axis 1 .* length 4"):
+        _ = actual[[0, 1], [0, 4]]
+    with pytest.raises(IndexError, match=r"index -5 .* axis 1 .* length 4"):
+        actual[[0, 1], [0, -5]] = 0
+
+
+@pytest.mark.parametrize("index", [(Ellipsis, 0), (None, 0)])
+def test_unverified_index_expansions_remain_explicitly_unsupported(
+    index: tuple[Any, ...],
+) -> None:
+    actual = Array(np.arange(6, dtype=np.int64).reshape(2, 3))
+
+    with pytest.raises(NotImplementedError, match=r"Ellipsis|newaxis"):
+        _ = actual[index]
+    with pytest.raises(NotImplementedError, match=r"Ellipsis|newaxis"):
+        actual[index] = 0
 
 
 def test_contiguous_advanced_indices_continue_to_match_numpy() -> None:
@@ -1254,6 +1505,11 @@ def test_float_aliases_preserve_double_precision(alias: object) -> None:
 
 def test_dtype_member_and_builtin_agree_for_every_alias() -> None:
     """The member spelling and the builtin must never diverge again."""
-    for name, builtin in [("float", float), ("int", int), ("bool", bool), ("complex", complex)]:
+    for name, builtin in [
+        ("float", float),
+        ("int", int),
+        ("bool", bool),
+        ("complex", complex),
+    ]:
         member = getattr(dtypes, name)
         assert str(pc.asarray([1], dtype=member).dtype) == str(pc.asarray([1], dtype=builtin).dtype)

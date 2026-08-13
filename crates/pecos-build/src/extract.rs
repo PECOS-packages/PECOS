@@ -10,6 +10,14 @@ use crate::home::{get_deps_dir, get_tmp_dir};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+/// Names Windows resolves as devices in every directory, so `NUL.txt` is the null
+/// device rather than a file. Matched case-insensitively against the part of a
+/// component before its first `.`.
+const WINDOWS_DEVICE_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
 /// Resolves an archive entry name to a path inside `dest`, rejecting escapes.
 ///
 /// Archive entry names are attacker-controlled data: a crafted archive can name an
@@ -20,10 +28,15 @@ use std::path::{Component, Path, PathBuf};
 /// The `tar` crate validates this inside `unpack`, and the `zip` crate exposes
 /// `enclosed_name` for it, so only archive readers without such a guard need this.
 ///
+/// Containment here is **lexical**. It assumes nothing under `dest` is a symlink or
+/// junction: this function cannot stop a write that travels through a link an earlier
+/// process placed inside the extraction directory.
+///
 /// # Errors
 ///
-/// Returns [`Error::Archive`] if the entry name is absolute, contains a `..`
-/// component, or contains a Windows prefix such as `C:`.
+/// Returns [`Error::Archive`] if the entry name is absolute, contains a `..` component,
+/// contains a Windows prefix such as `C:`, has a component with trailing dots or spaces,
+/// or names a Windows device.
 pub fn contained_entry_path(dest: &Path, entry_name: &str) -> Result<PathBuf> {
     // Treat both separators as separating on every platform: a Windows-built archive
     // read on Unix would otherwise carry "..\\.." through as a single opaque name.
@@ -32,7 +45,33 @@ pub fn contained_entry_path(dest: &Path, entry_name: &str) -> Result<PathBuf> {
 
     for component in candidate.components() {
         match component {
-            Component::Normal(_) | Component::CurDir => {}
+            Component::Normal(name) => {
+                let name = name.to_string_lossy();
+
+                // Windows strips trailing dots and spaces while resolving a path, so a
+                // component like ".. " arrives here as an innocuous Normal and is only
+                // turned back into ".." by the filesystem -- after this check would have
+                // passed. Rejecting any trailing dot or space closes that class without
+                // having to model Win32 normalization; such names are unrepresentable on
+                // Windows anyway and do not occur in the archives this reads.
+                if name.ends_with('.') || name.ends_with(' ') {
+                    return Err(Error::Archive(format!(
+                        "archive entry has a component with trailing dots or spaces, \
+                         which some filesystems resolve to a different path: {entry_name}"
+                    )));
+                }
+
+                let stem = name.split('.').next().unwrap_or(&name);
+                if WINDOWS_DEVICE_NAMES
+                    .iter()
+                    .any(|device| stem.eq_ignore_ascii_case(device))
+                {
+                    return Err(Error::Archive(format!(
+                        "archive entry names a reserved device: {entry_name}"
+                    )));
+                }
+            }
+            Component::CurDir => {}
             Component::ParentDir => {
                 return Err(Error::Archive(format!(
                     "archive entry escapes the extraction directory: {entry_name}"
@@ -217,6 +256,55 @@ mod tests {
             assert!(
                 matches!(error, Error::Archive(message) if message.contains("absolute")),
                 "expected an absolute-path rejection for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn trailing_space_or_dot_components_are_rejected() {
+        // Windows strips trailing dots and spaces during path resolution, so ".. " would
+        // become ".." after this check and escape the destination.
+        for name in [
+            ".. /nvcc",
+            "nvcc/.. /x",
+            "...",
+            "nvcc/... /x",
+            "trailing.",
+            "trailing ",
+        ] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("trailing dots or spaces")),
+                "expected a trailing dot/space rejection for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_device_names_are_rejected() {
+        for name in [
+            "nvcc/NUL.txt",
+            "nvcc/COM1",
+            "con",
+            "AUX",
+            "bin/lpt9.dll",
+            "NuL",
+        ] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("reserved device")),
+                "expected a device-name rejection for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_names_containing_device_words_are_allowed() {
+        // Only an exact device stem is reserved; these merely contain the letters.
+        for name in ["console.dll", "nulled.txt", "bin/comment.h", "auxiliary/x"] {
+            assert!(
+                contained_entry_path(Path::new("/out"), name).is_ok(),
+                "{name} should be allowed"
             );
         }
     }

@@ -20,6 +20,7 @@ ndarray.workspace = true
 
 # Random number generation (for numpy.random drop-in replacements)
 rand.workspace = true
+rand_distr.workspace = true
 pecos-random.workspace = true
 
 # Complex number support (for numpy complex operations)

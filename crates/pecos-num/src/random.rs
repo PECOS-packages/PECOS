@@ -38,12 +38,15 @@
 //! assert_eq!(random_values.len(), 100);
 //! ```
 
-use ndarray::Array1;
+use ndarray::{Array1, ArrayD};
 use pecos_random::PecosRng;
 use rand::RngExt;
+use rand::distr::Distribution;
 use rand::distr::uniform::SampleUniform;
 use rand::seq::SliceRandom;
+use rand_distr::Binomial;
 use std::cell::RefCell;
+use std::fmt;
 
 // Thread-local seeded RNG for reproducibility
 thread_local! {
@@ -149,6 +152,85 @@ pub fn seed(seed_value: u64) {
 #[must_use]
 pub fn random(size: usize) -> Array1<f64> {
     with_rng(|rng| Array1::from_vec((0..size).map(|_| rng.random::<f64>()).collect()))
+}
+
+/// An invalid input or impossible output from [`binomial`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BinomialError {
+    /// The parameter arrays did not have identical shapes.
+    ShapeMismatch,
+    /// A trial count was negative.
+    NegativeTrials(i64),
+    /// A probability was outside the closed interval `[0, 1]` or was NaN.
+    InvalidProbability(f64),
+    /// The sampler produced a value outside the distribution's support.
+    SampleOutOfBounds { sample: i64, trials: i64 },
+}
+
+impl fmt::Display for BinomialError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ShapeMismatch => write!(formatter, "n and p shapes must match"),
+            Self::NegativeTrials(value) => {
+                write!(formatter, "n value {value} must be nonnegative")
+            }
+            Self::InvalidProbability(value) => {
+                write!(formatter, "p value {value} must be in [0, 1]")
+            }
+            Self::SampleOutOfBounds { sample, trials } => write!(
+                formatter,
+                "binomial sample {sample} is outside [0, {trials}]"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BinomialError {}
+
+/// Draw element-wise samples from binomial distributions.
+///
+/// `n` and `p` must have identical shapes. Callers that accept broadcastable
+/// inputs should broadcast them before invoking this function.
+///
+/// # Errors
+///
+/// Returns an error if any trial count is negative, any probability is outside
+/// `[0, 1]` (including NaN), or a sampled value is outside `[0, n]`.
+#[must_use = "this function returns the generated samples or an input error"]
+pub fn binomial(n: &ArrayD<i64>, p: &ArrayD<f64>) -> Result<ArrayD<i64>, BinomialError> {
+    if n.shape() != p.shape() {
+        return Err(BinomialError::ShapeMismatch);
+    }
+
+    let mut samples = ArrayD::zeros(n.raw_dim());
+    with_rng(|rng| {
+        for ((sample, &trials), &probability) in samples.iter_mut().zip(n).zip(p) {
+            if trials < 0 {
+                return Err(BinomialError::NegativeTrials(trials));
+            }
+            if !(0.0..=1.0).contains(&probability) {
+                return Err(BinomialError::InvalidProbability(probability));
+            }
+
+            let distribution = Binomial::new(trials.cast_unsigned(), probability)
+                .map_err(|_| BinomialError::InvalidProbability(probability))?;
+            let draw = i64::try_from(distribution.sample(rng)).map_err(|_| {
+                BinomialError::SampleOutOfBounds {
+                    sample: i64::MAX,
+                    trials,
+                }
+            })?;
+            if draw < 0 || draw > trials {
+                return Err(BinomialError::SampleOutOfBounds {
+                    sample: draw,
+                    trials,
+                });
+            }
+            *sample = draw;
+        }
+        Ok(())
+    })?;
+    Ok(samples)
 }
 
 /// Generate random integers from a uniform distribution.

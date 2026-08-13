@@ -24,7 +24,7 @@ from pecos_rslib import (
 
 # Try to import optional functions that might not be available
 try:
-    from guppylang.std.quantum import discard_array, measure_array
+    from guppylang.std.quantum import collect_measurements, discard_array, measure_array
 except ImportError:
     measure_array = None
     discard_array = None
@@ -261,7 +261,7 @@ class TestArrayOperations:
                     x(qs[i])
 
             # Use measure_array to measure all at once
-            results = measure_array(qs)
+            results = collect_measurements(measure_array(qs))
 
             # Encode as integer
             result = 0

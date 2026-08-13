@@ -50,12 +50,12 @@ def test_selene_plugin_workspace_members_are_explicit_and_complete() -> None:
     cargo_plugin_members = [member for member in cargo_members if member.startswith("python/selene-plugins/")]
     uv_plugin_members = [member for member in uv_members if member.startswith("python/selene-plugins/")]
 
-    assert all("*" not in member for member in cargo_plugin_members), (
-        "Cargo workspace should list Selene plugins explicitly instead of using a wildcard"
-    )
-    assert all("*" not in member for member in uv_plugin_members), (
-        "uv workspace should list Selene plugins explicitly instead of using a wildcard"
-    )
+    assert all(
+        "*" not in member for member in cargo_plugin_members
+    ), "Cargo workspace should list Selene plugins explicitly instead of using a wildcard"
+    assert all(
+        "*" not in member for member in uv_plugin_members
+    ), "uv workspace should list Selene plugins explicitly instead of using a wildcard"
 
     actual_plugin_dirs, stray_dirs = _nonempty_selene_plugin_dirs(repo_root)
     msg = (

@@ -218,7 +218,7 @@ class TestQubitAllocationLimits:
     def test_qubit_array_allocation(self) -> None:
         """Test allocation of qubit arrays using Guppy's array type with proper ownership."""
         from guppylang.std.builtins import owned
-        from guppylang.std.quantum import measure_array
+        from guppylang.std.quantum import collect_measurements, measure_array
 
         @guppy
         def apply_h_to_array(qubits: array[qubit, 3] @ owned) -> array[qubit, 3]:
@@ -238,7 +238,7 @@ class TestQubitAllocationLimits:
             qubits = apply_h_to_array(qubits)
 
             # Measure all qubits at once using measure_array
-            return measure_array(qubits)
+            return collect_measurements(measure_array(qubits))
 
         # Need at least 3 qubits for the array
         results = sim(Guppy(array_test)).qubits(3).quantum(state_vector()).seed(42).run(50).to_dict()

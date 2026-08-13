@@ -701,7 +701,7 @@ class TestPerformance:
     def test_many_qubits(self, tester: ExtendedGuppyTester) -> None:
         """Test handling many qubits."""
         from guppylang.std.builtins import array
-        from guppylang.std.quantum import measure_array
+        from guppylang.std.quantum import collect_measurements, measure_array
 
         @guppy
         def many_qubits_test() -> int:
@@ -713,7 +713,7 @@ class TestPerformance:
                 h(qubits[i])
 
             # Count ones
-            bits = measure_array(qubits)
+            bits = collect_measurements(measure_array(qubits))
             count = 0
             for i in range(10):
                 if bits[i]:

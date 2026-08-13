@@ -284,8 +284,6 @@ many_single_char_names = "allow"
 too_many_lines = "allow"         # ~114 hits across 11 crates -- sim algorithms, tests, benchmarks
 # New Clippy lints in Rust nightly 1.99 flag established numeric and SIMD-heavy
 # implementations; defer broader, behavior-sensitive rewrites to a dedicated cleanup.
-assert_is_empty = "allow"
-chunks_exact_to_as_chunks = "allow"
 drain_collect = "allow"
 manual_is_variant_and = "allow"
 manual_midpoint = "allow"

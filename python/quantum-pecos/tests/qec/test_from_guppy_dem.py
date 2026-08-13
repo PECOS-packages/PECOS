@@ -2167,6 +2167,30 @@ def test_surface_result_tags_reject_permuted_runtime_ids() -> None:
         _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
 
 
+def test_surface_result_tags_reject_unbound_final_measurement_slots() -> None:
+    """Final arrays need per-slot evidence before their runtime IDs are trusted."""
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis="Z")
+    result_traces = [
+        {"name": f"sx{index}:init:meas:{index}", "values": [False], "result_ids": [index]}
+        for index in range(4)
+    ]
+    result_traces.extend(
+        [
+            {
+                "name": "final",
+                "values": [False] * 9,
+                "result_ids": [5, 4, *range(6, 13)],
+            },
+            {"name": "final:meas:0", "values": [False], "result_ids": []},
+            {"name": "final:meas:1", "values": [False], "result_ids": []},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="final aggregate result IDs must be contiguous in one source-order direction"):
+        _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
+
+
 def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
     from pecos_rslib.quantum import TickCircuit
 

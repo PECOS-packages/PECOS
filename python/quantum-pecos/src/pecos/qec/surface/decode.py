@@ -992,10 +992,11 @@ def _surface_runtime_measurement_remap_from_result_traces(
         else:
             _, name, element = ref
             try:
-                remap[abstract_index] = array_trace_ids[name][0][element]
+                result_id = array_trace_ids[name][0][element]
             except (KeyError, IndexError) as exc:
                 msg = f"result tag {name!r}[{element}] is missing from the runtime trace"
                 raise ValueError(msg) from exc
+            remap[abstract_index] = result_id
 
     runtime_ids = sorted(remap.values())
     if runtime_ids != list(range(num_measurements)):
@@ -1013,6 +1014,7 @@ def _validate_surface_array_slot_provenance(
     array_trace_ids: Mapping[str, list[list[int]]],
 ) -> None:
     """Compare collected-array IDs against any emitted per-element evidence."""
+    unbound_final_slots: set[int] = set()
     for trace in result_traces:
         name = trace.get("name")
         values = trace.get("values")
@@ -1020,16 +1022,37 @@ def _validate_surface_array_slot_provenance(
         if not isinstance(name, str) or not isinstance(values, list) or not isinstance(result_ids, list):
             continue
         base_name, separator, element_text = name.rpartition(":meas:")
-        if not separator or not element_text.isdecimal() or len(values) != 1 or len(result_ids) != 1:
+        if not separator or not element_text.isdecimal() or len(values) != 1:
+            continue
+        element = int(element_text)
+        if base_name == "final" and not result_ids:
+            unbound_final_slots.add(element)
+            continue
+        if len(result_ids) != 1:
             continue
         base_arrays = array_trace_ids.get(base_name)
-        element = int(element_text)
         if not base_arrays or element >= len(base_arrays[0]):
             continue
         if int(result_ids[0]) != base_arrays[0][element]:
             msg = (
                 f"runtime result tag {base_name!r}[{element}] has measurement id {base_arrays[0][element]}, "
                 f"but {name!r} certifies {result_ids[0]}"
+            )
+            raise ValueError(msg)
+
+    if unbound_final_slots:
+        final_arrays = array_trace_ids.get("final")
+        if not final_arrays:
+            msg = "final measurement slots have no scalar provenance or aggregate result IDs"
+            raise ValueError(msg)
+        final_ids = final_arrays[0]
+        step = 1 if len(final_ids) < 2 or final_ids[1] > final_ids[0] else -1
+        expected_ids = [final_ids[0] + step * offset for offset in range(len(final_ids))]
+        if final_ids != expected_ids:
+            msg = (
+                "final aggregate result IDs must be contiguous in one source-order direction when "
+                "per-element provenance is unavailable; got "
+                f"{final_ids}"
             )
             raise ValueError(msg)
 
@@ -1049,9 +1072,10 @@ def _index_surface_result_trace_ids(
         if _is_surface_sideband_result_tag(name):
             continue
         if len(values) != len(result_ids):
-            if not result_ids and (
-                name in {"init_synx", "init_synz", "synx", "synz"} or name.startswith("final:meas:")
-            ):
+            if not result_ids and name.startswith("final:meas:"):
+                # The aggregate tag below is validated against source order.
+                continue
+            if not result_ids and name in {"init_synx", "init_synz", "synx", "synz"}:
                 # Per-measurement scalar tags are the authoritative syndrome
                 # provenance. The aggregate array is intentionally unbound
                 # when those scalar reads have already been consumed.

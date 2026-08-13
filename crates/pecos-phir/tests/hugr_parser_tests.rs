@@ -209,6 +209,16 @@ fn parse_garbage_input_errors() {
     assert!(result.is_err(), "garbage input should error");
 }
 
+#[test]
+fn parse_nested_control_flow_errors() {
+    let bytes = include_bytes!("../../../crates/pecos/tests/test_data/hugr/conditional_x.hugr");
+    let result = parse_hugr_bytes_to_phir(bytes);
+    assert!(
+        result.is_err(),
+        "conditional HUGR must not silently drop nested operations"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Structural tests
 // ---------------------------------------------------------------------------

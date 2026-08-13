@@ -256,6 +256,26 @@ impl HugrToPhirConverter {
     /// error here turns that silent data loss into a clean failure.
     fn reject_control_flow(hugr: &Hugr) -> Result<()> {
         for node in hugr.nodes() {
+            // `topological_children` only traverses direct children of the
+            // selected container. Conditional regions and calls can therefore
+            // be accepted while their contained operations are silently
+            // omitted from the PHIR output. This straight-line converter must
+            // reject them until it gains recursive region/callee lowering.
+            if matches!(
+                hugr.get_optype(node),
+                OpType::Conditional(_)
+                    | OpType::Call(_)
+                    | OpType::CallIndirect(_)
+                    | OpType::LoadFunction(_)
+            ) {
+                return Err(PhirError::Parse(Box::new(
+                    crate::error::ParseError::Unsupported {
+                        feature: "conditional or function-call HUGR structure".to_string(),
+                        format: "HUGR".to_string(),
+                        location: crate::error::SourceLocation::unknown(),
+                    },
+                )));
+            }
             if matches!(hugr.get_optype(node), OpType::CFG(_)) {
                 let blocks = hugr
                     .children(node)

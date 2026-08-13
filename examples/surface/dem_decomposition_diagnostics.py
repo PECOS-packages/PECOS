@@ -367,9 +367,7 @@ def dense_effect_arrays(effects: dict[str, float]) -> tuple[list[str], Array, Ar
     for index, key in enumerate(keys):
         detectors = [int(detector) for detector in DET_RE.findall(key)]
         if detectors:
-            # Collapse to one indexed assignment when Array fancy assignment lands in #482.
-            for detector in detectors:
-                detection_events[index, detector] = 1
+            detection_events[index, detectors] = 1
         observable_flips[index] = 1 if "0" in OBS_RE.findall(key) else 0
 
     return keys, probabilities, detection_events, observable_flips
@@ -508,15 +506,8 @@ def two_fault_pair_analysis(
     for name, predicted in predictions.items():
         wrong = predicted != pair_observable_flips
         disagree = predicted != reference
-        # Collapse these selections to boolean-mask indexing when #482 covers Array reads.
-        wrong_weights = asarray(
-            [weight for weight, selected in zip(weights, wrong, strict=True) if selected],
-            dtype=dtypes.float64,
-        )
-        disagree_weights = asarray(
-            [weight for weight, selected in zip(weights, disagree, strict=True) if selected],
-            dtype=dtypes.float64,
-        )
+        wrong_weights = weights[wrong]
+        disagree_weights = weights[disagree]
         wrong_mass = float(array_sum(wrong_weights))
         disagree_mass = float(array_sum(disagree_weights))
         summaries.append(

@@ -66,13 +66,16 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pecos import array, asarray, dtypes, linspace, random, zeros
+from pecos import sum as array_sum
+
 if TYPE_CHECKING:
     from types import ModuleType
 
-    import numpy as np
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
     from matplotlib.patches import Rectangle
+    from pecos import Array
 
 
 @dataclass(frozen=True)
@@ -411,21 +414,18 @@ def _percentile_interval(
 def _fit_summary_confidence_intervals(points: list[SweepPoint]) -> tuple[float, float, float, float]:
     """Bootstrap fit uncertainty for one ``(d, basis, p)`` point group."""
     ordered = sorted(points, key=lambda point: point.total_rounds)
-    fitted_per_round = _fit_per_round_rate(ordered)
-    fitted_projected = ler_over_rounds(fitted_per_round, ordered[0].distance)
 
-    try:
-        import numpy as np
-    except ImportError:  # pragma: no cover
-        return fitted_per_round, fitted_per_round, fitted_projected, fitted_projected
-
-    shot_counts = np.asarray([point.num_shots for point in ordered], dtype=np.int64)
-    observed_rates = np.asarray(
+    shot_counts = asarray([point.num_shots for point in ordered], dtype=dtypes.int64)
+    observed_rates = asarray(
         [min(max(point.logical_error_rate, 0.0), 1.0) for point in ordered],
-        dtype=np.float64,
+        dtype=dtypes.float64,
     )
-    rng = np.random.default_rng(_stable_bootstrap_seed(ordered))
-    bootstrap_counts = rng.binomial(n=shot_counts, p=observed_rates, size=(_FIT_BOOTSTRAP_SAMPLES, len(ordered)))
+    random.seed(_stable_bootstrap_seed(ordered))
+    bootstrap_counts = random.binomial(
+        n=shot_counts,
+        p=observed_rates,
+        size=(_FIT_BOOTSTRAP_SAMPLES, len(ordered)),
+    )
 
     bootstrap_per_round: list[float] = []
     bootstrap_projected: list[float] = []
@@ -499,12 +499,10 @@ def _duration_rounds_for_distance(
 
 def _reshape_round_values(flat_values: list[int], num_rounds: int, width: int, label: str) -> list[Any]:
     """Reshape a flattened per-shot result register into round slices."""
-    import numpy as np
-
     if width <= 0:
         return []
     expected = num_rounds * width
-    values = np.asarray(flat_values, dtype=np.uint8)
+    values = asarray(flat_values, dtype=dtypes.uint8)
     if values.size != expected:
         msg = (
             f"Register {label!r} has {values.size} bits for one shot, "
@@ -591,41 +589,39 @@ def _decode_one_shot(dem_decoder: Any, events_flat: list[int]) -> object:
 
 def _decode_all_shots(
     dem_decoder: object,
-    detection_events: np.ndarray,
-    observable_flips: np.ndarray,
+    detection_events: Array,
+    observable_flips: Array,
     num_shots: int,
 ) -> int:
     """Decode all shots using the fastest available path.
 
-    For PyMatching: uses decode_batch with flattened numpy array (no Python loop).
+    For PyMatching: uses decode_batch with a flattened native array (no Python loop).
     For Tesseract: uses decode_batch with parallel rayon workers.
     For others: falls back to per-shot Python loop.
 
     Returns the number of logical errors.
     """
-    import numpy as np
-
     true_flips = (
-        observable_flips[:, 0].astype(np.uint8)
+        observable_flips[:, 0].astype(dtypes.uint8)
         if observable_flips.shape[1] > 0
-        else np.zeros(num_shots, dtype=np.uint8)
+        else zeros(num_shots, dtype=dtypes.uint8)
     )
 
     # PyMatching batch: takes flattened (num_shots * num_detectors) u8 array
     from pecos.decoders import PyMatchingDecoder
 
     if isinstance(dem_decoder, PyMatchingDecoder):
-        flat = detection_events.astype(np.uint8).flatten().tolist()
+        flat = detection_events.astype(dtypes.uint8).flatten().tolist()
         predictions = dem_decoder.decode_batch(flat, num_shots)
         # Each prediction is a list of observables; check index 0
-        predicted = np.array([p[0] if p else 0 for p in predictions], dtype=np.uint8)
-        return int(np.sum(predicted != true_flips))
+        predicted = array([p[0] if p else 0 for p in predictions], dtype=dtypes.uint8)
+        return int(array_sum(predicted != true_flips))
 
     # Tesseract batch: takes list of syndromes, parallel rayon
     from pecos.decoders import TesseractDecoder
 
     if isinstance(dem_decoder, TesseractDecoder):
-        syndromes = [detection_events[i].astype(np.uint8).tolist() for i in range(num_shots)]
+        syndromes = [detection_events[i].astype(dtypes.uint8).tolist() for i in range(num_shots)]
         batch_results = dem_decoder.decode_batch(syndromes)
         num_errors = 0
         for shot_idx, result in enumerate(batch_results):
@@ -636,7 +632,7 @@ def _decode_all_shots(
     # Fallback: per-shot loop (DemAwareDecoder, etc.)
     num_errors = 0
     for shot_idx in range(num_shots):
-        events_flat = detection_events[shot_idx].astype(np.uint8).tolist()
+        events_flat = detection_events[shot_idx].astype(dtypes.uint8).tolist()
         decode_result = _decode_one_shot(dem_decoder, events_flat)
         predicted_flip = _predicted_observable_flip(decode_result)
         num_errors += int(predicted_flip != true_flips[shot_idx])
@@ -783,7 +779,6 @@ def _sim_reference_trajectory(
     sim_noise_model: str,
 ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...], tuple[int, ...], tuple[int, ...]]:
     """Cache a noiseless gate-level trajectory used as a decoding reference."""
-    import numpy as np
     from pecos.qec.surface import SurfacePatch
 
     patch = SurfacePatch.create(distance=distance)
@@ -811,9 +806,9 @@ def _sim_reference_trajectory(
         len(patch.geometry.z_stabilizers),
         "synz",
     )
-    final = np.asarray(_result_rows_for_key(result_dict, "final")[0], dtype=np.uint8)
+    final = asarray(_result_rows_for_key(result_dict, "final")[0], dtype=dtypes.uint8)
     init_key = "init_synx" if basis.upper() == "Z" else "init_synz"
-    init = np.asarray(_result_rows_for_key(result_dict, init_key)[0], dtype=np.uint8)
+    init = asarray(_result_rows_for_key(result_dict, init_key)[0], dtype=dtypes.uint8)
 
     return (
         tuple(tuple(int(v) for v in row) for row in synx_rows),
@@ -1160,8 +1155,6 @@ def _run_memory_point(
     sim_noise_model: str = "depolarizing",
 ) -> SweepPoint:
     """Run one surface-memory point and decode it with native PECOS DEMs."""
-    import numpy as np
-
     basis = basis.upper()
     decoder_runtime = _decoder_runtime(
         distance,
@@ -1195,10 +1188,10 @@ def _run_memory_point(
             interaction_basis,
             sim_noise_model,
         )
-        ref_synx_list = [np.asarray(row, dtype=np.uint8) for row in ref_synx_rows]
-        ref_synz_list = [np.asarray(row, dtype=np.uint8) for row in ref_synz_rows]
-        ref_final = np.asarray(ref_final_row, dtype=np.uint8)
-        ref_init = np.asarray(ref_init_row, dtype=np.uint8)
+        ref_synx_list = [asarray(row, dtype=dtypes.uint8) for row in ref_synx_rows]
+        ref_synz_list = [asarray(row, dtype=dtypes.uint8) for row in ref_synz_rows]
+        ref_final = asarray(ref_final_row, dtype=dtypes.uint8)
+        ref_init = asarray(ref_init_row, dtype=dtypes.uint8)
         result_dict = _run_gate_backend_result_dict(
             sample_backend=sample_backend,
             distance=distance,
@@ -1238,8 +1231,8 @@ def _run_memory_point(
         for shot_idx in range(num_shots):
             synx_list = _reshape_round_values(synx_rows[shot_idx], total_rounds, num_x_stab, "synx")
             synz_list = _reshape_round_values(synz_rows[shot_idx], total_rounds, num_z_stab, "synz")
-            final = np.asarray(final_rows[shot_idx], dtype=np.uint8)
-            init = np.asarray(init_rows[shot_idx], dtype=np.uint8)
+            final = asarray(final_rows[shot_idx], dtype=dtypes.uint8)
+            init = asarray(init_rows[shot_idx], dtype=dtypes.uint8)
 
             if final.size != patch.geometry.num_data:
                 msg = f"Register 'final' has {final.size} bits for one shot, expected {patch.geometry.num_data}"
@@ -1252,16 +1245,17 @@ def _run_memory_point(
 
             # Decode relative to the noiseless gate-level baseline so the native
             # DEM sees deviations from the actual circuit trajectory.
+            # Array lacks elementwise XOR (#458); inequality is XOR for these binary bits.
             synx_list = [
-                np.asarray(synx, dtype=np.uint8) ^ ref_synx
+                asarray(synx, dtype=dtypes.uint8) != ref_synx
                 for synx, ref_synx in zip(synx_list, ref_synx_list, strict=True)
             ]
             synz_list = [
-                np.asarray(synz, dtype=np.uint8) ^ ref_synz
+                asarray(synz, dtype=dtypes.uint8) != ref_synz
                 for synz, ref_synz in zip(synz_list, ref_synz_list, strict=True)
             ]
-            final = final ^ ref_final
-            init = init ^ ref_init
+            final = final != ref_final
+            init = init != ref_init
 
             raw_parity = int(sum(int(final[q]) for q in logical_qubits) % 2)
             if num_raw_errors is None:
@@ -4405,9 +4399,8 @@ def main() -> int:
             p_low = median_th * (1.0 - half_w)
             p_high = median_th * (1.0 + half_w)
             n_pts = args.refine_points
-            import numpy as np
 
-            refined_rates = sorted({float(f"{r:.6g}") for r in np.linspace(p_low, p_high, n_pts)})
+            refined_rates = sorted({float(f"{r:.6g}") for r in linspace(p_low, p_high, n_pts)})
             # Exclude rates already in the initial sweep
             refined_rates = [r for r in refined_rates if r not in error_rates and r > 0]
 

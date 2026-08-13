@@ -489,6 +489,25 @@ class TestLoopCircuits:
 class TestUnsupportedConditionalCircuits:
     """Tests for CFG forms deliberately rejected until recursive lowering exists."""
 
+    def test_sequential_conditional_circuit_is_rejected(self) -> None:
+        """Sequential conditionals cannot be lowered by the flat converter."""
+
+        @guppy
+        def sequential_conditionals() -> bool:
+            q = qubit()
+            r0 = measure(qubit()).read()
+            if r0:
+                x(q)
+            z(q)
+            r1 = measure(qubit()).read()
+            if r1:
+                y(q)
+            h(q)
+            return measure(q).read()
+
+        with pytest.raises(UnsupportedHugrStructureError, match="sequential or nested conditionals"):
+            guppy_to_ast(sequential_conditionals)
+
     def test_nested_conditional_circuit_is_rejected(self) -> None:
         """Nested conditionals cannot be lowered safely by the flat converter."""
 

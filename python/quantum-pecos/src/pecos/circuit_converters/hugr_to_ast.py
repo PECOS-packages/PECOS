@@ -422,7 +422,11 @@ class HugrToAstConverter:
         if cfg.loops and conditional_headers:
             msg = "HUGR CFG combines a loop with a conditional; recursive lowering is not supported"
             raise UnsupportedHugrStructureError(msg)
-        if len(cfg.conditional_blocks) > 1:
+        # ``_identify_conditional_pattern`` intentionally recognizes only the
+        # entry conditional that the flat lowering can emit.  Count every
+        # conditional header here instead, otherwise a second conditional in
+        # the continuation is silently omitted from the AST.
+        if len(conditional_headers) > 1:
             msg = "HUGR CFG has sequential or nested conditionals; recursive lowering is not supported"
             raise UnsupportedHugrStructureError(msg)
 

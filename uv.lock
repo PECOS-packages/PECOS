@@ -2572,6 +2572,7 @@ dev = [
     { name = "mkdocstrings", extra = ["python"] },
     { name = "patchelf", marker = "sys_platform != 'win32' or (extra == 'extra-13-quantum-pecos-cuda12' and extra == 'extra-13-quantum-pecos-cuda13') or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
     { name = "pre-commit" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "setuptools" },
 ]
@@ -2613,6 +2614,7 @@ dev = [
     { name = "mkdocstrings", extras = ["python"] },
     { name = "patchelf", marker = "sys_platform != 'win32'" },
     { name = "pre-commit" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff" },
     { name = "setuptools", specifier = ">=82.0.1" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1.0" },

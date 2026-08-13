@@ -18,18 +18,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 MINIMUM_PYTHON = "3.12"
 EXPECTED_PYTHON_CLASSIFIERS = {"3", "3.12", "3.13", "3.14"}
-ABI3_MANIFESTS = (
-    REPO_ROOT / "python/pecos-rslib/Cargo.toml",
-    REPO_ROOT / "python/pecos-rslib-llvm/Cargo.toml",
-    REPO_ROOT / "python/pecos-rslib-cuda/Cargo.toml",
-    REPO_ROOT / "python/pecos-rslib-exp/Cargo.toml",
-    REPO_ROOT / "exp/zluppy/Cargo.toml",
-)
 RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/python-release.yml"
 
 
@@ -226,26 +221,75 @@ def check_python_floor(path: Path, data: dict[str, Any], errors: list[str]) -> N
         )
 
 
+def toml_strings(value: Any) -> list[str]:
+    """Return string values recursively from parsed TOML data."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [item for entry in value for item in toml_strings(entry)]
+    if isinstance(value, dict):
+        return [item for entry in value.values() for item in toml_strings(entry)]
+    return []
+
+
 def check_release_python_abi(errors: list[str]) -> None:
     """Keep ABI3, cibuildwheel, and the release smoke test on one floor."""
     expected_abi3 = f"abi3-py{MINIMUM_PYTHON.replace('.', '')}"
-    for manifest in ABI3_MANIFESTS:
-        abi3_features = set(re.findall(r"abi3-py\d+", manifest.read_text()))
+
+    for manifest in sorted(REPO_ROOT.rglob("Cargo.toml")):
+        if "target" in manifest.parts:
+            continue
+        data = load_toml(manifest)
+        abi3_features = {
+            feature for value in toml_strings(data) for feature in re.findall(r"(?:^|/)(abi3-py\d+)", value)
+        }
+        if not abi3_features:
+            continue
         if abi3_features != {expected_abi3}:
             fail(
                 errors,
                 f"{rel(manifest)}: ABI3 feature must be exactly {expected_abi3!r}, found {sorted(abi3_features)!r}",
             )
 
-    workflow = RELEASE_WORKFLOW.read_text()
-    cibw_target = f'CIBW_BUILD: "cp{MINIMUM_PYTHON.replace(".", "")}-*"'
-    if workflow.count(cibw_target) != 2:
-        fail(errors, f"{rel(RELEASE_WORKFLOW)}: expected two {cibw_target!r} release-wheel targets")
-
     python_abi = MINIMUM_PYTHON.replace(".", "")
-    smoke_interpreter = f"/opt/python/cp{python_abi}-cp{python_abi}/bin/python"
-    if workflow.count(smoke_interpreter) != 4:
-        fail(errors, f"{rel(RELEASE_WORKFLOW)}: expected four {smoke_interpreter!r} smoke commands")
+    expected_cibw_target = f"cp{python_abi}-*"
+    expected_smoke_interpreter = f"/opt/python/cp{python_abi}-cp{python_abi}/bin/python"
+    workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text())
+    jobs = workflow.get("jobs", {}) if isinstance(workflow, dict) else {}
+    if not isinstance(jobs, dict):
+        fail(errors, f"{rel(RELEASE_WORKFLOW)}: missing jobs mapping")
+        return
+
+    cibw_targets: list[str] = []
+    smoke_interpreters: list[str] = []
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        for step in job.get("steps", []):
+            if not isinstance(step, dict):
+                continue
+            env = step.get("env", {})
+            if isinstance(env, dict) and isinstance(env.get("CIBW_BUILD"), str):
+                cibw_targets.append(env["CIBW_BUILD"])
+            run = step.get("run")
+            if isinstance(run, str):
+                smoke_interpreters.extend(re.findall(r"/opt/python/cp\d+-cp\d+/bin/python", run))
+
+    if not cibw_targets:
+        fail(errors, f"{rel(RELEASE_WORKFLOW)}: no CIBW_BUILD release-wheel targets found")
+    for target in cibw_targets:
+        if target != expected_cibw_target:
+            fail(errors, f"{rel(RELEASE_WORKFLOW)}: CIBW_BUILD must be {expected_cibw_target!r}, found {target!r}")
+
+    if not smoke_interpreters:
+        fail(errors, f"{rel(RELEASE_WORKFLOW)}: no manylinux smoke interpreter found")
+    for interpreter in smoke_interpreters:
+        if interpreter != expected_smoke_interpreter:
+            fail(
+                errors,
+                f"{rel(RELEASE_WORKFLOW)}: manylinux smoke interpreter must be "
+                f"{expected_smoke_interpreter!r}, found {interpreter!r}",
+            )
 
 
 def main() -> int:

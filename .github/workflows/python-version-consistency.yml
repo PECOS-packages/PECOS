@@ -46,5 +46,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version-file: ".github/uv.toml"
+
       - name: Check Python workspace metadata
-        run: python scripts/check_python_workspace.py
+        run: uv run --frozen python scripts/check_python_workspace.py

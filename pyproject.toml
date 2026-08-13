@@ -45,6 +45,7 @@ dev = [
   "mkdocs-material",                        # Material theme for MkDocs
   "mkdocstrings[python]",                   # Code documentation extraction
   "markdown-exec[ansi]",                    # Executable markdown blocks
+  "pyyaml>=6.0.3",
 ]
 test = [ # exact pins so workspace tests run against a reproducible environment
   # Note: sub-package test extras (pecos-rslib, selene plugins) intentionally

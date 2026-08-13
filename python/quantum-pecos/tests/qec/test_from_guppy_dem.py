@@ -2172,8 +2172,7 @@ def test_surface_result_tags_reject_unbound_final_measurement_slots() -> None:
     patch = SurfacePatch.create(distance=3)
     abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis="Z")
     result_traces = [
-        {"name": f"sx{index}:init:meas:{index}", "values": [False], "result_ids": [index]}
-        for index in range(4)
+        {"name": f"sx{index}:init:meas:{index}", "values": [False], "result_ids": [index]} for index in range(4)
     ]
     result_traces.extend(
         [

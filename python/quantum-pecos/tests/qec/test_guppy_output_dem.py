@@ -68,6 +68,18 @@ def _direct_array_outputs() -> None:
     output("logical_x", array(m1, m2))
 
 
+@guppy
+def _scalar_measurements_emitted_as_array() -> None:
+    """The public scalar-array output form that currently reverses IDs."""
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
+    m2 = measure(qubit()).read()
+    output("physical", array(m0, m1, m2))
+    output("events", m0 ^ m1)
+    output("logical_z", m0)
+    output("logical_x", array(m1, m2))
+
+
 def test_infers_computed_detector_and_observable_parities_and_builds_dem() -> None:
     inferred = infer_guppy_dem_annotations(
         _computed_parity_outputs,
@@ -163,6 +175,22 @@ def test_direct_array_outputs_reject_permuted_runtime_result_ids(monkeypatch: py
     with pytest.raises(ValueError, match="certified source order"):
         infer_guppy_dem_annotations(
             _direct_array_outputs,
+            num_qubits=3,
+            raw_tag="physical",
+            detector_tag="events",
+            observable_tags=("logical_z", "logical_x"),
+            probe_shots=32,
+            provenance_shots=16,
+            validation_rows=8,
+            seed=19,
+        )
+
+
+def test_scalar_measurements_emitted_as_array_reject_reversed_runtime_ids() -> None:
+    """Keep the known Guppy-v1 array provenance reversal fail-loud."""
+    with pytest.raises(ValueError, match="certified source order"):
+        infer_guppy_dem_annotations(
+            _scalar_measurements_emitted_as_array,
             num_qubits=3,
             raw_tag="physical",
             detector_tag="events",

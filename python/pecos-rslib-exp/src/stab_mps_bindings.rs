@@ -305,6 +305,13 @@ impl PyStabMps {
         self.inner.sample_bitstring(num_shots)
     }
 
+    /// Prefix-sharing perfect sampling: shares each distinct measurement-prefix
+    /// projection across all shots taking that branch. Output is in
+    /// lexicographic tree order, not per-shot order.
+    fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
+        self.inner.sample_bitstrings(num_shots)
+    }
+
     // ---- Gate dispatch (matches pecos-rslib pattern) ----
 
     #[pyo3(signature = (symbol, location, params=None))]

@@ -98,6 +98,105 @@ class TestRandomComparison:
         assert p_value > 0.01, f"Chi-square test failed: p={p_value}, statistic={chi2_statistic}"
 
 
+class TestBinomialComparison:
+    """Test binomial draws against the distributional and structural contract."""
+
+    @pytest.mark.parametrize(
+        ("n", "p", "size"),
+        [
+            (8, 0.25, None),
+            ([2, 5, 9], 0.4, None),
+            (7, [0.1, 0.5, 0.9], None),
+            ([2, 5, 9], [0.1, 0.5, 0.9], None),
+            (np.array([[2], [5]]), np.array([0.1, 0.5, 0.9]), None),
+            ([2, 5, 9], 0.4, (4, 3)),
+            ([2, 5, 9], [0.1, 0.5, 0.9], (100, 3)),
+            (8, 0.25, (2, 3)),
+        ],
+    )
+    def test_binomial_shape_matches_numpy(self, n: object, p: object, size: object) -> None:
+        """Output shape follows NumPy for scalar, broadcast, and explicit-size forms."""
+        pecos_values = pc.random.binomial(n, p, size=size)
+        numpy_values = np.random.binomial(n, p, size=size)
+
+        assert isinstance(pecos_values, pc.Array)
+        assert pecos_values.shape == np.shape(numpy_values)
+
+    @pytest.mark.parametrize("seed", [3, 7, 19, 41, 73])
+    def test_binomial_moments(self, seed: int) -> None:
+        """Pinned samples match the theoretical mean and variance at wide tolerances."""
+        sample_count = 100_000
+        n = 40
+        p = 0.3
+        expected_mean = n * p
+        expected_variance = n * p * (1 - p)
+        mean_tolerance = 6 * np.sqrt(expected_variance / sample_count)
+        variance_tolerance = 0.03 * expected_variance
+
+        pc.random.seed(seed)
+        values = np.asarray(pc.random.binomial(n, p, size=sample_count))
+
+        assert abs(values.mean() - expected_mean) < mean_tolerance
+        assert abs(values.var() - expected_variance) < variance_tolerance
+
+    def test_binomial_degenerate_cases(self) -> None:
+        """Degenerate distributions are exact because no randomness is involved."""
+        np.testing.assert_array_equal(pc.random.binomial([2, 5, 9], 0, size=(20, 3)), 0)
+        np.testing.assert_array_equal(
+            pc.random.binomial([2, 5, 9], 1, size=(20, 3)),
+            np.broadcast_to([2, 5, 9], (20, 3)),
+        )
+        np.testing.assert_array_equal(pc.random.binomial(0, [0.1, 0.5, 0.9]), 0)
+
+    def test_binomial_scalar_parameters_are_bounded(self) -> None:
+        """A large scalar-parameter sample stays in the distribution support."""
+        values = np.asarray(pc.random.binomial(23, 0.37, size=100_000))
+        assert np.all(values >= 0)
+        assert np.all(values <= 23)
+
+    def test_binomial_broadcast_parameters_are_bounded(self) -> None:
+        """Every column of a broadcast sample is bounded by its own n."""
+        n = np.array([1, 8, 31])
+        values = np.asarray(pc.random.binomial(n, [0.2, 0.5, 0.8], size=(50_000, 3)))
+        assert np.all(values >= 0)
+        assert np.all(values <= n)
+
+    def test_binomial_seed_is_reproducible_and_distinguishes_seeds(self) -> None:
+        """binomial uses the RNG state controlled by pecos.random.seed."""
+        pc.random.seed(1_234)
+        first = np.asarray(pc.random.binomial(30, 0.4, size=1_000)).copy()
+        pc.random.seed(1_234)
+        repeated = np.asarray(pc.random.binomial(30, 0.4, size=1_000)).copy()
+        pc.random.seed(1_235)
+        different = np.asarray(pc.random.binomial(30, 0.4, size=1_000)).copy()
+
+        np.testing.assert_array_equal(first, repeated)
+        assert not np.array_equal(first, different)
+
+    @pytest.mark.parametrize("p", [-0.1, 1.1, np.nan])
+    def test_binomial_rejects_invalid_probability(self, p: float) -> None:
+        """Probabilities outside [0, 1], including NaN, raise with the value."""
+        with pytest.raises(ValueError, match=r"p value .* must be in \[0, 1\]"):
+            pc.random.binomial(10, p)
+
+    @pytest.mark.parametrize("n", [-1, [2, -3, 4]])
+    def test_binomial_rejects_negative_n(self, n: object) -> None:
+        """Negative trial counts raise with the offending value."""
+        with pytest.raises(ValueError, match=r"n value -[13] must be nonnegative"):
+            pc.random.binomial(n, 0.5)
+
+    @pytest.mark.parametrize("n", [2.5, [2, 3.5, 4]])
+    def test_binomial_rejects_noninteger_n(self, n: object) -> None:
+        """Noninteger trial counts raise rather than truncate."""
+        with pytest.raises(TypeError, match=r"(2\.5|3\.5|\[2, 3\.5, 4\]).*integer"):
+            pc.random.binomial(n, 0.5)
+
+    def test_binomial_rejects_incompatible_size(self) -> None:
+        """An explicit size must be broadcast-compatible with n and p."""
+        with pytest.raises(ValueError, match=r"size value \[4, 1\].*shape \[2\]"):
+            pc.random.binomial([4, 8], [0.2, 0.8], size=(4, 1))
+
+
 class TestRandintComparison:
     """Test randint() function against numpy.random.randint()."""
 

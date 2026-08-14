@@ -172,10 +172,8 @@ assert flat == [1, 0, 0, 1]
 - `fill()` does not coerce values by truthiness or parse numeric strings. Convert values
   explicitly instead of relying on behavior such as a non-empty string becoming `True`.
 
-Three more migration boundaries currently need local workarounds:
+Two more migration boundaries currently need local workarounds:
 
-- Advanced indexed assignment and boolean-mask reads are not available yet (#482). Use scalar
-  assignment or explicit selection locally, and collapse the workaround when indexed access lands.
 - Elementwise `Array ^ Array` is not available yet (#458). For arrays already known to contain only
   binary values, elementwise inequality has the same result; do not use that substitution for general integers.
 - Spell NumPy's `dtype=float` as `dtype=dtypes.float64`, especially with `asarray()`, to preserve
@@ -191,6 +189,20 @@ predicted = array([1, 0, 1], dtype=dtypes.uint8)
 expected = array([1, 1, 1], dtype=dtypes.uint8)
 logical_errors = int(array_sum(predicted != expected))
 assert logical_errors == 1
+```
+
+Seed `pecos.random` immediately before a reproducible draw. Its stream deliberately differs from
+NumPy's for the same seed, so migrate statistical tests by re-baselining pinned samples and retaining
+distributional invariants instead of asserting cross-library sample equality:
+
+```python
+from pecos import random
+
+random.seed(458)
+first = random.binomial(20, 0.25, size=8)
+random.seed(458)
+repeated = random.binomial(20, 0.25, size=8)
+assert first.tolist() == repeated.tolist()
 ```
 
 ## Dependency and Security Checks

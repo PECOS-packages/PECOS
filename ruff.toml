@@ -120,7 +120,6 @@ ignore = [
 # Do not add to it: new non-test NumPy use is the thing the ban exists to stop.
 # (decode.py's TID251 lives in its existing entry further down, to avoid a duplicate key.)
 "python/quantum-pecos/src/pecos/qec/reliable_observables.py" = ["TID251"]
-"examples/surface/native_dem_threshold_sweep.py" = ["TID251"]
 "examples/measurement_throughput_benchmark.ipynb" = ["TID251"]
 "examples/surface_code_experiments.ipynb" = ["TID251"]
 "examples/surface_code_noisy_decoding.ipynb" = ["TID251"]

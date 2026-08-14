@@ -16,7 +16,7 @@ use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StabVec};
 use pecos_stab_tn::stab_mps::StabMps;
-use pecos_stab_tn::stab_mps::mast::Mast;
+use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
 
 /// Check that two state vectors match up to global phase.
 fn assert_states_match(sv_a: &[Complex64], sv_b: &[Complex64], label: &str) {
@@ -1943,6 +1943,146 @@ fn test_measure_apply_measure_3qubit() {
 // ============================================================================
 // MAST vs STN measurement comparison
 // ============================================================================
+
+#[derive(Clone, Copy)]
+enum SeededCliffordTGate {
+    H(usize),
+    Sz(usize),
+    Cx(usize, usize),
+    T(usize),
+}
+
+fn next_seeded_gate_choice(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
+
+fn seeded_clifford_t_circuit(
+    num_qubits: usize,
+    t_count: usize,
+    seed: u64,
+) -> Vec<SeededCliffordTGate> {
+    let mut state = seed.wrapping_add(1);
+    let mut gates = (0..num_qubits)
+        .filter(|_| next_seeded_gate_choice(&mut state) & 1 != 0)
+        .map(SeededCliffordTGate::H)
+        .collect::<Vec<_>>();
+    if gates.is_empty() {
+        gates.push(SeededCliffordTGate::H(0));
+    }
+    for _ in 0..t_count {
+        for _ in 0..3 {
+            let gate_type = next_seeded_gate_choice(&mut state) % 2;
+            let q0 = (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
+            if gate_type == 0 {
+                gates.push(SeededCliffordTGate::Sz(q0));
+            } else {
+                let q1 = loop {
+                    let candidate =
+                        (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
+                    if candidate != q0 {
+                        break candidate;
+                    }
+                };
+                gates.push(SeededCliffordTGate::Cx(q0, q1));
+            }
+        }
+        let target = (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
+        gates.push(SeededCliffordTGate::T(target));
+    }
+    gates
+}
+
+fn apply_seeded_clifford_t_to_stn(stn: &mut StabMps, gates: &[SeededCliffordTGate]) {
+    let t = Angle64::QUARTER_TURN / 2u64;
+    for &gate in gates {
+        match gate {
+            SeededCliffordTGate::H(q) => stn.h(&[QubitId(q)]),
+            SeededCliffordTGate::Sz(q) => stn.sz(&[QubitId(q)]),
+            SeededCliffordTGate::Cx(control, target) => {
+                stn.cx(&[(QubitId(control), QubitId(target))])
+            }
+            SeededCliffordTGate::T(q) => stn.rz(t, &[QubitId(q)]),
+        };
+    }
+}
+
+fn apply_seeded_clifford_t_to_mast(mast: &mut Mast, gates: &[SeededCliffordTGate]) {
+    let t = Angle64::QUARTER_TURN / 2u64;
+    for &gate in gates {
+        match gate {
+            SeededCliffordTGate::H(q) => mast.h(&[QubitId(q)]),
+            SeededCliffordTGate::Sz(q) => mast.sz(&[QubitId(q)]),
+            SeededCliffordTGate::Cx(control, target) => {
+                mast.cx(&[(QubitId(control), QubitId(target))])
+            }
+            SeededCliffordTGate::T(q) => mast.rz(t, &[QubitId(q)]),
+        };
+    }
+}
+
+#[test]
+fn test_mast_min_span_matches_stn_exact_random_probabilities() {
+    // Mirrors `test_mast_matches_stn_exact_probabilities_2q`: compare each
+    // sampled outcome with `prob_bitstring` under the same five-sigma bound.
+    let num_trials = 5000usize;
+    for num_qubits in 3..=5 {
+        for t_count in 3..=6 {
+            let circuit_seed = 10_000 + (num_qubits * 100 + t_count) as u64;
+            let gates = seeded_clifford_t_circuit(num_qubits, t_count, circuit_seed);
+            let num_outcomes = 1usize << num_qubits;
+
+            let mut stn = StabMps::with_seed(num_qubits, circuit_seed);
+            apply_seeded_clifford_t_to_stn(&mut stn, &gates);
+            stn.flush();
+            let exact_probs = (0..num_outcomes)
+                .map(|outcome| {
+                    let bits = (0..num_qubits)
+                        .rev()
+                        .map(|q| ((outcome >> q) & 1) != 0)
+                        .collect::<Vec<_>>();
+                    stn.prob_bitstring(&bits)
+                })
+                .collect::<Vec<_>>();
+            let total: f64 = exact_probs.iter().sum();
+            assert!(
+                (total - 1.0).abs() < 1e-8,
+                "n={num_qubits} t={t_count}: exact probabilities sum to {total}"
+            );
+
+            let mut counts = vec![0u32; num_outcomes];
+            let measured_qubits = (0..num_qubits).map(QubitId).collect::<Vec<_>>();
+            for trial in 0..num_trials {
+                let simulator_seed = circuit_seed.wrapping_mul(10_000) + trial as u64;
+                let mut mast = Mast::with_seed(num_qubits, t_count, simulator_seed)
+                    .projection_order(ProjectionOrder::MinSpan);
+                apply_seeded_clifford_t_to_mast(&mut mast, &gates);
+                let outcome = mast
+                    .mz(&measured_qubits)
+                    .iter()
+                    .enumerate()
+                    .fold(0usize, |value, (q, result)| {
+                        value | (usize::from(result.outcome) << q)
+                    });
+                counts[outcome] += 1;
+            }
+
+            for outcome in 0..num_outcomes {
+                let exact = exact_probs[outcome];
+                let sampled = f64::from(counts[outcome]) / num_trials as f64;
+                let sigma = (exact * (1.0 - exact) / num_trials as f64).sqrt().max(1e-6);
+                let deviation = (exact - sampled).abs() / sigma;
+                assert!(
+                    deviation < 5.0,
+                    "n={num_qubits} t={t_count} outcome={outcome}: exact={exact:.4} \
+                     MinSpan={sampled:.4}, deviation={deviation:.1}σ"
+                );
+            }
+        }
+    }
+}
 
 #[test]
 fn test_mast_matches_stn_exact_probabilities_2q() {

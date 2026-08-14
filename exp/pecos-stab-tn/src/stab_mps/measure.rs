@@ -425,6 +425,34 @@ pub fn conjugate_pauli_by_deferred_ops(
     }
 }
 
+/// Return the MPS-site support of the current conjugated observable `C† Z_q C`.
+///
+/// The support is derived from the same `decompose_z` result used by the
+/// measurement protocol. When lazy measurement has accumulated a virtual
+/// Clifford frame, the decomposition is conjugated through that frame before
+/// its X and Z sites are combined.
+#[must_use]
+pub(crate) fn conjugated_z_support(
+    tableau: &SparseStabY,
+    q_idx: usize,
+    deferred: &[DeferredOp],
+) -> Vec<usize> {
+    let (mut flip_sites, mut sign_sites, mut phase) =
+        match decompose_z(tableau.stabs(), tableau.destabs(), q_idx) {
+            ZDecomposition::Stabilizer { phase, sign_sites } => (Vec::new(), sign_sites, phase),
+            ZDecomposition::DestabilizerFlip {
+                flip_sites,
+                phase,
+                sign_sites,
+            } => (flip_sites, sign_sites, phase),
+        };
+    conjugate_pauli_by_deferred_ops(&mut flip_sites, &mut sign_sites, &mut phase, deferred);
+    flip_sites.extend(sign_sites);
+    flip_sites.sort_unstable();
+    flip_sites.dedup();
+    flip_sites
+}
+
 /// Backwards-compatible CNOT-only conjugation wrapper. CNOT conjugation
 /// doesn't touch phase, so this discards the phase output.
 pub fn conjugate_pauli_by_deferred(

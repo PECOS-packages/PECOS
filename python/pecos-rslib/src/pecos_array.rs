@@ -33,7 +33,7 @@
 #![allow(clippy::unnecessary_wraps)] // PyResult is required for Python error handling
 #![allow(clippy::needless_pass_by_value)] // PyO3 requires passing Bound by value
 
-use ndarray::{ArrayD, Axis, Dimension, Ix2, IxDyn, Slice};
+use ndarray::{ArrayD, ArrayViewD, Axis, Dimension, Ix2, IxDyn, Slice};
 use num_complex::{Complex32, Complex64};
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
@@ -1255,30 +1255,37 @@ impl Array {
 
     /// Convert the array to nested Python lists with native scalar values.
     fn tolist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        fn build_nested(
-            array: &Array,
-            py: Python<'_>,
-            indices: &mut Vec<usize>,
-            axis: usize,
-        ) -> PyResult<Py<PyAny>> {
-            if axis == array.data.ndim() {
-                if indices.is_empty() {
-                    return array.extract_scalar(py);
-                }
-                let index = PyTuple::new(py, indices.iter().copied())?;
-                return array.__getitem__(index.as_any());
-            }
-
-            let mut items = Vec::with_capacity(array.data.shape()[axis]);
-            for index in 0..array.data.shape()[axis] {
-                indices.push(index);
-                items.push(build_nested(array, py, indices, axis + 1)?);
-                indices.pop();
-            }
-            Ok(PyList::new(py, items)?.into_any().unbind())
+        macro_rules! native_to_list {
+            ($array:expr) => {
+                Self::array_view_to_list($array.view(), py, &|value| *value)
+            };
         }
 
-        build_nested(self, py, &mut Vec::new(), 0)
+        match &self.data {
+            ArrayData::Bool(array) => native_to_list!(array),
+            ArrayData::I8(array) => native_to_list!(array),
+            ArrayData::I16(array) => native_to_list!(array),
+            ArrayData::I32(array) => native_to_list!(array),
+            ArrayData::I64(array) => native_to_list!(array),
+            ArrayData::U8(array) => native_to_list!(array),
+            ArrayData::U16(array) => native_to_list!(array),
+            ArrayData::U32(array) => native_to_list!(array),
+            ArrayData::U64(array) => native_to_list!(array),
+            ArrayData::F32(array) => native_to_list!(array),
+            ArrayData::F64(array) => native_to_list!(array),
+            ArrayData::Complex64(array) => native_to_list!(array),
+            ArrayData::Complex128(array) => native_to_list!(array),
+            ArrayData::Pauli(array) => {
+                Self::array_view_to_object_list(array.view(), py, &|value, py| {
+                    Ok(Py::new(py, *value)?.into_any())
+                })
+            }
+            ArrayData::PauliString(array) => {
+                Self::array_view_to_object_list(array.view(), py, &|value, py| {
+                    Ok(Py::new(py, value.clone())?.into_any())
+                })
+            }
+        }
     }
 
     /// Implement __`array_interface`__ property for `NumPy` compatibility
@@ -2096,6 +2103,71 @@ impl Array {
 }
 
 impl Array {
+    fn array_view_to_list<'py, T, U, F>(
+        array: ArrayViewD<'_, T>,
+        py: Python<'py>,
+        scalar_to_native: &F,
+    ) -> PyResult<Py<PyAny>>
+    where
+        U: IntoPyObject<'py>,
+        F: Fn(&T) -> U,
+    {
+        if array.ndim() == 0 {
+            let value = array.first().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "zero-dimensional array unexpectedly contained no scalar",
+                )
+            })?;
+            return scalar_to_native(value).into_py_any(py);
+        }
+
+        if array.ndim() == 1 {
+            return Ok(PyList::new(py, array.iter().map(scalar_to_native))?
+                .into_any()
+                .unbind());
+        }
+
+        let items = array
+            .outer_iter()
+            .map(|subarray| Self::array_view_to_list(subarray.into_dyn(), py, scalar_to_native))
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(PyList::new(py, items)?.into_any().unbind())
+    }
+
+    fn array_view_to_object_list<T, F>(
+        array: ArrayViewD<'_, T>,
+        py: Python<'_>,
+        scalar_to_object: &F,
+    ) -> PyResult<Py<PyAny>>
+    where
+        F: Fn(&T, Python<'_>) -> PyResult<Py<PyAny>>,
+    {
+        if array.ndim() == 0 {
+            let value = array.first().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "zero-dimensional array unexpectedly contained no scalar",
+                )
+            })?;
+            return scalar_to_object(value, py);
+        }
+
+        if array.ndim() == 1 {
+            let items = array
+                .iter()
+                .map(|value| scalar_to_object(value, py))
+                .collect::<PyResult<Vec<_>>>()?;
+            return Ok(PyList::new(py, items)?.into_any().unbind());
+        }
+
+        let items = array
+            .outer_iter()
+            .map(|subarray| {
+                Self::array_view_to_object_list(subarray.into_dyn(), py, scalar_to_object)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(PyList::new(py, items)?.into_any().unbind())
+    }
+
     fn slice_indices(start: isize, stop: isize, step: isize) -> Vec<usize> {
         let mut indices = Vec::new();
         let mut index = start;

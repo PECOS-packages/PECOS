@@ -61,6 +61,8 @@ SCALAR_DTYPES = (
     ("complex128", np.complex128, 7.5 + 2.25j),
 )
 
+TOLIST_SHAPES = ((), (3,), (2, 3), (2, 2, 2), (0,), (2, 0), (2, 0, 3))
+
 INDEX_ASSIGNMENT_DTYPES = (
     ("bool", dtypes.bool, np.bool_, True, [True, False, True]),
     ("int8", dtypes.int8, np.int8, 7, [2, 3, 4]),
@@ -339,21 +341,58 @@ def test_bool_scalar_dtype_matches_numpy_boolean_behavior() -> None:
     assert num.bool_(1) is bool(np.bool_(1))
 
 
-def test_tolist_matches_numpy_for_native_scalar_types() -> None:
-    cases = (
-        ([1, 2], dtypes.int16, np.int16),
-        ([1, 255], dtypes.uint8, np.uint8),
-        ([1.25, 2.5], dtypes.float32, np.float32),
-        ([True, False], dtypes.bool, np.bool_),
-    )
-    for values, pecos_dtype, numpy_dtype in cases:
-        actual = num.array(values, dtype=pecos_dtype).tolist()
-        expected = np.array(values, dtype=numpy_dtype).tolist()
-        assert actual == expected
-        assert [type(value) for value in actual] == [type(value) for value in expected]
+@pytest.mark.parametrize(("name", "numpy_dtype", "_value"), SCALAR_DTYPES)
+@pytest.mark.parametrize("shape", TOLIST_SHAPES)
+def test_tolist_matches_numpy_for_every_numeric_dtype_and_shape(
+    name: str,
+    numpy_dtype: Any,
+    _value: Any,
+    shape: tuple[int, ...],
+) -> None:
+    size = int(np.prod(shape, dtype=np.int64)) if shape else 1
+    values = np.arange(size, dtype=np.float64)
+    if np.issubdtype(numpy_dtype, np.complexfloating):
+        values = values + (values + 0.5) * 1j
+    elif numpy_dtype is np.bool_:
+        values = values % 2 == 0
+    expected_array = np.asarray(values, dtype=numpy_dtype).reshape(shape)
 
-    values_2d = [[1, 2], [3, 4]]
-    assert num.array(values_2d, dtype=dtypes.uint16).tolist() == np.array(values_2d, dtype=np.uint16).tolist()
+    actual = Array(expected_array, dtype=getattr(dtypes, name)).tolist()
+    expected = expected_array.tolist()
+
+    def scalar_types(value: Any) -> Any:
+        if isinstance(value, list):
+            return [scalar_types(item) for item in value]
+        return type(value)
+
+    assert actual == expected
+    assert scalar_types(actual) == scalar_types(expected)
+
+
+@pytest.mark.parametrize("shape", TOLIST_SHAPES)
+@pytest.mark.parametrize("kind", ["pauli", "paulistring"])
+def test_tolist_preserves_custom_dtype_objects_and_shape(
+    shape: tuple[int, ...],
+    kind: str,
+) -> None:
+    size = int(np.prod(shape, dtype=np.int64)) if shape else 1
+    if kind == "pauli":
+        values = [Pauli.I, Pauli.X, Pauli.Y, Pauli.Z]
+        dtype = dtypes.pauli
+    else:
+        values = [
+            PauliString.from_dense_str("I"),
+            PauliString.from_dense_str("X"),
+            PauliString.from_dense_str("Y"),
+            PauliString.from_dense_str("Z"),
+        ]
+        dtype = dtypes.paulistring
+    flat_values = [values[index % len(values)] for index in range(size)]
+    expected = np.asarray(flat_values, dtype=object).reshape(shape).tolist()
+
+    actual = Array(flat_values, dtype=dtype).reshape(shape).tolist()
+
+    assert actual == expected
 
 
 @pytest.mark.parametrize(

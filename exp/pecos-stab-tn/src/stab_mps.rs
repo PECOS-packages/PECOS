@@ -96,6 +96,7 @@ impl StabMpsFlags {
     const LAZY_MEASURE: u8 = 1 << 1;
     const MERGE_RZ: u8 = 1 << 2;
     const PAULI_FRAME_TRACKING: u8 = 1 << 3;
+    const NUMERICAL_FLAG_REDETECTION: u8 = 1 << 4;
 
     /// Default flags: normalize enabled, everything else off.
     #[must_use]
@@ -142,6 +143,13 @@ impl StabMpsFlags {
     }
     pub fn set_pauli_frame_tracking(&mut self, v: bool) {
         self.set(Self::PAULI_FRAME_TRACKING, v);
+    }
+    #[must_use]
+    pub fn numerical_flag_redetection(self) -> bool {
+        self.get(Self::NUMERICAL_FLAG_REDETECTION)
+    }
+    pub fn set_numerical_flag_redetection(&mut self, v: bool) {
+        self.set(Self::NUMERICAL_FLAG_REDETECTION, v);
     }
 }
 
@@ -325,6 +333,16 @@ impl StabMpsBuilder {
         self
     }
 
+    /// Numerically recover missing exact-disentangling |0> flags at product sites.
+    ///
+    /// When enabled, a failed symbolic flag search checks candidate bond-one MPS
+    /// tensors using a fixed tolerance of 1e-12. Default: false.
+    #[must_use]
+    pub fn numerical_flag_redetection(mut self, enable: bool) -> Self {
+        self.flags.set_numerical_flag_redetection(enable);
+        self
+    }
+
     /// Preset for QEC-style workloads: stabilizer-code circuits with
     /// non-Clifford noise (T gates, small-angle RZ), syndrome extraction,
     /// magic-state distillation.
@@ -453,6 +471,8 @@ pub struct StabMpsStats {
     pub single_site: u64,
     /// Non-Cliffords that fired multi-site disent (tableau right-compose).
     pub multi_disent: u64,
+    /// Missing |0> flags recovered numerically at product sites.
+    pub numerical_redetect: u64,
     /// Non-Cliffords that fell through to the std multi-site CNOT cascade path.
     pub multi_std: u64,
     /// Non-Cliffords that hit the Stabilizer branch (scalar or diagonal).
@@ -1803,6 +1823,7 @@ impl StabMps {
             self.flags.normalize_after_gate(),
             &mut non_clifford::RzContext {
                 disent_flags: &mut self.disent_flags,
+                numerical_flag_redetection: self.flags.numerical_flag_redetection(),
                 gf2_matrix: &mut self.gf2_matrix,
                 stats: &mut self.stats,
             },

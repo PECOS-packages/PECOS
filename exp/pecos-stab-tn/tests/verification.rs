@@ -2199,6 +2199,122 @@ fn test_mast_matches_stn_exact_probabilities_3q() {
     }
 }
 
+#[test]
+fn test_numerical_flag_redetection_random_probabilities() {
+    // Mirrors `stab_mps::tests::test_prob_bitstring_random_stress`, with
+    // numerical flag re-detection enabled and reconstructed state-vector
+    // probabilities as the oracle.
+    let t = Angle64::QUARTER_TURN / 2u64;
+    let eighth_turn = Angle64::QUARTER_TURN / 4u64;
+
+    for seed in 0..30u64 {
+        let n = 4 + (seed % 3) as usize;
+        let mut stn = StabMps::builder(n)
+            .seed(seed)
+            .numerical_flag_redetection(true)
+            .build();
+        let mut rng_state = 0xDEAD_BEEF ^ seed.wrapping_mul(37);
+
+        for _ in 0..20 {
+            let op = next_seeded_gate_choice(&mut rng_state) % 5;
+            let q1 = (next_seeded_gate_choice(&mut rng_state) as usize) % n;
+            match op {
+                0 => {
+                    stn.h(&[QubitId(q1)]);
+                }
+                1 => {
+                    stn.sz(&[QubitId(q1)]);
+                }
+                2 => {
+                    let q2 = (next_seeded_gate_choice(&mut rng_state) as usize) % n;
+                    if q1 != q2 {
+                        stn.cx(&[(QubitId(q1), QubitId(q2))]);
+                    }
+                }
+                3 => {
+                    stn.rz(t, &[QubitId(q1)]);
+                }
+                _ => {
+                    stn.rz(eighth_turn, &[QubitId(q1)]);
+                }
+            }
+        }
+
+        let state_vector = stn.state_vector();
+        for (idx, amplitude) in state_vector.iter().enumerate() {
+            let bits = (0..n)
+                .rev()
+                .map(|q| ((idx >> q) & 1) != 0)
+                .collect::<Vec<_>>();
+            let actual = stn.prob_bitstring(&bits);
+            let expected = amplitude.norm_sqr();
+            assert!(
+                (actual - expected).abs() <= 1e-12,
+                "seed={seed} n={n} idx={idx}: actual={actual:.16e} expected={expected:.16e}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_numerical_flag_redetection_recovers_cancelled_rotation() {
+    let t = Angle64::QUARTER_TURN / 2u64;
+    let final_angle = Angle64::from_radians(0.37);
+    let mut stn = StabMps::builder(2).numerical_flag_redetection(true).build();
+    let mut oracle = pecos_simulators::DenseStateVec::new(2);
+
+    stn.h(&[QubitId(0)]);
+    oracle.h(&[QubitId(0)]);
+    stn.rz(t, &[QubitId(0)]);
+    oracle.rz(t, &[QubitId(0)]);
+    stn.rz(-t, &[QubitId(0)]);
+    oracle.rz(-t, &[QubitId(0)]);
+    stn.cx(&[(QubitId(0), QubitId(1))]);
+    oracle.cx(&[(QubitId(0), QubitId(1))]);
+    stn.rz(final_angle, &[QubitId(1)]);
+    oracle.rz(final_angle, &[QubitId(1)]);
+
+    assert_eq!(stn.stats.numerical_redetect, 1);
+    let expected = (0..4)
+        .map(|idx| oracle.get_amplitude(idx))
+        .collect::<Vec<_>>();
+    assert_states_close(
+        &stn.state_vector(),
+        &expected,
+        1e-12,
+        "cancelled rotation re-detection",
+    );
+}
+
+#[test]
+fn test_numerical_flag_redetection_rejects_nonzero_product_site() {
+    let t = Angle64::QUARTER_TURN / 2u64;
+    let final_angle = Angle64::from_radians(0.37);
+    let mut stn = StabMps::builder(2).numerical_flag_redetection(true).build();
+    let mut oracle = pecos_simulators::DenseStateVec::new(2);
+
+    stn.h(&[QubitId(0)]);
+    oracle.h(&[QubitId(0)]);
+    stn.rz(t, &[QubitId(0)]);
+    oracle.rz(t, &[QubitId(0)]);
+    stn.cx(&[(QubitId(0), QubitId(1))]);
+    oracle.cx(&[(QubitId(0), QubitId(1))]);
+    stn.rz(final_angle, &[QubitId(1)]);
+    oracle.rz(final_angle, &[QubitId(1)]);
+
+    assert_eq!(stn.stats.numerical_redetect, 0);
+    assert_eq!(stn.stats.multi_std, 1);
+    let expected = (0..4)
+        .map(|idx| oracle.get_amplitude(idx))
+        .collect::<Vec<_>>();
+    assert_states_close(
+        &stn.state_vector(),
+        &expected,
+        1e-12,
+        "nonzero product site rejection",
+    );
+}
+
 // ============================================================================
 // Large bond dimension stress tests
 // ============================================================================

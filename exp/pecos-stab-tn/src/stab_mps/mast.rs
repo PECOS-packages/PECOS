@@ -347,7 +347,11 @@ impl Mast {
             true,
             &mut non_clifford::RzContext {
                 disent_flags: &mut self.disent_flags,
-                numerical_flag_redetection: self.numerical_flag_redetection,
+                // Redetection reads stored tensors; with pending lazy deferred
+                // ops the effective state is V * stored MPS, so stored |0> does
+                // not imply effective |0>.
+                numerical_flag_redetection: self.numerical_flag_redetection
+                    && self.deferred_ops.is_empty(),
                 gf2_matrix: &mut self.gf2_matrix,
                 stats: &mut self.stats,
             },
@@ -470,7 +474,10 @@ impl Mast {
                     true,
                     &mut non_clifford::RzContext {
                         disent_flags: &mut self.disent_flags,
-                        numerical_flag_redetection: self.numerical_flag_redetection,
+                        // Same stored-vs-effective constraint as the injection
+                        // path above.
+                        numerical_flag_redetection: self.numerical_flag_redetection
+                            && self.deferred_ops.is_empty(),
                         gf2_matrix: &mut self.gf2_matrix,
                         stats: &mut self.stats,
                     },

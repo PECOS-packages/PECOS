@@ -118,7 +118,6 @@ ignore = [
 
 # Pre-existing NumPy users, allowed only until #458 migrates them. This list must SHRINK.
 # Do not add to it: new non-test NumPy use is the thing the ban exists to stop.
-# (decode.py's TID251 lives in its existing entry further down, to avoid a duplicate key.)
 "python/quantum-pecos/src/pecos/qec/reliable_observables.py" = ["TID251"]
 "examples/measurement_throughput_benchmark.ipynb" = ["TID251"]
 "examples/surface_code_experiments.ipynb" = ["TID251"]
@@ -199,7 +198,6 @@ ignore = [
     "N806",     # H variable name - standard parity check matrix notation
     "SLF001",   # Private member access - accessing internal decoder APIs
     "ANN401",   # Any types - required for optional dependency types (pymatching, stim)
-    "TID251",   # NumPy - pre-existing, allowed only until #458 migrates these 114 sites
 ]
 "python/quantum-pecos/src/pecos/qec/dem.py" = [
     "PLC0415",  # Import inside function - lazy import breaks the qec/__init__ <-> decode cycle

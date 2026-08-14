@@ -159,6 +159,27 @@ impl ArrayData {
             }
         }
     }
+
+    /// Promote integer and boolean values to a lossless comparison domain.
+    fn to_i128_array(&self) -> Option<ArrayD<i128>> {
+        match self {
+            ArrayData::Bool(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::I8(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::I16(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::I32(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::I64(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::U8(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::U16(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::U32(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::U64(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::F32(_)
+            | ArrayData::F64(_)
+            | ArrayData::Complex64(_)
+            | ArrayData::Complex128(_)
+            | ArrayData::Pauli(_)
+            | ArrayData::PauliString(_) => None,
+        }
+    }
 }
 
 /// `Array` - A numpy-independent array type for Python
@@ -2761,6 +2782,25 @@ impl Array {
         ))
     }
 
+    /// Normalize an `array_equal` operand through the native array ingestion paths.
+    pub(crate) fn from_array_equal_value(data: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Ok(array) = data.extract::<PyRef<Array>>() {
+            return Ok(array.copy());
+        }
+        if data.hasattr("__array_interface__")? && Self::array_interface_typestr(data)? == "|O" {
+            // NumPy stores custom Pauli values in object arrays, which cannot use
+            // the raw numeric buffer ingester. Expose those Python objects to the
+            // existing sequence parser without changing general Array ingestion.
+            let objects = data.call_method0("tolist")?;
+            if objects.cast::<PySequence>().is_ok() {
+                return Self::from_nested_sequence(&objects, None);
+            }
+            let singleton = PyList::new(data.py(), [objects])?;
+            return Self::from_nested_sequence(&singleton, None)?.reshape_to_shape(&[]);
+        }
+        Self::from_python_value(data, None)
+    }
+
     /// Parse dtype from Python (string, `DType` object, or scalar class) to `ElemType`
     fn parse_dtype(dtype: &Bound<'_, PyAny>) -> PyResult<ElemType> {
         use crate::dtypes::DType;
@@ -3575,9 +3615,7 @@ impl Array {
         Ok(())
     }
 
-    /// Try to create Array from `NumPy` array
-    fn try_from_numpy(array: &Bound<'_, PyAny>) -> PyResult<Self> {
-        use crate::array_buffer;
+    fn array_interface_typestr(array: &Bound<'_, PyAny>) -> PyResult<String> {
         use pyo3::types::PyDict;
 
         // Get __array_interface__ dict from the Python object
@@ -3596,11 +3634,18 @@ impl Array {
         let typestr = interface.get_item("typestr")?.ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("Missing 'typestr' in __array_interface__")
         })?;
-        let typestr_str: &str = typestr.extract()?;
+        typestr.extract()
+    }
+
+    /// Try to create Array from `NumPy` array
+    fn try_from_numpy(array: &Bound<'_, PyAny>) -> PyResult<Self> {
+        use crate::array_buffer;
+
+        let typestr = Self::array_interface_typestr(array)?;
 
         // Try to extract based on dtype
         // Support little-endian (<), big-endian (>), and native (=) byte orders
-        match typestr_str {
+        match typestr.as_str() {
             "<f8" | ">f8" | "=f8" => {
                 let ndarray = array_buffer::extract_f64_array(array)?;
                 Ok(Self {
@@ -3680,7 +3725,7 @@ impl Array {
                 })
             }
             _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Unsupported dtype: {typestr_str}. Supported typestring kinds: 'b', 'i', 'u', 'f', 'c'"
+                "Unsupported dtype: {typestr}. Supported typestring kinds: 'b', 'i', 'u', 'f', 'c'"
             ))),
         }
     }
@@ -4727,9 +4772,47 @@ impl Array {
         }
     }
 
-    /// Helper for element-wise Array == Array (or !=) comparison.
-    /// `negate`: if true, returns != instead of ==.
-    fn eq_array(&self, other: &Array, py: Python<'_>, negate: bool) -> PyResult<Py<PyAny>> {
+    /// Produce the element-wise equality result shared by `__eq__` and `array_equal`.
+    #[allow(clippy::float_cmp)] // Exact equality is intentional for NumPy compatibility.
+    fn equality_data(&self, other: &Array, negate: bool, equal_nan: bool) -> PyResult<ArrayData> {
+        if self.data.shape() != other.data.shape() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "cannot compare arrays with shapes {:?} and {:?}",
+                self.data.shape(),
+                other.data.shape()
+            )));
+        }
+
+        let left_dtype = self.data.dtype();
+        let right_dtype = other.data.dtype();
+        if left_dtype != right_dtype
+            && let (Some(left), Some(right)) =
+                (self.data.to_i128_array(), other.data.to_i128_array())
+        {
+            let result = ndarray::Zip::from(&left)
+                .and(&right)
+                .map_collect(|left, right| {
+                    let equal = left == right;
+                    if negate { !equal } else { equal }
+                });
+            return Ok(ArrayData::Bool(result));
+        }
+
+        let (left, right) = if left_dtype == right_dtype {
+            (self, other)
+        } else {
+            let comparison_dtype = left_dtype.comparison_dtype(right_dtype).ok_or_else(|| {
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Cannot compare {left_dtype:?} with {right_dtype:?}"
+                ))
+            })?;
+            return self.astype(comparison_dtype)?.equality_data(
+                &other.astype(comparison_dtype)?,
+                negate,
+                equal_nan,
+            );
+        };
+
         macro_rules! eq_impl {
             ($a:expr, $b:expr) => {{
                 let result = if negate {
@@ -4737,35 +4820,86 @@ impl Array {
                 } else {
                     ndarray::Zip::from($a).and($b).map_collect(|a, b| a == b)
                 };
-                Ok(Py::new(
-                    py,
-                    Array {
-                        data: ArrayData::Bool(result),
-                    },
-                )?
-                .into_any())
+                Ok(ArrayData::Bool(result))
             }};
         }
-        match (&self.data, &other.data) {
-            (ArrayData::F64(a), ArrayData::F64(b)) => eq_impl!(a, b),
-            (ArrayData::F32(a), ArrayData::F32(b)) => eq_impl!(a, b),
+        macro_rules! eq_nan_impl {
+            ($a:expr, $b:expr, $is_nan:expr) => {{
+                let result = ndarray::Zip::from($a).and($b).map_collect(|a, b| {
+                    let equal = a == b || (equal_nan && $is_nan(a) && $is_nan(b));
+                    if negate { !equal } else { equal }
+                });
+                Ok(ArrayData::Bool(result))
+            }};
+        }
+        macro_rules! eq_with_impl {
+            ($a:expr, $b:expr, $equals:expr) => {{
+                let result = ndarray::Zip::from($a).and($b).map_collect(|a, b| {
+                    let equal = $equals(a, b);
+                    if negate { !equal } else { equal }
+                });
+                Ok(ArrayData::Bool(result))
+            }};
+        }
+        match (&left.data, &right.data) {
+            (ArrayData::F64(a), ArrayData::F64(b)) => {
+                eq_nan_impl!(a, b, |value: &f64| value.is_nan())
+            }
+            (ArrayData::F32(a), ArrayData::F32(b)) => {
+                eq_nan_impl!(a, b, |value: &f32| value.is_nan())
+            }
             (ArrayData::I64(a), ArrayData::I64(b)) => eq_impl!(a, b),
             (ArrayData::I32(a), ArrayData::I32(b)) => eq_impl!(a, b),
             (ArrayData::Bool(a), ArrayData::Bool(b)) => eq_impl!(a, b),
-            (ArrayData::Complex128(a), ArrayData::Complex128(b)) => eq_impl!(a, b),
-            (ArrayData::Complex64(a), ArrayData::Complex64(b)) => eq_impl!(a, b),
+            (ArrayData::Complex128(a), ArrayData::Complex128(b)) => {
+                eq_nan_impl!(a, b, |value: &Complex64| value.re.is_nan()
+                    || value.im.is_nan())
+            }
+            (ArrayData::Complex64(a), ArrayData::Complex64(b)) => {
+                eq_nan_impl!(a, b, |value: &Complex32| value.re.is_nan()
+                    || value.im.is_nan())
+            }
             (ArrayData::U64(a), ArrayData::U64(b)) => eq_impl!(a, b),
             (ArrayData::U32(a), ArrayData::U32(b)) => eq_impl!(a, b),
             (ArrayData::U16(a), ArrayData::U16(b)) => eq_impl!(a, b),
             (ArrayData::U8(a), ArrayData::U8(b)) => eq_impl!(a, b),
             (ArrayData::I16(a), ArrayData::I16(b)) => eq_impl!(a, b),
             (ArrayData::I8(a), ArrayData::I8(b)) => eq_impl!(a, b),
-            _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Cannot compare {:?} with {:?}",
-                self.data.dtype(),
-                other.data.dtype()
-            ))),
+            (ArrayData::Pauli(a), ArrayData::Pauli(b)) => eq_impl!(a, b),
+            (ArrayData::PauliString(a), ArrayData::PauliString(b)) => {
+                eq_with_impl!(a, b, |left: &PauliString, right: &PauliString| left.inner
+                    == right.inner)
+            }
+            _ => unreachable!("comparison operands were normalized to a common dtype"),
         }
+    }
+
+    /// Return whether two arrays have exactly equal shapes and values.
+    pub(crate) fn array_equal(&self, other: &Array, equal_nan: bool) -> PyResult<bool> {
+        if self.data.shape() != other.data.shape() {
+            return Ok(false);
+        }
+
+        let left_dtype = self.data.dtype();
+        let right_dtype = other.data.dtype();
+        if left_dtype != right_dtype
+            && (left_dtype.comparison_dtype(right_dtype).is_none()
+                || right_dtype.comparison_dtype(left_dtype).is_none())
+        {
+            return Ok(false);
+        }
+
+        let ArrayData::Bool(equal) = self.equality_data(other, false, equal_nan)? else {
+            unreachable!("element-wise equality always returns a boolean array")
+        };
+        Ok(equal.iter().all(|value| *value))
+    }
+
+    /// Helper for element-wise Array == Array (or !=) comparison.
+    /// `negate`: if true, returns != instead of ==.
+    fn eq_array(&self, other: &Array, py: Python<'_>, negate: bool) -> PyResult<Py<PyAny>> {
+        let data = self.equality_data(other, negate, false)?;
+        Ok(Py::new(py, Array { data })?.into_any())
     }
 
     /// Helper for matrix multiplication (used by __mul__, dot, etc.)

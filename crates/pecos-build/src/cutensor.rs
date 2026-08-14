@@ -203,7 +203,14 @@ pub fn install_cutensor(force: bool) -> Result<PathBuf> {
             println!(
                 "cargo:warning=Cached cuTensor archive failed verification ({error}); refetching"
             );
-            fs::remove_file(&archive_path)?;
+            // A concurrent build may have already removed or replaced the bad cache entry
+            // between our verify and here; a missing file is exactly the state we wanted, so
+            // do not abort the refetch over it.
+            if let Err(remove_error) = fs::remove_file(&archive_path)
+                && remove_error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(remove_error.into());
+            }
             fetch_and_verify(&url, &archive_path, expected_sha256)?;
         }
     } else {
@@ -264,13 +271,19 @@ fn detect_cuda_major() -> u32 {
     12
 }
 
-/// Downloads to a `.part` sibling, verifies it, and only then moves it into place.
+/// Downloads to a private `.part` sibling, verifies it, and only then moves it into place.
 ///
 /// Nothing is published at the cache path until its checksum matches, so an interrupted
 /// download or a killed process cannot leave a file a later build mistakes for verified.
+///
+/// The partial name carries this process's id. Concurrent builds share the cache directory
+/// (one per worktree is a normal workflow), and a shared partial name would let one build
+/// truncate another's download between its verify and its rename -- so the file that was
+/// verified would not be the file renamed into place. A per-process partial keeps each
+/// build's verify-then-rename operating on bytes no other build can touch.
 fn fetch_and_verify(url: &str, archive_path: &Path, expected_sha256: &str) -> Result<()> {
     println!("cargo:warning=Downloading cuTensor {CUTENSOR_VERSION}...");
-    let partial_path = archive_path.with_extension("part");
+    let partial_path = archive_path.with_extension(format!("part.{}", std::process::id()));
     download(url, &partial_path)?;
 
     if let Err(error) = verify_archive(&partial_path, expected_sha256) {
@@ -338,8 +351,15 @@ fn download(url: &str, dest: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// `checksum_for` selects the row matching BOTH the platform and the CUDA major.
+    ///
+    /// This pins the lookup, not the digest values: the literals here are the same
+    /// constants the table holds, so this cannot catch a wrong digit in the table -- only a
+    /// lookup that returns the wrong row (for example, ignoring the CUDA major). The table
+    /// values themselves were checked against NVIDIA's manifest by hand; see the note on
+    /// [`CUTENSOR_CHECKSUMS`] for how to re-verify them on a version bump.
     #[test]
-    fn published_platforms_resolve_to_their_checksums() {
+    fn checksum_for_selects_the_row_matching_platform_and_cuda_major() {
         assert_eq!(
             checksum_for("linux-x86_64", 12).unwrap(),
             "032904fb8bba341e24aa45a8cc7b5afc63e4c28e22474530ccc97cfa546d0442"
@@ -347,6 +367,12 @@ mod tests {
         assert_eq!(
             checksum_for("linux-sbsa", 13).unwrap(),
             "9baffd3658b7f4da2d2f94d23c3acddb6d12c62997d3da39a774a058fef04aa5"
+        );
+        // The x86-64 and sbsa CUDA-12 digests differ, so a lookup that dropped the platform
+        // would return one of these where the other is expected.
+        assert_ne!(
+            checksum_for("linux-x86_64", 12).unwrap(),
+            checksum_for("linux-sbsa", 12).unwrap()
         );
     }
 
@@ -357,7 +383,8 @@ mod tests {
         assert!(error.contains("linux-x86_64/CUDA 12"), "{error}");
     }
 
-    /// Guards against transcription damage when the table is refreshed by hand.
+    /// Catches a digest whose SHAPE is wrong (not 64 lowercase-hex characters). It cannot
+    /// catch a wrong-but-still-hex value; that is the manual manifest check's job.
     #[test]
     fn every_checksum_is_well_formed() {
         for (platform, cuda_major, hash) in CUTENSOR_CHECKSUMS {

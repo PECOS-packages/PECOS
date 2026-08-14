@@ -202,7 +202,13 @@ pub fn install_cuquantum(force: bool) -> Result<PathBuf> {
         println!("Using cached download: {}", archive_path.display());
         if let Err(error) = verify_checksum(&archive_path, download_info.sha256) {
             println!("Cached archive failed verification ({error}); discarding it.");
-            fs::remove_file(&archive_path)?;
+            // A concurrent install may have already removed the bad entry; a missing file is
+            // the state we wanted, so do not abort the refetch over it.
+            if let Err(remove_error) = fs::remove_file(&archive_path)
+                && remove_error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(remove_error.into());
+            }
             fetch_and_verify(&download_info, &archive_path)?;
         }
     } else {
@@ -304,14 +310,16 @@ fn download_cuquantum(url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Verify file checksum
-/// Downloads to a `.part` sibling, verifies it, and only then moves it into place.
+/// Downloads to a private `.part` sibling, verifies it, and only then moves it into place.
 ///
 /// Nothing is ever published at the cache path until its checksum matches, so an
-/// interrupted download, a killed process, or two installs racing on the same cache
-/// cannot leave a file that later runs mistake for a verified archive.
+/// interrupted download or a killed process cannot leave a file that later runs mistake
+/// for a verified archive. The partial name carries this process's id: concurrent installs
+/// share the cache directory (one per worktree is a normal workflow), and a shared partial
+/// name would let one install truncate another's download between its verify and its
+/// rename, so the bytes verified would not be the bytes renamed into place.
 fn fetch_and_verify(download_info: &CuQuantumDownload, archive_path: &Path) -> Result<()> {
-    let partial_path = archive_path.with_extension("part");
+    let partial_path = archive_path.with_extension(format!("part.{}", std::process::id()));
     download_cuquantum(&download_info.url, &partial_path)?;
 
     if let Err(error) = verify_checksum(&partial_path, download_info.sha256) {

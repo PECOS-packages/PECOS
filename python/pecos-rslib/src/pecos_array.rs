@@ -33,12 +33,13 @@
 #![allow(clippy::unnecessary_wraps)] // PyResult is required for Python error handling
 #![allow(clippy::needless_pass_by_value)] // PyO3 requires passing Bound by value
 
-use ndarray::{ArrayD, Axis, Ix2, IxDyn, Slice};
+use ndarray::{ArrayD, ArrayViewD, Axis, Dimension, Ix2, IxDyn, Slice};
 use num_complex::{Complex32, Complex64};
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{
-    PyBool, PyFloat, PyInt, PyList, PySequence, PySlice, PySliceIndices, PyTuple, PyType,
+    PyBool, PyEllipsis, PyFloat, PyInt, PyList, PySequence, PySlice, PySliceIndices, PyTuple,
+    PyType,
 };
 
 use crate::dtypes::DType;
@@ -67,17 +68,19 @@ pub enum ArrayData {
     PauliString(ArrayD<PauliString>),
 }
 
-/// Represents an indexing operation.
+/// One parsed component of a complete index tuple.
 #[derive(Debug, Clone)]
 enum IndexOp {
-    Integer(isize),
-    Slice(isize, isize, isize),
-    Fancy(Vec<usize>),
+    Integer(usize),
+    Slice(Vec<usize>),
+    // One broadcast input per consumed source axis. A boolean mask is lowered
+    // to its `nonzero` coordinates, so an N-D mask stores N one-dimensional arrays.
+    Advanced(Vec<ArrayD<usize>>),
 }
 
-struct AssignmentSelection {
-    ranges: Vec<Vec<usize>>,
-    integer_axes: Vec<usize>,
+/// Source coordinates in NumPy result order, shared by reads and writes.
+struct ResolvedSelection {
+    coordinates: ArrayD<Vec<usize>>,
     shape: Vec<usize>,
 }
 
@@ -154,6 +157,27 @@ impl ArrayData {
                 // Treat all Pauli elements as truthy
                 ArrayD::from_elem(ndarray::IxDyn(self.shape()), true)
             }
+        }
+    }
+
+    /// Promote integer and boolean values to a lossless comparison domain.
+    fn to_i128_array(&self) -> Option<ArrayD<i128>> {
+        match self {
+            ArrayData::Bool(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::I8(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::I16(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::I32(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::I64(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::U8(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::U16(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::U32(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::U64(arr) => Some(arr.mapv(i128::from)),
+            ArrayData::F32(_)
+            | ArrayData::F64(_)
+            | ArrayData::Complex64(_)
+            | ArrayData::Complex128(_)
+            | ArrayData::Pauli(_)
+            | ArrayData::PauliString(_) => None,
         }
     }
 }
@@ -1252,30 +1276,37 @@ impl Array {
 
     /// Convert the array to nested Python lists with native scalar values.
     fn tolist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        fn build_nested(
-            array: &Array,
-            py: Python<'_>,
-            indices: &mut Vec<usize>,
-            axis: usize,
-        ) -> PyResult<Py<PyAny>> {
-            if axis == array.data.ndim() {
-                if indices.is_empty() {
-                    return array.extract_scalar(py);
-                }
-                let index = PyTuple::new(py, indices.iter().copied())?;
-                return array.__getitem__(index.as_any());
-            }
-
-            let mut items = Vec::with_capacity(array.data.shape()[axis]);
-            for index in 0..array.data.shape()[axis] {
-                indices.push(index);
-                items.push(build_nested(array, py, indices, axis + 1)?);
-                indices.pop();
-            }
-            Ok(PyList::new(py, items)?.into_any().unbind())
+        macro_rules! native_to_list {
+            ($array:expr) => {
+                Self::array_view_to_list($array.view(), py, &|value| *value)
+            };
         }
 
-        build_nested(self, py, &mut Vec::new(), 0)
+        match &self.data {
+            ArrayData::Bool(array) => native_to_list!(array),
+            ArrayData::I8(array) => native_to_list!(array),
+            ArrayData::I16(array) => native_to_list!(array),
+            ArrayData::I32(array) => native_to_list!(array),
+            ArrayData::I64(array) => native_to_list!(array),
+            ArrayData::U8(array) => native_to_list!(array),
+            ArrayData::U16(array) => native_to_list!(array),
+            ArrayData::U32(array) => native_to_list!(array),
+            ArrayData::U64(array) => native_to_list!(array),
+            ArrayData::F32(array) => native_to_list!(array),
+            ArrayData::F64(array) => native_to_list!(array),
+            ArrayData::Complex64(array) => native_to_list!(array),
+            ArrayData::Complex128(array) => native_to_list!(array),
+            ArrayData::Pauli(array) => {
+                Self::array_view_to_object_list(array.view(), py, &|value, py| {
+                    Ok(Py::new(py, *value)?.into_any())
+                })
+            }
+            ArrayData::PauliString(array) => {
+                Self::array_view_to_object_list(array.view(), py, &|value, py| {
+                    Ok(Py::new(py, value.clone())?.into_any())
+                })
+            }
+        }
     }
 
     /// Implement __`array_interface`__ property for `NumPy` compatibility
@@ -1463,12 +1494,8 @@ impl Array {
         if let Ok(tuple) = index.cast::<PyTuple>() {
             let shape: Vec<usize> = slf.data.shape().to_vec();
             let index_ops = Self::parse_tuple_index(tuple, &shape)?;
-            slf.apply_mixed_indexing_assignment(
-                &index_ops,
-                &shape,
-                value,
-                value_snapshot.as_ref(),
-            )?;
+            let selection = Self::resolve_selection(&index_ops, &shape)?;
+            slf.apply_resolved_assignment(&selection, value, value_snapshot.as_ref())?;
             Ok(())
         } else if let Ok(slice) = index.cast::<PySlice>() {
             // Single slice: arr[start:stop:step] = value
@@ -1482,13 +1509,9 @@ impl Array {
             let (start, stop, step) = Self::parse_slice(slice, shape[0])?;
 
             if value_snapshot.is_some() {
-                let index_ops = vec![IndexOp::Slice(start, stop, step)];
-                slf.apply_mixed_indexing_assignment(
-                    &index_ops,
-                    &shape,
-                    value,
-                    value_snapshot.as_ref(),
-                )?;
+                let index_ops = vec![IndexOp::Slice(Self::slice_indices(start, stop, step))];
+                let selection = Self::resolve_selection(&index_ops, &shape)?;
+                slf.apply_resolved_assignment(&selection, value, value_snapshot.as_ref())?;
             } else {
                 // Apply 1D slice assignment (now supports arbitrary steps)
                 slf.apply_1d_slice_assignment_with_step(start, stop, step, value)?;
@@ -1582,15 +1605,19 @@ impl Array {
                 }
             }
             Ok(())
-        } else if index.extract::<PyRef<Array>>().is_ok() || index.cast::<PySequence>().is_ok() {
+        } else if index.extract::<PyRef<Array>>().is_ok()
+            || index.cast::<PySequence>().is_ok()
+            || index.hasattr("__array_interface__")?
+        {
             let shape: Vec<usize> = slf.data.shape().to_vec();
             if shape.is_empty() {
                 return Err(pyo3::exceptions::PyIndexError::new_err(
                     "Cannot index a zero-dimensional array",
                 ));
             }
-            let index_ops = vec![Self::parse_fancy_index(index, 0, shape[0])?];
-            slf.apply_mixed_indexing_assignment(&index_ops, &shape, value, value_snapshot.as_ref())
+            let index_ops = vec![Self::parse_advanced_index(index, 0, &shape)?];
+            let selection = Self::resolve_selection(&index_ops, &shape)?;
+            slf.apply_resolved_assignment(&selection, value, value_snapshot.as_ref())
         } else {
             // Unsupported index type
             Err(pyo3::exceptions::PyTypeError::new_err(
@@ -1599,16 +1626,15 @@ impl Array {
         }
     }
 
-    /// Implement integer, slice, fancy, and one-dimensional boolean-mask reads.
+    /// Implement basic and whole-tuple advanced indexing reads.
     fn __getitem__(&self, index: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let py = index.py();
 
         if let Ok(tuple) = index.cast::<PyTuple>() {
             let shape = self.data.shape();
             let index_ops = Self::parse_tuple_index(tuple, shape)?;
-
-            // Apply mixed indexing
-            let result = self.apply_mixed_indexing(&index_ops)?;
+            let selection = Self::resolve_selection(&index_ops, shape)?;
+            let result = self.apply_resolved_selection(&selection)?;
 
             // If result is 0-dimensional (scalar), extract the value instead of returning Array
             if result.data.shape().is_empty() {
@@ -1646,10 +1672,10 @@ impl Array {
                 )));
             }
 
-            // Use apply_mixed_indexing with a single integer index
-            // This handles both 1D (returns scalar) and multi-D (returns sub-array) cases
-            let index_ops = vec![IndexOp::Integer(normalized_idx)];
-            let result = self.apply_mixed_indexing(&index_ops)?;
+            // Use the shared resolver for both scalar and sub-array results.
+            let index_ops = vec![IndexOp::Integer(normalized_idx as usize)];
+            let selection = Self::resolve_selection(&index_ops, shape)?;
+            let result = self.apply_resolved_selection(&selection)?;
 
             // If result is 0-dimensional (scalar), extract the value instead of returning Array
             if result.data.shape().is_empty() {
@@ -1657,15 +1683,19 @@ impl Array {
             }
 
             Ok(Py::new(py, result)?.into_any())
-        } else if index.extract::<PyRef<Array>>().is_ok() || index.cast::<PySequence>().is_ok() {
+        } else if index.extract::<PyRef<Array>>().is_ok()
+            || index.cast::<PySequence>().is_ok()
+            || index.hasattr("__array_interface__")?
+        {
             let shape = self.data.shape();
             if shape.is_empty() {
                 return Err(pyo3::exceptions::PyIndexError::new_err(
                     "Cannot index a zero-dimensional array",
                 ));
             }
-            let index_ops = vec![Self::parse_fancy_index(index, 0, shape[0])?];
-            let result = self.apply_mixed_indexing(&index_ops)?;
+            let index_ops = vec![Self::parse_advanced_index(index, 0, shape)?];
+            let selection = Self::resolve_selection(&index_ops, shape)?;
+            let result = self.apply_resolved_selection(&selection)?;
             Ok(Py::new(py, result)?.into_any())
         } else {
             // Unsupported indexing type
@@ -2094,180 +2124,365 @@ impl Array {
 }
 
 impl Array {
-    fn resolve_bool_mask(mask: &[bool], axis: usize, axis_len: usize) -> PyResult<Vec<usize>> {
-        if mask.len() != axis_len {
-            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                "Boolean mask length {} does not match axis {axis} length {axis_len}",
-                mask.len()
-            )));
-        }
-        Ok(mask
-            .iter()
-            .enumerate()
-            .filter_map(|(position, selected)| selected.then_some(position))
-            .collect())
-    }
-
-    /// Return the dimensionality when every leaf in a non-empty sequence is boolean.
-    fn bool_sequence_ndim(value: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
-        if value.is_instance_of::<PyBool>() {
-            return Ok(Some(0));
-        }
-        let Ok(sequence) = value.cast::<PySequence>() else {
-            return Ok(None);
-        };
-        let length = sequence.len()?;
-        if length == 0 {
-            return Ok(None);
+    fn array_view_to_list<'py, T, U, F>(
+        array: ArrayViewD<'_, T>,
+        py: Python<'py>,
+        scalar_to_native: &F,
+    ) -> PyResult<Py<PyAny>>
+    where
+        U: IntoPyObject<'py>,
+        F: Fn(&T) -> U,
+    {
+        if array.ndim() == 0 {
+            let value = array.first().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "zero-dimensional array unexpectedly contained no scalar",
+                )
+            })?;
+            return scalar_to_native(value).into_py_any(py);
         }
 
-        let mut child_ndim = None;
-        for position in 0..length {
-            let Some(ndim) = Self::bool_sequence_ndim(&sequence.get_item(position)?)? else {
-                return Ok(None);
-            };
-            if child_ndim.is_some_and(|expected| expected != ndim) {
-                return Ok(None);
-            }
-            child_ndim = Some(ndim);
-        }
-        Ok(child_ndim.map(|ndim| ndim + 1))
-    }
-
-    /// Parse a sequence or bool Array used to index one axis.
-    fn parse_fancy_index(
-        index: &Bound<'_, PyAny>,
-        axis: usize,
-        axis_len: usize,
-    ) -> PyResult<IndexOp> {
-        if let Ok(mask) = index.extract::<PyRef<Array>>() {
-            let ArrayData::Bool(values) = &mask.data else {
-                return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Array indices must have bool dtype",
-                ));
-            };
-            if values.ndim() != 1 {
-                return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
-                    "Boolean mask indexing supports only one-dimensional masks; got {} dimensions",
-                    values.ndim()
-                )));
-            }
-            let mask_values = values.iter().copied().collect::<Vec<_>>();
-            return Ok(IndexOp::Fancy(Self::resolve_bool_mask(
-                &mask_values,
-                axis,
-                axis_len,
-            )?));
+        if array.ndim() == 1 {
+            return Ok(PyList::new(py, array.iter().map(scalar_to_native))?
+                .into_any()
+                .unbind());
         }
 
-        let sequence = index.cast::<PySequence>()?;
-        let length = sequence.len()?;
-        let items = (0..length)
-            .map(|position| sequence.get_item(position))
+        let items = array
+            .outer_iter()
+            .map(|subarray| Self::array_view_to_list(subarray.into_dyn(), py, scalar_to_native))
             .collect::<PyResult<Vec<_>>>()?;
+        Ok(PyList::new(py, items)?.into_any().unbind())
+    }
 
-        if let Some(ndim) = Self::bool_sequence_ndim(index)?
-            && ndim > 1
-        {
-            return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
-                "Boolean mask indexing supports only one-dimensional masks; got {ndim} dimensions"
-            )));
+    fn array_view_to_object_list<T, F>(
+        array: ArrayViewD<'_, T>,
+        py: Python<'_>,
+        scalar_to_object: &F,
+    ) -> PyResult<Py<PyAny>>
+    where
+        F: Fn(&T, Python<'_>) -> PyResult<Py<PyAny>>,
+    {
+        if array.ndim() == 0 {
+            let value = array.first().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "zero-dimensional array unexpectedly contained no scalar",
+                )
+            })?;
+            return scalar_to_object(value, py);
         }
-        let is_bool_mask = !items.is_empty()
-            && items
-                .iter()
-                .all(pyo3::types::PyAnyMethods::is_instance_of::<PyBool>);
 
-        if is_bool_mask {
-            let mask = items
+        if array.ndim() == 1 {
+            let items = array
                 .iter()
-                .map(pyo3::types::PyAnyMethods::extract::<bool>)
+                .map(|value| scalar_to_object(value, py))
                 .collect::<PyResult<Vec<_>>>()?;
-            return Ok(IndexOp::Fancy(Self::resolve_bool_mask(
-                &mask, axis, axis_len,
-            )?));
+            return Ok(PyList::new(py, items)?.into_any().unbind());
         }
 
-        let indices = items
-            .iter()
-            .map(|item| {
-                if item.is_instance_of::<PyBool>() {
-                    item.extract::<bool>().map(isize::from)
-                } else {
-                    item.extract::<isize>()
-                }
+        let items = array
+            .outer_iter()
+            .map(|subarray| {
+                Self::array_view_to_object_list(subarray.into_dyn(), py, scalar_to_object)
             })
             .collect::<PyResult<Vec<_>>>()?;
-        Ok(IndexOp::Fancy(Self::resolve_fancy_indices(
-            &indices, axis, axis_len,
-        )?))
+        Ok(PyList::new(py, items)?.into_any().unbind())
     }
 
-    /// Parse a tuple index through the same integer-sequence resolver used by reads.
-    fn parse_tuple_index(tuple: &Bound<'_, PyTuple>, shape: &[usize]) -> PyResult<Vec<IndexOp>> {
-        if tuple.len() > shape.len() {
+    fn slice_indices(start: isize, stop: isize, step: isize) -> Vec<usize> {
+        let mut indices = Vec::new();
+        let mut index = start;
+        while (step > 0 && index < stop) || (step < 0 && index > stop) {
+            indices.push(index as usize);
+            index += step;
+        }
+        indices
+    }
+
+    fn normalize_advanced_index(index: i128, axis: usize, axis_len: usize) -> PyResult<usize> {
+        let axis_len_i128 = axis_len as i128;
+        let resolved = if index < 0 {
+            axis_len_i128.checked_add(index)
+        } else {
+            Some(index)
+        };
+        resolved
+            .filter(|&value| value >= 0 && value < axis_len_i128)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| {
+                pyo3::exceptions::PyIndexError::new_err(format!(
+                    "index {index} is out of bounds for axis {axis} of length {axis_len}"
+                ))
+            })
+    }
+
+    fn integer_index_array(
+        values: &ArrayData,
+        axis: usize,
+        axis_len: usize,
+    ) -> PyResult<ArrayD<usize>> {
+        macro_rules! normalize_signed {
+            ($array:expr) => {{
+                let normalized = $array
+                    .iter()
+                    .map(|&index| Self::normalize_advanced_index(i128::from(index), axis, axis_len))
+                    .collect::<PyResult<Vec<_>>>()?;
+                ArrayD::from_shape_vec($array.raw_dim(), normalized).map_err(|error| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "internal error resolving integer index array: {error}"
+                    ))
+                })
+            }};
+        }
+
+        match values {
+            ArrayData::I8(array) => normalize_signed!(array),
+            ArrayData::I16(array) => normalize_signed!(array),
+            ArrayData::I32(array) => normalize_signed!(array),
+            ArrayData::I64(array) => normalize_signed!(array),
+            ArrayData::U8(array) => normalize_signed!(array),
+            ArrayData::U16(array) => normalize_signed!(array),
+            ArrayData::U32(array) => normalize_signed!(array),
+            ArrayData::U64(array) => normalize_signed!(array),
+            _ => Err(pyo3::exceptions::PyTypeError::new_err(
+                "advanced indices must have integer or bool dtype",
+            )),
+        }
+    }
+
+    fn boolean_mask_index(
+        mask: &ArrayD<bool>,
+        axis: usize,
+        source_shape: &[usize],
+    ) -> PyResult<IndexOp> {
+        if mask.ndim() == 0 {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "zero-dimensional boolean indices are not supported",
+            ));
+        }
+        let end_axis = axis
+            .checked_add(mask.ndim())
+            .ok_or_else(|| pyo3::exceptions::PyIndexError::new_err("too many indices for array"))?;
+        if end_axis > source_shape.len() || mask.shape() != &source_shape[axis..end_axis] {
+            if mask.ndim() == 1 && axis < source_shape.len() {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "Boolean mask length {} does not match axis {axis} length {}",
+                    mask.len(),
+                    source_shape[axis]
+                )));
+            }
             return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                "Too many indices for array: array is {}-dimensional, but {} were indexed",
-                shape.len(),
-                tuple.len()
+                "boolean mask shape {:?} does not match indexed axes {:?}",
+                mask.shape(),
+                source_shape.get(axis..end_axis).unwrap_or(&[])
             )));
         }
 
-        let mut index_ops = Vec::with_capacity(tuple.len());
-        let mut fancy_axes = 0;
-        for (axis, item) in tuple.iter().enumerate() {
-            if let Ok(slice) = item.cast::<PySlice>() {
-                let (start, stop, step) = Self::parse_slice(slice, shape[axis])?;
-                index_ops.push(IndexOp::Slice(start, stop, step));
-            } else if let Ok(idx) = item.extract::<isize>() {
-                index_ops.push(IndexOp::Integer(idx));
-            } else if item.extract::<PyRef<Array>>().is_ok() || item.cast::<PySequence>().is_ok() {
-                fancy_axes += 1;
-                if fancy_axes > 1 {
-                    return Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                        "Fancy indexing on more than one axis is not supported",
-                    ));
+        let selected_count = mask.iter().filter(|&&selected| selected).count();
+        let mut coordinates = (0..mask.ndim())
+            .map(|_| Vec::with_capacity(selected_count))
+            .collect::<Vec<_>>();
+        for (index, &selected) in mask.indexed_iter() {
+            if selected {
+                for (axis_coordinates, &coordinate) in
+                    coordinates.iter_mut().zip(index.slice().iter())
+                {
+                    axis_coordinates.push(coordinate);
                 }
-                index_ops.push(Self::parse_fancy_index(&item, axis, shape[axis])?);
-            } else {
-                return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "indices must be integers, slices, or one-dimensional sequences",
-                ));
             }
         }
-
-        if Self::has_separated_advanced_indices(&index_ops) {
-            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                "Integer and fancy indices separated by a slice are not supported because NumPy moves the advanced-index result axis",
-            ));
-        }
-        Ok(index_ops)
+        let arrays = coordinates
+            .into_iter()
+            .map(|values| {
+                ArrayD::from_shape_vec(IxDyn(&[selected_count]), values).map_err(|error| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "internal error resolving boolean mask: {error}"
+                    ))
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(IndexOp::Advanced(arrays))
     }
 
-    /// NumPy moves the advanced result axes to the front when advanced indices
-    /// are separated by a basic slice. The current axis-order resolver cannot
-    /// represent that layout, so reject it instead of returning transposed data.
-    fn has_separated_advanced_indices(index_ops: &[IndexOp]) -> bool {
-        let Some(fancy_axis) = index_ops
-            .iter()
-            .position(|op| matches!(op, IndexOp::Fancy(_)))
-        else {
-            return false;
-        };
-
-        index_ops.iter().enumerate().any(|(integer_axis, op)| {
-            if !matches!(op, IndexOp::Integer(_)) {
-                return false;
+    fn collect_sequence_indices(
+        value: &Bound<'_, PyAny>,
+        depth: usize,
+        shape: &[usize],
+        all_bool: &mut bool,
+        bool_values: &mut Vec<bool>,
+        integer_values: &mut Vec<i128>,
+    ) -> PyResult<()> {
+        if depth < shape.len() {
+            let sequence = value.cast::<PySequence>().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "advanced index sequences must have a rectangular shape",
+                )
+            })?;
+            if sequence.len()? != shape[depth] {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "advanced index sequences must have a rectangular shape",
+                ));
             }
-            let (start, end) = if integer_axis < fancy_axis {
-                (integer_axis, fancy_axis)
-            } else {
-                (fancy_axis, integer_axis)
+            for position in 0..shape[depth] {
+                Self::collect_sequence_indices(
+                    &sequence.get_item(position)?,
+                    depth + 1,
+                    shape,
+                    all_bool,
+                    bool_values,
+                    integer_values,
+                )?;
+            }
+            return Ok(());
+        }
+
+        if value.cast::<PySequence>().is_ok() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "advanced index sequences must have a rectangular shape",
+            ));
+        }
+        if value.is_instance_of::<PyBool>() {
+            let bool_value = value.extract::<bool>()?;
+            bool_values.push(bool_value);
+            integer_values.push(i128::from(bool_value));
+            return Ok(());
+        }
+
+        *all_bool = false;
+        let indexed = value.call_method0("__index__").map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err(
+                "advanced indices must contain only integers or only booleans",
+            )
+        })?;
+        let integer = if let Ok(signed) = indexed.extract::<i64>() {
+            i128::from(signed)
+        } else if let Ok(unsigned) = indexed.extract::<u64>() {
+            i128::from(unsigned)
+        } else {
+            return Err(pyo3::exceptions::PyOverflowError::new_err(
+                "advanced index is outside the supported integer range",
+            ));
+        };
+        integer_values.push(integer);
+        Ok(())
+    }
+
+    /// Parse one integer-array or boolean-mask component of an index tuple.
+    fn parse_advanced_index(
+        index: &Bound<'_, PyAny>,
+        axis: usize,
+        source_shape: &[usize],
+    ) -> PyResult<IndexOp> {
+        if let Ok(array) = index.extract::<PyRef<Array>>() {
+            return match &array.data {
+                ArrayData::Bool(mask) => Self::boolean_mask_index(mask, axis, source_shape),
+                data => Ok(IndexOp::Advanced(vec![Self::integer_index_array(
+                    data,
+                    axis,
+                    source_shape[axis],
+                )?])),
             };
-            index_ops[start + 1..end]
-                .iter()
-                .any(|op| matches!(op, IndexOp::Slice(..)))
-        })
+        }
+
+        if index.hasattr("__array_interface__")? {
+            let array = Self::from_python_value(index, None)?;
+            return match &array.data {
+                ArrayData::Bool(mask) => Self::boolean_mask_index(mask, axis, source_shape),
+                data => Ok(IndexOp::Advanced(vec![Self::integer_index_array(
+                    data,
+                    axis,
+                    source_shape[axis],
+                )?])),
+            };
+        }
+
+        let shape = Self::infer_shape(index)?;
+        let mut all_bool = true;
+        let mut bool_values = Vec::new();
+        let mut integer_values = Vec::new();
+        Self::collect_sequence_indices(
+            index,
+            0,
+            &shape,
+            &mut all_bool,
+            &mut bool_values,
+            &mut integer_values,
+        )?;
+        if all_bool && !integer_values.is_empty() {
+            let mask = ArrayD::from_shape_vec(IxDyn(&shape), bool_values).map_err(|error| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "invalid boolean mask shape: {error}"
+                ))
+            })?;
+            return Self::boolean_mask_index(&mask, axis, source_shape);
+        }
+
+        let normalized = integer_values
+            .into_iter()
+            .map(|value| Self::normalize_advanced_index(value, axis, source_shape[axis]))
+            .collect::<PyResult<Vec<_>>>()?;
+        let array = ArrayD::from_shape_vec(IxDyn(&shape), normalized).map_err(|error| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid integer index shape: {error}"))
+        })?;
+        Ok(IndexOp::Advanced(vec![array]))
+    }
+
+    /// Parse a tuple index into basic and advanced components against source axes.
+    fn parse_tuple_index(tuple: &Bound<'_, PyTuple>, shape: &[usize]) -> PyResult<Vec<IndexOp>> {
+        let mut index_ops = Vec::with_capacity(tuple.len());
+        let mut source_axis = 0;
+        for item in tuple.iter() {
+            if item.is_instance_of::<PyEllipsis>() {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "Ellipsis indexing is not supported",
+                ));
+            }
+            if item.is_none() {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "newaxis indexing is not supported",
+                ));
+            }
+            if source_axis >= shape.len() {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "Too many indices for array: array is {}-dimensional",
+                    shape.len()
+                )));
+            }
+
+            let operation = if let Ok(slice) = item.cast::<PySlice>() {
+                let (start, stop, step) = Self::parse_slice(slice, shape[source_axis])?;
+                IndexOp::Slice(Self::slice_indices(start, stop, step))
+            } else if let Ok(idx) = item.extract::<isize>() {
+                IndexOp::Integer(Self::normalize_advanced_index(
+                    idx as i128,
+                    source_axis,
+                    shape[source_axis],
+                )?)
+            } else if item.extract::<PyRef<Array>>().is_ok()
+                || item.cast::<PySequence>().is_ok()
+                || item.hasattr("__array_interface__")?
+            {
+                Self::parse_advanced_index(&item, source_axis, shape)?
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "indices must be integers, slices, integer arrays, or boolean masks",
+                ));
+            };
+
+            source_axis += match &operation {
+                IndexOp::Integer(_) | IndexOp::Slice(_) => 1,
+                IndexOp::Advanced(arrays) => arrays.len(),
+            };
+            if source_axis > shape.len() {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "Too many indices for array: array is {}-dimensional",
+                    shape.len()
+                )));
+            }
+            index_ops.push(operation);
+        }
+
+        Ok(index_ops)
     }
 
     fn parse_reshape_shape(shape: &Bound<'_, PyTuple>) -> PyResult<Vec<isize>> {
@@ -2565,6 +2780,25 @@ impl Array {
         Err(pyo3::exceptions::PyTypeError::new_err(
             "Input must be a numpy array, Array, or Python sequence (list/tuple)",
         ))
+    }
+
+    /// Normalize an `array_equal` operand through the native array ingestion paths.
+    pub(crate) fn from_array_equal_value(data: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Ok(array) = data.extract::<PyRef<Array>>() {
+            return Ok(array.copy());
+        }
+        if data.hasattr("__array_interface__")? && Self::array_interface_typestr(data)? == "|O" {
+            // NumPy stores custom Pauli values in object arrays, which cannot use
+            // the raw numeric buffer ingester. Expose those Python objects to the
+            // existing sequence parser without changing general Array ingestion.
+            let objects = data.call_method0("tolist")?;
+            if objects.cast::<PySequence>().is_ok() {
+                return Self::from_nested_sequence(&objects, None);
+            }
+            let singleton = PyList::new(data.py(), [objects])?;
+            return Self::from_nested_sequence(&singleton, None)?.reshape_to_shape(&[]);
+        }
+        Self::from_python_value(data, None)
     }
 
     /// Parse dtype from Python (string, `DType` object, or scalar class) to `ElemType`
@@ -3381,9 +3615,7 @@ impl Array {
         Ok(())
     }
 
-    /// Try to create Array from `NumPy` array
-    fn try_from_numpy(array: &Bound<'_, PyAny>) -> PyResult<Self> {
-        use crate::array_buffer;
+    fn array_interface_typestr(array: &Bound<'_, PyAny>) -> PyResult<String> {
         use pyo3::types::PyDict;
 
         // Get __array_interface__ dict from the Python object
@@ -3402,11 +3634,18 @@ impl Array {
         let typestr = interface.get_item("typestr")?.ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("Missing 'typestr' in __array_interface__")
         })?;
-        let typestr_str: &str = typestr.extract()?;
+        typestr.extract()
+    }
+
+    /// Try to create Array from `NumPy` array
+    fn try_from_numpy(array: &Bound<'_, PyAny>) -> PyResult<Self> {
+        use crate::array_buffer;
+
+        let typestr = Self::array_interface_typestr(array)?;
 
         // Try to extract based on dtype
         // Support little-endian (<), big-endian (>), and native (=) byte orders
-        match typestr_str {
+        match typestr.as_str() {
             "<f8" | ">f8" | "=f8" => {
                 let ndarray = array_buffer::extract_f64_array(array)?;
                 Ok(Self {
@@ -3486,7 +3725,7 @@ impl Array {
                 })
             }
             _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Unsupported dtype: {typestr_str}. Supported typestring kinds: 'b', 'i', 'u', 'f', 'c'"
+                "Unsupported dtype: {typestr}. Supported typestring kinds: 'b', 'i', 'u', 'f', 'c'"
             ))),
         }
     }
@@ -4533,9 +4772,47 @@ impl Array {
         }
     }
 
-    /// Helper for element-wise Array == Array (or !=) comparison.
-    /// `negate`: if true, returns != instead of ==.
-    fn eq_array(&self, other: &Array, py: Python<'_>, negate: bool) -> PyResult<Py<PyAny>> {
+    /// Produce the element-wise equality result shared by `__eq__` and `array_equal`.
+    #[allow(clippy::float_cmp)] // Exact equality is intentional for NumPy compatibility.
+    fn equality_data(&self, other: &Array, negate: bool, equal_nan: bool) -> PyResult<ArrayData> {
+        if self.data.shape() != other.data.shape() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "cannot compare arrays with shapes {:?} and {:?}",
+                self.data.shape(),
+                other.data.shape()
+            )));
+        }
+
+        let left_dtype = self.data.dtype();
+        let right_dtype = other.data.dtype();
+        if left_dtype != right_dtype
+            && let (Some(left), Some(right)) =
+                (self.data.to_i128_array(), other.data.to_i128_array())
+        {
+            let result = ndarray::Zip::from(&left)
+                .and(&right)
+                .map_collect(|left, right| {
+                    let equal = left == right;
+                    if negate { !equal } else { equal }
+                });
+            return Ok(ArrayData::Bool(result));
+        }
+
+        let (left, right) = if left_dtype == right_dtype {
+            (self, other)
+        } else {
+            let comparison_dtype = left_dtype.comparison_dtype(right_dtype).ok_or_else(|| {
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Cannot compare {left_dtype:?} with {right_dtype:?}"
+                ))
+            })?;
+            return self.astype(comparison_dtype)?.equality_data(
+                &other.astype(comparison_dtype)?,
+                negate,
+                equal_nan,
+            );
+        };
+
         macro_rules! eq_impl {
             ($a:expr, $b:expr) => {{
                 let result = if negate {
@@ -4543,35 +4820,86 @@ impl Array {
                 } else {
                     ndarray::Zip::from($a).and($b).map_collect(|a, b| a == b)
                 };
-                Ok(Py::new(
-                    py,
-                    Array {
-                        data: ArrayData::Bool(result),
-                    },
-                )?
-                .into_any())
+                Ok(ArrayData::Bool(result))
             }};
         }
-        match (&self.data, &other.data) {
-            (ArrayData::F64(a), ArrayData::F64(b)) => eq_impl!(a, b),
-            (ArrayData::F32(a), ArrayData::F32(b)) => eq_impl!(a, b),
+        macro_rules! eq_nan_impl {
+            ($a:expr, $b:expr, $is_nan:expr) => {{
+                let result = ndarray::Zip::from($a).and($b).map_collect(|a, b| {
+                    let equal = a == b || (equal_nan && $is_nan(a) && $is_nan(b));
+                    if negate { !equal } else { equal }
+                });
+                Ok(ArrayData::Bool(result))
+            }};
+        }
+        macro_rules! eq_with_impl {
+            ($a:expr, $b:expr, $equals:expr) => {{
+                let result = ndarray::Zip::from($a).and($b).map_collect(|a, b| {
+                    let equal = $equals(a, b);
+                    if negate { !equal } else { equal }
+                });
+                Ok(ArrayData::Bool(result))
+            }};
+        }
+        match (&left.data, &right.data) {
+            (ArrayData::F64(a), ArrayData::F64(b)) => {
+                eq_nan_impl!(a, b, |value: &f64| value.is_nan())
+            }
+            (ArrayData::F32(a), ArrayData::F32(b)) => {
+                eq_nan_impl!(a, b, |value: &f32| value.is_nan())
+            }
             (ArrayData::I64(a), ArrayData::I64(b)) => eq_impl!(a, b),
             (ArrayData::I32(a), ArrayData::I32(b)) => eq_impl!(a, b),
             (ArrayData::Bool(a), ArrayData::Bool(b)) => eq_impl!(a, b),
-            (ArrayData::Complex128(a), ArrayData::Complex128(b)) => eq_impl!(a, b),
-            (ArrayData::Complex64(a), ArrayData::Complex64(b)) => eq_impl!(a, b),
+            (ArrayData::Complex128(a), ArrayData::Complex128(b)) => {
+                eq_nan_impl!(a, b, |value: &Complex64| value.re.is_nan()
+                    || value.im.is_nan())
+            }
+            (ArrayData::Complex64(a), ArrayData::Complex64(b)) => {
+                eq_nan_impl!(a, b, |value: &Complex32| value.re.is_nan()
+                    || value.im.is_nan())
+            }
             (ArrayData::U64(a), ArrayData::U64(b)) => eq_impl!(a, b),
             (ArrayData::U32(a), ArrayData::U32(b)) => eq_impl!(a, b),
             (ArrayData::U16(a), ArrayData::U16(b)) => eq_impl!(a, b),
             (ArrayData::U8(a), ArrayData::U8(b)) => eq_impl!(a, b),
             (ArrayData::I16(a), ArrayData::I16(b)) => eq_impl!(a, b),
             (ArrayData::I8(a), ArrayData::I8(b)) => eq_impl!(a, b),
-            _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Cannot compare {:?} with {:?}",
-                self.data.dtype(),
-                other.data.dtype()
-            ))),
+            (ArrayData::Pauli(a), ArrayData::Pauli(b)) => eq_impl!(a, b),
+            (ArrayData::PauliString(a), ArrayData::PauliString(b)) => {
+                eq_with_impl!(a, b, |left: &PauliString, right: &PauliString| left.inner
+                    == right.inner)
+            }
+            _ => unreachable!("comparison operands were normalized to a common dtype"),
         }
+    }
+
+    /// Return whether two arrays have exactly equal shapes and values.
+    pub(crate) fn array_equal(&self, other: &Array, equal_nan: bool) -> PyResult<bool> {
+        if self.data.shape() != other.data.shape() {
+            return Ok(false);
+        }
+
+        let left_dtype = self.data.dtype();
+        let right_dtype = other.data.dtype();
+        if left_dtype != right_dtype
+            && (left_dtype.comparison_dtype(right_dtype).is_none()
+                || right_dtype.comparison_dtype(left_dtype).is_none())
+        {
+            return Ok(false);
+        }
+
+        let ArrayData::Bool(equal) = self.equality_data(other, false, equal_nan)? else {
+            unreachable!("element-wise equality always returns a boolean array")
+        };
+        Ok(equal.iter().all(|value| *value))
+    }
+
+    /// Helper for element-wise Array == Array (or !=) comparison.
+    /// `negate`: if true, returns != instead of ==.
+    fn eq_array(&self, other: &Array, py: Python<'_>, negate: bool) -> PyResult<Py<PyAny>> {
+        let data = self.equality_data(other, negate, false)?;
+        Ok(Py::new(py, Array { data })?.into_any())
     }
 
     /// Helper for matrix multiplication (used by __mul__, dot, etc.)
@@ -5336,31 +5664,6 @@ impl Array {
         Ok(())
     }
 
-    /// Resolve integer-sequence indices once for both reads and writes.
-    fn resolve_fancy_indices(
-        indices: &[isize],
-        axis: usize,
-        axis_len: usize,
-    ) -> PyResult<Vec<usize>> {
-        indices
-            .iter()
-            .map(|&index| {
-                let resolved = if index < 0 {
-                    axis_len.checked_add_signed(index)
-                } else {
-                    usize::try_from(index)
-                        .ok()
-                        .filter(|&value| value < axis_len)
-                };
-                resolved.ok_or_else(|| {
-                    pyo3::exceptions::PyIndexError::new_err(format!(
-                        "index {index} is out of bounds for axis {axis} of length {axis_len}"
-                    ))
-                })
-            })
-            .collect()
-    }
-
     /// Apply multi-dimensional slicing using iterative `slice_axis()`
     /// This leverages ndarray's built-in slicing capabilities
     /// Supports arbitrary step sizes including negative steps
@@ -6075,142 +6378,236 @@ impl Array {
         }
     }
 
-    /// Apply mixed integer/slice indexing leveraging ndarray's `index_axis` and `slice_axis`
-    /// This method handles cases like arr[0, 1:3] or arr[:, 0]
-    /// where some dimensions are indexed by integers (reducing dimensionality)
-    /// and others are sliced (preserving dimensionality)
-    fn apply_mixed_indexing(&self, index_ops: &[IndexOp]) -> PyResult<Self> {
-        // Check if all are slices (pure slice indexing)
-        let all_slices = index_ops
+    /// Resolve the complete index tuple into result-ordered source coordinates.
+    fn resolve_selection(
+        index_ops: &[IndexOp],
+        source_shape: &[usize],
+    ) -> PyResult<ResolvedSelection> {
+        enum ResolvedAxis {
+            Constant(usize),
+            Basic {
+                output_axis: usize,
+                indices: Vec<usize>,
+            },
+            Advanced(ArrayD<usize>),
+        }
+
+        let has_advanced = index_ops
             .iter()
-            .all(|op| matches!(op, IndexOp::Slice(_, _, _)));
-        if all_slices {
-            // Pure slice indexing - use existing implementation
-            let slices: Vec<(usize, isize, isize, isize)> = index_ops
+            .any(|operation| matches!(operation, IndexOp::Advanced(_)));
+        let advanced_positions = if has_advanced {
+            index_ops
                 .iter()
                 .enumerate()
-                .map(|(axis, op)| {
-                    if let IndexOp::Slice(start, stop, step) = op {
-                        (axis, *start, *stop, *step)
-                    } else {
-                        unreachable!()
-                    }
+                .filter_map(|(position, operation)| {
+                    matches!(operation, IndexOp::Integer(_) | IndexOp::Advanced(_))
+                        .then_some(position)
                 })
-                .collect();
-            return self.apply_multidim_slicing(slices);
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let separated = advanced_positions
+            .windows(2)
+            .any(|positions| positions[1] != positions[0] + 1);
+        let first_advanced = advanced_positions.first().copied();
+
+        let mut advanced_shape = Vec::new();
+        for array in index_ops
+            .iter()
+            .filter_map(|operation| match operation {
+                IndexOp::Advanced(arrays) => Some(arrays),
+                _ => None,
+            })
+            .flatten()
+        {
+            advanced_shape = Self::broadcast_shape(&advanced_shape, array.shape()).map_err(|_| {
+                pyo3::exceptions::PyIndexError::new_err(format!(
+                    "shape mismatch: indexing arrays could not be broadcast together with shapes {:?} and {:?}",
+                    advanced_shape,
+                    array.shape()
+                ))
+            })?;
         }
 
-        // Mixed indexing: combination of integers and slices
-        // Strategy: Apply operations sequentially, but index parameters are ALREADY computed
-        // based on the ORIGINAL array shape. We need to re-normalize them for the CURRENT array.
+        let basic_before_advanced = first_advanced.map_or(0, |position| {
+            index_ops[..position]
+                .iter()
+                .filter(|operation| matches!(operation, IndexOp::Slice(_)))
+                .count()
+        });
+        let advanced_output_start = if separated { 0 } else { basic_before_advanced };
+        let advanced_rank = advanced_shape.len();
 
-        // Macro to generate the mixed indexing logic for each dtype
-        macro_rules! apply_mixed_indexing_impl {
-            ($arr:expr, $variant:ident) => {{
-                // Start with owned array
-                let mut result = $arr.clone();
-                let mut current_axis = 0;
+        let mut basic_lengths = index_ops
+            .iter()
+            .filter_map(|operation| match operation {
+                IndexOp::Slice(indices) => Some(indices.len()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let consumed_axes = index_ops
+            .iter()
+            .map(|operation| match operation {
+                IndexOp::Integer(_) | IndexOp::Slice(_) => 1,
+                IndexOp::Advanced(arrays) => arrays.len(),
+            })
+            .sum::<usize>();
+        if consumed_axes > source_shape.len() {
+            return Err(pyo3::exceptions::PyIndexError::new_err(
+                "too many indices for array",
+            ));
+        }
+        basic_lengths.extend_from_slice(&source_shape[consumed_axes..]);
 
-                for op in index_ops.iter() {
-                    match op {
-                        IndexOp::Integer(idx) => {
-                            // Get the current shape of the result array (which may have been reduced)
-                            let current_shape = result.shape();
+        let mut result_shape = if separated {
+            let mut shape = advanced_shape.clone();
+            shape.extend_from_slice(&basic_lengths);
+            shape
+        } else {
+            let mut shape = basic_lengths[..basic_before_advanced].to_vec();
+            shape.extend_from_slice(&advanced_shape);
+            shape.extend_from_slice(&basic_lengths[basic_before_advanced..]);
+            shape
+        };
+        if !has_advanced {
+            result_shape.clone_from(&basic_lengths);
+        }
 
-                            // current_axis should be within bounds of the current result shape
-                            if current_axis >= current_shape.len() {
-                                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                                    "Too many indices for array with {} dimensions",
-                                    current_shape.len()
-                                )));
-                            }
+        let basic_output_axis = |basic_ordinal: usize| {
+            if !has_advanced {
+                basic_ordinal
+            } else if separated {
+                advanced_rank + basic_ordinal
+            } else if basic_ordinal < basic_before_advanced {
+                basic_ordinal
+            } else {
+                advanced_rank + basic_ordinal
+            }
+        };
 
-                            let axis_size = current_shape[current_axis];
-
-                            // Resolve negative index based on CURRENT axis size
-                            // NOTE: The index was already validated against the ORIGINAL shape,
-                            // but after dimension reduction, we need to re-validate
-                            let resolved_idx = if *idx < 0 {
-                                ((axis_size as isize) + idx) as usize
-                            } else {
-                                *idx as usize
-                            };
-
-                            // Bounds check against CURRENT axis size
-                            if resolved_idx >= axis_size {
-                                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                                    "Index {} is out of bounds for axis {} with size {}",
-                                    idx, current_axis, axis_size
-                                )));
-                            }
-
-                            // Use index_axis to select along this axis and convert to owned
-                            // This reduces dimensionality
-                            result = result.index_axis(Axis(current_axis), resolved_idx).to_owned();
-                            // Don't increment current_axis because we removed a dimension
-                        }
-                        IndexOp::Slice(start, stop, step) => {
-                            // The slice parameters (start, stop, step) were calculated by Python's
-                            // slice.indices() based on the original array shape. These are correct for
-                            // the SIZE of the axis. After dimension reduction from integer indexing,
-                            // the axis SIZE doesn't change (only the axis NUMBER changes).
-                            // So we can use the slice params as-is, just on the current_axis.
-
-                            if *step < 0 {
-                                // ndarray's Slice doesn't match NumPy for negative steps
-                                // We need to manually implement NumPy's behavior:
-                                // 1. Slice forward [stop+1, start+1] with step=1
-                                // 2. Reverse the axis
-                                // 3. Apply step magnitude if > 1
-                                let actual_start = if *stop == -1 { 0 } else { stop + 1 };
-                                let actual_end = start + 1;
-                                let slice_info = Slice::new(actual_start, Some(actual_end), 1);
-                                result = result.slice_axis(Axis(current_axis), slice_info).to_owned();
-                                result.invert_axis(Axis(current_axis));
-
-                                // Now apply step magnitude if it's not -1
-                                let step_magnitude = step.abs();
-                                if step_magnitude > 1 {
-                                    let slice_stepped = Slice::new(0, None, step_magnitude);
-                                    result = result.slice_axis(Axis(current_axis), slice_stepped).to_owned();
-                                }
-                            } else {
-                                // Positive step: use the slice as-is
-                                let slice_info = Slice::new(*start, Some(*stop), *step);
-                                result = result.slice_axis(Axis(current_axis), slice_info).to_owned();
-                            }
-                            current_axis += 1; // Move to next axis in the result
-                        }
-                        IndexOp::Fancy(indices) => {
-                            result = result.select(Axis(current_axis), indices);
-                            current_axis += 1;
-                        }
+        let mut resolved_axes = Vec::with_capacity(source_shape.len());
+        let mut basic_ordinal = 0;
+        for operation in index_ops {
+            match operation {
+                IndexOp::Integer(index) => resolved_axes.push(ResolvedAxis::Constant(*index)),
+                IndexOp::Slice(indices) => {
+                    resolved_axes.push(ResolvedAxis::Basic {
+                        output_axis: basic_output_axis(basic_ordinal),
+                        indices: indices.clone(),
+                    });
+                    basic_ordinal += 1;
+                }
+                IndexOp::Advanced(arrays) => {
+                    for array in arrays {
+                        let broadcast = array
+                            .broadcast(IxDyn(&advanced_shape))
+                            .ok_or_else(|| {
+                                pyo3::exceptions::PyIndexError::new_err(format!(
+                                    "shape mismatch: index shape {:?} cannot broadcast to {:?}",
+                                    array.shape(),
+                                    advanced_shape
+                                ))
+                            })?
+                            .to_owned();
+                        resolved_axes.push(ResolvedAxis::Advanced(broadcast));
                     }
                 }
-
-                Ok(Self {
-                    data: ArrayData::$variant(result),
-                })
-            }};
+            }
+        }
+        for &axis_len in &source_shape[consumed_axes..] {
+            resolved_axes.push(ResolvedAxis::Basic {
+                output_axis: basic_output_axis(basic_ordinal),
+                indices: (0..axis_len).collect(),
+            });
+            basic_ordinal += 1;
         }
 
-        // Apply the operation to each dtype variant
+        let coordinate_options = ArrayD::from_shape_fn(IxDyn(&result_shape), |output_index| {
+            let output = output_index.slice();
+            let advanced_index = output
+                .get(advanced_output_start..advanced_output_start.saturating_add(advanced_rank))?;
+            resolved_axes
+                .iter()
+                .map(|axis| match axis {
+                    ResolvedAxis::Constant(index) => Some(*index),
+                    ResolvedAxis::Basic {
+                        output_axis,
+                        indices,
+                    } => output
+                        .get(*output_axis)
+                        .and_then(|&position| indices.get(position))
+                        .copied(),
+                    ResolvedAxis::Advanced(indices) => indices.get(IxDyn(advanced_index)).copied(),
+                })
+                .collect::<Option<Vec<_>>>()
+        });
+        let coordinates = coordinate_options
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "internal error constructing resolved index selection",
+                )
+            })?;
+        let coordinates =
+            ArrayD::from_shape_vec(IxDyn(&result_shape), coordinates).map_err(|error| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "internal error shaping resolved index selection: {error}"
+                ))
+            })?;
+        Ok(ResolvedSelection {
+            coordinates,
+            shape: result_shape,
+        })
+    }
+
+    fn gather_resolved<T: Clone>(
+        source: &ArrayD<T>,
+        selection: &ResolvedSelection,
+    ) -> PyResult<ArrayD<T>> {
+        let values = selection
+            .coordinates
+            .iter()
+            .map(|coordinate| source.get(IxDyn(coordinate)).cloned())
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "internal error: resolved index is outside the source array",
+                )
+            })?;
+        ArrayD::from_shape_vec(IxDyn(&selection.shape), values).map_err(|error| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "internal error shaping indexed result: {error}"
+            ))
+        })
+    }
+
+    fn apply_resolved_selection(&self, selection: &ResolvedSelection) -> PyResult<Self> {
+        macro_rules! gather_variant {
+            ($source:expr, $variant:ident) => {
+                Ok(Self {
+                    data: ArrayData::$variant(Self::gather_resolved($source, selection)?),
+                })
+            };
+        }
+
         match &self.data {
-            ArrayData::Bool(arr) => apply_mixed_indexing_impl!(arr, Bool),
-            ArrayData::F64(arr) => apply_mixed_indexing_impl!(arr, F64),
-            ArrayData::F32(arr) => apply_mixed_indexing_impl!(arr, F32),
-            ArrayData::I64(arr) => apply_mixed_indexing_impl!(arr, I64),
-            ArrayData::I32(arr) => apply_mixed_indexing_impl!(arr, I32),
-            ArrayData::I16(arr) => apply_mixed_indexing_impl!(arr, I16),
-            ArrayData::I8(arr) => apply_mixed_indexing_impl!(arr, I8),
-            ArrayData::U64(arr) => apply_mixed_indexing_impl!(arr, U64),
-            ArrayData::U32(arr) => apply_mixed_indexing_impl!(arr, U32),
-            ArrayData::U16(arr) => apply_mixed_indexing_impl!(arr, U16),
-            ArrayData::U8(arr) => apply_mixed_indexing_impl!(arr, U8),
-            ArrayData::Complex128(arr) => apply_mixed_indexing_impl!(arr, Complex128),
-            ArrayData::Complex64(arr) => apply_mixed_indexing_impl!(arr, Complex64),
-            ArrayData::Pauli(arr) => apply_mixed_indexing_impl!(arr, Pauli),
-            ArrayData::PauliString(arr) => apply_mixed_indexing_impl!(arr, PauliString),
+            ArrayData::Bool(source) => gather_variant!(source, Bool),
+            ArrayData::I8(source) => gather_variant!(source, I8),
+            ArrayData::I16(source) => gather_variant!(source, I16),
+            ArrayData::I32(source) => gather_variant!(source, I32),
+            ArrayData::I64(source) => gather_variant!(source, I64),
+            ArrayData::U8(source) => gather_variant!(source, U8),
+            ArrayData::U16(source) => gather_variant!(source, U16),
+            ArrayData::U32(source) => gather_variant!(source, U32),
+            ArrayData::U64(source) => gather_variant!(source, U64),
+            ArrayData::F32(source) => gather_variant!(source, F32),
+            ArrayData::F64(source) => gather_variant!(source, F64),
+            ArrayData::Complex64(source) => gather_variant!(source, Complex64),
+            ArrayData::Complex128(source) => gather_variant!(source, Complex128),
+            ArrayData::Pauli(source) => gather_variant!(source, Pauli),
+            ArrayData::PauliString(source) => gather_variant!(source, PauliString),
         }
     }
 
@@ -6252,54 +6649,11 @@ impl Array {
         Ok((converted, is_scalar))
     }
 
-    /// Resolve each operation into ordered coordinates for mutable assignment.
-    fn assignment_ranges(index_ops: &[IndexOp], shape: &[usize]) -> PyResult<AssignmentSelection> {
-        let mut ranges = Vec::with_capacity(shape.len());
-        let mut integer_axes = Vec::new();
-
-        for (axis, op) in index_ops.iter().enumerate() {
-            match op {
-                IndexOp::Integer(index) => {
-                    let resolved = Self::resolve_fancy_indices(&[*index], axis, shape[axis])?;
-                    integer_axes.push(axis);
-                    ranges.push(resolved);
-                }
-                IndexOp::Slice(start, stop, step) => {
-                    let mut indices = Vec::new();
-                    let mut index = *start;
-                    while (*step > 0 && index < *stop) || (*step < 0 && index > *stop) {
-                        indices.push(index as usize);
-                        index += step;
-                    }
-                    ranges.push(indices);
-                }
-                IndexOp::Fancy(indices) => ranges.push(indices.clone()),
-            }
-        }
-
-        for &axis_len in &shape[index_ops.len()..] {
-            ranges.push((0..axis_len).collect());
-        }
-
-        let selection_shape = ranges
-            .iter()
-            .enumerate()
-            .filter_map(|(axis, indices)| (!integer_axes.contains(&axis)).then_some(indices.len()))
-            .collect();
-        Ok(AssignmentSelection {
-            ranges,
-            integer_axes,
-            shape: selection_shape,
-        })
-    }
-
     fn apply_converted_assignment<T: Clone>(
         target: &mut ArrayD<T>,
         source: &ArrayD<T>,
         is_scalar: bool,
-        ranges: &[Vec<usize>],
-        integer_axes: &[usize],
-        selection_shape: &[usize],
+        selection: &ResolvedSelection,
     ) -> PyResult<()> {
         if is_scalar {
             let scalar = source.first().cloned().ok_or_else(|| {
@@ -6307,41 +6661,51 @@ impl Array {
                     "internal error converting assignment value",
                 )
             })?;
-            Self::assign_to_mixed_indices(target, ranges, scalar);
+            for coordinate in &selection.coordinates {
+                let target_value = target.get_mut(IxDyn(coordinate)).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "internal error: resolved assignment index is outside the target array",
+                    )
+                })?;
+                *target_value = scalar.clone();
+            }
         } else {
-            if source.shape() != selection_shape {
+            if source.shape() != selection.shape {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "Shape mismatch: selection has shape {:?}, but source has shape {:?}",
-                    selection_shape,
+                    selection.shape,
                     source.shape()
                 )));
             }
-            Self::assign_array_to_mixed_indices(target, ranges, integer_axes, source)?;
+            for (output_index, coordinate) in selection.coordinates.indexed_iter() {
+                let source_value = source.get(output_index).cloned().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "internal error reading converted assignment value",
+                    )
+                })?;
+                let target_value = target.get_mut(IxDyn(coordinate)).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "internal error: resolved assignment index is outside the target array",
+                    )
+                })?;
+                *target_value = source_value;
+            }
         }
         Ok(())
     }
 
-    /// Apply integer, slice, or one-axis fancy assignment to an array.
-    fn apply_mixed_indexing_assignment(
+    /// Apply assignment through the same whole-index selection used by reads.
+    fn apply_resolved_assignment(
         &mut self,
-        index_ops: &[IndexOp],
-        shape: &[usize],
+        selection: &ResolvedSelection,
         value: &Bound<'_, PyAny>,
         value_snapshot: Option<&Self>,
     ) -> PyResult<()> {
         let (converted, is_scalar) = self.checked_assignment_value(value, value_snapshot)?;
-        let selection = Self::assignment_ranges(index_ops, shape)?;
 
         macro_rules! assign_variant {
             ($target:expr, $source:expr) => {
-                Self::apply_converted_assignment(
-                    $target,
-                    $source,
-                    is_scalar,
-                    &selection.ranges,
-                    &selection.integer_axes,
-                    &selection.shape,
-                )
+                Self::apply_converted_assignment($target, $source, is_scalar, selection)
             };
         }
 
@@ -6371,104 +6735,6 @@ impl Array {
                 "internal error converting assignment value to target dtype",
             )),
         }
-    }
-
-    // Helper method: Assign a scalar value to all indices specified by ranges
-    fn assign_to_mixed_indices<T: Clone>(
-        arr: &mut ndarray::ArrayD<T>,
-        ranges: &[Vec<usize>],
-        value: T,
-    ) {
-        // Recursively iterate through all combinations of indices
-        fn assign_recursive<T: Clone>(
-            arr: &mut ndarray::ArrayD<T>,
-            ranges: &[Vec<usize>],
-            current_indices: &mut Vec<usize>,
-            value: &T,
-        ) {
-            if current_indices.len() == ranges.len() {
-                // We have a complete set of indices - assign the value
-                arr[current_indices.as_slice()] = value.clone();
-            } else {
-                // Recurse through the next dimension
-                let dim = current_indices.len();
-                for &idx in &ranges[dim] {
-                    current_indices.push(idx);
-                    assign_recursive(arr, ranges, current_indices, value);
-                    current_indices.pop();
-                }
-            }
-        }
-
-        let mut current_indices = Vec::new();
-        assign_recursive(arr, ranges, &mut current_indices, &value);
-    }
-
-    // Helper method: Assign array values to indices specified by ranges
-    fn assign_array_to_mixed_indices<T: Clone>(
-        arr: &mut ndarray::ArrayD<T>,
-        ranges: &[Vec<usize>],
-        integer_axes: &[usize],
-        source: &ndarray::ArrayD<T>,
-    ) -> PyResult<()> {
-        use ndarray::IxDyn;
-
-        // Recursively iterate through all combinations of indices
-        fn assign_array_recursive<T: Clone>(
-            arr: &mut ndarray::ArrayD<T>,
-            ranges: &[Vec<usize>],
-            integer_axes: &[usize],
-            source: &ndarray::ArrayD<T>,
-            current_target_indices: &mut Vec<usize>,
-            current_source_indices: &mut Vec<usize>,
-        ) {
-            if current_target_indices.len() == ranges.len() {
-                // We have a complete set of indices - assign the value
-                let target_idx = IxDyn(current_target_indices);
-                let source_idx = IxDyn(current_source_indices);
-                arr[target_idx] = source[source_idx].clone();
-            } else {
-                // Recurse through the next dimension
-                let dim = current_target_indices.len();
-                let is_integer_axis = integer_axes.contains(&dim);
-
-                for (i, &idx) in ranges[dim].iter().enumerate() {
-                    current_target_indices.push(idx);
-
-                    // Only add to source indices if this is NOT an integer axis
-                    // (integer axes reduce dimensionality)
-                    if !is_integer_axis {
-                        current_source_indices.push(i);
-                    }
-
-                    assign_array_recursive(
-                        arr,
-                        ranges,
-                        integer_axes,
-                        source,
-                        current_target_indices,
-                        current_source_indices,
-                    );
-
-                    if !is_integer_axis {
-                        current_source_indices.pop();
-                    }
-                    current_target_indices.pop();
-                }
-            }
-        }
-
-        let mut current_target_indices = Vec::new();
-        let mut current_source_indices = Vec::new();
-        assign_array_recursive(
-            arr,
-            ranges,
-            integer_axes,
-            source,
-            &mut current_target_indices,
-            &mut current_source_indices,
-        );
-        Ok(())
     }
 }
 

@@ -37,7 +37,7 @@ use num_complex::Complex64;
 use pyo3::conversion::IntoPyObjectExt;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple, PyType};
+use pyo3::types::{PyDict, PySequence, PyTuple, PyType};
 
 // Import Array and ArrayData from pecos_array module for migration from numpy.ndarray to Array
 use crate::pecos_array::{Array, ArrayData};
@@ -767,6 +767,112 @@ fn random(py: Python<'_>, size: Option<usize>) -> PyResult<Py<PyAny>> {
             Ok(Py::new(py, Array::from_array_f64(result.into_dyn()))?.into_any())
         }
     }
+}
+
+fn binomial_n_array(n: &Bound<'_, PyAny>) -> PyResult<ArrayD<i64>> {
+    use crate::dtypes::DType;
+
+    let is_array_like = n.hasattr("__array_interface__")? || n.cast::<PySequence>().is_ok();
+    let array = if is_array_like {
+        Array::from_python_value(n, None)?
+    } else {
+        let singleton = PyTuple::new(n.py(), [n])?;
+        let dtype = Py::new(n.py(), DType::I64)?;
+        let converted =
+            Array::from_python_value(singleton.as_any(), Some(dtype.bind(n.py()).as_any()))?;
+        let ArrayData::I64(values) = converted.data else {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "internal error converting n to int64",
+            ));
+        };
+        return values.into_shape_with_order(IxDyn(&[])).map_err(|error| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "internal error reshaping scalar n: {error}"
+            ))
+        });
+    };
+
+    if matches!(
+        array.data,
+        ArrayData::F32(_) | ArrayData::F64(_) | ArrayData::Complex64(_) | ArrayData::Complex128(_)
+    ) {
+        let value = n.repr()?.to_string_lossy().into_owned();
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "n value {value} is not an integer"
+        )));
+    }
+
+    let converted = array.astype(DType::I64)?;
+    let ArrayData::I64(values) = converted.data else {
+        return Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "internal error converting n to int64",
+        ));
+    };
+    Ok(values)
+}
+
+fn binomial_p_array(p: &Bound<'_, PyAny>) -> PyResult<ArrayD<f64>> {
+    if let Ok(value) = p.extract::<f64>() {
+        Ok(NdArray::from_elem(IxDyn(&[]), value))
+    } else {
+        array_buffer::ensure_f64_array(p, "p")
+    }
+}
+
+fn binomial_size(size: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Vec<usize>>> {
+    let Some(size) = size else {
+        return Ok(None);
+    };
+    if let Ok(length) = size.extract::<usize>() {
+        return Ok(Some(vec![length]));
+    }
+    if let Ok(shape) = size.extract::<Vec<usize>>() {
+        return Ok(Some(shape));
+    }
+    let value = size.repr()?.to_string_lossy().into_owned();
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "size value {value} must be an integer or tuple of integers"
+    )))
+}
+
+/// Draw samples from a binomial distribution.
+///
+/// Scalar and array-like `n` and `p` inputs follow NumPy broadcasting rules.
+/// When `size` is omitted, their broadcast shape is used. An explicit `size`
+/// must be compatible with both inputs.
+#[pyfunction]
+#[pyo3(signature = (n, p, size=None))]
+fn binomial(
+    py: Python<'_>,
+    n: &Bound<'_, PyAny>,
+    p: &Bound<'_, PyAny>,
+    size: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Py<Array>> {
+    let n_array = binomial_n_array(n)?;
+    let p_array = binomial_p_array(p)?;
+    let requested_size = binomial_size(size)?;
+
+    let output_shape = if let Some(shape) = requested_size {
+        shape
+    } else {
+        broadcast_shapes(&[n_array.shape(), p_array.shape()])?
+    };
+    let n_broadcast = broadcast_to(n_array.view(), &output_shape).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "size value {output_shape:?} is incompatible with n shape {:?}",
+            n_array.shape()
+        ))
+    })?;
+    let p_broadcast = broadcast_to(p_array.view(), &output_shape).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "size value {output_shape:?} is incompatible with p shape {:?}",
+            p_array.shape()
+        ))
+    })?;
+
+    let samples = crate::prelude::random::binomial(&n_broadcast, &p_broadcast)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    Py::new(py, Array::from_array_i64(samples))
 }
 
 /// Generate random integers from a uniform distribution.
@@ -3246,7 +3352,15 @@ fn array(
     }
 
     if let Some(target_dtype) = target_dtype
-        && (obj.hasattr("__array_interface__")? || obj.cast::<pyo3::types::PySequence>().is_ok())
+        && obj.cast::<pyo3::types::PySequence>().is_ok()
+    {
+        let target_dtype_object = Py::new(py, target_dtype)?;
+        let array = Array::from_python_value(&obj, Some(target_dtype_object.bind(py).as_any()))?;
+        return Py::new(py, array);
+    }
+
+    if let Some(target_dtype) = target_dtype
+        && obj.hasattr("__array_interface__")?
     {
         let array = Array::from_python_value(&obj, None)?.astype(target_dtype)?;
         return Py::new(py, array);
@@ -5998,6 +6112,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Convenience functions (like numpy.random.random, numpy.random.seed, etc.)
     random_module.add_function(wrap_pyfunction!(seed, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(random, &random_module)?)?;
+    random_module.add_function(wrap_pyfunction!(binomial, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(randint, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(choice, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(compare_any, &random_module)?)?;

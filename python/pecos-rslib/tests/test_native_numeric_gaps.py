@@ -45,6 +45,15 @@ ARRAY_INTERFACE_DTYPES = (
     ("complex128", np.complex128, [1.5 + 2.25j, 2.5 - 3.25j]),
 )
 
+ARRAY_EQUAL_CUSTOM_DTYPES = (
+    ("pauli", [Pauli.I, Pauli.X, Pauli.Z], [Pauli.I, Pauli.Y, Pauli.Z]),
+    (
+        "paulistring",
+        [PauliString.from_dense_str(value) for value in ("I", "X", "Z")],
+        [PauliString.from_dense_str(value) for value in ("I", "Y", "Z")],
+    ),
+)
+
 SCALAR_DTYPES = (
     ("bool", np.bool_, True),
     ("int8", np.int8, 7),
@@ -60,6 +69,8 @@ SCALAR_DTYPES = (
     ("complex64", np.complex64, 7.5 + 2.25j),
     ("complex128", np.complex128, 7.5 + 2.25j),
 )
+
+TOLIST_SHAPES = ((), (3,), (2, 3), (2, 2, 2), (0,), (2, 0), (2, 0, 3))
 
 INDEX_ASSIGNMENT_DTYPES = (
     ("bool", dtypes.bool, np.bool_, True, [True, False, True]),
@@ -339,21 +350,58 @@ def test_bool_scalar_dtype_matches_numpy_boolean_behavior() -> None:
     assert num.bool_(1) is bool(np.bool_(1))
 
 
-def test_tolist_matches_numpy_for_native_scalar_types() -> None:
-    cases = (
-        ([1, 2], dtypes.int16, np.int16),
-        ([1, 255], dtypes.uint8, np.uint8),
-        ([1.25, 2.5], dtypes.float32, np.float32),
-        ([True, False], dtypes.bool, np.bool_),
-    )
-    for values, pecos_dtype, numpy_dtype in cases:
-        actual = num.array(values, dtype=pecos_dtype).tolist()
-        expected = np.array(values, dtype=numpy_dtype).tolist()
-        assert actual == expected
-        assert [type(value) for value in actual] == [type(value) for value in expected]
+@pytest.mark.parametrize(("name", "numpy_dtype", "_value"), SCALAR_DTYPES)
+@pytest.mark.parametrize("shape", TOLIST_SHAPES)
+def test_tolist_matches_numpy_for_every_numeric_dtype_and_shape(
+    name: str,
+    numpy_dtype: Any,
+    _value: Any,
+    shape: tuple[int, ...],
+) -> None:
+    size = int(np.prod(shape, dtype=np.int64)) if shape else 1
+    values = np.arange(size, dtype=np.float64)
+    if np.issubdtype(numpy_dtype, np.complexfloating):
+        values = values + (values + 0.5) * 1j
+    elif numpy_dtype is np.bool_:
+        values = values % 2 == 0
+    expected_array = np.asarray(values, dtype=numpy_dtype).reshape(shape)
 
-    values_2d = [[1, 2], [3, 4]]
-    assert num.array(values_2d, dtype=dtypes.uint16).tolist() == np.array(values_2d, dtype=np.uint16).tolist()
+    actual = Array(expected_array, dtype=getattr(dtypes, name)).tolist()
+    expected = expected_array.tolist()
+
+    def scalar_types(value: Any) -> Any:
+        if isinstance(value, list):
+            return [scalar_types(item) for item in value]
+        return type(value)
+
+    assert actual == expected
+    assert scalar_types(actual) == scalar_types(expected)
+
+
+@pytest.mark.parametrize("shape", TOLIST_SHAPES)
+@pytest.mark.parametrize("kind", ["pauli", "paulistring"])
+def test_tolist_preserves_custom_dtype_objects_and_shape(
+    shape: tuple[int, ...],
+    kind: str,
+) -> None:
+    size = int(np.prod(shape, dtype=np.int64)) if shape else 1
+    if kind == "pauli":
+        values = [Pauli.I, Pauli.X, Pauli.Y, Pauli.Z]
+        dtype = dtypes.pauli
+    else:
+        values = [
+            PauliString.from_dense_str("I"),
+            PauliString.from_dense_str("X"),
+            PauliString.from_dense_str("Y"),
+            PauliString.from_dense_str("Z"),
+        ]
+        dtype = dtypes.paulistring
+    flat_values = [values[index % len(values)] for index in range(size)]
+    expected = np.asarray(flat_values, dtype=object).reshape(shape).tolist()
+
+    actual = Array(flat_values, dtype=dtype).reshape(shape).tolist()
+
+    assert actual == expected
 
 
 @pytest.mark.parametrize(
@@ -370,6 +418,173 @@ def test_pecos_reexports_bool_dtype() -> None:
 
 def test_pecos_reexported_asarray_works() -> None:
     assert pc.asarray([1, 2], dtype=dtypes.uint8).tolist() == [1, 2]
+
+
+@pytest.mark.parametrize(("dtype_name", "numpy_dtype", "values"), ARRAY_INTERFACE_DTYPES)
+@pytest.mark.parametrize("input_kind", ["native", "numpy", "list"])
+def test_array_equal_same_numeric_dtype_matches_numpy_for_every_input_kind(
+    dtype_name: str,
+    numpy_dtype: Any,
+    values: list[Any],
+    input_kind: str,
+) -> None:
+    equal_left = np.asarray(values, dtype=numpy_dtype)
+    equal_right = equal_left.copy()
+    unequal_right = equal_left.copy()
+    unequal_right[-1] = equal_left[0]
+
+    def as_input(value: np.ndarray) -> Any:
+        if input_kind == "native":
+            return Array(value, dtype=getattr(dtypes, dtype_name))
+        if input_kind == "list":
+            return value.tolist()
+        return value
+
+    assert np.array_equal(equal_left, equal_right)
+    assert not np.array_equal(equal_left, unequal_right)
+    assert pc.array_equal(as_input(equal_left), as_input(equal_right))
+    assert not pc.array_equal(as_input(equal_left), as_input(unequal_right))
+
+
+@pytest.mark.parametrize(("dtype_name", "equal_values", "unequal_values"), ARRAY_EQUAL_CUSTOM_DTYPES)
+@pytest.mark.parametrize("input_kind", ["native", "numpy", "list"])
+def test_array_equal_custom_dtype_matches_numpy_object_oracle(
+    dtype_name: str,
+    equal_values: list[Any],
+    unequal_values: list[Any],
+    input_kind: str,
+) -> None:
+    equal_left = np.asarray(equal_values, dtype=object)
+    equal_right = np.asarray(equal_values, dtype=object)
+    unequal_right = np.asarray(unequal_values, dtype=object)
+
+    def as_input(value: np.ndarray) -> Any:
+        values = value.tolist()
+        if input_kind == "native":
+            return Array(values, dtype=getattr(dtypes, dtype_name))
+        if input_kind == "list":
+            return values
+        return value
+
+    assert np.array_equal(equal_left, equal_right)
+    assert not np.array_equal(equal_left, unequal_right)
+    assert pc.array_equal(as_input(equal_left), as_input(equal_right))
+    assert not pc.array_equal(as_input(equal_left), as_input(unequal_right))
+
+
+@pytest.mark.parametrize(("left_name", "left_dtype", "_left_values"), ARRAY_INTERFACE_DTYPES)
+@pytest.mark.parametrize(("right_name", "right_dtype", "_right_values"), ARRAY_INTERFACE_DTYPES)
+def test_array_equal_all_numeric_dtype_pairs_match_numpy_for_equal_values(
+    left_name: str,
+    left_dtype: Any,
+    _left_values: list[Any],
+    right_name: str,
+    right_dtype: Any,
+    _right_values: list[Any],
+) -> None:
+    left = np.asarray([0, 1], dtype=left_dtype)
+    right = np.asarray([0, 1], dtype=right_dtype)
+    expected = np.array_equal(left, right)
+
+    assert pc.array_equal(left, right) is expected, (left_name, right_name, "numpy")
+    assert pc.array_equal(Array(left), Array(right)) is expected, (left_name, right_name, "native")
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (np.asarray([0, 255], dtype=np.uint8), np.asarray([0, 255], dtype=np.int64)),
+        (np.asarray([-2, 3], dtype=np.int32), np.asarray([-2.0, 3.0], dtype=np.float64)),
+    ],
+)
+def test_array_equal_mixed_dtype_true_cases_match_numpy(left: np.ndarray, right: np.ndarray) -> None:
+    assert np.array_equal(left, right)
+    assert pc.array_equal(Array(left), Array(right))
+    assert pc.array_equal(left, right)
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (np.asarray([1, 2], dtype=np.uint8), np.asarray([1, 3], dtype=np.int64)),
+        (np.asarray([[1, 2]], dtype=np.int32), np.asarray([1, 2], dtype=np.int64)),
+        (np.asarray([16_777_217], dtype=np.int32), np.asarray([16_777_216], dtype=np.float32)),
+        (np.asarray([2**63], dtype=np.uint64), np.asarray([2**63 - 1], dtype=np.int64)),
+    ],
+)
+def test_array_equal_mixed_dtype_false_cases_match_numpy(left: np.ndarray, right: np.ndarray) -> None:
+    assert not np.array_equal(left, right)
+    assert not pc.array_equal(Array(left), Array(right))
+    assert not pc.array_equal(left, right)
+
+
+def test_array_equal_uses_numpy_promotion_before_value_comparison() -> None:
+    left = np.asarray([2**53 + 1], dtype=np.int64)
+    right = np.asarray([float(2**53)], dtype=np.float64)
+
+    assert np.array_equal(left, right)
+    assert pc.array_equal(Array(left), Array(right))
+    assert (Array(left) == Array(right)).tolist() == (left == right).tolist()
+
+
+@pytest.mark.parametrize("numpy_dtype", [np.float32, np.float64, np.complex64, np.complex128])
+@pytest.mark.parametrize("input_kind", ["native", "numpy", "list"])
+def test_array_equal_equal_nan_matches_numpy(
+    numpy_dtype: Any,
+    input_kind: str,
+) -> None:
+    if np.issubdtype(numpy_dtype, np.complexfloating):
+        left = np.asarray([complex(np.nan, 1), complex(2, np.nan)], dtype=numpy_dtype)
+        right = np.asarray([complex(np.nan, 9), complex(7, np.nan)], dtype=numpy_dtype)
+    else:
+        left = np.asarray([1, np.nan], dtype=numpy_dtype)
+        right = left.copy()
+
+    def as_input(value: np.ndarray) -> Any:
+        if input_kind == "native":
+            return Array(value)
+        if input_kind == "list":
+            return value.tolist()
+        return value
+
+    assert pc.array_equal(as_input(left), as_input(right), equal_nan=False) is np.array_equal(
+        left, right, equal_nan=False
+    )
+    assert pc.array_equal(as_input(left), as_input(right), equal_nan=True) is np.array_equal(
+        left, right, equal_nan=True
+    )
+
+
+@pytest.mark.parametrize(
+    "custom_values",
+    [
+        [Pauli.I, Pauli.X],
+        [PauliString.from_dense_str("I"), PauliString.from_dense_str("X")],
+    ],
+)
+def test_array_equal_pauli_vs_numeric_is_false_in_both_orders(custom_values: list[Any]) -> None:
+    custom = Array(custom_values)
+    numeric = Array([0, 1], dtype=dtypes.uint8)
+
+    assert not pc.array_equal(custom, numeric)
+    assert not pc.array_equal(numeric, custom)
+
+
+def test_array_equal_different_pauli_kinds_are_unequal() -> None:
+    pauli = Array([Pauli.X])
+    pauli_string = Array([PauliString.from_dense_str("X")])
+
+    assert not pc.array_equal(pauli, pauli_string)
+    assert not pc.array_equal(pauli_string, pauli)
+
+
+def test_array_equal_uint8_check_matrix_regression() -> None:
+    left = Array([[1, 0, 1, 0], [0, 1, 0, 1]], dtype=dtypes.uint8)
+    equal = Array([[1, 0, 1, 0], [0, 1, 0, 1]], dtype=dtypes.uint8)
+    bit_flipped = Array([[1, 0, 1, 0], [0, 1, 1, 1]], dtype=dtypes.uint8)
+
+    assert pc.array_equal(left, equal)
+    assert not pc.array_equal(left, bit_flipped)
 
 
 @pytest.mark.parametrize("dtype_name", ["uint8", "uint16", "uint32", "uint64"])

@@ -76,12 +76,14 @@ def test_load_maps_malformed_files_to_value_error(tmp_path) -> None:
 
 
 def test_load_rejects_a_tampered_header_or_payload(tmp_path) -> None:
-    """Integrity is checked over the whole file before anything is parsed.
+    """A corpus edited without recomputing the digest must not load.
 
-    A header edit that stays internally consistent -- bumping the declared
-    num_shots -- was accepted by an earlier design that validated fields
-    individually. The content digest is what makes that unreachable, so both
-    a header edit and a payload bit-flip must be rejected.
+    An earlier design validated header fields individually and accepted a
+    corpus whose declared num_shots had been bumped from 65 to 66. The digest
+    catches that class of edit -- corruption, truncation, a hand-patched
+    field. It is unkeyed and stored in the file it covers, so it does not stop
+    an adversary who recomputes it; see the threat model in sample_corpus.rs.
+    Both a header edit and a payload bit-flip are checked here.
     """
     dem = "error(0.125) D0 L0\n"
     path = tmp_path / "tampered.pecos"

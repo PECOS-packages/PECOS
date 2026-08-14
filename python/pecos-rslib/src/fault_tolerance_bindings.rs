@@ -88,6 +88,22 @@ use decoder_scoring::{
 };
 use sample_corpus::{CorpusError, CorpusToSave, LoadedCorpus};
 
+/// Resolve a caller-supplied worker count.
+///
+/// `None` means "use rayon's default". An explicit zero is caller error: the
+/// parallel decode paths divide the shot count by this value to size chunks,
+/// so a zero would panic across the FFI boundary instead of reporting a
+/// problem the caller can fix.
+fn resolve_worker_count(num_workers: Option<usize>) -> PyResult<usize> {
+    match num_workers {
+        Some(0) => Err(pyo3::exceptions::PyValueError::new_err(
+            "num_workers must be at least 1 (omit it to use one worker per CPU)",
+        )),
+        Some(count) => Ok(count),
+        None => Ok(rayon::current_num_threads()),
+    }
+}
+
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
 /// Per-shot detector rows paired with per-shot observable/DEM-output rows.
@@ -4032,7 +4048,7 @@ impl PySampleBatch {
 
         self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         drop(create_observable_decoder(dem, decoder_type)?);
-        let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
+        let n_workers = resolve_worker_count(num_workers)?;
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
             .build()
@@ -4215,7 +4231,7 @@ impl PySampleBatch {
         use rayon::prelude::*;
 
         self.ensure_dem_matches(dem, allow_dem_mismatch)?;
-        let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
+        let n_workers = resolve_worker_count(num_workers)?;
 
         // Validate decoder type early.
         create_observable_decoder(dem, decoder_type)?;
@@ -5059,7 +5075,7 @@ impl PyDemSampler {
         use rayon::prelude::*;
 
         let actual_seed = seed.unwrap_or(0);
-        let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
+        let n_workers = resolve_worker_count(num_workers)?;
 
         // Validate decoder type early
         create_observable_decoder(dem, decoder_type)?;

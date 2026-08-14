@@ -17,6 +17,19 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+// THREAT MODEL. The SHA-256 in the prefix is an unkeyed digest stored in the
+// same file it covers, so it detects corruption, truncation and casual edits --
+// not an adversary, who can simply recompute it after editing. Treat a corpus
+// as trusted input whose provenance you established some other way; the digest
+// tells you the bytes did not rot, not that they came from whom they claim.
+//
+// One limit is inherent to the encoding rather than to the digest: columns are
+// bit-packed 64 shots to a word, so a declared num_shots anywhere within its
+// own word is indistinguishable from the payload. A file holding 65 real shots
+// can honestly declare any count in 65..=128 -- which inflates a logical-error
+// denominator. Padding bits above the declared count are required to be zero,
+// which bounds the slack to that one word but cannot remove it.
+
 const MAGIC: &[u8; 12] = b"PECOSCORPUS\0";
 pub(super) const FORMAT_VERSION: u32 = 1;
 const SHA256_LEN: usize = 32;
@@ -208,7 +221,11 @@ pub(super) fn save(path: &Path, corpus: CorpusToSave<'_>) -> Result<(), CorpusEr
         .map_err(|error| invalid(format!("could not serialize corpus header: {error}")))?;
     let header_len = u32::try_from(header_bytes.len())
         .map_err(|_| invalid("corpus JSON header is too large to encode"))?;
+    // The declared header length is hashed too. It sits ahead of the digest in
+    // the file but still steers where the header ends, so leaving it out would
+    // put a behavior-affecting field outside the checked region.
     let mut content_hasher = Sha256::new();
+    content_hasher.update(header_len.to_le_bytes());
     content_hasher.update(&header_bytes);
     content_hasher.update(&payload);
     let content_sha256: [u8; SHA256_LEN] = content_hasher.finalize().into();
@@ -312,7 +329,10 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
     }
 
     let expected_content_sha = &bytes[HEADER_LEN_END..PREFIX_LEN];
-    let actual_content_sha = sha256(&bytes[PREFIX_LEN..]);
+    let mut content_hasher = Sha256::new();
+    content_hasher.update(&bytes[MAGIC.len()..HEADER_LEN_END]);
+    content_hasher.update(&bytes[PREFIX_LEN..]);
+    let actual_content_sha: [u8; SHA256_LEN] = content_hasher.finalize().into();
     if expected_content_sha != actual_content_sha {
         return Err(invalid(format!(
             "corpus content SHA-256 mismatch: expected {}, computed {}",
@@ -321,8 +341,8 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
         )));
     }
 
-    // The digest covers the exact header bytes, so a duplicate JSON key cannot
-    // be injected into an existing corpus without breaking content integrity.
+    // serde_json applies last-key-wins for duplicates; the digest does not make
+    // that unreachable, it only means an editor must recompute it.
     let header_value: Value = serde_json::from_slice(&bytes[PREFIX_LEN..header_end])
         .map_err(|error| invalid(format!("invalid corpus header JSON: {error}")))?;
     let header = header_value

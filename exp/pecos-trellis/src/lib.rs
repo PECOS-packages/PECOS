@@ -36,7 +36,7 @@ const WORD_BITS: usize = u64::BITS as usize;
 const BP_MIN_SUM_SCALE: f64 = 0.625;
 const BP_SCORE_PROBABILITY_MIN: f64 = 1e-6;
 
-/// Frontier pruning and column-order configuration.
+/// Pruning and column-order configuration for the trellis engine.
 ///
 /// The [`Default`] pruning values are provisional pending benchmarking.
 /// Pruning ranks accumulated prefix log mass plus a `score_alpha`-weighted
@@ -125,7 +125,7 @@ pub struct TrellisLogicalMass {
     pub log_mass: f64,
 }
 
-/// Completeness status of one successful Frontier decode.
+/// Completeness status of one successful trellis decode.
 ///
 /// `NoPath` remains a [`DecoderError`]. This envelope will gain a budget arm
 /// only when the decoder has an actual budget mechanism.
@@ -142,7 +142,7 @@ pub enum TrellisStatus {
     },
 }
 
-/// Result of one Frontier decode.
+/// Result of one trellis decode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrellisResult {
     /// Predicted logical-observable flip mask.
@@ -286,7 +286,7 @@ type RawColumn = (Vec<u64>, Vec<u64>, f64);
 type SuffixCompatibilityTables = Vec<Vec<SuffixCompatibility>>;
 type BpSuffixPreparation = (Option<SuffixCompatibilityTables>, f64);
 
-/// Structured outcome of one Frontier engine attempt.
+/// Structured outcome of one trellis engine attempt.
 ///
 /// This preserves work telemetry for a no-path outcome so higher-level decode
 /// policies can retry without duplicating engine logic.

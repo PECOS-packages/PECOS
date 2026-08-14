@@ -246,7 +246,8 @@ impl PyBpTrellisResult {
         self.inner.dropped_log_mass
     }
 
-    /// Wall-clock seconds spent producing BP-informed pruning scores.
+    /// Wall-clock seconds spent producing BP-informed pruning scores,
+    /// totalled across all attempted escalation rungs.
     #[getter]
     fn bp_seconds(&self) -> f64 {
         self.inner.bp_seconds

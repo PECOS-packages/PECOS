@@ -49,6 +49,7 @@ impl PyStabMps {
         auto_grow_bond_dim=None,
         auto_grow_max_bond_dim=None,
         max_truncation_error=None,
+        svd_cutoff=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -62,6 +63,7 @@ impl PyStabMps {
         auto_grow_bond_dim: Option<f64>,
         auto_grow_max_bond_dim: Option<usize>,
         max_truncation_error: Option<f64>,
+        svd_cutoff: Option<f64>,
     ) -> Self {
         let mut b = StabMps::builder(num_qubits);
         if let Some(s) = seed {
@@ -90,6 +92,9 @@ impl PyStabMps {
         }
         if let Some(e) = max_truncation_error {
             b = b.max_truncation_error(e);
+        }
+        if let Some(c) = svd_cutoff {
+            b = b.svd_cutoff(c);
         }
         PyStabMps { inner: b.build() }
     }

@@ -532,6 +532,98 @@ def test_all_unsigned_any_all_axis_and_axisless_match_numpy(
     assert num.all(actual, axis=1).tolist() == np.all(expected, axis=1).tolist()
 
 
+@pytest.mark.parametrize(("dtype_name", "numpy_dtype", "_values"), ARRAY_INTERFACE_DTYPES)
+def test_native_array_sum_uses_all_numeric_dtypes(
+    dtype_name: str,
+    numpy_dtype: Any,
+    _values: list[Any],
+) -> None:
+    expected = np.array([[1, 2], [3, 4]], dtype=numpy_dtype)
+    actual = Array(expected)
+
+    assert num.sum(actual) == np.sum(expected).item(), dtype_name
+    np.testing.assert_array_equal(np.asarray(num.sum(actual, axis=0)), np.sum(expected, axis=0))
+
+
+@pytest.mark.parametrize(
+    ("dtype_name", "numpy_dtype", "_values"),
+    [case for case in ARRAY_INTERFACE_DTYPES if not case[0].startswith("complex")],
+)
+@pytest.mark.parametrize(("reduction", "numpy_reduction"), [(num.max, np.max), (num.min, np.min)])
+def test_native_array_extremes_use_all_ordered_numeric_dtypes(
+    dtype_name: str,
+    numpy_dtype: Any,
+    _values: list[Any],
+    reduction: Callable[..., Any],
+    numpy_reduction: Callable[..., Any],
+) -> None:
+    expected = np.array([[1, 2], [3, 4]], dtype=numpy_dtype)
+    actual = Array(expected)
+
+    assert reduction(actual) == numpy_reduction(expected).item(), dtype_name
+    np.testing.assert_array_equal(np.asarray(reduction(actual, axis=1)), numpy_reduction(expected, axis=1))
+
+
+@pytest.mark.parametrize(("dtype_name", "numpy_dtype", "_values"), ARRAY_INTERFACE_DTYPES)
+@pytest.mark.parametrize(("reduction", "numpy_reduction"), [(num.any, np.any), (num.all, np.all)])
+def test_native_array_truth_reductions_use_all_numeric_dtypes(
+    dtype_name: str,
+    numpy_dtype: Any,
+    _values: list[Any],
+    reduction: Callable[..., Any],
+    numpy_reduction: Callable[..., Any],
+) -> None:
+    expected = np.array([[0, 1], [2, 0]], dtype=numpy_dtype)
+    actual = Array(expected)
+
+    assert reduction(actual) == numpy_reduction(expected).item(), dtype_name
+    np.testing.assert_array_equal(np.asarray(reduction(actual, axis=0)), numpy_reduction(expected, axis=0))
+
+
+@pytest.mark.parametrize(
+    ("dtype_name", "numpy_dtype", "_values"),
+    [case for case in ARRAY_INTERFACE_DTYPES if case[0] != "bool" and not case[0].startswith("complex")],
+)
+def test_native_array_mean_uses_all_supported_numeric_dtypes(
+    dtype_name: str,
+    numpy_dtype: Any,
+    _values: list[Any],
+) -> None:
+    expected = np.array([[1, 2], [3, 4]], dtype=numpy_dtype)
+    actual = Array(expected)
+
+    assert num.mean(actual) == np.mean(expected).item(), dtype_name
+    np.testing.assert_array_equal(np.asarray(num.mean(actual, axis=0)), np.mean(expected, axis=0))
+
+
+def test_native_float_reductions_preserve_nan_inf_and_axis_results() -> None:
+    values = np.array([[np.nan, np.inf, -np.inf, 1.0], [2.0, np.nan, 3.0, -4.0]])
+    actual = Array(values)
+
+    assert np.isnan(num.sum(actual))
+    assert num.max(actual) == 3.0
+    assert np.isnan(num.min(actual))
+    np.testing.assert_array_equal(np.asarray(num.sum(actual, axis=1)), np.array([np.nan, np.nan]))
+    np.testing.assert_array_equal(np.asarray(num.max(actual, axis=1)), np.array([np.inf, 3.0]))
+    np.testing.assert_array_equal(np.asarray(num.min(actual, axis=1)), np.array([-np.inf, -4.0]))
+
+
+@pytest.mark.performance
+def test_native_float64_sum_does_not_reenter_python_per_element() -> None:
+    """Release-only guard for the native-Array dispatch regression in PECOS #505."""
+    import time
+
+    values = Array(np.arange(1_000_000, dtype=np.float64))
+    num.sum(values)
+    samples = []
+    for _ in range(3):
+        start = time.perf_counter()
+        num.sum(values)
+        samples.append(time.perf_counter() - start)
+
+    assert min(samples) < 0.05, f"native float64 sum took {min(samples) * 1000:.1f} ms"
+
+
 @pytest.mark.parametrize("value", [0, 1, False, True, np.int64(0), np.int64(1)])
 def test_bool_dtype_scalar_likes_match_numpy(value: Any) -> None:
     assert num.bool_(value) is bool(np.bool_(value))

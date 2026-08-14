@@ -288,6 +288,74 @@ def test_fixture_enumerates_every_supported_backend() -> None:
     assert len(_FIXTURE["cases"]) == 2 * 2 * len(DecoderType)
 
 
+def test_tesseract_check_matrix_all_one_syndromes_match_pre_migration() -> None:
+    """Pin the valid mixed-dtype array_equal path reported during review."""
+    patch = SurfacePatch.create(distance=3)
+    decoder = SurfaceDecoder(
+        patch,
+        num_rounds=3,
+        decoder_type="tesseract",
+        use_circuit_level_dem=False,
+    )
+    synx = [np.ones(len(patch.geometry.x_stabilizers), dtype=np.uint8) for _round in range(3)]
+    synz = [np.ones(len(patch.geometry.z_stabilizers), dtype=np.uint8) for _round in range(3)]
+    final = np.ones(patch.num_data, dtype=np.uint8)
+
+    is_error, result = decoder.decode_memory_x(synx, synz, final)
+
+    assert is_error
+    assert result.x_correction.tolist() == [0] * patch.num_data
+    assert result.z_correction.tolist() == [0] * patch.num_data
+    assert not result.logical_x_flip
+    assert not result.logical_z_flip
+    assert float(result.decoding_weight).hex() == "0x1.2616719161d2bp+3"
+
+
+def test_syndrome_conversion_valid_bits_are_unchanged() -> None:
+    syndromes = np.asarray([[1, 0], [1, 1], [0, 1]], dtype=np.uint8)
+    events = syndromes_to_detection_events(syndromes, num_rounds=3, num_detectors_per_round=2)
+    assert events.tolist() == [[1, 0], [0, 1], [1, 0]]
+
+
+@pytest.mark.parametrize(
+    ("bad_value", "position"),
+    [(2, (0, 1)), (255, (2, 0))],
+)
+def test_syndrome_conversion_rejects_non_bits(bad_value: int, position: tuple[int, int]) -> None:
+    syndromes = np.zeros((3, 2), dtype=np.uint8)
+    syndromes[position] = bad_value
+
+    with pytest.raises(ValueError, match=rf"found {bad_value} at position") as exc_info:
+        syndromes_to_detection_events(syndromes, num_rounds=3, num_detectors_per_round=2)
+
+    assert str(exc_info.value) == (f"syndromes must contain only 0/1 bits; found {bad_value} at position {position}")
+
+
+@pytest.mark.parametrize("method_name", ["decode_memory_x", "decode_memory_z"])
+@pytest.mark.parametrize("syndrome_name", ["synx_list", "synz_list"])
+@pytest.mark.parametrize("bad_value", [2, 255])
+@pytest.mark.parametrize("round_index", range(3))
+def test_memory_decoders_reject_non_bits_in_any_round(
+    method_name: str,
+    syndrome_name: str,
+    bad_value: int,
+    round_index: int,
+) -> None:
+    patch = SurfacePatch.create(distance=3)
+    decoder = SurfaceDecoder(patch, num_rounds=3, decoder_type="pymatching", use_circuit_level_dem=False)
+    synx = [np.zeros(len(patch.geometry.x_stabilizers), dtype=np.uint8) for _round in range(3)]
+    synz = [np.zeros(len(patch.geometry.z_stabilizers), dtype=np.uint8) for _round in range(3)]
+    target = synx if syndrome_name == "synx_list" else synz
+    target[round_index][1] = bad_value
+
+    with pytest.raises(ValueError, match=rf"found {bad_value} at position") as exc_info:
+        getattr(decoder, method_name)(synx, synz, np.zeros(patch.num_data, dtype=np.uint8))
+
+    assert str(exc_info.value) == (
+        f"{syndrome_name} must contain only 0/1 bits; found {bad_value} at position ({round_index}, 1)"
+    )
+
+
 @pytest.mark.parametrize("case", _FIXTURE["cases"], ids=lambda case: case["id"])
 def test_decode_capture_is_bit_for_bit_identical(case: dict[str, Any]) -> None:
     assert _capture_case(case) == {

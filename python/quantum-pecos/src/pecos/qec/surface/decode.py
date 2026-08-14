@@ -635,6 +635,34 @@ def _twirl_traced_qis_rejection_message() -> str:
     )
 
 
+def _validate_syndrome_bits(
+    syndromes: Any,
+    *,
+    name: str,
+    position_prefix: tuple[int, ...] = (),
+) -> Array:
+    """Return ``syndromes`` as an Array after validating its bit values."""
+    syndrome_array = asarray(syndromes)
+    for flat_index, value in enumerate(syndrome_array.ravel().tolist()):
+        if value in (0, 1):
+            continue
+        position = []
+        remaining = flat_index
+        for extent in reversed(syndrome_array.shape):
+            position.append(remaining % extent)
+            remaining //= extent
+        full_position = position_prefix + tuple(reversed(position))
+        msg = f"{name} must contain only 0/1 bits; found {value!r} at position {full_position}"
+        raise ValueError(msg)
+    return syndrome_array
+
+
+def _validate_syndrome_rounds(syndromes: Any, *, name: str) -> None:
+    """Validate a sequence of syndrome rows without changing its representation."""
+    for round_index, row in enumerate(syndromes):
+        _validate_syndrome_bits(row, name=name, position_prefix=(round_index,))
+
+
 def syndromes_to_detection_events(
     syndromes: Array,
     num_rounds: int,
@@ -647,14 +675,20 @@ def syndromes_to_detection_events(
     flip syndromes in both the current and next round.
 
     Args:
-        syndromes: Raw syndrome array of shape (num_rounds, num_detectors_per_round)
-                   or flat array of length num_rounds * num_detectors_per_round
+        syndromes: Raw bit-syndrome array containing only 0 and 1, with shape
+            (num_rounds, num_detectors_per_round) or flat length
+            num_rounds * num_detectors_per_round.
         num_rounds: Number of syndrome extraction rounds
         num_detectors_per_round: Number of detectors per round
 
     Returns:
         Detection events array of shape (num_rounds, num_detectors_per_round)
+
+    Raises:
+        ValueError: If a syndrome value is not 0 or 1.
     """
+    syndromes = _validate_syndrome_bits(syndromes, name="syndromes")
+
     # Reshape to (rounds, detectors) if flat
     if syndromes.ndim == 1:
         syndromes = syndromes.reshape(num_rounds, num_detectors_per_round)
@@ -3289,15 +3323,23 @@ class SurfaceDecoder:
         - The decoder returns a per-qubit correction
 
         Args:
-            synx_list: List of X syndrome arrays, one per round
-            synz_list: List of Z syndrome arrays, one per round
+            synx_list: List of X bit-syndrome arrays, one per round. Values must be 0 or 1.
+            synz_list: List of Z bit-syndrome arrays, one per round. Values must be 0 or 1.
             final: Final data qubit measurements
             init_synx: Optional prep-baseline X syndrome for the random
                 stabilizer signs established before counted Z-memory rounds.
 
         Returns:
             (is_logical_error, decoding_result)
+
+        Raises:
+            ValueError: If a syndrome value is not 0 or 1.
         """
+        _validate_syndrome_rounds(synx_list, name="synx_list")
+        _validate_syndrome_rounds(synz_list, name="synz_list")
+        if init_synx is not None:
+            _validate_syndrome_bits(init_synx, name="init_synx")
+
         geom = self.patch.geometry
         logical_z_qubits = geom.logical_z.data_qubits if geom.logical_z else ()
         final_parity = sum(final[q] for q in logical_z_qubits) % 2
@@ -3386,15 +3428,23 @@ class SurfaceDecoder:
         - The decoder returns a per-qubit correction
 
         Args:
-            synx_list: List of X syndrome arrays, one per round
-            synz_list: List of Z syndrome arrays, one per round
+            synx_list: List of X bit-syndrome arrays, one per round. Values must be 0 or 1.
+            synz_list: List of Z bit-syndrome arrays, one per round. Values must be 0 or 1.
             final: Final data qubit measurements
             init_synz: Optional prep-baseline Z syndrome for the random
                 stabilizer signs established before counted X-memory rounds.
 
         Returns:
             (is_logical_error, decoding_result)
+
+        Raises:
+            ValueError: If a syndrome value is not 0 or 1.
         """
+        _validate_syndrome_rounds(synx_list, name="synx_list")
+        _validate_syndrome_rounds(synz_list, name="synz_list")
+        if init_synz is not None:
+            _validate_syndrome_bits(init_synz, name="init_synz")
+
         geom = self.patch.geometry
         logical_x_qubits = geom.logical_x.data_qubits if geom.logical_x else ()
         final_parity = sum(final[q] for q in logical_x_qubits) % 2
@@ -4326,6 +4376,13 @@ def demask_pauli_frame_records(
     )
 
 
+def _validate_pauli_mask_bits(bits: Array, *, tag: str) -> None:
+    """Reject malformed mask records before packing their two-bit fields."""
+    if array_any(bits > 1):
+        msg = f"Pauli-mask tag {tag!r} must contain only 0/1 bits"
+        raise OverflowError(msg)
+
+
 def _extract_pauli_masks_from_results(
     results: dict[str, Any],
     *,
@@ -4391,6 +4448,7 @@ def _extract_pauli_masks_from_results(
                     f"({num_shots}, 4) = (num_shots, 2*gate_operands)"
                 )
                 raise ValueError(msg)
+            _validate_pauli_mask_bits(bits, tag=tag)
             lo = bits[:, 0::2]
             hi = bits[:, 1::2]
             # Array lacks unsigned arithmetic and bit shifts (#458); signed doubling is exact for bits.
@@ -4436,6 +4494,7 @@ def _extract_pauli_masks_from_results(
                 f"({num_shots}, {bits_per_round}) = (num_shots, 2*num_data)"
             )
             raise ValueError(msg)
+        _validate_pauli_mask_bits(bits, tag=tag)
 
         lo = bits[:, 0::2]
         hi = bits[:, 1::2]

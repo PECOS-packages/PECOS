@@ -12,16 +12,16 @@
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
-use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
+use pecos_stab_tn::stab_mps::compile::{InjectionMode, SimulatorKind, StabMpsCompile};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
 
-#[pyclass(name = "Mast", module = "pecos_rslib_exp")]
-pub struct PyMast {
-    inner: Mast,
+#[pyclass(name = "StabMpsCompile", module = "pecos_rslib_exp")]
+pub struct PyStabMpsCompile {
+    inner: StabMpsCompile,
 }
 
-impl PyMast {
+impl PyStabMpsCompile {
     fn check_qubit(&self, q: usize, method: &str) -> PyResult<()> {
         if q >= self.inner.num_qubits() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
@@ -33,60 +33,32 @@ impl PyMast {
     }
 }
 
+fn simulator_name(kind: SimulatorKind) -> &'static str {
+    match kind {
+        SimulatorKind::StateVector => "state_vector",
+        SimulatorKind::CHForm => "ch_form",
+        SimulatorKind::StabVec => "stab_vec",
+        SimulatorKind::StabMps => "stab_mps",
+        SimulatorKind::Mast => "mast",
+    }
+}
+
+fn injection_name(mode: InjectionMode) -> &'static str {
+    match mode {
+        InjectionMode::Direct => "direct",
+        InjectionMode::Immediate => "immediate",
+        InjectionMode::Deferred => "deferred",
+    }
+}
+
 #[pymethods]
-impl PyMast {
+impl PyStabMpsCompile {
+    /// Create a compile-only stabilizer-MPS tractability analyzer.
     #[new]
-    /// Create a MAST simulator.
-    ///
-    /// `projection_order` accepts `"min_span"` or `"input"`; `None` uses
-    /// the Rust default (`"min_span"`). Boolean options are tri-state:
-    /// `None` preserves the Rust default, while an explicit bool calls the
-    /// corresponding Rust setter.
-    #[pyo3(signature = (
-        num_qubits,
-        max_non_clifford,
-        seed=None,
-        lazy_measure=None,
-        merge_rz=None,
-        projection_order=None,
-        numerical_flag_redetection=None,
-    ))]
-    fn new(
-        num_qubits: usize,
-        max_non_clifford: usize,
-        seed: Option<u64>,
-        lazy_measure: Option<bool>,
-        merge_rz: Option<bool>,
-        projection_order: Option<&str>,
-        numerical_flag_redetection: Option<bool>,
-    ) -> PyResult<Self> {
-        let mut mast = if let Some(s) = seed {
-            Mast::with_seed(num_qubits, max_non_clifford, s)
-        } else {
-            Mast::new(num_qubits, max_non_clifford)
-        };
-        if let Some(value) = lazy_measure {
-            mast = mast.with_lazy_measure(value);
+    fn new(num_qubits: usize) -> Self {
+        Self {
+            inner: StabMpsCompile::new(num_qubits),
         }
-        if let Some(value) = merge_rz {
-            mast = mast.with_merge_rz(value);
-        }
-        if let Some(value) = numerical_flag_redetection {
-            mast = mast.with_numerical_flag_redetection(value);
-        }
-        if let Some(order) = projection_order {
-            let order = match order {
-                "min_span" => ProjectionOrder::MinSpan,
-                "input" => ProjectionOrder::Input,
-                _ => {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        "projection_order must be 'min_span' or 'input'",
-                    ));
-                }
-            };
-            mast = mast.projection_order(order);
-        }
-        Ok(PyMast { inner: mast })
     }
 
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
@@ -100,56 +72,78 @@ impl PyMast {
     }
 
     #[getter]
-    fn num_data_qubits(&self) -> usize {
-        self.inner.num_data_qubits()
+    fn absorbed(&self) -> u64 {
+        self.inner.absorbed()
     }
 
     #[getter]
-    fn num_ancillas_used(&self) -> usize {
-        self.inner.num_ancillas_used()
+    fn grown(&self) -> u64 {
+        self.inner.grown()
     }
 
     #[getter]
-    fn max_bond_dim(&self) -> usize {
-        self.inner.max_bond_dim()
-    }
-
-    /// Diagnostics for deferred magic-state projections since reset.
-    fn projection_records(&self, py: Python<'_>) -> PyResult<Vec<Py<PyDict>>> {
-        self.inner
-            .projection_records()
-            .iter()
-            .map(|record| {
-                let result = PyDict::new(py);
-                result.set_item("ancilla", record.ancilla)?;
-                result.set_item("support_size", record.support_size)?;
-                result.set_item("mps_span", record.mps_span)?;
-                result.set_item("bond_before", record.bond_before)?;
-                result.set_item("bond_after", record.bond_after)?;
-                Ok(result.unbind())
-            })
-            .collect()
+    fn stabilizer(&self) -> u64 {
+        self.inner.stabilizer()
     }
 
     #[getter]
-    fn projection_peak_bond(&self) -> usize {
-        self.inner.projection_peak_bond()
+    fn total_nonclifford(&self) -> u64 {
+        self.inner.total_nonclifford()
     }
 
-    /// Runtime non-Clifford path counters.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        crate::stab_mps_stats_to_dict(py, &self.inner.stats)
+    #[getter]
+    fn nonclifford_rz_total(&self) -> u64 {
+        self.inner.nonclifford_rz_total()
     }
 
-    fn flush(&mut self) {
-        self.inner.flush();
+    #[getter]
+    fn injectable_clifford_correction(&self) -> u64 {
+        self.inner.injectable_clifford_correction()
     }
 
-    fn project_all(&mut self) {
-        self.inner.project_all();
+    #[getter]
+    fn nullity(&self) -> usize {
+        self.inner.nullity()
     }
 
-    // ---- Gate dispatch ----
+    #[getter]
+    fn rank(&self) -> usize {
+        self.inner.rank()
+    }
+
+    #[getter]
+    fn bond_dim_bound(&self) -> usize {
+        self.inner.bond_dim_bound()
+    }
+
+    /// Recommend a simulator for the analyzed circuit.
+    fn recommend(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let recommendation = self.inner.recommend();
+        let result = PyDict::new(py);
+        result.set_item("simulator", simulator_name(recommendation.kind))?;
+        result.set_item("reason", recommendation.reason)?;
+        Ok(result.unbind())
+    }
+
+    /// Recommend a simulator and non-Clifford injection mode.
+    #[pyo3(signature = (ancilla_budget=None))]
+    fn advise(&self, py: Python<'_>, ancilla_budget: Option<usize>) -> PyResult<Py<PyDict>> {
+        let advice = self.inner.advise(ancilla_budget);
+        let result = PyDict::new(py);
+        result.set_item("simulator", simulator_name(advice.simulator))?;
+        result.set_item("injection", injection_name(advice.injection))?;
+        result.set_item("injectable_count", advice.injectable_count)?;
+        result.set_item(
+            "deferred_ancillas_required",
+            advice.deferred_ancillas_required,
+        )?;
+        result.set_item("deferred_feasible", advice.deferred_feasible)?;
+        result.set_item("warnings", advice.warnings)?;
+        result.set_item("reason", advice.reason)?;
+        Ok(result.unbind())
+    }
+
+    // ---- Gate dispatch (matches StabMps and Mast) ----
 
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_1q_gate(
@@ -364,6 +358,6 @@ impl PyMast {
                 output.set_item(location, value)?;
             }
         }
-        Ok(output.into())
+        Ok(output.unbind())
     }
 }

@@ -26,10 +26,12 @@
 
 //! Python bindings for experimental PECOS simulators.
 //!
-//! Exposes `StabMps` (stabilizer + MPS hybrid) and `Mast` (magic state
-//! injection) from `pecos-stab-tn` via `PyO3`.
+//! Exposes `StabMps` (stabilizer + MPS hybrid), `Mast` (magic state
+//! injection), and `StabMpsCompile` (compile-only tractability analysis)
+//! from `pecos-stab-tn` via `PyO3`.
 
 mod coherent_idle_channel;
+mod compile_bindings;
 mod eeg_bindings;
 mod mast_bindings;
 mod sim_neo_bindings;
@@ -37,8 +39,25 @@ mod stab_mps_bindings;
 pub mod stabmps_builder;
 
 use pecos_core::Angle64;
+use pecos_stab_tn::stab_mps::StabMpsStats;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+
+pub(crate) fn stab_mps_stats_to_dict(py: Python<'_>, stats: &StabMpsStats) -> PyResult<Py<PyDict>> {
+    let result = PyDict::new(py);
+    result.set_item("total_nonclifford", stats.total_nonclifford)?;
+    result.set_item("single_site", stats.single_site)?;
+    result.set_item("multi_disent", stats.multi_disent)?;
+    result.set_item("numerical_redetect", stats.numerical_redetect)?;
+    result.set_item("multi_std", stats.multi_std)?;
+    result.set_item("stabilizer", stats.stabilizer)?;
+    result.set_item("ofd_in_span", stats.ofd_in_span)?;
+    result.set_item("ofd_new_dim", stats.ofd_new_dim)?;
+    result.set_item("ofd_in_span_std", stats.ofd_in_span_std)?;
+    result.set_item("ofd_in_span_single", stats.ofd_in_span_single)?;
+    result.set_item("ofd_in_span_disent", stats.ofd_in_span_disent)?;
+    Ok(result.unbind())
+}
 
 pub(crate) fn extract_angle(
     params: Option<&Bound<'_, PyDict>>,
@@ -66,6 +85,7 @@ pub(crate) fn extract_angle(
 fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<stab_mps_bindings::PyStabMps>()?;
     m.add_class::<mast_bindings::PyMast>()?;
+    m.add_class::<compile_bindings::PyStabMpsCompile>()?;
     m.add_class::<sim_neo_bindings::PySimNeoBuilder>()?;
     m.add_class::<sim_neo_bindings::PyStabMpsBuilder>()?;
     m.add_class::<sim_neo_bindings::PyNoiseModelBuilder>()?;

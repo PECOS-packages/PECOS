@@ -68,7 +68,10 @@ pub struct MinSumConfig {
     pub alpha: Option<f64>,
     /// Per-iteration scaling factor for alpha (default: 1.0)
     pub alpha_iteration_scaling_factor: f64,
-    /// Memory BP strength (None = disabled)
+    /// Memory BP strength. `None` disables memory-BP for the entire relay
+    /// ensemble, which also renders `gamma_dist_interval`, `num_sets` and the
+    /// seed inert; prefer [`crate::DEFAULT_GAMMA0`] unless you specifically
+    /// want plain min-sum.
     pub gamma0: Option<f64>,
 }
 

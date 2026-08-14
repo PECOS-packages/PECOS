@@ -17,9 +17,9 @@ import argparse
 import json
 import time
 
-import numpy as np
 import pymatching
 import stim
+from pecos import dtypes, zeros
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
@@ -77,7 +77,7 @@ def extract_and_decode(result, tc, matching, shots):
     t0 = time.perf_counter()
 
     errors = 0
-    syndrome = np.zeros(num_dets, dtype=np.uint8)
+    syndrome = zeros(num_dets, dtype=dtypes.uint8)
 
     for shot_idx in range(shots):
         row = result[shot_idx]
@@ -124,7 +124,7 @@ def run_native_sampler(tc, noise_args, matching, shots, seed):
 
     t0 = time.perf_counter()
     errors = 0
-    syndrome = np.zeros(num_dets, dtype=np.uint8)
+    syndrome = zeros(num_dets, dtype=dtypes.uint8)
 
     for i in range(shots):
         syn = batch.get_syndrome(i)

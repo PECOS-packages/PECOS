@@ -2212,9 +2212,9 @@ impl pecos_decoders::ObservableDecoder for WeightedUfObservableDecoder {
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         let arr = ndarray::Array1::from_vec(syndrome.to_vec());
-        // bits_per_step=1: grow one bit at a time, sorted by LLR weight.
-        // bits_per_step=0 with non-empty LLRs causes the C++ UF decoder to
-        // add zero bits per step, looping forever.
+        // bits_per_step=1: grow one bit at a time, sorted by LLR weight —
+        // the most conservative growth. Zero would mean "all candidates per
+        // step" (translated at the Rust boundary since the segfault fix).
         let result = self
             .decoder
             .decode(&arr.view(), &self.llrs, 1)

@@ -649,6 +649,7 @@ def _assert_canonical_frame_output_matches_lookup(
             "Z",
             marks=pytest.mark.xfail(
                 strict=True,
+                raises=AssertionError,
                 reason=(
                     "Gate-local canonical Z-frame output does not yet match "
                     "PauliFrameLookup demasking; raw records remain correct. "

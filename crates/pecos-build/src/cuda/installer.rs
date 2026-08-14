@@ -434,3 +434,67 @@ pub fn uninstall_cuda() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sevenz_rust2::{ArchiveEntry, ArchiveWriter};
+
+    /// Builds a 7z archive whose single entry carries the given name.
+    ///
+    /// Names must survive the component filter in `extract_windows_exe`, so each fixture
+    /// includes one of the wanted component substrings.
+    fn archive_with_entry(path: &Path, entry_name: &str) {
+        let mut writer = ArchiveWriter::create(path).expect("create archive");
+        writer
+            .push_archive_entry(ArchiveEntry::new_file(entry_name), Some(&b"payload"[..]))
+            .expect("push entry");
+        writer.finish().expect("finish archive");
+    }
+
+    /// The containment guard must be *wired into* the extractor, not merely present in
+    /// the crate. Unit tests on `contained_entry_path` all pass even when the call site is
+    /// replaced by a bare `dest.join`, so this is the test that protects the invocation.
+    #[test]
+    fn extraction_rejects_entries_that_escape_the_destination() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let archive = temp.path().join("installer.exe");
+        let dest = temp.path().join("dest");
+
+        // Trailing space: the spelling that defeated the first version of the guard.
+        archive_with_entry(&archive, "nvcc/.. /.. /escaped.dll");
+        let error = extract_windows_exe(&archive, &dest).expect_err("must reject");
+        assert!(
+            error.to_string().contains("escapes")
+                || error.to_string().contains("trailing dots or spaces"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            !temp.path().join("escaped.dll").exists(),
+            "wrote outside the destination"
+        );
+    }
+
+    #[test]
+    fn extraction_rejects_plain_parent_traversal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let archive = temp.path().join("installer.exe");
+        let dest = temp.path().join("dest");
+
+        archive_with_entry(&archive, "nvcc/../../escaped.dll");
+        let error = extract_windows_exe(&archive, &dest).expect_err("must reject");
+        assert!(error.to_string().contains("escapes"), "unexpected: {error}");
+        assert!(!temp.path().join("escaped.dll").exists());
+    }
+
+    #[test]
+    fn extraction_accepts_an_ordinary_nested_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let archive = temp.path().join("installer.exe");
+        let dest = temp.path().join("dest");
+
+        archive_with_entry(&archive, "cuda_nvcc/bin/nvcc.exe");
+        extract_windows_exe(&archive, &dest).expect("ordinary entry must extract");
+        assert!(dest.join("cuda_nvcc/bin/nvcc.exe").exists());
+    }
+}

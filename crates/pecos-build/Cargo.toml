@@ -52,6 +52,9 @@ cargo_metadata.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Writing 7z archives is test-only: it lets the extraction guard be exercised
+# end to end against a hostile archive rather than only unit-testing the helper.
+sevenz-rust2 = { workspace = true, features = ["compress"] }
 
 [lints]
 workspace = true

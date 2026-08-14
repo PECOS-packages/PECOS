@@ -12,10 +12,11 @@ use std::path::{Component, Path, PathBuf};
 
 /// Names Windows resolves as devices in every directory, so `NUL.txt` is the null
 /// device rather than a file. Matched case-insensitively against the part of a
-/// component before its first `.`.
+/// component before its first `.` or `:`.
 const WINDOWS_DEVICE_NAMES: &[&str] = &[
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "COM1", "COM2", "COM3", "COM4", "COM5",
+    "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+    "LPT9",
 ];
 
 /// Resolves an archive entry name to a path inside `dest`, rejecting escapes.
@@ -25,18 +26,29 @@ const WINDOWS_DEVICE_NAMES: &[&str] = &[
 /// outside the extraction directory. Callers must route every entry name through this
 /// function before creating anything on disk.
 ///
-/// The `tar` crate validates this inside `unpack`, and the `zip` crate exposes
-/// `enclosed_name` for it, so only archive readers without such a guard need this.
+/// Rejection is deliberately unconditional rather than `cfg(windows)`-gated. The rules
+/// below are Windows-specific, but a gated guard is one CI never exercises, and an
+/// archive extracted on one platform can be consumed on another.
 ///
-/// Containment here is **lexical**. It assumes nothing under `dest` is a symlink or
-/// junction: this function cannot stop a write that travels through a link an earlier
-/// process placed inside the extraction directory.
+/// Which readers need this:
+/// - The `tar` crate does **not** filter names lexically either, but it is safe by a
+///   stronger mechanism: it canonicalizes each entry's parent and rejects anything
+///   landing outside the destination, so the OS collapses names before the comparison.
+/// - The `zip` crate's `enclosed_name` only balances `..` lexically; it accepts trailing
+///   dots and spaces and device names. Zip entries must therefore come through here too.
+/// - 7z readers hand the raw name to the caller with no validation at all.
+///
+/// Containment here is **lexical**. It cannot stop a write that travels through a symlink
+/// or junction already present under `dest`. No archive can plant such a link through the
+/// callers in this crate, which only ever create directories and regular files; the
+/// residual case is a link placed there by something else.
 ///
 /// # Errors
 ///
 /// Returns [`Error::Archive`] if the entry name is absolute, contains a `..` component,
 /// contains a Windows prefix such as `C:`, has a component with trailing dots or spaces,
-/// or names a Windows device.
+/// contains `:` (a Windows alternate data stream or device suffix), or names a Windows
+/// device.
 pub fn contained_entry_path(dest: &Path, entry_name: &str) -> Result<PathBuf> {
     // Treat both separators as separating on every platform: a Windows-built archive
     // read on Unix would otherwise carry "..\\.." through as a single opaque name.
@@ -61,7 +73,23 @@ pub fn contained_entry_path(dest: &Path, entry_name: &str) -> Result<PathBuf> {
                     )));
                 }
 
-                let stem = name.split('.').next().unwrap_or(&name);
+                // A colon opens an NTFS alternate data stream (`nvcc.exe:payload`) or names
+                // a device (`nul:`), so the file on disk stops matching the name in the
+                // archive. Nothing in these archives legitimately contains one.
+                if name.contains(':') {
+                    return Err(Error::Archive(format!(
+                        "archive entry contains ':', which names a data stream or device \
+                         on Windows: {entry_name}"
+                    )));
+                }
+
+                // Device names are reserved in every directory, and both an extension and
+                // a stream suffix leave them reserved, so compare the stem before either.
+                let stem = name
+                    .split(['.', ':'])
+                    .next()
+                    .unwrap_or(&name)
+                    .trim_end_matches(' ');
                 if WINDOWS_DEVICE_NAMES
                     .iter()
                     .any(|device| stem.eq_ignore_ascii_case(device))
@@ -294,6 +322,36 @@ mod tests {
             assert!(
                 matches!(error, Error::Archive(message) if message.contains("reserved device")),
                 "expected a device-name rejection for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn colon_bearing_components_are_rejected() {
+        // ':' opens an NTFS alternate data stream or names a device, so the file written
+        // stops matching the name in the archive even though nothing escapes `dest`.
+        for name in [
+            "nvcc/nvcc.exe:payload",
+            "bin/nul:",
+            "bin/NUL::$DATA",
+            "notes:evil.exe",
+        ] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message)
+                    if message.contains("data stream") || message.contains("reserved device")),
+                "expected a colon/device rejection for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn console_device_aliases_are_rejected() {
+        for name in ["bin/CONIN$", "bin/conout$", "CONIN$.txt"] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("reserved device")),
+                "expected a device rejection for {name:?}"
             );
         }
     }

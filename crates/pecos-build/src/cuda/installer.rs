@@ -452,6 +452,29 @@ mod tests {
         writer.finish().expect("finish archive");
     }
 
+    /// True if any file named `needle` exists anywhere under `root`.
+    ///
+    /// A rejected escape must not land at ANY path, and where it would land depends on the
+    /// platform: on Unix `.. ` is a literal directory, so a trailing-space escape that
+    /// slipped the guard would sit deep under the destination rather than beside it. A
+    /// fixed-path existence check would miss that; a recursive search does not.
+    fn contains_file_named(root: &Path, needle: &str) -> bool {
+        let Ok(entries) = fs::read_dir(root) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if contains_file_named(&path, needle) {
+                    return true;
+                }
+            } else if path.file_name().is_some_and(|name| name == needle) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// The containment guard must be *wired into* the extractor, not merely present in
     /// the crate. Unit tests on `contained_entry_path` all pass even when the call site is
     /// replaced by a bare `dest.join`, so this is the test that protects the invocation.
@@ -469,9 +492,12 @@ mod tests {
                 || error.to_string().contains("trailing dots or spaces"),
             "unexpected error: {error}"
         );
+        // The escaped file must exist nowhere under the temp root, not merely beside `dest`:
+        // on Unix `.. ` is a literal directory, so an unguarded write would land deep inside
+        // the tree rather than at `temp/escaped.dll`.
         assert!(
-            !temp.path().join("escaped.dll").exists(),
-            "wrote outside the destination"
+            !contains_file_named(temp.path(), "escaped.dll"),
+            "the rejected entry was written somewhere under the temp root"
         );
     }
 
@@ -484,7 +510,7 @@ mod tests {
         archive_with_entry(&archive, "nvcc/../../escaped.dll");
         let error = extract_windows_exe(&archive, &dest).expect_err("must reject");
         assert!(error.to_string().contains("escapes"), "unexpected: {error}");
-        assert!(!temp.path().join("escaped.dll").exists());
+        assert!(!contains_file_named(temp.path(), "escaped.dll"));
     }
 
     #[test]

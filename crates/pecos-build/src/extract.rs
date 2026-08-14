@@ -83,10 +83,12 @@ pub fn contained_entry_path(dest: &Path, entry_name: &str) -> Result<PathBuf> {
                     )));
                 }
 
-                // Device names are reserved in every directory, and both an extension and
-                // a stream suffix leave them reserved, so compare the stem before either.
+                // Device names are reserved in every directory, and an extension leaves them
+                // reserved, so compare the stem before the first dot. A trailing space keeps
+                // the reservation too (`CON .txt`), so trim it. A `:` cannot appear here --
+                // the check above already returned for any component containing one.
                 let stem = name
-                    .split(['.', ':'])
+                    .split('.')
                     .next()
                     .unwrap_or(&name)
                     .trim_end_matches(' ');

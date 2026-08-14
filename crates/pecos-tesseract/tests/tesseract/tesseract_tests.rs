@@ -7,7 +7,9 @@ use pecos_tesseract::TesseractConfig;
 #[test]
 fn test_tesseract_config_default() {
     let config = TesseractConfig::default();
-    assert_eq!(config.det_beam, u16::MAX);
+    // Upstream Tesseract's DEFAULT_DET_BEAM. An unbounded beam saturates
+    // pqlimit on circuit-scale models and returns a truncated answer slowly.
+    assert_eq!(config.det_beam, 5);
     assert!(!config.beam_climbing);
     assert!(config.no_revisit_dets);
     assert!(!config.verbose);

@@ -57,7 +57,113 @@ fn default_priors(n: usize) -> Vec<f64> {
     vec![0.05; n]
 }
 
+fn lcg_next(state: &mut u64) -> u64 {
+    *state = state
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    *state
+}
+
+fn lcg_sparse_matrix() -> Array2<u8> {
+    let mut matrix = Array2::zeros((30, 60));
+    let mut state = 1;
+    for column in 0..60 {
+        let mut rows = [usize::MAX; 3];
+        for slot in 0..3 {
+            loop {
+                let row = ((lcg_next(&mut state) >> 32) % 30) as usize;
+                if !rows[..slot].contains(&row) {
+                    rows[slot] = row;
+                    matrix[[row, column]] = 1;
+                    break;
+                }
+            }
+        }
+    }
+    matrix
+}
+
+fn lcg_weight_two_syndromes(matrix: &ArrayView2<u8>) -> Vec<Array1<u8>> {
+    let mut state = 0x5eed;
+    (0..8)
+        .map(|_| {
+            let mut error = Array1::zeros(60);
+            let first = ((lcg_next(&mut state) >> 32) % 60) as usize;
+            let second = loop {
+                let candidate = ((lcg_next(&mut state) >> 32) % 60) as usize;
+                if candidate != first {
+                    break candidate;
+                }
+            };
+            error[first] = 1;
+            error[second] = 1;
+            compute_syndrome(matrix, &error)
+        })
+        .collect()
+}
+
+fn decode_all(decoder: &mut RelayBpDecoder, syndromes: &[Array1<u8>]) -> Vec<(bool, Vec<u8>)> {
+    syndromes
+        .iter()
+        .map(|syndrome| {
+            let result = decoder.decode(&syndrome.view()).unwrap();
+            (result.converged, result.decoding.to_vec())
+        })
+        .collect()
+}
+
 // --- Syndrome correctness: verify H * decoded_error mod 2 == syndrome ---
+
+#[test]
+fn default_gamma0_enables_memory_and_seed_sensitivity() {
+    let matrix = lcg_sparse_matrix();
+    let syndromes = lcg_weight_two_syndromes(&matrix.view());
+    let priors = vec![0.05; matrix.ncols()];
+    let build_default = |seed| {
+        RelayBpBuilder::new(&matrix.view())
+            .error_priors(&priors)
+            .pre_iter(0)
+            .num_sets(5)
+            .set_max_iter(30)
+            .seed(seed)
+            .build()
+            .unwrap()
+    };
+    let build_memory_off = |seed| {
+        RelayBpBuilder::new(&matrix.view())
+            .error_priors(&priors)
+            .gamma0(None)
+            .pre_iter(0)
+            .num_sets(5)
+            .set_max_iter(30)
+            .seed(seed)
+            .build()
+            .unwrap()
+    };
+
+    let mut default_seed_one = build_default(1);
+    let mut default_seed_two = build_default(2);
+    let mut memory_off_seed_one = build_memory_off(1);
+    let mut memory_off_seed_two = build_memory_off(2);
+    let default_seed_one = decode_all(&mut default_seed_one, &syndromes);
+    let default_seed_two = decode_all(&mut default_seed_two, &syndromes);
+    let memory_off_seed_one = decode_all(&mut memory_off_seed_one, &syndromes);
+    let memory_off_seed_two = decode_all(&mut memory_off_seed_two, &syndromes);
+
+    assert_eq!(memory_off_seed_one, memory_off_seed_two);
+    assert_ne!(default_seed_one, default_seed_two);
+    let default_converged = default_seed_one
+        .iter()
+        .filter(|(converged, _)| *converged)
+        .count();
+    let memory_off_converged = memory_off_seed_one
+        .iter()
+        .filter(|(converged, _)| *converged)
+        .count();
+    assert_eq!(default_converged, 8);
+    assert_eq!(memory_off_converged, 5);
+    assert!(default_converged > memory_off_converged);
+}
 
 #[test]
 fn min_sum_decoding_satisfies_syndrome_repetition_3() {

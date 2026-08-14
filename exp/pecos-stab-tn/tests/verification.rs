@@ -2023,6 +2023,163 @@ fn apply_seeded_clifford_t_to_mast(mast: &mut Mast, gates: &[SeededCliffordTGate
     }
 }
 
+fn bitstring_counts(shots: &[Vec<bool>], num_qubits: usize) -> Vec<usize> {
+    let mut counts = vec![0usize; 1usize << num_qubits];
+    for shot in shots {
+        let outcome = shot
+            .iter()
+            .enumerate()
+            .fold(0usize, |value, (q, &bit)| value | (usize::from(bit) << q));
+        counts[outcome] += 1;
+    }
+    counts
+}
+
+fn exact_stn_probabilities(stn: &StabMps, num_qubits: usize) -> Vec<f64> {
+    (0..1usize << num_qubits)
+        .map(|outcome| {
+            // `prob_bitstring` uses [q_(n-1), ..., q_0], whereas both
+            // samplers return [q_0, ..., q_(n-1)].
+            let bits = (0..num_qubits)
+                .rev()
+                .map(|q| ((outcome >> q) & 1) != 0)
+                .collect::<Vec<_>>();
+            stn.prob_bitstring(&bits)
+        })
+        .collect()
+}
+
+#[test]
+fn test_prefix_tree_sampler_random_clifford_t_distributions() {
+    // Mirrors the per-outcome five-sigma pattern in
+    // `test_mast_min_span_matches_stn_exact_random_probabilities`.
+    let num_shots = 5000usize;
+    for num_qubits in 3..=5 {
+        for t_count in 2..=5 {
+            let circuit_seed = 80_000 + (num_qubits * 100 + t_count) as u64;
+            let gates = seeded_clifford_t_circuit(num_qubits, t_count, circuit_seed);
+            let mut state = StabMps::with_seed(num_qubits, circuit_seed);
+            apply_seeded_clifford_t_to_stn(&mut state, &gates);
+            state.flush();
+
+            let exact_probabilities = exact_stn_probabilities(&state, num_qubits);
+            let total: f64 = exact_probabilities.iter().sum();
+            assert!(
+                (total - 1.0).abs() < 1e-8,
+                "n={num_qubits} t={t_count}: exact probabilities sum to {total}"
+            );
+
+            let state_before = state.state_vector();
+            let mut prefix_sampler = state.clone();
+            let prefix_shots = prefix_sampler.sample_bitstrings(num_shots);
+            assert_eq!(
+                prefix_sampler.state_vector(),
+                state_before,
+                "n={num_qubits} t={t_count}: prefix sampler mutated state"
+            );
+            let prefix_counts = bitstring_counts(&prefix_shots, num_qubits);
+
+            let mut legacy_sampler = state.clone();
+            let legacy_counts =
+                bitstring_counts(&legacy_sampler.sample_bitstring(num_shots), num_qubits);
+
+            for (outcome, &exact) in exact_probabilities.iter().enumerate() {
+                let prefix_sampled = prefix_counts[outcome] as f64 / num_shots as f64;
+                let legacy_sampled = legacy_counts[outcome] as f64 / num_shots as f64;
+                let sigma = (exact * (1.0 - exact) / num_shots as f64).sqrt().max(1e-6);
+                let exact_deviation = (exact - prefix_sampled).abs() / sigma;
+                assert!(
+                    exact_deviation < 5.0,
+                    "n={num_qubits} t={t_count} outcome={outcome}: exact={exact:.4} \
+                     prefix={prefix_sampled:.4}, deviation={exact_deviation:.1}σ"
+                );
+
+                let agreement_sigma = std::f64::consts::SQRT_2 * sigma;
+                let agreement_deviation = (legacy_sampled - prefix_sampled).abs() / agreement_sigma;
+                assert!(
+                    agreement_deviation < 5.0,
+                    "n={num_qubits} t={t_count} outcome={outcome}: legacy={legacy_sampled:.4} \
+                     prefix={prefix_sampled:.4}, deviation={agreement_deviation:.1}σ"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_prefix_tree_sampler_is_seed_deterministic() {
+    let build = |seed| {
+        let mut stn = StabMps::with_seed(4, seed);
+        let gates = seeded_clifford_t_circuit(4, 5, 91_337);
+        apply_seeded_clifford_t_to_stn(&mut stn, &gates);
+        stn
+    };
+    let mut first = build(1234);
+    let mut second = build(1234);
+    let mut different = build(1235);
+    let first_shots = first.sample_bitstrings(500);
+    assert_eq!(first_shots, second.sample_bitstrings(500));
+    assert_ne!(first_shots, different.sample_bitstrings(500));
+}
+
+#[test]
+fn test_prefix_tree_sampler_entangled_non_clifford_branches_and_order() {
+    // A CZ-entangled |++++> state with T phases has all sixteen Z-basis
+    // leaves populated, so both children are exercised at multiple depths.
+    let mut stn = StabMps::with_seed(4, 44_321);
+    stn.h(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
+    stn.cz(&[
+        (QubitId(0), QubitId(1)),
+        (QubitId(1), QubitId(2)),
+        (QubitId(2), QubitId(3)),
+    ]);
+    stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0), QubitId(2)]);
+    let shots = stn.sample_bitstrings(5000);
+    assert!(shots.windows(2).all(|pair| pair[0] <= pair[1]));
+    let populated = bitstring_counts(&shots, 4)
+        .into_iter()
+        .filter(|&count| count > 0)
+        .count();
+    assert_eq!(populated, 16, "every tree leaf should be populated");
+}
+
+#[test]
+fn test_prefix_tree_sampler_flushes_supported_modes_on_working_clone() {
+    let mut frame = StabMps::builder(2)
+        .seed(501)
+        .pauli_frame_tracking(true)
+        .build();
+    frame.inject_x_in_frame(QubitId(0));
+    let frame_shots = frame.sample_bitstrings(32);
+    assert!(frame_shots.iter().all(|shot| shot == &[true, false]));
+    assert!(frame.frame_x_bit(QubitId(0)), "caller's frame was mutated");
+
+    let mut merged = StabMps::builder(2).seed(502).merge_rz(true).build();
+    merged.h(&[QubitId(0)]);
+    merged.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
+    let before = merged.state_vector();
+    let merged_shots = merged.sample_bitstrings(200);
+    assert_eq!(
+        merged.state_vector(),
+        before,
+        "caller's pending RZ state was mutated"
+    );
+    let q0_ones = merged_shots.iter().filter(|shot| shot[0]).count();
+    assert!((70..=130).contains(&q0_ones));
+
+    let mut lazy = StabMps::builder(3).seed(503).lazy_measure(true).build();
+    lazy.h(&[QubitId(0), QubitId(1)]);
+    lazy.cx(&[(QubitId(0), QubitId(2))]);
+    let _ = lazy.mz(&[QubitId(1)]);
+    let before = lazy.state_vector();
+    let _ = lazy.sample_bitstrings(100);
+    assert_eq!(
+        lazy.state_vector(),
+        before,
+        "caller's lazy frame state was mutated"
+    );
+}
+
 #[test]
 fn test_mast_min_span_matches_stn_exact_random_probabilities() {
     // Mirrors `test_mast_matches_stn_exact_probabilities_2q`: compare each

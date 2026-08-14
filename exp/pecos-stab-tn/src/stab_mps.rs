@@ -493,6 +493,13 @@ pub struct StabMpsStats {
     pub ofd_in_span_disent: u64,
 }
 
+struct PrefixSamplingContext<'a> {
+    rng: &'a mut PecosRng,
+    frame_x: &'a [bool],
+    num_qubits: usize,
+    output: &'a mut Vec<Vec<bool>>,
+}
+
 impl StabMps {
     /// Create a builder for configuring the simulator.
     #[must_use]
@@ -1255,6 +1262,122 @@ impl StabMps {
             shots.push(bitstring);
         }
         shots
+    }
+
+    /// Sample `num_shots` bitstrings from the current Born distribution,
+    /// sharing each distinct measurement-prefix projection across all shots
+    /// that take that branch.
+    ///
+    /// The original simulator state is preserved; only its RNG advances.
+    /// A working clone first materializes any lazy-measurement frame and then
+    /// all pending merged RZ rotations. Tracked Pauli X bits remain classical:
+    /// as in [`Self::sample_bitstring`], they swap reported Z outcomes without
+    /// changing the stored-state collapse. Pauli Z bits and frame phase do not
+    /// affect computational-basis probabilities.
+    ///
+    /// At each prefix containing `k` shots, a candidate zero child is cloned and
+    /// passed once through [`measure::project_forced_z`]. Its returned probability
+    /// drives the split, and the already-projected candidate is reused if the
+    /// zero branch is inhabited. The one child similarly receives exactly one
+    /// forced projection on the untouched parent. Thus every descending path
+    /// follows the same atomic projection sequence as [`Self::prob_bitstring`].
+    /// The clamped `p0` is tested against `k` uniforms in branch-local shot order,
+    /// with all node draws completed before visiting either child. Probabilities
+    /// below `1e-20`, the forced projector's tolerance, are zero; if either child
+    /// is zero-probability, the node consumes no RNG draws.
+    ///
+    /// Children are visited depth-first, outcome 0 before outcome 1, measuring
+    /// qubits `0..num_qubits`. Returned bitstrings therefore use the same
+    /// `bitstring[q] == qubit q` convention as [`Self::sample_bitstring`] and
+    /// are in lexicographic tree order, with copies of each leaf adjacent.
+    pub fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
+        if num_shots == 0 {
+            return Vec::new();
+        }
+
+        let mut working = self.clone();
+        measure::flush_deferred_ops(&mut working.mps, &mut working.deferred_ops);
+        working.flush_all_pending_rz();
+        let frame_x = if working.flags.pauli_frame_tracking() {
+            working.pauli_frame_x.clone()
+        } else {
+            vec![false; self.num_qubits]
+        };
+
+        let mut shots = Vec::with_capacity(num_shots);
+        let mut prefix = Vec::with_capacity(self.num_qubits);
+        let mut context = PrefixSamplingContext {
+            rng: &mut self.rng,
+            frame_x: &frame_x,
+            num_qubits: self.num_qubits,
+            output: &mut shots,
+        };
+        Self::sample_prefix_tree(
+            &mut working.tableau,
+            &mut working.mps,
+            num_shots,
+            &mut prefix,
+            &mut context,
+        );
+        shots
+    }
+
+    fn sample_prefix_tree(
+        tableau: &mut SparseStabY,
+        mps: &mut Mps,
+        num_shots: usize,
+        prefix: &mut Vec<bool>,
+        context: &mut PrefixSamplingContext<'_>,
+    ) {
+        const ZERO_PROBABILITY_TOLERANCE: f64 = 1e-20;
+
+        let q = prefix.len();
+        if q == context.num_qubits {
+            context
+                .output
+                .extend(std::iter::repeat_n(prefix.clone(), num_shots));
+            return;
+        }
+
+        // Probability and projection are deliberately atomic. In particular,
+        // do not pre-reduce the shared parent and then call `project_forced_z`:
+        // pre-reduction can produce a trivial MPS, and a second entry would take
+        // the trivial fast path instead of completing the in-progress general
+        // projection as `prob_bitstring` does.
+        let mut zero_tableau = tableau.clone();
+        let mut zero_mps = mps.clone();
+        let probability_zero =
+            measure::project_forced_z(&mut zero_tableau, &mut zero_mps, q, context.frame_x[q])
+                .clamp(0.0, 1.0);
+        let probability_one = 1.0 - probability_zero;
+        let num_zero = if probability_zero < ZERO_PROBABILITY_TOLERANCE {
+            0
+        } else if probability_one < ZERO_PROBABILITY_TOLERANCE {
+            num_shots
+        } else {
+            (0..num_shots)
+                .filter(|_| context.rng.next_f64() < probability_zero)
+                .count()
+        };
+        let num_one = num_shots - num_zero;
+
+        if num_zero > 0 {
+            prefix.push(false);
+            Self::sample_prefix_tree(&mut zero_tableau, &mut zero_mps, num_zero, prefix, context);
+            prefix.pop();
+        }
+
+        if num_one > 0 {
+            let projected_probability =
+                measure::project_forced_z(tableau, mps, q, !context.frame_x[q]);
+            assert!(
+                projected_probability > 0.0,
+                "positive-probability one branch rejected by forced projection at qubit {q}"
+            );
+            prefix.push(true);
+            Self::sample_prefix_tree(tableau, mps, num_one, prefix, context);
+            prefix.pop();
+        }
     }
 
     /// Auto-grow check: if `auto_grow_bond_dim` is enabled and the MPS

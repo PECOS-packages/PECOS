@@ -948,7 +948,7 @@ impl<'a> DemBuilder<'a> {
                 return Ok(());
             }
             return Err(DemBuilderError::ConfigurationError(
-                "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
+                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
                     .to_string(),
             ));
         }
@@ -1639,7 +1639,7 @@ impl<'a> DemBuilder<'a> {
         }
     }
 
-    /// Processes starred two-qubit replacement branches as explicit branch impacts.
+    /// Processes two-qubit replacement branches as explicit branch impacts.
     fn process_two_qubit_replacement_branch_impacts_source_tracked(
         &self,
         loc1: usize,
@@ -1681,7 +1681,7 @@ impl<'a> DemBuilder<'a> {
         }
     }
 
-    /// Processes starred two-qubit replacement branches by replaying the exact
+    /// Processes two-qubit replacement branches by replaying the exact
     /// omitted-gate branch against detector/observable metadata.
     fn process_two_qubit_exact_replacement_branches_source_tracked(
         &self,
@@ -4547,7 +4547,7 @@ mod tests {
                 .paulis
                 .iter()
                 .all(|pauli| *pauli == Pauli::I),
-            "omission-only replacement branch should be recorded as *II"
+            "omission-only replacement branch should be recorded as an identity replacement"
         );
         let (base_effect, branch_pauli_effect) = contributions[0]
             .direct_component_effects()

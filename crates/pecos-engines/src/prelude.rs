@@ -39,7 +39,15 @@ pub use crate::noise::{
     GeneralNoiseModelBuilder,
     IntoNoiseModel, // Needed for .noise() method to work smoothly
     NoiseModel,
+    P2PauliLeakageStep,
+    P2TransitionStep,
     PassThroughNoiseModel,
+    PauliLeakageChannel,
+    PauliLeakageDict,
+    QubitTransitionChannel,
+    TransitionDict,
+    TwoQubitPauliLeakageChannel,
+    TwoQubitTransitionChannel,
     general::GeneralNoiseModel,
 };
 

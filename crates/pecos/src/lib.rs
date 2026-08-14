@@ -84,7 +84,9 @@ pub mod simulators {
 pub mod noise {
     pub use pecos_engines::noise::{
         BiasedDepolarizingNoiseModelBuilder, DepolarizingNoiseModel, DepolarizingNoiseModelBuilder,
-        GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel, PassThroughNoiseModel,
+        GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel, P2PauliLeakageStep, P2TransitionStep,
+        PassThroughNoiseModel, PauliLeakageChannel, PauliLeakageDict, QubitTransitionChannel,
+        TransitionDict, TwoQubitPauliLeakageChannel, TwoQubitTransitionChannel,
         general::GeneralNoiseModel,
     };
     pub use pecos_engines::{BiasedDepolarizingNoise, DepolarizingNoise, PassThroughNoise};

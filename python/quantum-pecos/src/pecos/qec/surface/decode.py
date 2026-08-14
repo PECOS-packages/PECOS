@@ -172,18 +172,20 @@ class NoiseParameters:
             unset, ``SZZdg`` uses ``p2``.
         p2_weights: Optional relative probabilities over two-qubit Pauli error
             labels. Plain labels such as ``"XX"`` are post-gate Pauli branches;
-            labels prefixed by ``"*"`` such as ``"*XX"`` are replacement
+            labels such as ``"~XX"`` or ``":replace:XX"`` are replacement
             branches that omit the ideal two-qubit gate before applying the
-            Pauli. Values must sum to 1.0; ``p2`` remains the total two-qubit
-            error rate.
-        p2_replacement_approximation: Approximation used for starred
+            Pauli. ``"~II"`` (or ``":replace:II"``) omits the gate without a
+            Pauli. The former ``"*XX"`` syntax is not accepted because ``"*"``
+            is reserved for state wildcards in stochastic channels. Values
+            must sum to 1.0; ``p2`` remains the total two-qubit error rate.
+        p2_replacement_approximation: Approximation used for
             replacement labels. ``"pauli_twirl_omitted_gate"`` convolves with
             the omitted two-qubit gate's Pauli twirl; ``"branch_impact"``
-            evaluates starred entries as replacement branch impacts;
+            evaluates replacement entries as replacement branch impacts;
             ``"exact_branch_replay"`` uses the traced circuit context to replay
             omitted-gate branches at concrete two-qubit gate locations and
             fails loudly when a branch is not DEM-representable;
-            ``"ignore_gate_removal"`` treats starred entries like plain
+            ``"ignore_gate_removal"`` treats replacement entries like plain
             post-gate Pauli entries.
         p_meas: Measurement error rate.
         p_prep: Initialization error rate.

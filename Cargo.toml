@@ -104,6 +104,7 @@ wide = "1"
 fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
+rand_distr = "0.6"
 rand_xoshiro = "0.8"
 rapidrand = { version = "0.1", features = ["rand"] }
 

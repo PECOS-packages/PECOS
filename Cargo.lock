@@ -4443,6 +4443,7 @@ dependencies = [
  "pecos-random",
  "puruspe",
  "rand 0.10.2",
+ "rand_distr",
  "rustworkx-core",
  "serde",
  "serde_json",

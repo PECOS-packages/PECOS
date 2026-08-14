@@ -1531,6 +1531,11 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
         assert got == ref_dem, f"surface from_guppy not byte-identical ({basis})"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 @pytest.mark.parametrize("distance", [3, 5])
 def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: int) -> None:
     """SZZ-basis surface Guppy generation must match the traced-QIS reference DEM."""
@@ -1680,8 +1685,22 @@ def test_from_guppy_constrained_surface_dem_byte_identical(
 @pytest.mark.parametrize(
     "check_plan",
     [
-        "szz_balanced_data_round_order_1032_v1",
-        "szz_balanced_data_round_order_3102_v1",
+        pytest.param(
+            "szz_balanced_data_round_order_1032_v1",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason="#498: SZZ final provenance reversed",
+            ),
+        ),
+        pytest.param(
+            "szz_balanced_data_round_order_3102_v1",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason="#498: SZZ final provenance reversed",
+            ),
+        ),
     ],
 )
 def test_from_guppy_round_order_szz_surface_dem_byte_identical(check_plan: str) -> None:
@@ -1703,8 +1722,22 @@ def test_from_guppy_round_order_szz_surface_dem_byte_identical(check_plan: str) 
     "check_plan",
     [
         None,
-        "szz_balanced_data_round_order_1032_v1",
-        "szz_balanced_data_round_order_3102_v1",
+        pytest.param(
+            "szz_balanced_data_round_order_1032_v1",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason="#498: SZZ final provenance reversed",
+            ),
+        ),
+        pytest.param(
+            "szz_balanced_data_round_order_3102_v1",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason="#498: SZZ final provenance reversed",
+            ),
+        ),
     ],
 )
 def test_constrained_surface_traced_metadata_matches_abstract(check_plan: str | None) -> None:
@@ -2186,8 +2219,32 @@ def test_surface_result_tags_reject_unbound_final_measurement_slots() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="final aggregate result IDs must be contiguous in one source-order direction"):
+    with pytest.raises(ValueError, match="final aggregate result IDs must be contiguous in ascending source order"):
         _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
+
+
+def test_surface_result_tags_accept_ascending_unbound_final_measurement_slots() -> None:
+    """Ascending final aggregate IDs preserve source order without scalar IDs."""
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis="Z")
+    result_traces = [
+        {"name": f"sx{index}:init:meas:{index}", "values": [False], "result_ids": [index]} for index in range(4)
+    ]
+    result_traces.extend(
+        [
+            {
+                "name": "final",
+                "values": [False] * 9,
+                "result_ids": list(range(4, 13)),
+            },
+            {"name": "final:meas:0", "values": [False], "result_ids": []},
+            {"name": "final:meas:1", "values": [False], "result_ids": []},
+        ],
+    )
+
+    remap = _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
+
+    assert [remap[index] for index in range(13)] == list(range(13))
 
 
 def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:

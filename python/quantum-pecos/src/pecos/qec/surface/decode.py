@@ -1046,11 +1046,10 @@ def _validate_surface_array_slot_provenance(
             msg = "final measurement slots have no scalar provenance or aggregate result IDs"
             raise ValueError(msg)
         final_ids = final_arrays[0]
-        step = 1 if len(final_ids) < 2 or final_ids[1] > final_ids[0] else -1
-        expected_ids = [final_ids[0] + step * offset for offset in range(len(final_ids))]
+        expected_ids = list(range(final_ids[0], final_ids[0] + len(final_ids)))
         if final_ids != expected_ids:
             msg = (
-                "final aggregate result IDs must be contiguous in one source-order direction when "
+                "final aggregate result IDs must be contiguous in ascending source order when "
                 "per-element provenance is unavailable; got "
                 f"{final_ids}"
             )

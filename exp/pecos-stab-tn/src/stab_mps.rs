@@ -98,10 +98,10 @@ impl StabMpsFlags {
     const PAULI_FRAME_TRACKING: u8 = 1 << 3;
     const NUMERICAL_FLAG_REDETECTION: u8 = 1 << 4;
 
-    /// Default flags: normalize enabled, everything else off.
+    /// Default flags: normalization and RZ merging enabled, everything else off.
     #[must_use]
     pub const fn new() -> Self {
-        Self(Self::NORMALIZE_AFTER_GATE)
+        Self(Self::NORMALIZE_AFTER_GATE | Self::MERGE_RZ)
     }
 
     fn get(self, bit: u8) -> bool {
@@ -176,7 +176,7 @@ impl StabMpsBuilder {
     /// Maximum MPS bond dimension. Singular values beyond this are discarded
     /// during SVD truncation after two-site gates.
     ///
-    /// - Default: 64
+    /// - Default: 128
     /// - Higher values give more accuracy at the cost of memory and time
     /// - For n qubits, the exact max is 2^(n/2)
     #[must_use]
@@ -219,8 +219,10 @@ impl StabMpsBuilder {
     /// while bonds with high entanglement grow up to `max_bond_dim` (accurate).
     /// The discarded weight at each SVD stays below this fraction.
     ///
-    /// - Default: None (disabled, use fixed `max_bond_dim` only)
-    /// - Typical values: 1e-6 to 1e-3
+    /// - Default: 1e-8
+    /// - Typical values: 1e-8 to 1e-3
+    /// - `0.0` disables the adaptive bound: no positive discarded weight is
+    ///   permitted, so only `svd_cutoff` and `max_bond_dim` truncate
     /// - `max_bond_dim` still acts as a hard cap
     #[must_use]
     pub fn max_truncation_error(mut self, error: f64) -> Self {
@@ -270,7 +272,7 @@ impl StabMpsBuilder {
     /// `auto_grow_max_bond_dim`, default 4096).
     ///
     /// Removes the manual tuning step for deep T-heavy circuits where
-    /// the default cap of 64 is insufficient. Cost: rebuild bond
+    /// the default cap of 128 is insufficient. Cost: rebuild bond
     /// allocation on growth (rare). Benefit: avoids surprise truncation
     /// when entanglement spikes.
     ///
@@ -321,7 +323,7 @@ impl StabMpsBuilder {
     /// models where every idle qubit receives a small RZ each time step:
     /// adjacent idle rounds merge into one non-Clifford op.
     ///
-    /// - Default: false.
+    /// - Default: true.
     /// - Semantics: strictly equivalent to applying each `rz` individually
     ///   (tableau and MPS paths both reduce non-Clifford count). No
     ///   accuracy trade-off.
@@ -343,17 +345,10 @@ impl StabMpsBuilder {
         self
     }
 
-    /// Preset for QEC-style workloads: stabilizer-code circuits with
-    /// non-Clifford noise (T gates, small-angle RZ), syndrome extraction,
-    /// magic-state distillation.
+    /// QEC-style preset retained for source compatibility.
     ///
-    /// Sets:
-    /// - `max_truncation_error(1e-8)` — adaptive bond dim; bonds with low
-    ///   entanglement shrink naturally, saving time on deep circuits.
-    /// - Keeps `lazy_measure = false` — benchmarks (see `examples/qec_bench.rs`)
-    ///   show the default eager path is faster for typical QEC workloads.
-    /// - `max_bond_dim(128)` — 2× the library default, giving more headroom
-    ///   for adversarial T-heavy subcircuits before truncation hits the cap.
+    /// This now matches the general defaults: `max_bond_dim(128)`,
+    /// `max_truncation_error(1e-8)`, `merge_rz(true)`, and eager measurement.
     ///
     /// Override any of these with subsequent builder calls:
     /// ```
@@ -367,7 +362,7 @@ impl StabMpsBuilder {
         self.for_qec_with_bond_dim(128)
     }
 
-    /// Like `for_qec()` but with a caller-chosen `max_bond_dim` cap.
+    /// Like the general defaults but with a caller-chosen `max_bond_dim` cap.
     /// Use when the default 128 is too tight (deep T-heavy circuits)
     /// or too loose (memory-constrained environments).
     #[must_use]
@@ -507,9 +502,9 @@ impl StabMps {
         StabMpsBuilder {
             num_qubits,
             seed: None,
-            max_bond_dim: 64,
+            max_bond_dim: 128,
             svd_cutoff: 1e-12,
-            max_truncation_error: None,
+            max_truncation_error: Some(1e-8),
             parallel: false,
             auto_grow_bond_dim: None,
             auto_grow_max_bond_dim: 4096,
@@ -2232,7 +2227,7 @@ mod tests {
     fn test_gf2_diagnostic_single_t() {
         // Single T gate: 1 non-Clifford gate, flip pattern has rank 1
         // Theoretical min bond dim = 2^(1-1) = 1
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         assert_eq!(stn.gf2_matrix().num_gates(), 1);
@@ -2243,7 +2238,7 @@ mod tests {
     #[test]
     fn test_gf2_diagnostic_two_independent_t() {
         // Two T gates on independent qubits: rank 2, min bond dim = 1
-        let mut stn = StabMps::new(4);
+        let mut stn = StabMps::builder(4).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.h(&[QubitId(2)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
@@ -2256,7 +2251,7 @@ mod tests {
     #[test]
     fn test_gf2_diagnostic_entangled_t() {
         // Entangled state + T gates: check GF(2) tracking works
-        let mut stn = StabMps::new(3);
+        let mut stn = StabMps::builder(3).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.cx(&[(QubitId(1), QubitId(2))]);
@@ -2276,7 +2271,7 @@ mod tests {
     #[test]
     fn test_gf2_stabilizer_case_not_tracked() {
         // T on |0⟩: Z_0 is a stabilizer, no flip sites, not tracked in GF(2) matrix
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         assert_eq!(stn.gf2_matrix().num_gates(), 0); // Stabilizer case: no flip
     }
@@ -2289,7 +2284,7 @@ mod tests {
     fn test_disentangle_single_site_case() {
         use pecos_simulators::DenseStateVec;
         let theta = Angle64::from_radians(0.7);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
         stn.h(&[QubitId(0)]);
@@ -2323,7 +2318,7 @@ mod tests {
     fn test_disentangle_multi_site_bell_plus_rz() {
         use pecos_simulators::DenseStateVec;
         let theta = Angle64::from_radians(0.7);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
         stn.h(&[QubitId(0)]);
@@ -2362,7 +2357,7 @@ mod tests {
     fn test_disentangle_yy_rotation() {
         use pecos_simulators::DenseStateVec;
         let theta = Angle64::from_radians(0.3);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
         // Construct a state where RZ decomposition has pauli_map=[(0,Y),(1,Y)]
@@ -2425,7 +2420,7 @@ mod tests {
     fn test_737_step14_std_only() {
         use pecos_simulators::DenseStateVec;
         let q = |i: usize| QubitId(i);
-        let mut stn = StabMps::new(4);
+        let mut stn = StabMps::builder(4).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(4);
         let apply = |stn: &mut StabMps, r: &mut DenseStateVec, step: usize| match step {
             0 => {
@@ -2519,7 +2514,7 @@ mod tests {
     #[test]
     fn test_span_decomposition_on_real_simulation() {
         let q = |i: usize| QubitId(i);
-        let mut stn = StabMps::with_seed(3, 42);
+        let mut stn = StabMps::builder(3).seed(42).merge_rz(false).build();
         // Bring qubits out of Z-eigenstate so T decomposes via DestabilizerFlip.
         stn.h(&[q(0), q(1), q(2)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[q(0)]);
@@ -4002,7 +3997,7 @@ mod tests {
         let q = |i: usize| QubitId(i);
 
         // Case 1: 5q, all T on distinct qubits after H -> nullity=0, bond=1.
-        let mut stn = StabMps::with_seed(5, 1);
+        let mut stn = StabMps::builder(5).seed(1).merge_rz(false).build();
         stn.h(&[q(0), q(1), q(2), q(3), q(4)]);
         for i in 0..5 {
             stn.rz(Angle64::QUARTER_TURN / 2u64, &[q(i)]);
@@ -4012,7 +4007,7 @@ mod tests {
 
         // Case 2: 3q, same qubit T'd multiple times with Cliffords between
         // -> some dependencies, nullity > 0, bond > 1.
-        let mut stn2 = StabMps::with_seed(3, 2);
+        let mut stn2 = StabMps::builder(3).seed(2).merge_rz(false).build();
         stn2.h(&[q(0), q(1), q(2)]);
         // Build dependencies: T on q0, CNOT(0,1), T on q1 (depends on q0's pattern?)
         // Force bond dim to grow by interleaving differently.
@@ -4040,7 +4035,7 @@ mod tests {
     #[test]
     fn test_ofd_analysis_api() {
         let q = |i: usize| QubitId(i);
-        let mut stn = StabMps::with_seed(5, 42);
+        let mut stn = StabMps::builder(5).seed(42).merge_rz(false).build();
         // H on all, then T's interspersed with CNOTs.
         stn.h(&[q(0), q(1), q(2), q(3), q(4)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[q(0)]);
@@ -4239,7 +4234,7 @@ mod tests {
     fn test_trace_seed_107_disent() {
         let q0 = QubitId(0);
         let q1 = QubitId(1);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.cx(&[(q0, q1)]);
         stn.sz(&[q1]);
         stn.rz(Angle64::from_radians(4.8946), &[q1]);
@@ -4311,7 +4306,7 @@ mod tests {
         use pecos_simulators::DenseStateVec;
         let q0 = QubitId(0);
         let q1 = QubitId(1);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
         let apply_both = |_stn: &mut StabMps,
@@ -4696,7 +4691,7 @@ mod tests {
         // Each Rz has a single flip site (no entangling gate between them).
         // Disentangling fires on both, recording single-site patterns.
         let theta = Angle64::from_radians(0.3);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
 
         stn.h(&[QubitId(0)]);
         stn.h(&[QubitId(1)]);
@@ -4737,14 +4732,14 @@ mod tests {
 
     #[test]
     fn test_stn_t_gate_on_zero() {
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]); // T = RZ(pi/4)
         assert_eq!(stn.max_bond_dim(), 1);
     }
 
     #[test]
     fn test_stn_t_gate_on_plus() {
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]); // T gate
         assert_eq!(stn.max_bond_dim(), 1);
@@ -4753,7 +4748,7 @@ mod tests {
 
     #[test]
     fn test_stn_multiple_t_gates() {
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
@@ -4811,7 +4806,7 @@ mod tests {
     #[test]
     fn test_cross_validate_t_on_plus() {
         // H then T on single qubit
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         let stn_sv = stn.state_vector();
@@ -4827,7 +4822,7 @@ mod tests {
     #[test]
     fn test_cross_validate_t_on_zero() {
         // T on |0>
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         let stn_sv = stn.state_vector();
 
@@ -4841,7 +4836,7 @@ mod tests {
     #[test]
     fn test_cross_validate_bell_plus_t() {
         // Bell state then T on q0
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
@@ -4860,7 +4855,7 @@ mod tests {
     fn test_cross_validate_rz_arbitrary_angle() {
         // RZ at non-Clifford, non-T angle
         let theta = Angle64::from_radians(1.234);
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(theta, &[QubitId(0)]);
         let stn_sv = stn.state_vector();
@@ -4877,7 +4872,7 @@ mod tests {
     fn test_cross_validate_multiple_rz() {
         // H, T, H, T on single qubit (two non-Clifford layers)
         let t_angle = Angle64::QUARTER_TURN / 2u64;
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(t_angle, &[QubitId(0)]);
         stn.h(&[QubitId(0)]);
@@ -4898,7 +4893,7 @@ mod tests {
     fn test_cross_validate_two_t_gates_2qubit() {
         // Two T gates on different qubits: H(0), H(1), T(0), T(1)
         let t_angle = Angle64::QUARTER_TURN / 2u64;
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.h(&[QubitId(1)]);
         stn.rz(t_angle, &[QubitId(0)]);
@@ -4919,7 +4914,7 @@ mod tests {
     fn test_cross_validate_3qubit_circuit() {
         // 3-qubit circuit with Cliffords and T gates
         let t_angle = Angle64::QUARTER_TURN / 2u64;
-        let mut stn = StabMps::new(3);
+        let mut stn = StabMps::builder(3).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(t_angle, &[QubitId(0)]);
@@ -6304,7 +6299,7 @@ mod tests {
         let sv_merged = merged.state_vector();
         let nc_merged = merged.stats.total_nonclifford;
 
-        let mut eager = StabMps::with_seed(2, 7);
+        let mut eager = StabMps::builder(2).seed(7).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
         eager.z(&[QubitId(0)]);
@@ -6364,7 +6359,7 @@ mod tests {
         // applying RZ(t) twice. Compare state vectors.
         let t = Angle64::QUARTER_TURN / 2u64; // T
 
-        let mut eager = StabMps::with_seed(2, 7);
+        let mut eager = StabMps::builder(2).seed(7).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.cx(&[(QubitId(0), QubitId(1))]);
         eager.rz(t, &[QubitId(0)]);
@@ -6397,7 +6392,7 @@ mod tests {
         merged.flush();
         let sv_merged = merged.state_vector();
 
-        let mut eager = StabMps::with_seed(2, 11);
+        let mut eager = StabMps::builder(2).seed(11).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
         eager.h(&[QubitId(1)]);
@@ -6425,7 +6420,7 @@ mod tests {
         merged.flush();
         let sv_merged = merged.state_vector();
 
-        let mut eager = StabMps::with_seed(2, 13);
+        let mut eager = StabMps::builder(2).seed(13).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
         eager.h(&[QubitId(0)]);
@@ -6456,7 +6451,7 @@ mod tests {
             "two T merging to S should hit Clifford fast path, not non-Clifford"
         );
 
-        let mut eager = StabMps::with_seed(2, 17);
+        let mut eager = StabMps::builder(2).seed(17).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
@@ -6469,6 +6464,21 @@ mod tests {
         for (a, b) in sv_eager.iter().zip(sv_merged.iter()) {
             assert!((a - b).norm() < 1e-10, "T+T = S state mismatch");
         }
+    }
+
+    #[test]
+    fn test_builder_default_values() {
+        let stn = StabMps::builder(4).build();
+
+        assert_eq!(stn.config.max_bond_dim, 128);
+        assert_relative_eq!(stn.config.svd_cutoff, 1e-12);
+        assert_eq!(stn.config.max_truncation_error, Some(1e-8));
+        assert!(!stn.config.parallel);
+        assert!(stn.flags.normalize_after_gate());
+        assert!(!stn.flags.lazy_measure());
+        assert!(stn.flags.merge_rz());
+        assert!(!stn.flags.pauli_frame_tracking());
+        assert!(!stn.flags.numerical_flag_redetection());
     }
 
     #[test]

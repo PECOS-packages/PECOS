@@ -37,6 +37,13 @@ impl PyStabMps {
 
 #[pymethods]
 impl PyStabMps {
+    /// Create a stabilizer-MPS simulator.
+    ///
+    /// Boolean options are tri-state: `None` preserves the Rust builder
+    /// default, while `True` or `False` explicitly enables or disables the
+    /// option. `max_truncation_error=None` preserves the builder default of
+    /// `1e-8`; a float overrides it, and `0.0` disables adaptive truncation
+    /// while retaining the SVD cutoff and bond cap.
     #[new]
     #[pyo3(signature = (
         num_qubits,
@@ -77,14 +84,14 @@ impl PyStabMps {
         if let Some(bd) = max_bond_dim {
             b = b.max_bond_dim(bd);
         }
-        if merge_rz == Some(true) {
-            b = b.merge_rz(true);
+        if let Some(v) = merge_rz {
+            b = b.merge_rz(v);
         }
-        if pauli_frame_tracking == Some(true) {
-            b = b.pauli_frame_tracking(true);
+        if let Some(v) = pauli_frame_tracking {
+            b = b.pauli_frame_tracking(v);
         }
-        if lazy_measure == Some(true) {
-            b = b.lazy_measure(true);
+        if let Some(v) = lazy_measure {
+            b = b.lazy_measure(v);
         }
         if let Some(t) = auto_grow_bond_dim {
             b = b.auto_grow_bond_dim(t);
@@ -98,8 +105,8 @@ impl PyStabMps {
         if let Some(c) = svd_cutoff {
             b = b.svd_cutoff(c);
         }
-        if numerical_flag_redetection == Some(true) {
-            b = b.numerical_flag_redetection(true);
+        if let Some(v) = numerical_flag_redetection {
+            b = b.numerical_flag_redetection(v);
         }
         PyStabMps { inner: b.build() }
     }

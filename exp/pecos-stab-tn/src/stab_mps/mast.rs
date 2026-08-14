@@ -42,10 +42,10 @@ use super::non_clifford;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ProjectionOrder {
     /// Collapse in reverse injection order, preserving the original MAST behavior.
-    #[default]
     Input,
     /// Recompute MPS-frame locality before every collapse and choose the
     /// smallest `(span, support size, injection index)` tuple.
+    #[default]
     MinSpan,
 }
 
@@ -214,8 +214,9 @@ impl Mast {
 
     /// Select the ordering policy for deferred ancilla projections.
     ///
-    /// The default is [`ProjectionOrder::Input`], which preserves reverse
-    /// injection order and its RNG-consumption sequence.
+    /// The default is [`ProjectionOrder::MinSpan`]. Select
+    /// [`ProjectionOrder::Input`] to preserve the legacy reverse-injection
+    /// order and its RNG-consumption sequence.
     #[must_use]
     pub fn projection_order(mut self, projection_order: ProjectionOrder) -> Self {
         self.projection_order = projection_order;
@@ -687,19 +688,37 @@ mod tests {
         mast.rz(t, &[QubitId(0)]);
     }
 
+    fn project_all_legacy(mast: &mut Mast) {
+        let deferred: Vec<DeferredMeasurement> = mast.deferred.drain(..).rev().collect();
+        for dm in deferred {
+            let (support_size, mps_span) = mast.projection_locality(dm.ancilla);
+            mast.project_deferred(dm, support_size, mps_span);
+        }
+    }
+
     #[test]
-    fn test_mast_explicit_input_preserves_default_projection_path() {
+    fn test_mast_default_is_min_span_and_input_preserves_legacy_path() {
         let mut default_path = Mast::with_seed(3, 4, 0x51_7a);
+        assert_eq!(default_path.projection_order, ProjectionOrder::MinSpan);
+        assert_eq!(default_path.mps().config().max_bond_dim, 128);
+        assert_eq!(default_path.mps().config().max_truncation_error, Some(1e-8));
+        let mut explicit_min_span =
+            Mast::with_seed(3, 4, 0x51_7a).projection_order(ProjectionOrder::MinSpan);
         let mut explicit_input =
             Mast::with_seed(3, 4, 0x51_7a).projection_order(ProjectionOrder::Input);
+        let mut legacy_path = Mast::with_seed(3, 4, 0x51_7a);
         apply_seeded_projection_regression_circuit(&mut default_path);
+        apply_seeded_projection_regression_circuit(&mut explicit_min_span);
         apply_seeded_projection_regression_circuit(&mut explicit_input);
+        apply_seeded_projection_regression_circuit(&mut legacy_path);
 
         default_path.project_all();
+        explicit_min_span.project_all();
         explicit_input.project_all();
+        project_all_legacy(&mut legacy_path);
 
         assert_eq!(
-            default_path
+            explicit_input
                 .projection_records()
                 .iter()
                 .map(|record| record.ancilla)
@@ -708,10 +727,23 @@ mod tests {
         );
         assert_eq!(
             default_path.mps().state_vector(),
-            explicit_input.mps().state_vector()
+            explicit_min_span.mps().state_vector()
+        );
+        assert_eq!(
+            explicit_input.projection_records(),
+            legacy_path.projection_records()
+        );
+        assert_eq!(
+            explicit_input.mps().state_vector(),
+            legacy_path.mps().state_vector()
         );
 
         let default_outcomes: Vec<bool> = default_path
+            .mz(&[QubitId(0), QubitId(1), QubitId(2)])
+            .into_iter()
+            .map(|result| result.outcome)
+            .collect();
+        let min_span_outcomes: Vec<bool> = explicit_min_span
             .mz(&[QubitId(0), QubitId(1), QubitId(2)])
             .into_iter()
             .map(|result| result.outcome)
@@ -721,7 +753,13 @@ mod tests {
             .into_iter()
             .map(|result| result.outcome)
             .collect();
-        assert_eq!(default_outcomes, input_outcomes);
+        let legacy_outcomes: Vec<bool> = legacy_path
+            .mz(&[QubitId(0), QubitId(1), QubitId(2)])
+            .into_iter()
+            .map(|result| result.outcome)
+            .collect();
+        assert_eq!(default_outcomes, min_span_outcomes);
+        assert_eq!(input_outcomes, legacy_outcomes);
     }
 
     #[test]

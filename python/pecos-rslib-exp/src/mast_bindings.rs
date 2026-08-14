@@ -12,7 +12,7 @@
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
-use pecos_stab_tn::stab_mps::mast::Mast;
+use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
 
@@ -36,14 +36,26 @@ impl PyMast {
 #[pymethods]
 impl PyMast {
     #[new]
-    #[pyo3(signature = (num_qubits, max_non_clifford, seed=None, lazy_measure=false, merge_rz=false))]
+    /// Create a MAST simulator.
+    ///
+    /// `projection_order` accepts `"min_span"` or `"input"`; `None` uses
+    /// the Rust default (`"min_span"`).
+    #[pyo3(signature = (
+        num_qubits,
+        max_non_clifford,
+        seed=None,
+        lazy_measure=false,
+        merge_rz=false,
+        projection_order=None,
+    ))]
     fn new(
         num_qubits: usize,
         max_non_clifford: usize,
         seed: Option<u64>,
         lazy_measure: bool,
         merge_rz: bool,
-    ) -> Self {
+        projection_order: Option<&str>,
+    ) -> PyResult<Self> {
         let mut mast = if let Some(s) = seed {
             Mast::with_seed(num_qubits, max_non_clifford, s)
         } else {
@@ -55,7 +67,19 @@ impl PyMast {
         if merge_rz {
             mast = mast.with_merge_rz(true);
         }
-        PyMast { inner: mast }
+        if let Some(order) = projection_order {
+            let order = match order {
+                "min_span" => ProjectionOrder::MinSpan,
+                "input" => ProjectionOrder::Input,
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "projection_order must be 'min_span' or 'input'",
+                    ));
+                }
+            };
+            mast = mast.projection_order(order);
+        }
+        Ok(PyMast { inner: mast })
     }
 
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {

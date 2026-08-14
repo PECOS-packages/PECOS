@@ -16,7 +16,7 @@ use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StabVec};
 use pecos_stab_tn::stab_mps::StabMps;
-use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
+use pecos_stab_tn::stab_mps::mast::Mast;
 
 /// Check that two state vectors match up to global phase.
 fn assert_states_match(sv_a: &[Complex64], sv_b: &[Complex64], label: &str) {
@@ -53,7 +53,7 @@ fn run_circuit_on_both(
     gates: &[(&str, Vec<usize>, Option<Angle64>)],
     seed: u64,
 ) -> (Vec<Complex64>, Vec<Complex64>) {
-    let mut stn = StabMps::with_seed(n, seed);
+    let mut stn = StabMps::builder(n).seed(seed).merge_rz(false).build();
     let mut crz = StabVec::builder(n).seed(seed).build();
 
     for (gate, qubits, angle) in gates {
@@ -332,7 +332,7 @@ fn test_mast_vs_stn_measurement_statistics() {
 #[test]
 fn test_bond_dim_growth_with_t_gates() {
     // Track bond dimension as T gates accumulate
-    let mut stn = StabMps::new(6);
+    let mut stn = StabMps::builder(6).max_bond_dim(64).merge_rz(false).build();
     for q in 0..6 {
         stn.h(&[QubitId(q)]);
     }
@@ -365,7 +365,10 @@ fn fuzz_circuit(num_qubits: usize, num_gates: usize, seed: u64) {
 }
 
 fn fuzz_circuit_with_tol(num_qubits: usize, num_gates: usize, seed: u64, tol: f64) {
-    let mut stn = StabMps::with_seed(num_qubits, seed);
+    let mut stn = StabMps::builder(num_qubits)
+        .seed(seed)
+        .merge_rz(false)
+        .build();
     // Use DenseStateVec as reference (not CRZ, which has frame optimization issues with CZ)
     let mut crz = pecos_simulators::DenseStateVec::new(num_qubits);
 
@@ -448,7 +451,10 @@ fn fuzz_circuit_with_tol(num_qubits: usize, num_gates: usize, seed: u64, tol: f6
         .sum();
     if (overlap.norm_sqr() - 1.0).abs() > tol {
         // Re-run step-by-step to find the divergence point
-        let mut stn2 = StabMps::with_seed(num_qubits, seed);
+        let mut stn2 = StabMps::builder(num_qubits)
+            .seed(seed)
+            .merge_rz(false)
+            .build();
         let mut dsv2 = pecos_simulators::DenseStateVec::new(num_qubits);
         let mut rng2 = seed;
         let next2 = |state: &mut u64| -> u64 {
@@ -555,7 +561,7 @@ fn test_fuzz_2qubit_circuits() {
 fn test_fuzz_seed_115_mps_check() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
-    let mut stn = StabMps::with_seed(2, 115);
+    let mut stn = StabMps::builder(2).seed(115).merge_rz(false).build();
     stn.cx(&[(q0, q1)]);
     stn.cz(&[(q0, q1)]);
     stn.cx(&[(q1, q0)]);
@@ -685,7 +691,7 @@ fn test_fuzz_debug_seed_101() {
     let rz_angle = Angle64::from_radians(4.0024);
     let rx_angle1 = Angle64::from_radians(5.6800);
 
-    let mut stn = StabMps::with_seed(2, 101);
+    let mut stn = StabMps::builder(2).seed(101).merge_rz(false).build();
     let mut crz = StabVec::builder(2).seed(101).build();
 
     // Step 0: T on q1
@@ -859,7 +865,10 @@ fn test_debug_seed_502() {
     let seed = 502u64;
     let dim = 1usize << num_qubits;
 
-    let mut stn = StabMps::with_seed(num_qubits, seed);
+    let mut stn = StabMps::builder(num_qubits)
+        .seed(seed)
+        .merge_rz(false)
+        .build();
     let mut dsv = pecos_simulators::DenseStateVec::new(num_qubits);
 
     let mut rng_state = seed;
@@ -1003,7 +1012,7 @@ fn test_fuzz_2qubit_deep() {
 #[test]
 fn test_rx_pi_after_nonclifford() {
     // RX(pi) = -i*X. Check it works after non-Clifford gates.
-    let mut stn = StabMps::with_seed(2, 42);
+    let mut stn = StabMps::builder(2).seed(42).merge_rz(false).build();
     let mut dsv = pecos_simulators::DenseStateVec::new(2);
     let t = Angle64::QUARTER_TURN / 2u64;
     let pi = Angle64::from_radians(std::f64::consts::PI);
@@ -1066,7 +1075,7 @@ fn test_rx_pi_after_nonclifford() {
         eprintln!("  D[{i}] minus={dm} i={di}");
     }
     // Also check state before RX(pi)
-    let mut stn2 = StabMps::with_seed(2, 42);
+    let mut stn2 = StabMps::builder(2).seed(42).merge_rz(false).build();
     let mut dsv2 = pecos_simulators::DenseStateVec::new(2);
     stn2.h(&[QubitId(0)]);
     dsv2.h(&[QubitId(0)]);
@@ -1173,7 +1182,7 @@ fn test_seed502_prefix() {
         ("rx", vec![1], Some(rx_angle)),
         ("t", vec![1], None),
     ];
-    let mut stn = StabMps::with_seed(2, 42);
+    let mut stn = StabMps::builder(2).seed(42).merge_rz(false).build();
     let mut dsv = pecos_simulators::DenseStateVec::new(2);
     let dim = 1usize << 2;
     for (step, (gate, qubits, angle)) in gates.iter().enumerate() {
@@ -1585,7 +1594,7 @@ fn test_disentangle_various_circuits() {
     ];
 
     for (i, build) in circuits.iter().enumerate() {
-        let mut stn = StabMps::new(3);
+        let mut stn = StabMps::builder(3).merge_rz(false).build();
         build(&mut stn);
         let sv_before = stn.state_vector();
         let _gates = stn.disentangle(5);
@@ -1759,7 +1768,10 @@ fn test_mast_t_then_measure_then_more() {
 
 /// Fuzz with RZZ gates included in the gate set.
 fn fuzz_with_rzz(num_qubits: usize, num_gates: usize, seed: u64) {
-    let mut stn = StabMps::with_seed(num_qubits, seed);
+    let mut stn = StabMps::builder(num_qubits)
+        .seed(seed)
+        .merge_rz(false)
+        .build();
     let mut dsv = pecos_simulators::DenseStateVec::new(num_qubits);
 
     let mut rng_state = seed;
@@ -2184,6 +2196,7 @@ fn test_prefix_tree_sampler_flushes_supported_modes_on_working_clone() {
 fn test_mast_min_span_matches_stn_exact_random_probabilities() {
     // Mirrors `test_mast_matches_stn_exact_probabilities_2q`: compare each
     // sampled outcome with `prob_bitstring` under the same five-sigma bound.
+    // MinSpan is the default, so this also guards the default MAST path.
     let num_trials = 5000usize;
     for num_qubits in 3..=5 {
         for t_count in 3..=6 {
@@ -2213,8 +2226,7 @@ fn test_mast_min_span_matches_stn_exact_random_probabilities() {
             let measured_qubits = (0..num_qubits).map(QubitId).collect::<Vec<_>>();
             for trial in 0..num_trials {
                 let simulator_seed = circuit_seed.wrapping_mul(10_000) + trial as u64;
-                let mut mast = Mast::with_seed(num_qubits, t_count, simulator_seed)
-                    .projection_order(ProjectionOrder::MinSpan);
+                let mut mast = Mast::with_seed(num_qubits, t_count, simulator_seed);
                 apply_seeded_clifford_t_to_mast(&mut mast, &gates);
                 let outcome = mast
                     .mz(&measured_qubits)
@@ -2368,6 +2380,7 @@ fn test_numerical_flag_redetection_random_probabilities() {
         let n = 4 + (seed % 3) as usize;
         let mut stn = StabMps::builder(n)
             .seed(seed)
+            .merge_rz(false)
             .numerical_flag_redetection(true)
             .build();
         let mut rng_state = 0xDEAD_BEEF ^ seed.wrapping_mul(37);
@@ -2417,7 +2430,10 @@ fn test_numerical_flag_redetection_random_probabilities() {
 fn test_numerical_flag_redetection_recovers_cancelled_rotation() {
     let t = Angle64::QUARTER_TURN / 2u64;
     let final_angle = Angle64::from_radians(0.37);
-    let mut stn = StabMps::builder(2).numerical_flag_redetection(true).build();
+    let mut stn = StabMps::builder(2)
+        .merge_rz(false)
+        .numerical_flag_redetection(true)
+        .build();
     let mut oracle = pecos_simulators::DenseStateVec::new(2);
 
     stn.h(&[QubitId(0)]);
@@ -2447,7 +2463,10 @@ fn test_numerical_flag_redetection_recovers_cancelled_rotation() {
 fn test_numerical_flag_redetection_rejects_nonzero_product_site() {
     let t = Angle64::QUARTER_TURN / 2u64;
     let final_angle = Angle64::from_radians(0.37);
-    let mut stn = StabMps::builder(2).numerical_flag_redetection(true).build();
+    let mut stn = StabMps::builder(2)
+        .merge_rz(false)
+        .numerical_flag_redetection(true)
+        .build();
     let mut oracle = pecos_simulators::DenseStateVec::new(2);
 
     stn.h(&[QubitId(0)]);
@@ -2483,7 +2502,10 @@ fn test_many_t_gates_bond_dim_growth() {
     let num_qubits = 6;
     let t = Angle64::QUARTER_TURN / 2u64;
 
-    let mut stn = StabMps::builder(num_qubits).max_bond_dim(32).build();
+    let mut stn = StabMps::builder(num_qubits)
+        .max_bond_dim(32)
+        .merge_rz(false)
+        .build();
     let mut dsv = pecos_simulators::DenseStateVec::new(num_qubits);
 
     // Create full entanglement: H on all, then CX chain
@@ -2520,7 +2542,10 @@ fn test_ghz_plus_t_ladder() {
     let num_qubits = 5;
     let t = Angle64::QUARTER_TURN / 2u64;
 
-    let mut stn = StabMps::builder(num_qubits).max_bond_dim(64).build();
+    let mut stn = StabMps::builder(num_qubits)
+        .max_bond_dim(64)
+        .merge_rz(false)
+        .build();
     let mut dsv = pecos_simulators::DenseStateVec::new(num_qubits);
 
     // GHZ: H(0), CX chain
@@ -2562,7 +2587,10 @@ fn test_repeated_t_layers_4qubit() {
     let num_qubits = 4;
     let t = Angle64::QUARTER_TURN / 2u64;
 
-    let mut stn = StabMps::with_seed(num_qubits, 42);
+    let mut stn = StabMps::builder(num_qubits)
+        .seed(42)
+        .merge_rz(false)
+        .build();
     let mut dsv = pecos_simulators::DenseStateVec::new(num_qubits);
 
     for _layer in 0..3 {
@@ -2596,7 +2624,10 @@ fn test_bond_dim_respects_config() {
     let t = Angle64::QUARTER_TURN / 2u64;
     let max_chi = 8;
 
-    let mut stn = StabMps::builder(num_qubits).max_bond_dim(max_chi).build();
+    let mut stn = StabMps::builder(num_qubits)
+        .max_bond_dim(max_chi)
+        .merge_rz(false)
+        .build();
 
     stn.h(&[QubitId(0)]);
     stn.cx(&[(QubitId(0), QubitId(1))]);
@@ -2629,7 +2660,10 @@ fn test_bond_dim_respects_config() {
 
 /// Fuzz with Tdg and negative-angle RZ gates.
 fn fuzz_with_tdg(num_qubits: usize, num_gates: usize, seed: u64) {
-    let mut stn = StabMps::with_seed(num_qubits, seed);
+    let mut stn = StabMps::builder(num_qubits)
+        .seed(seed)
+        .merge_rz(false)
+        .build();
     let mut dsv = pecos_simulators::DenseStateVec::new(num_qubits);
 
     let mut rng_state = seed;
@@ -2728,7 +2762,7 @@ fn test_fuzz_tdg_2qubit() {
 fn test_fuzz_szdg_circuits() {
     // Include szdg in the gate set to test the default sz.sz.sz path
     for seed in 3200..3250 {
-        let mut stn = StabMps::with_seed(2, seed);
+        let mut stn = StabMps::builder(2).seed(seed).merge_rz(false).build();
         let mut dsv = pecos_simulators::DenseStateVec::new(2);
         let mut rng_state = seed;
         let next_rng = |state: &mut u64| -> u64 {
@@ -2898,7 +2932,7 @@ fn test_post_measurement_multisite_collapse() {
 
     for trial in 0..50u64 {
         let seed = 9200 + trial;
-        let mut stn = StabMps::with_seed(3, seed);
+        let mut stn = StabMps::builder(3).seed(seed).merge_rz(false).build();
 
         // Build state where Z_0 decomposes with both flip and sign sites
         stn.h(&[QubitId(0)]);
@@ -2987,7 +3021,7 @@ fn test_post_measurement_state_3qubit() {
 fn test_fuzz_single_qubit() {
     // Single-qubit circuits: always Stabilizer decomposition path.
     for seed in 4000..4200 {
-        let mut stn = StabMps::with_seed(1, seed);
+        let mut stn = StabMps::builder(1).seed(seed).merge_rz(false).build();
         let mut dsv = pecos_simulators::DenseStateVec::new(1);
 
         let mut rng_state = seed;
@@ -3091,7 +3125,7 @@ fn test_rzz_then_non_clifford() {
     let angle = Angle64::from_radians(0.7);
     let t = Angle64::QUARTER_TURN / 2u64;
 
-    let mut stn = StabMps::with_seed(3, 42);
+    let mut stn = StabMps::builder(3).seed(42).merge_rz(false).build();
     let mut dsv = pecos_simulators::DenseStateVec::new(3);
 
     stn.h(&[QubitId(0)]);
@@ -3313,7 +3347,7 @@ fn test_property_cliffords_dont_grow_bond_dim() {
 fn test_property_stn_bond_dim_grows_with_nonclifford() {
     // Paper claim: each non-Clifford gate on an entangled state can increase bond dim.
     let t = Angle64::QUARTER_TURN / 2u64;
-    let mut stn = StabMps::with_seed(4, 42);
+    let mut stn = StabMps::builder(4).seed(42).merge_rz(false).build();
 
     // Create entangled state
     for q in 0..4 {
@@ -3401,7 +3435,10 @@ fn test_property_mast_vs_stn_bond_dim() {
     let t = Angle64::QUARTER_TURN / 2u64;
     let num_qubits = 6;
 
-    let mut stn = StabMps::with_seed(num_qubits, 42);
+    let mut stn = StabMps::builder(num_qubits)
+        .seed(42)
+        .merge_rz(false)
+        .build();
     let mut mast = Mast::with_seed(num_qubits, 4, 42);
 
     // Same circuit on both
@@ -3434,7 +3471,7 @@ fn test_property_mast_vs_stn_bond_dim() {
 fn test_property_disentangle_reduces_bond_dim() {
     // Paper claim: Clifford disentangling can reduce MPS bond dimension.
     let t = Angle64::QUARTER_TURN / 2u64;
-    let mut stn = StabMps::with_seed(3, 42);
+    let mut stn = StabMps::builder(3).seed(42).merge_rz(false).build();
 
     stn.h(&[QubitId(0)]);
     stn.cx(&[(QubitId(0), QubitId(1))]);
@@ -3480,6 +3517,7 @@ fn large_scale_bond_dim_check(
     let mut stn = StabMps::builder(num_qubits)
         .max_bond_dim(256)
         .seed(seed)
+        .merge_rz(false)
         .build();
 
     let mut rng = seed;

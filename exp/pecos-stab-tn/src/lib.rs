@@ -19,6 +19,15 @@
 //! - **STN**: Stabilizer Tensor Networks (tableau + MPS coefficients)
 //! - **MAST**: Magic state injection Augmented STN (deferred non-Clifford cost)
 //!
+//! # Default configuration
+//!
+//! `StabMps` defaults to a maximum bond dimension of 128, a maximum relative
+//! truncation error of `1e-8`, an SVD cutoff of `1e-12`, normalization after
+//! non-Clifford gates, and merged same-qubit RZ rotations. Lazy measurement,
+//! Pauli-frame tracking, and numerical flag redetection remain opt-in. To
+//! recover the former behavior explicitly, use `max_bond_dim(64)`,
+//! `max_truncation_error(0.0)`, and `merge_rz(false)` on the builder.
+//!
 //! # References
 //!
 //! - Masot-Llima, Garcia-Saez. "Stabilizer Tensor Networks: Universal Quantum Simulator

@@ -207,8 +207,8 @@ fn main() {
     println!("{:-<90}", "");
 
     let configs: &[(&str, bool, Option<f64>, bool)] = &[
-        ("default", false, None, false),
-        ("lazy_measure", true, None, false),
+        ("legacy defaults", false, Some(0.0), false),
+        ("legacy + lazy_measure", true, Some(0.0), false),
         ("max_truncation_error=1e-8", false, Some(1e-8), false),
         ("merge_rz", false, None, true),
         (
@@ -217,7 +217,7 @@ fn main() {
             Some(1e-8),
             true,
         ),
-        ("for_qec()", false, Some(1e-8), true),
+        ("general defaults (cap pinned)", false, Some(1e-8), true),
     ];
 
     for &(name, lazy, trunc, merge) in configs {
@@ -277,7 +277,7 @@ fn main() {
     println!("{:<30} {:>12} {:>12}", "config", "time (s)", "max bond");
     println!("{:-<70}", "");
     let small_angle = Angle64::from_radians(0.01);
-    for (name, merge) in [("default", false), ("merge_rz", true)] {
+    for (name, merge) in [("merge_rz=off", false), ("merge_rz=on (default)", true)] {
         let (t, b) = ion_trap_memory_scenario(6, 10, 50, small_angle, merge, 42);
         println!("{name:<30} {t:>12.4} {b:>12}");
     }

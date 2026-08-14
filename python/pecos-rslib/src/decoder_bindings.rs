@@ -1452,19 +1452,6 @@ fn parse_osd_method(s: &str) -> PyResult<RustOsdMethod> {
     }
 }
 
-/// Builder for BP+OSD decoder.
-///
-/// Belief Propagation with Ordered Statistics Decoding post-processing.
-///
-/// # Example
-///
-/// ```python
-/// from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
-///
-/// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-/// decoder = BpOsdBuilder(H, error_rate=0.1).osd_method("osd_cs").osd_order(7).build()
-/// result = decoder.decode_syndrome(syndrome)
-/// ```
 /// Channel prior for BP-family builders: a single probability applied to every
 /// column, or one probability per column (e.g. per-mechanism DEM priors).
 #[derive(Clone, FromPyObject)]
@@ -1482,6 +1469,20 @@ impl PyErrorPrior {
         }
     }
 }
+
+/// Builder for BP+OSD decoder.
+///
+/// Belief Propagation with Ordered Statistics Decoding post-processing.
+///
+/// # Example
+///
+/// ```python
+/// from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
+///
+/// H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+/// decoder = BpOsdBuilder(H, error_rate=0.1).osd_method("osd_cs").osd_order(7).build()
+/// result = decoder.decode_syndrome(syndrome)
+/// ```
 
 #[pyclass(name = "BpOsdBuilder", module = "pecos_rslib.decoders")]
 pub struct PyBpOsdBuilder {
@@ -1724,7 +1725,8 @@ impl PyBpLsdBuilder {
     }
 
     /// Set bits added per cluster-growth step (default: 0 = grow all candidate
-    /// bits each step, the crate convention).
+    /// bits each step, the crate convention; measured ~50x faster than 1 on
+    /// large circuit DEMs with comparable corrections).
     fn bits_per_step(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
         slf.bits_per_step = val;
         slf
@@ -1917,7 +1919,8 @@ impl PyUnionFindDecoder {
     ///
     /// * `syndrome` - Syndrome vector
     /// * `llrs` - Optional log-likelihood ratios for soft information
-    /// * `bits_per_step` - Bits to grow per step (0 = all at once)
+    /// * `bits_per_step` - Bits to grow per step (0 = all at once; safe with
+    ///   or without `llrs`)
     #[pyo3(signature = (syndrome, llrs=None, bits_per_step=0))]
     fn decode_syndrome(
         &mut self,
@@ -2546,6 +2549,11 @@ impl PyRelayBpBuilder {
 /// result = decoder.decode([1, 0])
 /// assert result.converged
 /// ```
+///
+/// The relay memory-strength RNG is seeded once at construction and advances
+/// across decodes, so a reused decoder's per-shot outcomes depend on decode
+/// history. Equal seeds reproduce the same full shot sequence, not an
+/// individual syndrome decoded in isolation.
 #[pyclass(name = "RelayBpDecoder", module = "pecos_rslib.decoders")]
 pub struct PyRelayBpDecoder {
     inner: RustRelayBpDecoder,

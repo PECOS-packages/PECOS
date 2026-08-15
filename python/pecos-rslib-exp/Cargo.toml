@@ -28,6 +28,7 @@ extension-module = [
 pecos-bp-trellis.workspace = true
 pecos-core.workspace = true
 pecos-eeg.workspace = true
+pecos-frontier.workspace = true
 pecos-neo.workspace = true
 pecos-qec.workspace = true
 pecos-quantum.workspace = true

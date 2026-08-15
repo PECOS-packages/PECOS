@@ -146,6 +146,27 @@ mod union_find_decoder_tests {
         println!("  Decoding: {:?}", result.decoding);
     }
 
+    /// The combination the `bits_per_step = 0` fix changed: weighted growth
+    /// (non-empty LLRs) with zero, which previously reached the C++ growth loop
+    /// literally and prevented clusters from growing at all.
+    #[test]
+    fn test_uf_decoder_weighted_with_zero_bits_per_step() {
+        let pcm = repetition_code(6);
+        let mut decoder = UnionFindDecoder::new(&pcm, UfMethod::Inversion).unwrap();
+
+        let syndrome = arr1(&[1, 0, 1, 0, 0]);
+        let llrs = vec![-1.0, 2.0, -0.5, 1.5, 0.1, 2.5];
+
+        let result = decoder
+            .decode(&syndrome.view(), &llrs, 0)
+            .expect("weighted decode with bits_per_step = 0 must succeed");
+
+        // The correction must reproduce the observed syndrome.
+        let dense_pcm = pcm.to_dense();
+        let reproduced: Array1<u8> = dense_pcm.dot(&result.decoding).mapv(|x| x % 2);
+        assert_eq!(reproduced, syndrome);
+    }
+
     #[test]
     fn test_uf_decoder_peeling_method() {
         // Create a code suitable for peeling (max degree 2)

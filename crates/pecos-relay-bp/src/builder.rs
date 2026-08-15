@@ -5,6 +5,12 @@ use crate::decoder::{MinSumBpDecoder, RelayBpDecoder};
 use crate::errors::Result;
 use ndarray::ArrayView2;
 
+/// Default `gamma0` for the relay ensemble. It enables memory-BP for the entire
+/// ensemble: the pre-relay leg uses it directly and relay legs draw per-leg
+/// strengths only when it is set. `None` disables memory entirely and makes
+/// relay ensembling ineffective.
+pub const DEFAULT_GAMMA0: f64 = 0.65;
+
 /// Builder for `RelayBpDecoder`
 ///
 /// # Example
@@ -18,7 +24,6 @@ use ndarray::ArrayView2;
 /// let decoder = RelayBpDecoder::builder(&check_matrix.view())
 ///     .error_priors(&[0.1, 0.1, 0.1])
 ///     .max_iter(200)
-///     .gamma0(Some(0.9))
 ///     .pre_iter(80)
 ///     .num_sets(300)
 ///     .seed(42)
@@ -52,7 +57,13 @@ impl<'a> RelayBpBuilder<'a> {
             max_iter: 200,
             alpha: None,
             alpha_iteration_scaling_factor: 1.0,
-            gamma0: None,
+            // `gamma0` enables memory-BP for the entire relay ensemble: the
+            // pre-relay leg uses it directly and relay legs draw per-leg
+            // strengths only when it is set. `None` disables memory entirely
+            // and makes relay ensembling ineffective. Measured on the BB144
+            // gross-code circuit DEM at p=0.003: 99/1000 logical failures with
+            // `None` vs 1/1000 with 0.65.
+            gamma0: Some(DEFAULT_GAMMA0),
             pre_iter: relay_defaults.pre_iter,
             num_sets: relay_defaults.num_sets,
             set_max_iter: relay_defaults.set_max_iter,
@@ -90,7 +101,10 @@ impl<'a> RelayBpBuilder<'a> {
         self
     }
 
-    /// Set memory BP strength (None = disabled)
+    /// Enable memory-BP for the entire relay ensemble (default: `Some(0.65)`).
+    /// The pre-relay leg uses this directly and relay legs draw per-leg strengths
+    /// only when it is set; `None` disables memory entirely and makes relay
+    /// ensembling ineffective. The optimal value is graph-dependent.
     #[must_use]
     pub fn gamma0(mut self, gamma0: Option<f64>) -> Self {
         self.gamma0 = gamma0;
@@ -132,7 +146,10 @@ impl<'a> RelayBpBuilder<'a> {
         self
     }
 
-    /// Set random seed (default: 0)
+    /// Set the run-level random seed for relay strengths (default: 0).
+    /// The RNG advances across decodes, so reused-decoder outcomes depend on
+    /// decode history; equal seeds reproduce only the same full shot sequence,
+    /// not an individual syndrome independently.
     #[must_use]
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = seed;
@@ -274,6 +291,17 @@ impl<'a> MinSumBpBuilder<'a> {
 mod tests {
     use super::*;
     use ndarray::{Array1, Array2};
+
+    #[test]
+    fn relay_builder_defaults_enable_memory() {
+        let h = Array2::from_shape_vec((2, 3), vec![1, 1, 0, 0, 1, 1]).unwrap();
+        let relay = RelayBpBuilder::new(&h.view());
+        assert_eq!(relay.gamma0, Some(DEFAULT_GAMMA0));
+        // Plain min-sum stays memory-free by default; only the relay builder
+        // enables memory across its ensemble by default.
+        let min_sum = MinSumBpBuilder::new(&h.view());
+        assert_eq!(min_sum.gamma0, None);
+    }
 
     #[test]
     fn test_relay_builder() {

@@ -108,6 +108,7 @@ pub use pecos_uf_decoder::{
 // Re-export Relay BP decoder when feature is enabled
 #[cfg(feature = "relay-bp")]
 pub use pecos_relay_bp::{
-    DecodingResult as RelayBpDecodingResult, MinSumBpBuilder, MinSumBpDecoder, MinSumConfig,
-    RelayBpBuilder, RelayBpDecoder, RelayBpError, RelayConfig, StoppingCriterion,
+    DEFAULT_GAMMA0 as RELAY_BP_DEFAULT_GAMMA0, DecodingResult as RelayBpDecodingResult,
+    MinSumBpBuilder, MinSumBpDecoder, MinSumConfig, RelayBpBuilder, RelayBpDecoder, RelayBpError,
+    RelayConfig, StoppingCriterion,
 };

@@ -3,6 +3,7 @@
 #![allow(clippy::case_sensitive_file_extension_comparisons)]
 
 use crate::errors::{Error, Result};
+use crate::extract::contained_entry_path;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io;
@@ -324,7 +325,10 @@ fn extract_zip(archive: &Path, dest: &Path, archive_name: &str) -> Result<()> {
         let Some(entry_path) = entry.enclosed_name() else {
             continue;
         };
-        let out_path = extract_to.join(entry_path);
+        // enclosed_name only balances `..` lexically: it accepts a component like ".. ",
+        // which Windows resolves back to ".." at write time, and it accepts device names.
+        // Route the result through the shared containment check for those classes.
+        let out_path = contained_entry_path(extract_to, &entry_path.to_string_lossy())?;
         if entry.is_dir() {
             fs::create_dir_all(&out_path)?;
         } else {

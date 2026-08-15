@@ -402,14 +402,40 @@ fn prior_llr(probability: f64) -> f64 {
     } else if probability >= 1.0 {
         -30.0
     } else {
-        ((1.0 - probability) / probability).ln()
+        // The clamp keeps the computed branch inside the same +-30 saturation
+        // the boundary branches already use. Without it, a subnormal
+        // probability overflows the ratio to infinity before `ln`, and one
+        // infinite prior turns downstream exponentially-weighted updates into
+        // NaN -- which a consumer then misreads as "no retained path".
+        // Clamp returns the input bit-identically whenever it is in range.
+        ((1.0 - probability) / probability).ln().clamp(-30.0, 30.0)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BpGraph, BpScratch, min_sum_bp_into};
+    use super::{BpGraph, BpScratch, min_sum_bp_into, prior_llr};
     use crate::dem::DemCheckMatrix;
+
+    /// A subnormal probability overflows `(1 - p) / p` to infinity before the
+    /// logarithm; the prior must saturate at the same +-30 the boundary
+    /// branches use, or one infinite prior poisons every downstream
+    /// exponentially-weighted update with NaN.
+    #[test]
+    fn prior_llr_is_finite_and_saturated_for_subnormal_probabilities() {
+        assert_eq!(prior_llr(5e-324).to_bits(), 30.0_f64.to_bits());
+        // The mirrored extreme saturates at the negative bound.
+        assert_eq!(
+            prior_llr(1.0 - f64::EPSILON).to_bits(),
+            (-30.0_f64).to_bits()
+        );
+        // Ordinary probabilities are untouched bit-for-bit.
+        let ordinary = 0.03_f64;
+        assert_eq!(
+            prior_llr(ordinary).to_bits(),
+            ((1.0 - ordinary) / ordinary).ln().to_bits()
+        );
+    }
 
     #[test]
     fn scratch_is_reset_between_calls() {

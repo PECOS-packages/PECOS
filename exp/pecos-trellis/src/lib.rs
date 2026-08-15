@@ -651,11 +651,14 @@ impl TrellisDecoder {
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
             if frontier.is_empty() {
-                return TrellisDecodeAttempt::NoPath {
-                    error: unexplainable_error(),
-                    transitions,
-                    bp_seconds,
-                };
+                // Pruning always retains the best-scoring candidate of a
+                // nonempty set, so an empty frontier here means the scores
+                // themselves were unusable (non-finite) -- an engine fault,
+                // not an unexplainable syndrome. Genuine no-path exits happen
+                // above, before pruning, when no branch is compatible.
+                return TrellisDecodeAttempt::Error(DecoderError::InternalError(
+                    "pruning emptied a nonempty frontier; candidate scores were not finite".into(),
+                ));
             }
             peak_retained_states = peak_retained_states.max(frontier.len());
         }

@@ -1214,3 +1214,46 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
         );
     }
 }
+
+/// A subnormal mechanism probability used to overflow the BP prior to
+/// infinity, poison the posterior updates with NaN, empty the frontier at
+/// prune time, and surface as "no path" -- a numerical engine fault wearing an
+/// unexplainable-syndrome costume. With saturated priors the BP-on decode must
+/// succeed and agree with the BP-off decode; and if scores ever go non-finite
+/// again, the engine must report an internal error, not a no-path.
+#[test]
+fn subnormal_priors_decode_with_bp_scoring_instead_of_reporting_no_path() {
+    let dem = sparse_dem(
+        vec![(5e-324, vec![0], vec![]), (5e-324, vec![0], vec![0])],
+        1,
+        1,
+    );
+    let mut with_bp = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            k: 1,
+            delta: 10.0,
+            score_alpha: 0.8,
+            column_order: None,
+            merge_indistinguishable: false,
+            bp_score_iterations: 1,
+        },
+    )
+    .unwrap();
+    let mut without_bp = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            k: 1,
+            delta: 10.0,
+            score_alpha: 0.8,
+            column_order: None,
+            merge_indistinguishable: false,
+            bp_score_iterations: 0,
+        },
+    )
+    .unwrap();
+
+    let with_bp = with_bp.decode(&[0]).expect("BP-on decode must succeed");
+    let without_bp = without_bp.decode(&[0]).expect("BP-off decode must succeed");
+    assert_eq!(with_bp.predicted, without_bp.predicted);
+}

@@ -9,7 +9,6 @@ import math
 import pecos_rslib_exp as exp
 import pytest
 
-
 STATS_KEYS = {
     "total_nonclifford",
     "single_site",
@@ -80,7 +79,9 @@ def test_stab_mps_analysis_and_noise_exposure():
     phase_flip.run_1q_gate("H", 0)
     assert phase_flip.apply_phase_flip(0, 1.0) is True
     assert math.isclose(
-        phase_flip.pauli_expectation([(0, "X")]), -1.0, abs_tol=1e-12
+        phase_flip.pauli_expectation([(0, "X")]),
+        -1.0,
+        abs_tol=1e-12,
     )
 
 
@@ -117,9 +118,9 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     assert len(lazy.state_vector()) == 4
     assert lazy.is_state_exact() is True
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="bitstring length 1, expected 2"):
         q0_one.amplitude([True])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="bitstring item 0 must be bool"):
         q0_one.prob_bitstring([1, False])
     with pytest.raises(IndexError):
         q0_one.frame_x_bit(2)
@@ -127,9 +128,12 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
         q0_one.frame_x_bit(-1)
     with pytest.raises(IndexError):
         q0_one.pauli_expectation([(2, "Z")])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Unknown Pauli: A"):
         q0_one.pauli_expectation([(0, "A")])
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError,
+        match=r"probability must be finite and in \[0, 1\]",
+    ):
         q0_one.apply_depolarizing(0, math.nan)
 
 

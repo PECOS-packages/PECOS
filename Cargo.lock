@@ -4080,6 +4080,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-bp-trellis"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-decoder-core",
+ "pecos-trellis",
+]
+
+[[package]]
 name = "pecos-build"
 version = "0.2.0-dev.0"
 dependencies = [
@@ -4734,6 +4742,7 @@ name = "pecos-rslib-exp"
 version = "0.2.0-dev.0"
 dependencies = [
  "num-complex 0.4.6",
+ "pecos-bp-trellis",
  "pecos-core",
  "pecos-eeg",
  "pecos-neo",
@@ -4742,6 +4751,7 @@ dependencies = [
  "pecos-random",
  "pecos-simulators",
  "pecos-stab-tn",
+ "pecos-trellis",
  "pyo3",
  "rayon",
  "serde",
@@ -4871,6 +4881,15 @@ dependencies = [
  "pecos-build",
  "pecos-decoder-core",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pecos-trellis"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-decoder-core",
+ "rand 0.10.2",
+ "rand_xoshiro 0.8.1",
 ]
 
 [[package]]

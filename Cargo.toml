@@ -206,6 +206,8 @@ pecos-eeg = { version = "0.2.0-dev.0", path = "exp/pecos-eeg" }
 pecos-stab-tn = { version = "0.2.0-dev.0", path = "exp/pecos-stab-tn" }
 pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
 pecos-foreign = { version = "0.2.0-dev.0", path = "crates/pecos-foreign" }
+pecos-bp-trellis = { version = "0.2.0-dev.0", path = "exp/pecos-bp-trellis" }
+pecos-trellis = { version = "0.2.0-dev.0", path = "exp/pecos-trellis" }
 pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
 pecos-gpu-sims = { version = "0.2.0-dev.0", path = "crates/pecos-gpu-sims" }
 pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }

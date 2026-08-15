@@ -24,11 +24,12 @@
     clippy::unused_self
 )]
 
-//! Python bindings for experimental PECOS simulators.
+//! Python bindings for experimental PECOS components.
 //!
 //! Exposes `StabMps` (stabilizer + MPS hybrid) and `Mast` (magic state
-//! injection) from `pecos-stab-tn` via `PyO3`.
+//! injection) from `pecos-stab-tn`, plus the BP-trellis decoder, via `PyO3`.
 
+mod bp_trellis_bindings;
 mod coherent_idle_channel;
 mod eeg_bindings;
 mod mast_bindings;
@@ -64,6 +65,9 @@ pub(crate) fn extract_angle(
 
 #[pymodule]
 fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<bp_trellis_bindings::PyBpTrellisDecoder>()?;
+    m.add_class::<bp_trellis_bindings::PyBpTrellisResult>()?;
+    m.add_class::<bp_trellis_bindings::PyBpTrellisObservableFlips>()?;
     m.add_class::<stab_mps_bindings::PyStabMps>()?;
     m.add_class::<mast_bindings::PyMast>()?;
     m.add_class::<sim_neo_bindings::PySimNeoBuilder>()?;

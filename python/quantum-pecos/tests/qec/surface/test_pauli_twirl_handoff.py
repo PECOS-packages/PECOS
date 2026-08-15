@@ -113,6 +113,18 @@ def test_extract_pauli_masks_rejects_missing_or_misshaped_tags() -> None:
         )
 
 
+def test_extract_pauli_masks_rejects_malformed_bytes_instead_of_wrapping() -> None:
+    # The old NumPy packing silently accepted or wrapped malformed bytes. Raising
+    # loudly is deliberate because mask records are required to contain bits.
+    with pytest.raises(OverflowError, match="must contain only 0/1 bits"):
+        _extract_pauli_masks_from_results(
+            {pauli_mask_round_tag(0): [[200, 1]]},
+            num_rounds=2,
+            num_data=1,
+            num_shots=1,
+        )
+
+
 def test_extract_gate_local_pauli_masks_packs_operand_order() -> None:
     patch = SurfacePatch.create(distance=3)
     results = {

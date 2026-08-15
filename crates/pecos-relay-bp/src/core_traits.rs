@@ -3,6 +3,7 @@
 //! This module implements the standard traits from pecos-decoder-core
 //! to ensure Relay BP decoders are compatible with the common decoder interface.
 
+use crate::builder::DEFAULT_GAMMA0;
 use crate::config::{MinSumConfig, RelayConfig};
 use crate::decoder::{DecodingResult, MinSumBpDecoder, RelayBpDecoder};
 use crate::errors::RelayBpError;
@@ -98,7 +99,8 @@ impl CheckMatrixDecoder for RelayBpDecoder {
         // Use weights from config as error priors, or default to 0.1
         let error_priors = config.weights.unwrap_or_else(|| vec![0.1; ncols]);
 
-        let ms_config = MinSumConfig::new(error_priors);
+        let mut ms_config = MinSumConfig::new(error_priors);
+        ms_config.gamma0 = Some(DEFAULT_GAMMA0);
         let relay_config = RelayConfig::default();
 
         RelayBpDecoder::new(check_matrix, &ms_config, &relay_config)

@@ -7,6 +7,7 @@ builds the extension before running this file; this test is not wired into Cargo
 import math
 
 import pecos_rslib_exp as exp
+import pytest
 
 
 STATS_KEYS = {
@@ -83,6 +84,55 @@ def test_stab_mps_analysis_and_noise_exposure():
     )
 
 
+def test_stab_mps_bitstring_convention_auto_flush_and_validation():
+    q0_one = exp.StabMps(2, seed=13)
+    q0_one.run_1q_gate("X", 0)
+    assert q0_one.sample_bitstrings(4) == [[True, False]] * 4
+    assert q0_one.state_vector() == [
+        (0.0, 0.0),
+        (1.0, 0.0),
+        (0.0, 0.0),
+        (0.0, 0.0),
+    ]
+    assert q0_one.amplitude([True, False]) == (1.0, 0.0)
+    assert q0_one.amplitude_iterative([True, False]) == (1.0, 0.0)
+    assert math.isclose(q0_one.prob_bitstring([True, False]), 1.0)
+
+    merged = exp.StabMps(2, seed=17, merge_rz=True)
+    merged.run_1q_gate("H", 0)
+    merged.run_1q_gate("T", 0)
+    assert merged.is_state_exact() is False
+    merged_amplitude = merged.amplitude([True, False])
+    assert_complex_tuple(merged_amplitude)
+    assert merged.is_state_exact() is True
+
+    lazy = exp.StabMps(2, seed=19, lazy_measure=True)
+    lazy.run_1q_gate("H", 1)
+    lazy.run_1q_gate("T", 1)
+    lazy.run_1q_gate("S", 0)
+    lazy.run_1q_gate("H", 0)
+    lazy.run_2q_gate("CX", (0, 1))
+    lazy.run_1q_gate("MZ", 0)
+    assert lazy.is_state_exact() is False
+    assert len(lazy.state_vector()) == 4
+    assert lazy.is_state_exact() is True
+
+    with pytest.raises(ValueError):
+        q0_one.amplitude([True])
+    with pytest.raises(ValueError):
+        q0_one.prob_bitstring([1, False])
+    with pytest.raises(IndexError):
+        q0_one.frame_x_bit(2)
+    with pytest.raises(IndexError):
+        q0_one.frame_x_bit(-1)
+    with pytest.raises(IndexError):
+        q0_one.pauli_expectation([(2, "Z")])
+    with pytest.raises(ValueError):
+        q0_one.pauli_expectation([(0, "A")])
+    with pytest.raises(ValueError):
+        q0_one.apply_depolarizing(0, math.nan)
+
+
 def test_mast_configuration_projection_diagnostics_and_stats():
     mast = exp.Mast(
         1,
@@ -95,6 +145,9 @@ def test_mast_configuration_projection_diagnostics_and_stats():
     )
     mast.run_1q_gate("H", 0)
     mast.run_1q_gate("T", 0)
+    assert mast.remaining_injections == 0
+    with pytest.raises(IndexError):
+        mast.run_1q_gate("H", -1)
     mast.project_all()
 
     records = mast.projection_records()
@@ -123,6 +176,8 @@ def test_stab_mps_compile_dispatch_accessors_and_advice():
     assert compile_only.run_1q_gate("H", 0) is None
     assert compile_only.run_2q_gate("CX", (0, 1)) is None
     assert compile_only.run_gate("Z", {1}) == {}
+    with pytest.raises(IndexError):
+        compile_only.run_1q_gate("H", -1)
 
     recommendation = compile_only.recommend()
     assert recommendation["simulator"] == "ch_form"

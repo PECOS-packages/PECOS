@@ -22,14 +22,20 @@ pub struct PyStabMpsCompile {
 }
 
 impl PyStabMpsCompile {
-    fn check_qubit(&self, q: usize, method: &str) -> PyResult<()> {
+    fn check_qubit(&self, q: isize, method: &str) -> PyResult<usize> {
+        let Ok(q) = usize::try_from(q) else {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "{method}: qubit {q} out of bounds (num_qubits={})",
+                self.inner.num_qubits()
+            )));
+        };
         if q >= self.inner.num_qubits() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "{method}: qubit {q} out of bounds (num_qubits={})",
                 self.inner.num_qubits()
             )));
         }
-        Ok(())
+        Ok(q)
     }
 }
 
@@ -149,10 +155,10 @@ impl PyStabMpsCompile {
     fn run_1q_gate(
         &mut self,
         symbol: &str,
-        location: usize,
+        location: isize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
-        self.check_qubit(location, symbol)?;
+        let location = self.check_qubit(location, symbol)?;
         let q = &[QubitId(location)];
         match symbol {
             "I" => Ok(None),
@@ -269,10 +275,13 @@ impl PyStabMpsCompile {
                 "Two-qubit gate requires exactly 2 qubit locations",
             ));
         }
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
-        self.check_qubit(q1, symbol)?;
-        self.check_qubit(q2, symbol)?;
+        let q1 = self.check_qubit(location.get_item(0)?.extract::<isize>()?, symbol)?;
+        let q2 = self.check_qubit(location.get_item(1)?.extract::<isize>()?, symbol)?;
+        if q1 == q2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Two-qubit gate requires distinct qubit locations",
+            ));
+        }
         let pair = &[(QubitId(q1), QubitId(q2))];
         match symbol {
             "CX" | "CNOT" => {
@@ -344,7 +353,7 @@ impl PyStabMpsCompile {
             };
             let result = match loc_tuple.len() {
                 1 => {
-                    let qubit: usize = loc_tuple.get_item(0)?.extract()?;
+                    let qubit: isize = loc_tuple.get_item(0)?.extract()?;
                     self.run_1q_gate(symbol, qubit, params)?
                 }
                 2 => self.run_2q_gate(symbol, &loc_tuple, params)?,

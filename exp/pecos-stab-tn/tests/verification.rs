@@ -2050,15 +2050,43 @@ fn bitstring_counts(shots: &[Vec<bool>], num_qubits: usize) -> Vec<usize> {
 fn exact_stn_probabilities(stn: &StabMps, num_qubits: usize) -> Vec<f64> {
     (0..1usize << num_qubits)
         .map(|outcome| {
-            // `prob_bitstring` uses [q_(n-1), ..., q_0], whereas both
-            // samplers return [q_0, ..., q_(n-1)].
             let bits = (0..num_qubits)
-                .rev()
                 .map(|q| ((outcome >> q) & 1) != 0)
                 .collect::<Vec<_>>();
             stn.prob_bitstring(&bits)
         })
         .collect()
+}
+
+#[test]
+fn test_sampled_bitstring_round_trips_through_probability_and_amplitude() {
+    let mut stn = StabMps::with_seed(3, 0xB17_0ADE);
+    stn.h(&[QubitId(0)]);
+    stn.x(&[QubitId(1)]);
+
+    let rows = stn.sample_bitstrings(64);
+    let state_vector = stn.state_vector();
+    assert!(rows.iter().any(|row| row[0]));
+    assert!(rows.iter().any(|row| !row[0]));
+
+    for bits in rows {
+        let index = bits
+            .iter()
+            .enumerate()
+            .fold(0usize, |index, (q, &bit)| index | (usize::from(bit) << q));
+        let expected_amplitude = state_vector[index];
+        let actual_probability = stn.prob_bitstring(&bits);
+        assert!(
+            (actual_probability - expected_amplitude.norm_sqr()).abs() <= 1e-12,
+            "bits={bits:?}: probability={actual_probability}, expected={}",
+            expected_amplitude.norm_sqr()
+        );
+        let actual_amplitude = stn.amplitude(&bits);
+        assert!(
+            (actual_amplitude - expected_amplitude).norm() <= 1e-12,
+            "bits={bits:?}: amplitude={actual_amplitude}, expected={expected_amplitude}"
+        );
+    }
 }
 
 #[test]
@@ -2210,7 +2238,6 @@ fn test_mast_min_span_matches_stn_exact_random_probabilities() {
             let exact_probs = (0..num_outcomes)
                 .map(|outcome| {
                     let bits = (0..num_qubits)
-                        .rev()
                         .map(|q| ((outcome >> q) & 1) != 0)
                         .collect::<Vec<_>>();
                     stn.prob_bitstring(&bits)
@@ -2269,11 +2296,9 @@ fn test_mast_matches_stn_exact_probabilities_2q() {
     stn_for_probs.h(&[QubitId(1)]);
     stn_for_probs.rz(t, &[QubitId(1)]);
     stn_for_probs.flush();
-    // prob_bitstring is MSB-first: bitstring[k] is qubit (n-1-k). For a
-    // LSB-first integer index `i` (q_k = (i >> k) & 1), bitstring =
-    // [q_{n-1}, q_{n-2}, ..., q_0].
+    // bitstring[q] is qubit q, matching the LSB-first integer index.
     for (i, ep) in exact_probs.iter_mut().enumerate().take(4) {
-        let bits = [(i & 2) != 0, (i & 1) != 0];
+        let bits = [(i & 1) != 0, (i & 2) != 0];
         *ep = stn_for_probs.prob_bitstring(&bits);
     }
     let total: f64 = exact_probs.iter().sum();
@@ -2326,9 +2351,9 @@ fn test_mast_matches_stn_exact_probabilities_3q() {
     stn.rz(t, &[QubitId(2)]);
     stn.cx(&[(QubitId(1), QubitId(2))]);
     stn.flush();
-    // prob_bitstring is MSB-first: bitstring = [q_{n-1}, ..., q_0].
+    // bitstring[q] is qubit q, matching the LSB-first integer index.
     for (i, ep) in exact_probs.iter_mut().enumerate().take(8) {
-        let bits = [(i & 4) != 0, (i & 2) != 0, (i & 1) != 0];
+        let bits = [(i & 1) != 0, (i & 2) != 0, (i & 4) != 0];
         *ep = stn.prob_bitstring(&bits);
     }
     let total: f64 = exact_probs.iter().sum();
@@ -2412,10 +2437,7 @@ fn test_numerical_flag_redetection_random_probabilities() {
 
         let state_vector = stn.state_vector();
         for (idx, amplitude) in state_vector.iter().enumerate() {
-            let bits = (0..n)
-                .rev()
-                .map(|q| ((idx >> q) & 1) != 0)
-                .collect::<Vec<_>>();
+            let bits = (0..n).map(|q| ((idx >> q) & 1) != 0).collect::<Vec<_>>();
             let actual = stn.prob_bitstring(&bits);
             let expected = amplitude.norm_sqr();
             assert!(

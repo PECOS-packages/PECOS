@@ -16,20 +16,34 @@ use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
 
+/// Python MAST simulator.
+///
+/// Telemetry and capacity reads materialize pending lazy-measurement operations
+/// and merged RZ rotations before returning. Exceeding the constructor's
+/// `max_non_clifford` capacity raises a `PanicException`;
+/// `remaining_injections` exposes available capacity, and
+/// `StabMpsCompile.advise()` reports the required capacity for an analyzed
+/// circuit.
 #[pyclass(name = "Mast", module = "pecos_rslib_exp")]
 pub struct PyMast {
     inner: Mast,
 }
 
 impl PyMast {
-    fn check_qubit(&self, q: usize, method: &str) -> PyResult<()> {
+    fn check_qubit(&self, q: isize, method: &str) -> PyResult<usize> {
+        let Ok(q) = usize::try_from(q) else {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "{method}: qubit {q} out of bounds (num_qubits={})",
+                self.inner.num_qubits()
+            )));
+        };
         if q >= self.inner.num_qubits() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "{method}: qubit {q} out of bounds (num_qubits={})",
                 self.inner.num_qubits()
             )));
         }
-        Ok(())
+        Ok(q)
     }
 }
 
@@ -41,7 +55,10 @@ impl PyMast {
     /// `projection_order` accepts `"min_span"` or `"input"`; `None` uses
     /// the Rust default (`"min_span"`). Boolean options are tri-state:
     /// `None` preserves the Rust default, while an explicit bool calls the
-    /// corresponding Rust setter.
+    /// corresponding Rust setter. Exceeding `max_non_clifford` raises a
+    /// `PanicException`; inspect `remaining_injections` before adding work.
+    /// `StabMpsCompile.advise()` reports the required deferred capacity for an
+    /// analyzed circuit.
     #[pyo3(signature = (
         num_qubits,
         max_non_clifford,
@@ -60,6 +77,11 @@ impl PyMast {
         projection_order: Option<&str>,
         numerical_flag_redetection: Option<bool>,
     ) -> PyResult<Self> {
+        if num_qubits.checked_add(max_non_clifford).is_none() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "num_qubits + max_non_clifford exceeds platform capacity",
+            ));
+        }
         let mut mast = if let Some(s) = seed {
             Mast::with_seed(num_qubits, max_non_clifford, s)
         } else {
@@ -105,17 +127,26 @@ impl PyMast {
     }
 
     #[getter]
-    fn num_ancillas_used(&self) -> usize {
+    fn num_ancillas_used(&mut self) -> usize {
+        self.inner.flush();
         self.inner.num_ancillas_used()
     }
 
     #[getter]
-    fn max_bond_dim(&self) -> usize {
+    fn remaining_injections(&mut self) -> usize {
+        self.inner.flush();
+        self.inner.remaining_injections()
+    }
+
+    #[getter]
+    fn max_bond_dim(&mut self) -> usize {
+        self.inner.flush();
         self.inner.max_bond_dim()
     }
 
     /// Diagnostics for deferred magic-state projections since reset.
-    fn projection_records(&self, py: Python<'_>) -> PyResult<Vec<Py<PyDict>>> {
+    fn projection_records(&mut self, py: Python<'_>) -> PyResult<Vec<Py<PyDict>>> {
+        self.inner.flush();
         self.inner
             .projection_records()
             .iter()
@@ -132,12 +163,14 @@ impl PyMast {
     }
 
     #[getter]
-    fn projection_peak_bond(&self) -> usize {
+    fn projection_peak_bond(&mut self) -> usize {
+        self.inner.flush();
         self.inner.projection_peak_bond()
     }
 
     /// Runtime non-Clifford path counters.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+    fn stats(&mut self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        self.inner.flush();
         crate::stab_mps_stats_to_dict(py, &self.inner.stats)
     }
 
@@ -155,10 +188,10 @@ impl PyMast {
     fn run_1q_gate(
         &mut self,
         symbol: &str,
-        location: usize,
+        location: isize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
-        self.check_qubit(location, symbol)?;
+        let location = self.check_qubit(location, symbol)?;
         let q = &[QubitId(location)];
         match symbol {
             "I" => Ok(None),
@@ -275,10 +308,13 @@ impl PyMast {
                 "Two-qubit gate requires exactly 2 qubit locations",
             ));
         }
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
-        self.check_qubit(q1, symbol)?;
-        self.check_qubit(q2, symbol)?;
+        let q1 = self.check_qubit(location.get_item(0)?.extract::<isize>()?, symbol)?;
+        let q2 = self.check_qubit(location.get_item(1)?.extract::<isize>()?, symbol)?;
+        if q1 == q2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Two-qubit gate requires distinct qubit locations",
+            ));
+        }
         let pair = &[(QubitId(q1), QubitId(q2))];
         match symbol {
             "CX" | "CNOT" => {
@@ -350,7 +386,7 @@ impl PyMast {
             };
             let result = match loc_tuple.len() {
                 1 => {
-                    let qubit: usize = loc_tuple.get_item(0)?.extract()?;
+                    let qubit: isize = loc_tuple.get_item(0)?.extract()?;
                     self.run_1q_gate(symbol, qubit, params)?
                 }
                 2 => self.run_2q_gate(symbol, &loc_tuple, params)?,

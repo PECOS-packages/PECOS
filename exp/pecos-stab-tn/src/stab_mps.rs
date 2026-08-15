@@ -584,6 +584,7 @@ impl StabMps {
     ///
     /// `bitstring` has length `num_qubits`; bit k corresponds to qubit k.
     /// Returns the unnormalized amplitude coefficient.
+    /// See the crate-level **Bitstring convention** section.
     ///
     /// For n ≤ 14 uses `state_vector()` directly. Paper Liu-Clark 2412.17209
     /// Section VI.B gives an iterative CAMPS-native algorithm for larger n.
@@ -599,12 +600,12 @@ impl StabMps {
         );
         assert!(self.num_qubits <= 14, "amplitude requires n <= 14");
         let sv = self.state_vector();
-        // Convert bitstring to index per state_vector convention:
-        // x = Σ_k σ_k * 2^{n-1-k} where σ_0 is MSB.
+        // Convert bitstring to the state_vector's little-endian index:
+        // x = Σ_q bitstring[q] * 2^q.
         let mut idx = 0usize;
-        for (k, &b) in bitstring.iter().enumerate() {
+        for (q, &b) in bitstring.iter().enumerate() {
             if b {
-                idx |= 1 << (self.num_qubits - 1 - k);
+                idx |= 1 << q;
             }
         }
         sv[idx]
@@ -747,11 +748,8 @@ impl StabMps {
                 // from the correct Born distribution. Skip defensively.
                 continue;
             }
-            // Compute <x|Ψ> via amplitude_iterative.
-            // Convert bitstring to amplitude_iterative's convention:
-            // amplitude(bs) treats bs[k] as qubit (n-1-k), so we reverse.
-            let bs_rev: Vec<bool> = bitstring.iter().rev().copied().collect();
-            let amp_xpsi = self.amplitude_iterative(&bs_rev);
+            // Compute <x|Ψ>; both APIs use bitstring[q] for qubit q.
+            let amp_xpsi = self.amplitude_iterative(&bitstring);
             acc += amp_xpsi / amp_xs;
             samples_used += 1;
         }
@@ -826,6 +824,8 @@ impl StabMps {
 
     /// Complex amplitude ⟨s|Ψ⟩ via iterative forced projection without
     /// renormalization (Liu-Clark 2412.17209 Section VI.B).
+    /// `bitstring[q]` specifies qubit `q`; see the crate-level
+    /// **Bitstring convention** section.
     ///
     /// Scales beyond `amplitude`'s n ≤ 14 limit by working directly on the
     /// MPS + tableau. After forcing all N outcomes, the tableau encodes |s⟩
@@ -850,10 +850,7 @@ impl StabMps {
         let mut tab = self.tableau.clone();
         let mut mps = self.mps.clone();
         let n = self.num_qubits;
-        // Convention: `amplitude(bs)` treats `bs[k]` as qubit (n-1-k), so
-        // project qubit q with bitstring[n-1-q].
-        for q in 0..n {
-            let s_q = bitstring[n - 1 - q];
+        for (q, &s_q) in bitstring.iter().enumerate() {
             if !measure::project_forced_z_unnormalized(&mut tab, &mut mps, q, s_q) {
                 return Complex64::new(0.0, 0.0);
             }
@@ -863,6 +860,8 @@ impl StabMps {
     }
 
     /// Probability of measuring `bitstring` in the computational basis.
+    /// `bitstring[q]` specifies qubit `q`; see the crate-level
+    /// **Bitstring convention** section.
     ///
     /// Implements Liu-Clark 2412.17209 Algorithm 3 (Section VI.A): iterative
     /// forced projection of the CAMPS state. For each qubit k:
@@ -885,11 +884,8 @@ impl StabMps {
         );
         let mut tab = self.tableau.clone();
         let mut mps = self.mps.clone();
-        let n = self.num_qubits;
         let mut total_prob: f64 = 1.0;
-        // Convention: bitstring[k] is qubit (n-1-k) (matches `amplitude`).
-        for q in 0..n {
-            let s_q = bitstring[n - 1 - q];
+        for (q, &s_q) in bitstring.iter().enumerate() {
             let pi_q = measure::project_forced_z(&mut tab, &mut mps, q, s_q);
             total_prob *= pi_q;
             if total_prob < 1e-30 {
@@ -1061,8 +1057,10 @@ impl StabMps {
     ///   `state_vector`/`amplitude` reads can drift. If exact state is
     ///   needed, use `StabMpsBuilder::lazy_measure(true)`.
     /// - **Merged-RZ pending buffer** (`merge_rz = true`): any pending
-    ///   merged-RZ angle has not been applied yet. Call `StabMps::flush()`
-    ///   first.
+    ///   merged-RZ angle has not been applied yet.
+    /// - **Lazy-measurement deferred operations** (`lazy_measure = true`):
+    ///   queued virtual-frame operations have not been applied to the stored
+    ///   MPS yet. Call `StabMps::flush()` before either kind of read.
     /// - **Pauli-frame tracking** (`pauli_frame_tracking = true`): the
     ///   frame's Pauli bits are not in the returned state vector. Call
     ///   `StabMps::flush_pauli_frame_to_state()` first for frame-applied
@@ -1231,7 +1229,8 @@ impl StabMps {
     /// (only the internal RNG advances, to ensure each shot uses a
     /// distinct RNG seed).
     ///
-    /// `bitstring[k]` corresponds to qubit `k`'s outcome.
+    /// `bitstring[k]` corresponds to qubit `k`'s outcome. See the crate-level
+    /// **Bitstring convention** section.
     ///
     /// Useful for shot-based experiments (logical error rate estimation,
     /// outcome distribution histograms, etc.).
@@ -1285,6 +1284,7 @@ impl StabMps {
     /// qubits `0..num_qubits`. Returned bitstrings therefore use the same
     /// `bitstring[q] == qubit q` convention as [`Self::sample_bitstring`] and
     /// are in lexicographic tree order, with copies of each leaf adjacent.
+    /// See the crate-level **Bitstring convention** section.
     pub fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         if num_shots == 0 {
             return Vec::new();
@@ -1536,9 +1536,9 @@ impl StabMps {
     ///
     /// Panics if any MPS gate application fails on a valid site.
     pub fn flush_pauli_frame_to_state(&mut self) {
-        // Flush pending RZ first so the tableau C reflects the true Clifford
-        // the frame will be composed with.
-        self.flush_all_pending_rz();
+        // Materialize the lazy virtual frame and pending RZs first so the
+        // tableau C and stored MPS are aligned before composing the Pauli frame.
+        self.flush();
 
         // Collect frame Paulis as a Pauli string.
         let mut paulis: Vec<(usize, pauli_decomp::PauliKindForDecomp)> = Vec::new();
@@ -1761,12 +1761,13 @@ impl StabMps {
         self.pragmatic_drift_count
     }
 
-    /// Apply any pending merged-RZ angles to the simulator state.
-    /// No-op when `merge_rz` is off. Call before `&self` read methods
-    /// (`state_vector`, `amplitude`, `prob_bitstring`, etc.) if `merge_rz`
-    /// is on and you want the read to reflect the most recent `rz` calls.
-    /// Measurements (`mz`) and `reset` flush automatically.
+    /// Materialize deferred lazy-measurement operations and any pending
+    /// merged-RZ angles into the simulator state. Call before `&self` read
+    /// methods (`state_vector`, `amplitude`, `prob_bitstring`, etc.) when
+    /// either feature is enabled. Measurements (`mz`) and `reset` flush the
+    /// state needed for their own operation automatically.
     pub fn flush(&mut self) {
+        measure::flush_deferred_ops(&mut self.mps, &mut self.deferred_ops);
         self.flush_all_pending_rz();
     }
 
@@ -2911,7 +2912,7 @@ mod tests {
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         let mut max_diff: f64 = 0.0;
         for idx in 0..16 {
-            let bs: Vec<bool> = (0..4).map(|k| (idx >> (3 - k)) & 1 == 1).collect();
+            let bs: Vec<bool> = (0..4).map(|q| (idx >> q) & 1 == 1).collect();
             let p = stn.prob_bitstring(&bs);
             let a = stn.amplitude(&bs);
             let diff = (p - a.norm_sqr()).abs();
@@ -3572,7 +3573,7 @@ mod tests {
                 }
             }
             for idx in 0..(1usize << n) {
-                let bs: Vec<bool> = (0..n).map(|k| (idx >> (n - 1 - k)) & 1 == 1).collect();
+                let bs: Vec<bool> = (0..n).map(|q| (idx >> q) & 1 == 1).collect();
                 let a_sv = stn.amplitude(&bs);
                 // Probability must match exactly (primary correctness check).
                 let p = stn.prob_bitstring(&bs);
@@ -3599,7 +3600,7 @@ mod tests {
 
         let mut max_diff: f64 = 0.0;
         for idx in 0..16 {
-            let bs: Vec<bool> = (0..4).map(|k| (idx >> (3 - k)) & 1 == 1).collect();
+            let bs: Vec<bool> = (0..4).map(|q| (idx >> q) & 1 == 1).collect();
             let a_iter = stn.amplitude_iterative(&bs);
             let a_sv = stn.amplitude(&bs);
             let diff = (a_iter - a_sv).norm();
@@ -3627,10 +3628,10 @@ mod tests {
         stn.cx(&[(q(0), q(15))]);
         let bs0 = vec![false; n];
         let a00 = stn.amplitude_iterative(&bs0);
-        // bs[k] corresponds to qubit (n-1-k); flip q0 and q15.
+        // bs[q] corresponds to qubit q; flip q0 and q15.
         let mut bs1 = vec![false; n];
-        bs1[n - 1] = true;
-        bs1[n - 1 - 15] = true;
+        bs1[0] = true;
+        bs1[15] = true;
         let a11 = stn.amplitude_iterative(&bs1);
         eprintln!("n=30 Bell: a(0)={a00:.4}, a(q0,q15=1)={a11:.4}");
         assert!((a00.norm_sqr() - 0.5).abs() < 1e-9);
@@ -3651,7 +3652,7 @@ mod tests {
         // Check every bitstring.
         let mut max_diff = 0f64;
         for idx in 0..16 {
-            let bs: Vec<bool> = (0..4).map(|k| (idx >> (3 - k)) & 1 == 1).collect();
+            let bs: Vec<bool> = (0..4).map(|q| (idx >> q) & 1 == 1).collect();
             let p = stn.prob_bitstring(&bs);
             let a = stn.amplitude(&bs);
             let diff = (p - a.norm_sqr()).abs();
@@ -3671,11 +3672,11 @@ mod tests {
         let mut stn = StabMps::with_seed(n, 5);
         stn.h(&[q(0)]);
         stn.cx(&[(q(0), q(15))]);
-        // bs[k] corresponds to qubit (n-1-k). Bell correlator: q0, q15 same.
+        // bs[q] corresponds to qubit q. Bell correlator: q0, q15 same.
         let bs0 = vec![false; n];
         let mut bs1 = vec![false; n];
-        bs1[n - 1] = true;
-        bs1[n - 1 - 15] = true;
+        bs1[0] = true;
+        bs1[15] = true;
         let p00 = stn.prob_bitstring(&bs0);
         let p11 = stn.prob_bitstring(&bs1);
         eprintln!("n=30 Bell: P(all0)={p00:.3} P(q0,q15=1)={p11:.3}");
@@ -3683,7 +3684,7 @@ mod tests {
         assert!((p11 - 0.5).abs() < 1e-9);
         // Disallowed: q0=1, q15=0.
         let mut bs_bad = vec![false; n];
-        bs_bad[n - 1] = true;
+        bs_bad[0] = true;
         assert!(stn.prob_bitstring(&bs_bad).abs() < 1e-9);
     }
 
@@ -5359,6 +5360,24 @@ mod tests {
         assert!(!stn.is_state_exact(), "frame X set → not exact");
         stn.flush_pauli_frame_to_state();
         assert!(stn.is_state_exact(), "after frame flush → exact");
+    }
+
+    #[test]
+    fn test_flush_materializes_lazy_deferred_operations() {
+        let mut stn = StabMps::builder(2).seed(19).lazy_measure(true).build();
+        stn.h(&[QubitId(1)]);
+        stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(1)]);
+        stn.sz(&[QubitId(0)]);
+        stn.h(&[QubitId(0)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        let _ = stn.mz(&[QubitId(0)]);
+
+        assert!(!stn.is_state_exact(), "lazy operations should be pending");
+        stn.flush();
+        assert!(
+            stn.is_state_exact(),
+            "flush should materialize lazy operations"
+        );
     }
 
     #[test]

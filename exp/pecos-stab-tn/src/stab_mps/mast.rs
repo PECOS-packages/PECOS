@@ -86,7 +86,7 @@ pub struct Mast {
     /// Number of data qubits.
     num_data_qubits: usize,
     /// Maximum number of non-Clifford gates (= number of ancilla slots).
-    _max_non_clifford: usize,
+    max_non_clifford: usize,
     /// Total qubits = data + ancillas.
     total_qubits: usize,
     /// The underlying stabilizer tableau for all qubits.
@@ -130,12 +130,19 @@ pub struct Mast {
 impl Mast {
     /// Create a MAST simulator with `num_qubits` data qubits and room for
     /// `max_non_clifford` non-Clifford gates.
+    ///
+    /// # Panics
+    ///
+    /// Applying more injections than `max_non_clifford` panics. Use
+    /// [`Self::remaining_injections`] to inspect capacity; compile-only
+    /// [`super::compile::StabMpsCompile::advise`] reports the required deferred
+    /// ancilla capacity for an analyzed circuit.
     #[must_use]
     pub fn new(num_qubits: usize, max_non_clifford: usize) -> Self {
         let total = num_qubits + max_non_clifford;
         Self {
             num_data_qubits: num_qubits,
-            _max_non_clifford: max_non_clifford,
+            max_non_clifford,
             total_qubits: total,
             tableau: SparseStabY::new(total).with_destab_sign_tracking(),
             mps: Mps::new(total, MpsConfig::default()),
@@ -159,12 +166,17 @@ impl Mast {
     }
 
     /// Create with a specific seed.
+    ///
+    /// # Panics
+    ///
+    /// Applying more injections than `max_non_clifford` panics. See
+    /// [`Self::new`] for capacity-planning details.
     #[must_use]
     pub fn with_seed(num_qubits: usize, max_non_clifford: usize, seed: u64) -> Self {
         let total = num_qubits + max_non_clifford;
         Self {
             num_data_qubits: num_qubits,
-            _max_non_clifford: max_non_clifford,
+            max_non_clifford,
             total_qubits: total,
             tableau: SparseStabY::with_seed(total, seed).with_destab_sign_tracking(),
             mps: Mps::new(total, MpsConfig::default()),
@@ -261,9 +273,10 @@ impl Mast {
         self.inject_magic_state(theta, q);
     }
 
-    /// Flush all pending merged RZ. Public; useful before read operations
-    /// when `merge_rz` is on.
+    /// Materialize lazy-measurement deferred operations and all pending merged
+    /// RZ rotations. Public; useful before read operations.
     pub fn flush(&mut self) {
+        super::measure::flush_deferred_ops(&mut self.mps, &mut self.deferred_ops);
         if !self.merge_rz {
             return;
         }
@@ -280,6 +293,13 @@ impl Mast {
     #[must_use]
     pub fn num_ancillas_used(&self) -> usize {
         self.next_ancilla - self.num_data_qubits
+    }
+
+    /// Number of additional magic-state injections available before the
+    /// configured `max_non_clifford` capacity is exhausted.
+    #[must_use]
+    pub fn remaining_injections(&self) -> usize {
+        self.max_non_clifford - self.num_ancillas_used()
     }
 
     #[must_use]
@@ -654,15 +674,19 @@ mod tests {
     fn test_mast_single_t_gate() {
         // T gate uses magic state injection
         let mut mast = Mast::new(1, 4);
+        assert_eq!(mast.remaining_injections(), 4);
         mast.h(&[QubitId(0)]);
         mast.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         assert_eq!(mast.num_ancillas_used(), 1);
+        assert_eq!(mast.remaining_injections(), 3);
         // Bond dim should be low -- the RZ on the ancilla is a single-site gate
         assert!(
             mast.max_bond_dim() <= 2,
             "bond dim should be low, got {}",
             mast.max_bond_dim()
         );
+        mast.reset();
+        assert_eq!(mast.remaining_injections(), 4);
     }
 
     #[test]

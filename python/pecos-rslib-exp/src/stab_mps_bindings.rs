@@ -17,8 +17,15 @@ use pecos_core::{Angle64, Pauli, PauliOperator, PauliString, QuarterPhase, Qubit
 use pecos_simulators::{ArbitraryRotationGateable, CHForm, CliffordGateable, QuantumSimulator};
 use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PySet, PyTuple};
+use pyo3::types::{PyBool, PyDict, PyList, PySet, PyTuple};
 
+/// Python stabilizer-MPS simulator.
+///
+/// Read methods materialize pending lazy-measurement operations and merged RZ
+/// rotations before returning. Bitstrings use qubit-index order: `bits[q]` is
+/// the bit for qubit `q`. The `for_qec` constructor keyword is an enable-only
+/// preset switch: `True` applies it, while `False` and `None` are identical
+/// no-ops.
 #[pyclass(name = "StabMps", module = "pecos_rslib_exp")]
 pub struct PyStabMps {
     inner: StabMps,
@@ -86,7 +93,7 @@ fn apply_stabilizer_prep_gate(
 
 fn stabilizer_state_from_generators(
     num_qubits: usize,
-    generators: Vec<Vec<(usize, String)>>,
+    generators: Vec<Vec<(isize, String)>>,
     seed: u64,
 ) -> PyResult<CHForm> {
     if generators.len() != num_qubits {
@@ -101,8 +108,13 @@ fn stabilizer_state_from_generators(
         let mut seen = vec![false; num_qubits];
         let mut paulis = Vec::with_capacity(generator.len());
         for (q, value) in generator {
+            let Ok(q) = usize::try_from(q) else {
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                    "stabilizer generator {generator_index}: qubit {q} out of bounds (num_qubits={num_qubits})"
+                )));
+            };
             if q >= num_qubits {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                     "stabilizer generator {generator_index}: qubit {q} out of bounds (num_qubits={num_qubits})"
                 )));
             }
@@ -260,14 +272,80 @@ fn stabilizer_state_from_generators(
 }
 
 impl PyStabMps {
-    fn check_qubit(&self, q: usize, method: &str) -> PyResult<()> {
+    fn check_qubit(&self, q: isize, method: &str) -> PyResult<usize> {
+        let Ok(q) = usize::try_from(q) else {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "{method}: qubit {q} out of bounds (num_qubits={})",
+                self.inner.num_qubits()
+            )));
+        };
         if q >= self.inner.num_qubits() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "{method}: qubit {q} out of bounds (num_qubits={})",
                 self.inner.num_qubits()
             )));
         }
+        Ok(q)
+    }
+
+    fn check_probability(p: f64, method: &str) -> PyResult<()> {
+        if !(0.0..=1.0).contains(&p) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "{method}: probability must be finite and in [0, 1]"
+            )));
+        }
         Ok(())
+    }
+
+    fn bitstring(&self, value: &Bound<'_, PyAny>, method: &str) -> PyResult<Vec<bool>> {
+        let iterator = value.try_iter().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "{method}: bitstring must be an iterable of bool values"
+            ))
+        })?;
+        let mut bits = Vec::new();
+        for (index, item) in iterator.enumerate() {
+            let item = item?;
+            if !item.is_instance_of::<PyBool>() {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "{method}: bitstring item {index} must be bool"
+                )));
+            }
+            bits.push(item.extract::<bool>()?);
+        }
+        if bits.len() != self.inner.num_qubits() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "{method}: bitstring length {}, expected {}",
+                bits.len(),
+                self.inner.num_qubits()
+            )));
+        }
+        Ok(bits)
+    }
+
+    fn pauli_kind(value: &str) -> PyResult<PauliKind> {
+        match value {
+            "X" => Ok(PauliKind::X),
+            "Y" => Ok(PauliKind::Y),
+            "Z" => Ok(PauliKind::Z),
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Unknown Pauli: {value}. Use 'X', 'Y', or 'Z'."
+            ))),
+        }
+    }
+
+    fn pauli_string(
+        &self,
+        values: Vec<(isize, String)>,
+        method: &str,
+    ) -> PyResult<Vec<(usize, PauliKind)>> {
+        values
+            .into_iter()
+            .map(|(q, value)| {
+                let q = self.check_qubit(q, method)?;
+                Ok((q, Self::pauli_kind(&value)?))
+            })
+            .collect()
     }
 }
 
@@ -275,9 +353,11 @@ impl PyStabMps {
 impl PyStabMps {
     /// Create a stabilizer-MPS simulator.
     ///
-    /// Boolean options are tri-state: `None` preserves the Rust builder
-    /// default, while `True` or `False` explicitly enables or disables the
-    /// option. `max_truncation_error=None` preserves the builder default of
+    /// Boolean options other than `for_qec` are tri-state: `None` preserves
+    /// the Rust builder default, while `True` or `False` explicitly enables or
+    /// disables the option. `for_qec` is enable-only: `True` applies the
+    /// preset, while `False` and `None` are identical no-ops.
+    /// `max_truncation_error=None` preserves the builder default of
     /// `1e-8`; a float overrides it, and `0.0` disables adaptive truncation
     /// while retaining the SVD cutoff and bond cap.
     #[new]
@@ -358,12 +438,14 @@ impl PyStabMps {
     }
 
     #[getter]
-    fn max_bond_dim(&self) -> usize {
+    fn max_bond_dim(&mut self) -> usize {
+        self.inner.flush();
         self.inner.max_bond_dim()
     }
 
     #[getter]
-    fn truncation_error(&self) -> f64 {
+    fn truncation_error(&mut self) -> f64 {
+        self.inner.flush();
         self.inner.truncation_error()
     }
 
@@ -384,35 +466,37 @@ impl PyStabMps {
         self.inner.flush_pauli_frame_to_state();
     }
 
-    fn state_vector(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
+    fn state_vector(&mut self, py: Python<'_>) -> PyResult<Py<PyList>> {
+        if self.inner.num_qubits() > 14 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "state_vector requires n <= 14",
+            ));
+        }
+        self.inner.flush();
         let sv = self.inner.state_vector();
         let list: Vec<(f64, f64)> = sv.iter().map(|c| (c.re, c.im)).collect();
         Ok(PyList::new(py, &list)?.unbind())
     }
 
-    /// Wavefunction amplitude for a computational-basis bitstring.
-    fn amplitude(&self, bitstring: Vec<bool>) -> PyResult<(f64, f64)> {
-        if bitstring.len() != self.inner.num_qubits() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "bitstring length mismatch",
-            ));
-        }
+    /// Wavefunction amplitude for a computational-basis bitstring, with
+    /// `bitstring[q]` specifying qubit `q`.
+    fn amplitude(&mut self, bitstring: &Bound<'_, PyAny>) -> PyResult<(f64, f64)> {
+        let bitstring = self.bitstring(bitstring, "amplitude")?;
         if self.inner.num_qubits() > 14 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "amplitude requires n <= 14",
             ));
         }
+        self.inner.flush();
         let amplitude = self.inner.amplitude(&bitstring);
         Ok((amplitude.re, amplitude.im))
     }
 
-    /// CAMPS-native iterative wavefunction amplitude.
-    fn amplitude_iterative(&self, bitstring: Vec<bool>) -> PyResult<(f64, f64)> {
-        if bitstring.len() != self.inner.num_qubits() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "bitstring length mismatch",
-            ));
-        }
+    /// CAMPS-native iterative wavefunction amplitude, with `bitstring[q]`
+    /// specifying qubit `q`.
+    fn amplitude_iterative(&mut self, bitstring: &Bound<'_, PyAny>) -> PyResult<(f64, f64)> {
+        let bitstring = self.bitstring(bitstring, "amplitude_iterative")?;
+        self.inner.flush();
         let amplitude = self.inner.amplitude_iterative(&bitstring);
         Ok((amplitude.re, amplitude.im))
     }
@@ -421,8 +505,8 @@ impl PyStabMps {
     /// by a complete set of independent +1 Pauli generators.
     #[pyo3(signature = (stabilizers, *, num_samples, rng_seed=None))]
     fn overlap_with_stabilizer(
-        &self,
-        stabilizers: Vec<Vec<(usize, String)>>,
+        &mut self,
+        stabilizers: Vec<Vec<(isize, String)>>,
         num_samples: usize,
         rng_seed: Option<u64>,
     ) -> PyResult<(f64, f64)> {
@@ -441,18 +525,23 @@ impl PyStabMps {
             stabilizers,
             rng_seed.unwrap_or(42),
         )?;
+        self.inner.flush();
         let overlap = self
             .inner
             .overlap_with_stabilizer(&state, num_samples, rng_seed);
         Ok((overlap.re, overlap.im))
     }
 
-    fn prob_bitstring(&self, bitstring: Vec<bool>) -> f64 {
-        self.inner.prob_bitstring(&bitstring)
+    /// Probability of a computational-basis bitstring, with `bitstring[q]`
+    /// specifying qubit `q`.
+    fn prob_bitstring(&mut self, bitstring: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let bitstring = self.bitstring(bitstring, "prob_bitstring")?;
+        self.inner.flush();
+        Ok(self.inner.prob_bitstring(&bitstring))
     }
 
     /// Second Renyi entropy from the full state vector.
-    fn renyi_s2(&self, cut: usize) -> PyResult<f64> {
+    fn renyi_s2(&mut self, cut: usize) -> PyResult<f64> {
         let num_qubits = self.inner.num_qubits();
         if cut == 0 || cut >= num_qubits {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -464,18 +553,21 @@ impl PyStabMps {
                 "renyi_s2 requires n <= 14 (uses full state vector)",
             ));
         }
+        self.inner.flush();
         Ok(self.inner.renyi_s2(cut))
     }
 
     /// Second Renyi entropy via Pauli coefficient enumeration.
-    fn s2_pce(&self, cut: usize) -> PyResult<f64> {
+    fn s2_pce(&mut self, cut: usize) -> PyResult<f64> {
+        self.inner.flush();
         self.inner
             .s2_pce(cut)
             .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
     }
 
     /// Second Renyi entropy via the PCMPS hierarchy.
-    fn s2_pcmps(&self, cut: usize) -> PyResult<f64> {
+    fn s2_pcmps(&mut self, cut: usize) -> PyResult<f64> {
+        self.inner.flush();
         self.inner
             .s2_pcmps(cut)
             .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
@@ -487,189 +579,173 @@ impl PyStabMps {
     }
 
     #[getter]
-    fn bond_cap_hits(&self) -> u64 {
+    fn bond_cap_hits(&mut self) -> u64 {
+        self.inner.flush();
         self.inner.bond_cap_hits()
     }
 
-    fn ofd_nullity(&self) -> usize {
+    fn ofd_nullity(&mut self) -> usize {
+        self.inner.flush();
         self.inner.ofd_nullity()
     }
 
-    fn theoretical_min_bond_dim(&self) -> usize {
+    fn theoretical_min_bond_dim(&mut self) -> usize {
+        self.inner.flush();
         self.inner.theoretical_min_bond_dim()
     }
 
-    fn ofd_disentangled_count(&self) -> usize {
+    fn ofd_disentangled_count(&mut self) -> usize {
+        self.inner.flush();
         self.inner.ofd_disentangled_count()
     }
 
-    fn ofd_total_absorbed(&self) -> u64 {
+    fn ofd_total_absorbed(&mut self) -> u64 {
+        self.inner.flush();
         u64::try_from(self.inner.ofd_total_absorbed())
             .expect("usize fits in u64 on supported Python targets")
     }
 
     /// Runtime non-Clifford path counters.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+    fn stats(&mut self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        self.inner.flush();
         crate::stab_mps_stats_to_dict(py, &self.inner.stats)
     }
 
     // ---- QEC helpers ----
 
-    fn reset_qubit(&mut self, q: usize) -> PyResult<bool> {
-        self.check_qubit(q, "reset_qubit")?;
+    fn reset_qubit(&mut self, q: isize) -> PyResult<bool> {
+        let q = self.check_qubit(q, "reset_qubit")?;
         Ok(self.inner.reset_qubit(QubitId(q)))
     }
 
-    fn pz(&mut self, q: usize) -> PyResult<()> {
-        self.check_qubit(q, "pz")?;
+    fn pz(&mut self, q: isize) -> PyResult<()> {
+        let q = self.check_qubit(q, "pz")?;
         self.inner.pz(QubitId(q));
         Ok(())
     }
 
-    fn px(&mut self, q: usize) -> PyResult<()> {
-        self.check_qubit(q, "px")?;
+    fn px(&mut self, q: isize) -> PyResult<()> {
+        let q = self.check_qubit(q, "px")?;
         self.inner.px(QubitId(q));
         Ok(())
     }
 
-    fn inject_x_in_frame(&mut self, q: usize) -> PyResult<()> {
-        self.check_qubit(q, "inject_x_in_frame")?;
+    fn inject_x_in_frame(&mut self, q: isize) -> PyResult<()> {
+        let q = self.check_qubit(q, "inject_x_in_frame")?;
         self.inner.inject_x_in_frame(QubitId(q));
         Ok(())
     }
 
-    fn inject_y_in_frame(&mut self, q: usize) -> PyResult<()> {
-        self.check_qubit(q, "inject_y_in_frame")?;
+    fn inject_y_in_frame(&mut self, q: isize) -> PyResult<()> {
+        let q = self.check_qubit(q, "inject_y_in_frame")?;
         self.inner.inject_y_in_frame(QubitId(q));
         Ok(())
     }
 
-    fn inject_z_in_frame(&mut self, q: usize) -> PyResult<()> {
-        self.check_qubit(q, "inject_z_in_frame")?;
+    fn inject_z_in_frame(&mut self, q: isize) -> PyResult<()> {
+        let q = self.check_qubit(q, "inject_z_in_frame")?;
         self.inner.inject_z_in_frame(QubitId(q));
         Ok(())
     }
 
-    fn inject_paulis_in_frame(&mut self, paulis: Vec<(usize, String)>) -> PyResult<()> {
-        let converted: Vec<(QubitId, PauliKind)> = paulis
+    fn inject_paulis_in_frame(&mut self, paulis: Vec<(isize, String)>) -> PyResult<()> {
+        let converted: Vec<(QubitId, PauliKind)> = self
+            .pauli_string(paulis, "inject_paulis_in_frame")?
             .into_iter()
-            .map(|(q, s)| {
-                let kind = match s.as_str() {
-                    "X" => PauliKind::X,
-                    "Y" => PauliKind::Y,
-                    "Z" => PauliKind::Z,
-                    _ => {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "Unknown Pauli kind: {s}. Use 'X', 'Y', or 'Z'."
-                        )));
-                    }
-                };
-                Ok((QubitId(q), kind))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
+            .map(|(q, kind)| (QubitId(q), kind))
+            .collect();
         self.inner.inject_paulis_in_frame(&converted);
         Ok(())
     }
 
-    fn frame_x_bit(&self, q: usize) -> bool {
-        self.inner.frame_x_bit(QubitId(q))
+    fn frame_x_bit(&self, q: isize) -> PyResult<bool> {
+        let q = self.check_qubit(q, "frame_x_bit")?;
+        Ok(self.inner.frame_x_bit(QubitId(q)))
     }
 
-    fn frame_z_bit(&self, q: usize) -> bool {
-        self.inner.frame_z_bit(QubitId(q))
+    fn frame_z_bit(&self, q: isize) -> PyResult<bool> {
+        let q = self.check_qubit(q, "frame_z_bit")?;
+        Ok(self.inner.frame_z_bit(QubitId(q)))
     }
 
-    fn apply_depolarizing(&mut self, q: usize, p: f64) -> Option<String> {
-        self.inner
+    fn apply_depolarizing(&mut self, q: isize, p: f64) -> PyResult<Option<String>> {
+        let q = self.check_qubit(q, "apply_depolarizing")?;
+        Self::check_probability(p, "apply_depolarizing")?;
+        Ok(self
+            .inner
             .apply_depolarizing(QubitId(q), p)
-            .map(|k| format!("{k:?}"))
+            .map(|k| format!("{k:?}")))
     }
 
-    fn apply_bit_flip(&mut self, q: usize, p: f64) -> PyResult<bool> {
-        self.check_qubit(q, "apply_bit_flip")?;
+    fn apply_bit_flip(&mut self, q: isize, p: f64) -> PyResult<bool> {
+        let q = self.check_qubit(q, "apply_bit_flip")?;
+        Self::check_probability(p, "apply_bit_flip")?;
         Ok(self.inner.apply_bit_flip(QubitId(q), p))
     }
 
-    fn apply_phase_flip(&mut self, q: usize, p: f64) -> PyResult<bool> {
-        self.check_qubit(q, "apply_phase_flip")?;
+    fn apply_phase_flip(&mut self, q: isize, p: f64) -> PyResult<bool> {
+        let q = self.check_qubit(q, "apply_phase_flip")?;
+        Self::check_probability(p, "apply_phase_flip")?;
         Ok(self.inner.apply_phase_flip(QubitId(q), p))
     }
 
-    fn apply_depolarizing_all(&mut self, qubits: Vec<usize>, p: f64) {
+    fn apply_depolarizing_all(&mut self, qubits: Vec<isize>, p: f64) -> PyResult<()> {
+        let qubits = qubits
+            .into_iter()
+            .map(|q| self.check_qubit(q, "apply_depolarizing_all"))
+            .collect::<PyResult<Vec<_>>>()?;
+        Self::check_probability(p, "apply_depolarizing_all")?;
         let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.apply_depolarizing_all(&qs, p);
+        Ok(())
     }
 
     fn extract_syndromes(
         &mut self,
-        generators: Vec<Vec<(usize, String)>>,
-        ancilla_qubits: Vec<usize>,
+        generators: Vec<Vec<(isize, String)>>,
+        ancilla_qubits: Vec<isize>,
     ) -> PyResult<Vec<bool>> {
+        if generators.len() != ancilla_qubits.len() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "extract_syndromes: one ancilla per generator required",
+            ));
+        }
+        let ancilla_qubits = ancilla_qubits
+            .into_iter()
+            .map(|q| self.check_qubit(q, "extract_syndromes"))
+            .collect::<PyResult<Vec<_>>>()?;
         let gens: Vec<Vec<(usize, PauliKind)>> = generators
             .into_iter()
-            .map(|g| {
-                g.into_iter()
-                    .map(|(q, s)| {
-                        let kind = match s.as_str() {
-                            "X" => PauliKind::X,
-                            "Y" => PauliKind::Y,
-                            "Z" => PauliKind::Z,
-                            _ => {
-                                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    format!("Unknown Pauli: {s}"),
-                                ));
-                            }
-                        };
-                        Ok((q, kind))
-                    })
-                    .collect::<PyResult<Vec<_>>>()
-            })
+            .map(|generator| self.pauli_string(generator, "extract_syndromes"))
             .collect::<PyResult<Vec<_>>>()?;
+        for (generator, &ancilla) in gens.iter().zip(&ancilla_qubits) {
+            if generator.iter().any(|&(q, _)| q == ancilla) {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "extract_syndromes: ancilla {ancilla} overlaps with generator data qubit"
+                )));
+            }
+        }
         let ancs: Vec<QubitId> = ancilla_qubits.into_iter().map(QubitId).collect();
         Ok(self.inner.extract_syndromes(&gens, &ancs))
     }
 
-    fn pauli_expectation(&self, pauli_string: Vec<(usize, String)>) -> PyResult<f64> {
-        let ps: Vec<(usize, PauliKind)> = pauli_string
-            .into_iter()
-            .map(|(q, s)| {
-                let kind = match s.as_str() {
-                    "X" => PauliKind::X,
-                    "Y" => PauliKind::Y,
-                    "Z" => PauliKind::Z,
-                    _ => {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "Unknown Pauli: {s}"
-                        )));
-                    }
-                };
-                Ok((q, kind))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
+    fn pauli_expectation(&mut self, pauli_string: Vec<(isize, String)>) -> PyResult<f64> {
+        let ps = self.pauli_string(pauli_string, "pauli_expectation")?;
+        self.inner.flush();
         Ok(self.inner.pauli_expectation(&ps))
     }
 
-    fn code_state_fidelity(&self, stabilizers: Vec<Vec<(usize, String)>>) -> PyResult<f64> {
+    fn code_state_fidelity(&mut self, stabilizers: Vec<Vec<(isize, String)>>) -> PyResult<f64> {
+        if stabilizers.len() > 30 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "code_state_fidelity supports at most 30 stabilizer generators",
+            ));
+        }
         let stabs: Vec<Vec<(usize, PauliKind)>> = stabilizers
             .into_iter()
-            .map(|g| {
-                g.into_iter()
-                    .map(|(q, s)| {
-                        let kind = match s.as_str() {
-                            "X" => PauliKind::X,
-                            "Y" => PauliKind::Y,
-                            "Z" => PauliKind::Z,
-                            _ => {
-                                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    format!("Unknown Pauli: {s}"),
-                                ));
-                            }
-                        };
-                        Ok((q, kind))
-                    })
-                    .collect::<PyResult<Vec<_>>>()
-            })
+            .map(|generator| self.pauli_string(generator, "code_state_fidelity"))
             .collect::<PyResult<Vec<_>>>()?;
+        self.inner.flush();
         Ok(self.inner.code_state_fidelity(&stabs))
     }
 
@@ -690,10 +766,10 @@ impl PyStabMps {
     fn run_1q_gate(
         &mut self,
         symbol: &str,
-        location: usize,
+        location: isize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
-        self.check_qubit(location, symbol)?;
+        let location = self.check_qubit(location, symbol)?;
         let q = &[QubitId(location)];
         match symbol {
             "I" => Ok(None),
@@ -803,10 +879,13 @@ impl PyStabMps {
                 "Two-qubit gate requires exactly 2 qubit locations",
             ));
         }
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
-        self.check_qubit(q1, symbol)?;
-        self.check_qubit(q2, symbol)?;
+        let q1 = self.check_qubit(location.get_item(0)?.extract::<isize>()?, symbol)?;
+        let q2 = self.check_qubit(location.get_item(1)?.extract::<isize>()?, symbol)?;
+        if q1 == q2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Two-qubit gate requires distinct qubit locations",
+            ));
+        }
         let pair = &[(QubitId(q1), QubitId(q2))];
         match symbol {
             "CX" | "CNOT" => {
@@ -878,7 +957,7 @@ impl PyStabMps {
             };
             let result = match loc_tuple.len() {
                 1 => {
-                    let qubit: usize = loc_tuple.get_item(0)?.extract()?;
+                    let qubit: isize = loc_tuple.get_item(0)?.extract()?;
                     self.run_1q_gate(symbol, qubit, params)?
                 }
                 2 => self.run_2q_gate(symbol, &loc_tuple, params)?,

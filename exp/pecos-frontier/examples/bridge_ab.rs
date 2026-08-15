@@ -15,9 +15,9 @@
 //!
 //! Input JSON (produced by an external extraction script from the upstream
 //! `frontier` package): `{num_detectors, num_observables, mechanisms:
-//! [[p, [detectors], [observables]], ...], shots: [{syndrome, truth_logical}]}`
-//! where mechanism order IS the processing order and `syndrome` packs detector
-//! `i` into bit `i`.
+//! [[p, [detectors], [observables]], ...], shots: [{fired, truth_logical}]}`
+//! where mechanism order IS the processing order and `fired` lists the indices
+//! of the detectors that fired.
 //!
 //! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha> [bp_score_iterations]`
 //! Prints one `shot,predicted,truth,status,gap,log_evidence,seconds` line per

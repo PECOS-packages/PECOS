@@ -171,9 +171,32 @@ impl FrontierCommittee {
         let forward = committee_member(&forward_result);
         let backward = committee_member(&backward_result);
         let (selected, direction) = match (forward_result, backward_result) {
-            (Err(_), Err(_)) => return Err(unexplainable_error()),
-            (Ok(selected), Err(_)) => (selected, CommitteeDirection::Forward),
-            (Err(_), Ok(selected)) => (selected, CommitteeDirection::Backward),
+            (Err(forward_error), Err(backward_error)) => {
+                // Surface the engine's own error rather than synthesizing one,
+                // and prefer a genuine fault over the no-path report so a
+                // malformed call is not reported as a pruning problem.
+                return Err(
+                    if is_absorbable_failure(&forward_error)
+                        && !is_absorbable_failure(&backward_error)
+                    {
+                        backward_error
+                    } else {
+                        forward_error
+                    },
+                );
+            }
+            (Ok(selected), Err(error)) => {
+                if !is_absorbable_failure(&error) {
+                    return Err(error);
+                }
+                (selected, CommitteeDirection::Forward)
+            }
+            (Err(error), Ok(selected)) => {
+                if !is_absorbable_failure(&error) {
+                    return Err(error);
+                }
+                (selected, CommitteeDirection::Backward)
+            }
             (Ok(forward_result), Ok(backward_result)) => {
                 if compare_committee_legs(Some(&forward_result), Some(&backward_result))
                     == Ordering::Less
@@ -200,6 +223,21 @@ impl ObservableDecoder for FrontierCommittee {
     }
 }
 
+/// Whether a leg failure is one the committee may absorb by falling back to
+/// the other leg.
+///
+/// Only an unexplainable syndrome qualifies. A dimension mismatch or a BP
+/// preparation failure is a fault in the call itself: both legs would hit it,
+/// and reporting it as "this leg found no path" would send a caller tuning
+/// pruning parameters over a malformed input.
+fn is_absorbable_failure(error: &DecoderError) -> bool {
+    matches!(error, DecoderError::DecodingFailed(_))
+}
+
+/// Summarize one leg for the committee result.
+///
+/// A non-`Ok` status here is always an unexplainable syndrome: `decode`
+/// propagates every other failure before a member summary is returned.
 fn committee_member(result: &Result<FrontierResult, DecoderError>) -> CommitteeMember {
     match result {
         Ok(decoded) => CommitteeMember {
@@ -267,10 +305,6 @@ fn committee_rank(result: Option<&FrontierResult>, is_forward: bool) -> [f64; 6]
         0.0,
         forward_bonus,
     ]
-}
-
-fn unexplainable_error() -> DecoderError {
-    DecoderError::DecodingFailed("syndrome is unexplainable at the given pruning parameters".into())
 }
 
 #[cfg(test)]

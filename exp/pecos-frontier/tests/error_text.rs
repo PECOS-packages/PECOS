@@ -47,3 +47,31 @@ fn committee_and_direct_decoder_share_unexplainable_error_text() {
     let committee_error = committee.decode(&[1, 0]).unwrap_err();
     assert_eq!(direct_error.to_string(), committee_error.to_string());
 }
+
+/// A malformed call must reach the caller as itself, not as a pruning
+/// complaint. The committee used to synthesize an unexplainable-syndrome error
+/// whenever both legs failed, which reported a dimension mismatch as something
+/// the caller could fix by tuning `k` or `delta`.
+#[test]
+fn committee_propagates_a_dimension_error_instead_of_reporting_no_path() {
+    let dem = sparse_dem(vec![(0.2, vec![0, 1], vec![])], 2, 0);
+    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
+    let mut committee = FrontierCommittee::from_sparse_dem(&dem, exact_config()).unwrap();
+
+    // One detector short of the model.
+    let direct_error = decoder.decode(&[1]).unwrap_err();
+    let committee_error = committee.decode(&[1]).unwrap_err();
+
+    assert!(
+        matches!(
+            direct_error,
+            pecos_frontier::DecoderError::InvalidDimensions { .. }
+        ),
+        "expected the engine to reject a short syndrome, got {direct_error:?}"
+    );
+    assert_eq!(direct_error.to_string(), committee_error.to_string());
+    assert!(
+        !committee_error.to_string().contains("unexplainable"),
+        "committee reported a dimension fault as an unexplainable syndrome: {committee_error}"
+    );
+}

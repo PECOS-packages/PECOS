@@ -14,7 +14,9 @@
 
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
-use pecos_num::stats::{JeffreysError, JeffreysInterval, jeffreys_interval};
+use pecos_num::stats::{
+    JeffreysError, JeffreysEstimator, JeffreysInterval, jeffreys_interval, jeffreys_point,
+};
 use pyo3::prelude::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +42,22 @@ fn classify(result: Result<ObsMask, DecoderError>, truth: &ObsMask) -> DecoderOu
         Ok(_) => DecoderOutcome::Mismatch,
         Err(_) => DecoderOutcome::Error,
     }
+}
+
+/// Validate caller-controlled comparison arguments without running an interval
+/// calculation or constructing either decoder.
+pub(super) fn validate_comparison_arguments(
+    num_shots: usize,
+    alpha: f64,
+) -> Result<(), JeffreysError> {
+    let num_shots = u64::try_from(num_shots).unwrap_or(u64::MAX);
+    // The mean estimator performs the shared zero/maximum-trial validation but
+    // no special-function solve, keeping this preflight constant-time.
+    jeffreys_point(0, num_shots, JeffreysEstimator::Mean)?;
+    if !alpha.is_finite() || alpha <= 0.0 || alpha >= 1.0 {
+        return Err(JeffreysError::InvalidAlpha { alpha });
+    }
+    Ok(())
 }
 
 /// Counts indexed by DUT outcome first, then reference outcome.
@@ -426,6 +444,31 @@ mod tests {
             summary.dut_only_failure.point.to_bits(),
             expected.point.to_bits()
         );
+    }
+
+    #[test]
+    fn comparison_arguments_reject_invalid_shot_counts() {
+        assert_eq!(
+            validate_comparison_arguments(0, 0.05),
+            Err(JeffreysError::ZeroTrials)
+        );
+        assert!(matches!(
+            validate_comparison_arguments(100_000_001, 0.05),
+            Err(JeffreysError::TrialsExceedSupported {
+                n: 100_000_001,
+                max: 100_000_000
+            })
+        ));
+    }
+
+    #[test]
+    fn comparison_arguments_reject_alpha_outside_open_unit_interval() {
+        for alpha in [f64::NAN, f64::NEG_INFINITY, 0.0, 1.0, f64::INFINITY] {
+            assert!(matches!(
+                validate_comparison_arguments(1, alpha),
+                Err(JeffreysError::InvalidAlpha { .. })
+            ));
+        }
     }
 
     #[test]

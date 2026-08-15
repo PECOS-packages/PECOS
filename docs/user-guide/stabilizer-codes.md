@@ -278,8 +278,8 @@ let code = StabilizerCodeSpec::builder(7)
     .check(Zs([0, 2, 4, 6]))
     .check(Zs([1, 2, 5, 6]))
     .check(Zs([3, 4, 5, 6]))
-    .logical_z(Zs([0, 2, 4, 6]))
-    .logical_x(Xs([0, 2, 4, 6]))
+    .logical_z(Zs([0, 1, 2, 3, 4, 5, 6]))
+    .logical_x(Xs([0, 1, 2, 3, 4, 5, 6]))
     .build()
     .unwrap();
 

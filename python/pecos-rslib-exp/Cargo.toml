@@ -25,8 +25,10 @@ extension-module = [
 ]
 
 [dependencies]
+pecos-bp-trellis.workspace = true
 pecos-core.workspace = true
 pecos-eeg.workspace = true
+pecos-frontier.workspace = true
 pecos-neo.workspace = true
 pecos-qec.workspace = true
 pecos-quantum.workspace = true
@@ -36,6 +38,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 rayon.workspace = true
 pecos-stab-tn.workspace = true
+pecos-trellis.workspace = true
 pyo3 = { workspace = true, features = ["num-complex"] }
 num-complex.workspace = true
 smallvec.workspace = true

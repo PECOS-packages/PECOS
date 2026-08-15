@@ -66,10 +66,12 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::RXXRYYRZZ => "RXXRYYRZZ",
         GateType::U2q => "U2q",
         GateType::CCX => "CCX",
+        GateType::MX => "MX",
         GateType::MZ => "MZ",
         GateType::MeasureLeaked => "ML",
         GateType::MeasureFree => "MF",
         GateType::MPZ => "MPZ",
+        GateType::PX => "PX",
         GateType::PZ => "PZ",
         GateType::QAlloc => "QA",
         GateType::QFree => "QF",
@@ -180,7 +182,9 @@ fn full_gate_symbol(gate: &Gate, unit: AngleUnit) -> String {
 /// Map a `GateType` to its diagram color using the PECOS axis color algebra.
 fn gate_color(gate_type: GateType) -> CellColor {
     match gate_type {
-        GateType::X | GateType::RX | GateType::RXX => CellColor::XAxis,
+        GateType::X | GateType::RX | GateType::RXX | GateType::MX | GateType::PX => {
+            CellColor::XAxis
+        }
         GateType::Y | GateType::RY | GateType::RYY => CellColor::YAxis,
         GateType::Z
         | GateType::RZ

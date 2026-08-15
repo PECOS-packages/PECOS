@@ -20,6 +20,7 @@ calculation, and logical operator validation.
 
 from __future__ import annotations
 
+import warnings
 from itertools import combinations, product
 from typing import TYPE_CHECKING
 
@@ -44,6 +45,14 @@ class VerifyStabilizers:
         Sets up the circuit simulator and initializes empty data structures
         for stabilizer checks, logical operators, and qubit tracking.
         """
+        warnings.warn(
+            "VerifyStabilizers is deprecated and will be removed in a future release. "
+            "Use pecos.quantum.StabilizerCodeSpec.builder(...) with "
+            "build_with_discovered_logicals() and spec.distance() instead; see the "
+            "'Stabilizer-Code Verification' page in the user guide.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.circ_sim = pc.simulators.SparseStabPy
 
         self.checks = []

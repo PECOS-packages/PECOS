@@ -15,7 +15,7 @@ pub mod decoder;
 pub mod errors;
 
 // Re-export main types
-pub use builder::{MinSumBpBuilder, RelayBpBuilder};
+pub use builder::{DEFAULT_GAMMA0, MinSumBpBuilder, RelayBpBuilder};
 pub use config::{MinSumConfig, RelayConfig, StoppingCriterion};
 pub use decoder::{DecodingResult, MinSumBpDecoder, RelayBpDecoder};
 pub use errors::RelayBpError;

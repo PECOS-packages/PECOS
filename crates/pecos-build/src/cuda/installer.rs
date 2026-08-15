@@ -19,7 +19,33 @@ use super::{CUDA_VERSION, get_pecos_cuda_dir, is_valid_cuda_installation};
 struct CudaDownload {
     url: String,
     filename: String,
+    /// Expected SHA256 of the archive, when one is published.
+    ///
+    /// This is `None` for every current target because NVIDIA publishes only MD5 digests
+    /// for the CUDA *local installers* (`.../<version>/docs/sidebar/md5sum.txt`); there is
+    /// no `sha256sum.txt` beside it. When no digest is recorded the installer prints a
+    /// prominent warning rather than silently proceeding -- see
+    /// [`warn_archive_is_unverified`].
+    ///
+    /// Two ways to close this properly, both deliberately left as follow-ups because each
+    /// changes more than checksum bookkeeping:
+    /// - Verify NVIDIA's published MD5. Sound against substitution here (that needs a
+    ///   second-preimage, not a collision) but requires an MD5 implementation.
+    /// - Install from the CUDA *redistributable* components instead of the multi-gigabyte
+    ///   local installer. `.../compute/cuda/redist/redistrib_<version>.json` publishes
+    ///   SHA256 for each component, and this installer already discards everything except
+    ///   nvcc, cudart, and cublas -- which redist ships separately.
     sha256: Option<&'static str>,
+}
+
+/// Warns, unmissably, that an archive is about to be used without integrity verification.
+fn warn_archive_is_unverified(filename: &str) {
+    println!();
+    println!("WARNING: {filename} is being used without checksum verification.");
+    println!("         NVIDIA publishes no SHA256 digest for the CUDA local installers, so");
+    println!("         its integrity rests entirely on the HTTPS transport. A corrupted or");
+    println!("         substituted archive will not be detected here.");
+    println!();
 }
 
 /// Get download URL for the current platform
@@ -105,11 +131,14 @@ pub fn install_cuda(force: bool) -> Result<PathBuf> {
         println!("Using cached download: {}", archive_path.display());
     } else {
         download_cuda(&download_info.url, &archive_path)?;
+    }
 
-        // Verify checksum if available
-        if let Some(expected_sha256) = download_info.sha256 {
-            verify_checksum(&archive_path, expected_sha256)?;
-        }
+    // Verify on every install, not only after a fresh download: the cache persists between
+    // runs, so a truncated or tampered cached archive must not be trusted merely because an
+    // earlier run left it there.
+    match download_info.sha256 {
+        Some(expected_sha256) => verify_checksum(&archive_path, expected_sha256)?,
+        None => warn_archive_is_unverified(&download_info.filename),
     }
 
     // Extract CUDA
@@ -433,4 +462,94 @@ pub fn uninstall_cuda() -> Result<()> {
     println!("CUDA uninstalled successfully");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sevenz_rust2::{ArchiveEntry, ArchiveWriter};
+
+    /// Builds a 7z archive whose single entry carries the given name.
+    ///
+    /// Names must survive the component filter in `extract_windows_exe`, so each fixture
+    /// includes one of the wanted component substrings.
+    fn archive_with_entry(path: &Path, entry_name: &str) {
+        let mut writer = ArchiveWriter::create(path).expect("create archive");
+        writer
+            .push_archive_entry(ArchiveEntry::new_file(entry_name), Some(&b"payload"[..]))
+            .expect("push entry");
+        writer.finish().expect("finish archive");
+    }
+
+    /// True if any file named `needle` exists anywhere under `root`.
+    ///
+    /// A rejected escape must not land at ANY path, and where it would land depends on the
+    /// platform: on Unix `.. ` is a literal directory, so a trailing-space escape that
+    /// slipped the guard would sit deep under the destination rather than beside it. A
+    /// fixed-path existence check would miss that; a recursive search does not.
+    fn contains_file_named(root: &Path, needle: &str) -> bool {
+        let Ok(entries) = fs::read_dir(root) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if contains_file_named(&path, needle) {
+                    return true;
+                }
+            } else if path.file_name().is_some_and(|name| name == needle) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// The containment guard must be *wired into* the extractor, not merely present in
+    /// the crate. Unit tests on `contained_entry_path` all pass even when the call site is
+    /// replaced by a bare `dest.join`, so this is the test that protects the invocation.
+    #[test]
+    fn extraction_rejects_entries_that_escape_the_destination() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let archive = temp.path().join("installer.exe");
+        let dest = temp.path().join("dest");
+
+        // Trailing space: the spelling that defeated the first version of the guard.
+        archive_with_entry(&archive, "nvcc/.. /.. /escaped.dll");
+        let error = extract_windows_exe(&archive, &dest).expect_err("must reject");
+        assert!(
+            error.to_string().contains("escapes")
+                || error.to_string().contains("trailing dots or spaces"),
+            "unexpected error: {error}"
+        );
+        // The escaped file must exist nowhere under the temp root, not merely beside `dest`:
+        // on Unix `.. ` is a literal directory, so an unguarded write would land deep inside
+        // the tree rather than at `temp/escaped.dll`.
+        assert!(
+            !contains_file_named(temp.path(), "escaped.dll"),
+            "the rejected entry was written somewhere under the temp root"
+        );
+    }
+
+    #[test]
+    fn extraction_rejects_plain_parent_traversal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let archive = temp.path().join("installer.exe");
+        let dest = temp.path().join("dest");
+
+        archive_with_entry(&archive, "nvcc/../../escaped.dll");
+        let error = extract_windows_exe(&archive, &dest).expect_err("must reject");
+        assert!(error.to_string().contains("escapes"), "unexpected: {error}");
+        assert!(!contains_file_named(temp.path(), "escaped.dll"));
+    }
+
+    #[test]
+    fn extraction_accepts_an_ordinary_nested_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let archive = temp.path().join("installer.exe");
+        let dest = temp.path().join("dest");
+
+        archive_with_entry(&archive, "cuda_nvcc/bin/nvcc.exe");
+        extract_windows_exe(&archive, &dest).expect("ordinary entry must extract");
+        assert!(dest.join("cuda_nvcc/bin/nvcc.exe").exists());
+    }
 }

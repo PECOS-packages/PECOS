@@ -51,9 +51,22 @@ from enum import Enum
 from functools import cache
 from typing import TYPE_CHECKING, Any, Literal
 
-import numpy as np
-
 import pecos.tracing as _tracing
+from pecos import (
+    any as array_any,
+)
+from pecos import (
+    array,
+    array_equal,
+    asarray,
+    dtypes,
+    integer,
+    issubdtype,
+    ones,
+    where,
+    zeros,
+    zeros_like,
+)
 from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
@@ -63,8 +76,8 @@ from pecos.qec.surface._check_plan import require_current_surface_check_plan_ren
 
 if TYPE_CHECKING:
     import stim
-    from numpy.typing import NDArray
 
+    from pecos import Array
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -550,8 +563,8 @@ def _p2_gate_rates_dict(noise: NoiseParameters) -> dict[str, float] | None:
 class DecodingResult:
     """Result from decoding a single shot."""
 
-    x_correction: NDArray[np.uint8]  # X corrections to apply to data qubits
-    z_correction: NDArray[np.uint8]  # Z corrections to apply to data qubits
+    x_correction: Array  # X corrections to apply to data qubits
+    z_correction: Array  # Z corrections to apply to data qubits
     logical_x_flip: bool  # True if logical X was flipped by correction
     logical_z_flip: bool  # True if logical Z was flipped by correction
     decoding_weight: float  # Weight of the matching solution
@@ -622,11 +635,39 @@ def _twirl_traced_qis_rejection_message() -> str:
     )
 
 
+def _validate_syndrome_bits(
+    syndromes: Any,
+    *,
+    name: str,
+    position_prefix: tuple[int, ...] = (),
+) -> Array:
+    """Return ``syndromes`` as an Array after validating its bit values."""
+    syndrome_array = asarray(syndromes)
+    for flat_index, value in enumerate(syndrome_array.ravel().tolist()):
+        if value in (0, 1):
+            continue
+        position = []
+        remaining = flat_index
+        for extent in reversed(syndrome_array.shape):
+            position.append(remaining % extent)
+            remaining //= extent
+        full_position = position_prefix + tuple(reversed(position))
+        msg = f"{name} must contain only 0/1 bits; found {value!r} at position {full_position}"
+        raise ValueError(msg)
+    return syndrome_array
+
+
+def _validate_syndrome_rounds(syndromes: Any, *, name: str) -> None:
+    """Validate a sequence of syndrome rows without changing its representation."""
+    for round_index, row in enumerate(syndromes):
+        _validate_syndrome_bits(row, name=name, position_prefix=(round_index,))
+
+
 def syndromes_to_detection_events(
-    syndromes: NDArray[np.uint8],
+    syndromes: Array,
     num_rounds: int,
     num_detectors_per_round: int,
-) -> NDArray[np.uint8]:
+) -> Array:
     """Convert raw syndromes to detection events.
 
     Detection events are the XOR between consecutive syndrome rounds.
@@ -634,25 +675,32 @@ def syndromes_to_detection_events(
     flip syndromes in both the current and next round.
 
     Args:
-        syndromes: Raw syndrome array of shape (num_rounds, num_detectors_per_round)
-                   or flat array of length num_rounds * num_detectors_per_round
+        syndromes: Raw bit-syndrome array containing only 0 and 1, with shape
+            (num_rounds, num_detectors_per_round) or flat length
+            num_rounds * num_detectors_per_round.
         num_rounds: Number of syndrome extraction rounds
         num_detectors_per_round: Number of detectors per round
 
     Returns:
         Detection events array of shape (num_rounds, num_detectors_per_round)
+
+    Raises:
+        ValueError: If a syndrome value is not 0 or 1.
     """
+    syndromes = _validate_syndrome_bits(syndromes, name="syndromes")
+
     # Reshape to (rounds, detectors) if flat
     if syndromes.ndim == 1:
         syndromes = syndromes.reshape(num_rounds, num_detectors_per_round)
 
     # First round: compare to expected zero syndrome
-    events = np.zeros_like(syndromes)
-    events[0] = syndromes[0]
+    events = zeros_like(syndromes)
+    events[0, :] = syndromes[0]
 
     # Subsequent rounds: XOR with previous round
     for r in range(1, num_rounds):
-        events[r] = syndromes[r] ^ syndromes[r - 1]
+        # Array has no elementwise XOR (#458); syndrome bits differ exactly when their XOR is one.
+        events[r, :] = syndromes[r] != syndromes[r - 1]
 
     return events
 
@@ -1301,13 +1349,13 @@ def _build_surface_tick_circuit_for_native_model(
     return traced_tc
 
 
-def _pauli_masks_as_int64(pauli_masks: Any) -> NDArray[np.int64]:
+def _pauli_masks_as_int64(pauli_masks: Any) -> Array:
     """Return Pauli-mask input in the integer dtype accepted by Rust bindings."""
-    masks_arr = np.asarray(pauli_masks)
-    if not np.issubdtype(masks_arr.dtype, np.integer):
+    masks_arr = asarray(pauli_masks)
+    if not issubdtype(masks_arr.dtype, integer):
         msg = "pauli_masks must be an integer array with values 0=I, 1=X, 2=Y, 3=Z"
         raise TypeError(msg)
-    return np.asarray(masks_arr, dtype=np.int64)
+    return asarray(masks_arr, dtype=dtypes.int64)
 
 
 def build_memory_circuit(
@@ -2656,7 +2704,7 @@ class SurfaceDecoder:
             self._x_dem = dem
         return dem
 
-    def _get_z_check_matrix(self) -> NDArray[np.uint8]:
+    def _get_z_check_matrix(self) -> Array:
         """Get Z stabilizer parity check matrix."""
         if self._z_check_matrix is None:
             geom = self.patch.geometry
@@ -2664,7 +2712,7 @@ class SurfaceDecoder:
             num_data = geom.num_data
 
             # H is standard notation for parity check matrix in coding theory
-            H = np.zeros((num_stab, num_data), dtype=np.uint8)
+            H = zeros((num_stab, num_data), dtype=dtypes.uint8)
             for stab in geom.z_stabilizers:
                 for q in stab.data_qubits:
                     H[stab.index, q] = 1
@@ -2672,7 +2720,7 @@ class SurfaceDecoder:
             self._z_check_matrix = H
         return self._z_check_matrix
 
-    def _get_x_check_matrix(self) -> NDArray[np.uint8]:
+    def _get_x_check_matrix(self) -> Array:
         """Get X stabilizer parity check matrix."""
         if self._x_check_matrix is None:
             geom = self.patch.geometry
@@ -2680,7 +2728,7 @@ class SurfaceDecoder:
             num_data = geom.num_data
 
             # H is standard notation for parity check matrix in coding theory
-            H = np.zeros((num_stab, num_data), dtype=np.uint8)
+            H = zeros((num_stab, num_data), dtype=dtypes.uint8)
             for stab in geom.x_stabilizers:
                 for q in stab.data_qubits:
                     H[stab.index, q] = 1
@@ -2698,7 +2746,7 @@ class SurfaceDecoder:
                 self._z_decoder = self._create_decoder(self._get_z_check_matrix())
         return self._z_decoder
 
-    def _create_decoder(self, H: NDArray[np.uint8]) -> Any:
+    def _create_decoder(self, H: Array) -> Any:
         """Create decoder instance based on decoder_type."""
         num_data = H.shape[1]
         num_stab = H.shape[0]
@@ -2808,7 +2856,7 @@ class SurfaceDecoder:
 
     def _create_fusion_blossom_spacetime(
         self,
-        H: NDArray[np.uint8],
+        H: Array,
         data_weight: float,
         meas_weight: float,
     ) -> Any:
@@ -2869,7 +2917,7 @@ class SurfaceDecoder:
 
     def _create_ldpc_decoder(
         self,
-        H: NDArray[np.uint8],
+        H: Array,
         p_data: float,
     ) -> Any:
         """Create LDPC decoder (BP+OSD, BP+LSD, or UnionFind)."""
@@ -2904,7 +2952,7 @@ class SurfaceDecoder:
 
     def _create_tesseract_decoder(
         self,
-        H: NDArray[np.uint8],
+        H: Array,
         _p_data: float,
         _p_meas: float,
     ) -> Any:
@@ -2913,7 +2961,7 @@ class SurfaceDecoder:
 
         # Determine stabilizer type based on check matrix shape
         z_check = self._get_z_check_matrix()
-        stab_type = "Z" if H.shape == z_check.shape and np.array_equal(H, z_check) else "X"
+        stab_type = "Z" if H.shape == z_check.shape and array_equal(H, z_check) else "X"
 
         # Generate DEM using the full surface code DEM generator
         dem = generate_surface_code_dem(
@@ -2993,9 +3041,9 @@ class SurfaceDecoder:
 
     def decode_z_syndrome(
         self,
-        detection_events: NDArray[np.uint8],
-        raw_syndrome: NDArray[np.uint8] | None = None,
-    ) -> tuple[NDArray[np.uint8], float]:
+        detection_events: Array,
+        raw_syndrome: Array | None = None,
+    ) -> tuple[Array, float]:
         """Decode Z stabilizer syndrome to get X corrections.
 
         For MWPM decoders: uses detection_events (differences between rounds)
@@ -3012,7 +3060,7 @@ class SurfaceDecoder:
 
         if self._is_mwpm_decoder():
             # MWPM/Tesseract: use detection events
-            events_flat = detection_events.ravel().astype(np.uint8)
+            events_flat = detection_events.ravel().astype(dtypes.uint8)
 
             if self.decoder_type == DecoderType.TESSERACT:
                 # Tesseract takes sparse detection indices
@@ -3021,7 +3069,7 @@ class SurfaceDecoder:
                 # Tesseract returns observable flips, not per-qubit correction
                 # We return a dummy correction and encode logical flip in first element
                 num_data = self._get_z_check_matrix().shape[1]
-                correction = np.zeros(num_data, dtype=np.uint8)
+                correction = zeros(num_data, dtype=dtypes.uint8)
                 if len(result.observable_flips) > 0 and result.observable_flips[0]:  # L0 flipped
                     correction[0] = 1  # Mark that logical was predicted flipped
                 weight = result.cost
@@ -3032,7 +3080,7 @@ class SurfaceDecoder:
                 if self.decoder_type == DecoderType.FUSION_BLOSSOM:
                     decoder.clear()
 
-                correction = np.array(list(result.observable_flips), dtype=np.uint8)
+                correction = array(list(result.observable_flips), dtype=dtypes.uint8)
                 weight = result.weight
         else:
             # LDPC: use raw syndrome (last round)
@@ -3045,19 +3093,19 @@ class SurfaceDecoder:
                     raw_syndrome = detection_events.ravel()
 
             if self.decoder_type == DecoderType.BP_LSD:
-                result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+                result = decoder.decode(raw_syndrome.astype(dtypes.uint8).tolist())
             else:
-                result = decoder.decode_syndrome(raw_syndrome.astype(np.uint8).tolist())
-            correction = np.array(result.decoding, dtype=np.uint8)
+                result = decoder.decode_syndrome(raw_syndrome.astype(dtypes.uint8).tolist())
+            correction = array(result.decoding, dtype=dtypes.uint8)
             weight = 0.0 if result.converged else 1.0  # LDPC doesn't have weight
 
         return correction, weight
 
     def decode_x_syndrome(
         self,
-        detection_events: NDArray[np.uint8],
-        raw_syndrome: NDArray[np.uint8] | None = None,
-    ) -> tuple[NDArray[np.uint8], float]:
+        detection_events: Array,
+        raw_syndrome: Array | None = None,
+    ) -> tuple[Array, float]:
         """Decode X stabilizer syndrome to get Z corrections.
 
         For MWPM decoders: uses detection_events (differences between rounds)
@@ -3074,7 +3122,7 @@ class SurfaceDecoder:
 
         if self._is_mwpm_decoder():
             # MWPM/Tesseract: use detection events
-            events_flat = detection_events.ravel().astype(np.uint8)
+            events_flat = detection_events.ravel().astype(dtypes.uint8)
 
             if self.decoder_type == DecoderType.TESSERACT:
                 # Tesseract takes sparse detection indices
@@ -3082,7 +3130,7 @@ class SurfaceDecoder:
                 result = decoder.decode_from_defects(detection_indices)
                 # Tesseract returns observable flips, not per-qubit correction
                 num_data = self._get_x_check_matrix().shape[1]
-                correction = np.zeros(num_data, dtype=np.uint8)
+                correction = zeros(num_data, dtype=dtypes.uint8)
                 if len(result.observable_flips) > 0 and result.observable_flips[0]:  # L0 flipped
                     correction[0] = 1  # Mark that logical was predicted flipped
                 weight = result.cost
@@ -3093,7 +3141,7 @@ class SurfaceDecoder:
                 if self.decoder_type == DecoderType.FUSION_BLOSSOM:
                     decoder.clear()
 
-                correction = np.array(list(result.observable_flips), dtype=np.uint8)
+                correction = array(list(result.observable_flips), dtype=dtypes.uint8)
                 weight = result.weight
         else:
             # LDPC: use raw syndrome (last round)
@@ -3106,22 +3154,22 @@ class SurfaceDecoder:
                     raw_syndrome = detection_events.ravel()
 
             if self.decoder_type == DecoderType.BP_LSD:
-                result = decoder.decode(raw_syndrome.astype(np.uint8).tolist())
+                result = decoder.decode(raw_syndrome.astype(dtypes.uint8).tolist())
             else:
-                result = decoder.decode_syndrome(raw_syndrome.astype(np.uint8).tolist())
-            correction = np.array(result.decoding, dtype=np.uint8)
+                result = decoder.decode_syndrome(raw_syndrome.astype(dtypes.uint8).tolist())
+            correction = array(result.decoding, dtype=dtypes.uint8)
             weight = 0.0 if result.converged else 1.0  # LDPC doesn't have weight
 
         return correction, weight
 
     def _compute_dem_detection_events_z(
         self,
-        synx_list: list[NDArray[np.uint8]],
-        synz_list: list[NDArray[np.uint8]],
-        final: NDArray[np.uint8],
+        synx_list: list[Array],
+        synz_list: list[Array],
+        final: Array,
         *,
-        init_synx: NDArray[np.uint8] | None = None,
-    ) -> NDArray[np.uint8]:
+        init_synx: Array | None = None,
+    ) -> Array:
         """Compute full detection events for Z-basis DEM-based decoding.
 
         The circuit-level DEM defines detectors in this order:
@@ -3142,8 +3190,9 @@ class SurfaceDecoder:
             Detection events array matching the DEM detector ordering
         """
         geom = self.patch.geometry
-        synx = np.array(synx_list, dtype=np.uint8)
-        synz = np.array(synz_list, dtype=np.uint8)
+        # Nested Array/external-array ingest is not supported (#458); normalize each row at the boundary.
+        synx = array([asarray(row).tolist() for row in synx_list], dtype=dtypes.uint8)
+        synz = array([asarray(row).tolist() for row in synz_list], dtype=dtypes.uint8)
         if self.num_rounds > 0 and init_synx is None:
             msg = (
                 "Z-basis circuit-level DEM decoding requires init_synx, the prep-baseline "
@@ -3157,20 +3206,21 @@ class SurfaceDecoder:
             if init_synx is None:
                 msg = "init_synx is required for Z-basis circuit-level DEM decoding"
                 raise ValueError(msg)
-            init_synx_array = np.array(init_synx, dtype=np.uint8)
+            init_synx_array = array(init_synx, dtype=dtypes.uint8)
             if init_synx_array.shape != synx[0].shape:
                 msg = f"init_synx has shape {init_synx_array.shape}, expected {synx[0].shape}"
                 raise ValueError(msg)
 
             # 1. X stabilizer detection events
-            events.extend((synx[0] ^ init_synx_array).tolist())
+            # Array has no elementwise XOR (#458); these arrays contain only syndrome bits.
+            events.extend((synx[0] != init_synx_array).tolist())
             for r in range(1, self.num_rounds):
-                events.extend((synx[r] ^ synx[r - 1]).tolist())
+                events.extend((synx[r] != synx[r - 1]).tolist())
 
             # 2. Z stabilizer detection events (all rounds)
             events.extend(synz[0].tolist())  # round 0: compare to expected 0
             for r in range(1, self.num_rounds):
-                events.extend((synz[r] ^ synz[r - 1]).tolist())
+                events.extend((synz[r] != synz[r - 1]).tolist())
 
         # 3. Final readout: final Z parity XOR the last known Z syndrome.
         for stab in geom.z_stabilizers:
@@ -3178,16 +3228,16 @@ class SurfaceDecoder:
             last_syn = int(synz[-1][stab.index]) if self.num_rounds > 0 else 0
             events.append((data_parity ^ last_syn) & 1)
 
-        return np.array(events, dtype=np.uint8)
+        return array(events, dtype=dtypes.uint8)
 
     def _compute_dem_detection_events_x(
         self,
-        synx_list: list[NDArray[np.uint8]],
-        synz_list: list[NDArray[np.uint8]],
-        final: NDArray[np.uint8],
+        synx_list: list[Array],
+        synz_list: list[Array],
+        final: Array,
         *,
-        init_synz: NDArray[np.uint8] | None = None,
-    ) -> NDArray[np.uint8]:
+        init_synz: Array | None = None,
+    ) -> Array:
         """Compute full detection events for X-basis DEM-based decoding.
 
         The circuit-level DEM defines detectors in this order:
@@ -3208,8 +3258,9 @@ class SurfaceDecoder:
             Detection events array matching the DEM detector ordering
         """
         geom = self.patch.geometry
-        synx = np.array(synx_list, dtype=np.uint8)
-        synz = np.array(synz_list, dtype=np.uint8)
+        # Nested Array/external-array ingest is not supported (#458); normalize each row at the boundary.
+        synx = array([asarray(row).tolist() for row in synx_list], dtype=dtypes.uint8)
+        synz = array([asarray(row).tolist() for row in synz_list], dtype=dtypes.uint8)
         if self.num_rounds > 0 and init_synz is None:
             msg = (
                 "X-basis circuit-level DEM decoding requires init_synz, the prep-baseline "
@@ -3223,7 +3274,7 @@ class SurfaceDecoder:
             if init_synz is None:
                 msg = "init_synz is required for X-basis circuit-level DEM decoding"
                 raise ValueError(msg)
-            init_synz_array = np.array(init_synz, dtype=np.uint8)
+            init_synz_array = array(init_synz, dtype=dtypes.uint8)
             if init_synz_array.shape != synz[0].shape:
                 msg = f"init_synz has shape {init_synz_array.shape}, expected {synz[0].shape}"
                 raise ValueError(msg)
@@ -3231,12 +3282,13 @@ class SurfaceDecoder:
             # 1. X stabilizer detection events (all rounds)
             events.extend(synx[0].tolist())  # round 0: compare to expected 0
             for r in range(1, self.num_rounds):
-                events.extend((synx[r] ^ synx[r - 1]).tolist())
+                # Array has no elementwise XOR (#458); these arrays contain only syndrome bits.
+                events.extend((synx[r] != synx[r - 1]).tolist())
 
             # 2. Z stabilizer detection events
-            events.extend((synz[0] ^ init_synz_array).tolist())
+            events.extend((synz[0] != init_synz_array).tolist())
             for r in range(1, self.num_rounds):
-                events.extend((synz[r] ^ synz[r - 1]).tolist())
+                events.extend((synz[r] != synz[r - 1]).tolist())
 
         # 3. Final readout: final X parity XOR the last known X syndrome.
         for stab in geom.x_stabilizers:
@@ -3244,15 +3296,15 @@ class SurfaceDecoder:
             last_syn = int(synx[-1][stab.index]) if self.num_rounds > 0 else 0
             events.append((data_parity ^ last_syn) & 1)
 
-        return np.array(events, dtype=np.uint8)
+        return array(events, dtype=dtypes.uint8)
 
     def decode_memory_z(
         self,
-        synx_list: list[NDArray[np.uint8]],
-        synz_list: list[NDArray[np.uint8]],
-        final: NDArray[np.uint8],
+        synx_list: list[Array],
+        synz_list: list[Array],
+        final: Array,
         *,
-        init_synx: NDArray[np.uint8] | None = None,
+        init_synx: Array | None = None,
     ) -> tuple[bool, DecodingResult]:
         """Decode a Z-basis memory experiment.
 
@@ -3271,15 +3323,23 @@ class SurfaceDecoder:
         - The decoder returns a per-qubit correction
 
         Args:
-            synx_list: List of X syndrome arrays, one per round
-            synz_list: List of Z syndrome arrays, one per round
+            synx_list: List of X bit-syndrome arrays, one per round. Values must be 0 or 1.
+            synz_list: List of Z bit-syndrome arrays, one per round. Values must be 0 or 1.
             final: Final data qubit measurements
             init_synx: Optional prep-baseline X syndrome for the random
                 stabilizer signs established before counted Z-memory rounds.
 
         Returns:
             (is_logical_error, decoding_result)
+
+        Raises:
+            ValueError: If a syndrome value is not 0 or 1.
         """
+        _validate_syndrome_rounds(synx_list, name="synx_list")
+        _validate_syndrome_rounds(synz_list, name="synz_list")
+        if init_synx is not None:
+            _validate_syndrome_bits(init_synx, name="init_synx")
+
         geom = self.patch.geometry
         logical_z_qubits = geom.logical_z.data_qubits if geom.logical_z else ()
         final_parity = sum(final[q] for q in logical_z_qubits) % 2
@@ -3287,7 +3347,7 @@ class SurfaceDecoder:
         # DEM-based path: compute full detection events matching DEM detector order
         if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
             events = self._compute_dem_detection_events_z(synx_list, synz_list, final, init_synx=init_synx)
-            events_flat = events.ravel().astype(np.uint8)
+            events_flat = events.ravel().astype(dtypes.uint8)
 
             decoder = self._get_z_decoder()
 
@@ -3305,8 +3365,8 @@ class SurfaceDecoder:
             is_logical_error = corrected_parity != 0
 
             return is_logical_error, DecodingResult(
-                x_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
-                z_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+                x_correction=zeros(self.patch.num_data, dtype=dtypes.uint8),
+                z_correction=zeros(self.patch.num_data, dtype=dtypes.uint8),
                 logical_x_flip=bool(predicted_obs),
                 logical_z_flip=False,
                 decoding_weight=weight,
@@ -3314,7 +3374,8 @@ class SurfaceDecoder:
 
         # Check-matrix path (FusionBlossom, LDPC)
         num_z_stab = len(geom.z_stabilizers)
-        synz = np.array(synz_list, dtype=np.uint8)
+        # Nested Array/external-array ingest is not supported (#458); normalize each row at the boundary.
+        synz = array([asarray(row).tolist() for row in synz_list], dtype=dtypes.uint8)
         events = syndromes_to_detection_events(synz, self.num_rounds, num_z_stab)
         raw_syn = synz[-1] if len(synz_list) > 0 else None
 
@@ -3332,9 +3393,9 @@ class SurfaceDecoder:
             x_correction=(
                 x_correction
                 if len(x_correction) == self.patch.num_data
-                else np.zeros(self.patch.num_data, dtype=np.uint8)
+                else zeros(self.patch.num_data, dtype=dtypes.uint8)
             ),
-            z_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+            z_correction=zeros(self.patch.num_data, dtype=dtypes.uint8),
             logical_x_flip=correction_parity != 0,
             logical_z_flip=False,
             decoding_weight=weight,
@@ -3344,11 +3405,11 @@ class SurfaceDecoder:
 
     def decode_memory_x(
         self,
-        synx_list: list[NDArray[np.uint8]],
-        synz_list: list[NDArray[np.uint8]],
-        final: NDArray[np.uint8],
+        synx_list: list[Array],
+        synz_list: list[Array],
+        final: Array,
         *,
-        init_synz: NDArray[np.uint8] | None = None,
+        init_synz: Array | None = None,
     ) -> tuple[bool, DecodingResult]:
         """Decode an X-basis memory experiment.
 
@@ -3367,15 +3428,23 @@ class SurfaceDecoder:
         - The decoder returns a per-qubit correction
 
         Args:
-            synx_list: List of X syndrome arrays, one per round
-            synz_list: List of Z syndrome arrays, one per round
+            synx_list: List of X bit-syndrome arrays, one per round. Values must be 0 or 1.
+            synz_list: List of Z bit-syndrome arrays, one per round. Values must be 0 or 1.
             final: Final data qubit measurements
             init_synz: Optional prep-baseline Z syndrome for the random
                 stabilizer signs established before counted X-memory rounds.
 
         Returns:
             (is_logical_error, decoding_result)
+
+        Raises:
+            ValueError: If a syndrome value is not 0 or 1.
         """
+        _validate_syndrome_rounds(synx_list, name="synx_list")
+        _validate_syndrome_rounds(synz_list, name="synz_list")
+        if init_synz is not None:
+            _validate_syndrome_bits(init_synz, name="init_synz")
+
         geom = self.patch.geometry
         logical_x_qubits = geom.logical_x.data_qubits if geom.logical_x else ()
         final_parity = sum(final[q] for q in logical_x_qubits) % 2
@@ -3383,7 +3452,7 @@ class SurfaceDecoder:
         # DEM-based path: compute full detection events matching DEM detector order
         if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
             events = self._compute_dem_detection_events_x(synx_list, synz_list, final, init_synz=init_synz)
-            events_flat = events.ravel().astype(np.uint8)
+            events_flat = events.ravel().astype(dtypes.uint8)
 
             decoder = self._get_x_decoder()
 
@@ -3401,8 +3470,8 @@ class SurfaceDecoder:
             is_logical_error = corrected_parity != 0
 
             return is_logical_error, DecodingResult(
-                x_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
-                z_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+                x_correction=zeros(self.patch.num_data, dtype=dtypes.uint8),
+                z_correction=zeros(self.patch.num_data, dtype=dtypes.uint8),
                 logical_x_flip=False,
                 logical_z_flip=bool(predicted_obs),
                 decoding_weight=weight,
@@ -3410,7 +3479,8 @@ class SurfaceDecoder:
 
         # Check-matrix path (FusionBlossom, LDPC)
         num_x_stab = len(geom.x_stabilizers)
-        synx = np.array(synx_list, dtype=np.uint8)
+        # Nested Array/external-array ingest is not supported (#458); normalize each row at the boundary.
+        synx = array([asarray(row).tolist() for row in synx_list], dtype=dtypes.uint8)
         events = syndromes_to_detection_events(synx, self.num_rounds, num_x_stab)
         raw_syn = synx[-1] if len(synx_list) > 0 else None
 
@@ -3425,11 +3495,11 @@ class SurfaceDecoder:
         is_logical_error = corrected_parity != 0
 
         result = DecodingResult(
-            x_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+            x_correction=zeros(self.patch.num_data, dtype=dtypes.uint8),
             z_correction=(
                 z_correction
                 if len(z_correction) == self.patch.num_data
-                else np.zeros(self.patch.num_data, dtype=np.uint8)
+                else zeros(self.patch.num_data, dtype=dtypes.uint8)
             ),
             logical_x_flip=False,
             logical_z_flip=correction_parity != 0,
@@ -3455,7 +3525,7 @@ class SurfaceDecoder:
         self,
         synx_list: list,
         synz_list: list,
-        final: NDArray[np.uint8] | list[int],
+        final: Array | list[int],
     ) -> tuple[bool, DecodingResult]:
         """Decode Z-basis memory using UIUF (joint X/Z intersection).
 
@@ -3470,8 +3540,6 @@ class SurfaceDecoder:
         Returns:
             (is_logical_error, decoding_result)
         """
-        import numpy as np
-
         geom = self.patch.geometry
         logical_z_qubits = geom.logical_z.data_qubits if geom.logical_z else ()
         final_parity = sum(final[q] for q in logical_z_qubits) % 2
@@ -3479,8 +3547,8 @@ class SurfaceDecoder:
         # Compute detection events for both bases.
         x_events = self._compute_dem_detection_events_x(synx_list, synz_list, final)
         z_events = self._compute_dem_detection_events_z(synx_list, synz_list, final)
-        x_flat = x_events.ravel().astype(np.uint8)
-        z_flat = z_events.ravel().astype(np.uint8)
+        x_flat = x_events.ravel().astype(dtypes.uint8)
+        z_flat = z_events.ravel().astype(dtypes.uint8)
 
         # Joint decode via UIUF.
         decoder = self._get_css_uf_decoder()
@@ -3492,8 +3560,8 @@ class SurfaceDecoder:
         is_logical_error = corrected_parity != 0
 
         return is_logical_error, DecodingResult(
-            x_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
-            z_correction=np.zeros(self.patch.num_data, dtype=np.uint8),
+            x_correction=zeros(self.patch.num_data, dtype=dtypes.uint8),
+            z_correction=zeros(self.patch.num_data, dtype=dtypes.uint8),
             logical_x_flip=bool(x_obs & 1),
             logical_z_flip=bool(predicted_obs),
             decoding_weight=0.0,
@@ -3805,9 +3873,9 @@ def run_noisy_memory_experiment(
         for name, values in shot_results:
             vals = list(values)
             if name == "synx":
-                synx_list.append(np.array(vals, dtype=np.uint8))
+                synx_list.append(array(vals, dtype=dtypes.uint8))
             elif name == "synz":
-                synz_list.append(np.array(vals, dtype=np.uint8))
+                synz_list.append(array(vals, dtype=dtypes.uint8))
             elif name == "final":
                 final = vals
 
@@ -3820,7 +3888,7 @@ def run_noisy_memory_experiment(
             num_raw_errors += 1
 
         if decode and decoder is not None:
-            final_arr = np.array(final, dtype=np.uint8)
+            final_arr = array(final, dtype=dtypes.uint8)
 
             # Decode based on basis
             if decoder_type == "pecos_uf_uiuf" and basis.upper() == "Z":
@@ -3913,7 +3981,7 @@ class NativeSampler:
         seed: int | None = None,
         *,
         pauli_masks: Any | None = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[Array, Array]:
         """Sample detection events and observable flips.
 
         This matches Stim's DEM sampler output format.
@@ -3927,7 +3995,7 @@ class NativeSampler:
                 twirl=TwirlConfig())``.
 
         Returns:
-            Tuple of (detection_events, observable_flips) as numpy arrays.
+            Tuple of (detection_events, observable_flips) as PECOS arrays.
             - detection_events: shape (num_shots, num_detectors)
             - observable_flips: shape (num_shots, num_observables)
         """
@@ -3945,8 +4013,8 @@ class NativeSampler:
                 seed,
             )
         return (
-            np.array(batch.detector_events(), dtype=bool),
-            np.array(batch.observable_flips(), dtype=bool),
+            array(batch.detector_events(), dtype=dtypes.bool_),
+            array(batch.observable_flips(), dtype=dtypes.bool_),
         )
 
 
@@ -4235,16 +4303,18 @@ def decode_native_samples(
             msg = "pauli_masks require build_native_sampler(..., twirl=TwirlConfig())"
             raise ValueError(msg)
         det_xor, obs_xor = sampler.pauli_frame_lookup.compute_mask_xor(masks_arr)
-        det_events = np.asarray(det_events, dtype=bool) ^ np.asarray(det_xor, dtype=bool)
-        obs_flips = np.asarray(obs_flips, dtype=bool) ^ np.asarray(obs_xor, dtype=bool)
+        # Array has no elementwise XOR (#458); these operands are boolean bit records.
+        det_events = asarray(det_events, dtype=dtypes.bool_) != asarray(det_xor, dtype=dtypes.bool_)
+        obs_flips = asarray(obs_flips, dtype=dtypes.bool_) != asarray(obs_xor, dtype=dtypes.bool_)
 
-    det_list = np.asarray(det_events, dtype=np.uint8).tolist()
-    obs_arr = np.asarray(obs_flips, dtype=np.uint64)
+    det_list = asarray(det_events, dtype=dtypes.uint8).tolist()
+    obs_arr = asarray(obs_flips, dtype=dtypes.uint64)
     if obs_arr.ndim != 2:
         msg = f"expected obs_flips to be 2-D, got shape {obs_arr.shape}"
         raise ValueError(msg)
-    weights = (1 << np.arange(obs_arr.shape[1], dtype=np.uint64)).astype(np.uint64)
-    obs_masks = (obs_arr * weights).sum(axis=1).astype(np.uint64).tolist()
+    # Array lacks unsigned arithmetic and bit shifts (#458); preserve uint64 packing in Python.
+    uint64_mask = (1 << 64) - 1
+    obs_masks = [sum(int(bit) << index for index, bit in enumerate(row)) & uint64_mask for row in obs_arr.tolist()]
     batch = SampleBatch(det_list, obs_masks, num_observables=obs_arr.shape[1])
     return batch.decode_count(dem_str, decoder_type)
 
@@ -4254,10 +4324,10 @@ def demask_pauli_frame_records(
     raw_events: Any,
     raw_obs: Any,
     pauli_masks: Any,
-) -> tuple[NDArray[np.bool_], NDArray[np.bool_]]:
+) -> tuple[Array, Array]:
     """Cancel known Pauli-frame mask flips from detector/observable records."""
-    events_arr = np.asarray(raw_events, dtype=bool)
-    obs_arr = np.asarray(raw_obs, dtype=bool)
+    events_arr = asarray(raw_events, dtype=dtypes.bool_)
+    obs_arr = asarray(raw_obs, dtype=dtypes.bool_)
     masks_arr = _pauli_masks_as_int64(pauli_masks)
 
     if events_arr.ndim != 2:
@@ -4299,10 +4369,18 @@ def demask_pauli_frame_records(
         raise ValueError(msg)
 
     det_xor, obs_xor = pauli_frame_lookup.compute_mask_xor(masks_arr)
+    # Array has no elementwise XOR (#458); these operands are boolean bit records.
     return (
-        events_arr ^ np.asarray(det_xor, dtype=bool),
-        obs_arr ^ np.asarray(obs_xor, dtype=bool),
+        events_arr != asarray(det_xor, dtype=dtypes.bool_),
+        obs_arr != asarray(obs_xor, dtype=dtypes.bool_),
     )
+
+
+def _validate_pauli_mask_bits(bits: Array, *, tag: str) -> None:
+    """Reject malformed mask records before packing their two-bit fields."""
+    if array_any(bits > 1):
+        msg = f"Pauli-mask tag {tag!r} must contain only 0/1 bits"
+        raise OverflowError(msg)
 
 
 def _extract_pauli_masks_from_results(
@@ -4314,7 +4392,7 @@ def _extract_pauli_masks_from_results(
     patch: SurfacePatch | None = None,
     basis: str = "Z",
     twirl: TwirlConfig | None = None,
-) -> NDArray[np.uint8]:
+) -> Array:
     """Reconstruct per-shot Pauli-mask codes from Guppy result tags."""
     from pecos.qec.surface._twirl_sites import (
         mask_col_for,
@@ -4337,7 +4415,7 @@ def _extract_pauli_masks_from_results(
             num_rounds=num_rounds,
             basis=basis,
         )
-        out = np.zeros(
+        out = zeros(
             (
                 num_shots,
                 num_pauli_sites_for_schedule(
@@ -4347,7 +4425,7 @@ def _extract_pauli_masks_from_results(
                     site_schedule="before_two_qubit_gate",
                 ),
             ),
-            dtype=np.uint8,
+            dtype=dtypes.uint8,
         )
         for site in range(n_twirl):
             tag = pauli_mask_gate_tag(site)
@@ -4363,16 +4441,18 @@ def _extract_pauli_masks_from_results(
                 msg = f"Pauli-mask tag {tag!r}: got {len(per_gate)} shots, expected {num_shots} shots"
                 raise ValueError(msg)
 
-            bits = np.asarray(per_gate, dtype=np.uint8)
+            bits = asarray(per_gate, dtype=dtypes.uint8)
             if bits.ndim != 2 or bits.shape[1] != 4:
                 msg = (
                     f"Pauli-mask tag {tag!r} array has shape {bits.shape}, expected "
                     f"({num_shots}, 4) = (num_shots, 2*gate_operands)"
                 )
                 raise ValueError(msg)
+            _validate_pauli_mask_bits(bits, tag=tag)
             lo = bits[:, 0::2]
             hi = bits[:, 1::2]
-            packed = (lo + (hi << 1)).astype(np.uint8)
+            # Array lacks unsigned arithmetic and bit shifts (#458); signed doubling is exact for bits.
+            packed = (lo.astype(dtypes.int64) + hi.astype(dtypes.int64) * 2).astype(dtypes.uint8)
             for operand in range(2):
                 out[:, mask_col_for_gate_operand(site, operand)] = packed[:, operand]
         active = _extract_pauli_activations_from_results(
@@ -4384,14 +4464,15 @@ def _extract_pauli_masks_from_results(
             basis=basis,
             twirl=twirl,
         )
-        if np.any((~active) & (out != 0)):
+        # Array has no bitwise boolean operators (#458); select nonzero values only when inactive.
+        if array_any(where(active, zeros_like(active), out != 0)):
             msg = "malformed Pauli twirl bundle: inactive gate-local site recorded a non-identity Pauli"
             raise ValueError(msg)
         return out
 
     n_twirl = max(0, num_rounds - 1)
     bits_per_round = 2 * num_data
-    out = np.zeros((num_shots, num_pauli_sites(num_rounds, num_data)), dtype=np.uint8)
+    out = zeros((num_shots, num_pauli_sites(num_rounds, num_data)), dtype=dtypes.uint8)
 
     for r in range(n_twirl):
         tag = pauli_mask_round_tag(r)
@@ -4406,17 +4487,19 @@ def _extract_pauli_masks_from_results(
             msg = f"Pauli-mask tag {tag!r}: got {len(per_round)} shots, expected {num_shots} shots"
             raise ValueError(msg)
 
-        bits = np.asarray(per_round, dtype=np.uint8)
+        bits = asarray(per_round, dtype=dtypes.uint8)
         if bits.ndim != 2 or bits.shape[1] != bits_per_round:
             msg = (
                 f"Pauli-mask tag {tag!r} array has shape {bits.shape}, expected "
                 f"({num_shots}, {bits_per_round}) = (num_shots, 2*num_data)"
             )
             raise ValueError(msg)
+        _validate_pauli_mask_bits(bits, tag=tag)
 
         lo = bits[:, 0::2]
         hi = bits[:, 1::2]
-        packed = (lo + (hi << 1)).astype(np.uint8)
+        # Array lacks unsigned arithmetic and bit shifts (#458); signed doubling is exact for bits.
+        packed = (lo.astype(dtypes.int64) + hi.astype(dtypes.int64) * 2).astype(dtypes.uint8)
 
         site = site_idx_for_round(r)
         for q in range(num_data):
@@ -4431,7 +4514,8 @@ def _extract_pauli_masks_from_results(
         basis=basis,
         twirl=twirl,
     )
-    if np.any((~active) & (out != 0)):
+    # Array has no bitwise boolean operators (#458); select nonzero values only when inactive.
+    if array_any(where(active, zeros_like(active), out != 0)):
         msg = "malformed Pauli twirl bundle: inactive round site recorded a non-identity Pauli"
         raise ValueError(msg)
     return out
@@ -4446,7 +4530,7 @@ def _extract_pauli_activations_from_results(
     patch: SurfacePatch | None = None,
     basis: str = "Z",
     twirl: TwirlConfig | None = None,
-) -> NDArray[np.bool_]:
+) -> Array:
     """Reconstruct per-shot twirl activation bits from Guppy result tags.
 
     Legacy `twirl_probability=1.0` bundles have no activation tags; they are
@@ -4478,7 +4562,7 @@ def _extract_pauli_activations_from_results(
             num_rounds=num_rounds,
             basis=basis,
         )
-        out = np.ones(
+        out = ones(
             (
                 num_shots,
                 num_pauli_sites_for_schedule(
@@ -4488,11 +4572,11 @@ def _extract_pauli_activations_from_results(
                     site_schedule="before_two_qubit_gate",
                 ),
             ),
-            dtype=bool,
+            dtype=dtypes.bool_,
         )
         if not require_active_tags:
             return out
-        out[...] = False
+        out.fill(value=False)
         for site in range(n_twirl):
             tag = pauli_active_gate_tag(site)
             if tag not in results:
@@ -4502,7 +4586,7 @@ def _extract_pauli_activations_from_results(
             if len(per_gate) != num_shots:
                 msg = f"Pauli-activation tag {tag!r}: got {len(per_gate)} shots, expected {num_shots} shots"
                 raise ValueError(msg)
-            bits = np.asarray(per_gate, dtype=bool)
+            bits = asarray(per_gate, dtype=dtypes.bool_)
             if bits.ndim != 2 or bits.shape[1] != 2:
                 msg = (
                     f"Pauli-activation tag {tag!r} array has shape {bits.shape}, "
@@ -4514,10 +4598,10 @@ def _extract_pauli_activations_from_results(
         return out
 
     n_twirl = max(0, num_rounds - 1)
-    out = np.ones((num_shots, num_pauli_sites(num_rounds, num_data)), dtype=bool)
+    out = ones((num_shots, num_pauli_sites(num_rounds, num_data)), dtype=dtypes.bool_)
     if not require_active_tags:
         return out
-    out[...] = False
+    out.fill(value=False)
     for r in range(n_twirl):
         tag = pauli_active_round_tag(r)
         if tag not in results:
@@ -4527,7 +4611,7 @@ def _extract_pauli_activations_from_results(
         if len(per_round) != num_shots:
             msg = f"Pauli-activation tag {tag!r}: got {len(per_round)} shots, expected {num_shots} shots"
             raise ValueError(msg)
-        bits = np.asarray(per_round, dtype=bool)
+        bits = asarray(per_round, dtype=dtypes.bool_)
         if bits.ndim != 2 or bits.shape[1] != num_data:
             msg = (
                 f"Pauli-activation tag {tag!r} array has shape {bits.shape}, "
@@ -4611,7 +4695,7 @@ def sample_pauli_masks_from_guppy(
     twirl: TwirlConfig,
     rng: Any,
     ancilla_budget: int | None = None,
-) -> NDArray[np.uint8]:
+) -> Array:
     """Run the Guppy memory program with twirling and harvest mask columns."""
     twirl.validate_runtime_supported()
     num_data = patch.geometry.num_data
@@ -4645,7 +4729,7 @@ def sample_pauli_activations_from_guppy(
     twirl: TwirlConfig,
     rng: Any,
     ancilla_budget: int | None = None,
-) -> NDArray[np.bool_]:
+) -> Array:
     """Run the Guppy memory program with twirling and harvest activation bits."""
     twirl.validate_runtime_supported()
     num_data = patch.geometry.num_data

@@ -200,7 +200,11 @@ impl StabMpsCompile {
     pub fn advise(&self, ancilla_budget: Option<usize>) -> ExecutionAdvice {
         let base = self.recommend();
         let injectable_count = self.injectable_clifford_correction();
-        let deferred_ancillas_required = injectable_count;
+        // Mast consumes one fresh ancilla per non-Clifford RZ regardless of
+        // angle (mast.rs inject_magic_state); only the correction's
+        // Cliffordness depends on injectability. Budget feasibility must
+        // therefore count every non-Clifford RZ, not only T-like ones.
+        let deferred_ancillas_required = self.nonclifford_rz_total();
         let deferred_feasible = ancilla_budget.map(|budget| {
             usize::try_from(deferred_ancillas_required).is_ok_and(|required| budget >= required)
         });
@@ -221,7 +225,7 @@ impl StabMpsCompile {
                 }
                 Some(budget) => {
                     warnings.push(format!(
-                        "deferred injection needs one fresh ancilla per injectable gate \
+                        "deferred injection needs one fresh ancilla per non-Clifford RZ \
                          ({deferred_ancillas_required} required); the given budget of {budget} is \
                          insufficient"
                     ));
@@ -393,7 +397,8 @@ pub struct ExecutionAdvice {
     pub injection: InjectionMode,
     /// Number of gates with Clifford deferred-injection corrections.
     pub injectable_count: u64,
-    /// Fresh ancillas required for deferred injection.
+    /// Fresh ancillas required for deferred injection: one per non-Clifford
+    /// RZ (injectable or not — Mast injects for every non-Clifford gate).
     pub deferred_ancillas_required: u64,
     /// Whether the supplied budget supports deferral, or `None` if unspecified.
     pub deferred_feasible: Option<bool>,
@@ -616,8 +621,29 @@ mod tests {
         assert_eq!(advice.simulator, SimulatorKind::StabMps);
         assert_eq!(advice.injection, InjectionMode::Direct);
         assert_eq!(advice.injectable_count, 0);
-        assert_eq!(advice.deferred_ancillas_required, 0);
+        // Every non-Clifford RZ consumes a fresh ancilla under deferral,
+        // injectable or not.
+        assert_eq!(advice.deferred_ancillas_required, 1);
         assert_eq!(advice.deferred_feasible, Some(true));
+    }
+
+    #[test]
+    fn test_advise_mixed_angles_count_all_nonclifford_rz_for_deferral() {
+        // One T (injectable) plus one arbitrary-angle RZ: deferral consumes
+        // two ancillas. A budget covering only the injectable gate must not
+        // be reported feasible for deferred execution.
+        let mut comp = compile_t_gates(1);
+        comp.rz(Angle64::from_radians(0.3), &[QubitId(0)]);
+
+        let advice = comp.advise(Some(1));
+        assert_eq!(advice.injectable_count, 1);
+        assert_eq!(advice.deferred_ancillas_required, 2);
+        assert_eq!(advice.deferred_feasible, Some(false));
+        assert_ne!(advice.injection, InjectionMode::Deferred);
+
+        let advice = comp.advise(Some(2));
+        assert_eq!(advice.deferred_feasible, Some(true));
+        assert_eq!(advice.injection, InjectionMode::Deferred);
     }
 
     #[test]
@@ -666,7 +692,7 @@ mod tests {
         assert_eq!(advice.injection, InjectionMode::Immediate);
         assert_eq!(advice.deferred_feasible, Some(false));
         assert!(advice.warnings.iter().any(|warning| {
-            warning.contains("one fresh ancilla per injectable gate")
+            warning.contains("one fresh ancilla per non-Clifford RZ")
                 && warning.contains("budget of 1 is insufficient")
         }));
     }

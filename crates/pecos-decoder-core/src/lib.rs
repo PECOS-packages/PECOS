@@ -24,6 +24,7 @@
 
 pub mod adaptive;
 pub mod advanced;
+pub mod bp;
 pub mod bp_matching;
 pub mod config;
 pub mod correlated_decoder;

@@ -308,6 +308,27 @@ class TestBpOsdDecoder:
         result2 = decoder2.decode_syndrome([0, 0, 0])
         assert result2 is not None
 
+    def test_per_column_error_channel(self) -> None:
+        """A per-column channel must steer the decode, not just be accepted."""
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
+
+        H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+        # Syndrome [1, 1, 1] is explained by columns {1, 3} or {0, 2};
+        # the channel priors decide which support wins.
+        favor_1_3 = BpOsdBuilder(H, error_rate=[0.001, 0.3, 0.001, 0.3]).build()
+        assert list(favor_1_3.decode_syndrome([1, 1, 1]).decoding) == [0, 1, 0, 1]
+        favor_0_2 = BpOsdBuilder(H, error_rate=[0.3, 0.001, 0.3, 0.001]).build()
+        assert list(favor_0_2.decode_syndrome([1, 1, 1]).decoding) == [1, 0, 1, 0]
+
+    def test_error_channel_length_mismatch_rejected(self) -> None:
+        """A channel whose length differs from the column count fails at build."""
+        import pytest
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
+
+        H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+        with pytest.raises(RuntimeError, match="length must match"):
+            BpOsdBuilder(H, error_rate=[0.01, 0.02]).build()
+
 
 class TestBpLsdDecoder:
     """Tests for BpLsdDecoder via BpLsdBuilder."""
@@ -330,6 +351,16 @@ class TestBpLsdDecoder:
 
         result = decoder.decode([0, 0, 0])
         assert result is not None
+
+    def test_per_column_error_channel(self) -> None:
+        """A per-column channel must steer the decode, not just be accepted."""
+        from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
+
+        H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+        favor_1_3 = BpLsdBuilder(H, error_rate=[0.001, 0.3, 0.001, 0.3]).build()
+        assert list(favor_1_3.decode([1, 1, 1]).decoding) == [0, 1, 0, 1]
+        favor_0_2 = BpLsdBuilder(H, error_rate=[0.3, 0.001, 0.3, 0.001]).build()
+        assert list(favor_0_2.decode([1, 1, 1]).decoding) == [1, 0, 1, 0]
 
 
 class TestUnionFindDecoder:

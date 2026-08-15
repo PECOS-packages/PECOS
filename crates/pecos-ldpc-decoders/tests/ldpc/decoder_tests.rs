@@ -458,6 +458,97 @@ mod bp_lsd_decoder_tests {
             );
         }
     }
+
+    /// Regression for the `bits_per_step = 0` segfault: on matrices large
+    /// enough for real cluster growth, a literal zero reached the C++ growth
+    /// loop (which adds exactly `bits_per_step` bits per step) and corrupted
+    /// the cluster state. Zero now means "grow all candidates per step" at the
+    /// Rust boundary, matching the `BeliefFind` convention.
+    #[test]
+    fn test_lsd_zero_bits_per_step_on_grown_clusters() {
+        // Deterministic dv=3 (50, 100) matrix via a fixed LCG.
+        let rows = 50;
+        let cols = 100;
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut lcg = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            (state >> 33) as usize
+        };
+        let mut dense = vec![vec![0_u8; cols]; rows];
+        let mut column_supports = Vec::with_capacity(cols);
+        for _ in 0..cols {
+            let mut support = Vec::with_capacity(3);
+            while support.len() < 3 {
+                let row = lcg() % rows;
+                if !support.contains(&row) {
+                    support.push(row);
+                }
+            }
+            column_supports.push(support);
+        }
+        for (col, support) in column_supports.iter().enumerate() {
+            for &row in support {
+                dense[row][col] = 1;
+            }
+        }
+        let flat: Vec<u8> = dense.iter().flatten().copied().collect();
+        let arr = ndarray::Array2::from_shape_vec((rows, cols), flat).unwrap();
+        let pcm = SparseMatrix::from_dense(&arr.view());
+        // A high-weight error: BP cannot resolve it in the iteration budget
+        // below, so decoding falls through to LSD with clusters that must
+        // genuinely grow — the path the fix is about.
+        let mut syndrome = vec![0_u8; rows];
+        for col in [3, 7, 11, 19, 24, 31, 38, 44, 51, 63, 72, 88, 91, 95] {
+            for (row, dense_row) in dense.iter().enumerate() {
+                syndrome[row] ^= dense_row[col];
+            }
+        }
+        let syndrome = Array1::from_vec(syndrome);
+        for bits_per_step in [0, 1] {
+            // Two BP iterations cannot converge on this syndrome, so the C++
+            // bridge falls through to LSD — which is the path the fix is
+            // about. Without this, BP converges and LSD never runs, and the
+            // test proves nothing.
+            let mut decoder = BpLsdDecoder::new(
+                &pcm,
+                Some(0.05),
+                None,
+                2,
+                BpMethod::MinimumSum,
+                BpSchedule::Parallel,
+                0.625,
+                OsdMethod::Osd0,
+                0,
+                bits_per_step,
+                InputVectorType::Syndrome,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let result = decoder.decode(&syndrome.view()).unwrap();
+            assert!(
+                !result.converged,
+                "BP converged, so LSD never ran and this test cannot see the defect"
+            );
+            // The correction must reproduce the observed syndrome.
+            let mut reproduced = vec![0_u8; rows];
+            for (col, &bit) in result.decoding.iter().enumerate() {
+                if bit == 1 {
+                    for (row, dense_row) in dense.iter().enumerate() {
+                        reproduced[row] ^= dense_row[col];
+                    }
+                }
+            }
+            assert_eq!(
+                reproduced,
+                syndrome.to_vec(),
+                "bits_per_step={bits_per_step} produced an invalid correction"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

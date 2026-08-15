@@ -104,6 +104,7 @@ wide = "1"
 fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
+rand_distr = "0.6"
 rand_xoshiro = "0.8"
 rapidrand = { version = "0.1", features = ["rand"] }
 
@@ -206,6 +207,9 @@ pecos-eeg = { version = "0.2.0-dev.0", path = "exp/pecos-eeg" }
 pecos-stab-tn = { version = "0.2.0-dev.0", path = "exp/pecos-stab-tn" }
 pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
 pecos-foreign = { version = "0.2.0-dev.0", path = "crates/pecos-foreign" }
+pecos-bp-trellis = { version = "0.2.0-dev.0", path = "exp/pecos-bp-trellis" }
+pecos-frontier = { version = "0.2.0-dev.0", path = "exp/pecos-frontier" }
+pecos-trellis = { version = "0.2.0-dev.0", path = "exp/pecos-trellis" }
 pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
 pecos-gpu-sims = { version = "0.2.0-dev.0", path = "crates/pecos-gpu-sims" }
 pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }

@@ -450,9 +450,13 @@ class Array(Generic[_ScalarT]):
     def conj(self) -> Array[_ScalarT]: ...
 
     # Methods
+    @overload
+    def reshape(self, shape: tuple[int, ...]) -> Array[_ScalarT]: ...
+    @overload
     def reshape(self, *shape: int) -> Array[_ScalarT]: ...
     def flatten(self) -> Array[_ScalarT]: ...
     def ravel(self) -> Array[_ScalarT]: ...
+    def fill(self, value: object) -> None: ...
     def transpose(self, *axes: int) -> Array[_ScalarT]: ...
     def sum(self, axis: int | None = None) -> Scalar | Array[_ScalarT]: ...
     def mean(self, axis: int | None = None) -> ScalarF64 | Array[ScalarF64]: ...
@@ -2370,26 +2374,62 @@ class qec:
         def num_shots(self) -> int: ...
         @property
         def num_observables(self) -> int: ...
+        @property
+        def seed(self) -> int | None: ...
+        @property
+        def dem(self) -> str | None: ...
+        @property
+        def metadata_json(self) -> str | None: ...
+        @property
+        def generator(self) -> str | None: ...
+        @property
+        def format_version(self) -> int | None: ...
         def get_syndrome(self, i: int) -> list[int]: ...
         def get_observable_flips(self, i: int) -> ObservableFlips: ...
         def detector_events(self) -> list[list[bool]]: ...
         def observable_flips(self) -> list[list[bool]]: ...
-        def decode_count(self, dem: str, decoder_type: str = ...) -> int: ...
-        def decode_each(self, dem: str, decoder_type: str = ...) -> list[int]: ...
+        def save(
+            self,
+            path: str | os.PathLike[str],
+            *,
+            dem: str,
+            metadata_json: str | None = ...,
+            clear_metadata: bool = ...,
+            allow_dem_mismatch: bool = ...,
+        ) -> None: ...
+        @staticmethod
+        def load(path: str | os.PathLike[str]) -> qec.SampleBatch: ...
+        def decode_count(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> int: ...
+        def decode_each(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> list[int]: ...
         def decode_count_parallel(
             self,
             dem: str,
             decoder_type: str = ...,
             num_workers: int | None = ...,
+            *,
+            allow_dem_mismatch: bool = ...,
         ) -> int: ...
-        def decode_count_batch(self, dem: str) -> int: ...
-        def decode_stats(self, dem: str, decoder_type: str = ...) -> qec.DecodeStats: ...
+        def decode_count_batch(self, dem: str, *, allow_dem_mismatch: bool = ...) -> int: ...
+        def decode_stats(
+            self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...
+        ) -> qec.DecodeStats: ...
         def decode_stats_parallel(
             self,
             dem: str,
             decoder_type: str = ...,
             num_workers: int | None = ...,
+            *,
+            allow_dem_mismatch: bool = ...,
         ) -> qec.DecodeStats: ...
+        def compare_decoders(
+            self,
+            dem: str,
+            dut_decoder_type: str,
+            reference_decoder_type: str,
+            alpha: float = ...,
+            *,
+            allow_dem_mismatch: bool = ...,
+        ) -> qec.DecoderComparisonResult: ...
 
     class DecodeStats:
         num_shots: int
@@ -2857,7 +2897,8 @@ class decoders:
 
         Args:
             pcm: Sparse parity check matrix.
-            error_rate: Channel error probability.
+            error_rate: Channel error probability: a single float applied to every column,
+                or one probability per column.
 
         Example:
             >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
@@ -2866,7 +2907,11 @@ class decoders:
             >>> result = decoder.decode_syndrome([0, 0, 0])
         """
 
-        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def __init__(
+            self,
+            pcm: decoders.SparseMatrix,
+            error_rate: float | Sequence[float],
+        ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpOsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
@@ -2933,7 +2978,8 @@ class decoders:
 
         Args:
             pcm: Sparse parity check matrix.
-            error_rate: Channel error probability.
+            error_rate: Channel error probability: a single float applied to every column,
+                or one probability per column.
 
         Example:
             >>> from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
@@ -2942,7 +2988,11 @@ class decoders:
             >>> result = decoder.decode([0, 0, 0])
         """
 
-        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def __init__(
+            self,
+            pcm: decoders.SparseMatrix,
+            error_rate: float | Sequence[float],
+        ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpLsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
@@ -2957,6 +3007,11 @@ class decoders:
 
         def lsd_order(self, val: int) -> decoders.BpLsdBuilder:
             """Set LSD order parameter (default: 0)."""
+            ...
+
+        def bits_per_step(self, val: int) -> decoders.BpLsdBuilder:
+            """Set bits added per cluster-growth step (default: 0 = grow all
+            candidate bits each step)."""
             ...
 
         def build(self) -> decoders.BpLsdDecoder:
@@ -3151,7 +3206,12 @@ class decoders:
             ...
 
         def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Set initial damping factor (None = disabled)."""
+            """Enable memory-BP for the relay ensemble (default: 0.65).
+
+            The pre-relay leg uses this directly and relay legs draw per-leg strengths
+            only when it is set; None disables memory entirely and makes relay
+            ensembling ineffective.
+            """
             ...
 
         def pre_iter(self, val: int) -> decoders.RelayBpBuilder:
@@ -3167,7 +3227,12 @@ class decoders:
             ...
 
         def seed(self, val: int) -> decoders.RelayBpBuilder:
-            """Set random seed for relay parameter sampling (default: 0)."""
+            """Set the run-level random seed for relay strengths (default: 0).
+
+            The RNG advances across decodes, so reused-decoder outcomes depend on
+            decode history. Equal seeds reproduce only the same full shot sequence,
+            not an individual syndrome independently.
+            """
             ...
 
         def stopping(self, val: str) -> decoders.RelayBpBuilder:
@@ -3184,6 +3249,9 @@ class decoders:
         """Relay BP ensemble decoder for qLDPC codes.
 
         Created via ``RelayBpBuilder(...).build()``.
+        Its relay RNG advances across decodes, so a reused decoder's per-shot outcomes
+        depend on decode history. A seed reproduces the same full shot sequence, not
+        each syndrome independently.
         """
 
         @staticmethod

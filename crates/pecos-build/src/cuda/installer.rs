@@ -6,81 +6,120 @@
 
 use crate::errors::{Error, Result};
 use crate::extract::contained_entry_path;
-use sevenz_rust2::{ArchiveReader, Password};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use super::{CUDA_VERSION, get_pecos_cuda_dir, is_valid_cuda_installation};
 
-/// CUDA Toolkit download information
-struct CudaDownload {
-    url: String,
-    filename: String,
-    /// Expected SHA256 of the archive, when one is published.
-    ///
-    /// This is `None` for every current target because NVIDIA publishes only MD5 digests
-    /// for the CUDA *local installers* (`.../<version>/docs/sidebar/md5sum.txt`); there is
-    /// no `sha256sum.txt` beside it. When no digest is recorded the installer prints a
-    /// prominent warning rather than silently proceeding -- see
-    /// [`warn_archive_is_unverified`].
-    ///
-    /// Two ways to close this properly, both deliberately left as follow-ups because each
-    /// changes more than checksum bookkeeping:
-    /// - Verify NVIDIA's published MD5. Sound against substitution here (that needs a
-    ///   second-preimage, not a collision) but requires an MD5 implementation.
-    /// - Install from the CUDA *redistributable* components instead of the multi-gigabyte
-    ///   local installer. `.../compute/cuda/redist/redistrib_<version>.json` publishes
-    ///   SHA256 for each component, and this installer already discards everything except
-    ///   nvcc, cudart, and cublas -- which redist ships separately.
-    sha256: Option<&'static str>,
+const CUDA_REDIST_BASE: &str = "https://developer.download.nvidia.com/compute/cuda/redist";
+
+/// Components installed for CUDA 12.6.3, in installation order.
+///
+/// NVIDIA versions redistributable components independently of the CUDA release, so keep
+/// each component's published version rather than deriving it from [`CUDA_VERSION`].
+const CUDA_COMPONENTS: &[(&str, &str)] = &[
+    ("cuda_nvcc", "12.6.85"),
+    ("cuda_cudart", "12.6.77"),
+    ("libcublas", "12.6.4.1"),
+];
+
+struct CudaArchive {
+    component: &'static str,
+    platform: &'static str,
+    filename: &'static str,
+    sha256: &'static str,
 }
 
-/// Warns, unmissably, that an archive is about to be used without integrity verification.
-fn warn_archive_is_unverified(filename: &str) {
-    println!();
-    println!("WARNING: {filename} is being used without checksum verification.");
-    println!("         NVIDIA publishes no SHA256 digest for the CUDA local installers, so");
-    println!("         its integrity rests entirely on the HTTPS transport. A corrupted or");
-    println!("         substituted archive will not be detected here.");
-    println!();
-}
+/// CUDA redistributable archives keyed by component and platform.
+///
+/// NVIDIA published these values in
+/// `https://developer.download.nvidia.com/compute/cuda/redist/redistrib_12.6.3.json`.
+/// To refresh them, read the `cuda_nvcc`, `cuda_cudart`, and `libcublas` keys from the new
+/// manifest. Each has its own `version` and per-platform `relative_path` and `sha256`;
+/// preserve the component-specific version in the filename and take the digest from the
+/// manifest, never from a local download.
+const CUDA_ARCHIVES: &[CudaArchive] = &[
+    CudaArchive {
+        component: "cuda_nvcc",
+        platform: "linux-x86_64",
+        filename: "cuda_nvcc-linux-x86_64-12.6.85-archive.tar.xz",
+        sha256: "840deff234d9bef20d6856439c49881cb4f29423b214f9ecd2fa59b7ac323817",
+    },
+    CudaArchive {
+        component: "cuda_nvcc",
+        platform: "linux-sbsa",
+        filename: "cuda_nvcc-linux-sbsa-12.6.85-archive.tar.xz",
+        sha256: "1b834df41cb071884f33b1e4ffc185e4799975057baca57d80ba7c4591e67950",
+    },
+    CudaArchive {
+        component: "cuda_nvcc",
+        platform: "windows-x86_64",
+        filename: "cuda_nvcc-windows-x86_64-12.6.85-archive.zip",
+        sha256: "3fb9f76b87c37d02f947354be89b718ad5f2c76b6ab47995265bfa3a068a5e14",
+    },
+    CudaArchive {
+        component: "cuda_cudart",
+        platform: "linux-x86_64",
+        filename: "cuda_cudart-linux-x86_64-12.6.77-archive.tar.xz",
+        sha256: "f74689258a60fd9c5bdfa7679458527a55e22442691ba678dcfaeffbf4391ef9",
+    },
+    CudaArchive {
+        component: "cuda_cudart",
+        platform: "linux-sbsa",
+        filename: "cuda_cudart-linux-sbsa-12.6.77-archive.tar.xz",
+        sha256: "c73c8e5bfe8fcd7468d012c9eebff15063005a3bba44423d541d573dc058de58",
+    },
+    CudaArchive {
+        component: "cuda_cudart",
+        platform: "windows-x86_64",
+        filename: "cuda_cudart-windows-x86_64-12.6.77-archive.zip",
+        sha256: "7a313bc0c93b1a50bb03aa9783a199ae70c3b66e2d8084da65e8254a8577b925",
+    },
+    CudaArchive {
+        component: "libcublas",
+        platform: "linux-x86_64",
+        filename: "libcublas-linux-x86_64-12.6.4.1-archive.tar.xz",
+        sha256: "ec682bac6387f9cdfd0c20b25a16cd6ed0b8b3b7ff42be9eaeb41828e3a72572",
+    },
+    CudaArchive {
+        component: "libcublas",
+        platform: "linux-sbsa",
+        filename: "libcublas-linux-sbsa-12.6.4.1-archive.tar.xz",
+        sha256: "84668dcb2159f9efd912a66ed5afe5d6533b72a81bbabc98b26ac7ac7a36105a",
+    },
+    CudaArchive {
+        component: "libcublas",
+        platform: "windows-x86_64",
+        filename: "libcublas-windows-x86_64-12.6.4.1-archive.zip",
+        sha256: "1a87ec80f8c0e5a39badc87010d479930c5b63abd788b3a05bd688a5980a3d07",
+    },
+];
 
-/// Get download URL for the current platform
-fn get_download_info() -> Result<CudaDownload> {
+fn platform_key() -> Result<&'static str> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
 
     match (os, arch) {
-        ("linux", "x86_64") => Ok(CudaDownload {
-            url: format!(
-                "https://developer.download.nvidia.com/compute/cuda/{CUDA_VERSION}/local_installers/cuda_{CUDA_VERSION}_560.35.05_linux.run"
-            ),
-            filename: format!("cuda_{CUDA_VERSION}_560.35.05_linux.run"),
-            // SHA256 can be added once verified
-            sha256: None,
-        }),
-        ("linux", "aarch64") => Ok(CudaDownload {
-            url: format!(
-                "https://developer.download.nvidia.com/compute/cuda/{CUDA_VERSION}/local_installers/cuda_{CUDA_VERSION}_560.35.05_linux_sbsa.run"
-            ),
-            filename: format!("cuda_{CUDA_VERSION}_560.35.05_linux_sbsa.run"),
-            sha256: None,
-        }),
-        ("windows", "x86_64") => Ok(CudaDownload {
-            url: format!(
-                "https://developer.download.nvidia.com/compute/cuda/{CUDA_VERSION}/local_installers/cuda_{CUDA_VERSION}_561.17_windows.exe"
-            ),
-            filename: format!("cuda_{CUDA_VERSION}_561.17_windows.exe"),
-            sha256: None,
-        }),
+        ("linux", "x86_64") => Ok("linux-x86_64"),
+        ("linux", "aarch64") => Ok("linux-sbsa"),
+        ("windows", "x86_64") => Ok("windows-x86_64"),
         ("macos", _) => Err(Error::Cuda(
             "CUDA is not supported on macOS (deprecated by NVIDIA since macOS 10.14)".into(),
         )),
         _ => Err(Error::Cuda(format!("Unsupported platform: {os}/{arch}"))),
     }
+}
+
+fn archive_for(component: &str, platform: &str) -> Result<&'static CudaArchive> {
+    CUDA_ARCHIVES
+        .iter()
+        .find(|archive| archive.component == component && archive.platform == platform)
+        .ok_or_else(|| {
+            Error::Cuda(format!(
+                "No CUDA redistributable archive for {component} on {platform}"
+            ))
+        })
 }
 
 /// Install CUDA Toolkit to `~/.pecos/deps/cuda/`
@@ -93,7 +132,7 @@ fn get_download_info() -> Result<CudaDownload> {
 /// - Home directory cannot be determined
 /// - CUDA is already installed (unless `force` is true)
 /// - Platform is unsupported
-/// - Download or extraction fails
+/// - Download, verification, extraction, or merging fails
 /// - Installation verification fails
 pub fn install_cuda(force: bool) -> Result<PathBuf> {
     let cuda_dir = crate::home::get_versioned_dep_path("cuda", CUDA_VERSION)?;
@@ -111,38 +150,35 @@ pub fn install_cuda(force: bool) -> Result<PathBuf> {
         fs::remove_dir_all(&cuda_dir)?;
     }
 
-    let download_info = get_download_info()?;
+    let platform = platform_key()?;
 
     println!("Installing CUDA Toolkit {CUDA_VERSION}...");
-    println!("This will download ~4GB and may take 10-30 minutes depending on your connection.");
+    println!(
+        "This will download ~574MB and may take several minutes depending on your connection."
+    );
     println!();
 
     // Create cache directory
-    let cache_dir = cuda_dir
+    let cuda_parent = cuda_dir
         .parent()
-        .ok_or_else(|| Error::Cuda("Invalid CUDA directory".into()))?
-        .join("cache");
+        .ok_or_else(|| Error::Cuda("Invalid CUDA directory".into()))?;
+    let cache_dir = cuda_parent.join("cache");
     fs::create_dir_all(&cache_dir)?;
 
-    let archive_path = cache_dir.join(&download_info.filename);
-
-    // Download if not already cached
-    if archive_path.exists() {
-        println!("Using cached download: {}", archive_path.display());
-    } else {
-        download_cuda(&download_info.url, &archive_path)?;
+    let extraction_root = cuda_parent
+        .join("tmp")
+        .join(format!("cuda_extract.{}", std::process::id()));
+    if let Err(error) = fs::remove_dir_all(&extraction_root)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        return Err(error.into());
     }
+    fs::create_dir_all(&extraction_root)?;
 
-    // Verify on every install, not only after a fresh download: the cache persists between
-    // runs, so a truncated or tampered cached archive must not be trusted merely because an
-    // earlier run left it there.
-    match download_info.sha256 {
-        Some(expected_sha256) => verify_checksum(&archive_path, expected_sha256)?,
-        None => warn_archive_is_unverified(&download_info.filename),
-    }
-
-    // Extract CUDA
-    extract_cuda(&archive_path, &cuda_dir)?;
+    let install_result = install_components(platform, &cache_dir, &extraction_root, &cuda_dir);
+    let cleanup_result = fs::remove_dir_all(&extraction_root);
+    install_result?;
+    cleanup_result?;
 
     // Verify installation
     if !is_valid_cuda_installation(&cuda_dir) {
@@ -175,9 +211,82 @@ pub fn install_cuda(force: bool) -> Result<PathBuf> {
     Ok(cuda_dir)
 }
 
-/// Download CUDA installer
+fn install_components(
+    platform: &str,
+    cache_dir: &Path,
+    extraction_root: &Path,
+    cuda_dir: &Path,
+) -> Result<()> {
+    for (component, version) in CUDA_COMPONENTS {
+        let archive = archive_for(component, platform)?;
+        debug_assert!(archive.filename.contains(version));
+
+        let url = format!(
+            "{CUDA_REDIST_BASE}/{component}/{platform}/{}",
+            archive.filename
+        );
+        let archive_path = cache_dir.join(archive.filename);
+
+        // Verify on every install, whether cached or freshly downloaded. A cached archive
+        // that fails is discarded and re-fetched once so corruption cannot wedge later runs.
+        if archive_path.exists() {
+            println!("Using cached download: {}", archive_path.display());
+            if let Err(error) = verify_archive(&archive_path, archive.sha256) {
+                println!(
+                    "Cached CUDA component {} failed verification ({error}); refetching",
+                    archive.filename
+                );
+                // Another process may have removed the bad entry after our verification.
+                if let Err(remove_error) = fs::remove_file(&archive_path)
+                    && remove_error.kind() != io::ErrorKind::NotFound
+                {
+                    return Err(remove_error.into());
+                }
+                fetch_and_verify(&url, &archive_path, archive.sha256)?;
+            }
+        } else {
+            fetch_and_verify(&url, &archive_path, archive.sha256)?;
+        }
+
+        let component_root = extraction_root.join(component);
+        fs::create_dir_all(&component_root)?;
+        let extracted_dir = extract_component_archive(&archive_path, &component_root)?;
+        merge_component_dir(&extracted_dir, cuda_dir)?;
+    }
+
+    Ok(())
+}
+
+/// Downloads to a private `.part` sibling, verifies it, and only then moves it into place.
+///
+/// The process id prevents concurrent installs from modifying the bytes between verification
+/// and rename. A failed verification removes the partial file and never publishes it.
+fn fetch_and_verify(url: &str, archive_path: &Path, expected_sha256: &str) -> Result<()> {
+    let filename = archive_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("CUDA component");
+    println!("Downloading {filename}...");
+    let partial_path = archive_path.with_extension(format!("part.{}", std::process::id()));
+    if let Err(error) = download_cuda(url, &partial_path) {
+        // A download interrupted midway leaves a partial file; do not leave it behind for
+        // a later run to trip over (verification would reject it, but the leak is untidy).
+        let _ = fs::remove_file(&partial_path);
+        return Err(error);
+    }
+
+    if let Err(error) = verify_archive(&partial_path, expected_sha256) {
+        let _ = fs::remove_file(&partial_path);
+        return Err(error);
+    }
+
+    fs::rename(&partial_path, archive_path)?;
+    Ok(())
+}
+
+/// Download a CUDA component, streaming it to disk.
 fn download_cuda(url: &str, dest: &Path) -> Result<()> {
-    print!("Downloading CUDA Toolkit... ");
+    print!("Downloading CUDA component... ");
     io::stdout().flush()?;
 
     crate::download::ensure_crypto_provider();
@@ -196,9 +305,9 @@ fn download_cuda(url: &str, dest: &Path) -> Result<()> {
     let mut downloaded: u64 = 0;
     let mut stream = response;
     let mut last_print = 0.0;
+    let mut buffer = vec![0u8; 64 * 1024];
 
     loop {
-        let mut buffer = vec![0; 65536]; // 64KB buffer for faster download
         let bytes_read = io::Read::read(&mut stream, &mut buffer)?;
         if bytes_read == 0 {
             break;
@@ -211,7 +320,7 @@ fn download_cuda(url: &str, dest: &Path) -> Result<()> {
             #[allow(clippy::cast_precision_loss)]
             let progress = (downloaded as f64 / total_size as f64) * 100.0;
             if progress - last_print >= 1.0 {
-                print!("\rDownloading CUDA Toolkit... {progress:.0}%");
+                print!("\rDownloading CUDA component... {progress:.0}%");
                 io::stdout().flush()?;
                 last_print = progress;
             }
@@ -219,227 +328,173 @@ fn download_cuda(url: &str, dest: &Path) -> Result<()> {
     }
 
     println!(
-        "\rDownloading CUDA Toolkit... Done ({} MB)",
+        "\rDownloading CUDA component... Done ({} MB)",
         downloaded / 1_000_000
     );
     Ok(())
 }
 
-/// Verify file checksum
-fn verify_checksum(file_path: &Path, expected: &str) -> Result<()> {
-    print!("Verifying checksum... ");
-    io::stdout().flush()?;
+/// Computes a file's SHA256 incrementally so large archives are not read into memory.
+fn file_sha256(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
 
-    let data = fs::read(file_path)?;
+    let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    Digest::update(&mut hasher, &data);
-    let computed_hash = hasher.finalize().iter().fold(String::new(), |mut s, b| {
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = io::Read::read(&mut file, &mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        Digest::update(&mut hasher, &buffer[..read]);
+    }
+    Ok(hasher.finalize().iter().fold(String::new(), |mut s, b| {
         use std::fmt::Write;
         write!(s, "{b:02x}").unwrap();
         s
-    });
+    }))
+}
 
-    if computed_hash == expected {
-        println!("OK");
+fn verify_archive(path: &Path, expected: &str) -> Result<()> {
+    let actual = file_sha256(path)?;
+    if actual == expected {
         Ok(())
     } else {
-        println!("FAILED");
         Err(Error::Sha256Mismatch {
             expected: expected.to_string(),
-            actual: computed_hash,
+            actual,
         })
     }
 }
 
-/// Extract CUDA from the installer
-fn extract_cuda(archive: &Path, dest: &Path) -> Result<()> {
+fn extract_component_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
     let filename = archive
         .file_name()
-        .and_then(|n| n.to_str())
+        .and_then(|name| name.to_str())
         .ok_or_else(|| Error::Archive("Invalid archive path".into()))?;
 
-    if filename.ends_with(".run") {
-        extract_linux_runfile(archive, dest)
-    } else if filename.ends_with(".exe") {
-        extract_windows_exe(archive, dest)
+    println!("Extracting {filename}...");
+    if filename.ends_with(".tar.xz") {
+        extract_tar_xz(archive, dest)?;
+    } else if filename.ends_with(".zip") {
+        extract_zip(archive, dest)?;
     } else {
-        Err(Error::Archive(format!(
-            "Unsupported archive format: {filename}"
-        )))
+        return Err(Error::Archive(format!(
+            "Unsupported CUDA component archive format: {filename}"
+        )));
     }
+
+    let expected_name = filename
+        .strip_suffix(".tar.xz")
+        .or_else(|| filename.strip_suffix(".zip"))
+        .ok_or_else(|| Error::Archive(format!("Invalid CUDA archive filename: {filename}")))?;
+    validate_extracted_layout(dest, expected_name)
 }
 
-/// Extract CUDA from Linux .run file
-fn extract_linux_runfile(archive: &Path, dest: &Path) -> Result<()> {
-    println!("Extracting CUDA Toolkit (this may take several minutes)...");
-
-    // Create a temporary extraction directory
-    let temp_dir = dest
-        .parent()
-        .ok_or_else(|| Error::Cuda("Invalid destination path".into()))?
-        .join("tmp")
-        .join("cuda_extract");
-
-    if temp_dir.exists() {
-        fs::remove_dir_all(&temp_dir)?;
-    }
-    fs::create_dir_all(&temp_dir)?;
-
-    // Make the .run file executable
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(archive)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(archive, perms)?;
-    }
-
-    // Extract using --extract flag
-    // The .run file supports: --extract=<path> to extract without installing
-    print!("Running CUDA installer extraction... ");
-    io::stdout().flush()?;
-
-    let status = Command::new("sh")
-        .arg(archive)
-        .arg("--silent")
-        .arg("--toolkit")
-        .arg(format!("--toolkitpath={}", dest.display()))
-        .arg("--no-man-page")
-        .arg("--no-opengl-libs")
-        .arg("--no-drm")
-        .status()
-        .map_err(|e| Error::Cuda(format!("Failed to run CUDA installer: {e}")))?;
-
-    if !status.success() {
-        // If the full extraction fails, try the extract-only approach
-        println!("Full extraction failed, trying alternative method...");
-
-        let status = Command::new("sh")
-            .arg(archive)
-            .arg("--extract")
-            .arg(&temp_dir)
-            .status()
-            .map_err(|e| Error::Cuda(format!("Failed to extract CUDA: {e}")))?;
-
-        if !status.success() {
-            return Err(Error::Cuda("CUDA extraction failed".into()));
-        }
-
-        // Copy only the components we need from the extracted files
-        copy_cuda_components(&temp_dir, dest)?;
-
-        // Clean up temp directory
-        fs::remove_dir_all(&temp_dir)?;
-    }
-
-    println!("Done");
+fn extract_tar_xz(archive: &Path, dest: &Path) -> Result<()> {
+    let file = fs::File::open(archive)?;
+    let decoder = xz2::read::XzDecoder::new(file);
+    let mut tar_archive = tar::Archive::new(decoder);
+    tar_archive.unpack(dest)?;
     Ok(())
 }
 
-/// Copy only the necessary CUDA components
-fn copy_cuda_components(src: &Path, dest: &Path) -> Result<()> {
-    print!("Copying CUDA components... ");
-    io::stdout().flush()?;
+fn extract_zip(archive: &Path, dest: &Path) -> Result<()> {
+    let file = fs::File::open(archive)?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|error| Error::Archive(error.to_string()))?;
 
-    fs::create_dir_all(dest)?;
-
-    // Components we need
-    let components = ["cuda_nvcc", "cuda_cudart", "libcublas"];
-
-    for component in &components {
-        // Find the component directory (might be versioned)
-        let entries = fs::read_dir(src)?;
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with(component) {
-                copy_component(&entry.path(), dest)?;
-            }
-        }
-    }
-
-    println!("Done");
-    Ok(())
-}
-
-/// Copy a CUDA component to the destination
-fn copy_component(component_path: &Path, dest: &Path) -> Result<()> {
-    // Each component has bin/, include/, lib64/ subdirectories
-    let subdirs = ["bin", "include", "lib64", "lib"];
-
-    for subdir in &subdirs {
-        let src_subdir = component_path.join(subdir);
-        if src_subdir.exists() {
-            let dest_subdir = dest.join(subdir);
-            fs::create_dir_all(&dest_subdir)?;
-            copy_dir_contents(&src_subdir, &dest_subdir)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Recursively copy directory contents
-fn copy_dir_contents(src: &Path, dest: &Path) -> Result<()> {
-    for entry in fs::read_dir(src)?.flatten() {
-        let src_path = entry.path();
-        let dest_path = dest.join(entry.file_name());
-
-        if src_path.is_dir() {
-            fs::create_dir_all(&dest_path)?;
-            copy_dir_contents(&src_path, &dest_path)?;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|error| Error::Archive(error.to_string()))?;
+        let Some(entry_path) = entry.enclosed_name() else {
+            continue;
+        };
+        // `enclosed_name` balances `..` lexically but accepts Windows-normalized escapes
+        // and device names, so every accepted entry also goes through the shared guard.
+        let out_path = contained_entry_path(dest, &entry_path.to_string_lossy())?;
+        if entry.is_dir() {
+            fs::create_dir_all(&out_path)?;
         } else {
-            fs::copy(&src_path, &dest_path)?;
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut out_file = fs::File::create(&out_path)?;
+            io::copy(&mut entry, &mut out_file)?;
         }
     }
+
     Ok(())
 }
 
-/// Extract CUDA from Windows .exe installer
-fn extract_windows_exe(archive: &Path, dest: &Path) -> Result<()> {
-    println!("Extracting CUDA Toolkit...");
+fn validate_extracted_layout(root: &Path, expected_name: &str) -> Result<PathBuf> {
+    let entries = fs::read_dir(root)?.collect::<std::result::Result<Vec<_>, _>>()?;
+    if entries.len() != 1 {
+        return Err(Error::Archive(format!(
+            "CUDA component archive must contain one top-level directory named {expected_name}; found {} entries",
+            entries.len()
+        )));
+    }
 
-    let mut reader = ArchiveReader::open(archive, Password::empty())
-        .map_err(|e| Error::Archive(e.to_string()))?;
+    let entry = &entries[0];
+    if !entry.file_type()?.is_dir() || entry.file_name() != expected_name {
+        return Err(Error::Archive(format!(
+            "CUDA component archive top-level entry must be the directory {expected_name}; found {}",
+            entry.path().display()
+        )));
+    }
 
-    fs::create_dir_all(dest)?;
+    Ok(entry.path())
+}
 
-    // Extract only the components we need
-    reader
-        .for_each_entries(|entry, reader| {
-            let entry_name = entry.name();
+/// Creates a symlink at `link` pointing at `target`, on either platform.
+#[cfg(unix)]
+fn symlink_file(target: &Path, link: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, link)?;
+    Ok(())
+}
 
-            // Filter for nvcc, cudart, and cublas components
-            let dominated_components = ["nvcc", "cudart", "cublas", "cuda_runtime"];
-            let dominated = dominated_components
-                .iter()
-                .any(|c| entry_name.to_lowercase().contains(c));
+/// Creates a symlink at `link` pointing at `target`, on either platform.
+///
+/// CUDA `lib/` symlink targets are files, so the file variant is correct here.
+#[cfg(windows)]
+fn symlink_file(target: &Path, link: &Path) -> Result<()> {
+    std::os::windows::fs::symlink_file(target, link)?;
+    Ok(())
+}
 
-            if !dominated {
-                return Ok(true); // Skip this entry
+/// Recursively merges a component's top-level children into the CUDA installation.
+///
+/// Uses the non-following [`std::fs::DirEntry::file_type`] to classify each entry, and
+/// recreates symlinks as symlinks rather than copying through them. CUDA `lib/` trees ship
+/// versioned shared-object symlink chains (`libcublas.so -> libcublas.so.12 ->
+/// libcublas.so.12.6.4.1`); copying through them with a following `is_dir`/`fs::copy` would
+/// both triple the ~523MB payload on disk and follow a symlinked directory out of the
+/// extraction tree. Recreating the link preserves the layout NVIDIA intended and keeps the
+/// merge within the extracted component.
+fn merge_component_dir(component_dir: &Path, cuda_dir: &Path) -> Result<()> {
+    fs::create_dir_all(cuda_dir)?;
+    for entry in fs::read_dir(component_dir)? {
+        let entry = entry?;
+        let source = entry.path();
+        let target = cuda_dir.join(entry.file_name());
+        let file_type = entry.file_type()?;
+
+        if file_type.is_symlink() {
+            // Redist archives only carry relative symlinks pointing beside the link; recreate
+            // it verbatim so `.so` version resolution keeps working without duplicating bytes.
+            let link_target = fs::read_link(&source)?;
+            if target.symlink_metadata().is_ok() {
+                fs::remove_file(&target)?;
             }
-
-            // Entry names come from the archive, so they are untrusted input: resolve them
-            // through the containment check before touching the filesystem. Unlike the tar
-            // and zip readers used elsewhere in this crate, ArchiveReader hands the raw name
-            // to the callback without validating it.
-            let entry_path = contained_entry_path(dest, entry_name)
-                .map_err(|error| sevenz_rust2::Error::Other(error.to_string().into()))?;
-
-            if entry.is_directory() {
-                fs::create_dir_all(&entry_path).ok();
-            } else {
-                if let Some(parent) = entry_path.parent() {
-                    fs::create_dir_all(parent).ok();
-                }
-                let mut output = fs::File::create(&entry_path)?;
-                io::copy(reader, &mut output)?;
-            }
-            Ok(true)
-        })
-        .map_err(|e| Error::Archive(e.to_string()))?;
-
-    println!("Done");
+            symlink_file(&link_target, &target)?;
+        } else if file_type.is_dir() {
+            fs::create_dir_all(&target)?;
+            merge_component_dir(&source, &target)?;
+        } else {
+            fs::copy(&source, &target)?;
+        }
+    }
     Ok(())
 }
 
@@ -467,89 +522,128 @@ pub fn uninstall_cuda() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sevenz_rust2::{ArchiveEntry, ArchiveWriter};
 
-    /// Builds a 7z archive whose single entry carries the given name.
-    ///
-    /// Names must survive the component filter in `extract_windows_exe`, so each fixture
-    /// includes one of the wanted component substrings.
-    fn archive_with_entry(path: &Path, entry_name: &str) {
-        let mut writer = ArchiveWriter::create(path).expect("create archive");
-        writer
-            .push_archive_entry(ArchiveEntry::new_file(entry_name), Some(&b"payload"[..]))
-            .expect("push entry");
-        writer.finish().expect("finish archive");
-    }
-
-    /// True if any file named `needle` exists anywhere under `root`.
-    ///
-    /// A rejected escape must not land at ANY path, and where it would land depends on the
-    /// platform: on Unix `.. ` is a literal directory, so a trailing-space escape that
-    /// slipped the guard would sit deep under the destination rather than beside it. A
-    /// fixed-path existence check would miss that; a recursive search does not.
-    fn contains_file_named(root: &Path, needle: &str) -> bool {
-        let Ok(entries) = fs::read_dir(root) else {
-            return false;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if contains_file_named(&path, needle) {
-                    return true;
-                }
-            } else if path.file_name().is_some_and(|name| name == needle) {
-                return true;
-            }
+    #[test]
+    fn every_checksum_is_well_formed() {
+        for archive in CUDA_ARCHIVES {
+            assert_eq!(
+                archive.sha256.len(),
+                64,
+                "{}/{} digest is not 64 characters",
+                archive.component,
+                archive.platform
+            );
+            assert!(
+                archive
+                    .sha256
+                    .chars()
+                    .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character)),
+                "{}/{} digest is not lowercase hex: {}",
+                archive.component,
+                archive.platform,
+                archive.sha256
+            );
         }
-        false
     }
 
-    /// The containment guard must be *wired into* the extractor, not merely present in
-    /// the crate. Unit tests on `contained_entry_path` all pass even when the call site is
-    /// replaced by a bare `dest.join`, so this is the test that protects the invocation.
     #[test]
-    fn extraction_rejects_entries_that_escape_the_destination() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let archive = temp.path().join("installer.exe");
-        let dest = temp.path().join("dest");
+    fn the_archive_table_has_no_duplicate_entries() {
+        let mut keys: Vec<_> = CUDA_ARCHIVES
+            .iter()
+            .map(|archive| (archive.component, archive.platform))
+            .collect();
+        keys.sort_unstable();
+        let before = keys.len();
+        keys.dedup();
+        assert_eq!(before, keys.len(), "duplicate component/platform entries");
+    }
 
-        // Trailing space: the spelling that defeated the first version of the guard.
-        archive_with_entry(&archive, "nvcc/.. /.. /escaped.dll");
-        let error = extract_windows_exe(&archive, &dest).expect_err("must reject");
-        assert!(
-            error.to_string().contains("escapes")
-                || error.to_string().contains("trailing dots or spaces"),
-            "unexpected error: {error}"
-        );
-        // The escaped file must exist nowhere under the temp root, not merely beside `dest`:
-        // on Unix `.. ` is a literal directory, so an unguarded write would land deep inside
-        // the tree rather than at `temp/escaped.dll`.
-        assert!(
-            !contains_file_named(temp.path(), "escaped.dll"),
-            "the rejected entry was written somewhere under the temp root"
+    #[test]
+    fn streaming_hash_matches_known_answer() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sample = temp.path().join("sample");
+        fs::write(&sample, b"abc").expect("write sample");
+
+        assert_eq!(
+            file_sha256(&sample).expect("hash sample"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
     }
 
     #[test]
-    fn extraction_rejects_plain_parent_traversal() {
+    fn component_trees_merge_into_one_cuda_installation() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let archive = temp.path().join("installer.exe");
-        let dest = temp.path().join("dest");
+        let component_a = temp.path().join("comp-a-archive");
+        let component_b = temp.path().join("comp-b-archive");
+        let cuda_dir = temp.path().join("cuda");
 
-        archive_with_entry(&archive, "nvcc/../../escaped.dll");
-        let error = extract_windows_exe(&archive, &dest).expect_err("must reject");
-        assert!(error.to_string().contains("escapes"), "unexpected: {error}");
-        assert!(!contains_file_named(temp.path(), "escaped.dll"));
+        fs::create_dir_all(component_a.join("bin")).expect("create bin fixture");
+        fs::write(component_a.join("bin/nvcc"), b"nvcc").expect("write nvcc fixture");
+        fs::create_dir_all(component_b.join("include")).expect("create include fixture");
+        fs::write(
+            component_b.join("include/cuda_runtime.h"),
+            b"runtime header",
+        )
+        .expect("write header fixture");
+
+        merge_component_dir(&component_a, &cuda_dir).expect("merge first component");
+        merge_component_dir(&component_b, &cuda_dir).expect("merge second component");
+
+        assert!(cuda_dir.join("bin/nvcc").exists());
+        assert!(cuda_dir.join("include/cuda_runtime.h").exists());
     }
 
+    /// The redist `lib/` trees ship versioned soname symlink chains. Merging must recreate
+    /// them as symlinks, not copy through them into duplicate full-size files.
+    #[cfg(unix)]
     #[test]
-    fn extraction_accepts_an_ordinary_nested_entry() {
+    fn merge_preserves_shared_object_symlink_chains() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let archive = temp.path().join("installer.exe");
-        let dest = temp.path().join("dest");
+        let component = temp.path().join("comp-archive");
+        let cuda_dir = temp.path().join("cuda");
+        let lib = component.join("lib");
+        fs::create_dir_all(&lib).expect("create lib fixture");
 
-        archive_with_entry(&archive, "cuda_nvcc/bin/nvcc.exe");
-        extract_windows_exe(&archive, &dest).expect("ordinary entry must extract");
-        assert!(dest.join("cuda_nvcc/bin/nvcc.exe").exists());
+        // libcublas.so -> libcublas.so.12 -> libcublas.so.12.6.4.1 (the real file)
+        fs::write(lib.join("libcublas.so.12.6.4.1"), vec![0u8; 4096]).expect("write real so");
+        std::os::unix::fs::symlink("libcublas.so.12.6.4.1", lib.join("libcublas.so.12"))
+            .expect("link .12");
+        std::os::unix::fs::symlink("libcublas.so.12", lib.join("libcublas.so")).expect("link .so");
+
+        merge_component_dir(&component, &cuda_dir).expect("merge component with symlinks");
+
+        let merged_lib = cuda_dir.join("lib");
+        // The links are still links (not duplicated), and they still resolve to the real file.
+        assert!(
+            merged_lib
+                .join("libcublas.so")
+                .symlink_metadata()
+                .expect("stat .so")
+                .file_type()
+                .is_symlink(),
+            "libcublas.so must remain a symlink, not a copied file"
+        );
+        assert!(
+            merged_lib
+                .join("libcublas.so.12")
+                .symlink_metadata()
+                .expect("stat .12")
+                .file_type()
+                .is_symlink()
+        );
+        // Following the chain reaches the real file, so linking/loading still works.
+        assert_eq!(
+            fs::read(merged_lib.join("libcublas.so"))
+                .expect("read through the link chain")
+                .len(),
+            4096
+        );
+        // And only one real file exists on disk, not three.
+        let real_files = fs::read_dir(&merged_lib)
+            .expect("read merged lib")
+            .filter_map(std::result::Result::ok)
+            .filter(|e| e.file_type().expect("type").is_file())
+            .count();
+        assert_eq!(real_files, 1, "the merge must not duplicate the real .so");
     }
 }

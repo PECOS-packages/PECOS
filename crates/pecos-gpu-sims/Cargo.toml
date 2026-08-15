@@ -27,6 +27,7 @@ num-complex.workspace = true
 
 # PECOS integration
 pecos-core.workspace = true
+pecos-qec.workspace = true
 pecos-simulators.workspace = true
 pecos-random.workspace = true
 
@@ -34,7 +35,6 @@ pecos-random.workspace = true
 approx.workspace = true
 paste.workspace = true
 env_logger.workspace = true
-pecos-qec.workspace = true
 pecos-quantum.workspace = true
 
 [lints]

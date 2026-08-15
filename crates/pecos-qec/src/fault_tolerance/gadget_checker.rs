@@ -2572,6 +2572,7 @@ mod tests {
         println!("  Total tested: {}", analysis.total_tested);
         println!("  Is FT: {}", analysis.is_fault_tolerant());
         println!("  Syndrome patterns: {}", analysis.num_syndrome_patterns());
+        assert!(analysis.is_fault_tolerant());
     }
 
     #[test]
@@ -2623,6 +2624,10 @@ mod tests {
             analysis.never_detected_logical_errors
         );
         println!("  Is FT: {}", analysis.is_fault_tolerant());
+        assert!(
+            !analysis.is_fault_tolerant(),
+            "the final extraction round still has undetectable post-CX data faults"
+        );
     }
 
     #[test]
@@ -2645,7 +2650,7 @@ mod tests {
         let analysis = checker.analyze_decoder_requirements(1);
 
         // Test helper methods
-        let _ = analysis.is_fault_tolerant();
+        assert!(!analysis.is_fault_tolerant());
         let _ = analysis.num_syndrome_patterns();
         let problematic = analysis.problematic_syndromes();
 

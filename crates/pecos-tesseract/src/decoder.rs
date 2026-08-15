@@ -53,10 +53,21 @@ pub struct TesseractConfig {
     pub det_penalty: f64,
 }
 
+/// Upstream Tesseract's `DEFAULT_DET_BEAM`. An unbounded beam is a separate
+/// opt-in constant upstream (`INF_DET_BEAM`); using it by default saturates
+/// `pqlimit` on circuit-scale detector error models, which returns a truncated
+/// (wrong) answer slowly: measured on a 936-detector BB144 model, an unbounded
+/// beam took ~14 s/shot and failed 16 of 60 shots, versus ~0.29 s/shot and 2 of
+/// 1000 with this beam.
+const DEFAULT_DET_BEAM: u16 = 5;
+
+/// Upstream Tesseract's `INF_DET_BEAM`: search without a detector beam bound.
+const INFINITE_DET_BEAM: u16 = u16::MAX;
+
 impl Default for TesseractConfig {
     fn default() -> Self {
         Self {
-            det_beam: u16::MAX, // Infinite beam by default
+            det_beam: DEFAULT_DET_BEAM,
             beam_climbing: false,
             no_revisit_dets: true,
             verbose: false,
@@ -96,7 +107,7 @@ impl TesseractConfig {
     #[must_use]
     pub fn fast() -> Self {
         Self {
-            det_beam: 5,
+            det_beam: DEFAULT_DET_BEAM,
             beam_climbing: true,
             no_revisit_dets: true,
             verbose: false,
@@ -109,7 +120,7 @@ impl TesseractConfig {
     #[must_use]
     pub fn accurate() -> Self {
         Self {
-            det_beam: u16::MAX,
+            det_beam: INFINITE_DET_BEAM,
             beam_climbing: false,
             no_revisit_dets: false,
             verbose: false,
@@ -454,7 +465,11 @@ mod tests {
     #[test]
     fn test_tesseract_config_default() {
         let config = TesseractConfig::default();
-        assert_eq!(config.det_beam, u16::MAX);
+        // Must match upstream Tesseract's DEFAULT_DET_BEAM. An unbounded beam
+        // here saturates pqlimit on circuit-scale models and returns a
+        // truncated answer slowly, so this value is load-bearing, not cosmetic.
+        assert_eq!(config.det_beam, DEFAULT_DET_BEAM);
+        assert_ne!(config.det_beam, INFINITE_DET_BEAM);
         assert!(!config.beam_climbing);
         assert!(!config.verbose);
     }
@@ -470,7 +485,7 @@ mod tests {
     #[test]
     fn test_tesseract_config_accurate() {
         let config = TesseractConfig::accurate();
-        assert_eq!(config.det_beam, u16::MAX);
+        assert_eq!(config.det_beam, INFINITE_DET_BEAM);
         assert!(!config.beam_climbing);
         assert!(!config.no_revisit_dets);
     }

@@ -111,13 +111,17 @@ fn is_standard_2q_clifford_gate(gate_type: GateType) -> bool {
 fn is_supported_measurement_gate(gate_type: GateType) -> bool {
     matches!(
         gate_type,
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
+        GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ
     )
 }
 
 #[inline]
 fn is_supported_prep_gate(gate_type: GateType) -> bool {
-    matches!(gate_type, GateType::PZ | GateType::QAlloc)
+    matches!(gate_type, GateType::PX | GateType::PZ | GateType::QAlloc)
 }
 
 #[inline]
@@ -517,21 +521,28 @@ fn propagate_forward(
                 let pair = [(QubitId(loc.qubits[0]), QubitId(loc.qubits[1]))];
                 prop.swap(&pair);
             }
-            // PZ/QAlloc absorbs propagating errors on the reset qubit
-            GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
+            // Preparation absorbs propagating errors on the reset qubit.
+            GateType::PX | GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
                 prop.clear_qubit(loc.qubits[0]);
             }
             // The X component flips the measurement and then survives the
             // collapse -- a non-destructive measurement absorbs only the Z
             // component. A discarded (`MeasureFree`) or reset (`MPZ`) qubit
             // clears fully.
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
+            GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ
                 if !loc.qubits.is_empty() =>
             {
                 let q = loc.qubits[0];
-                if prop.contains_x(q)
-                    && let Some(&meas_idx) = meas_positions.get(&loc_idx)
-                {
+                let flips_result = if loc.gate_type == GateType::MX {
+                    prop.contains_z(q)
+                } else {
+                    prop.contains_x(q)
+                };
+                if flips_result && let Some(&meas_idx) = meas_positions.get(&loc_idx) {
                     affected.insert(meas_idx);
                 }
                 super::propagator::cross_measurement(
@@ -1217,10 +1228,15 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 });
             }
 
-            GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
+            GateType::PX | GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
                 let q = loc.qubits[0];
+                let prep_fault = if gate_type == GateType::PX {
+                    PauliType::Z
+                } else {
+                    PauliType::X
+                };
                 let effect = effect_cache.single(
-                    PauliType::X,
+                    prep_fault,
                     q,
                     loc_idx + 1,
                     &gates,
@@ -1251,7 +1267,11 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 });
             }
 
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ => {
+            GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ => {
                 if let Some(&meas_idx) = meas_positions.get(&loc_idx) {
                     let affected = vec![meas_idx];
                     let dets = record_effect_index.detectors_for_measurements(&affected);
@@ -1556,9 +1576,12 @@ pub fn symbolic_measurement_history(
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 
             match gate.gate_type {
-                GateType::PZ | GateType::QAlloc => {
+                GateType::PX | GateType::PZ | GateType::QAlloc => {
                     for &q in &qs {
                         sim.pz(q);
+                        if gate.gate_type == GateType::PX {
+                            sim.h(&[q]);
+                        }
                     }
                 }
                 GateType::H => {
@@ -1638,10 +1661,17 @@ pub fn symbolic_measurement_history(
                 // every reference to it. Representing that needs a notion of a
                 // hidden random source this history does not have, so say so
                 // rather than return a history whose dependencies dangle.
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ => {
+                GateType::MX
+                | GateType::MZ
+                | GateType::MeasureFree
+                | GateType::MeasureLeaked
+                | GateType::MPZ => {
                     // Every measurement collapses its qubit, so all of them run.
                     // Only the record-bearing ones earn a column.
                     let records_a_result = gate.gate_type.consumes_measurement_record();
+                    if gate.gate_type == GateType::MX {
+                        sim.h(&qs);
+                    }
                     for result in sim.mz(&qs) {
                         if records_a_result {
                             let column = column_of.len();

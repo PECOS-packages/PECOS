@@ -127,8 +127,9 @@ ignore = [
 "examples/surface_code_thresholds.ipynb" = ["TID251"]
 
 # Standalone offline oracle-fixture generators inside Rust crate test dirs -
-# scripts run via uv, not an importable package
-"crates/*/tests/fixtures/*.py" = [
+# scripts run via uv, not an importable package. Experimental crates live under
+# exp/ and carry the same kind of generator.
+"{crates,exp}/*/tests/fixtures/*.py" = [
     "INP001",   # Implicit namespace package - standalone scripts, not a package
     "S311",     # Standard pseudo-random - fixed-seed case sampling, not crypto
     "TID251",   # NumPy allowed - these generate oracle fixtures for the test suite

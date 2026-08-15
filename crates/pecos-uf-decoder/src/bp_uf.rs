@@ -23,7 +23,7 @@
 //! 3. **UF stage**: standard weighted UF growth + peeling
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
-use crate::mini_bp::{self, BpGraph};
+use pecos_decoder_core::bp::{BpGraph, BpScratch, min_sum_bp_into};
 use pecos_decoder_core::correlated_decoder::MatchingDecoder;
 use pecos_decoder_core::dem::{DemCheckMatrix, DemMatchingGraph};
 use pecos_decoder_core::errors::DecoderError;
@@ -133,9 +133,8 @@ pub struct BpUfDecoder {
     base_weights: Vec<f64>,
     /// BP-adjusted weights (reusable buffer).
     adjusted_weights: Vec<f64>,
-    /// BP message buffers (reusable across shots).
-    bp_c_to_v: Vec<f64>,
-    bp_v_to_c: Vec<f64>,
+    /// BP work buffers (reusable across shots).
+    bp_scratch: BpScratch,
     bp_posterior: Vec<f64>,
     /// Config.
     config: BpUfConfig,
@@ -210,9 +209,8 @@ impl BpUfDecoder {
         let adjusted_weights = base_weights.clone();
 
         let bp_graph_data = BpGraph::from_dcm(&dcm);
-        let bp_c_to_v = vec![0.0; bp_graph_data.total_edges];
-        let bp_v_to_c = vec![0.0; bp_graph_data.total_edges];
-        let bp_posterior = Vec::with_capacity(bp_graph_data.num_vars);
+        let bp_scratch = BpScratch::new(&bp_graph_data);
+        let bp_posterior = vec![0.0; bp_graph_data.mechanism_count()];
 
         // Always store matching graph (needed for Auto and MatchingGraph modes).
         let matching_graph_stored = Some(graph);
@@ -224,8 +222,7 @@ impl BpUfDecoder {
             mechanism_to_edge,
             base_weights,
             adjusted_weights,
-            bp_c_to_v,
-            bp_v_to_c,
+            bp_scratch,
             bp_posterior,
             config,
         })
@@ -298,7 +295,8 @@ impl BpUfDecoder {
 
         let base_weights: Vec<f64> = match_graph.edges.iter().map(|e| e.weight).collect();
         let adjusted_weights = base_weights.clone();
-        let total_edges = bp_graph.total_edges;
+        let bp_scratch = BpScratch::new(&bp_graph);
+        let mechanism_count = bp_graph.mechanism_count();
 
         Ok(Self {
             uf,
@@ -307,16 +305,16 @@ impl BpUfDecoder {
             mechanism_to_edge,
             base_weights,
             adjusted_weights,
-            bp_c_to_v: vec![0.0; total_edges],
-            bp_v_to_c: vec![0.0; total_edges],
-            bp_posterior: Vec::with_capacity(bp_dcm.num_mechanisms),
+            bp_scratch,
+            bp_posterior: vec![0.0; mechanism_count],
             config,
         })
     }
 }
 
 impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
-    fn compute_weights(&mut self, syndrome: &[u8]) -> Vec<f64> {
+    fn compute_weights(&mut self, syndrome: &[u8]) -> Result<Vec<f64>, DecoderError> {
+        validate_syndrome_length(&self.bp_graph, syndrome)?;
         let num_defects = syndrome.iter().filter(|&&v| v != 0).count();
 
         let iters = if self.config.bp_iterations > 0 {
@@ -325,7 +323,7 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
             let d_est = ((self
                 .matching_graph
                 .as_ref()
-                .map_or(self.bp_graph.num_checks, |mg| mg.num_detectors)
+                .map_or(self.bp_graph.check_count(), |mg| mg.num_detectors)
                 as f64)
                 / 2.0)
                 .sqrt();
@@ -342,7 +340,7 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
         let num_det = self
             .matching_graph
             .as_ref()
-            .map_or(self.bp_graph.num_checks, |mg| mg.num_detectors);
+            .map_or(self.bp_graph.check_count(), |mg| mg.num_detectors);
         let d_est = ((num_det as f64) / 2.0).sqrt();
         let use_matching_graph = match self.config.bp_graph_type {
             BpGraphType::MatchingGraph => true,
@@ -352,15 +350,14 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
 
         if let (true, Some(mg)) = (use_matching_graph, &self.matching_graph) {
             // Matching-graph BP: simpler topology, better convergence.
-            self.bp_posterior =
-                mini_bp::matching_graph_bp(mg, syndrome, iters, self.config.min_sum_scale);
+            self.bp_posterior = matching_graph_bp(mg, syndrome, iters, self.config.min_sum_scale);
             // Matching-graph BP posteriors are already per-edge (no mechanism mapping needed).
             // Return them directly as weights.
             let mut weights = self.base_weights.clone();
             let d_est = ((self
                 .matching_graph
                 .as_ref()
-                .map_or(self.bp_graph.num_checks, |mg| mg.num_detectors)
+                .map_or(self.bp_graph.check_count(), |mg| mg.num_detectors)
                 as f64)
                 / 2.0)
                 .sqrt();
@@ -382,30 +379,27 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
                     }
                 }
             }
-            return weights;
+            return Ok(weights);
         }
 
         // At d>=5 with auto mode, selective BP rarely adjusts edges.
         // Skip BP entirely and return base weights (= FB_correlated behavior).
         // The correlation table second pass in BpMatchingDecoder handles accuracy.
         if matches!(self.config.bp_graph_type, BpGraphType::Auto) && d_est >= 5.5 {
-            return self.base_weights.clone();
+            return Ok(self.base_weights.clone());
         }
 
         // Tanner-graph BP.
-        self.bp_c_to_v.fill(0.0);
-        self.bp_v_to_c.fill(0.0);
         let serial = matches!(self.config.bp_schedule, BpSchedule::Serial);
-        mini_bp::min_sum_bp_into(
+        min_sum_bp_into(
             &self.bp_graph,
             syndrome,
             iters,
             self.config.min_sum_scale,
             serial,
-            &mut self.bp_c_to_v,
-            &mut self.bp_v_to_c,
+            &mut self.bp_scratch,
             &mut self.bp_posterior,
-        );
+        )?;
 
         // Selective BP: only adjust edges where BP strongly disagrees with
         // the DEM prior. This avoids BP noise (which hurts at d>=5) while
@@ -419,7 +413,8 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
         let d_est = ((self
             .matching_graph
             .as_ref()
-            .map_or(self.bp_graph.num_checks, |mg| mg.num_detectors) as f64)
+            .map_or(self.bp_graph.check_count(), |mg| mg.num_detectors)
+            as f64)
             / 2.0)
             .sqrt();
         // Selectivity threshold: higher at large d (BP less reliable).
@@ -430,7 +425,7 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
 
         for (m, &posterior) in self.bp_posterior.iter().enumerate() {
             if let Some(edge_idx) = self.mechanism_to_edge[m] {
-                let prior = self.bp_graph.prior_llr[m];
+                let prior = self.bp_graph.prior_llrs()[m];
                 let shift = (posterior - prior).abs();
 
                 // Only use BP weight if the shift is large relative to the prior.
@@ -449,11 +444,15 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
                 }
             }
         }
-        weights
+        Ok(weights)
     }
 
     fn num_edges(&self) -> usize {
         self.base_weights.len()
+    }
+
+    fn check_count(&self) -> usize {
+        self.bp_graph.check_count()
     }
 
     fn is_trivial(&self, syndrome: &[u8]) -> Option<u64> {
@@ -469,6 +468,7 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+        validate_syndrome_length(&self.bp_graph, syndrome)?;
         // Fast path: cluster predecoder handles isolated cases without BP.
         // This catches 0 defects, single defects, and isolated pairs. Gated on
         // the UF config like the plain `UfDecoder` paths. It deliberately runs
@@ -495,7 +495,7 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
             let d_est = ((self
                 .matching_graph
                 .as_ref()
-                .map_or(self.bp_graph.num_checks, |mg| mg.num_detectors)
+                .map_or(self.bp_graph.check_count(), |mg| mg.num_detectors)
                 as f64)
                 / 2.0)
                 .sqrt();
@@ -509,19 +509,16 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
             }
         };
 
-        self.bp_c_to_v.fill(0.0);
-        self.bp_v_to_c.fill(0.0);
         let serial = matches!(self.config.bp_schedule, BpSchedule::Serial);
-        mini_bp::min_sum_bp_into(
+        min_sum_bp_into(
             &self.bp_graph,
             syndrome,
             iters,
             self.config.min_sum_scale,
             serial,
-            &mut self.bp_c_to_v,
-            &mut self.bp_v_to_c,
+            &mut self.bp_scratch,
             &mut self.bp_posterior,
-        );
+        )?;
         let posteriors = &self.bp_posterior;
 
         // Stage 2: Adjust UF edge weights using BP posteriors.
@@ -583,6 +580,133 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
     }
 }
 
+fn validate_syndrome_length(graph: &BpGraph, syndrome: &[u8]) -> Result<(), DecoderError> {
+    if syndrome.len() == graph.check_count() {
+        Ok(())
+    } else {
+        Err(DecoderError::InvalidDimensions {
+            expected: graph.check_count(),
+            actual: syndrome.len(),
+        })
+    }
+}
+
+/// BP on the matching graph (Hack et al. 2026 style).
+///
+/// This remains an implementation detail of BP+UF. The promoted native BP
+/// surface is the Tanner-graph belief primitive in `pecos_decoder_core::bp`.
+fn matching_graph_bp(
+    graph: &DemMatchingGraph,
+    syndrome: &[u8],
+    num_iterations: usize,
+    min_sum_scale: f64,
+) -> Vec<f64> {
+    debug_assert_eq!(syndrome.len(), graph.num_detectors);
+    let num_nodes = graph.num_detectors + 1;
+    let num_edges = graph.edges.len();
+    let boundary = graph.num_detectors;
+    let prior_llr: Vec<f64> = graph.edges.iter().map(|edge| edge.weight).collect();
+
+    let mut node_edges: Vec<Vec<usize>> = vec![Vec::new(); num_nodes];
+    for (index, edge) in graph.edges.iter().enumerate() {
+        node_edges[edge.node1 as usize].push(index);
+        if let Some(node2) = edge.node2 {
+            node_edges[node2 as usize].push(index);
+        } else {
+            node_edges[boundary].push(index);
+        }
+    }
+
+    let mut message_index = 0;
+    let mut node_messages: Vec<Vec<(usize, usize)>> = vec![Vec::new(); num_nodes];
+    let mut edge_messages: Vec<Vec<(usize, usize)>> = vec![Vec::new(); num_edges];
+    for (node, edges) in node_edges.iter().enumerate() {
+        for &edge in edges {
+            node_messages[node].push((edge, message_index));
+            edge_messages[edge].push((node, message_index));
+            message_index += 1;
+        }
+    }
+
+    let mut node_to_edge = vec![0.0; message_index];
+    let mut edge_to_node = vec![0.0; message_index];
+    for (edge, entries) in edge_messages.iter().enumerate() {
+        for &(_, message) in entries {
+            edge_to_node[message] = prior_llr[edge];
+        }
+    }
+
+    let syndrome_sign: Vec<f64> = (0..num_nodes)
+        .map(|node| {
+            if node < syndrome.len() && syndrome[node] != 0 {
+                -1.0
+            } else {
+                1.0
+            }
+        })
+        .collect();
+    let damp = 0.25;
+
+    for _ in 0..num_iterations {
+        for node in 0..num_nodes {
+            let entries = &node_messages[node];
+            if entries.len() < 2 {
+                continue;
+            }
+
+            let mut total_sign = syndrome_sign[node];
+            let mut min1 = f64::INFINITY;
+            let mut min2 = f64::INFINITY;
+            let mut min1_position = usize::MAX;
+            for (position, &(_, message)) in entries.iter().enumerate() {
+                let value = edge_to_node[message];
+                if value < 0.0 {
+                    total_sign = -total_sign;
+                }
+                let absolute_value = value.abs();
+                if absolute_value < min1 {
+                    min2 = min1;
+                    min1 = absolute_value;
+                    min1_position = position;
+                } else if absolute_value < min2 {
+                    min2 = absolute_value;
+                }
+            }
+
+            for (position, &(_, message)) in entries.iter().enumerate() {
+                let variable_message = edge_to_node[message];
+                let sign_without_variable = total_sign.copysign(total_sign * variable_message);
+                let min_without_variable = if position == min1_position {
+                    min2
+                } else {
+                    min1
+                };
+                node_to_edge[message] =
+                    sign_without_variable * min_without_variable * min_sum_scale;
+            }
+        }
+
+        for (edge, entries) in edge_messages.iter().enumerate() {
+            let total: f64 = entries
+                .iter()
+                .map(|&(_, message)| node_to_edge[message])
+                .sum();
+            for &(_, message) in entries {
+                let new_message = prior_llr[edge] + total - node_to_edge[message];
+                edge_to_node[message] = (1.0 - damp) * new_message + damp * edge_to_node[message];
+            }
+        }
+    }
+
+    let mut posterior = prior_llr;
+    for (edge, entries) in edge_messages.iter().enumerate() {
+        for &(_, message) in entries {
+            posterior[edge] += node_to_edge[message];
+        }
+    }
+    posterior
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,6 +735,20 @@ error(0.1) D1
         let mut dec = BpUfDecoder::from_dem(SIMPLE_DEM, BpUfConfig::default()).unwrap();
         let obs = dec.decode_to_observables(&[1, 1]).unwrap();
         assert_eq!(obs, 1); // D0-D1 edge carries L0
+    }
+
+    #[test]
+    fn test_bp_uf_rejects_wrong_syndrome_length_before_bp() {
+        let mut dec = BpUfDecoder::from_dem(SIMPLE_DEM, BpUfConfig::default()).unwrap();
+        for syndrome in [&[1_u8][..], &[1_u8, 1, 0][..]] {
+            assert!(matches!(
+                dec.decode_obs(syndrome),
+                Err(DecoderError::InvalidDimensions {
+                    expected: 2,
+                    actual
+                }) if actual == syndrome.len()
+            ));
+        }
     }
 
     const D3_DEM: &str =

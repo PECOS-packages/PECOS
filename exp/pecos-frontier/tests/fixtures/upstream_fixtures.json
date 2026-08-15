@@ -1,0 +1,1488 @@
+{
+ "generator": "generate_upstream_fixtures.py",
+ "fixtures": [
+  {
+   "name": "degeneracy_ml_vs_mle",
+   "mechanisms": [
+    [
+     0.2,
+     [
+      0
+     ],
+     [
+      0
+     ]
+    ],
+    [
+     0.15,
+     [
+      0
+     ],
+     []
+    ],
+    [
+     0.15,
+     [
+      0
+     ],
+     []
+    ]
+   ],
+   "num_detectors": 1,
+   "num_observables": 1,
+   "syndromes": [
+    0,
+    1
+   ],
+   "pruned": {
+    "k": 2,
+    "delta": 100.0
+   },
+   "expected_unpruned": [
+    {
+     "syndrome": 0,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -0.4354089844812365,
+     "terminal_log_masses": {
+      "0": -0.5175146119167873,
+      "1": -2.9759296462578115
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 1,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -1.0412872220488403,
+     "terminal_log_masses": {
+      "0": -1.5896352851379207,
+      "1": -1.9038089730366778
+     },
+     "engine": "native_binary"
+    }
+   ],
+   "expected_pruned": [
+    {
+     "syndrome": 0,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -0.5050092384445508,
+     "terminal_log_masses": {
+      "0": -0.5481814103097595,
+      "1": -3.6690768268177565
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 1,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -1.4003932854993923,
+     "terminal_log_masses": {
+      "0": -2.282782465697866,
+      "1": -1.93447577142965
+     },
+     "engine": "native_binary"
+    }
+   ]
+  },
+  {
+   "name": "rep_chain_hyperedge",
+   "mechanisms": [
+    [
+     0.05,
+     [
+      0
+     ],
+     [
+      0
+     ]
+    ],
+    [
+     0.04,
+     [
+      0,
+      1
+     ],
+     []
+    ],
+    [
+     0.03,
+     [
+      1,
+      2
+     ],
+     [
+      1
+     ]
+    ],
+    [
+     0.06,
+     [
+      2,
+      3
+     ],
+     []
+    ],
+    [
+     0.02,
+     [
+      3
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.07,
+     [
+      1,
+      2,
+      3
+     ],
+     []
+    ]
+   ],
+   "num_detectors": 4,
+   "num_observables": 2,
+   "syndromes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+   ],
+   "pruned": {
+    "k": 4,
+    "delta": 30.0
+   },
+   "expected_unpruned": [
+    {
+     "syndrome": 0,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -0.27716516945765746,
+     "terminal_log_masses": {
+      "0": -0.27722321191185384,
+      "1": -10.031530036817655
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 1,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -3.217786917942595,
+     "terminal_log_masses": {
+      "0": -8.78108842722251,
+      "1": -3.221630385188459
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 2,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -5.233687599573494,
+     "terminal_log_masses": {
+      "0": -5.615426272349639,
+      "1": -6.381511448991767
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 3,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -3.4491289645180316,
+     "terminal_log_masses": {
+      "0": -3.455226241668234,
+      "1": -8.552089030335141
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 4,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -6.764670168798568,
+     "terminal_log_masses": {
+      "2": -9.069129045682928,
+      "3": -6.86982270281349
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 5,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -6.82797229734218,
+     "terminal_log_masses": {
+      "2": -6.879539903005537,
+      "3": -9.818506902744613
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 6,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -3.7047508205521926,
+     "terminal_log_masses": {
+      "2": -3.7532296281899296,
+      "3": -6.7555208339606345
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 7,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -6.6145097115094025,
+     "terminal_log_masses": {
+      "2": -9.626383227722268,
+      "3": -6.664960641265254
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 8,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -4.0608263079955025,
+     "terminal_log_masses": {
+      "2": -6.339918972287872,
+      "3": -4.168831489862692
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 9,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -6.9357967928880235,
+     "terminal_log_masses": {
+      "2": -7.039693883624326,
+      "3": -9.251649985363196
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 10,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -6.432607404086188,
+     "terminal_log_masses": {
+      "2": -6.482439701584985,
+      "3": -9.456512046911433
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 11,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -7.130114138247697,
+     "terminal_log_masses": {
+      "2": -9.46622924710348,
+      "3": -7.231817558646671
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 12,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -3.026106948529199,
+     "terminal_log_masses": {
+      "0": -3.028736928251697,
+      "1": -8.968200793089709
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 13,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -5.309778798539666,
+     "terminal_log_masses": {
+      "0": -6.041915585766176,
+      "1": -5.965399686237199
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 14,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -2.8537193014310196,
+     "terminal_log_masses": {
+      "0": -2.8639125560097964,
+      "1": -7.444840692719713
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 15,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -5.289694649257151,
+     "terminal_log_masses": {
+      "0": -6.194399083124567,
+      "1": -5.808319729286401
+     },
+     "engine": "native_binary"
+    }
+   ],
+   "expected_pruned": [
+    {
+     "syndrome": 0,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -0.27722330026295683,
+     "terminal_log_masses": {
+      "0": -0.27722330026295683
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 1,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -3.221662279429397,
+     "terminal_log_masses": {
+      "1": -3.221662279429397
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 2,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -6.381511448991767,
+     "terminal_log_masses": {
+      "1": -6.381511448991767
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 3,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -3.4552771306109022,
+     "terminal_log_masses": {
+      "0": -3.4552771306109022
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 4,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -6.86982270281349,
+     "terminal_log_masses": {
+      "3": -6.86982270281349
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 5,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -6.879539903005537,
+     "terminal_log_masses": {
+      "2": -6.879539903005537
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 6,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -3.75332199009823,
+     "terminal_log_masses": {
+      "2": -3.75332199009823
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 7,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -6.664960641265254,
+     "terminal_log_masses": {
+      "3": -6.664960641265254
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 8,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -4.169043598373583,
+     "terminal_log_masses": {
+      "3": -4.169043598373583
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 9,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -7.039693883624326,
+     "terminal_log_masses": {
+      "2": -7.039693883624326
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 10,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -6.504857303140179,
+     "terminal_log_masses": {
+      "2": -6.504857303140179
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 11,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -7.231817558646671,
+     "terminal_log_masses": {
+      "3": -7.231817558646671
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 12,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -3.028758613304906,
+     "terminal_log_masses": {
+      "0": -3.028758613304906
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 13,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -5.965399686237199,
+     "terminal_log_masses": {
+      "1": -5.965399686237199
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 14,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -2.855561927630394,
+     "terminal_log_masses": {
+      "0": -2.8639126443608993,
+      "1": -7.645142288208857
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 15,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -6.194399083124567,
+     "terminal_log_masses": {
+      "0": -6.194399083124567
+     },
+     "engine": "native_binary"
+    }
+   ]
+  },
+  {
+   "name": "wide_observable_70",
+   "mechanisms": [
+    [
+     0.1,
+     [
+      0
+     ],
+     [
+      70
+     ]
+    ],
+    [
+     0.02,
+     [
+      0
+     ],
+     [
+      3
+     ]
+    ],
+    [
+     0.05,
+     [
+      1
+     ],
+     [
+      0,
+      70
+     ]
+    ],
+    [
+     0.03,
+     [
+      0,
+      1
+     ],
+     []
+    ]
+   ],
+   "num_detectors": 2,
+   "num_observables": 71,
+   "syndromes": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "pruned": {
+    "k": 8,
+    "delta": 100.0
+   },
+   "expected_unpruned": [
+    {
+     "syndrome": 0,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -0.20483714083157648,
+     "terminal_log_masses": {
+      "0": -0.20731572484760488,
+      "1": -8.825077971185538,
+      "1180591620717411303432": -6.2963606002944505,
+      "1180591620717411303433": -10.519673691959945
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 1,
+     "status": "ok",
+     "logical_hat": 1180591620717411303424,
+     "log_evidence": -2.2235890867675474,
+     "terminal_log_masses": {
+      "8": -4.099136022958231,
+      "9": -12.716898269296165,
+      "1180591620717411303424": -2.404540302183824,
+      "1180591620717411303425": -6.6278533938493185
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 2,
+     "status": "ok",
+     "logical_hat": 1180591620717411303425,
+     "log_evidence": -3.0752084750557875,
+     "terminal_log_masses": {
+      "8": -7.575234712793504,
+      "9": -9.24079957946089,
+      "1180591620717411303424": -5.880638992019097,
+      "1180591620717411303425": -3.1517547040140452
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 3,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -3.4795914490901674,
+     "terminal_log_masses": {
+      "0": -3.6834144146828782,
+      "1": -5.348979281350265,
+      "1180591620717411303432": -9.772459290129724,
+      "1180591620717411303433": -7.043575002124672
+     },
+     "engine": "native_binary"
+    }
+   ],
+   "expected_pruned": [
+    {
+     "syndrome": 0,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -0.20483714083157648,
+     "terminal_log_masses": {
+      "0": -0.20731572484760488,
+      "1": -8.825077971185538,
+      "1180591620717411303432": -6.2963606002944505,
+      "1180591620717411303433": -10.519673691959945
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 1,
+     "status": "ok",
+     "logical_hat": 1180591620717411303424,
+     "log_evidence": -2.2235890867675474,
+     "terminal_log_masses": {
+      "8": -4.099136022958231,
+      "9": -12.716898269296165,
+      "1180591620717411303424": -2.404540302183824,
+      "1180591620717411303425": -6.6278533938493185
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 2,
+     "status": "ok",
+     "logical_hat": 1180591620717411303425,
+     "log_evidence": -3.0752084750557875,
+     "terminal_log_masses": {
+      "8": -7.575234712793504,
+      "9": -9.24079957946089,
+      "1180591620717411303424": -5.880638992019097,
+      "1180591620717411303425": -3.1517547040140452
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 3,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -3.4795914490901674,
+     "terminal_log_masses": {
+      "0": -3.6834144146828782,
+      "1": -5.348979281350265,
+      "1180591620717411303432": -9.772459290129724,
+      "1180591620717411303433": -7.043575002124672
+     },
+     "engine": "native_binary"
+    }
+   ]
+  },
+  {
+   "name": "random_seed11",
+   "mechanisms": [
+    [
+     0.343468,
+     [
+      3,
+      4
+     ],
+     [
+      2
+     ]
+    ],
+    [
+     0.046708,
+     [
+      1
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.24222,
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ]
+    ],
+    [
+     0.033225,
+     [
+      1,
+      3
+     ],
+     [
+      0,
+      2
+     ]
+    ],
+    [
+     0.137254,
+     [
+      1
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.011792,
+     [
+      1,
+      2,
+      4
+     ],
+     [
+      1
+     ]
+    ],
+    [
+     0.399086,
+     [
+      3
+     ],
+     [
+      1
+     ]
+    ],
+    [
+     0.210025,
+     [
+      2
+     ],
+     [
+      0
+     ]
+    ]
+   ],
+   "num_detectors": 5,
+   "num_observables": 3,
+   "syndromes": [
+    0,
+    1,
+    2,
+    3,
+    9,
+    12,
+    18,
+    21,
+    24,
+    26,
+    27,
+    30
+   ],
+   "pruned": {
+    "k": 3,
+    "delta": 20.0
+   },
+   "expected_unpruned": [
+    {
+     "syndrome": 0,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -1.671574535204913,
+     "terminal_log_masses": {
+      "0": -1.6765593657035884,
+      "2": -11.448346632924705,
+      "4": -7.034064799488613,
+      "6": -10.064525695922914
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 1,
+     "status": "ok",
+     "logical_hat": 6,
+     "log_evidence": -4.284979715475963,
+     "terminal_log_masses": {
+      "0": -9.627505046429114,
+      "2": -6.597044149994812,
+      "4": -14.166460686329314,
+      "6": -4.394673419108197
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 2,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -3.144433013520559,
+     "terminal_log_masses": {
+      "1": -13.02591398437391,
+      "3": -3.2541267171527934,
+      "5": -8.48695834447371,
+      "7": -5.456497448039408
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 3,
+     "status": "ok",
+     "logical_hat": 5,
+     "log_evidence": -2.812121237160317,
+     "terminal_log_masses": {
+      "1": -8.174611501444016,
+      "3": -11.205072397878318,
+      "5": -2.8171060676589925,
+      "7": -12.588893334880108
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 9,
+     "status": "ok",
+     "logical_hat": 4,
+     "log_evidence": -4.570633149175533,
+     "terminal_log_masses": {
+      "0": -6.187769253052399,
+      "2": -9.218230149486702,
+      "4": -4.80394831605061,
+      "6": -14.575735583271726
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 12,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -3.391991752771167,
+     "terminal_log_masses": {
+      "1": -10.532846801727313,
+      "3": -3.4106089907858057,
+      "5": -8.330476070840698,
+      "7": -7.949564630686005
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 18,
+     "status": "ok",
+     "logical_hat": 5,
+     "log_evidence": -4.052729957929209,
+     "terminal_log_masses": {
+      "1": -5.695100038325779,
+      "3": -7.429805960302515,
+      "5": -4.311279101323989,
+      "7": -12.787311394087538
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 21,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -6.145749443548663,
+     "terminal_log_masses": {
+      "1": -6.776600531419197,
+      "3": -12.603083367903139,
+      "5": -8.160421468420987,
+      "7": -7.245577934118114
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 24,
+     "status": "ok",
+     "logical_hat": 4,
+     "log_evidence": -2.318700728115651,
+     "terminal_log_masses": {
+      "0": -7.681942286717397,
+      "2": -9.41664820869413,
+      "4": -2.3244368529323713,
+      "6": -10.800469145695923
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 26,
+     "status": "ok",
+     "logical_hat": 7,
+     "log_evidence": -3.779561516643309,
+     "terminal_log_masses": {
+      "1": -7.839080857244927,
+      "3": -6.104374935268192,
+      "5": -12.378036497145127,
+      "7": -3.9020042043815764
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 27,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -3.459247430071055,
+     "terminal_log_masses": {
+      "1": -3.4649835548877754,
+      "3": -11.941015847651325,
+      "5": -8.8224889886728,
+      "7": -10.557194910649535
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 30,
+     "status": "ok",
+     "logical_hat": 6,
+     "log_evidence": -4.89787704322171,
+     "terminal_log_masses": {
+      "0": -6.5143061291051225,
+      "2": -7.429149663407996,
+      "4": -11.053261769005323,
+      "6": -5.2267789325213805
+     },
+     "engine": "native_binary"
+    }
+   ],
+   "expected_pruned": [
+    {
+     "syndrome": 0,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -1.6765593657035884,
+     "terminal_log_masses": {
+      "0": -1.6765593657035884
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 1,
+     "status": "ok",
+     "logical_hat": 6,
+     "log_evidence": -4.290596505646497,
+     "terminal_log_masses": {
+      "2": -6.604808770272863,
+      "6": -4.394673419108197
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 2,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -3.150049803691093,
+     "terminal_log_masses": {
+      "3": -3.2541267171527934,
+      "7": -5.464262068317459
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 3,
+     "status": "ok",
+     "logical_hat": 5,
+     "log_evidence": -2.8171060676589925,
+     "terminal_log_masses": {
+      "5": -2.8171060676589925
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 9,
+     "status": "ok",
+     "logical_hat": 4,
+     "log_evidence": -4.581860766597815,
+     "terminal_log_masses": {
+      "0": -6.19553387333045,
+      "4": -4.80394831605061
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 12,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -3.4106089907858057,
+     "terminal_log_masses": {
+      "3": -3.4106089907858057
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 18,
+     "status": "ok",
+     "logical_hat": 5,
+     "log_evidence": -4.0891915518711945,
+     "terminal_log_masses": {
+      "1": -5.70286465860383,
+      "5": -4.311279101323989
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 21,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -6.554512981966402,
+     "terminal_log_masses": {
+      "1": -6.776600531419197,
+      "5": -8.168186088699038
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 24,
+     "status": "ok",
+     "logical_hat": 4,
+     "log_evidence": -2.3244368529323713,
+     "terminal_log_masses": {
+      "4": -2.3244368529323713
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 26,
+     "status": "ok",
+     "logical_hat": 7,
+     "log_evidence": -3.7979272909198762,
+     "terminal_log_masses": {
+      "3": -6.112139555546243,
+      "7": -3.9020042043815764
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 27,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -3.4649835548877754,
+     "terminal_log_masses": {
+      "1": -3.4649835548877754
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 30,
+     "status": "ok",
+     "logical_hat": 6,
+     "log_evidence": -5.12270201905968,
+     "terminal_log_masses": {
+      "2": -7.436914283686047,
+      "6": -5.2267789325213805
+     },
+     "engine": "native_binary"
+    }
+   ]
+  },
+  {
+   "name": "random_seed23",
+   "mechanisms": [
+    [
+     0.157882,
+     [
+      0,
+      5
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.01549,
+     [
+      1,
+      5
+     ],
+     [
+      1
+     ]
+    ],
+    [
+     0.392697,
+     [
+      0,
+      3,
+      4
+     ],
+     []
+    ],
+    [
+     0.310602,
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.252187,
+     [
+      0
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.233464,
+     [
+      2,
+      4
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.080991,
+     [
+      1,
+      3
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.237096,
+     [
+      4
+     ],
+     [
+      0
+     ]
+    ],
+    [
+     0.231524,
+     [
+      0
+     ],
+     [
+      0
+     ]
+    ],
+    [
+     0.154165,
+     [
+      2,
+      4,
+      5
+     ],
+     []
+    ],
+    [
+     0.110783,
+     [
+      2,
+      4
+     ],
+     [
+      0
+     ]
+    ],
+    [
+     0.285786,
+     [
+      4
+     ],
+     []
+    ]
+   ],
+   "num_detectors": 6,
+   "num_observables": 2,
+   "syndromes": [
+    6,
+    9,
+    10,
+    15,
+    21,
+    24,
+    28,
+    34,
+    37,
+    47,
+    58,
+    63
+   ],
+   "pruned": {
+    "k": 3,
+    "delta": 20.0
+   },
+   "expected_unpruned": [
+    {
+     "syndrome": 6,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -6.261360364568913,
+     "terminal_log_masses": {
+      "0": -8.022112546944442,
+      "1": -7.381200831217981,
+      "2": -8.108959728041507,
+      "3": -7.328074193125911
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 9,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -2.746146123465367,
+     "terminal_log_masses": {
+      "0": -4.161166730740183,
+      "1": -4.178207023817416,
+      "2": -5.201547393913861,
+      "3": -3.5844707493527204
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 10,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -4.825670397095194,
+     "terminal_log_masses": {
+      "0": -7.181705090376861,
+      "1": -6.69623585114158,
+      "2": -7.093662900641675,
+      "3": -5.260077866992471
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 15,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -6.267659716409388,
+     "terminal_log_masses": {
+      "0": -7.536940959893618,
+      "1": -7.801949941948513,
+      "2": -7.502800422375863,
+      "3": -7.816172145726686
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 21,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -3.728576225544649,
+     "terminal_log_masses": {
+      "0": -4.705768715947511,
+      "1": -6.048612948850653,
+      "2": -4.742088593348227,
+      "3": -5.546134838095753
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 24,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -3.195049731702389,
+     "terminal_log_masses": {
+      "0": -5.198501326106871,
+      "1": -4.225594619504352,
+      "2": -5.2657461414212445,
+      "3": -4.156807045414695
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 28,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -4.048424295677088,
+     "terminal_log_masses": {
+      "0": -5.663367805631611,
+      "1": -5.241754487058921,
+      "2": -5.818941255520636,
+      "3": -5.164254047244065
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 34,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -5.919368393148876,
+     "terminal_log_masses": {
+      "0": -7.509757989395482,
+      "1": -7.781149574063392,
+      "2": -6.8199852871255935,
+      "3": -7.369926971975649
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 37,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -4.376752960041338,
+     "terminal_log_masses": {
+      "0": -5.645368208329156,
+      "1": -5.805270421594858,
+      "2": -5.838870051154233,
+      "3": -5.773622533026615
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 47,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -6.454195312203719,
+     "terminal_log_masses": {
+      "0": -8.016944210315367,
+      "1": -7.677035952817707,
+      "2": -7.997361477046367,
+      "3": -7.718822085051365
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 58,
+     "status": "ok",
+     "logical_hat": 1,
+     "log_evidence": -6.346280908592142,
+     "terminal_log_masses": {
+      "0": -7.840804515838283,
+      "1": -7.5791547012495855,
+      "2": -7.971308624305485,
+      "3": -7.593563081590824
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 63,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -6.293149510399605,
+     "terminal_log_masses": {
+      "0": -7.548704846288836,
+      "1": -7.991352744805838,
+      "2": -7.53198768208597,
+      "3": -7.710522924736072
+     },
+     "engine": "native_binary"
+    }
+   ],
+   "expected_pruned": [
+    {
+     "syndrome": 6,
+     "status": "no_path",
+     "logical_hat": null,
+     "log_evidence": null,
+     "terminal_log_masses": {},
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 9,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -2.9484790481067105,
+     "terminal_log_masses": {
+      "0": -4.206361122627545,
+      "1": -4.459088846121866,
+      "3": -3.6517386468059914
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 10,
+     "status": "no_path",
+     "logical_hat": null,
+     "log_evidence": null,
+     "terminal_log_masses": {},
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 15,
+     "status": "no_path",
+     "logical_hat": null,
+     "log_evidence": null,
+     "terminal_log_masses": {},
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 21,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -4.618721109597032,
+     "terminal_log_masses": {
+      "0": -6.136926003885628,
+      "2": -4.866035499364936
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 24,
+     "status": "ok",
+     "logical_hat": 3,
+     "log_evidence": -3.615451514982718,
+     "terminal_log_masses": {
+      "1": -4.490147557262374,
+      "2": -5.767403798098758,
+      "3": -4.377403835207338
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 28,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -5.970649988579859,
+     "terminal_log_masses": {
+      "0": -7.488854882868454,
+      "2": -6.217964378347763
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 34,
+     "status": "ok",
+     "logical_hat": 2,
+     "log_evidence": -6.8891711710562795,
+     "terminal_log_masses": {
+      "2": -7.006381644683862,
+      "3": -9.09098808483612
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 37,
+     "status": "ok",
+     "logical_hat": 0,
+     "log_evidence": -5.770110042340254,
+     "terminal_log_masses": {
+      "0": -6.6332976046584315,
+      "1": -6.672398242645703,
+      "2": -7.527211797628485
+     },
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 47,
+     "status": "no_path",
+     "logical_hat": null,
+     "log_evidence": null,
+     "terminal_log_masses": {},
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 58,
+     "status": "no_path",
+     "logical_hat": null,
+     "log_evidence": null,
+     "terminal_log_masses": {},
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 63,
+     "status": "no_path",
+     "logical_hat": null,
+     "log_evidence": null,
+     "terminal_log_masses": {},
+     "engine": "native_binary"
+    }
+   ]
+  }
+ ]
+}

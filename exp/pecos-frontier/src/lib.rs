@@ -55,7 +55,8 @@ pub enum CommitteeDirection {
 pub enum CommitteeStatus {
     /// The leg retained at least one terminal state.
     Ok,
-    /// The leg found no retained path for the syndrome.
+    /// The leg found no retained path for the syndrome. Engine faults never
+    /// appear here: they abort the whole committee decode instead.
     NoPath,
 }
 
@@ -158,62 +159,26 @@ impl FrontierCommittee {
 
     /// Decode with both processing directions and select the stronger result.
     ///
+    /// Failure provenance comes from the engine's structured
+    /// [`TrellisDecodeAttempt`](FrontierDecodeAttempt): only a no-path outcome
+    /// lets the committee fall back to the other leg. Any other failure --
+    /// dimension mismatch, configuration or internal fault -- aborts the whole
+    /// committee even if the other leg produced a valid decode, because both
+    /// legs saw the same input and such a fault is a property of the call, not
+    /// of the processing direction.
+    ///
     /// # Errors
     ///
-    /// Returns the standard unexplainable-syndrome error if both legs find no
-    /// retained path.
+    /// Returns the engine's own no-path error when both legs find no retained
+    /// path, and propagates any non-no-path leg failure unchanged. When both
+    /// legs fail with engine faults, the forward leg's error is returned.
     pub fn decode(&mut self, syndrome: &[u8]) -> Result<FrontierCommitteeResult, DecoderError> {
         // Each leg owns its BP graph and scratch and runs independently on the
         // same syndrome. Their beliefs are expected to match, but are never
         // shared by reference between the two code paths.
-        let forward_result = self.forward.decode(syndrome);
-        let backward_result = self.backward.decode(syndrome);
-        let forward = committee_member(&forward_result);
-        let backward = committee_member(&backward_result);
-        let (selected, direction) = match (forward_result, backward_result) {
-            (Err(forward_error), Err(backward_error)) => {
-                // Surface the engine's own error rather than synthesizing one,
-                // and prefer a genuine fault over the no-path report so a
-                // malformed call is not reported as a pruning problem.
-                return Err(
-                    if is_absorbable_failure(&forward_error)
-                        && !is_absorbable_failure(&backward_error)
-                    {
-                        backward_error
-                    } else {
-                        forward_error
-                    },
-                );
-            }
-            (Ok(selected), Err(error)) => {
-                if !is_absorbable_failure(&error) {
-                    return Err(error);
-                }
-                (selected, CommitteeDirection::Forward)
-            }
-            (Err(error), Ok(selected)) => {
-                if !is_absorbable_failure(&error) {
-                    return Err(error);
-                }
-                (selected, CommitteeDirection::Backward)
-            }
-            (Ok(forward_result), Ok(backward_result)) => {
-                if compare_committee_legs(Some(&forward_result), Some(&backward_result))
-                    == Ordering::Less
-                {
-                    (backward_result, CommitteeDirection::Backward)
-                } else {
-                    (forward_result, CommitteeDirection::Forward)
-                }
-            }
-        };
-
-        Ok(FrontierCommitteeResult {
-            selected,
-            direction,
-            forward,
-            backward,
-        })
+        let forward_attempt = self.forward.decode_attempt(syndrome);
+        let backward_attempt = self.backward.decode_attempt(syndrome);
+        resolve_committee_attempts(forward_attempt, backward_attempt)
     }
 }
 
@@ -223,28 +188,60 @@ impl ObservableDecoder for FrontierCommittee {
     }
 }
 
-/// Whether a leg failure is one the committee may absorb by falling back to
-/// the other leg.
+/// Turn the two legs' structured attempts into a committee result.
 ///
-/// Only an unexplainable syndrome qualifies. A dimension mismatch or a BP
-/// preparation failure is a fault in the call itself: both legs would hit it,
-/// and reporting it as "this leg found no path" would send a caller tuning
-/// pruning parameters over a malformed input.
-fn is_absorbable_failure(error: &DecoderError) -> bool {
-    matches!(error, DecoderError::DecodingFailed(_))
+/// Provenance is the engine's own: [`FrontierDecodeAttempt::NoPath`] is the
+/// only failure the committee absorbs, and [`FrontierDecodeAttempt::Error`]
+/// always propagates -- checked before anything else, forward leg first --
+/// because an engine fault on a shared input can never be repaired by
+/// preferring the other processing direction.
+fn resolve_committee_attempts(
+    forward_attempt: FrontierDecodeAttempt,
+    backward_attempt: FrontierDecodeAttempt,
+) -> Result<FrontierCommitteeResult, DecoderError> {
+    use pecos_trellis::TrellisDecodeAttempt::{Error, NoPath, Success};
+
+    let forward = committee_member(&forward_attempt);
+    let backward = committee_member(&backward_attempt);
+    let (selected, direction) = match (forward_attempt, backward_attempt) {
+        // Pattern order is the precedence: a forward fault, then a backward
+        // fault, and only then the double no-path with the engine's own error.
+        (Error(error), _) | (_, Error(error)) | (NoPath { error, .. }, NoPath { .. }) => {
+            return Err(error);
+        }
+        (Success(selected), NoPath { .. }) => (selected, CommitteeDirection::Forward),
+        (NoPath { .. }, Success(selected)) => (selected, CommitteeDirection::Backward),
+        (Success(forward_result), Success(backward_result)) => {
+            if compare_committee_legs(Some(&forward_result), Some(&backward_result))
+                == Ordering::Less
+            {
+                (backward_result, CommitteeDirection::Backward)
+            } else {
+                (forward_result, CommitteeDirection::Forward)
+            }
+        }
+    };
+
+    Ok(FrontierCommitteeResult {
+        selected,
+        direction,
+        forward,
+        backward,
+    })
 }
 
 /// Summarize one leg for the committee result.
 ///
-/// A non-`Ok` status here is always an unexplainable syndrome: `decode`
-/// propagates every other failure before a member summary is returned.
-fn committee_member(result: &Result<FrontierResult, DecoderError>) -> CommitteeMember {
-    match result {
-        Ok(decoded) => CommitteeMember {
+/// A non-`Ok` status here is always a genuine no-path:
+/// [`resolve_committee_attempts`] propagates every engine fault before a
+/// member summary is returned.
+fn committee_member(attempt: &FrontierDecodeAttempt) -> CommitteeMember {
+    match attempt {
+        FrontierDecodeAttempt::Success(decoded) => CommitteeMember {
             status: CommitteeStatus::Ok,
             log_evidence: decoded.log_evidence,
         },
-        Err(_) => CommitteeMember {
+        FrontierDecodeAttempt::NoPath { .. } | FrontierDecodeAttempt::Error(_) => CommitteeMember {
             status: CommitteeStatus::NoPath,
             log_evidence: f64::NEG_INFINITY,
         },
@@ -310,11 +307,98 @@ fn committee_rank(result: Option<&FrontierResult>, is_forward: bool) -> [f64; 6]
 #[cfg(test)]
 mod tests {
     use super::{
-        FrontierCommittee, FrontierConfig, FrontierLogicalMass, FrontierResult, FrontierStatus,
-        SparseDem, committee_rank,
+        CommitteeStatus, DecoderError, FrontierCommittee, FrontierConfig, FrontierDecodeAttempt,
+        FrontierLogicalMass, FrontierResult, FrontierStatus, SparseDem, committee_rank,
+        resolve_committee_attempts,
     };
     use pecos_decoder_core::obs_mask::ObsMask;
     use std::collections::BTreeMap;
+
+    fn no_path_attempt() -> FrontierDecodeAttempt {
+        FrontierDecodeAttempt::NoPath {
+            error: DecoderError::DecodingFailed(
+                "syndrome is unexplainable at the given pruning parameters".into(),
+            ),
+            transitions: 0,
+            bp_seconds: 0.0,
+        }
+    }
+
+    fn fault_attempt(expected: usize, actual: usize) -> FrontierDecodeAttempt {
+        FrontierDecodeAttempt::Error(DecoderError::InvalidDimensions { expected, actual })
+    }
+
+    /// The full failure-arbitration matrix, on synthesized attempts so every
+    /// combination is reachable: an engine fault always propagates (forward
+    /// first), and only a double no-path returns the engine's no-path error.
+    #[test]
+    fn committee_arbitration_covers_every_failure_combination() {
+        // fault x fault -> the forward fault.
+        let error = resolve_committee_attempts(fault_attempt(1, 0), fault_attempt(2, 0))
+            .expect_err("two faults must not produce a result");
+        assert!(matches!(
+            error,
+            DecoderError::InvalidDimensions { expected: 1, .. }
+        ));
+
+        // fault x no-path (either order) -> the fault, never the no-path.
+        for (forward, backward) in [
+            (fault_attempt(1, 0), no_path_attempt()),
+            (no_path_attempt(), fault_attempt(1, 0)),
+        ] {
+            let error = resolve_committee_attempts(forward, backward)
+                .expect_err("a fault beside a no-path must not produce a result");
+            assert!(
+                matches!(error, DecoderError::InvalidDimensions { .. }),
+                "fault must win over no-path, got {error:?}"
+            );
+        }
+
+        // no-path x no-path -> the engine's own no-path error.
+        let error = resolve_committee_attempts(no_path_attempt(), no_path_attempt())
+            .expect_err("two no-paths must not produce a result");
+        assert!(matches!(error, DecoderError::DecodingFailed(_)));
+        assert!(error.to_string().contains("unexplainable"));
+    }
+
+    /// A leg fault aborts the committee even when the other leg SUCCEEDED:
+    /// both legs saw the same input, so the fault is the call's, and a valid
+    /// result from one direction must not hide it.
+    #[test]
+    fn committee_fault_beside_a_success_still_aborts() {
+        let dem = SparseDem {
+            mechanisms: vec![(0.2, vec![0], vec![0])],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 1,
+            num_observables: 1,
+        };
+        let mut leg = super::FrontierDecoder::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                k: usize::MAX,
+                delta: f64::INFINITY,
+                score_alpha: 0.8,
+                column_order: None,
+                merge_indistinguishable: false,
+                bp_score_iterations: 0,
+            },
+        )
+        .unwrap();
+        let success = leg.decode_attempt(&[1]);
+        assert!(matches!(success, FrontierDecodeAttempt::Success(_)));
+
+        let error = resolve_committee_attempts(success, fault_attempt(1, 0))
+            .expect_err("a fault must abort even beside a success");
+        assert!(matches!(error, DecoderError::InvalidDimensions { .. }));
+
+        // A success beside a genuine no-path is still selected, with the
+        // failed leg reported honestly.
+        let success = leg.decode_attempt(&[1]);
+        let result = resolve_committee_attempts(success, no_path_attempt())
+            .expect("a success beside a no-path must be selected");
+        assert_eq!(result.backward.status, CommitteeStatus::NoPath);
+        assert!(result.backward.log_evidence.is_infinite() && result.backward.log_evidence < 0.0);
+    }
 
     #[test]
     fn committee_merges_both_legs() {

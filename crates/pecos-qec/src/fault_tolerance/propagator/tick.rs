@@ -152,8 +152,8 @@ impl<'a> TickFaultAnalyzer<'a> {
 
         for (tick_idx, tick) in self.circuit.iter_ticks() {
             for gate in tick.iter_gate_batches() {
-                // Currently only Z-basis measurements are supported
                 let basis = match gate.gate_type {
+                    GateType::MX => 1,                                         // X-basis
                     GateType::MZ | GateType::MeasureFree | GateType::MPZ => 0, // Z-basis
                     _ => continue,
                 };
@@ -466,7 +466,10 @@ impl<'a> TickFaultAnalyzer<'a> {
     fn apply_gate_backward(prop: &mut PauliProp, gate: &pecos_core::Gate) {
         let qubits = &gate.qubits;
 
-        if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+        if matches!(
+            gate.gate_type,
+            GateType::PX | GateType::PZ | GateType::QAlloc
+        ) {
             // Preparation resets the qubit - backward propagation stops here
             // Any Pauli on a prepared qubit doesn't propagate further back
             // Toggle off both X and Z if present

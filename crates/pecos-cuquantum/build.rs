@@ -16,18 +16,33 @@ fn main() {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
         } else if pecos_build::cuda::find_cuda().is_some() {
             // CUDA available but cuQuantum not found -- try auto-install
-            if let Ok(cuquantum_path) = pecos_build::cuquantum::ensure_cuquantum()
-                && let Some(lib_dir) = pecos_build::cuquantum::get_lib_dir(&cuquantum_path)
-            {
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+            match pecos_build::cuquantum::ensure_cuquantum() {
+                Ok(cuquantum_path) => {
+                    if let Some(lib_dir) = pecos_build::cuquantum::get_lib_dir(&cuquantum_path) {
+                        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+                    }
+                }
+                // Never swallow this. The installers verify archive checksums, and their
+                // own output goes to cargo's captured stdout, which is invisible without
+                // -vv; discarding the error too would mean a failed integrity check
+                // produced no signal at all on the one path an ordinary `cargo build`
+                // uses. cargo:warning= is the only channel cargo always shows.
+                Err(error) => {
+                    println!("cargo:warning=cuQuantum auto-install failed: {error}");
+                }
             }
         }
 
         // cuTensor (transitive dependency of cuTensorNet)
-        if let Ok(cutensor_path) = pecos_build::cutensor::ensure_cutensor()
-            && let Some(lib_dir) = pecos_build::cutensor::get_lib_dir(&cutensor_path)
-        {
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+        match pecos_build::cutensor::ensure_cutensor() {
+            Ok(cutensor_path) => {
+                if let Some(lib_dir) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+                }
+            }
+            Err(error) => {
+                println!("cargo:warning=cuTensor auto-install failed: {error}");
+            }
         }
 
         // CUDA runtime

@@ -23,7 +23,27 @@ use pyo3::types::{PyDict, PySet, PyTuple};
 /// `max_non_clifford` capacity raises a `PanicException`;
 /// `remaining_injections` exposes available capacity, and
 /// `StabMpsCompile.advise()` reports the required capacity for an analyzed
-/// circuit.
+/// circuit. `project_all()` completes deferred injections explicitly; any MZ
+/// gate does so automatically before measuring data. Qubit indices are
+/// zero-based, and any bit rows elsewhere in the STN API use `bits[q] == qubit q`.
+///
+/// # Gate symbols
+///
+/// The three STN classes accept the same dispatch symbols:
+///
+/// | Arity | Accepted symbols | Parameters |
+/// | --- | --- | --- |
+/// | 1 | `I`; `X`; `Y`; `Z` | none |
+/// | 1 | `H`, `H1`, `H+z+x`; `F`, `F1`; `Fdg`, `F1d`, `F1dg` | none |
+/// | 1 | `SX`, `SqrtX`, `Q`; `SXdg`, `SqrtXdg`, `SqrtXd`, `Qd` | none |
+/// | 1 | `SY`, `SqrtY`, `R`; `SYdg`, `SqrtYdg`, `SqrtYd`, `Rd` | none |
+/// | 1 | `S`, `SZ`, `SqrtZ`; `Sd`, `SZdg`, `SqrtZdg`, `SqrtZd` | none |
+/// | 1 | `RX`; `RY`; `RZ` | `angle` in radians |
+/// | 1 | `T`; `Tdg` | none |
+/// | 1 | `PZ`, `Init`, `init \|0>`; `PX`, `Init +X`, `init \|+>` | none |
+/// | 1 | `MZ`, `Measure`, `measure Z` | none; returns 0 or 1 |
+/// | 2 | `CX`, `CNOT`; `CY`; `CZ`; `SXX`; `SXXdg`; `SYY`; `SYYdg`; `SZZ`; `SZZdg`; `SWAP` | none |
+/// | 2 | `RZZ` | `angle` in radians |
 #[pyclass(name = "Mast", module = "pecos_rslib_exp")]
 pub struct PyMast {
     inner: Mast,
@@ -59,6 +79,10 @@ impl PyMast {
     /// `PanicException`; inspect `remaining_injections` before adding work.
     /// `StabMpsCompile.advise()` reports the required deferred capacity for an
     /// analyzed circuit.
+    ///
+    /// `seed` initializes PECOS's buffered RapidHash RNG and the tableau. Fresh
+    /// instances with the same configuration and call sequence reproduce
+    /// stochastic results; `reset()` does not rewind the stream.
     #[pyo3(signature = (
         num_qubits,
         max_non_clifford,
@@ -111,40 +135,62 @@ impl PyMast {
         Ok(PyMast { inner: mast })
     }
 
+    /// Reset data, ancillas, capacity use, and diagnostics, returning `self`.
+    ///
+    /// Configuration is retained. The random stream is not rewound.
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner.reset();
         slf
     }
 
     #[getter]
+    /// Number of addressable data qubits.
+    ///
+    /// Preallocated injection ancillas are internal and excluded.
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
     }
 
     #[getter]
+    /// Number of data qubits, equal to `num_qubits` for this binding.
     fn num_data_qubits(&self) -> usize {
         self.inner.num_data_qubits()
     }
 
     #[getter]
+    /// Number of fresh ancilla slots consumed by injections.
+    ///
+    /// Pending merged rotations are flushed first and can consume capacity.
     fn num_ancillas_used(&mut self) -> usize {
         self.inner.flush();
         self.inner.num_ancillas_used()
     }
 
     #[getter]
+    /// Number of additional injections available before capacity is exhausted.
+    ///
+    /// Pending merged rotations are flushed first and can reduce this value.
+    /// Exceeding capacity through a later gate raises `PanicException`.
     fn remaining_injections(&mut self) -> usize {
         self.inner.flush();
         self.inner.remaining_injections()
     }
 
     #[getter]
+    /// Largest bond dimension currently present in the coefficient MPS.
+    ///
+    /// Pending lazy operations and merged rotations are flushed first. Deferred
+    /// injections remain unprojected until `project_all()` or an MZ gate.
     fn max_bond_dim(&mut self) -> usize {
         self.inner.flush();
         self.inner.max_bond_dim()
     }
 
-    /// Diagnostics for deferred magic-state projections since reset.
+    /// Return diagnostics for deferred magic-state projections since reset.
+    ///
+    /// Pending lazy operations and merged rotations are flushed first, but
+    /// deferred injections are not projected. Each dictionary reports ancilla,
+    /// support size, MPS span, and bond dimensions before and after projection.
     fn projection_records(&mut self, py: Python<'_>) -> PyResult<Vec<Py<PyDict>>> {
         self.inner.flush();
         self.inner
@@ -163,27 +209,49 @@ impl PyMast {
     }
 
     #[getter]
+    /// Peak MPS bond dimension observed during deferred projections.
+    ///
+    /// Returns zero until `project_all()` or an MZ gate projects an injection.
+    /// Pending ordinary work is flushed before the read.
     fn projection_peak_bond(&mut self) -> usize {
         self.inner.flush();
         self.inner.projection_peak_bond()
     }
 
-    /// Runtime non-Clifford path counters.
+    /// Return runtime non-Clifford path counters as a dictionary.
+    ///
+    /// Pending ordinary work is flushed; deferred injections remain unprojected.
     fn stats(&mut self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         self.inner.flush();
         crate::stab_mps_stats_to_dict(py, &self.inner.stats)
     }
 
+    /// Materialize lazy-measurement operations and pending merged RZ rotations.
+    ///
+    /// Flushing a non-Clifford merged rotation can consume injection capacity.
+    /// This does not project already deferred injections.
     fn flush(&mut self) {
         self.inner.flush();
     }
 
+    /// Project all deferred magic-state ancillas and apply their corrections.
+    ///
+    /// This is the explicit MAST completion step. An MZ gate calls it
+    /// automatically before measuring the requested data qubit.
     fn project_all(&mut self) {
         self.inner.project_all();
     }
 
     // ---- Gate dispatch ----
 
+    /// Apply one accepted gate symbol to one data qubit.
+    ///
+    /// `location` is zero-based. RX, RY, and RZ require
+    /// `params={"angle": radians}`. MZ returns `0` or `1` and first completes
+    /// every deferred injection; other gates return `None`. Raises `IndexError`
+    /// for an invalid qubit, `ValueError` for an unknown symbol or invalid angle,
+    /// and `PanicException` if injection capacity is exceeded. See `run_gate`
+    /// for the complete symbol table.
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_1q_gate(
         &mut self,
@@ -296,6 +364,13 @@ impl PyMast {
         }
     }
 
+    /// Apply one accepted two-qubit gate to an ordered data-qubit pair.
+    ///
+    /// `location` must be a two-element tuple of distinct zero-based indices;
+    /// the first is the control for controlled gates. RZZ requires
+    /// `params={"angle": radians}`. Raises `IndexError`, `ValueError`, or
+    /// `PanicException` for invalid indices/arguments or exhausted injection
+    /// capacity. See `run_gate` for the complete symbol table.
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_2q_gate(
         &mut self,
@@ -368,6 +443,34 @@ impl PyMast {
         }
     }
 
+    /// Apply a gate to a set of one- or two-qubit locations.
+    ///
+    /// `locations` must be a `set`; each item is either a zero-based qubit
+    /// integer or an ordered two-integer tuple. Rotation keyword `angle` is in
+    /// radians. The returned dictionary contains entries only for measurement
+    /// locations, mapped to integer outcomes. Bit-bearing results use the
+    /// shared convention `bits[q] == qubit q` wherever represented as rows.
+    ///
+    /// # Gate symbols
+    ///
+    /// | Arity | Accepted symbols | Parameters |
+    /// | --- | --- | --- |
+    /// | 1 | `I`; `X`; `Y`; `Z` | none |
+    /// | 1 | `H`, `H1`, `H+z+x`; `F`, `F1`; `Fdg`, `F1d`, `F1dg` | none |
+    /// | 1 | `SX`, `SqrtX`, `Q`; `SXdg`, `SqrtXdg`, `SqrtXd`, `Qd` | none |
+    /// | 1 | `SY`, `SqrtY`, `R`; `SYdg`, `SqrtYdg`, `SqrtYd`, `Rd` | none |
+    /// | 1 | `S`, `SZ`, `SqrtZ`; `Sd`, `SZdg`, `SqrtZdg`, `SqrtZd` | none |
+    /// | 1 | `RX`; `RY`; `RZ` | `angle` in radians |
+    /// | 1 | `T`; `Tdg` | none |
+    /// | 1 | `PZ`, `Init`, `init \|0>`; `PX`, `Init +X`, `init \|+>` | none |
+    /// | 1 | `MZ`, `Measure`, `measure Z` | none; returns 0 or 1 |
+    /// | 2 | `CX`, `CNOT`; `CY`; `CZ`; `SXX`; `SXXdg`; `SYY`; `SYYdg`; `SZZ`; `SZZdg`; `SWAP` | none |
+    /// | 2 | `RZZ` | `angle` in radians |
+    ///
+    /// Raises `TypeError` when `locations` or its items have the wrong Python
+    /// shape, `IndexError` for an out-of-range qubit, `ValueError` for bad arity,
+    /// repeated pair members, an unsupported symbol, or an invalid angle, and
+    /// `PanicException` if injection capacity is exceeded.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,

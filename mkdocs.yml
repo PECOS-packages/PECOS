@@ -57,6 +57,7 @@ nav:
   - HUGR & Guppy Simulation: user-guide/hugr-simulation.md
   - Runtime QIS Tracing: user-guide/runtime-qis-tracing.md
   - Simulators: user-guide/simulators.md
+  - Stabilizer Tensor Networks: user-guide/stabilizer-tensor-networks.md
   - Engine Selection: user-guide/engine-selection.md
   - Gate Reference: user-guide/gates.md
   - Gate Naming Conventions: user-guide/gate-naming-conventions.md

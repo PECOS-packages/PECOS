@@ -23,9 +23,28 @@ use pyo3::types::{PyBool, PyDict, PyList, PySet, PyTuple};
 ///
 /// Read methods materialize pending lazy-measurement operations and merged RZ
 /// rotations before returning. Bitstrings use qubit-index order: `bits[q]` is
-/// the bit for qubit `q`. The `for_qec` constructor keyword is an enable-only
+/// the bit for qubit `q`. A tracked Pauli frame remains separate until
+/// `flush_pauli_frame_to_state()` is called. The `for_qec` constructor keyword is an enable-only
 /// preset switch: `True` applies it, while `False` and `None` are identical
 /// no-ops.
+///
+/// # Gate symbols
+///
+/// The three STN classes accept the same dispatch symbols:
+///
+/// | Arity | Accepted symbols | Parameters |
+/// | --- | --- | --- |
+/// | 1 | `I`; `X`; `Y`; `Z` | none |
+/// | 1 | `H`, `H1`, `H+z+x`; `F`, `F1`; `Fdg`, `F1d`, `F1dg` | none |
+/// | 1 | `SX`, `SqrtX`, `Q`; `SXdg`, `SqrtXdg`, `SqrtXd`, `Qd` | none |
+/// | 1 | `SY`, `SqrtY`, `R`; `SYdg`, `SqrtYdg`, `SqrtYd`, `Rd` | none |
+/// | 1 | `S`, `SZ`, `SqrtZ`; `Sd`, `SZdg`, `SqrtZdg`, `SqrtZd` | none |
+/// | 1 | `RX`; `RY`; `RZ` | `angle` in radians |
+/// | 1 | `T`; `Tdg` | none |
+/// | 1 | `PZ`, `Init`, `init \|0>`; `PX`, `Init +X`, `init \|+>` | none |
+/// | 1 | `MZ`, `Measure`, `measure Z` | none; returns 0 or 1 |
+/// | 2 | `CX`, `CNOT`; `CY`; `CZ`; `SXX`; `SXXdg`; `SYY`; `SYYdg`; `SZZ`; `SZZdg`; `SWAP` | none |
+/// | 2 | `RZZ` | `angle` in radians |
 #[pyclass(name = "StabMps", module = "pecos_rslib_exp")]
 pub struct PyStabMps {
     inner: StabMps,
@@ -360,6 +379,10 @@ impl PyStabMps {
     /// `max_truncation_error=None` preserves the builder default of
     /// `1e-8`; a float overrides it, and `0.0` disables adaptive truncation
     /// while retaining the SVD cutoff and bond cap.
+    ///
+    /// `seed` seeds PECOS's buffered RapidHash RNG and the stabilizer tableau.
+    /// Fresh instances with the same configuration and call sequence reproduce
+    /// stochastic results; `reset()` does not rewind the stream.
     #[new]
     #[pyo3(signature = (
         num_qubits,
@@ -427,45 +450,85 @@ impl PyStabMps {
         PyStabMps { inner: b.build() }
     }
 
+    /// Reset the quantum state and diagnostics to `|0...0>` and return `self`.
+    ///
+    /// Configuration is retained. The random stream is not rewound; construct
+    /// a fresh simulator with the same seed to replay it.
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner.reset();
         slf
     }
 
     #[getter]
+    /// Number of simulated qubits.
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
     }
 
     #[getter]
+    /// Largest bond dimension currently present.
+    ///
+    /// Pending lazy operations and merged rotations are flushed first. This
+    /// may perform MPS work and mutate diagnostics.
     fn max_bond_dim(&mut self) -> usize {
         self.inner.flush();
         self.inner.max_bond_dim()
     }
 
     #[getter]
+    /// Accumulated approximate infidelity from SVD truncation.
+    ///
+    /// Pending work is flushed first. Zero means no tracked singular-value
+    /// weight above the configured cutoff has been discarded.
     fn truncation_error(&mut self) -> f64 {
         self.inner.flush();
         self.inner.truncation_error()
     }
 
     #[getter]
+    /// Number of eager measurements that introduced pragmatic stored-state drift.
+    ///
+    /// A nonzero value means amplitude-like reads can be approximate even after
+    /// flushing. Use `lazy_measure=True` when later exact state reads are needed.
     fn pragmatic_drift_count(&self) -> u64 {
         self.inner.pragmatic_drift_count()
     }
 
+    /// Whether the stored tableau/MPS exactly represents the physical state.
+    ///
+    /// This is false for pending merged rotations, lazy operations, an
+    /// unmaterialized Pauli frame, or pragmatic measurement drift. MPS
+    /// truncation is reported separately by `truncation_error`.
     fn is_state_exact(&self) -> bool {
         self.inner.is_state_exact()
     }
 
+    /// Materialize pending lazy-measurement operations and merged RZ rotations.
+    ///
+    /// Read methods call this automatically. It does not materialize a tracked
+    /// Pauli frame; use `flush_pauli_frame_to_state()` for that.
     fn flush(&mut self) {
         self.inner.flush();
     }
 
+    /// Materialize tracked Pauli-frame bits into the quantum state.
+    ///
+    /// This also flushes pending lazy operations and merged rotations. Call it
+    /// before physical-state reads when `pauli_frame_tracking=True`.
     fn flush_pauli_frame_to_state(&mut self) {
         self.inner.flush_pauli_frame_to_state();
     }
 
+    /// Return the dense state vector as `(real, imag)` pairs.
+    ///
+    /// Indexing is little-endian: the entry for `bits` is at
+    /// `sum(int(bits[q]) << q)`. This allocates `2**num_qubits` amplitudes and
+    /// constructs dense operators, so it is restricted to `num_qubits <= 14`.
+    /// Prefer `amplitude_iterative`, `prob_bitstring`, `pauli_expectation`, or
+    /// `sample_bitstrings` for scalable reads. Pending work is auto-flushed;
+    /// a tracked Pauli frame must be materialized explicitly.
+    ///
+    /// Raises `ValueError` when more than 14 qubits are present.
     fn state_vector(&mut self, py: Python<'_>) -> PyResult<Py<PyList>> {
         if self.inner.num_qubits() > 14 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -478,8 +541,15 @@ impl PyStabMps {
         Ok(PyList::new(py, &list)?.unbind())
     }
 
-    /// Wavefunction amplitude for a computational-basis bitstring, with
-    /// `bitstring[q]` specifying qubit `q`.
+    /// Return a dense-state wavefunction amplitude as `(real, imag)`.
+    ///
+    /// `bitstring` must contain exactly `num_qubits` Python `bool` values and
+    /// `bitstring[q]` specifies qubit `q`. This materializes the full `2**n`
+    /// state and is restricted to `n <= 14`; prefer `amplitude_iterative` for
+    /// larger systems. Pending work is auto-flushed; materialize a tracked
+    /// Pauli frame explicitly.
+    ///
+    /// Raises `ValueError` for a malformed bitstring or `n > 14`.
     fn amplitude(&mut self, bitstring: &Bound<'_, PyAny>) -> PyResult<(f64, f64)> {
         let bitstring = self.bitstring(bitstring, "amplitude")?;
         if self.inner.num_qubits() > 14 {
@@ -492,8 +562,14 @@ impl PyStabMps {
         Ok((amplitude.re, amplitude.im))
     }
 
-    /// CAMPS-native iterative wavefunction amplitude, with `bitstring[q]`
-    /// specifying qubit `q`.
+    /// Return a CAMPS-native iterative amplitude as `(real, imag)`.
+    ///
+    /// `bitstring` must contain exactly `num_qubits` Python `bool` values and
+    /// `bitstring[q]` specifies qubit `q`. Forced projections avoid dense-state
+    /// materialization and scale with MPS contractions. Pending work is
+    /// auto-flushed; materialize a tracked Pauli frame explicitly.
+    ///
+    /// Raises `ValueError` for a malformed bitstring.
     fn amplitude_iterative(&mut self, bitstring: &Bound<'_, PyAny>) -> PyResult<(f64, f64)> {
         let bitstring = self.bitstring(bitstring, "amplitude_iterative")?;
         self.inner.flush();
@@ -501,8 +577,17 @@ impl PyStabMps {
         Ok((amplitude.re, amplitude.im))
     }
 
-    /// Monte Carlo estimate of the overlap with a stabilizer state specified
-    /// by a complete set of independent +1 Pauli generators.
+    /// Estimate overlap with a stabilizer state by Monte Carlo sampling.
+    ///
+    /// `stabilizers` is a complete list of `num_qubits` independent, commuting
+    /// +1 generators; each generator is a list of `(qubit, "X"|"Y"|"Z")`
+    /// factors. `num_samples` controls statistical error, and `rng_seed`
+    /// controls the estimator stream (default 42). Returns `(real, imag)`.
+    /// Cost is linear in `num_samples` times sequential stabilizer sampling and
+    /// iterative-amplitude work. Pending simulator work is auto-flushed.
+    ///
+    /// Raises `IndexError` for an out-of-range qubit and `ValueError` for zero
+    /// samples, invalid/incomplete/noncommuting generators, or more than 64 qubits.
     #[pyo3(signature = (stabilizers, *, num_samples, rng_seed=None))]
     fn overlap_with_stabilizer(
         &mut self,
@@ -532,15 +617,25 @@ impl PyStabMps {
         Ok((overlap.re, overlap.im))
     }
 
-    /// Probability of a computational-basis bitstring, with `bitstring[q]`
-    /// specifying qubit `q`.
+    /// Return the computational-basis probability of `bitstring`.
+    ///
+    /// The iterable must contain exactly `num_qubits` Python `bool` values;
+    /// `bitstring[q]` specifies qubit `q`. The method uses iterative forced
+    /// MPS projections rather than a dense state. Pending work is auto-flushed;
+    /// materialize a tracked Pauli frame explicitly.
+    ///
+    /// Raises `ValueError` for a malformed bitstring.
     fn prob_bitstring(&mut self, bitstring: &Bound<'_, PyAny>) -> PyResult<f64> {
         let bitstring = self.bitstring(bitstring, "prob_bitstring")?;
         self.inner.flush();
         Ok(self.inner.prob_bitstring(&bitstring))
     }
 
-    /// Second Renyi entropy from the full state vector.
+    /// Return second Renyi entropy across the cut after qubits `[0, cut)`.
+    ///
+    /// Entropy uses the natural logarithm. This method materializes the full
+    /// state and is limited to `num_qubits <= 14`; pending work is auto-flushed.
+    /// Raises `ValueError` unless `0 < cut < num_qubits`, or when `n > 14`.
     fn renyi_s2(&mut self, cut: usize) -> PyResult<f64> {
         let num_qubits = self.inner.num_qubits();
         if cut == 0 || cut >= num_qubits {
@@ -557,7 +652,12 @@ impl PyStabMps {
         Ok(self.inner.renyi_s2(cut))
     }
 
-    /// Second Renyi entropy via Pauli coefficient enumeration.
+    /// Return second Renyi entropy via Pauli-coefficient enumeration.
+    ///
+    /// `cut` divides qubits `[0, cut)` from `[cut, num_qubits)`. Cost is
+    /// exponential in the nonzero local Bloch components and is capped by the
+    /// implementation. Pending work is auto-flushed. Raises `ValueError` for an
+    /// invalid cut or an enumeration above the safety limit.
     fn s2_pce(&mut self, cut: usize) -> PyResult<f64> {
         self.inner.flush();
         self.inner
@@ -565,7 +665,12 @@ impl PyStabMps {
             .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
     }
 
-    /// Second Renyi entropy via the PCMPS hierarchy.
+    /// Return second Renyi entropy via the PCMPS fallback hierarchy.
+    ///
+    /// `cut` divides qubits `[0, cut)` from `[cut, num_qubits)`. This tries the
+    /// GF(2) null-space methods before Pauli enumeration. Pending work is
+    /// auto-flushed. Raises `ValueError` for an invalid cut or excessive
+    /// enumeration size.
     fn s2_pcmps(&mut self, cut: usize) -> PyResult<f64> {
         self.inner.flush();
         self.inner
@@ -573,39 +678,65 @@ impl PyStabMps {
             .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
     }
 
-    /// Run Clifford disentangling sweeps and return the gates applied.
+    /// Run up to `max_sweeps` full-chain Clifford disentangling sweeps.
+    ///
+    /// Each bond tries 20 two-qubit Clifford candidates using SVD-based entropy
+    /// estimates, so this is substantially costlier than a gate update. Use it
+    /// after batches that grew bonds. Returns the number of accepted exact
+    /// Clifford transformations; ordinary configured SVD truncation still applies.
     fn disentangle(&mut self, max_sweeps: usize) -> usize {
         self.inner.disentangle(max_sweeps)
     }
 
     #[getter]
+    /// Number of SVDs for which the configured maximum bond dimension was binding.
+    ///
+    /// Pending work is auto-flushed. A nonzero value is a warning to inspect
+    /// `truncation_error` and consider a larger cap.
     fn bond_cap_hits(&mut self) -> u64 {
         self.inner.flush();
         self.inner.bond_cap_hits()
     }
 
+    /// Return OFD nullity, the number of tracked flip patterns beyond GF(2) rank.
+    ///
+    /// Pending work is auto-flushed. The associated ideal bond bound is
+    /// `2**ofd_nullity()`.
     fn ofd_nullity(&mut self) -> usize {
         self.inner.flush();
         self.inner.ofd_nullity()
     }
 
+    /// Return the OFD theoretical bond dimension, `2**nullity`.
+    ///
+    /// Pending work is auto-flushed. The Rust calculation saturates at the
+    /// platform's maximum unsigned integer if the power overflows.
     fn theoretical_min_bond_dim(&mut self) -> usize {
         self.inner.flush();
         self.inner.theoretical_min_bond_dim()
     }
 
+    /// Return the GF(2) rank of non-Clifford flip patterns absorbed by OFD.
+    ///
+    /// Pending work is auto-flushed.
     fn ofd_disentangled_count(&mut self) -> usize {
         self.inner.flush();
         self.inner.ofd_disentangled_count()
     }
 
+    /// Return the total non-Clifford flip patterns recorded in the OFD basis.
+    ///
+    /// Pending work is auto-flushed.
     fn ofd_total_absorbed(&mut self) -> u64 {
         self.inner.flush();
         u64::try_from(self.inner.ofd_total_absorbed())
             .expect("usize fits in u64 on supported Python targets")
     }
 
-    /// Runtime non-Clifford path counters.
+    /// Return runtime non-Clifford path counters as a dictionary.
+    ///
+    /// Pending work is auto-flushed. Values count dispatch paths since
+    /// construction or the last reset.
     fn stats(&mut self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         self.inner.flush();
         crate::stab_mps_stats_to_dict(py, &self.inner.stats)
@@ -613,41 +744,68 @@ impl PyStabMps {
 
     // ---- QEC helpers ----
 
+    /// Measure qubit `q`, reset it to `|0>`, and return the observed bit.
+    ///
+    /// Raises `IndexError` when `q` is outside `[0, num_qubits)`.
     fn reset_qubit(&mut self, q: isize) -> PyResult<bool> {
         let q = self.check_qubit(q, "reset_qubit")?;
         Ok(self.inner.reset_qubit(QubitId(q)))
     }
 
+    /// Prepare qubit `q` in `|0>` by measurement and conditional X.
+    ///
+    /// The discarded measurement makes this a state-preparation operation.
+    /// Raises `IndexError` for an out-of-range qubit.
     fn pz(&mut self, q: isize) -> PyResult<()> {
         let q = self.check_qubit(q, "pz")?;
         self.inner.pz(QubitId(q));
         Ok(())
     }
 
+    /// Prepare qubit `q` in `|+>` by Z reset followed by H.
+    ///
+    /// Raises `IndexError` for an out-of-range qubit.
     fn px(&mut self, q: isize) -> PyResult<()> {
         let q = self.check_qubit(q, "px")?;
         self.inner.px(QubitId(q));
         Ok(())
     }
 
+    /// Toggle a Pauli X error in the classical frame at qubit `q`.
+    ///
+    /// Intended when `pauli_frame_tracking=True`. Raises `IndexError` for an
+    /// out-of-range qubit. This is O(1) and does not update the MPS immediately.
     fn inject_x_in_frame(&mut self, q: isize) -> PyResult<()> {
         let q = self.check_qubit(q, "inject_x_in_frame")?;
         self.inner.inject_x_in_frame(QubitId(q));
         Ok(())
     }
 
+    /// Toggle a Pauli Y error in the classical frame at qubit `q`.
+    ///
+    /// Intended when `pauli_frame_tracking=True`. Raises `IndexError` for an
+    /// out-of-range qubit. This is O(1) and does not update the MPS immediately.
     fn inject_y_in_frame(&mut self, q: isize) -> PyResult<()> {
         let q = self.check_qubit(q, "inject_y_in_frame")?;
         self.inner.inject_y_in_frame(QubitId(q));
         Ok(())
     }
 
+    /// Toggle a Pauli Z error in the classical frame at qubit `q`.
+    ///
+    /// Intended when `pauli_frame_tracking=True`. Raises `IndexError` for an
+    /// out-of-range qubit. This is O(1) and does not update the MPS immediately.
     fn inject_z_in_frame(&mut self, q: isize) -> PyResult<()> {
         let q = self.check_qubit(q, "inject_z_in_frame")?;
         self.inner.inject_z_in_frame(QubitId(q));
         Ok(())
     }
 
+    /// Toggle several classical-frame Pauli factors.
+    ///
+    /// `paulis` contains `(qubit, "X"|"Y"|"Z")` pairs. Raises `IndexError`
+    /// for an out-of-range qubit and `ValueError` for any other Pauli name.
+    /// Cost is linear in the number of factors and does not update the MPS.
     fn inject_paulis_in_frame(&mut self, paulis: Vec<(isize, String)>) -> PyResult<()> {
         let converted: Vec<(QubitId, PauliKind)> = self
             .pauli_string(paulis, "inject_paulis_in_frame")?
@@ -658,16 +816,27 @@ impl PyStabMps {
         Ok(())
     }
 
+    /// Return the X component of the tracked Pauli frame at qubit `q`.
+    ///
+    /// Raises `IndexError` for an out-of-range qubit.
     fn frame_x_bit(&self, q: isize) -> PyResult<bool> {
         let q = self.check_qubit(q, "frame_x_bit")?;
         Ok(self.inner.frame_x_bit(QubitId(q)))
     }
 
+    /// Return the Z component of the tracked Pauli frame at qubit `q`.
+    ///
+    /// Raises `IndexError` for an out-of-range qubit.
     fn frame_z_bit(&self, q: isize) -> PyResult<bool> {
         let q = self.check_qubit(q, "frame_z_bit")?;
         Ok(self.inner.frame_z_bit(QubitId(q)))
     }
 
+    /// Apply single-qubit depolarizing noise with total probability `p`.
+    ///
+    /// Returns `None` or the sampled Pauli name `"X"`, `"Y"`, or `"Z"`.
+    /// `p` is dimensionless and must be finite in `[0, 1]`. Raises `IndexError`
+    /// for an invalid qubit and `ValueError` for an invalid probability.
     fn apply_depolarizing(&mut self, q: isize, p: f64) -> PyResult<Option<String>> {
         let q = self.check_qubit(q, "apply_depolarizing")?;
         Self::check_probability(p, "apply_depolarizing")?;
@@ -677,18 +846,31 @@ impl PyStabMps {
             .map(|k| format!("{k:?}")))
     }
 
+    /// Apply X with probability `p` and return whether it was applied.
+    ///
+    /// `p` is dimensionless and must be finite in `[0, 1]`. Raises `IndexError`
+    /// for an invalid qubit and `ValueError` for an invalid probability.
     fn apply_bit_flip(&mut self, q: isize, p: f64) -> PyResult<bool> {
         let q = self.check_qubit(q, "apply_bit_flip")?;
         Self::check_probability(p, "apply_bit_flip")?;
         Ok(self.inner.apply_bit_flip(QubitId(q), p))
     }
 
+    /// Apply Z with probability `p` and return whether it was applied.
+    ///
+    /// `p` is dimensionless and must be finite in `[0, 1]`. Raises `IndexError`
+    /// for an invalid qubit and `ValueError` for an invalid probability.
     fn apply_phase_flip(&mut self, q: isize, p: f64) -> PyResult<bool> {
         let q = self.check_qubit(q, "apply_phase_flip")?;
         Self::check_probability(p, "apply_phase_flip")?;
         Ok(self.inner.apply_phase_flip(QubitId(q), p))
     }
 
+    /// Apply independent single-qubit depolarizing noise to `qubits`.
+    ///
+    /// Each qubit receives a non-identity Pauli with total dimensionless
+    /// probability `p`. Raises `IndexError` for any invalid qubit and
+    /// `ValueError` unless `p` is finite and in `[0, 1]`.
     fn apply_depolarizing_all(&mut self, qubits: Vec<isize>, p: f64) -> PyResult<()> {
         let qubits = qubits
             .into_iter()
@@ -700,6 +882,13 @@ impl PyStabMps {
         Ok(())
     }
 
+    /// Extract one syndrome bit per Pauli generator using supplied ancillas.
+    ///
+    /// Each generator is a list of `(data_qubit, "X"|"Y"|"Z")` factors;
+    /// `ancilla_qubits` must contain one distinct non-overlapping ancilla per
+    /// generator. Returns bits in generator order. Raises `IndexError` for an
+    /// invalid qubit and `ValueError` for invalid Paulis, length mismatch, or
+    /// an ancilla that overlaps its generator.
     fn extract_syndromes(
         &mut self,
         generators: Vec<Vec<(isize, String)>>,
@@ -729,12 +918,24 @@ impl PyStabMps {
         Ok(self.inner.extract_syndromes(&gens, &ancs))
     }
 
+    /// Return the expectation of a Hermitian Pauli string.
+    ///
+    /// `pauli_string` lists non-identity `(qubit, "X"|"Y"|"Z")` factors.
+    /// Pending work is auto-flushed; materialize a tracked Pauli frame
+    /// explicitly. Raises `IndexError` for an invalid qubit and `ValueError`
+    /// for an invalid Pauli name.
     fn pauli_expectation(&mut self, pauli_string: Vec<(isize, String)>) -> PyResult<f64> {
         let ps = self.pauli_string(pauli_string, "pauli_expectation")?;
         self.inner.flush();
         Ok(self.inner.pauli_expectation(&ps))
     }
 
+    /// Return fidelity with the subspace stabilized by `stabilizers`.
+    ///
+    /// Each generator lists `(qubit, "X"|"Y"|"Z")` factors. Cost is
+    /// exponential in generator count (`2**k` expectations), so `k <= 30` is
+    /// enforced. Pending work is auto-flushed. Raises `IndexError` for an
+    /// invalid qubit and `ValueError` for an invalid Pauli or too many generators.
     fn code_state_fidelity(&mut self, stabilizers: Vec<Vec<(isize, String)>>) -> PyResult<f64> {
         if stabilizers.len() > 30 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -749,19 +950,40 @@ impl PyStabMps {
         Ok(self.inner.code_state_fidelity(&stabs))
     }
 
+    /// Sample `num_shots` computational-basis rows by cloning once per shot.
+    ///
+    /// Every returned row uses `row[q] == qubit q`; the original state is
+    /// preserved and its RNG advances. Prefer `sample_bitstrings`: this method
+    /// pays for a full clone and collapse per shot, while prefix sharing has
+    /// measured tens-to-hundreds-fold speedups on the repository's 1,000-shot
+    /// example workloads. A negative or oversized count raises `OverflowError`.
     fn sample_bitstring(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         self.inner.sample_bitstring(num_shots)
     }
 
-    /// Prefix-sharing perfect sampling: shares each distinct measurement-prefix
-    /// projection across all shots taking that branch. Output is in
-    /// lexicographic tree order, not per-shot order.
+    /// Sample `num_shots` computational-basis rows with shared prefixes.
+    ///
+    /// Every returned row uses `row[q] == qubit q`. The original state is
+    /// preserved and its RNG advances. Distinct measurement-prefix projections
+    /// are shared across all shots taking that branch, avoiding the per-shot
+    /// cloning cost of `sample_bitstring`; the repository's 1,000-shot example
+    /// measures hardware-dependent tens-to-hundreds-fold speedups. Output is in
+    /// lexicographic tree order, not input shot order. Pending merged rotations
+    /// and lazy operations are handled internally. A negative or oversized
+    /// count raises `OverflowError`.
     fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         self.inner.sample_bitstrings(num_shots)
     }
 
     // ---- Gate dispatch (matches pecos-rslib pattern) ----
 
+    /// Apply one accepted gate symbol to one qubit.
+    ///
+    /// `location` is a zero-based qubit index. RX, RY, and RZ require
+    /// `params={"angle": radians}`; angles are floating-point radians.
+    /// Measurement symbols return `0` or `1`; other gates return `None`.
+    /// Raises `IndexError` for an invalid qubit and `ValueError` for an unknown
+    /// symbol or missing/non-numeric angle. See `run_gate` for the symbol table.
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_1q_gate(
         &mut self,
@@ -867,6 +1089,13 @@ impl PyStabMps {
         }
     }
 
+    /// Apply one accepted two-qubit gate symbol to an ordered qubit pair.
+    ///
+    /// `location` must be a two-element tuple of distinct zero-based indices;
+    /// for controlled gates the first qubit is the control. RZZ requires
+    /// `params={"angle": radians}`. Raises `IndexError` for an out-of-range
+    /// index and `ValueError` for bad arity, repeated qubits, an unknown symbol,
+    /// or a missing/non-numeric angle. See `run_gate` for the symbol table.
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_2q_gate(
         &mut self,
@@ -939,6 +1168,33 @@ impl PyStabMps {
         }
     }
 
+    /// Apply a gate to a set of one- or two-qubit locations.
+    ///
+    /// `locations` must be a `set`; each item is either a zero-based qubit
+    /// integer or an ordered two-integer tuple. Rotation keyword `angle` is in
+    /// radians. The returned dictionary contains entries only for measurement
+    /// locations, mapped to integer outcomes. Bit-bearing results use the
+    /// shared convention `bits[q] == qubit q` wherever represented as rows.
+    ///
+    /// # Gate symbols
+    ///
+    /// | Arity | Accepted symbols | Parameters |
+    /// | --- | --- | --- |
+    /// | 1 | `I`; `X`; `Y`; `Z` | none |
+    /// | 1 | `H`, `H1`, `H+z+x`; `F`, `F1`; `Fdg`, `F1d`, `F1dg` | none |
+    /// | 1 | `SX`, `SqrtX`, `Q`; `SXdg`, `SqrtXdg`, `SqrtXd`, `Qd` | none |
+    /// | 1 | `SY`, `SqrtY`, `R`; `SYdg`, `SqrtYdg`, `SqrtYd`, `Rd` | none |
+    /// | 1 | `S`, `SZ`, `SqrtZ`; `Sd`, `SZdg`, `SqrtZdg`, `SqrtZd` | none |
+    /// | 1 | `RX`; `RY`; `RZ` | `angle` in radians |
+    /// | 1 | `T`; `Tdg` | none |
+    /// | 1 | `PZ`, `Init`, `init \|0>`; `PX`, `Init +X`, `init \|+>` | none |
+    /// | 1 | `MZ`, `Measure`, `measure Z` | none; returns 0 or 1 |
+    /// | 2 | `CX`, `CNOT`; `CY`; `CZ`; `SXX`; `SXXdg`; `SYY`; `SYYdg`; `SZZ`; `SZZdg`; `SWAP` | none |
+    /// | 2 | `RZZ` | `angle` in radians |
+    ///
+    /// Raises `TypeError` when `locations` or its items have the wrong Python
+    /// shape, `IndexError` for an out-of-range qubit, and `ValueError` for bad
+    /// arity, repeated pair members, an unsupported symbol, or an invalid angle.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,

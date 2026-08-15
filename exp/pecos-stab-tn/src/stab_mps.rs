@@ -48,15 +48,19 @@ use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, SparseStabY,
 };
 
-/// Known eigenstate at an MPS site, for exact disentangling.
-/// Tracks which Pauli basis the site is a definite eigenstate of.
+/// Known Pauli eigenstate at an MPS site, used for exact disentangling.
+///
+/// For every variant, `false` denotes the `+1` eigenstate and `true` the
+/// `-1` eigenstate. Thus `Z(false)` is `|0>`, `Z(true)` is `|1>`,
+/// `X(false)` is `|+>`, `X(true)` is `|->`, `Y(false)` is `|+i>`, and
+/// `Y(true)` is `|-i>`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SiteEigenstate {
-    /// |0⟩ or |1⟩ (Z eigenstate). Compatible with X or Y Pauli rotations.
+    /// A Z eigenstate: `false` is `|0>` and `true` is `|1>`.
     Z(bool),
-    /// |+⟩ or |−⟩ (X eigenstate). Compatible with Z or Y Pauli rotations.
+    /// An X eigenstate: `false` is `|+>` and `true` is `|->`.
     X(bool),
-    /// |+i⟩ or |−i⟩ (Y eigenstate). Compatible with X or Z Pauli rotations.
+    /// A Y eigenstate: `false` is `|+i>` and `true` is `|-i>`.
     Y(bool),
 }
 
@@ -71,8 +75,11 @@ pub(crate) struct MpsIndexGate {
 /// (e.g., stabilizer generators of QEC codes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PauliKind {
+    /// Pauli X.
     X,
+    /// Pauli Y.
     Y,
+    /// Pauli Z.
     Z,
 }
 
@@ -87,7 +94,10 @@ enum SingleQubitCliffordKind {
     Z,
 }
 
-/// Runtime feature flags for `StabMps`, stored as a bitfield.
+/// Runtime feature flags for [`StabMps`], stored as a bitfield.
+///
+/// Each accessor and setter mirrors the equivalently named option on
+/// [`StabMpsBuilder`].
 #[derive(Clone, Copy, Debug)]
 pub struct StabMpsFlags(u8);
 
@@ -117,37 +127,47 @@ impl StabMpsFlags {
     }
 
     #[must_use]
+    /// Return whether non-Clifford gates are followed by MPS normalization.
     pub fn normalize_after_gate(self) -> bool {
         self.get(Self::NORMALIZE_AFTER_GATE)
     }
+    /// Set whether non-Clifford gates are followed by MPS normalization.
     pub fn set_normalize_after_gate(&mut self, v: bool) {
         self.set(Self::NORMALIZE_AFTER_GATE, v);
     }
     #[must_use]
+    /// Return whether measurement uses the deferred virtual-frame path.
     pub fn lazy_measure(self) -> bool {
         self.get(Self::LAZY_MEASURE)
     }
+    /// Set whether measurement uses the deferred virtual-frame path.
     pub fn set_lazy_measure(&mut self, v: bool) {
         self.set(Self::LAZY_MEASURE, v);
     }
     #[must_use]
+    /// Return whether consecutive same-qubit RZ rotations are merged.
     pub fn merge_rz(self) -> bool {
         self.get(Self::MERGE_RZ)
     }
+    /// Set whether consecutive same-qubit RZ rotations are merged.
     pub fn set_merge_rz(&mut self, v: bool) {
         self.set(Self::MERGE_RZ, v);
     }
     #[must_use]
+    /// Return whether Pauli errors are tracked in a classical frame.
     pub fn pauli_frame_tracking(self) -> bool {
         self.get(Self::PAULI_FRAME_TRACKING)
     }
+    /// Set whether Pauli errors are tracked in a classical frame.
     pub fn set_pauli_frame_tracking(&mut self, v: bool) {
         self.set(Self::PAULI_FRAME_TRACKING, v);
     }
     #[must_use]
+    /// Return whether product-site eigenstate flags are recovered numerically.
     pub fn numerical_flag_redetection(self) -> bool {
         self.get(Self::NUMERICAL_FLAG_REDETECTION)
     }
+    /// Set whether product-site eigenstate flags are recovered numerically.
     pub fn set_numerical_flag_redetection(&mut self, v: bool) {
         self.set(Self::NUMERICAL_FLAG_REDETECTION, v);
     }
@@ -206,7 +226,13 @@ impl StabMpsBuilder {
         self
     }
 
-    /// Set the RNG seed for reproducible measurements.
+    /// Seed the simulator's [`pecos_random::PecosRng`] and stabilizer-tableau RNG.
+    ///
+    /// Fresh simulators built with the same seed, configuration, gates, noise
+    /// calls, measurements, and sampling calls consume the same random stream.
+    /// Reproducibility covers those stochastic results, not floating-point
+    /// equivalence across different PECOS versions or platforms. `reset()` does
+    /// not rewind the RNG; construct a fresh seeded simulator to replay a stream.
     #[must_use]
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
@@ -417,7 +443,55 @@ impl StabMpsBuilder {
     }
 }
 
-/// Stabilizer Tensor Network simulator.
+/// Stabilizer tensor-network simulator for Clifford circuits with non-Clifford rotations.
+///
+/// Clifford gates update a stabilizer tableau, while non-Clifford rotations
+/// update an MPS of coefficients. This is usually preferable to a dense state
+/// vector when the OFD nullity and resulting MPS bond dimensions remain small.
+///
+/// # Quick start
+///
+/// ```
+/// use pecos_core::{Angle64, QubitId};
+/// use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
+/// use pecos_stab_tn::stab_mps::StabMps;
+///
+/// let mut sim = StabMps::builder(2)
+///     .seed(7)
+///     .lazy_measure(true)
+///     .build();
+/// sim.h(&[QubitId(0)]);
+/// sim.cx(&[(QubitId(0), QubitId(1))]);
+/// sim.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(1)]);
+///
+/// let outcome = sim.mz(&[QubitId(0)])[0].outcome;
+/// sim.flush();
+/// let bits = [outcome, outcome];
+/// assert!((sim.prob_bitstring(&bits) - 1.0).abs() < 1e-12);
+/// ```
+///
+/// Bitstrings always use qubit-index order: `bits[q]` is qubit `q`. See the
+/// crate-level **Bitstring convention** section for conversion to a state-vector
+/// index.
+///
+/// # Read validity and accuracy checklist
+///
+/// Rust callers must call [`Self::flush`] before state and diagnostic reads when
+/// lazy measurement or merged RZ is enabled. If Pauli-frame tracking is enabled,
+/// call [`Self::flush_pauli_frame_to_state`] as well before reads that must include
+/// the physical Pauli frame. The Python bindings automatically perform
+/// `flush()`, but do not implicitly materialize a Pauli frame.
+///
+/// Before relying on a state read, check all four diagnostics:
+///
+/// 1. [`Self::is_state_exact`] is `true` after the required flushes. It excludes
+///    MPS truncation from its definition of exactness.
+/// 2. [`Self::pragmatic_drift_count`] is zero. Nonzero drift from eager random
+///    measurement is irreversible; use `lazy_measure(true)` when later exact
+///    amplitudes are required.
+/// 3. [`Self::truncation_error`] is acceptable for the application.
+/// 4. [`Self::bond_cap_hits`] is zero, or the configured bond cap is known to be
+///    adequate despite having bound an SVD.
 #[derive(Clone)]
 pub struct StabMps {
     num_qubits: usize,
@@ -518,13 +592,18 @@ impl StabMps {
         Self::builder(num_qubits).build()
     }
 
-    /// Create with a specific seed for reproducibility.
+    /// Create with a specific seed for reproducible stochastic operations.
+    ///
+    /// This seeds both the simulator's [`pecos_random::PecosRng`] and the
+    /// stabilizer tableau. Identically configured fresh instances reproduce an
+    /// identical call sequence; `reset()` does not rewind the random stream.
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self::builder(num_qubits).seed(seed).build()
     }
 
     #[must_use]
+    /// Return the number of simulated qubits.
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
     }
@@ -580,14 +659,19 @@ impl StabMps {
         &self.gf2_matrix
     }
 
-    /// Wavefunction amplitude ⟨s|C|ψ⟩ for a given bitstring `s`.
+    /// Wavefunction amplitude `⟨s|C|psi⟩` for a given bitstring `s`.
     ///
     /// `bitstring` has length `num_qubits`; bit k corresponds to qubit k.
     /// Returns the unnormalized amplitude coefficient.
     /// See the crate-level **Bitstring convention** section.
     ///
-    /// For n ≤ 14 uses `state_vector()` directly. Paper Liu-Clark 2412.17209
-    /// Section VI.B gives an iterative CAMPS-native algorithm for larger n.
+    /// This materializes the full dense state using [`Self::state_vector`], with
+    /// `O(2^n)` memory and greater construction cost than a single amplitude
+    /// needs; it is limited to `n <= 14`. Prefer [`Self::amplitude_iterative`]
+    /// for scalable selected-amplitude reads.
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// # Panics
     /// Panics if bitstring length doesn't match `num_qubits`, or n > 14.
@@ -620,6 +704,9 @@ impl StabMps {
     /// Building block for code-state fidelity at large `n` (sum over
     /// stabilizer group of `⟨Ψ|g|Ψ⟩`), variational energy estimation,
     /// and arbitrary-observable readout.
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// # Method
     /// Tableau-based decomposition: writes `P` as
@@ -664,6 +751,9 @@ impl StabMps {
     /// Scales to arbitrary `n` (uses `amplitude_iterative` for `⟨x|Ψ⟩` and
     /// CH-form `amplitude` + sequential measurement for `⟨x|s⟩` and
     /// stabilizer Born sampling).
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// Note: requires `n ≤ 64` due to CH-form's `usize`-indexed amplitude
     /// API; that's already a much higher limit than the SV path's `n ≤ 14`.
@@ -788,6 +878,9 @@ impl StabMps {
     /// `StabMps::overlap_with_stabilizer` (CD Loschmidt MC) targeting one
     /// specific code state at a time.
     ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
+    ///
     /// # Panics
     /// Panics if any qubit index in a generator is ≥ `num_qubits`, or if
     /// `2^k` overflows `usize` (e.g., k > 62 on 64-bit).
@@ -827,6 +920,9 @@ impl StabMps {
     /// `bitstring[q]` specifies qubit `q`; see the crate-level
     /// **Bitstring convention** section.
     ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
+    ///
     /// Scales beyond `amplitude`'s n ≤ 14 limit by working directly on the
     /// MPS + tableau. After forcing all N outcomes, the tableau encodes |s⟩
     /// as a computational basis state and the MPS (left unnormalized)
@@ -863,6 +959,9 @@ impl StabMps {
     /// `bitstring[q]` specifies qubit `q`; see the crate-level
     /// **Bitstring convention** section.
     ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
+    ///
     /// Implements Liu-Clark 2412.17209 Algorithm 3 (Section VI.A): iterative
     /// forced projection of the CAMPS state. For each qubit k:
     ///   `π_k` = ⟨`ψ_k` | (I + (-`1)^{s_k`} `Z̃_k)/2` | `ψ_k`⟩
@@ -897,6 +996,9 @@ impl StabMps {
 
     /// Second Rényi entropy `S_2` = -`ln(Tr_A(ρ_A²))` at a bipartition
     /// (qubits 0..cut vs qubits cut..N).
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// Uses the full `state_vector` for computation — works only for n <= 14.
     /// Paper Liu-Clark 2412.17209 Section VI.C gives an MPS-based algorithm
@@ -959,6 +1061,8 @@ impl StabMps {
     /// Complexity: ∏_j (1 + `non_zero_bloch_components(j)`) combinations. For
     /// Clifford+T with sparse T gates most sites give count=1 → 2^N fallback.
     /// Full-magic sites give count=3 -> 4^N worst case. Error if > 2^22.
+    /// Call [`Self::flush`] before this read when lazy measurement or RZ
+    /// merging is enabled, and materialize a tracked Pauli frame if required.
     ///
     /// # Errors
     ///
@@ -981,6 +1085,8 @@ impl StabMps {
     /// Scales to much larger n than PCE when applicable: `2^null_dim`
     /// enumerations vs 2^N. For pure-Clifford Bell on n=100, `null_dim` is
     /// typically 0-2.
+    /// Call [`Self::flush`] before this read when lazy measurement or RZ
+    /// merging is enabled, and materialize a tracked Pauli frame if required.
     ///
     /// # Errors
     ///
@@ -1006,7 +1112,11 @@ impl StabMps {
         renyi::compute_s2_pce(&self.mps, &self.tableau, &mask)
     }
 
-    /// Access the MPS (for testing).
+    /// Access the stored coefficient MPS.
+    ///
+    /// Call [`Self::flush`] first if the returned tensors must include pending
+    /// lazy-measurement operations or merged RZ rotations. A tracked Pauli
+    /// frame is stored separately until explicitly materialized.
     #[must_use]
     pub fn mps(&self) -> &Mps {
         &self.mps
@@ -1014,6 +1124,7 @@ impl StabMps {
 
     /// Accumulated truncation error so far (approximate `1 - |⟨ψ_exact|ψ⟩|²`).
     /// Zero if no SVD has dropped any singular values above `svd_cutoff`.
+    /// Call [`Self::flush`] first to include SVDs triggered by pending work.
     #[must_use]
     pub fn truncation_error(&self) -> f64 {
         self.mps.truncation_error()
@@ -1022,12 +1133,17 @@ impl StabMps {
     /// Number of SVDs where `max_bond_dim` was the binding cap. If > 0 the
     /// state is under-resolved; consider raising `max_bond_dim` or loosening
     /// `max_truncation_error`.
+    /// Call [`Self::flush`] first to include SVDs triggered by pending work.
     #[must_use]
     pub fn bond_cap_hits(&self) -> u64 {
         self.mps.bond_cap_hits()
     }
 
-    /// Access the tableau (for testing).
+    /// Access the stored stabilizer tableau.
+    ///
+    /// Call [`Self::flush`] first when the read must include pending merged RZ
+    /// rotations. Lazy virtual-frame operations and a tracked Pauli frame can
+    /// remain represented outside this tableau.
     #[must_use]
     pub fn tableau(&self) -> &SparseStabY {
         &self.tableau
@@ -1035,17 +1151,29 @@ impl StabMps {
 
     /// Run Clifford disentangling sweeps to reduce MPS bond dimension.
     ///
-    /// Tries two-qubit Clifford gates at each bond. If one reduces entanglement,
-    /// it's applied to the MPS and the inverse to the tableau.
-    /// Returns the number of gates applied.
+    /// Each sweep examines every internal bond and tries 20 inequivalent
+    /// entangling two-qubit Clifford candidates, performing SVD-based entropy
+    /// estimates for them. If a candidate reduces entanglement, it is applied
+    /// exactly to the coefficient MPS and its inverse is recorded for later
+    /// physical-state reconstruction. The operation adds no approximation
+    /// beyond the MPS configuration's normal SVD truncation.
+    ///
+    /// This can be expensive compared with a gate update; use it after a batch
+    /// of non-Clifford gates or when observed bond growth justifies a sweep, not
+    /// after every gate. `max_sweeps` bounds full-chain passes. Returns the
+    /// number of accepted Clifford gates.
     pub fn disentangle(&mut self, max_sweeps: usize) -> usize {
         disentangle::disentangle(&mut self.mps, &mut self.mps_corrections, max_sweeps)
     }
 
-    /// Compute the full state vector (for testing on small systems).
+    /// Compute the full state vector for a small system.
     ///
     /// Directly computes |psi> = `Σ_x` `ν_x` * D^x * |stab> from the MPS
     /// coefficients and the current stabilizer/destabilizer generators.
+    /// It allocates `2^n` complex amplitudes and constructs dense `2^n` by
+    /// `2^n` operators, and is therefore restricted to `n <= 14`. For scalable
+    /// reads, use [`Self::amplitude_iterative`], [`Self::prob_bitstring`],
+    /// [`Self::pauli_expectation`], or [`Self::sample_bitstrings`].
     ///
     /// # Accuracy caveats (read if you have outstanding measurements)
     ///
@@ -1234,6 +1362,12 @@ impl StabMps {
     ///
     /// Useful for shot-based experiments (logical error rate estimation,
     /// outcome distribution histograms, etc.).
+    ///
+    /// Prefer [`Self::sample_bitstrings`] for multiple shots: this method pays
+    /// for a full simulator clone and all-qubit collapse per shot, whereas the
+    /// plural method shares each distinct measurement prefix. The repository's
+    /// `sampling_methods` release example measures tens-to-hundreds-fold speedups
+    /// for its 1,000-shot workloads (hardware and circuit dependent).
     pub fn sample_bitstring(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         use pecos_core::RngManageable;
         let mut shots = Vec::with_capacity(num_shots);
@@ -1285,6 +1419,12 @@ impl StabMps {
     /// `bitstring[q] == qubit q` convention as [`Self::sample_bitstring`] and
     /// are in lexicographic tree order, with copies of each leaf adjacent.
     /// See the crate-level **Bitstring convention** section.
+    ///
+    /// Prefer this method over [`Self::sample_bitstring`] for multiple shots:
+    /// it shares projections for common prefixes instead of cloning and
+    /// collapsing the whole simulator once per shot. The repository's
+    /// `sampling_methods` release example measures tens-to-hundreds-fold speedups
+    /// for its 1,000-shot workloads (hardware and circuit dependent).
     pub fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         if num_shots == 0 {
             return Vec::new();

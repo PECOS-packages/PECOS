@@ -78,10 +78,27 @@ struct DeferredMeasurement {
     injection_index: usize,
 }
 
-/// MAST simulator: Magic state injection Augmented STN.
+/// Magic-state-injection augmented stabilizer tensor-network simulator.
 ///
-/// Wraps the STN approach with magic state injection for non-Clifford gates.
-/// Pre-allocates ancilla qubits for up to `max_non_clifford` T/RZ gates.
+/// `max_non_clifford` preallocates one fresh ancilla slot per deferred
+/// non-Clifford RZ. Exceeding that capacity panics. Replay the circuit through
+/// [`super::compile::StabMpsCompile`] and call
+/// [`super::compile::StabMpsCompile::advise`] to compute
+/// `deferred_ancillas_required`; during execution,
+/// [`Self::remaining_injections`] reports unused slots.
+///
+/// Non-Clifford injections remain deferred until completion. Call
+/// [`Self::project_all`] explicitly to project every magic-state ancilla and
+/// apply its correction. Alternatively, measuring data through
+/// [`CliffordGateable::mz`] calls `project_all()` first and then performs the
+/// requested Z measurements. [`Self::flush`] only materializes lazy operations
+/// and pending merged RZ rotations; it does not project already deferred
+/// injections.
+///
+/// Prefer `Mast` for T-like, Clifford-correction workloads when sufficient
+/// ancilla capacity is available and deferred projection keeps the coefficient
+/// MPS small. Prefer [`super::StabMps`] for direct arbitrary rotations, limited
+/// ancillary memory, or its amplitude, probability, and sampling read APIs.
 pub struct Mast {
     /// Number of data qubits.
     num_data_qubits: usize,
@@ -109,6 +126,7 @@ pub struct Mast {
     numerical_flag_redetection: bool,
     gf2_matrix: super::ofd::Gf2FlipMatrix,
     rng: PecosRng,
+    /// Runtime counters for non-Clifford decomposition paths.
     pub stats: super::StabMpsStats,
     /// Deferred virtual-frame Clifford V for lazy measurement
     /// (see `super::measure::DeferredOp`).
@@ -165,7 +183,12 @@ impl Mast {
         }
     }
 
-    /// Create with a specific seed.
+    /// Create with a specific seed for reproducible stochastic operations.
+    ///
+    /// Seeds both the simulator's [`pecos_random::PecosRng`] and its tableau.
+    /// Identically configured fresh instances reproduce an identical sequence
+    /// of injections, projections, and measurements. `reset()` does not rewind
+    /// the random stream.
     ///
     /// # Panics
     ///
@@ -286,11 +309,13 @@ impl Mast {
     }
 
     #[must_use]
+    /// Return the number of data qubits, excluding preallocated ancillas.
     pub fn num_data_qubits(&self) -> usize {
         self.num_data_qubits
     }
 
     #[must_use]
+    /// Return the number of ancilla slots consumed by injections so far.
     pub fn num_ancillas_used(&self) -> usize {
         self.next_ancilla - self.num_data_qubits
     }
@@ -303,11 +328,17 @@ impl Mast {
     }
 
     #[must_use]
+    /// Return the largest bond dimension currently present in the coefficient MPS.
     pub fn max_bond_dim(&self) -> usize {
         self.mps.max_bond_dim()
     }
 
     #[must_use]
+    /// Borrow the coefficient MPS over data qubits and preallocated ancillas.
+    ///
+    /// Call [`Self::flush`] first if pending merged rotations or lazy operations
+    /// must be included, and [`Self::project_all`] first if deferred injections
+    /// must be completed.
     pub fn mps(&self) -> &Mps {
         &self.mps
     }
@@ -391,12 +422,14 @@ impl Mast {
         });
     }
 
-    /// Project all deferred ancilla measurements.
+    /// Project all deferred ancilla measurements and apply their corrections.
     ///
     /// For each deferred ancilla:
     /// 1. Measure ancilla in Z basis (using shared STN measurement protocol)
     /// 2. If outcome = 1: apply RZ(2*theta) correction to the target data qubit
     ///    (For T gates, this is S = RZ(pi/2), which is Clifford)
+    ///
+    /// Calling `mz` on data qubits performs this completion step automatically.
     pub fn project_all(&mut self) {
         match self.projection_order {
             ProjectionOrder::Input => {

@@ -143,11 +143,13 @@ impl Mps {
     }
 
     #[must_use]
+    /// Return the number of physical sites in the MPS chain.
     pub fn num_sites(&self) -> usize {
         self.num_sites
     }
 
     #[must_use]
+    /// Return the local physical dimension (two for qubit MPS instances).
     pub fn phys_dim(&self) -> usize {
         self.phys_dim
     }
@@ -159,11 +161,13 @@ impl Mps {
     }
 
     #[must_use]
+    /// Return the largest bond dimension currently present in the chain.
     pub fn max_bond_dim(&self) -> usize {
         *self.bond_dims.iter().max().unwrap_or(&1)
     }
 
     #[must_use]
+    /// Return the truncation and parallelism configuration used by this MPS.
     pub fn config(&self) -> &MpsConfig {
         &self.config
     }
@@ -565,9 +569,12 @@ impl Mps {
         result[(0, 0)]
     }
 
-    /// Compute the full state vector (2^N complex amplitudes).
+    /// Compute the full state vector (`2^N` complex amplitudes).
     ///
-    /// Only for testing on small systems.
+    /// This performs `2^N` MPS contractions and allocates `2^N` complex
+    /// values, so it is only suitable for testing and other small-system
+    /// reads. Prefer [`Self::amplitude`] for selected basis states and
+    /// [`Self::expectation_product`] for product-observable expectations.
     /// When `parallel` is enabled in the config, amplitude computations run on
     /// rayon's thread pool.
     ///

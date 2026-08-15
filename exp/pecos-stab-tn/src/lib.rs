@@ -45,6 +45,7 @@
 //!   with Magic State Injection." PRL 134, 190602 (2025). arXiv:2411.12482.
 //! - Reference implementation: <https://github.com/bsc-quantic/stabilizer-TN>
 
+/// Errors returned by matrix-product-state operations.
 pub mod errors;
 pub mod mps;
 pub mod stab_mps;

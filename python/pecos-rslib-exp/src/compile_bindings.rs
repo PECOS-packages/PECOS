@@ -16,6 +16,30 @@ use pecos_stab_tn::stab_mps::compile::{InjectionMode, SimulatorKind, StabMpsComp
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
 
+/// Compile-only STN tractability analyzer.
+///
+/// Replay the same gate stream that will be executed, then call `recommend()`
+/// or `advise()`. The analyzer updates a stabilizer tableau and GF(2) flip
+/// matrix without allocating an MPS. Recommendations are heuristic. Qubits are
+/// zero-based; any bit rows elsewhere in the STN API use `bits[q] == qubit q`.
+///
+/// # Gate symbols
+///
+/// The three STN classes accept the same dispatch symbols:
+///
+/// | Arity | Accepted symbols | Parameters |
+/// | --- | --- | --- |
+/// | 1 | `I`; `X`; `Y`; `Z` | none |
+/// | 1 | `H`, `H1`, `H+z+x`; `F`, `F1`; `Fdg`, `F1d`, `F1dg` | none |
+/// | 1 | `SX`, `SqrtX`, `Q`; `SXdg`, `SqrtXdg`, `SqrtXd`, `Qd` | none |
+/// | 1 | `SY`, `SqrtY`, `R`; `SYdg`, `SqrtYdg`, `SqrtYd`, `Rd` | none |
+/// | 1 | `S`, `SZ`, `SqrtZ`; `Sd`, `SZdg`, `SqrtZdg`, `SqrtZd` | none |
+/// | 1 | `RX`; `RY`; `RZ` | `angle` in radians |
+/// | 1 | `T`; `Tdg` | none |
+/// | 1 | `PZ`, `Init`, `init \|0>`; `PX`, `Init +X`, `init \|+>` | none |
+/// | 1 | `MZ`, `Measure`, `measure Z` | none; returns 0 or 1 |
+/// | 2 | `CX`, `CNOT`; `CY`; `CZ`; `SXX`; `SXXdg`; `SYY`; `SYYdg`; `SZZ`; `SZZdg`; `SWAP` | none |
+/// | 2 | `RZZ` | `angle` in radians |
 #[pyclass(name = "StabMpsCompile", module = "pecos_rslib_exp")]
 pub struct PyStabMpsCompile {
     inner: StabMpsCompile,
@@ -59,7 +83,10 @@ fn injection_name(mode: InjectionMode) -> &'static str {
 
 #[pymethods]
 impl PyStabMpsCompile {
-    /// Create a compile-only stabilizer-MPS tractability analyzer.
+    /// Create an empty compile-only analyzer for `num_qubits` qubits.
+    ///
+    /// Gate replay costs approximately `O(t*n**2)` for `t` non-Clifford gates
+    /// and `n` qubits, without coefficient-MPS allocation.
     #[new]
     fn new(num_qubits: usize) -> Self {
         Self {
@@ -67,62 +94,80 @@ impl PyStabMpsCompile {
         }
     }
 
+    /// Clear the replayed circuit and all counters, returning `self`.
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner.reset();
         slf
     }
 
     #[getter]
+    /// Number of qubits being analyzed.
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
     }
 
     #[getter]
+    /// Non-Clifford gates that OFD would absorb by consuming a free qubit.
     fn absorbed(&self) -> u64 {
         self.inner.absorbed()
     }
 
     #[getter]
+    /// Non-Clifford gates predicted to grow the coefficient-MPS bond dimension.
     fn grown(&self) -> u64 {
         self.inner.grown()
     }
 
     #[getter]
+    /// Non-Clifford RZ gates reduced to the stabilizer-only branch.
     fn stabilizer(&self) -> u64 {
         self.inner.stabilizer()
     }
 
     #[getter]
+    /// Total analyzed non-Clifford gates: absorbed plus grown plus stabilizer.
     fn total_nonclifford(&self) -> u64 {
         self.inner.total_nonclifford()
     }
 
     #[getter]
+    /// Total analyzed non-Clifford RZ gates.
     fn nonclifford_rz_total(&self) -> u64 {
         self.inner.nonclifford_rz_total()
     }
 
     #[getter]
+    /// RZ gates whose deferred-injection `RZ(2*angle)` correction is Clifford.
     fn injectable_clifford_correction(&self) -> u64 {
         self.inner.injectable_clifford_correction()
     }
 
     #[getter]
+    /// OFD nullity: tracked flip-pattern count minus GF(2) rank.
     fn nullity(&self) -> usize {
         self.inner.nullity()
     }
 
     #[getter]
+    /// GF(2) rank of accumulated flip patterns.
     fn rank(&self) -> usize {
         self.inner.rank()
     }
 
     #[getter]
+    /// Theoretical STN bond upper bound, `2**nullity`.
+    ///
+    /// Saturates at the platform's maximum unsigned integer on overflow.
     fn bond_dim_bound(&self) -> usize {
         self.inner.bond_dim_bound()
     }
 
-    /// Recommend a simulator for the analyzed circuit.
+    /// Return a heuristic simulator recommendation dictionary.
+    ///
+    /// The `simulator` and `reason` fields use these ordered thresholds: pure
+    /// Clifford -> `ch_form`; otherwise `n <= 14` -> `state_vector`; otherwise
+    /// nullity `<= 6` -> `stab_mps`; otherwise non-Clifford count `<= 40` ->
+    /// `stab_vec`; otherwise -> `stab_mps` with adaptive growth suggested.
     fn recommend(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let recommendation = self.inner.recommend();
         let result = PyDict::new(py);
@@ -131,7 +176,14 @@ impl PyStabMpsCompile {
         Ok(result.unbind())
     }
 
-    /// Recommend a simulator and non-Clifford injection mode.
+    /// Return simulator, injection, capacity, warning, and reason fields.
+    ///
+    /// `ancilla_budget` counts fresh ancillas available for deferral. `None`
+    /// yields `deferred_feasible=None` and a warning; a sufficient budget yields
+    /// deferred injection; an insufficient nonzero budget yields immediate
+    /// injection; zero yields direct application. `deferred_ancillas_required`
+    /// counts every non-Clifford RZ, while `injectable_count` counts only gates
+    /// with Clifford corrections. Recommendations are heuristic.
     #[pyo3(signature = (ancilla_budget=None))]
     fn advise(&self, py: Python<'_>, ancilla_budget: Option<usize>) -> PyResult<Py<PyDict>> {
         let advice = self.inner.advise(ancilla_budget);
@@ -151,6 +203,13 @@ impl PyStabMpsCompile {
 
     // ---- Gate dispatch (matches StabMps and Mast) ----
 
+    /// Replay one accepted gate symbol on one qubit.
+    ///
+    /// `location` is zero-based. RX, RY, and RZ require
+    /// `params={"angle": radians}`. Measurement symbols return `0` or `1`;
+    /// other gates return `None`. Raises `IndexError` for an invalid qubit and
+    /// `ValueError` for an unknown symbol or invalid angle. See `run_gate` for
+    /// the complete symbol table.
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_1q_gate(
         &mut self,
@@ -263,6 +322,12 @@ impl PyStabMpsCompile {
         }
     }
 
+    /// Replay one accepted two-qubit gate on an ordered qubit pair.
+    ///
+    /// `location` must be a two-element tuple of distinct zero-based indices;
+    /// the first is the control for controlled gates. RZZ requires
+    /// `params={"angle": radians}`. Raises `IndexError` or `ValueError` for
+    /// invalid arguments. See `run_gate` for the complete symbol table.
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_2q_gate(
         &mut self,
@@ -335,6 +400,33 @@ impl PyStabMpsCompile {
         }
     }
 
+    /// Replay a gate on a set of one- or two-qubit locations.
+    ///
+    /// `locations` must be a `set`; each item is either a zero-based qubit
+    /// integer or an ordered two-integer tuple. Rotation keyword `angle` is in
+    /// radians. The returned dictionary contains entries only for measurement
+    /// locations, mapped to integer outcomes. Bit-bearing results use the
+    /// shared convention `bits[q] == qubit q` wherever represented as rows.
+    ///
+    /// # Gate symbols
+    ///
+    /// | Arity | Accepted symbols | Parameters |
+    /// | --- | --- | --- |
+    /// | 1 | `I`; `X`; `Y`; `Z` | none |
+    /// | 1 | `H`, `H1`, `H+z+x`; `F`, `F1`; `Fdg`, `F1d`, `F1dg` | none |
+    /// | 1 | `SX`, `SqrtX`, `Q`; `SXdg`, `SqrtXdg`, `SqrtXd`, `Qd` | none |
+    /// | 1 | `SY`, `SqrtY`, `R`; `SYdg`, `SqrtYdg`, `SqrtYd`, `Rd` | none |
+    /// | 1 | `S`, `SZ`, `SqrtZ`; `Sd`, `SZdg`, `SqrtZdg`, `SqrtZd` | none |
+    /// | 1 | `RX`; `RY`; `RZ` | `angle` in radians |
+    /// | 1 | `T`; `Tdg` | none |
+    /// | 1 | `PZ`, `Init`, `init \|0>`; `PX`, `Init +X`, `init \|+>` | none |
+    /// | 1 | `MZ`, `Measure`, `measure Z` | none; returns 0 or 1 |
+    /// | 2 | `CX`, `CNOT`; `CY`; `CZ`; `SXX`; `SXXdg`; `SYY`; `SYYdg`; `SZZ`; `SZZdg`; `SWAP` | none |
+    /// | 2 | `RZZ` | `angle` in radians |
+    ///
+    /// Raises `TypeError` when `locations` or its items have the wrong Python
+    /// shape, `IndexError` for an out-of-range qubit, and `ValueError` for bad
+    /// arity, repeated pair members, an unsupported symbol, or an invalid angle.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,

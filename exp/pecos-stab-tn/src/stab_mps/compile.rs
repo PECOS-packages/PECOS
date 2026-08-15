@@ -28,8 +28,36 @@ use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, SparseStabY,
 };
 
-/// Compile-only STN analyzer: runs Clifford tableau and tracks OFD-relevant
-/// GF(2) flip patterns, without any MPS representation.
+/// Compile-only STN analyzer for replaying a circuit before choosing a simulator.
+///
+/// Replay the same gates that an execution simulator would receive, then call
+/// [`Self::recommend`] or [`Self::advise`]. The analysis tracks the Clifford
+/// tableau and OFD-relevant GF(2) flip patterns without allocating an MPS.
+/// Recommendations are heuristic dispatch guidance, not resource or runtime
+/// guarantees.
+///
+/// ```
+/// use pecos_core::{Angle64, QubitId};
+/// use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
+/// use pecos_stab_tn::stab_mps::compile::{InjectionMode, StabMpsCompile};
+///
+/// let mut analysis = StabMpsCompile::new(20);
+/// analysis.h(&[QubitId(0)]);
+/// analysis.cx(&[(QubitId(0), QubitId(1))]);
+/// analysis.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+///
+/// let recommendation = analysis.recommend();
+/// let advice = analysis.advise(Some(analysis.nonclifford_rz_total() as usize));
+/// assert_eq!(advice.injection, InjectionMode::Deferred);
+/// println!("{:?}: {}", recommendation.kind, recommendation.reason);
+/// ```
+///
+/// [`Self::recommend`] applies these rules in order: pure Clifford selects
+/// `CHForm`; otherwise `n <= 14` selects a dense state vector; otherwise OFD
+/// nullity `<= 6` selects `StabMps`; otherwise non-Clifford count `<= 40`
+/// selects `StabVec`; all remaining circuits select `StabMps` with adaptive
+/// bond growth suggested. [`Self::bond_dim_bound`] returns `2^nullity` when
+/// representable and saturates at [`usize::MAX`] if that power overflows.
 pub struct StabMpsCompile {
     num_qubits: usize,
     tableau: SparseStabY,
@@ -50,6 +78,7 @@ pub struct StabMpsCompile {
 }
 
 impl StabMpsCompile {
+    /// Create an empty compile-only analysis for `num_qubits` qubits.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
         Self {
@@ -66,6 +95,7 @@ impl StabMpsCompile {
     }
 
     #[must_use]
+    /// Return the number of qubits being analyzed.
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
     }
@@ -121,7 +151,10 @@ impl StabMpsCompile {
         self.gf2_matrix.gf2_rank()
     }
 
-    /// Theoretical bond dim upper bound: 2^nullity.
+    /// Theoretical bond-dimension upper bound, `2^nullity`.
+    ///
+    /// Returns one at zero nullity and saturates at [`usize::MAX`] when the
+    /// power of two cannot be represented by `usize` on the target platform.
     #[must_use]
     pub fn bond_dim_bound(&self) -> usize {
         let n = self.nullity();
@@ -140,9 +173,12 @@ impl StabMpsCompile {
         &self.gf2_matrix
     }
 
-    /// Recommend which PECOS simulator best fits the accumulated circuit
-    /// characteristics. Based on a heuristic cost model — see the
-    /// `SimulatorRecommendation` docstring for exact decision rules.
+    /// Heuristically recommend a PECOS simulator for the accumulated circuit.
+    ///
+    /// Rules are evaluated in order: pure Clifford selects `CHForm`; otherwise
+    /// `n <= 14` selects `StateVector`; otherwise nullity `<= 6` selects
+    /// `StabMps`; otherwise total non-Clifford count `<= 40` selects `StabVec`;
+    /// all remaining cases select `StabMps` and suggest adaptive bond growth.
     ///
     /// Use case: after running a circuit through `StabMpsCompile` (which does
     /// O(t·n²) pre-analysis without any MPS overhead), dispatch to the
@@ -194,8 +230,15 @@ impl StabMpsCompile {
         }
     }
 
-    /// Advise a simulator and magic-state injection mode for the accumulated
-    /// circuit, taking an optional ancilla budget into account.
+    /// Advise a simulator and magic-state injection mode for the accumulated circuit.
+    ///
+    /// `ancilla_budget` is the number of fresh ancillas available for deferred
+    /// injection. `None` leaves feasibility unspecified and emits a warning;
+    /// a sufficient budget selects deferred injection for injectable gates;
+    /// an insufficient nonzero budget selects immediate injection; zero selects
+    /// direct application. Required deferred capacity is one ancilla for every
+    /// non-Clifford RZ, including arbitrary-angle rotations whose correction is
+    /// itself non-Clifford.
     #[must_use]
     pub fn advise(&self, ancilla_budget: Option<usize>) -> ExecutionAdvice {
         let base = self.recommend();
@@ -369,11 +412,12 @@ pub enum SimulatorKind {
     Mast,
 }
 
-/// Simulator recommendation with a human-readable reason string.
-/// Returned by `StabMpsCompile::recommend`.
+/// Heuristic simulator recommendation returned by [`StabMpsCompile::recommend`].
 #[derive(Clone, Debug)]
 pub struct SimulatorRecommendation {
+    /// Simulator selected by the ordered recommendation thresholds.
     pub kind: SimulatorKind,
+    /// Human-readable rule and observed metric that led to the selection.
     pub reason: String,
 }
 

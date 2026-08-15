@@ -236,12 +236,12 @@ impl DepolarizingNoiseModel {
                 Self::apply_meas_faults(rng, p_meas_threshold, builder, gate);
                 NoiseUtils::add_gate_to_builder(builder, gate);
             }
-            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
+            GateType::MX | GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
                 trace!("Applying measurement with possible fault");
                 Self::apply_meas_faults(rng, p_meas_threshold, builder, gate);
                 NoiseUtils::add_gate_to_builder(builder, gate);
             }
-            GateType::PZ | GateType::QAlloc => {
+            GateType::PX | GateType::PZ | GateType::QAlloc => {
                 NoiseUtils::add_gate_to_builder(builder, gate);
                 trace!("Applying preparation with possible fault");
                 Self::apply_prep_faults(rng, p_prep_threshold, builder, gate);
@@ -268,7 +268,10 @@ impl DepolarizingNoiseModel {
         // Use precomputed threshold for fast probability check
         if rng.inner_mut().check_probability(p_prep_threshold) {
             trace!("Applying prep fault on qubits {:?}", gate.qubits);
-            NoiseUtils::apply_x(builder, *gate.qubits[0]);
+            match gate.gate_type {
+                GateType::PX => NoiseUtils::apply_z(builder, *gate.qubits[0]),
+                _ => NoiseUtils::apply_x(builder, *gate.qubits[0]),
+            }
         }
     }
 
@@ -281,7 +284,10 @@ impl DepolarizingNoiseModel {
         // Use precomputed threshold for fast probability check
         if rng.inner_mut().check_probability(p_meas_threshold) {
             trace!("Applying meas fault on qubits {:?}", gate.qubits);
-            NoiseUtils::apply_x(builder, *gate.qubits[0]);
+            match gate.gate_type {
+                GateType::MX => NoiseUtils::apply_z(builder, *gate.qubits[0]),
+                _ => NoiseUtils::apply_x(builder, *gate.qubits[0]),
+            }
         }
     }
 

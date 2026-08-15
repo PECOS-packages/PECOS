@@ -201,6 +201,12 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 });
             }
 
+            GateType::MX => {
+                sim.h(&cmd.qubits);
+                for meas_id in sim.mz(&cmd.qubits) {
+                    measurements.push(usize::from(meas_id.outcome));
+                }
+            }
             // Batch consecutive MZ commands
             GateType::MZ | GateType::MeasureLeaked => {
                 mz_qubits.clear();
@@ -226,6 +232,10 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 }
             }
 
+            GateType::PX => {
+                sim.pz(&cmd.qubits);
+                sim.h(&cmd.qubits);
+            }
             GateType::PZ => {
                 sim.pz(&cmd.qubits);
             }
@@ -567,6 +577,12 @@ fn process_general_message<
                 }
             }
 
+            GateType::MX => {
+                sim.h(&cmd.qubits);
+                for meas_id in sim.mz(&cmd.qubits) {
+                    measurements.push(usize::from(meas_id.outcome));
+                }
+            }
             // Batch consecutive MZ commands into one simulator call
             GateType::MZ | GateType::MeasureLeaked => {
                 mz_qubits.clear();
@@ -605,6 +621,10 @@ fn process_general_message<
             }
 
             // State preparation
+            GateType::PX => {
+                sim.pz(&cmd.qubits);
+                sim.h(&cmd.qubits);
+            }
             GateType::PZ | GateType::QAlloc => {
                 sim.pz(&cmd.qubits);
             }
@@ -1147,6 +1167,13 @@ where
 
                 // Batch consecutive MZ commands into one simulator call.
                 // This enables joint-sampling optimizations (fewer state vector passes).
+                GateType::MX => {
+                    self.simulator.h(&cmd.qubits);
+                    let meas_ids = self.simulator.mz(&cmd.qubits);
+                    for meas_id in meas_ids {
+                        measurements.push(usize::from(meas_id.outcome));
+                    }
+                }
                 GateType::MZ | GateType::MeasureLeaked => {
                     // Collect qubits from consecutive MZ/MeasureLeaked commands
                     let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
@@ -1168,6 +1195,10 @@ where
                     for meas_id in meas_ids {
                         measurements.push(usize::from(meas_id.outcome));
                     }
+                }
+                GateType::PX => {
+                    self.simulator.pz(&cmd.qubits);
+                    self.simulator.h(&cmd.qubits);
                 }
                 GateType::PZ => {
                     debug!("Processing Prep gate on qubits {:?}", cmd.qubits);

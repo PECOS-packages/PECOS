@@ -2231,6 +2231,18 @@ impl<'a> SamplingEngineBuilder<'a> {
                         );
                     }
                 }
+                GateType::PX if !loc.before => {
+                    let p = self.init_rate_for_location(loc);
+                    if p > 0.0 {
+                        self.process_single_pauli_fault(
+                            loc_idx,
+                            Pauli::Z,
+                            p,
+                            &mechanism_context,
+                            &mut aggregated,
+                        );
+                    }
+                }
                 GateType::MZ | GateType::MeasureFree | GateType::MPZ
                     // Measurement errors: only "before" locations (X error = bit flip)
                     if loc.before =>
@@ -2240,6 +2252,18 @@ impl<'a> SamplingEngineBuilder<'a> {
                         self.process_single_pauli_fault(
                             loc_idx,
                             Pauli::X,
+                            p,
+                            &mechanism_context,
+                            &mut aggregated,
+                        );
+                    }
+                }
+                GateType::MX if loc.before => {
+                    let p = self.measurement_rate_for_location(loc);
+                    if p > 0.0 {
+                        self.process_single_pauli_fault(
+                            loc_idx,
+                            Pauli::Z,
                             p,
                             &mechanism_context,
                             &mut aggregated,

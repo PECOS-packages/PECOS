@@ -102,6 +102,8 @@ struct DeferredMeasurement {
 pub struct Mast {
     /// Number of data qubits.
     num_data_qubits: usize,
+    /// Seed supplied at construction, or `None` for entropy-backed resets.
+    construction_seed: Option<u64>,
     /// Maximum number of non-Clifford gates (= number of ancilla slots).
     max_non_clifford: usize,
     /// Total qubits = data + ancillas.
@@ -158,11 +160,13 @@ impl Mast {
     #[must_use]
     pub fn new(num_qubits: usize, max_non_clifford: usize) -> Self {
         let total = num_qubits + max_non_clifford;
+        let (tableau, rng) = super::initial_tableau_and_rng(total, None);
         Self {
             num_data_qubits: num_qubits,
+            construction_seed: None,
             max_non_clifford,
             total_qubits: total,
-            tableau: SparseStabY::new(total).with_destab_sign_tracking(),
+            tableau,
             mps: Mps::new(total, MpsConfig::default()),
             config: MpsConfig::default(),
             next_ancilla: num_qubits,
@@ -174,7 +178,7 @@ impl Mast {
             disent_flags: vec![Some(super::SiteEigenstate::Z(false)); total],
             numerical_flag_redetection: false,
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
-            rng: PecosRng::seed_from_u64(0),
+            rng,
             stats: super::StabMpsStats::default(),
             deferred_ops: Vec::new(),
             lazy_measure: false,
@@ -187,8 +191,8 @@ impl Mast {
     ///
     /// Seeds both the simulator's [`pecos_random::PecosRng`] and its tableau.
     /// Identically configured fresh instances reproduce an identical sequence
-    /// of injections, projections, and measurements. `reset()` does not rewind
-    /// the random stream.
+    /// of injections, projections, and measurements. `reset()` rewinds both
+    /// streams to this seed.
     ///
     /// # Panics
     ///
@@ -197,11 +201,13 @@ impl Mast {
     #[must_use]
     pub fn with_seed(num_qubits: usize, max_non_clifford: usize, seed: u64) -> Self {
         let total = num_qubits + max_non_clifford;
+        let (tableau, rng) = super::initial_tableau_and_rng(total, Some(seed));
         Self {
             num_data_qubits: num_qubits,
+            construction_seed: Some(seed),
             max_non_clifford,
             total_qubits: total,
-            tableau: SparseStabY::with_seed(total, seed).with_destab_sign_tracking(),
+            tableau,
             mps: Mps::new(total, MpsConfig::default()),
             config: MpsConfig::default(),
             next_ancilla: num_qubits,
@@ -213,7 +219,7 @@ impl Mast {
             disent_flags: vec![Some(super::SiteEigenstate::Z(false)); total],
             numerical_flag_redetection: false,
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
-            rng: PecosRng::seed_from_u64(seed),
+            rng,
             stats: super::StabMpsStats::default(),
             deferred_ops: Vec::new(),
             lazy_measure: false,
@@ -315,20 +321,23 @@ impl Mast {
     }
 
     #[must_use]
-    /// Return the number of ancilla slots consumed by injections so far.
+    /// Return the number of ancilla slots consumed by materialized injections.
+    /// Pending merged rotations are not reflected and may consume slots later.
     pub fn num_ancillas_used(&self) -> usize {
         self.next_ancilla - self.num_data_qubits
     }
 
     /// Number of additional magic-state injections available before the
-    /// configured `max_non_clifford` capacity is exhausted.
+    /// configured `max_non_clifford` capacity is exhausted. Pending merged
+    /// rotations are not reflected and may consume this capacity later.
     #[must_use]
     pub fn remaining_injections(&self) -> usize {
         self.max_non_clifford - self.num_ancillas_used()
     }
 
     #[must_use]
-    /// Return the largest bond dimension currently present in the coefficient MPS.
+    /// Return the largest bond dimension currently stored in the coefficient MPS.
+    /// Pending operations are not materialized by this diagnostic.
     pub fn max_bond_dim(&self) -> usize {
         self.mps.max_bond_dim()
     }
@@ -343,7 +352,8 @@ impl Mast {
         &self.mps
     }
 
-    /// Return diagnostics for deferred projections performed since reset.
+    /// Return stored diagnostics for deferred projections performed since reset.
+    /// Pending operations are not materialized by this diagnostic.
     #[must_use]
     pub fn projection_records(&self) -> &[ProjectionRecord] {
         &self.projection_records
@@ -351,7 +361,8 @@ impl Mast {
 
     /// Return the peak MPS bond dimension observed during deferred projection.
     ///
-    /// Returns zero when no deferred projection has run since reset.
+    /// Returns zero when no deferred projection has run since reset. Pending
+    /// operations are not materialized by this diagnostic.
     #[must_use]
     pub fn projection_peak_bond(&self) -> usize {
         self.projection_peak_bond
@@ -552,8 +563,14 @@ impl Mast {
 }
 
 impl QuantumSimulator for Mast {
+    /// Reset data, ancillas, capacity use, and diagnostics as if newly
+    /// constructed with the retained configuration.
+    ///
+    /// A construction seed rewinds both simulator RNGs to the start of that
+    /// seed's stream. Without a construction seed, reset obtains fresh entropy.
     fn reset(&mut self) -> &mut Self {
-        self.tableau = SparseStabY::new(self.total_qubits).with_destab_sign_tracking();
+        (self.tableau, self.rng) =
+            super::initial_tableau_and_rng(self.total_qubits, self.construction_seed);
         self.mps = Mps::new(self.total_qubits, self.config.clone());
         self.next_ancilla = self.num_data_qubits;
         self.deferred.clear();
@@ -562,6 +579,7 @@ impl QuantumSimulator for Mast {
         self.global_phase = Complex64::new(1.0, 0.0);
         self.disent_flags = vec![Some(super::SiteEigenstate::Z(false)); self.total_qubits];
         self.gf2_matrix.reset();
+        self.stats = super::StabMpsStats::default();
         self.deferred_ops.clear();
         for slot in &mut self.pending_rz {
             *slot = None;
@@ -844,6 +862,36 @@ mod tests {
             assert!(mast.projection_records().is_empty());
             assert_eq!(mast.projection_peak_bond(), 0);
         }
+    }
+
+    #[test]
+    fn test_mast_seeded_reset_replays_measurements_and_clears_diagnostics() {
+        let run = |mast: &mut Mast| {
+            mast.h(&[QubitId(0)]);
+            mast.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
+            mast.mz(&[QubitId(0)])[0].outcome
+        };
+
+        let mut mast = Mast::with_seed(1, 2, 0x5eed);
+        let first = run(&mut mast);
+        assert_eq!(mast.projection_records().len(), 1);
+        mast.stats.total_nonclifford = 7;
+        mast.reset();
+        assert!(mast.projection_records().is_empty());
+        assert_eq!(mast.projection_peak_bond(), 0);
+        assert_eq!(mast.stats.total_nonclifford, 0);
+        let second = run(&mut mast);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_mast_unseeded_reset_smoke() {
+        let mut mast = Mast::new(1, 1);
+        mast.h(&[QubitId(0)]);
+        let _ = mast.mz(&[QubitId(0)]);
+        mast.reset();
+        mast.h(&[QubitId(0)]);
+        let _ = mast.mz(&[QubitId(0)]);
     }
 
     #[test]

@@ -449,9 +449,16 @@ impl PyStabMpsBuilder {
         slf
     }
 
-    fn max_truncation_error(mut slf: PyRefMut<'_, Self>, err: f64) -> PyRefMut<'_, Self> {
+    /// Set the adaptive truncation bound. Negative and non-finite values raise
+    /// `ValueError`.
+    fn max_truncation_error(mut slf: PyRefMut<'_, Self>, err: f64) -> PyResult<PyRefMut<'_, Self>> {
+        if !err.is_finite() || err < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_truncation_error must be finite and non-negative",
+            ));
+        }
         slf.inner.max_truncation_error = Some(err);
-        slf
+        Ok(slf)
     }
 
     fn merge_rz(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {

@@ -42,11 +42,24 @@ pub mod tableau_compose;
 use crate::mps::{Mps, MpsConfig};
 use nalgebra::DMatrix;
 use num_complex::Complex64;
-use pecos_core::{Angle64, QubitId};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_random::PecosRng;
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, SparseStabY,
 };
+
+fn initial_tableau_and_rng(num_qubits: usize, seed: Option<u64>) -> (SparseStabY, PecosRng) {
+    if let Some(seed) = seed {
+        return (
+            SparseStabY::with_seed(num_qubits, seed).with_destab_sign_tracking(),
+            PecosRng::seed_from_u64(seed),
+        );
+    }
+
+    let tableau = SparseStabY::new(num_qubits).with_destab_sign_tracking();
+    let rng = tableau.rng().clone();
+    (tableau, rng)
+}
 
 /// Known Pauli eigenstate at an MPS site, used for exact disentangling.
 ///
@@ -231,8 +244,9 @@ impl StabMpsBuilder {
     /// Fresh simulators built with the same seed, configuration, gates, noise
     /// calls, measurements, and sampling calls consume the same random stream.
     /// Reproducibility covers those stochastic results, not floating-point
-    /// equivalence across different PECOS versions or platforms. `reset()` does
-    /// not rewind the RNG; construct a fresh seeded simulator to replay a stream.
+    /// equivalence across different PECOS versions or platforms. `reset()`
+    /// rewinds both RNGs to this seed, so rerunning the same calls replays the
+    /// stream from the start.
     #[must_use]
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
@@ -250,8 +264,16 @@ impl StabMpsBuilder {
     /// - `0.0` disables the adaptive bound: no positive discarded weight is
     ///   permitted, so only `svd_cutoff` and `max_bond_dim` truncate
     /// - `max_bond_dim` still acts as a hard cap
+    ///
+    /// # Panics
+    ///
+    /// Panics if `error` is negative, NaN, or infinite.
     #[must_use]
     pub fn max_truncation_error(mut self, error: f64) -> Self {
+        assert!(
+            error.is_finite() && error >= 0.0,
+            "max_truncation_error must be finite and non-negative"
+        );
         self.max_truncation_error = Some(error);
         self
     }
@@ -407,19 +429,10 @@ impl StabMpsBuilder {
             max_truncation_error: self.max_truncation_error,
             parallel: self.parallel,
         };
-        let (tableau, rng) = if let Some(seed) = self.seed {
-            (
-                SparseStabY::with_seed(self.num_qubits, seed).with_destab_sign_tracking(),
-                PecosRng::seed_from_u64(seed),
-            )
-        } else {
-            (
-                SparseStabY::new(self.num_qubits).with_destab_sign_tracking(),
-                PecosRng::seed_from_u64(0),
-            )
-        };
+        let (tableau, rng) = initial_tableau_and_rng(self.num_qubits, self.seed);
         StabMps {
             num_qubits: self.num_qubits,
+            construction_seed: self.seed,
             tableau,
             mps: Mps::new(self.num_qubits, config.clone()),
             config,
@@ -495,6 +508,8 @@ impl StabMpsBuilder {
 #[derive(Clone)]
 pub struct StabMps {
     num_qubits: usize,
+    /// Seed supplied at construction, or `None` for entropy-backed resets.
+    construction_seed: Option<u64>,
     tableau: SparseStabY,
     mps: Mps,
     config: MpsConfig,
@@ -596,7 +611,7 @@ impl StabMps {
     ///
     /// This seeds both the simulator's [`pecos_random::PecosRng`] and the
     /// stabilizer tableau. Identically configured fresh instances reproduce an
-    /// identical call sequence; `reset()` does not rewind the random stream.
+    /// identical call sequence; `reset()` rewinds both streams to this seed.
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self::builder(num_qubits).seed(seed).build()
@@ -924,10 +939,10 @@ impl StabMps {
     /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// Scales beyond `amplitude`'s n ≤ 14 limit by working directly on the
-    /// MPS + tableau. After forcing all N outcomes, the tableau encodes |s⟩
-    /// as a computational basis state and the MPS (left unnormalized)
-    /// contains the amplitude at its |0^N⟩ coefficient:
-    ///   amp(s) = `global_phase` · `ν_final(0^N)`.
+    /// MPS + tableau. After forcing all N outcomes, the tableau encodes the
+    /// physical Z constraints and the MPS (left unnormalized) contains one
+    /// selected virtual-basis coefficient. The final tableau's GF(2) sign
+    /// equations identify that coefficient without enumerating the state.
     ///
     /// # Correctness
     /// Exact match to `amplitude` (SV-based) at n ≤ 14 for Clifford+T
@@ -945,14 +960,13 @@ impl StabMps {
         );
         let mut tab = self.tableau.clone();
         let mut mps = self.mps.clone();
-        let n = self.num_qubits;
         for (q, &s_q) in bitstring.iter().enumerate() {
             if !measure::project_forced_z_unnormalized(&mut tab, &mut mps, q, s_q) {
                 return Complex64::new(0.0, 0.0);
             }
         }
-        let zero: Vec<u8> = vec![0u8; n];
-        self.global_phase * mps.amplitude(&zero)
+        let mps_index = measure::projected_mps_basis_index(&tab, bitstring);
+        self.global_phase * mps.amplitude(&mps_index)
     }
 
     /// Probability of measuring `bitstring` in the computational basis.
@@ -1505,6 +1519,11 @@ impl StabMps {
         if num_one > 0 {
             let projected_probability =
                 measure::project_forced_z(tableau, mps, q, !context.frame_x[q]);
+            // Invariant: `probability_zero` and this forced-projection
+            // probability deterministically recompute the same expectation on
+            // identical parent states. A positive one-branch probability
+            // therefore cannot pair with a zero forced projection; this assert
+            // guards an internal consistency bug, not caller input.
             assert!(
                 projected_probability > 0.0,
                 "positive-probability one branch rejected by forced projection at qubit {q}"
@@ -2140,15 +2159,22 @@ impl StabMps {
 }
 
 impl QuantumSimulator for StabMps {
+    /// Reset the state and diagnostics as if newly constructed with the
+    /// retained configuration.
+    ///
+    /// A construction seed rewinds both simulator RNGs to the start of that
+    /// seed's stream. Without a construction seed, reset obtains fresh entropy.
     fn reset(&mut self) -> &mut Self {
-        self.tableau = SparseStabY::new(self.num_qubits).with_destab_sign_tracking();
+        (self.tableau, self.rng) = initial_tableau_and_rng(self.num_qubits, self.construction_seed);
         self.mps = Mps::new(self.num_qubits, self.config.clone());
         self.mps_corrections.clear();
         self.global_phase = Complex64::new(1.0, 0.0);
         self.disent_flags = vec![Some(SiteEigenstate::Z(false)); self.num_qubits];
         self.gf2_matrix.reset();
+        self.stats = StabMpsStats::default();
         self.deferred_ops.clear();
         self.pragmatic_drift_count = 0;
+        self.last_truncation_error = 0.0;
         for slot in &mut self.pending_rz {
             *slot = None;
         }
@@ -2820,6 +2846,67 @@ mod tests {
         let s = stn.amplitude(&[false]);
         eprintln!("T|+⟩: iter={a} sv={s}");
         assert!((a - s).norm() < 1e-9);
+    }
+
+    #[test]
+    fn test_amplitude_iterative_h_rz_h_regression() {
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.9), &[QubitId(0)]);
+        stn.h(&[QubitId(0)]);
+
+        let amplitude = stn.amplitude_iterative(&[true]);
+        let probability = stn.prob_bitstring(&[true]);
+        let expected_probability = 0.45_f64.sin().powi(2);
+        assert_relative_eq!(probability, expected_probability, epsilon = 1e-12);
+        assert_relative_eq!(amplitude.norm_sqr(), probability, epsilon = 1e-12);
+        assert!((amplitude - stn.amplitude(&[true])).norm() < 1e-12);
+    }
+
+    #[test]
+    fn test_amplitude_iterative_h_after_rotation_randomized() {
+        for n in 3..=5 {
+            for circuit_seed in 0..4_u64 {
+                let mut stn = StabMps::builder(n)
+                    .seed(circuit_seed)
+                    .merge_rz(false)
+                    .max_truncation_error(0.0)
+                    .build();
+                let mut rng_state = 0x9e37_79b9_7f4a_7c15_u64 ^ circuit_seed ^ n as u64;
+                let random = |state: &mut u64| {
+                    *state ^= *state << 13;
+                    *state ^= *state >> 7;
+                    *state ^= *state << 17;
+                    *state
+                };
+
+                for rotation_qubit in 0..n {
+                    let theta = 0.17 + (random(&mut rng_state) % 101) as f64 * 0.011;
+                    stn.h(&[QubitId(rotation_qubit)]);
+                    stn.rz(Angle64::from_radians(theta), &[QubitId(rotation_qubit)]);
+                    stn.h(&[QubitId(rotation_qubit)]);
+
+                    if rotation_qubit + 1 < n {
+                        let pair = if random(&mut rng_state) & 1 == 0 {
+                            (rotation_qubit, rotation_qubit + 1)
+                        } else {
+                            (rotation_qubit + 1, rotation_qubit)
+                        };
+                        stn.cx(&[(QubitId(pair.0), QubitId(pair.1))]);
+                    }
+                }
+
+                let state_vector = stn.state_vector();
+                for (index, &expected) in state_vector.iter().enumerate() {
+                    let bitstring: Vec<bool> = (0..n).map(|q| (index >> q) & 1 == 1).collect();
+                    let actual = stn.amplitude_iterative(&bitstring);
+                    assert!(
+                        (actual - expected).norm() < 1e-10,
+                        "n={n} seed={circuit_seed} index={index}: iterative={actual}, state-vector={expected}"
+                    );
+                }
+            }
+        }
     }
 
     /// n=2 no-entangle H+T: amp(00) = (e^{-iπ/8}/√2)/√2 = e^{-iπ/8}/2.
@@ -4905,6 +4992,38 @@ mod tests {
         assert_eq!(stn.max_bond_dim(), 1);
     }
 
+    #[test]
+    fn test_stn_seeded_reset_replays_measurements_and_clears_stats() {
+        let run = |stn: &mut StabMps| {
+            stn.h(&[QubitId(0)]);
+            let tableau_outcome = stn.mz(&[QubitId(0)])[0].outcome;
+            stn.h(&[QubitId(1)]);
+            stn.rz(Angle64::from_radians(0.7), &[QubitId(1)]);
+            stn.h(&[QubitId(1)]);
+            let mps_outcome = stn.mz(&[QubitId(1)])[0].outcome;
+            [tableau_outcome, mps_outcome]
+        };
+
+        let mut stn = StabMps::builder(2).seed(0x5eed).merge_rz(false).build();
+        let first = run(&mut stn);
+        assert!(stn.stats.total_nonclifford > 0);
+        stn.reset();
+        assert_eq!(stn.stats.total_nonclifford, 0);
+        assert_eq!(stn.stats.single_site, 0);
+        let second = run(&mut stn);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_stn_unseeded_reset_smoke() {
+        let mut stn = StabMps::new(1);
+        stn.h(&[QubitId(0)]);
+        let _ = stn.mz(&[QubitId(0)]);
+        stn.reset();
+        stn.h(&[QubitId(0)]);
+        let _ = stn.mz(&[QubitId(0)]);
+    }
+
     // --- Cross-validation tests against StabVec ---
 
     /// Helper: compare STN state vector against `StabVec` state vector.
@@ -6268,9 +6387,8 @@ mod tests {
         let mut z_count = 0;
         let mut none_count = 0;
         let trials = 2000;
-        let mut stn = StabMps::with_seed(1, 42);
-        for _ in 0..trials {
-            stn.reset();
+        for trial in 0..trials {
+            let mut stn = StabMps::with_seed(1, 42 + trial as u64);
             match stn.apply_depolarizing(QubitId(0), 0.9) {
                 Some(PauliKind::X) => x_count += 1,
                 Some(PauliKind::Y) => y_count += 1,
@@ -6357,6 +6475,36 @@ mod tests {
             (est.norm_sqr() - 1.0).abs() < 0.01,
             "identical states fidelity should be 1.0, got |est|² = {}",
             est.norm_sqr()
+        );
+    }
+
+    #[test]
+    fn test_overlap_with_stabilizer_h_after_rotation_matches_state_vector() {
+        use pecos_simulators::CHForm;
+
+        let mut stn = StabMps::builder(3).merge_rz(false).build();
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.9), &[QubitId(0)]);
+        stn.h(&[QubitId(0)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        stn.h(&[QubitId(2)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(2)]);
+        stn.h(&[QubitId(2)]);
+        stn.cx(&[(QubitId(1), QubitId(2))]);
+
+        let mut stabilizer = CHForm::new_with_seed(3, 41);
+        stabilizer.x(&[QubitId(0), QubitId(2)]);
+        let state_vector = stn.state_vector();
+        let expected: Complex64 = state_vector
+            .iter()
+            .enumerate()
+            .map(|(index, amplitude)| stabilizer.amplitude(index).conj() * amplitude)
+            .sum();
+        let actual = stn.overlap_with_stabilizer(&stabilizer, 8, Some(73));
+
+        assert!(
+            (actual - expected).norm() < 1e-10,
+            "overlap estimate={actual}, state-vector overlap={expected}"
         );
     }
 
@@ -6638,6 +6786,24 @@ mod tests {
         assert!(stn.flags.merge_rz());
         assert!(!stn.flags.pauli_frame_tracking());
         assert!(!stn.flags.numerical_flag_redetection());
+    }
+
+    #[test]
+    #[should_panic(expected = "max_truncation_error must be finite and non-negative")]
+    fn test_builder_rejects_negative_max_truncation_error() {
+        let _ = StabMps::builder(1).max_truncation_error(-1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_truncation_error must be finite and non-negative")]
+    fn test_builder_rejects_nan_max_truncation_error() {
+        let _ = StabMps::builder(1).max_truncation_error(f64::NAN);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_truncation_error must be finite and non-negative")]
+    fn test_builder_rejects_infinite_max_truncation_error() {
+        let _ = StabMps::builder(1).max_truncation_error(f64::INFINITY);
     }
 
     #[test]

@@ -378,11 +378,12 @@ impl PyStabMps {
     /// preset, while `False` and `None` are identical no-ops.
     /// `max_truncation_error=None` preserves the builder default of
     /// `1e-8`; a float overrides it, and `0.0` disables adaptive truncation
-    /// while retaining the SVD cutoff and bond cap.
+    /// while retaining the SVD cutoff and bond cap. Negative and non-finite
+    /// values raise `ValueError`.
     ///
     /// `seed` seeds PECOS's buffered RapidHash RNG and the stabilizer tableau.
     /// Fresh instances with the same configuration and call sequence reproduce
-    /// stochastic results; `reset()` does not rewind the stream.
+    /// stochastic results; `reset()` rewinds both streams to the seed.
     #[new]
     #[pyo3(signature = (
         num_qubits,
@@ -412,7 +413,12 @@ impl PyStabMps {
         max_truncation_error: Option<f64>,
         svd_cutoff: Option<f64>,
         numerical_flag_redetection: Option<bool>,
-    ) -> Self {
+    ) -> PyResult<Self> {
+        if max_truncation_error.is_some_and(|error| !error.is_finite() || error < 0.0) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_truncation_error must be finite and non-negative",
+            ));
+        }
         let mut b = StabMps::builder(num_qubits);
         if let Some(s) = seed {
             b = b.seed(s);
@@ -447,13 +453,13 @@ impl PyStabMps {
         if let Some(v) = numerical_flag_redetection {
             b = b.numerical_flag_redetection(v);
         }
-        PyStabMps { inner: b.build() }
+        Ok(PyStabMps { inner: b.build() })
     }
 
     /// Reset the quantum state and diagnostics to `|0...0>` and return `self`.
     ///
-    /// Configuration is retained. The random stream is not rewound; construct
-    /// a fresh simulator with the same seed to replay it.
+    /// Configuration is retained. A seeded simulator rewinds both RNG streams
+    /// to the construction seed; an unseeded simulator obtains fresh entropy.
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner.reset();
         slf

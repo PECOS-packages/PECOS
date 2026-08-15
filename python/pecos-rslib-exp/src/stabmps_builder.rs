@@ -70,8 +70,16 @@ impl StabMpsBuilder {
     }
 
     /// Set maximum truncation error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `err` is negative, NaN, or infinite.
     #[must_use]
     pub fn with_max_truncation_error(mut self, err: f64) -> Self {
+        assert!(
+            err.is_finite() && err >= 0.0,
+            "max_truncation_error must be finite and non-negative"
+        );
         self.max_truncation_error = Some(err);
         self
     }

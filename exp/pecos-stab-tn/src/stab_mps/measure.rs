@@ -108,6 +108,15 @@ pub fn z_expectation_value(tableau: &SparseStabY, mps: &Mps, q: usize) -> Comple
     }
 }
 
+fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
+    let probability_zero = f64::midpoint(1.0, expectation).clamp(0.0, 1.0);
+    if outcome {
+        1.0 - probability_zero
+    } else {
+        probability_zero
+    }
+}
+
 /// Compute the inner product <`mps_a|mps_b`> by contracting from left to right.
 fn mps_inner_product(mps_a: &Mps, mps_b: &Mps) -> Complex64 {
     let d = mps_a.phys_dim();
@@ -564,7 +573,7 @@ fn mps_site_block_is_zero(mps: &Mps, site: usize, block: usize) -> bool {
 ///
 /// Unlike `project_forced_z`, the MPS is left UNNORMALIZED: its norm drops
 /// by `sqrt(conditional_prob)` after this call. This is what lets the caller
-/// recover the complex amplitude at the end via `mps.amplitude(&[0;N])`.
+/// recover the complex amplitude from the selected virtual-basis coefficient.
 ///
 /// Used by `StabMps::amplitude_iterative` (Liu-Clark VI.B).
 ///
@@ -577,124 +586,85 @@ pub fn project_forced_z_unnormalized(
     q_idx: usize,
     outcome: bool,
 ) -> bool {
-    // Trivial MPS: just consult the tableau.
-    if is_mps_trivial(mps) {
-        let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
-        let ok = match decomp {
-            ZDecomposition::Stabilizer { phase, .. } => {
-                let det_outcome = phase.re < 0.0;
-                det_outcome == outcome
-            }
-            ZDecomposition::DestabilizerFlip { .. } => {
-                // MPS is trivial (|0⟩^N scaled); both outcomes contribute
-                // amplitude 1/sqrt(2). Apply the equal-sum projection by
-                // rescaling the (already trivial) MPS by 1/sqrt(2) on site
-                // 0 to preserve probability normalization.
-                mps.scale(Complex64::new(1.0 / std::f64::consts::SQRT_2, 0.0));
-                true
-            }
+    let carried_norm = mps.norm_squared().sqrt();
+    if carried_norm < 1e-30 {
+        return false;
+    }
+    mps.scale(Complex64::new(carried_norm.recip(), 0.0));
+    let probability = project_forced_z(tableau, mps, q_idx, outcome);
+    if probability < 1e-20 {
+        return false;
+    }
+    mps.scale(Complex64::new(carried_norm * probability.sqrt(), 0.0));
+    true
+}
+
+/// Recover the unique MPS-frame computational-basis index selected after all
+/// physical Z outcomes have been projected.
+///
+/// A forced projection through the stabilizer branch can leave the selected
+/// coefficient at a nonzero virtual index. The final tableau supplies the
+/// invertible GF(2) system relating physical Z eigenvalues to virtual
+/// stabilizer-sign bits.
+///
+/// # Panics
+///
+/// Panics if the outcome length differs from the tableau size or the fully
+/// projected tableau does not define an invertible real-valued Z constraint
+/// system. Those cases indicate an internal projection inconsistency.
+#[must_use]
+pub(super) fn projected_mps_basis_index(tableau: &SparseStabY, outcomes: &[bool]) -> Vec<u8> {
+    let n = tableau.num_qubits();
+    assert_eq!(outcomes.len(), n, "projected outcome length mismatch");
+
+    let mut matrix = vec![vec![false; n + 1]; n];
+    for (q, &outcome) in outcomes.iter().enumerate() {
+        let ZDecomposition::Stabilizer { phase, sign_sites } =
+            decompose_z(tableau.stabs(), tableau.destabs(), q)
+        else {
+            panic!("projected tableau still has a destabilizer component at qubit {q}");
         };
-        if ok {
-            tableau.mz_forced(q_idx, outcome);
+        assert!(
+            phase.im.abs() < 1e-10,
+            "projected Z decomposition has non-real phase at qubit {q}"
+        );
+        for site in sign_sites {
+            matrix[q][site] = true;
         }
-        return ok;
+        matrix[q][n] = outcome ^ (phase.re < 0.0);
     }
 
-    pre_reduce_for_measurement(tableau, mps, q_idx, true);
-    let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
-
-    match decomp {
-        ZDecomposition::Stabilizer { phase, sign_sites } => {
-            if sign_sites.is_empty() {
-                let det_outcome = phase.re < 0.0;
-                if det_outcome != outcome {
-                    return false;
+    let mut pivot_row = 0;
+    let mut pivot_columns = vec![usize::MAX; n];
+    for col in 0..n {
+        let found = matrix[pivot_row..]
+            .iter()
+            .position(|row| row[col])
+            .map(|offset| pivot_row + offset);
+        if let Some(found_row) = found {
+            matrix.swap(pivot_row, found_row);
+            let pivot = matrix[pivot_row].clone();
+            for (row_index, row) in matrix.iter_mut().enumerate() {
+                if row_index != pivot_row && row[col] {
+                    for (cell, &pivot_cell) in row.iter_mut().zip(pivot.iter()) {
+                        *cell ^= pivot_cell;
+                    }
                 }
-                tableau.mz_forced(q_idx, outcome);
-                return true;
             }
-            let sign_f = if outcome { -1.0 } else { 1.0 };
-            let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
-            let mut mps_z = mps.clone();
-            for &k in &sign_sites {
-                mps_z
-                    .apply_diagonal_one_site(k, &z_diag)
-                    .expect("MPS op on valid site");
-            }
-            mps_z.scale(Complex64::new(sign_f, 0.0) * phase * Complex64::new(0.5, 0.0));
-            mps.scale(Complex64::new(0.5, 0.0));
-            *mps = mps.add(&mps_z);
-            mps.compress();
-            tableau.mz_forced(q_idx, outcome);
-            true
-        }
-
-        ZDecomposition::DestabilizerFlip {
-            flip_sites,
-            phase,
-            sign_sites,
-        } => {
-            let sign_f = if outcome { -1.0 } else { 1.0 };
-            if flip_sites.len() == 1 && sign_sites.is_empty() {
-                let k = flip_sites[0];
-                let chi_r = mps.bond_dim(k + 1);
-                let sp = Complex64::new(sign_f, 0.0) * phase;
-                let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[k], 0, chi_r);
-                let block_1 = crate::mps::tensor::phys_block(&mps.tensors()[k], 1, chi_r);
-                // Project onto (I + sp·X_k)/2 eigenstate, then basis-change
-                // (X_k → Z_k via mz_forced). The projected state has σ_0 = σ_1;
-                // collapsing to the new Z=0 eigenstate keeps norm via √2 factor.
-                let inv_sqrt2 = Complex64::new(1.0 / std::f64::consts::SQRT_2, 0.0);
-                let projected = (&block_0 + &block_1 * sp) * inv_sqrt2;
-                let zero = DMatrix::zeros(mps.tensors()[k].nrows(), chi_r);
-                crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 0, chi_r, &projected);
-                crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 1, chi_r, &zero);
-            } else {
-                let x_gate = DMatrix::from_row_slice(
-                    2,
-                    2,
-                    &[
-                        Complex64::new(0.0, 0.0),
-                        Complex64::new(1.0, 0.0),
-                        Complex64::new(1.0, 0.0),
-                        Complex64::new(0.0, 0.0),
-                    ],
-                );
-                let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
-                let mut mps_z = mps.clone();
-                // Apply Z first, then X (order must match z_expectation_value).
-                for &k in &sign_sites {
-                    mps_z
-                        .apply_diagonal_one_site(k, &z_diag)
-                        .expect("MPS op on valid site");
-                }
-                for &j in &flip_sites {
-                    mps_z
-                        .apply_one_site_gate(j, &x_gate)
-                        .expect("MPS op on valid site");
-                }
-                mps_z.scale(Complex64::new(sign_f, 0.0) * phase * Complex64::new(0.5, 0.0));
-                mps.scale(Complex64::new(0.5, 0.0));
-                *mps = mps.add(&mps_z);
-                mps.compress();
-                if flip_sites.len() == 1 {
-                    let k = flip_sites[0];
-                    let chi_r = mps.bond_dim(k + 1);
-                    let zero = DMatrix::zeros(mps.tensors()[k].nrows(), chi_r);
-                    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 1, chi_r, &zero);
-                    // Basis swap at flip site: σ_0_new absorbs both σ_0 and σ_1
-                    // of old basis → √2 factor to preserve norm.
-                    mps.scale(Complex64::new(std::f64::consts::SQRT_2, 0.0));
-                }
-                // For >1 flip sites, the multi-site projection distributes
-                // amplitude across sites in a way our simple basis-swap trick
-                // doesn't handle. Callers should pre-reduce the tableau
-                // (`pre_reduce_for_measurement`) to collapse to single-flip.
-            }
-            tableau.mz_forced(q_idx, outcome);
-            true
+            pivot_columns[pivot_row] = col;
+            pivot_row += 1;
         }
     }
+    assert_eq!(
+        pivot_row, n,
+        "projected Z constraints are not an invertible MPS-frame basis"
+    );
+
+    let mut index = vec![0; n];
+    for row in 0..n {
+        index[pivot_columns[row]] = u8::from(matrix[row][n]);
+    }
+    index
 }
 
 /// Project qubit `q_idx` onto a forced Z-basis outcome and return the
@@ -746,8 +716,7 @@ pub fn project_forced_z(
                 }
                 return 0.0;
             }
-            let prob_plus = f64::midpoint(1.0, ev).clamp(0.0, 1.0);
-            let prob = if outcome { 1.0 - prob_plus } else { prob_plus };
+            let prob = forced_outcome_probability(ev, outcome);
             if prob < 1e-20 {
                 return 0.0;
             }
@@ -776,8 +745,7 @@ pub fn project_forced_z(
             phase,
             sign_sites,
         } => {
-            let prob_plus = f64::midpoint(1.0, ev).clamp(0.0, 1.0);
-            let prob = if outcome { 1.0 - prob_plus } else { prob_plus };
+            let prob = forced_outcome_probability(ev, outcome);
             if prob < 1e-20 {
                 return 0.0;
             }

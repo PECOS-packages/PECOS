@@ -18,9 +18,9 @@ use pyo3::types::{PyDict, PySet, PyTuple};
 
 /// Python MAST simulator.
 ///
-/// Telemetry and capacity reads materialize pending lazy-measurement operations
-/// and merged RZ rotations before returning. Exceeding the constructor's
-/// `max_non_clifford` capacity raises a `PanicException`;
+/// Telemetry and capacity reads report stored state without materializing
+/// pending lazy-measurement operations or merged RZ rotations. Exceeding the
+/// constructor's `max_non_clifford` capacity raises a `PanicException`;
 /// `remaining_injections` exposes available capacity, and
 /// `StabMpsCompile.advise()` reports the required capacity for an analyzed
 /// circuit. `project_all()` completes deferred injections explicitly; any MZ
@@ -82,7 +82,7 @@ impl PyMast {
     ///
     /// `seed` initializes PECOS's buffered RapidHash RNG and the tableau. Fresh
     /// instances with the same configuration and call sequence reproduce
-    /// stochastic results; `reset()` does not rewind the stream.
+    /// stochastic results; `reset()` rewinds both streams to the seed.
     #[pyo3(signature = (
         num_qubits,
         max_non_clifford,
@@ -137,7 +137,8 @@ impl PyMast {
 
     /// Reset data, ancillas, capacity use, and diagnostics, returning `self`.
     ///
-    /// Configuration is retained. The random stream is not rewound.
+    /// Configuration is retained. A seeded simulator rewinds both RNG streams
+    /// to the construction seed; an unseeded simulator obtains fresh entropy.
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner.reset();
         slf
@@ -160,39 +161,38 @@ impl PyMast {
     #[getter]
     /// Number of fresh ancilla slots consumed by injections.
     ///
-    /// Pending merged rotations are flushed first and can consume capacity.
-    fn num_ancillas_used(&mut self) -> usize {
-        self.inner.flush();
+    /// Pending unflushed rotations are not reflected and can consume capacity
+    /// when later materialized.
+    fn num_ancillas_used(&self) -> usize {
         self.inner.num_ancillas_used()
     }
 
     #[getter]
     /// Number of additional injections available before capacity is exhausted.
     ///
-    /// Pending merged rotations are flushed first and can reduce this value.
+    /// Pending unflushed rotations are not reflected and can consume capacity
+    /// when later materialized.
     /// Exceeding capacity through a later gate raises `PanicException`.
-    fn remaining_injections(&mut self) -> usize {
-        self.inner.flush();
+    fn remaining_injections(&self) -> usize {
         self.inner.remaining_injections()
     }
 
     #[getter]
     /// Largest bond dimension currently present in the coefficient MPS.
     ///
-    /// Pending lazy operations and merged rotations are flushed first. Deferred
-    /// injections remain unprojected until `project_all()` or an MZ gate.
-    fn max_bond_dim(&mut self) -> usize {
-        self.inner.flush();
+    /// Pending unflushed operations are not reflected and can later consume
+    /// injection capacity. Deferred injections remain unprojected until
+    /// `project_all()` or an MZ gate.
+    fn max_bond_dim(&self) -> usize {
         self.inner.max_bond_dim()
     }
 
     /// Return diagnostics for deferred magic-state projections since reset.
     ///
-    /// Pending lazy operations and merged rotations are flushed first, but
-    /// deferred injections are not projected. Each dictionary reports ancilla,
-    /// support size, MPS span, and bond dimensions before and after projection.
-    fn projection_records(&mut self, py: Python<'_>) -> PyResult<Vec<Py<PyDict>>> {
-        self.inner.flush();
+    /// Pending unflushed operations are not reflected and can later consume
+    /// injection capacity. Each dictionary reports ancilla, support size, MPS
+    /// span, and bond dimensions before and after projection.
+    fn projection_records(&self, py: Python<'_>) -> PyResult<Vec<Py<PyDict>>> {
         self.inner
             .projection_records()
             .iter()
@@ -212,17 +212,17 @@ impl PyMast {
     /// Peak MPS bond dimension observed during deferred projections.
     ///
     /// Returns zero until `project_all()` or an MZ gate projects an injection.
-    /// Pending ordinary work is flushed before the read.
-    fn projection_peak_bond(&mut self) -> usize {
-        self.inner.flush();
+    /// Pending unflushed operations are not reflected and can later consume
+    /// injection capacity.
+    fn projection_peak_bond(&self) -> usize {
         self.inner.projection_peak_bond()
     }
 
     /// Return runtime non-Clifford path counters as a dictionary.
     ///
-    /// Pending ordinary work is flushed; deferred injections remain unprojected.
-    fn stats(&mut self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        self.inner.flush();
+    /// Pending unflushed operations are not reflected and can later consume
+    /// injection capacity. Deferred injections remain unprojected.
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         crate::stab_mps_stats_to_dict(py, &self.inner.stats)
     }
 

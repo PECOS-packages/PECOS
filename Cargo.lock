@@ -442,6 +442,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "batsat"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c46275d5d413790e96e7a74bab90591ba0aad8117662fadee8ba266685e5908a"
+dependencies = [
+ "bit-vec 0.5.1",
+]
+
+[[package]]
 name = "beef"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -521,6 +530,12 @@ checksum = "34ddef2995421ab6a5c779542c81ee77c115206f4ad9d5a8e05f4ff49716a3dd"
 dependencies = [
  "bit-vec 0.9.1",
 ]
+
+[[package]]
+name = "bit-vec"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f59bbe95d4e52a6398ec21238d31577f2b28a9d86807f06ca59d191d8440d0bb"
 
 [[package]]
 name = "bit-vec"
@@ -4080,6 +4095,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-bp-trellis"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-decoder-core",
+ "pecos-trellis",
+]
+
+[[package]]
 name = "pecos-build"
 version = "0.2.0-dev.0"
 dependencies = [
@@ -4287,6 +4310,18 @@ dependencies = [
  "pecos-neo",
  "pecos-random",
  "pecos-simulators",
+]
+
+[[package]]
+name = "pecos-frontier"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-decoder-core",
+ "pecos-trellis",
+ "rand 0.10.2",
+ "rand_xoshiro 0.8.1",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4564,9 +4599,11 @@ dependencies = [
 name = "pecos-qec"
 version = "0.2.0-dev.0"
 dependencies = [
+ "batsat",
  "ndarray 0.17.2",
  "pecos-core",
  "pecos-decoder-core",
+ "pecos-ldpc-decoders",
  "pecos-neo",
  "pecos-num",
  "pecos-quantum",
@@ -4661,7 +4698,6 @@ dependencies = [
  "ndarray 0.16.1",
  "ndarray 0.17.2",
  "pecos-decoder-core",
- "rayon",
  "relay-bp",
  "sprs",
  "thiserror 2.0.18",
@@ -4713,6 +4749,7 @@ dependencies = [
  "rand 0.10.2",
  "rayon",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
 ]
 
@@ -4734,14 +4771,17 @@ name = "pecos-rslib-exp"
 version = "0.2.0-dev.0"
 dependencies = [
  "num-complex 0.4.6",
+ "pecos-bp-trellis",
  "pecos-core",
  "pecos-eeg",
+ "pecos-frontier",
  "pecos-neo",
  "pecos-qec",
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
  "pecos-stab-tn",
+ "pecos-trellis",
  "pyo3",
  "rayon",
  "serde",
@@ -4871,6 +4911,15 @@ dependencies = [
  "pecos-build",
  "pecos-decoder-core",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pecos-trellis"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-decoder-core",
+ "rand 0.10.2",
+ "rand_xoshiro 0.8.1",
 ]
 
 [[package]]

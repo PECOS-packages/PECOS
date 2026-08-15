@@ -904,6 +904,15 @@ impl Gate {
         )
     }
 
+    /// Create an X-basis measurement gate on multiple qubits.
+    #[must_use]
+    pub fn mx(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::MX,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
     /// Create `MeasureLeaked` gate on multiple qubits
     #[must_use]
     pub fn measure_leaked(qubits: &[impl Into<QubitId> + Copy]) -> Self {
@@ -918,6 +927,15 @@ impl Gate {
     pub fn pz(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::simple(
             GateType::PZ,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create an X-basis preparation gate on multiple qubits.
+    #[must_use]
+    pub fn px(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::PX,
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
     }
@@ -1183,7 +1201,11 @@ impl Gate {
         }
         let is_measurement = matches!(
             self.gate_type,
-            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ
+            GateType::MX
+                | GateType::MZ
+                | GateType::MeasureLeaked
+                | GateType::MeasureFree
+                | GateType::MPZ
         );
         if is_measurement {
             if !self.meas_ids.is_empty() && self.meas_ids.len() != self.qubits.len() {

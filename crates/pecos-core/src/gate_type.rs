@@ -84,7 +84,8 @@ pub enum GateType {
     /// Toffoli gate (CCX, 3 qubits)
     CCX = 90,
 
-    // MX = 100
+    /// Measure in the X basis.
+    MX = 100,
     // MnX = 101
     // MY = 102
     // MnY = 103
@@ -97,8 +98,8 @@ pub enum GateType {
     /// Measure +Z, then prepare |0> (measure-and-prepare; the MP* family)
     MPZ = 107,
     // TODO: MPauli instead of the other variants?
-
-    // PX = 130
+    /// Prepare the +1 eigenstate of X.
+    PX = 130,
     // PNX = 131
     // PY = 132
     // PNY = 133
@@ -173,10 +174,12 @@ impl From<u8> for GateType {
             83 => GateType::RXXRYYRZZ,
             84 => GateType::U2q,
             90 => GateType::CCX,
+            100 => GateType::MX,
             104 => GateType::MZ,
             105 => GateType::MeasureLeaked,
             106 => GateType::MeasureFree,
             107 => GateType::MPZ,
+            130 => GateType::PX,
             134 => GateType::PZ,
             135 => GateType::QAlloc,
             136 => GateType::QFree,
@@ -220,7 +223,10 @@ impl GateType {
     /// Deciding otherwise means changing this function and nothing else.
     #[must_use]
     pub const fn consumes_measurement_record(self) -> bool {
-        matches!(self, GateType::MZ | GateType::MeasureFree | GateType::MPZ)
+        matches!(
+            self,
+            GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
+        )
     }
 
     /// Returns the number of angle parameters this gate type requires
@@ -259,6 +265,7 @@ impl GateType {
             | GateType::SZZdg
             | GateType::SWAP
             | GateType::CCX
+            | GateType::MX
             | GateType::MZ
             | GateType::MeasureLeaked
             | GateType::MeasureFree
@@ -266,6 +273,7 @@ impl GateType {
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::MeasCrosstalkLocalPayload
             | GateType::Channel
+            | GateType::PX
             | GateType::PZ
             | GateType::QAlloc
             | GateType::QFree
@@ -324,10 +332,12 @@ impl GateType {
             | GateType::Tdg
             | GateType::R1XY
             | GateType::U
+            | GateType::MX
             | GateType::MZ
             | GateType::MeasureLeaked
             | GateType::MeasureFree
             | GateType::MPZ
+            | GateType::PX
             | GateType::PZ
             | GateType::QAlloc
             | GateType::QFree
@@ -480,10 +490,12 @@ impl fmt::Display for GateType {
             GateType::RXXRYYRZZ => write!(f, "RXXRYYRZZ"),
             GateType::U2q => write!(f, "U2q"),
             GateType::CCX => write!(f, "CCX"),
+            GateType::MX => write!(f, "MX"),
             GateType::MZ => write!(f, "MZ"),
             GateType::MeasureLeaked => write!(f, "MeasureLeaked"),
             GateType::MeasureFree => write!(f, "MeasureFree"),
             GateType::MPZ => write!(f, "MPZ"),
+            GateType::PX => write!(f, "PX"),
             GateType::PZ => write!(f, "PZ"),
             GateType::QAlloc => write!(f, "QAlloc"),
             GateType::QFree => write!(f, "QFree"),
@@ -503,7 +515,9 @@ impl std::str::FromStr for GateType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Try exact match first for multi-word aliases with specific casing
         match s {
+            "init |+>" | "Init |+>" => return Ok(GateType::PX),
             "init |0>" | "Init |0>" => return Ok(GateType::PZ),
+            "measure X" => return Ok(GateType::MX),
             "measure Z" => return Ok(GateType::MZ),
             _ => {}
         }
@@ -549,10 +563,12 @@ impl std::str::FromStr for GateType {
             "CRZ" => Ok(GateType::CRZ),
             "CCX" | "TOFFOLI" => Ok(GateType::CCX),
             "SWAP" => Ok(GateType::SWAP),
+            "MX" | "MEASURE X" => Ok(GateType::MX),
             "MEASURE" | "MZ" | "MEASURE Z" => Ok(GateType::MZ),
             "MEASUREFREE" | "MZFREE" => Ok(GateType::MeasureFree),
             "MEASURELEAKED" => Ok(GateType::MeasureLeaked),
             "MPZ" => Ok(GateType::MPZ),
+            "PX" | "INIT |+>" => Ok(GateType::PX),
             "PREP" | "PZ" | "INIT" | "INIT |0>" | "RESET" => Ok(GateType::PZ),
             "QALLOC" => Ok(GateType::QAlloc),
             "QFREE" => Ok(GateType::QFree),

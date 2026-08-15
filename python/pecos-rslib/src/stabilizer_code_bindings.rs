@@ -41,7 +41,7 @@ use crate::stabilizer_group_bindings::PyPauliStabilizerGroup;
 #[pyclass(name = "StabilizerCode", module = "pecos_rslib", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyStabilizerCode {
-    inner: RustCode,
+    pub(crate) inner: RustCode,
 }
 
 unsafe impl Send for PyStabilizerCode {}

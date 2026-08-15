@@ -15,7 +15,10 @@
 //! This module provides integration between the fault tolerance checking framework
 //! and `TickCircuit` / `pecos-simulators` simulators.
 
-use super::pauli_prop_checker::{CircuitIO, FaultClass, classify_fault, propagate_faults};
+use super::pauli_prop_checker::{
+    CircuitIO, FaultClass, PropagationResult, anticommutes_with_logical, classify_fault,
+    get_syndrome_flips, propagate_faults,
+};
 use super::{
     FaultCheckConfig, FaultCheckResult, FaultConfiguration, PauliFault, SpacetimeLocation,
 };
@@ -60,19 +63,19 @@ pub fn extract_spacetime_locations(
 
     // Iterate through all ticks
     for (tick_idx, tick) in circuit.iter_ticks() {
-        for gate in tick.iter_gate_batches() {
-            let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
+        for (gate_index, gate) in tick.iter_gate_instances().enumerate() {
+            let qubits: Vec<QubitId> = gate.qubits().to_vec();
             let is_measurement = matches!(
-                gate.gate_type,
-                GateType::MZ | GateType::MeasureFree | GateType::MPZ
+                gate.gate_type(),
+                GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
             );
 
             locations.push(SpacetimeLocation::new(
                 tick_idx,
                 qubits,
                 is_measurement, // Measurements get "before" errors
-                gate.gate_type,
-                gate.batch_index(),
+                gate.gate_type(),
+                gate_index,
             ));
         }
     }
@@ -207,8 +210,16 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
                     swap_pairs.push((c[0], c[1]));
                 }
             }
+            GateType::MX => {
+                sim.h(&gate.qubits);
+                sim.mz(&gate.qubits);
+            }
             GateType::MZ | GateType::MeasureFree => mz_qubits.extend(gate.qubits.iter()),
             GateType::MPZ => mpz_qubits.extend(gate.qubits.iter()),
+            GateType::PX => {
+                sim.pz(&gate.qubits);
+                sim.h(&gate.qubits);
+            }
             GateType::PZ => pz_qubits.extend(gate.qubits.iter()),
             GateType::I => {}
             _ => {
@@ -388,11 +399,19 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
                 _ => unreachable!(),
             }
         }
+        GateType::MX => {
+            sim.h(&qubits);
+            sim.mz(&qubits);
+        }
         GateType::MZ | GateType::MeasureFree => {
             sim.mz(&qubits);
         }
         GateType::MPZ => {
             sim.mpz(&qubits);
+        }
+        GateType::PX => {
+            sim.pz(&qubits);
+            sim.h(&qubits);
         }
         GateType::PZ => {
             sim.pz(&qubits);
@@ -486,6 +505,23 @@ impl FaultCategoryAnalysis {
             self.detectable_errors as f64 / self.total_tested as f64
         }
     }
+}
+
+/// The minimum circuit-level fault weight and one configuration attaining it.
+#[derive(Debug, Clone)]
+pub struct CircuitDistanceResult {
+    /// Minimum number of fault locations in an undetectable logical error.
+    pub distance: usize,
+    /// First minimum-weight failing configuration in fault-iterator order.
+    pub witness: FaultConfiguration,
+    /// Index of the supplied logical operator flipped by `witness`.
+    pub logical_index: usize,
+}
+
+#[derive(Clone, Copy)]
+enum CircuitDistanceStoppingRule {
+    FirstLogical,
+    AllLogicals,
 }
 
 /// A fault checker that tests a circuit for fault tolerance.
@@ -617,6 +653,129 @@ impl<'a> FaultChecker<'a> {
             self.locations.clone(),
             self.config.max_weight,
             self.config.clone(),
+        )
+    }
+
+    fn circuit_fault_distances_with_stopping_rule(
+        &self,
+        z_ancillas: &[usize],
+        x_ancillas: &[usize],
+        logicals: &[(&[usize], &[usize])],
+        max_weight: usize,
+        stopping_rule: CircuitDistanceStoppingRule,
+    ) -> Vec<Option<CircuitDistanceResult>> {
+        let mut distances: Vec<Option<CircuitDistanceResult>> =
+            (0..logicals.len()).map(|_| None).collect();
+        if logicals.is_empty() {
+            return distances;
+        }
+
+        for weight in 1..=max_weight {
+            let mut config = self.config.clone();
+            config.max_weight = weight;
+            let fault_iter = super::PauliFaultIterator::new(self.locations.clone(), weight, config);
+
+            for fault_config in fault_iter {
+                let prop = propagate_faults(self.circuit, &fault_config);
+                let (z_syndrome_flips, x_syndrome_flips) =
+                    get_syndrome_flips(&prop, z_ancillas, x_ancillas);
+                let logical_errors = logicals
+                    .iter()
+                    .map(|(xs, zs)| anticommutes_with_logical(&prop, xs, zs))
+                    .collect();
+                let propagation_result = PropagationResult {
+                    propagated_error: prop,
+                    z_syndrome_flips,
+                    x_syndrome_flips,
+                    logical_errors,
+                };
+
+                if propagation_result.has_syndrome() {
+                    continue;
+                }
+
+                for (logical_index, logical_error) in
+                    propagation_result.logical_errors.into_iter().enumerate()
+                {
+                    if logical_error && distances[logical_index].is_none() {
+                        distances[logical_index] = Some(CircuitDistanceResult {
+                            distance: fault_config.len(),
+                            witness: fault_config.clone(),
+                            logical_index,
+                        });
+                    }
+                }
+
+                let should_stop = match stopping_rule {
+                    CircuitDistanceStoppingRule::FirstLogical => {
+                        distances.iter().any(Option::is_some)
+                    }
+                    CircuitDistanceStoppingRule::AllLogicals => {
+                        distances.iter().all(Option::is_some)
+                    }
+                };
+                if should_stop {
+                    return distances;
+                }
+            }
+        }
+
+        distances
+    }
+
+    /// Finds the circuit-level fault distance up to an explicit weight budget.
+    ///
+    /// The distance counts fault locations ([`FaultConfiguration::len`]), not the number of
+    /// non-identity single-qubit Paulis within those locations. Configurations are searched in
+    /// increasing location weight, and the first undetectable logical error in iterator order is
+    /// returned.
+    ///
+    /// This search is combinatorial in `max_weight`: it builds and exhausts a fresh exact-weight
+    /// fault iterator for each weight until it finds a witness. Callers must choose the budget
+    /// explicitly.
+    #[must_use]
+    pub fn circuit_fault_distance(
+        &self,
+        z_ancillas: &[usize],
+        x_ancillas: &[usize],
+        logicals: &[(&[usize], &[usize])],
+        max_weight: usize,
+    ) -> Option<CircuitDistanceResult> {
+        self.circuit_fault_distances_with_stopping_rule(
+            z_ancillas,
+            x_ancillas,
+            logicals,
+            max_weight,
+            CircuitDistanceStoppingRule::FirstLogical,
+        )
+        .into_iter()
+        .flatten()
+        .next()
+    }
+
+    /// Finds a separate circuit-level fault distance for each supplied logical operator.
+    ///
+    /// Each entry is the first iterator-ordered witness at the smallest searched location weight
+    /// that flips that logical without producing a syndrome. An entry is `None` when no such
+    /// witness exists through `max_weight`.
+    ///
+    /// This search is combinatorial in `max_weight`: it builds and exhausts a fresh exact-weight
+    /// fault iterator for each weight until every logical has a result or the explicit caller-owned
+    /// budget is exhausted.
+    #[must_use]
+    pub fn per_logical_circuit_fault_distances(
+        &self,
+        z_ancillas: &[usize],
+        x_ancillas: &[usize],
+        logicals: &[(&[usize], &[usize])],
+        max_weight: usize,
+    ) -> Vec<Option<CircuitDistanceResult>> {
+        self.circuit_fault_distances_with_stopping_rule(
+            z_ancillas,
+            x_ancillas,
+            logicals,
+            max_weight,
+            CircuitDistanceStoppingRule::AllLogicals,
         )
     }
 
@@ -940,6 +1099,7 @@ impl<'a> FaultChecker<'a> {
 #[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
+    use crate::fault_tolerance::PauliFaultIterator;
     use pecos_simulators::SparseStab;
 
     #[test]
@@ -967,6 +1127,93 @@ mod tests {
         assert_eq!(locations[1].tick, 1);
         assert_eq!(locations[1].qubits, vec![QubitId(0), QubitId(1)]);
         assert_eq!(locations[1].gate_type, GateType::CX);
+    }
+
+    #[test]
+    fn test_extract_spacetime_locations_uses_gate_instance_granularity() {
+        let mut single_qubit_batch = TickCircuit::new();
+        single_qubit_batch.tick().pz(&[0, 1, 2]);
+
+        let locations = extract_spacetime_locations(&single_qubit_batch, false);
+        assert_eq!(locations.len(), 3);
+        assert_eq!(
+            locations
+                .iter()
+                .map(|location| location.qubits.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![QubitId(0)], vec![QubitId(1)], vec![QubitId(2)]]
+        );
+        assert_eq!(
+            locations
+                .iter()
+                .map(|location| location.gate_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+
+        let mut two_qubit_batch = TickCircuit::new();
+        two_qubit_batch.tick().cx(&[(0, 1), (2, 3)]);
+
+        let locations = extract_spacetime_locations(&two_qubit_batch, false);
+        assert_eq!(locations.len(), 2);
+        assert_eq!(
+            locations
+                .iter()
+                .map(|location| location.qubits.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![QubitId(0), QubitId(1)], vec![QubitId(2), QubitId(3)],]
+        );
+
+        let mut mixed_tick = TickCircuit::new();
+        mixed_tick.tick().h(&[0, 1]).x(&[2]).cx(&[(3, 4), (5, 6)]);
+
+        let locations = extract_spacetime_locations(&mixed_tick, false);
+        assert_eq!(locations.len(), 5);
+        assert_eq!(
+            locations
+                .iter()
+                .map(|location| location.qubits.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                vec![QubitId(0)],
+                vec![QubitId(1)],
+                vec![QubitId(2)],
+                vec![QubitId(3), QubitId(4)],
+                vec![QubitId(5), QubitId(6)],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_weight_one_fault_cannot_span_parallel_cx_instances() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().cx(&[(0, 1), (2, 3)]);
+
+        let locations = extract_spacetime_locations(&circuit, false);
+        let fault_iter = PauliFaultIterator::new(locations, 1, FaultCheckConfig::new().x_only());
+
+        for configuration in fault_iter {
+            let [fault] = configuration.faults.as_slice() else {
+                panic!("weight-one iteration must select exactly one location");
+            };
+            let touches_first_pair = fault
+                .location
+                .qubits
+                .iter()
+                .zip(&fault.paulis)
+                .any(|(qubit, pauli)| qubit.index() < 2 && *pauli != 0);
+            let touches_second_pair = fault
+                .location
+                .qubits
+                .iter()
+                .zip(&fault.paulis)
+                .any(|(qubit, pauli)| qubit.index() >= 2 && *pauli != 0);
+
+            assert!(
+                !(touches_first_pair && touches_second_pair),
+                "a weight-one fault crossed CX instances: {configuration:?}"
+            );
+        }
     }
 
     #[test]
@@ -1069,6 +1316,22 @@ mod tests {
         circuit
     }
 
+    /// Build two independent logical sectors for which X-only location faults have distances one
+    /// and two. Logical 0 is flipped by an X fault before its final H. In the other sector, the two
+    /// prep faults propagate respectively to Z0 Z1 and Z1, so each is detected alone but together
+    /// they cancel the syndrome while flipping logical 1 on qubit 0.
+    fn unequal_logical_distance_circuit() -> TickCircuit {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        circuit.tick().pz(&[1]);
+        circuit.tick().h(&[0, 1]);
+        circuit.tick().cx(&[(1, 0)]);
+
+        circuit.tick().pz(&[2]);
+        circuit.tick().h(&[2]);
+        circuit
+    }
+
     #[test]
     fn test_three_qubit_code_syndrome_extraction() {
         let circuit = three_qubit_bitflip_syndrome_circuit();
@@ -1076,16 +1339,18 @@ mod tests {
         // Check we have the expected number of locations
         let locations = extract_spacetime_locations(&circuit, false);
 
-        // 1 prep (2 qubits) + 4 CX gates + 1 measure (2 qubits) = 6 gate operations
-        assert_eq!(locations.len(), 6);
+        // 2 preparations + 4 CX gates + 2 measurements = 8 gate applications
+        assert_eq!(locations.len(), 8);
 
         // Verify gate types
         assert_eq!(locations[0].gate_type, GateType::PZ);
-        assert_eq!(locations[1].gate_type, GateType::CX);
+        assert_eq!(locations[1].gate_type, GateType::PZ);
         assert_eq!(locations[2].gate_type, GateType::CX);
         assert_eq!(locations[3].gate_type, GateType::CX);
         assert_eq!(locations[4].gate_type, GateType::CX);
-        assert_eq!(locations[5].gate_type, GateType::MZ);
+        assert_eq!(locations[5].gate_type, GateType::CX);
+        assert_eq!(locations[6].gate_type, GateType::MZ);
+        assert_eq!(locations[7].gate_type, GateType::MZ);
     }
 
     #[test]
@@ -1272,10 +1537,10 @@ mod tests {
             .filter(|l| l.gate_type == GateType::MZ)
             .count();
 
-        assert_eq!(preps, 1); // One bulk prep
-        assert_eq!(hadamards, 2); // Two bulk H operations
+        assert_eq!(preps, 3); // Three ancilla preparations
+        assert_eq!(hadamards, 6); // Three initial and three final H gates
         assert_eq!(cnots, 12); // 12 individual CX gates
-        assert_eq!(measures, 1); // One bulk measure
+        assert_eq!(measures, 3); // Three ancilla measurements
     }
 
     #[test]
@@ -1870,6 +2135,106 @@ mod tests {
             result.failures.len(),
             result.total_tested
         );
+    }
+
+    #[test]
+    fn circuit_fault_distance_is_one_for_three_qubit_syndrome_extraction() {
+        let circuit = three_qubit_bitflip_syndrome_circuit();
+        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().all_paulis());
+        let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1, 2])];
+
+        let result = checker
+            .circuit_fault_distance(&[3, 4], &[], logicals, 1)
+            .expect("the three-qubit syndrome circuit has a weight-one logical fault");
+
+        assert_eq!(result.distance, 1);
+        assert_eq!(result.witness.len(), 1);
+        assert_eq!(result.logical_index, 0);
+    }
+
+    #[test]
+    fn circuit_fault_distance_returns_none_without_a_logical_fault_in_budget() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().x_only());
+        let logicals: &[(&[usize], &[usize])] = &[(&[0], &[])];
+
+        assert!(
+            checker
+                .circuit_fault_distance(&[], &[], logicals, 2)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn circuit_fault_distance_respects_a_budget_below_the_true_distance() {
+        let circuit = unequal_logical_distance_circuit();
+        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().x_only());
+        let logicals: &[(&[usize], &[usize])] = &[(&[0], &[])];
+
+        assert!(
+            checker
+                .circuit_fault_distance(&[], &[1], logicals, 1)
+                .is_none()
+        );
+        assert_eq!(
+            checker
+                .circuit_fault_distance(&[], &[1], logicals, 2)
+                .expect("the second logical sector has a weight-two fault")
+                .distance,
+            2
+        );
+    }
+
+    #[test]
+    fn per_logical_circuit_fault_distances_discriminate_and_bound_overall_distance() {
+        let circuit = unequal_logical_distance_circuit();
+        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().x_only());
+        let logicals: &[(&[usize], &[usize])] = &[(&[2], &[]), (&[0], &[])];
+
+        let per_logical = checker.per_logical_circuit_fault_distances(&[], &[1], logicals, 2);
+        let distances: Vec<Option<usize>> = per_logical
+            .iter()
+            .map(|result| result.as_ref().map(|result| result.distance))
+            .collect();
+        assert_eq!(distances, vec![Some(1), Some(2)]);
+        assert_ne!(distances[0], distances[1]);
+        for (logical_index, result) in per_logical.iter().enumerate() {
+            let result = result
+                .as_ref()
+                .expect("both logical sectors have a fault within the budget");
+            assert_eq!(result.logical_index, logical_index);
+            assert_eq!(result.witness.len(), result.distance);
+        }
+
+        let overall = checker
+            .circuit_fault_distance(&[], &[1], logicals, 2)
+            .expect("at least one supplied logical has a fault within the budget");
+        let minimum = per_logical
+            .iter()
+            .flatten()
+            .map(|result| result.distance)
+            .min()
+            .expect("both per-logical distances are present");
+        assert_eq!(overall.distance, minimum);
+    }
+
+    #[test]
+    fn circuit_fault_distance_is_deterministic() {
+        let circuit = unequal_logical_distance_circuit();
+        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().x_only());
+        let logicals: &[(&[usize], &[usize])] = &[(&[2], &[]), (&[0], &[])];
+
+        let first = checker
+            .circuit_fault_distance(&[], &[1], logicals, 2)
+            .expect("the circuit has a logical fault within the budget");
+        let second = checker
+            .circuit_fault_distance(&[], &[1], logicals, 2)
+            .expect("the circuit has a logical fault within the budget");
+
+        assert_eq!(first.distance, second.distance);
+        assert_eq!(first.witness.faults, second.witness.faults);
+        assert_eq!(first.logical_index, second.logical_index);
     }
 
     #[test]

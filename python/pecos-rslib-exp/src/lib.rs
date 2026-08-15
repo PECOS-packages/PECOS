@@ -24,15 +24,18 @@
     clippy::unused_self
 )]
 
-//! Python bindings for experimental PECOS simulators.
+//! Python bindings for experimental PECOS components.
 //!
 //! Exposes `StabMps` (stabilizer + MPS hybrid), `Mast` (magic state
 //! injection), and `StabMpsCompile` (compile-only tractability analysis)
-//! from `pecos-stab-tn` via `PyO3`.
+//! from `pecos-stab-tn`, plus the Frontier and BP-trellis decoders,
+//! via `PyO3`.
 
+mod bp_trellis_bindings;
 mod coherent_idle_channel;
 mod compile_bindings;
 mod eeg_bindings;
+mod frontier_bindings;
 mod mast_bindings;
 mod sim_neo_bindings;
 mod stab_mps_bindings;
@@ -83,6 +86,14 @@ pub(crate) fn extract_angle(
 
 #[pymodule]
 fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<bp_trellis_bindings::PyBpTrellisDecoder>()?;
+    m.add_class::<bp_trellis_bindings::PyBpTrellisResult>()?;
+    m.add_class::<bp_trellis_bindings::PyBpTrellisObservableFlips>()?;
+    m.add_class::<frontier_bindings::PyFrontierDecoder>()?;
+    m.add_class::<frontier_bindings::PyFrontierCommitteeDecoder>()?;
+    m.add_class::<frontier_bindings::PyFrontierResult>()?;
+    m.add_class::<frontier_bindings::PyFrontierCommitteeResult>()?;
+    m.add_class::<frontier_bindings::PyFrontierObservableFlips>()?;
     m.add_class::<stab_mps_bindings::PyStabMps>()?;
     m.add_class::<mast_bindings::PyMast>()?;
     m.add_class::<compile_bindings::PyStabMpsCompile>()?;

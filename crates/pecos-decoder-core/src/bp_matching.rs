@@ -29,10 +29,18 @@ use crate::errors::DecoderError;
 pub trait BpWeightProvider {
     /// Compute BP-adjusted matching graph edge weights for a syndrome.
     /// Returns one weight per matching graph edge.
-    fn compute_weights(&mut self, syndrome: &[u8]) -> Vec<f64>;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] when the syndrome dimensions are invalid or
+    /// soft inference fails.
+    fn compute_weights(&mut self, syndrome: &[u8]) -> Result<Vec<f64>, DecoderError>;
 
     /// Number of matching graph edges.
     fn num_edges(&self) -> usize;
+
+    /// Number of detector checks expected in each syndrome.
+    fn check_count(&self) -> usize;
 
     /// Check if this syndrome is trivial (predecoder can handle it).
     fn is_trivial(&self, syndrome: &[u8]) -> Option<u64>;
@@ -80,6 +88,13 @@ impl<M: MatchingDecoder, B: BpWeightProvider> BpMatchingDecoder<M, B> {
 
 impl<M: MatchingDecoder, B: BpWeightProvider> crate::ObservableDecoder for BpMatchingDecoder<M, B> {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+        if syndrome.len() != self.bp.check_count() {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.bp.check_count(),
+                actual: syndrome.len(),
+            });
+        }
+
         // Predecoder fast path: only for zero-defect syndromes.
         // At d>=5, always use full MWPM (predecoder can be suboptimal).
         // At d=3, BP + predecoder is actually better than MWPM for simple
@@ -91,7 +106,7 @@ impl<M: MatchingDecoder, B: BpWeightProvider> crate::ObservableDecoder for BpMat
         }
 
         // Compute BP-adjusted weights.
-        let bp_weights = self.bp.compute_weights(syndrome);
+        let bp_weights = self.bp.compute_weights(syndrome)?;
 
         if let Some(corr) = &self.correlation
             && corr.has_correlations()

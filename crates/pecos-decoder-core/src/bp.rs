@@ -111,6 +111,11 @@ impl BpGraph {
     }
 
     /// Prior per-mechanism log-likelihood ratios, in graph mechanism order.
+    ///
+    /// Saturated to `[-30.0, 30.0]`: probabilities below about `9.36e-14` (or
+    /// above one minus that) produce the bound rather than the exact ratio,
+    /// matching the values used for out-of-range probabilities. Everything
+    /// inside that regime is the exact `ln((1 - p) / p)`.
     #[must_use]
     pub fn prior_llrs(&self) -> &[f64] {
         &self.prior_llr
@@ -393,6 +398,17 @@ pub fn min_sum_bp_into(
         }
     }
 
+    // Finite priors do not guarantee finite arithmetic: message sums over
+    // high-degree variables can still overflow, and `prior + total - c_to_v`
+    // then evaluates infinity minus infinity. Garbage beliefs must not steer a
+    // consumer silently, so non-finite posteriors are a loud failure here, at
+    // the layer that produced them.
+    if let Some(variable) = posterior.iter().position(|belief| !belief.is_finite()) {
+        return Err(DecoderError::InternalError(format!(
+            "belief propagation produced a non-finite posterior for mechanism {variable};              the model's degree and prior regime exceeds what min-sum message              accumulation can represent"
+        )));
+    }
+
     Ok(())
 }
 
@@ -403,11 +419,12 @@ fn prior_llr(probability: f64) -> f64 {
         -30.0
     } else {
         // The clamp keeps the computed branch inside the same +-30 saturation
-        // the boundary branches already use. Without it, a subnormal
-        // probability overflows the ratio to infinity before `ln`, and one
-        // infinite prior turns downstream exponentially-weighted updates into
-        // NaN -- which a consumer then misreads as "no retained path".
-        // Clamp returns the input bit-identically whenever it is in range.
+        // the boundary branches already use, which changes the result exactly
+        // for probabilities below ~9.36e-14 or above one minus that. Without
+        // it, a subnormal probability overflows the ratio to infinity before
+        // `ln`, and one infinite prior turns downstream exponentially-weighted
+        // updates into NaN. Clamp returns the input bit-identically whenever
+        // it is in range.
         ((1.0 - probability) / probability).ln().clamp(-30.0, 30.0)
     }
 }

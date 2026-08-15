@@ -190,9 +190,16 @@ fn collect_snapshot() -> SnapshotFile {
                 .expect("fixture decoder construction must succeed");
             for &syndrome_mask in &fixture.syndromes {
                 let syndrome = dense_syndrome(syndrome_mask, fixture.num_detectors);
-                let outcome = decoder
-                    .decode(&syndrome)
-                    .map_or(SnapshotOutcome::NoPath, snapshot_result);
+                let outcome = decoder.decode(&syndrome).map_or_else(
+                    |error| {
+                        assert!(
+                            matches!(error, pecos_frontier::DecoderError::DecodingFailed(_)),
+                            "snapshot scenario hit an engine fault: {error}"
+                        );
+                        SnapshotOutcome::NoPath
+                    },
+                    snapshot_result,
+                );
                 scenarios.push(ScenarioSnapshot {
                     name: format!(
                         "upstream/{}/{regime}/syndrome=0x{syndrome_mask:x}",
@@ -224,11 +231,16 @@ fn collect_snapshot() -> SnapshotFile {
         .expect("fixture committee construction must succeed");
         for syndrome_mask in fixture.syndromes {
             let syndrome = dense_syndrome(syndrome_mask, fixture.num_detectors);
-            let outcome = committee
-                .decode(&syndrome)
-                .map_or(SnapshotOutcome::NoPath, |result| {
-                    snapshot_result(result.selected)
-                });
+            let outcome = committee.decode(&syndrome).map_or_else(
+                |error| {
+                    assert!(
+                        matches!(error, pecos_frontier::DecoderError::DecodingFailed(_)),
+                        "snapshot scenario hit an engine fault: {error}"
+                    );
+                    SnapshotOutcome::NoPath
+                },
+                |result| snapshot_result(result.selected),
+            );
             scenarios.push(ScenarioSnapshot {
                 name: format!(
                     "order/{}/committee/syndrome=0x{syndrome_mask:x}",

@@ -202,8 +202,12 @@ fn assert_expected_results(
                     fixture.name
                 );
                 assert!(
-                    decoded.is_err(),
-                    "{} {regime} syndrome {syndrome_mask}: expected no path",
+                    matches!(
+                        decoded,
+                        Err(pecos_frontier::DecoderError::DecodingFailed(_))
+                    ),
+                    "{} {regime} syndrome {syndrome_mask}: expected a genuine \
+                     no-path, got {decoded:?}",
                     fixture.name
                 );
             }

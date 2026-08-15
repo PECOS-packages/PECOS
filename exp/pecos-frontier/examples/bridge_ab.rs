@@ -95,6 +95,15 @@ fn main() {
         let shot_started = std::time::Instant::now();
         let outcome = decoder.decode(&syndrome);
         let shot_seconds = shot_started.elapsed().as_secs_f64();
+        if let Err(error) = &outcome {
+            // Only a genuine no-path is a shot outcome. Anything else is an
+            // engine fault, and recording it as no_path would silently skew
+            // the A/B comparison.
+            assert!(
+                matches!(error, pecos_frontier::DecoderError::DecodingFailed(_)),
+                "engine fault on shot {shot}: {error}"
+            );
+        }
         if let Ok(result) = outcome {
             let words = result.predicted.words();
             assert!(words.iter().skip(2).all(|&w| w == 0), "label fits u128");

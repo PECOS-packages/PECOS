@@ -13,7 +13,9 @@
 use pecos_decoder_core::dem::SparseDem;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
-use pecos_trellis::{TrellisConfig, TrellisDecoder, TrellisResult, TrellisStatus};
+use pecos_trellis::{
+    TrellisConfig, TrellisDecodeAttempt, TrellisDecoder, TrellisResult, TrellisStatus,
+};
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1256,4 +1258,53 @@ fn subnormal_priors_decode_with_bp_scoring_instead_of_reporting_no_path() {
     let with_bp = with_bp.decode(&[0]).expect("BP-on decode must succeed");
     let without_bp = without_bp.decode(&[0]).expect("BP-off decode must succeed");
     assert_eq!(with_bp.predicted, without_bp.predicted);
+}
+
+/// High variable degree can overflow BP message sums even with saturated
+/// priors, minting NaN through infinity-minus-infinity. Unusable beliefs must
+/// surface as an engine fault -- never as a no-path, which a committee or an
+/// escalation ladder would absorb and a caller would misread as a pruning
+/// problem.
+#[test]
+fn non_finite_bp_posteriors_are_an_engine_fault_not_a_no_path() {
+    let detectors: Vec<u32> = (0..1600).collect();
+    let dem = sparse_dem(
+        vec![
+            (5e-324, detectors.clone(), vec![]),
+            (5e-324, detectors, vec![0]),
+        ],
+        1600,
+        1,
+    );
+    let mut decoder = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            k: 1,
+            delta: 10.0,
+            score_alpha: 0.8,
+            column_order: None,
+            merge_indistinguishable: false,
+            bp_score_iterations: 5,
+        },
+    )
+    .unwrap();
+
+    let syndrome = vec![0_u8; 1600];
+    match decoder.decode_attempt(&syndrome) {
+        TrellisDecodeAttempt::Error(DecoderError::InternalError(message)) => {
+            assert!(
+                message.contains("non-finite"),
+                "fault must say what broke, got: {message}"
+            );
+        }
+        TrellisDecodeAttempt::NoPath { error, .. } => {
+            panic!("non-finite BP beliefs were misreported as no-path: {error}")
+        }
+        TrellisDecodeAttempt::Success(_) => {
+            panic!("expected an internal-error fault, got a successful decode")
+        }
+        TrellisDecodeAttempt::Error(other) => {
+            panic!("expected an internal-error fault, got: {other}")
+        }
+    }
 }

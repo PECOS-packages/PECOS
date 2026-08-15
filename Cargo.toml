@@ -113,6 +113,7 @@ bitflags = "2"
 bitvec = { version = "1", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 dyn-clone = "1"
+batsat = "0.5"
 smallvec = "1"
 
 # --- Concurrency ---
@@ -206,6 +207,9 @@ pecos-eeg = { version = "0.2.0-dev.0", path = "exp/pecos-eeg" }
 pecos-stab-tn = { version = "0.2.0-dev.0", path = "exp/pecos-stab-tn" }
 pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
 pecos-foreign = { version = "0.2.0-dev.0", path = "crates/pecos-foreign" }
+pecos-bp-trellis = { version = "0.2.0-dev.0", path = "exp/pecos-bp-trellis" }
+pecos-frontier = { version = "0.2.0-dev.0", path = "exp/pecos-frontier" }
+pecos-trellis = { version = "0.2.0-dev.0", path = "exp/pecos-trellis" }
 pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
 pecos-gpu-sims = { version = "0.2.0-dev.0", path = "crates/pecos-gpu-sims" }
 pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }
@@ -313,6 +317,13 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package.fusion-blossom]
 opt-level = 2
+
+# batsat's solver core is tested and shipped by upstream with release arithmetic;
+# under this workspace's debug profile its internal activity/restart arithmetic
+# overflows on instances with thousands of variables. Run the dependency at its
+# supported semantics; PECOS code keeps full debug overflow checks.
+[profile.dev.package.batsat]
+overflow-checks = false
 
 # Replace mwpf's vendored HiGHS wrapper with a pure-Rust LP shim so the mwpf feature does not require cmake.
 [patch."https://github.com/yuewuo/mwpf"]

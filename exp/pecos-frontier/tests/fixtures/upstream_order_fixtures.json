@@ -1,0 +1,721 @@
+{
+ "generator": "generate_upstream_order_fixtures.py",
+ "fixtures": [
+  {
+   "name": "chain_reorder",
+   "mechanisms": [
+    [
+     0.05,
+     [
+      3
+     ],
+     [
+      0
+     ]
+    ],
+    [
+     0.04,
+     [
+      0,
+      1
+     ],
+     []
+    ],
+    [
+     0.03,
+     [
+      0
+     ],
+     [
+      1
+     ]
+    ],
+    [
+     0.06,
+     [
+      2,
+      3
+     ],
+     []
+    ],
+    [
+     0.02,
+     [
+      1,
+      2
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.07,
+     [],
+     [
+      0
+     ]
+    ],
+    [
+     0.08,
+     [
+      3
+     ],
+     []
+    ]
+   ],
+   "num_detectors": 4,
+   "num_observables": 2,
+   "syndromes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+   ],
+   "pruned": {
+    "k": 3,
+    "delta": 25.0
+   },
+   "forward_ordering": [
+    2,
+    1,
+    4,
+    3,
+    0,
+    6,
+    5
+   ],
+   "backward_ordering": [
+    0,
+    6,
+    3,
+    4,
+    1,
+    2,
+    5
+   ],
+   "expected_committee": [
+    {
+     "syndrome": 0,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -0.28346776513264615,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 1,
+     "status": "ok",
+     "logical_hat": 2,
+     "direction": "forward",
+     "log_evidence": -3.759322862835824,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 2,
+     "status": "ok",
+     "logical_hat": 2,
+     "direction": "forward",
+     "log_evidence": -6.806188349883318,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 3,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -3.4613874828963334,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 4,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -5.005668051298697,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 5,
+     "status": "ok",
+     "logical_hat": 3,
+     "direction": "forward",
+     "log_evidence": -7.073753194315811,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 6,
+     "status": "ok",
+     "logical_hat": 3,
+     "direction": "forward",
+     "log_evidence": -4.174728408076651,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 7,
+     "status": "ok",
+     "logical_hat": 1,
+     "direction": "forward",
+     "log_evidence": -7.1904896117099835,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 8,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -2.2570814664348506,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 9,
+     "status": "ok",
+     "logical_hat": 2,
+     "direction": "forward",
+     "log_evidence": -5.720641390924243,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 10,
+     "status": "ok",
+     "logical_hat": 3,
+     "direction": "forward",
+     "log_evidence": -6.7980259206306055,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 11,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -5.42821286277637,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 12,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -3.0349460619312487,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 13,
+     "status": "ok",
+     "logical_hat": 2,
+     "direction": "forward",
+     "log_evidence": -6.452971892213298,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 14,
+     "status": "ok",
+     "logical_hat": 3,
+     "direction": "forward",
+     "log_evidence": -6.120320259211788,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 15,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -6.180612551164233,
+     "engine": "native_binary"
+    }
+   ]
+  },
+  {
+   "name": "order_random_seed7",
+   "mechanisms": [
+    [
+     0.03825,
+     [
+      1
+     ],
+     [
+      0
+     ]
+    ],
+    [
+     0.024623,
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.045378,
+     [
+      0,
+      3
+     ],
+     []
+    ],
+    [
+     0.255944,
+     [
+      0,
+      4
+     ],
+     []
+    ],
+    [
+     0.390739,
+     [
+      0,
+      3
+     ],
+     []
+    ],
+    [
+     0.173464,
+     [],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.236824,
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.251414,
+     [
+      0,
+      1,
+      2
+     ],
+     [
+      0,
+      1
+     ]
+    ],
+    [
+     0.238369,
+     [
+      3,
+      4
+     ],
+     [
+      1
+     ]
+    ],
+    [
+     0.319808,
+     [
+      2,
+      4
+     ],
+     []
+    ]
+   ],
+   "num_detectors": 5,
+   "num_observables": 2,
+   "syndromes": [
+    2,
+    9,
+    10,
+    14,
+    15,
+    16,
+    18,
+    23,
+    28,
+    31
+   ],
+   "pruned": {
+    "k": 3,
+    "delta": 25.0
+   },
+   "forward_ordering": [
+    0,
+    2,
+    4,
+    7,
+    1,
+    3,
+    6,
+    8,
+    9,
+    5
+   ],
+   "backward_ordering": [
+    9,
+    3,
+    8,
+    1,
+    6,
+    7,
+    2,
+    4,
+    0,
+    5
+   ],
+   "expected_committee": [
+    {
+     "syndrome": 2,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -3.7718451171394514,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 9,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -2.356365085425516,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 10,
+     "status": "no_path",
+     "logical_hat": null,
+     "direction": "forward",
+     "log_evidence": null,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 14,
+     "status": "ok",
+     "logical_hat": 3,
+     "direction": "forward",
+     "log_evidence": -3.447450196392692,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 15,
+     "status": "no_path",
+     "logical_hat": null,
+     "direction": "forward",
+     "log_evidence": null,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 16,
+     "status": "no_path",
+     "logical_hat": null,
+     "direction": "forward",
+     "log_evidence": null,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 18,
+     "status": "no_path",
+     "logical_hat": null,
+     "direction": "forward",
+     "log_evidence": null,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 23,
+     "status": "no_path",
+     "logical_hat": null,
+     "direction": "forward",
+     "log_evidence": null,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 28,
+     "status": "no_path",
+     "logical_hat": null,
+     "direction": "forward",
+     "log_evidence": null,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 31,
+     "status": "ok",
+     "logical_hat": 1,
+     "direction": "forward",
+     "log_evidence": -3.7142361581954058,
+     "engine": "native_binary"
+    }
+   ]
+  },
+  {
+   "name": "order_random_seed41",
+   "mechanisms": [
+    [
+     0.361782,
+     [
+      1,
+      2
+     ],
+     []
+    ],
+    [
+     0.342266,
+     [
+      2,
+      4
+     ],
+     [
+      1,
+      2
+     ]
+    ],
+    [
+     0.181364,
+     [
+      0,
+      1
+     ],
+     []
+    ],
+    [
+     0.11043,
+     [
+      1
+     ],
+     [
+      0
+     ]
+    ],
+    [
+     0.315883,
+     [
+      0,
+      4,
+      5
+     ],
+     []
+    ],
+    [
+     0.338008,
+     [],
+     [
+      1
+     ]
+    ],
+    [
+     0.195322,
+     [
+      0
+     ],
+     [
+      2
+     ]
+    ],
+    [
+     0.048489,
+     [
+      0,
+      5
+     ],
+     []
+    ],
+    [
+     0.030877,
+     [
+      5
+     ],
+     []
+    ],
+    [
+     0.17961,
+     [
+      1
+     ],
+     [
+      0,
+      2
+     ]
+    ],
+    [
+     0.066904,
+     [],
+     [
+      1
+     ]
+    ],
+    [
+     0.099857,
+     [
+      0,
+      3,
+      5
+     ],
+     [
+      1
+     ]
+    ],
+    [
+     0.040368,
+     [],
+     []
+    ],
+    [
+     0.265496,
+     [
+      2,
+      3,
+      5
+     ],
+     [
+      0,
+      2
+     ]
+    ]
+   ],
+   "num_detectors": 6,
+   "num_observables": 3,
+   "syndromes": [
+    2,
+    4,
+    8,
+    11,
+    41,
+    43,
+    45,
+    46,
+    51,
+    55
+   ],
+   "pruned": {
+    "k": 3,
+    "delta": 25.0
+   },
+   "forward_ordering": [
+    1,
+    4,
+    3,
+    9,
+    2,
+    0,
+    6,
+    7,
+    11,
+    13,
+    8,
+    5,
+    10,
+    12
+   ],
+   "backward_ordering": [
+    11,
+    13,
+    3,
+    9,
+    2,
+    0,
+    7,
+    8,
+    6,
+    4,
+    1,
+    5,
+    10,
+    12
+   ],
+   "expected_committee": [
+    {
+     "syndrome": 2,
+     "status": "ok",
+     "logical_hat": 5,
+     "direction": "forward",
+     "log_evidence": -3.6936105673212936,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 4,
+     "status": "ok",
+     "logical_hat": 5,
+     "direction": "forward",
+     "log_evidence": -4.552330763901034,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 8,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -8.710128457552232,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 11,
+     "status": "ok",
+     "logical_hat": 6,
+     "direction": "backward",
+     "log_evidence": -6.883257276707938,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 41,
+     "status": "ok",
+     "logical_hat": 2,
+     "direction": "forward",
+     "log_evidence": -4.658431103478807,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 43,
+     "status": "ok",
+     "logical_hat": 1,
+     "direction": "forward",
+     "log_evidence": -5.475933441779121,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 45,
+     "status": "ok",
+     "logical_hat": 1,
+     "direction": "forward",
+     "log_evidence": -4.908295344487828,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 46,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "forward",
+     "log_evidence": -4.898928838303473,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 51,
+     "status": "ok",
+     "logical_hat": 5,
+     "direction": "forward",
+     "log_evidence": -4.7528127098070145,
+     "engine": "native_binary"
+    },
+    {
+     "syndrome": 55,
+     "status": "ok",
+     "logical_hat": 0,
+     "direction": "backward",
+     "log_evidence": -3.815302120068774,
+     "engine": "native_binary"
+    }
+   ]
+  }
+ ]
+}

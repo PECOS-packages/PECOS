@@ -188,8 +188,16 @@ fn execute_gate_command<S: CliffordGateable>(
             let pairs = flat_to_pairs(qubits);
             sim.swap(&pairs);
         }
+        GateType::PX => {
+            sim.pz(qubits);
+            sim.h(qubits);
+        }
         GateType::PZ | GateType::QAlloc => {
             sim.pz(qubits);
+        }
+        GateType::MX => {
+            sim.h(qubits);
+            measurements.extend(sim.mz(qubits));
         }
         GateType::MZ | GateType::MeasureFree => {
             measurements.extend(sim.mz(qubits));

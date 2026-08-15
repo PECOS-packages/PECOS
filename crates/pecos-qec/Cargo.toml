@@ -15,6 +15,7 @@ readme = "README.md"
 ndarray.workspace = true
 pecos-core.workspace = true
 pecos-decoder-core.workspace = true
+pecos-ldpc-decoders.workspace = true
 pecos-num.workspace = true
 pecos-quantum.workspace = true
 pecos-simulators.workspace = true
@@ -24,6 +25,7 @@ pecos-neo = { workspace = true, optional = true }
 rand.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
+batsat.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true

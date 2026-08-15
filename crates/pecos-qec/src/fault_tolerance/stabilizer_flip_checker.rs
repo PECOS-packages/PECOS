@@ -37,7 +37,7 @@
 //!     .check(Zs([0, 1]))
 //!     .check(Zs([1, 2]))
 //!     .logical_z(Zs([0, 1, 2]))
-//!     .logical_x(Xs([0]))
+//!     .logical_x(Xs([0, 1, 2]))
 //!     .build()
 //!     .unwrap();
 //!
@@ -471,32 +471,40 @@ impl<'a> StabilizerFlipChecker<'a> {
     /// Quick check if any weight-t error causes an undetectable logical error.
     ///
     /// Returns early on first failure, more efficient than full analysis.
-    #[must_use]
-    pub fn has_undetectable_logical(&self, weight: usize) -> bool {
-        let n = self.code.num_qubits();
-        let pauli_types = [1u8, 2, 3]; // X, Y, Z
-
-        for positions in combinations(n, weight) {
-            for paulis in pauli_product(&pauli_types, weight) {
-                let error = build_pauli_string(&positions, &paulis);
-                let flips = self.compute_flips(&error);
-
-                if flips.is_undetectable() && flips.has_logical_error() {
-                    return true;
-                }
-            }
-        }
-
-        false
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the code's supplied logical basis is incomplete or it encodes no
+    /// logical qubits.
+    pub fn has_undetectable_logical(
+        &self,
+        weight: usize,
+    ) -> Result<bool, crate::StabilizerCodeSpecError> {
+        crate::distance::has_logical_error_at_weight(
+            self.code,
+            weight,
+            &crate::DistanceSearchConfig::default(),
+        )
     }
 
     /// Compute the distance of the code.
     ///
     /// The distance is the minimum weight of an undetectable logical error.
     /// Returns None if no undetectable logical error is found up to `max_weight`.
-    #[must_use]
-    pub fn compute_distance(&self, max_weight: usize) -> Option<usize> {
-        (1..=max_weight).find(|&w| self.has_undetectable_logical(w))
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the code's supplied logical basis is incomplete or it encodes no
+    /// logical qubits.
+    pub fn compute_distance(
+        &self,
+        max_weight: usize,
+    ) -> Result<Option<usize>, crate::StabilizerCodeSpecError> {
+        crate::calculate_distance(
+            self.code,
+            &crate::DistanceSearchConfig::with_max_weight(max_weight),
+        )
+        .map(|result| result.map(|distance| distance.distance))
     }
 }
 
@@ -645,11 +653,13 @@ mod tests {
     use pecos_core::{Xs, Zs};
 
     fn three_qubit_code() -> StabilizerCodeSpec {
+        // The bit-flip code's genuine logical X is transversal: X0 alone anticommutes
+        // with the Z0Z1 stabilizer and is not a logical operator at all.
         StabilizerCodeSpec::builder(3)
             .check(Zs([0, 1]))
             .check(Zs([1, 2]))
             .logical_z(Zs([0, 1, 2]))
-            .logical_x(Xs([0]))
+            .logical_x(Xs([0, 1, 2]))
             .build()
             .unwrap()
     }
@@ -753,10 +763,14 @@ mod tests {
         // 3 qubits * 3 Pauli types = 9 weight-1 errors
         assert_eq!(analysis.total_errors, 9);
 
-        // The 3-qubit bit flip code only protects against X errors.
-        // Z errors are undetectable and flip the logical X.
-        // So there ARE undetectable logical errors at weight 1 (Z errors).
-        assert!(analysis.undetectable_logical > 0);
+        // The 3-qubit bit flip code only protects against X errors. Each single-qubit Z
+        // is undetectable and flips the transversal logical X; each single-qubit X or Y
+        // triggers a syndrome while flipping the logical Z. The exact counts pin the
+        // fixture: with the invalid X0 "logical" this analysis instead reports one
+        // undetectable and two stabilizer-equivalent errors.
+        assert_eq!(analysis.stabilizer_errors, 0);
+        assert_eq!(analysis.undetectable_logical, 3);
+        assert_eq!(analysis.detectable_with_logical, 6);
     }
 
     #[test]
@@ -803,7 +817,7 @@ mod tests {
 
         // The overall distance is 1 (single Z error is undetectable logical)
         // because this code doesn't protect against Z errors.
-        let distance = checker.compute_distance(5);
+        let distance = checker.compute_distance(5).unwrap();
         assert_eq!(distance, Some(1));
     }
 
@@ -882,7 +896,7 @@ mod tests {
         let checker = StabilizerFlipChecker::new(&code);
 
         // The [[5,1,3]] code has distance 3
-        let distance = checker.compute_distance(5);
+        let distance = checker.compute_distance(5).unwrap();
         assert_eq!(distance, Some(3), "5-qubit code distance should be 3");
     }
 
@@ -953,8 +967,19 @@ mod tests {
         let code = steane_code();
         let checker = StabilizerFlipChecker::new(&code);
 
-        let distance = checker.compute_distance(5);
+        let distance = checker.compute_distance(5).unwrap();
         assert_eq!(distance, Some(3), "Steane code distance should be 3");
+    }
+
+    #[test]
+    fn test_compute_distance_matches_calculate_distance() {
+        let code = steane_code();
+        let checker_distance = StabilizerFlipChecker::new(&code).compute_distance(5);
+        let engine_distance =
+            crate::calculate_distance(&code, &crate::DistanceSearchConfig::with_max_weight(5))
+                .map(|result| result.map(|distance| distance.distance));
+
+        assert_eq!(checker_distance, engine_distance);
     }
 
     #[test]

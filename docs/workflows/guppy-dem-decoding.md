@@ -349,8 +349,54 @@ for syndrome, observable_mask in sim_shots:
 print(f"simulated shots, pymatching: {sim_errors}/{len(sim_shots)}")
 ```
 
-When you only need the count, `batch.decode_count(dem_text, "pymatching")` runs
-this same loop natively and returns the number of mismatches.
+The per-shot loops above are written for clarity, and they pay for it: every
+shot crosses the Python/Rust boundary once per decoder. When you only need the
+error count, `SampleBatch` runs the whole loop natively:
+
+- `decode_count(dem_text, decoder_type)` is the same loop with no per-shot
+  Python crossing.
+- `decode_count_parallel(dem_text, decoder_type, num_workers=...)` spreads the
+  shots across worker threads, each with its own decoder instance. Slow
+  decoders such as Tesseract and BP+OSD benefit most; for PyMatching at small
+  shot counts, thread setup can dominate.
+- `decode_count_batch(dem_text)` is PyMatching-only and hands every shot to its
+  vectorized batch API in one call.
+
+These construct the decoder from its type string with default settings, which
+need not match a hand-configured instance: the loop's Tesseract `pqlimit` does
+not carry over, and the `"pymatching"` string enables correlated matching where
+`PyMatchingDecoder.from_dem` does not — `"pymatching_uncorrelated"` is that
+constructor's equivalent. Parallel and sequential counts always agree for a
+deterministic decoder, since each shot is decoded independently:
+
+<!--continuation-->
+```python
+sequential_count = batch.decode_count(terminal_graphlike_text, "pymatching_uncorrelated")
+parallel_count = batch.decode_count_parallel(terminal_graphlike_text, "pymatching_uncorrelated")
+
+assert sequential_count == parallel_count == pymatching_errors
+```
+
+The simulated shots take the same native path. A `SampleBatch` is
+constructible from exactly what `evaluate_result_columns()` returns — per-shot
+syndromes and observable masks — so stage 4b's shots decode in parallel
+without the Python loop:
+
+<!--continuation-->
+```python
+from pecos.qec import SampleBatch
+
+sim_batch = SampleBatch(
+    [syndrome for syndrome, _ in sim_shots],
+    [observable_mask for _, observable_mask in sim_shots],
+    num_observables=dem.num_observables,
+)
+
+assert sim_batch.decode_count_parallel(terminal_graphlike_text, "pymatching_uncorrelated") == sim_errors
+```
+
+When you also want timing, `decode_stats_parallel(...)` returns the logical
+error rate together with per-shot latency quantiles.
 
 At this noise level the three decoders land within about a percentage point of
 each other on this code; the gaps between decoders widen with code distance and

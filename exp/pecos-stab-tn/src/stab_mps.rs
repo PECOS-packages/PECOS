@@ -77,13 +77,6 @@ pub enum SiteEigenstate {
     Y(bool),
 }
 
-/// A gate applied in the MPS index space (for disentangling).
-#[derive(Clone)]
-pub(crate) struct MpsIndexGate {
-    site: usize,
-    inverse_matrix: DMatrix<Complex64>,
-}
-
 /// Single-qubit Pauli kind for specifying multi-qubit Pauli strings
 /// (e.g., stabilizer generators of QEC codes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -436,7 +429,6 @@ impl StabMpsBuilder {
             tableau,
             mps: Mps::new(self.num_qubits, config.clone()),
             config,
-            mps_corrections: Vec::new(),
             global_phase: Complex64::new(1.0, 0.0),
             disent_flags: vec![Some(SiteEigenstate::Z(false)); self.num_qubits],
             gf2_matrix: ofd::Gf2FlipMatrix::new(self.num_qubits),
@@ -513,8 +505,6 @@ pub struct StabMps {
     tableau: SparseStabY,
     mps: Mps,
     config: MpsConfig,
-    /// Inverse of disentangling gates applied to MPS (in index space).
-    mps_corrections: Vec<MpsIndexGate>,
     /// Global phase accumulated from Clifford-angle RZ gates.
     global_phase: Complex64,
     /// Per-site eigenstate tracking for exact disentangling.
@@ -1168,16 +1158,26 @@ impl StabMps {
     /// Each sweep examines every internal bond and tries 20 inequivalent
     /// entangling two-qubit Clifford candidates, performing SVD-based entropy
     /// estimates for them. If a candidate reduces entanglement, it is applied
-    /// exactly to the coefficient MPS and its inverse is recorded for later
-    /// physical-state reconstruction. The operation adds no approximation
-    /// beyond the MPS configuration's normal SVD truncation.
+    /// exactly to the coefficient MPS and its inverse is right-composed into
+    /// the tableau, preserving the represented state for every read path. The
+    /// operation adds no approximation beyond the MPS configuration's normal
+    /// SVD truncation.
+    ///
+    /// Deferred lazy-measurement operations and pending merged RZ rotations
+    /// are materialized before the first sweep.
     ///
     /// This can be expensive compared with a gate update; use it after a batch
     /// of non-Clifford gates or when observed bond growth justifies a sweep, not
     /// after every gate. `max_sweeps` bounds full-chain passes. Returns the
     /// number of accepted Clifford gates.
     pub fn disentangle(&mut self, max_sweeps: usize) -> usize {
-        disentangle::disentangle(&mut self.mps, &mut self.mps_corrections, max_sweeps)
+        self.flush();
+        disentangle::disentangle(
+            &mut self.mps,
+            &mut self.tableau,
+            &mut self.disent_flags,
+            max_sweeps,
+        )
     }
 
     /// Compute the full state vector for a small system.
@@ -1220,26 +1220,7 @@ impl StabMps {
 
         let n = self.num_qubits;
         let dim = 1usize << n;
-        let mut mps_sv = self.mps.state_vector();
-
-        // Undo disentangling corrections (reverse order) so MPS SV matches the tableau.
-        // MPS uses MSB-first: bit (n-1-k) = destabilizer index k.
-        for correction in self.mps_corrections.iter().rev() {
-            let k = correction.site;
-            let bit_hi = n - 1 - k;
-            let bit_lo = n - 1 - (k + 1);
-            let mat = &correction.inverse_matrix;
-            let mut new_sv = vec![Complex64::new(0.0, 0.0); dim];
-            for (idx, &sv_val) in mps_sv.iter().enumerate() {
-                let sigma_in = ((idx >> bit_hi) & 1) * 2 + ((idx >> bit_lo) & 1);
-                let base = idx & !(1 << bit_hi) & !(1 << bit_lo);
-                for sigma_out in 0..4usize {
-                    let out_idx = base | ((sigma_out >> 1) << bit_hi) | ((sigma_out & 1) << bit_lo);
-                    new_sv[out_idx] += mat[(sigma_out, sigma_in)] * sv_val;
-                }
-            }
-            mps_sv = new_sv;
-        }
+        let mps_sv = self.mps.state_vector();
 
         // Build Pauli matrices for generator construction.
         let i2 = DMatrix::<Complex64>::identity(2, 2);
@@ -2167,7 +2148,6 @@ impl QuantumSimulator for StabMps {
     fn reset(&mut self) -> &mut Self {
         (self.tableau, self.rng) = initial_tableau_and_rng(self.num_qubits, self.construction_seed);
         self.mps = Mps::new(self.num_qubits, self.config.clone());
-        self.mps_corrections.clear();
         self.global_phase = Complex64::new(1.0, 0.0);
         self.disent_flags = vec![Some(SiteEigenstate::Z(false)); self.num_qubits];
         self.gf2_matrix.reset();
@@ -5370,18 +5350,25 @@ mod tests {
 
     #[test]
     fn test_disentangle_preserves_state() {
-        // Create a circuit, disentangle, verify state vector is unchanged.
+        use pecos_simulators::DenseStateVec;
+
+        // Create a circuit, disentangle, verify against an independent dense oracle.
         let t_angle = Angle64::QUARTER_TURN / 2u64;
         let mut stn = StabMps::new(3);
+        let mut oracle = DenseStateVec::new(3);
         stn.h(&[QubitId(0)]);
+        oracle.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
+        oracle.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(t_angle, &[QubitId(0)]);
+        oracle.rz(t_angle, &[QubitId(0)]);
         stn.h(&[QubitId(2)]);
+        oracle.h(&[QubitId(2)]);
         stn.cx(&[(QubitId(1), QubitId(2))]);
+        oracle.cx(&[(QubitId(1), QubitId(2))]);
         stn.rz(t_angle, &[QubitId(2)]);
+        oracle.rz(t_angle, &[QubitId(2)]);
 
-        // Get state vector before disentangling
-        let sv_before = stn.state_vector();
         let bond_before = stn.max_bond_dim();
 
         // Disentangle
@@ -5392,15 +5379,16 @@ mod tests {
             stn.max_bond_dim()
         );
 
-        // State vector should be unchanged (up to global phase)
+        // State vector should match the dense oracle (up to global phase).
         let sv_after = stn.state_vector();
-        let overlap: Complex64 = sv_before
+        let expected = oracle.state();
+        let overlap: Complex64 = expected
             .iter()
             .zip(sv_after.iter())
             .map(|(a, b)| a.conj() * b)
             .sum();
         eprintln!("overlap = {:.6}", overlap.norm_sqr());
-        assert_state_vectors_match(&sv_before, &sv_after, "disentangle preserves state");
+        assert_state_vectors_match(&expected, &sv_after, "disentangle preserves state");
 
         // Bond dimension should not have increased
         assert!(

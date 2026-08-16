@@ -16,8 +16,8 @@ use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StabVec};
 use pecos_stab_tn::mps::MpsConfig;
-use pecos_stab_tn::stab_mps::StabMps;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
+use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
 use rayon::prelude::*;
 
 /// Check that two state vectors match up to global phase.
@@ -47,6 +47,64 @@ fn assert_states_close(sv_a: &[Complex64], sv_b: &[Complex64], tol: f64, label: 
         "{label}: overlap = {:.4} (should be 1.0, tol={tol})",
         overlap.norm_sqr()
     );
+}
+
+fn dense_pauli_expectation(state_vector: &[Complex64], pauli_string: &[(usize, PauliKind)]) -> f64 {
+    let mut expectation = Complex64::new(0.0, 0.0);
+    for (input, &amplitude) in state_vector.iter().enumerate() {
+        let mut output = input;
+        let mut phase = Complex64::new(1.0, 0.0);
+        for &(q, pauli) in pauli_string {
+            let bit = (input >> q) & 1 != 0;
+            match pauli {
+                PauliKind::X => output ^= 1 << q,
+                PauliKind::Y => {
+                    output ^= 1 << q;
+                    phase *= if bit {
+                        Complex64::new(0.0, -1.0)
+                    } else {
+                        Complex64::new(0.0, 1.0)
+                    };
+                }
+                PauliKind::Z => {
+                    if bit {
+                        phase = -phase;
+                    }
+                }
+            }
+        }
+        expectation += state_vector[output].conj() * phase * amplitude;
+    }
+    assert!(
+        expectation.im.abs() <= 1e-12,
+        "Hermitian Pauli expectation has imaginary part {expectation:?}"
+    );
+    expectation.re
+}
+
+fn project_dense_z(state_vector: &[Complex64], qubit: usize, outcome: bool) -> Vec<Complex64> {
+    let probability: f64 = state_vector
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| ((*index >> qubit) & 1 != 0) == outcome)
+        .map(|(_, amplitude)| amplitude.norm_sqr())
+        .sum();
+    assert!(
+        probability > 1e-14,
+        "cannot project onto a zero-probability outcome"
+    );
+    let normalization = probability.sqrt();
+    state_vector
+        .iter()
+        .enumerate()
+        .map(|(index, &amplitude)| {
+            if ((index >> qubit) & 1 != 0) == outcome {
+                amplitude / normalization
+            } else {
+                Complex64::new(0.0, 0.0)
+            }
+        })
+        .collect()
 }
 
 /// Apply a random-ish Clifford+T circuit to both STN and `StabVec`.
@@ -1568,41 +1626,209 @@ fn test_measurement_probabilities_5qubit() {
 // Disentangle validation
 // ============================================================================
 
+#[derive(Clone, Copy)]
+enum DisentangleTestGate {
+    H(usize),
+    Cx(usize, usize),
+    Rz(usize, Angle64),
+}
+
+fn apply_disentangle_test_gate<S>(simulator: &mut S, gate: DisentangleTestGate)
+where
+    S: ArbitraryRotationGateable + CliffordGateable,
+{
+    match gate {
+        DisentangleTestGate::H(q) => {
+            simulator.h(&[QubitId(q)]);
+        }
+        DisentangleTestGate::Cx(control, target) => {
+            simulator.cx(&[(QubitId(control), QubitId(target))]);
+        }
+        DisentangleTestGate::Rz(q, angle) => {
+            simulator.rz(angle, &[QubitId(q)]);
+        }
+    }
+}
+
 #[test]
-#[allow(clippy::type_complexity)]
 fn test_disentangle_various_circuits() {
-    // Verify disentangle preserves state for several circuits
-    let circuits: Vec<Box<dyn Fn(&mut StabMps)>> = vec![
-        Box::new(|stn: &mut StabMps| {
-            let t = Angle64::QUARTER_TURN / 2u64;
-            stn.h(&[QubitId(0)]);
-            stn.cx(&[(QubitId(0), QubitId(1))]);
-            stn.rz(t, &[QubitId(0)]);
-        }),
-        Box::new(|stn: &mut StabMps| {
-            let t = Angle64::QUARTER_TURN / 2u64;
-            stn.h(&[QubitId(0)]);
-            stn.h(&[QubitId(1)]);
-            stn.rz(t, &[QubitId(0)]);
-            stn.cx(&[(QubitId(0), QubitId(1))]);
-            stn.rz(t, &[QubitId(1)]);
-        }),
-        Box::new(|stn: &mut StabMps| {
-            stn.h(&[QubitId(0)]);
-            stn.cx(&[(QubitId(0), QubitId(1))]);
-            stn.cx(&[(QubitId(1), QubitId(2))]);
-            stn.rz(Angle64::from_radians(0.7), &[QubitId(1)]);
-        }),
+    let t = Angle64::QUARTER_TURN / 2_u64;
+    let circuits = [
+        vec![
+            DisentangleTestGate::H(0),
+            DisentangleTestGate::Cx(0, 1),
+            DisentangleTestGate::Rz(0, t),
+        ],
+        vec![
+            DisentangleTestGate::H(0),
+            DisentangleTestGate::H(1),
+            DisentangleTestGate::Rz(0, t),
+            DisentangleTestGate::Cx(0, 1),
+            DisentangleTestGate::Rz(1, t),
+        ],
+        vec![
+            DisentangleTestGate::H(0),
+            DisentangleTestGate::Cx(0, 1),
+            DisentangleTestGate::Cx(1, 2),
+            DisentangleTestGate::Rz(1, Angle64::from_radians(0.7)),
+        ],
     ];
 
-    for (i, build) in circuits.iter().enumerate() {
+    for (i, circuit) in circuits.iter().enumerate() {
         let mut stn = StabMps::builder(3).merge_rz(false).build();
-        build(&mut stn);
-        let sv_before = stn.state_vector();
-        let _gates = stn.disentangle(5);
-        let sv_after = stn.state_vector();
-        assert_states_match(&sv_before, &sv_after, &format!("disentangle circuit {i}"));
+        let mut oracle = pecos_simulators::DenseStateVec::new(3);
+        for &gate in circuit {
+            apply_disentangle_test_gate(&mut stn, gate);
+            apply_disentangle_test_gate(&mut oracle, gate);
+        }
+        let _ = stn.disentangle(5);
+        let expected = oracle.state();
+        assert_states_match(
+            &stn.state_vector(),
+            &expected,
+            &format!("disentangle circuit {i}"),
+        );
     }
+}
+
+fn apply_heuristic_trigger_circuit<S>(simulator: &mut S)
+where
+    S: ArbitraryRotationGateable + CliffordGateable,
+{
+    let angle =
+        |units: u32| Angle64::from_radians(f64::from(units) * 0.0001 * std::f64::consts::TAU);
+    simulator.rz(angle(4934), &[QubitId(2)]);
+    simulator.rx(angle(7513), &[QubitId(2)]);
+    simulator.cz(&[(QubitId(0), QubitId(2))]);
+    simulator.cx(&[(QubitId(2), QubitId(0))]);
+    simulator.rz(angle(3365), &[QubitId(0)]);
+    simulator.rz(angle(7635), &[QubitId(0)]);
+    simulator.h(&[QubitId(0)]);
+    simulator.x(&[QubitId(1)]);
+    simulator.sz(&[QubitId(2)]);
+    simulator.rx(angle(8337), &[QubitId(2)]);
+}
+
+#[test]
+fn test_accepted_heuristic_disentangler_keeps_all_reads_in_one_frame() {
+    let mut stn = StabMps::builder(3)
+        .seed(5)
+        .merge_rz(false)
+        .svd_cutoff(0.0)
+        .max_truncation_error(0.0)
+        .build();
+    let mut oracle = pecos_simulators::DenseStateVec::new(3);
+    apply_heuristic_trigger_circuit(&mut stn);
+    apply_heuristic_trigger_circuit(&mut oracle);
+
+    assert_eq!(
+        stn.max_bond_dim(),
+        2,
+        "trigger should reach the maximum end-bond rank for three qubits"
+    );
+    let accepted = stn.disentangle(1);
+    assert!(
+        accepted > 0,
+        "trigger circuit must exercise an accepted heuristic gate"
+    );
+    eprintln!(
+        "heuristic trigger: accepted {accepted} gate(s), coefficient bond 2 -> {}",
+        stn.max_bond_dim()
+    );
+
+    let expected = oracle.state();
+    assert_states_close(
+        &stn.state_vector(),
+        &expected,
+        1e-10,
+        "accepted heuristic state_vector",
+    );
+
+    for (index, expected_amplitude) in expected.iter().enumerate() {
+        let bits = (0..3).map(|q| (index >> q) & 1 != 0).collect::<Vec<_>>();
+        let actual = stn.prob_bitstring(&bits);
+        let expected_probability = expected_amplitude.norm_sqr();
+        assert!(
+            (actual - expected_probability).abs() <= 1e-10,
+            "index={index}: prob_bitstring={actual:.16e}, dense={expected_probability:.16e}"
+        );
+    }
+
+    let pauli_strings = [
+        vec![(0, PauliKind::X)],
+        vec![(2, PauliKind::Z)],
+        vec![(0, PauliKind::X), (1, PauliKind::Y), (2, PauliKind::Z)],
+    ];
+    let mut saw_nonzero_expectation = false;
+    for pauli_string in &pauli_strings {
+        let actual = stn.pauli_expectation(pauli_string);
+        let expected_value = dense_pauli_expectation(&expected, pauli_string);
+        saw_nonzero_expectation |= expected_value.abs() > 1e-3;
+        assert!(
+            (actual - expected_value).abs() <= 1e-10,
+            "pauli={pauli_string:?}: pauli_expectation={actual:.16e}, dense={expected_value:.16e}"
+        );
+    }
+    assert!(
+        saw_nonzero_expectation,
+        "Pauli regression must include a nonzero dense expectation"
+    );
+}
+
+#[test]
+fn test_disentangle_flushes_lazy_measurement_and_merged_rz() {
+    let mut stn = StabMps::builder(2)
+        .seed(19)
+        .lazy_measure(true)
+        .merge_rz(true)
+        .svd_cutoff(0.0)
+        .max_truncation_error(0.0)
+        .build();
+    let mut oracle = pecos_simulators::DenseStateVec::new(2);
+    let t = Angle64::QUARTER_TURN / 2_u64;
+
+    stn.h(&[QubitId(1)]);
+    oracle.h(&[QubitId(1)]);
+    stn.rz(t, &[QubitId(1)]);
+    oracle.rz(t, &[QubitId(1)]);
+    stn.sz(&[QubitId(0)]);
+    oracle.sz(&[QubitId(0)]);
+    stn.h(&[QubitId(0)]);
+    oracle.h(&[QubitId(0)]);
+    stn.cx(&[(QubitId(0), QubitId(1))]);
+    oracle.cx(&[(QubitId(0), QubitId(1))]);
+
+    let pre_measurement = oracle.state();
+    let outcome = stn.mz(&[QubitId(0)])[0].outcome;
+    assert!(
+        !stn.is_state_exact(),
+        "lazy measurement should leave a virtual frame"
+    );
+    let mut expected = project_dense_z(&pre_measurement, 0, outcome);
+
+    let pending_angle = Angle64::from_radians(0.37);
+    stn.rz(pending_angle, &[QubitId(1)]);
+    let half_angle = pending_angle.to_radians_signed() / 2.0;
+    for (index, amplitude) in expected.iter_mut().enumerate() {
+        let signed_half = if (index >> 1) & 1 == 0 {
+            -half_angle
+        } else {
+            half_angle
+        };
+        *amplitude *= Complex64::from_polar(1.0, signed_half);
+    }
+
+    let _ = stn.disentangle(1);
+    assert!(
+        stn.is_state_exact(),
+        "disentangle should flush deferred operations and merged RZs"
+    );
+    assert_states_close(
+        &stn.state_vector(),
+        &expected,
+        1e-10,
+        "lazy measurement followed by disentangle",
+    );
 }
 
 // ============================================================================
@@ -3680,26 +3906,33 @@ fn test_property_disentangle_reduces_bond_dim() {
     // Paper claim: Clifford disentangling can reduce MPS bond dimension.
     let t = Angle64::QUARTER_TURN / 2u64;
     let mut stn = StabMps::builder(3).seed(42).merge_rz(false).build();
+    let mut oracle = pecos_simulators::DenseStateVec::new(3);
 
     stn.h(&[QubitId(0)]);
+    oracle.h(&[QubitId(0)]);
     stn.cx(&[(QubitId(0), QubitId(1))]);
+    oracle.cx(&[(QubitId(0), QubitId(1))]);
     stn.rz(t, &[QubitId(0)]);
+    oracle.rz(t, &[QubitId(0)]);
     stn.h(&[QubitId(2)]);
+    oracle.h(&[QubitId(2)]);
     stn.cx(&[(QubitId(1), QubitId(2))]);
+    oracle.cx(&[(QubitId(1), QubitId(2))]);
     stn.rz(t, &[QubitId(2)]);
+    oracle.rz(t, &[QubitId(2)]);
 
     let bond_before = stn.max_bond_dim();
-    let sv_before = stn.state_vector();
 
     let num_gates = stn.disentangle(5);
 
     let bond_after = stn.max_bond_dim();
     let sv_after = stn.state_vector();
+    let expected = oracle.state();
 
     eprintln!("Disentangle: bond {bond_before} -> {bond_after}, applied {num_gates} gates");
 
     // State should be preserved
-    assert_states_match(&sv_before, &sv_after, "disentangle preserves state");
+    assert_states_match(&expected, &sv_after, "disentangle preserves state");
 
     // Bond dim should not increase (and ideally decreases)
     assert!(

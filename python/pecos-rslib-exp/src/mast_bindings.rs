@@ -12,6 +12,7 @@
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
@@ -75,7 +76,12 @@ impl PyMast {
     /// `projection_order` accepts `"min_span"` or `"input"`; `None` uses
     /// the Rust default (`"min_span"`). Boolean options are tri-state:
     /// `None` preserves the Rust default, while an explicit bool calls the
-    /// corresponding Rust setter. Exceeding `max_non_clifford` raises a
+    /// corresponding Rust setter. `merge_rz` defaults to false so injection
+    /// capacity use remains visible immediately; `StabMps` defaults it to true
+    /// for throughput. Numerical flag redetection self-disables while lazy
+    /// deferred operations are pending. `max_bond_dim` and
+    /// `max_truncation_error` override the coefficient-MPS defaults; the latter
+    /// must be finite and non-negative. Exceeding `max_non_clifford` raises a
     /// `PanicException`; inspect `remaining_injections` before adding work.
     /// `StabMpsCompile.advise()` reports the required deferred capacity for an
     /// analyzed circuit.
@@ -87,6 +93,8 @@ impl PyMast {
         num_qubits,
         max_non_clifford,
         seed=None,
+        max_bond_dim=None,
+        max_truncation_error=None,
         lazy_measure=None,
         merge_rz=None,
         projection_order=None,
@@ -96,6 +104,8 @@ impl PyMast {
         num_qubits: usize,
         max_non_clifford: usize,
         seed: Option<u64>,
+        max_bond_dim: Option<usize>,
+        max_truncation_error: Option<f64>,
         lazy_measure: Option<bool>,
         merge_rz: Option<bool>,
         projection_order: Option<&str>,
@@ -106,11 +116,26 @@ impl PyMast {
                 "num_qubits + max_non_clifford exceeds platform capacity",
             ));
         }
+        if max_truncation_error.is_some_and(|error| !error.is_finite() || error < 0.0) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_truncation_error must be finite and non-negative",
+            ));
+        }
         let mut mast = if let Some(s) = seed {
             Mast::with_seed(num_qubits, max_non_clifford, s)
         } else {
             Mast::new(num_qubits, max_non_clifford)
         };
+        if max_bond_dim.is_some() || max_truncation_error.is_some() {
+            let mut config = MpsConfig::default();
+            if let Some(value) = max_bond_dim {
+                config.max_bond_dim = value;
+            }
+            if let Some(value) = max_truncation_error {
+                config.max_truncation_error = Some(value);
+            }
+            mast = mast.with_mps_config(config);
+        }
         if let Some(value) = lazy_measure {
             mast = mast.with_lazy_measure(value);
         }
@@ -185,6 +210,24 @@ impl PyMast {
     /// `project_all()` or an MZ gate.
     fn max_bond_dim(&self) -> usize {
         self.inner.max_bond_dim()
+    }
+
+    #[getter]
+    /// Accumulated approximate infidelity from SVD truncation.
+    ///
+    /// This is a pure stored-state diagnostic: pending lazy operations and
+    /// merged rotations are not materialized.
+    fn truncation_error(&self) -> f64 {
+        self.inner.truncation_error()
+    }
+
+    #[getter]
+    /// Number of SVDs where `max_bond_dim` was the binding cap.
+    ///
+    /// This is a pure stored-state diagnostic: pending lazy operations and
+    /// merged rotations are not materialized.
+    fn bond_cap_hits(&self) -> u64 {
+        self.inner.bond_cap_hits()
     }
 
     /// Return diagnostics for deferred magic-state projections since reset.

@@ -365,6 +365,8 @@ impl StabMpsBuilder {
     /// adjacent idle rounds merge into one non-Clifford op.
     ///
     /// - Default: true.
+    ///   MAST instead defaults to false so injection and ancilla-capacity use
+    ///   remains visible after each RZ call.
     /// - Semantics: strictly equivalent to applying each `rz` individually
     ///   (tableau and MPS paths both reduce non-Clifford count). No
     ///   accuracy trade-off.
@@ -379,7 +381,10 @@ impl StabMpsBuilder {
     /// Numerically recover missing exact-disentangling |0> flags at product sites.
     ///
     /// When enabled, a failed symbolic flag search checks candidate bond-one MPS
-    /// tensors using a fixed tolerance of 1e-12. Default: false.
+    /// tensors using a fixed relative tolerance of 1e-12. Redetection
+    /// self-disables while lazy deferred operations are pending because the
+    /// stored tensors then differ from the effective MPS-frame state. Default:
+    /// false.
     #[must_use]
     pub fn numerical_flag_redetection(mut self, enable: bool) -> Self {
         self.flags.set_numerical_flag_redetection(enable);
@@ -485,7 +490,9 @@ impl StabMpsBuilder {
 /// lazy measurement or merged RZ is enabled. If Pauli-frame tracking is enabled,
 /// call [`Self::flush_pauli_frame_to_state`] as well before reads that must include
 /// the physical Pauli frame. The Python bindings automatically perform
-/// `flush()`, but do not implicitly materialize a Pauli frame.
+/// `flush()` for state and MPS-diagnostic reads, but not for the pure
+/// `is_state_exact()` and `pragmatic_drift_count` diagnostics, and they do not
+/// implicitly materialize a Pauli frame.
 ///
 /// Before relying on a state read, check all four diagnostics:
 ///
@@ -1351,6 +1358,8 @@ impl StabMps {
     /// returns the bitstring. The original simulator state is unchanged
     /// (only the internal RNG advances, to ensure each shot uses a
     /// distinct RNG seed).
+    /// This method and [`Self::sample_bitstrings`] do not share an RNG stream,
+    /// so identically seeded runs are not shot-for-shot comparable across them.
     ///
     /// `bitstring[k]` corresponds to qubit `k`'s outcome. See the crate-level
     /// **Bitstring convention** section.
@@ -1392,6 +1401,8 @@ impl StabMps {
     /// that take that branch.
     ///
     /// The original simulator state is preserved; only its RNG advances.
+    /// This method and [`Self::sample_bitstring`] do not share an RNG stream,
+    /// so identically seeded runs are not shot-for-shot comparable across them.
     /// A working clone first materializes any lazy-measurement frame and then
     /// all pending merged RZ rotations. Tracked Pauli X bits remain classical:
     /// as in [`Self::sample_bitstring`], they swap reported Z outcomes without
@@ -6852,6 +6863,53 @@ mod tests {
         assert!(stn.flags.merge_rz());
         assert!(!stn.flags.pauli_frame_tracking());
         assert!(!stn.flags.numerical_flag_redetection());
+    }
+
+    #[test]
+    fn test_numerical_redetection_accepts_scaled_product_site() {
+        use pecos_simulators::DenseStateVec;
+
+        let t = Angle64::QUARTER_TURN / 2u64;
+        let final_angle = Angle64::from_radians(0.37);
+        let mut stn = StabMps::builder(2)
+            .merge_rz(false)
+            .numerical_flag_redetection(true)
+            .build();
+        let mut oracle = DenseStateVec::new(2);
+
+        stn.h(&[QubitId(0)]);
+        oracle.h(&[QubitId(0)]);
+        stn.rz(t, &[QubitId(0)]);
+        oracle.rz(t, &[QubitId(0)]);
+        stn.rz(-t, &[QubitId(0)]);
+        oracle.rz(-t, &[QubitId(0)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        oracle.cx(&[(QubitId(0), QubitId(1))]);
+
+        // Move an exactly cancelling gauge factor between the two bond-one
+        // product tensors. This preserves the physical state while making
+        // neither local |0> coefficient unit modulus; site 0 is where
+        // Mps::scale normally stores such a global factor.
+        stn.mps.tensors_mut()[0] *= Complex64::new(0.25, 0.0);
+        stn.mps.tensors_mut()[1] *= Complex64::new(4.0, 0.0);
+
+        stn.rz(final_angle, &[QubitId(1)]);
+        oracle.rz(final_angle, &[QubitId(1)]);
+
+        assert_eq!(stn.stats.numerical_redetect, 1);
+        let actual = stn.state_vector();
+        for (index, amplitude) in actual.iter().enumerate() {
+            assert_relative_eq!(
+                amplitude.re,
+                oracle.get_amplitude(index).re,
+                epsilon = 1e-12
+            );
+            assert_relative_eq!(
+                amplitude.im,
+                oracle.get_amplitude(index).im,
+                epsilon = 1e-12
+            );
+        }
     }
 
     #[test]

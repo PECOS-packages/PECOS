@@ -563,11 +563,13 @@ pub fn apply_rz_stab_mps(
     }
 }
 
-/// A bond-one `[c, 0]` tensor is |0> up to a global phase. The existing
-/// fast path applies linear gates without replacing `c`, so the phase remains
-/// represented in the MPS.
+/// A bond-one `[c, 0]` tensor is |0> up to a nonzero scalar. The consuming
+/// disentangling path is linear in the site tensor, so only the second
+/// component relative to `|c|` matters; site 0 can also carry the global scale
+/// introduced by [`Mps::scale`].
 fn is_numerical_product_zero_site(mps: &Mps, site: usize) -> bool {
     const TOLERANCE: f64 = 1e-12;
+    const MIN_SCALE: f64 = 1e-30;
 
     if mps.bond_dim(site) != 1 || mps.bond_dim(site + 1) != 1 {
         return false;
@@ -576,5 +578,6 @@ fn is_numerical_product_zero_site(mps: &Mps, site: usize) -> bool {
     let tensor = &mps.tensors()[site];
     let c = tensor[(0, 0)];
     let second = tensor[(0, 1)];
-    second.norm() <= TOLERANCE && (c.norm() - 1.0).abs() <= TOLERANCE
+    let scale = c.norm();
+    scale > MIN_SCALE && second.norm() <= TOLERANCE * scale
 }

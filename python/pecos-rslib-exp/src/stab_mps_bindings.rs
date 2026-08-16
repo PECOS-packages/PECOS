@@ -22,8 +22,10 @@ use pyo3::types::{PyBool, PyDict, PyList, PySet, PyTuple};
 /// Python stabilizer-MPS simulator.
 ///
 /// Read methods materialize pending lazy-measurement operations and merged RZ
-/// rotations before returning. Bitstrings use qubit-index order: `bits[q]` is
-/// the bit for qubit `q`. A tracked Pauli frame remains separate until
+/// rotations before returning, except the pure diagnostics `is_state_exact()`
+/// and `pragmatic_drift_count`. Bitstrings use qubit-index order: `bits[q]` is
+/// the bit for qubit `q`, and input items must be actual Python `bool` values.
+/// A tracked Pauli frame remains separate until
 /// `flush_pauli_frame_to_state()` is called. The `for_qec` constructor keyword is an enable-only
 /// preset switch: `True` applies it, while `False` and `None` are identical
 /// no-ops.
@@ -380,6 +382,9 @@ impl PyStabMps {
     /// `1e-8`; a float overrides it, and `0.0` disables adaptive truncation
     /// while retaining the SVD cutoff and bond cap. Negative and non-finite
     /// values raise `ValueError`.
+    /// `merge_rz` defaults to true for throughput; MAST defaults it to false so
+    /// every call immediately exposes its injection-capacity cost. Numerical
+    /// flag redetection self-disables while lazy deferred operations are pending.
     ///
     /// `seed` seeds PECOS's buffered RapidHash RNG and the stabilizer tableau.
     /// Fresh instances with the same configuration and call sequence reproduce
@@ -962,7 +967,9 @@ impl PyStabMps {
     /// preserved and its RNG advances. Prefer `sample_bitstrings`: this method
     /// pays for a full clone and collapse per shot, while prefix sharing has
     /// measured tens-to-hundreds-fold speedups on the repository's 1,000-shot
-    /// example workloads. A negative or oversized count raises `OverflowError`.
+    /// example workloads. The two sampler methods do not share an RNG stream,
+    /// so their seeded results are not shot-for-shot comparable. A negative or
+    /// oversized count raises `OverflowError`.
     fn sample_bitstring(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         self.inner.sample_bitstring(num_shots)
     }
@@ -975,8 +982,9 @@ impl PyStabMps {
     /// cloning cost of `sample_bitstring`; the repository's 1,000-shot example
     /// measures hardware-dependent tens-to-hundreds-fold speedups. Output is in
     /// lexicographic tree order, not input shot order. Pending merged rotations
-    /// and lazy operations are handled internally. A negative or oversized
-    /// count raises `OverflowError`.
+    /// and lazy operations are handled internally. The two sampler methods do
+    /// not share an RNG stream, so their seeded results are not shot-for-shot
+    /// comparable. A negative or oversized count raises `OverflowError`.
     fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         self.inner.sample_bitstrings(num_shots)
     }

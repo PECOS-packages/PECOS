@@ -235,8 +235,10 @@ impl StabMpsCompile {
     /// `ancilla_budget` is the number of fresh ancillas available for deferred
     /// injection. `None` leaves feasibility unspecified and emits a warning;
     /// a sufficient budget selects deferred injection for injectable gates;
-    /// an insufficient nonzero budget selects immediate injection; zero selects
-    /// direct application. Required deferred capacity is one ancilla for every
+    /// an insufficient budget selects immediate injection except that zero
+    /// selects direct application. Injection modes apply only when the selected
+    /// simulator is `StabMps` or `Mast`; all other simulator kinds report
+    /// `Direct`. Required deferred capacity is one ancilla for every
     /// non-Clifford RZ, including arbitrary-angle rotations whose correction is
     /// itself non-Clifford.
     #[must_use]
@@ -253,11 +255,18 @@ impl StabMpsCompile {
         });
         let mut warnings = Vec::new();
 
-        let injection = if injectable_count == 0 {
+        let requested_injection = if injectable_count == 0 {
             InjectionMode::Direct
         } else {
             match ancilla_budget {
-                Some(0) => InjectionMode::Direct,
+                Some(0) => {
+                    warnings.push(format!(
+                        "deferred injection needs one fresh ancilla per non-Clifford RZ \
+                         ({deferred_ancillas_required} required); the given budget of 0 is \
+                         insufficient"
+                    ));
+                    InjectionMode::Direct
+                }
                 Some(_) if deferred_feasible == Some(true) => InjectionMode::Deferred,
                 None => {
                     warnings.push(format!(
@@ -293,6 +302,12 @@ impl StabMpsCompile {
             SimulatorKind::Mast
         } else {
             base.kind
+        };
+
+        let injection = if matches!(simulator, SimulatorKind::StabMps | SimulatorKind::Mast) {
+            requested_injection
+        } else {
+            InjectionMode::Direct
         };
 
         let mode_reason = match injection {
@@ -697,6 +712,10 @@ mod tests {
         assert_eq!(advice.simulator, SimulatorKind::StabMps);
         assert_eq!(advice.injection, InjectionMode::Direct);
         assert_eq!(advice.deferred_feasible, Some(false));
+        assert!(advice.warnings.iter().any(|warning| {
+            warning.contains("one fresh ancilla per non-Clifford RZ")
+                && warning.contains("budget of 0 is insufficient")
+        }));
     }
 
     #[test]
@@ -754,12 +773,15 @@ mod tests {
     }
 
     #[test]
-    fn test_advise_preserves_non_stn_base_simulator() {
+    fn test_advise_non_injection_simulator_uses_direct_application() {
         let mut comp = StabMpsCompile::new(8);
         comp.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
 
         let advice = comp.advise(Some(1));
         assert_eq!(advice.simulator, SimulatorKind::StateVector);
-        assert_eq!(advice.injection, InjectionMode::Deferred);
+        assert_eq!(advice.injection, InjectionMode::Direct);
+        assert_eq!(advice.injectable_count, 1);
+        assert_eq!(advice.deferred_ancillas_required, 1);
+        assert_eq!(advice.deferred_feasible, Some(true));
     }
 }

@@ -6,11 +6,11 @@ The experimental `pecos_rslib_exp` package exposes three related tools:
 - `Mast` defers non-Clifford work through preallocated magic-state ancillas.
 - `StabMpsCompile` replays a circuit without an MPS and estimates which execution strategy is practical.
 
-All public bitstrings use qubit-index order: `bits[q]` is the bit for qubit `q`. Dense state-vector indices are little-endian, so a row maps to `sum(int(bits[q]) << q for q in range(len(bits)))`. Gate rotation angles are in radians.
+All public bitstrings use qubit-index order: `bits[q]` is the bit for qubit `q`. Python bitstring inputs must contain actual `bool` items; integers such as `0` and `1` are rejected. Dense state-vector indices are little-endian, so a row maps to `sum(int(bits[q]) << q for q in range(len(bits)))`. Gate rotation angles are in radians.
 
 ## `StabMps` quickstart
 
-Use `sample_bitstrings`, plural, for shot workloads. It shares each distinct measurement-prefix projection between shots; `sample_bitstring` clones and collapses the entire simulator once per shot.
+Use `sample_bitstrings`, plural, for shot workloads. It shares each distinct measurement-prefix projection between shots; `sample_bitstring` clones and collapses the entire simulator once per shot. The two methods do not share an RNG stream, so seeded outputs should not be compared shot for shot across methods.
 
 ```python
 import math
@@ -57,6 +57,8 @@ The accuracy fields answer different questions:
 
 Python state reads automatically flush lazy operations and merged rotations. When Pauli-frame tracking is enabled, call `flush_pauli_frame_to_state()` before a read that must include the physical frame.
 
+`StabMps` defaults `merge_rz` to true for throughput. `Mast` defaults it to false so each RZ immediately exposes its injection and ancilla-capacity cost. Numerical flag redetection is opt-in and self-disables while lazy deferred operations are pending, because the stored tensors then differ from the effective MPS-frame state.
+
 ## `Mast` quickstart
 
 `max_non_clifford` reserves one fresh ancilla for each deferred non-Clifford RZ. Exceeding it raises `PanicException`, so use compile advice to size the simulator and inspect `remaining_injections` while building a circuit. Prefer MAST for T-like gates whose injection corrections are Clifford and when the extra ancillas fit; prefer `StabMps` for direct arbitrary rotations, limited ancillary memory, or amplitude, probability, and bulk-sampling reads.
@@ -71,6 +73,8 @@ mast.run_gate("T", {1})
 
 assert mast.num_ancillas_used == 1
 assert mast.remaining_injections == 1
+assert mast.truncation_error == 0.0
+assert mast.bond_cap_hits == 0
 
 # Complete all deferred injections and apply their corrections.
 mast.project_all()
@@ -86,6 +90,7 @@ assert outcome in (0, 1)
 ## Analyze first with `StabMpsCompile`
 
 Replay the same gates through `StabMpsCompile`, then call `recommend()` or `advise()`. Advice is heuristic. Deferred capacity counts every non-Clifford RZ, even an arbitrary-angle rotation whose eventual correction is also non-Clifford.
+When advice selects a simulator without an injection implementation (`state_vector`, `ch_form`, or `stab_vec`), its injection field is always `direct`, while capacity and gate counts are still reported. A zero ancilla budget emits the same insufficient-budget warning as any other insufficient budget.
 
 ```python
 import pecos_rslib_exp as exp

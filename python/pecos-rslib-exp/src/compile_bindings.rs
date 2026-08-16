@@ -181,9 +181,11 @@ impl PyStabMpsCompile {
     /// `ancilla_budget` counts fresh ancillas available for deferral. `None`
     /// yields `deferred_feasible=None` and a warning; a sufficient budget yields
     /// deferred injection; an insufficient nonzero budget yields immediate
-    /// injection; zero yields direct application. `deferred_ancillas_required`
-    /// counts every non-Clifford RZ, while `injectable_count` counts only gates
-    /// with Clifford corrections. Recommendations are heuristic.
+    /// injection; zero yields direct application and the same insufficient-
+    /// budget warning. Injection is always direct when the selected simulator
+    /// is not `stab_mps` or `mast`. `deferred_ancillas_required` counts every
+    /// non-Clifford RZ, while `injectable_count` counts only gates with Clifford
+    /// corrections. Recommendations are heuristic.
     #[pyo3(signature = (ancilla_budget=None))]
     fn advise(&self, py: Python<'_>, ancilla_budget: Option<usize>) -> PyResult<Py<PyDict>> {
         let advice = self.inner.advise(ancilla_budget);

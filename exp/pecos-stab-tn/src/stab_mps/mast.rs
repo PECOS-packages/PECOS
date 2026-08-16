@@ -43,10 +43,11 @@ use super::non_clifford;
 /// Order used to collapse deferred magic-state ancillas.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ProjectionOrder {
-    /// Collapse in reverse injection order, preserving the original MAST behavior.
+    /// Collapse in reverse injection order.
     Input,
     /// Recompute MPS-frame locality before every collapse and choose the
-    /// smallest `(span, support size, injection index)` tuple.
+    /// smallest `(span, support size, injection index)` tuple. With `k`
+    /// deferred injections, repeatedly recomputing locality costs O(k^2).
     #[default]
     MinSpan,
 }
@@ -263,16 +264,20 @@ impl Mast {
         self
     }
 
-    /// Enable RZ batching on same qubit. See `StabMpsBuilder::merge_rz` for
-    /// semantics. Fluent-style setter on MAST.
+    /// Enable RZ batching on the same qubit. See `StabMpsBuilder::merge_rz`
+    /// for semantics. MAST defaults this to false so each RZ immediately makes
+    /// its injection and ancilla-capacity cost visible; `StabMps` defaults it
+    /// to true for throughput. Fluent-style setter on MAST.
     #[must_use]
     pub fn with_merge_rz(mut self, merge: bool) -> Self {
         self.merge_rz = merge;
         self
     }
 
-    /// Numerically recover missing exact-disentangling |0> flags at product sites.
-    /// Default: false.
+    /// Numerically recover missing exact-disentangling |0> flags at product
+    /// sites. Redetection self-disables while lazy deferred operations are
+    /// pending because stored tensors then differ from the effective MPS-frame
+    /// state. Default: false.
     #[must_use]
     pub fn with_numerical_flag_redetection(mut self, enable: bool) -> Self {
         self.numerical_flag_redetection = enable;
@@ -366,6 +371,20 @@ impl Mast {
     /// Pending operations are not materialized by this diagnostic.
     pub fn max_bond_dim(&self) -> usize {
         self.mps.max_bond_dim()
+    }
+
+    /// Accumulated approximate infidelity from SVD truncation.
+    /// Pending operations are not materialized by this diagnostic.
+    #[must_use]
+    pub fn truncation_error(&self) -> f64 {
+        self.mps.truncation_error()
+    }
+
+    /// Number of SVDs where `max_bond_dim` was the binding cap.
+    /// Pending operations are not materialized by this diagnostic.
+    #[must_use]
+    pub fn bond_cap_hits(&self) -> u64 {
+        self.mps.bond_cap_hits()
     }
 
     #[must_use]
@@ -897,6 +916,31 @@ mod tests {
             .collect();
         assert_eq!(default_outcomes, min_span_outcomes);
         assert_eq!(input_outcomes, legacy_outcomes);
+    }
+
+    #[test]
+    fn test_mast_mps_config_and_truncation_telemetry() {
+        let config = MpsConfig {
+            max_bond_dim: 7,
+            max_truncation_error: Some(0.0),
+            ..MpsConfig::default()
+        };
+        let mut mast = Mast::new(2, 1).with_mps_config(config);
+
+        assert_eq!(mast.mps().config().max_bond_dim, 7);
+        assert_eq!(mast.mps().config().max_truncation_error, Some(0.0));
+        assert_relative_eq!(mast.truncation_error(), 0.0, epsilon = f64::EPSILON);
+        assert_eq!(mast.bond_cap_hits(), 0);
+
+        mast.mps.record_truncation(0.25, true);
+        assert_relative_eq!(mast.truncation_error(), 0.25, epsilon = f64::EPSILON);
+        assert_eq!(mast.bond_cap_hits(), 1);
+
+        mast.reset();
+        assert_eq!(mast.mps().config().max_bond_dim, 7);
+        assert_eq!(mast.mps().config().max_truncation_error, Some(0.0));
+        assert_relative_eq!(mast.truncation_error(), 0.0, epsilon = f64::EPSILON);
+        assert_eq!(mast.bond_cap_hits(), 0);
     }
 
     #[test]

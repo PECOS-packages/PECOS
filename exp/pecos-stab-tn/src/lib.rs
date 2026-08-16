@@ -27,15 +27,20 @@
 //! Pauli-frame tracking, and numerical flag redetection remain opt-in. To
 //! recover the former behavior explicitly, use `max_bond_dim(64)`,
 //! `max_truncation_error(0.0)`, and `merge_rz(false)` on the builder.
+//! `Mast` instead defaults `merge_rz` to false so every RZ immediately exposes
+//! its injection and ancilla-capacity cost; enable it explicitly when batching
+//! is desired.
 //!
 //! # Bitstring convention
 //!
-//! Every public bitstring API uses qubit-index order: `bits[q]` is the bit
-//! for qubit `q`. Consequently, converting a bitstring to the little-endian
-//! integer index used by [`stab_mps::StabMps::state_vector`] gives
+//! At the `StabMps`/`Mast` layer, public bitstrings use qubit-index order:
+//! `bits[q]` is the bit for qubit `q`. Consequently, converting a `StabMps`
+//! bitstring to the little-endian integer index used by
+//! [`stab_mps::StabMps::state_vector`] gives
 //! `index = sum(usize::from(bits[q]) << q)`. This convention applies equally
 //! to bitstrings accepted by probability and amplitude reads and to rows
-//! returned by the samplers.
+//! returned by the samplers. The lower-level [`mps::Mps::state_vector`] is an
+//! internal tensor-chain read and orders site 0 as the most-significant bit.
 //!
 //! # References
 //!

@@ -192,7 +192,6 @@ fn main() {
     let t_angle = Angle64::QUARTER_TURN / 2u64; // T = RZ(π/4)
     let num_data = 8;
     let num_rounds = 20;
-    let max_bond = 64;
     let seed = 42;
 
     println!(
@@ -206,21 +205,22 @@ fn main() {
     );
     println!("{:-<90}", "");
 
-    let configs: &[(&str, bool, Option<f64>, bool)] = &[
-        ("legacy defaults", false, Some(0.0), false),
-        ("legacy + lazy_measure", true, Some(0.0), false),
-        ("max_truncation_error=1e-8", false, Some(1e-8), false),
-        ("merge_rz", false, None, true),
+    let configs: &[(&str, bool, Option<f64>, bool, usize)] = &[
+        ("legacy defaults", false, Some(0.0), false, 64),
+        ("legacy + lazy_measure", true, Some(0.0), false, 64),
+        ("max_truncation_error=1e-8", false, Some(1e-8), false, 64),
+        ("merge_rz", false, None, true, 64),
         (
             "merge_rz + max_truncation_error=1e-8",
             false,
             Some(1e-8),
             true,
+            64,
         ),
-        ("general defaults (cap pinned)", false, Some(1e-8), true),
+        ("general defaults (cap pinned)", false, Some(1e-8), true, 64),
     ];
 
-    for &(name, lazy, trunc, merge) in configs {
+    for &(name, lazy, trunc, merge, max_bond) in configs {
         let (t, bond, parity) = build_and_run(&BenchConfig {
             num_data,
             num_rounds,

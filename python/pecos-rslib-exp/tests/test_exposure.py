@@ -211,6 +211,8 @@ def test_mast_configuration_projection_diagnostics_and_stats():
         1,
         1,
         seed=5,
+        max_bond_dim=1,
+        max_truncation_error=0.0,
         lazy_measure=False,
         merge_rz=False,
         numerical_flag_redetection=True,
@@ -235,11 +237,19 @@ def test_mast_configuration_projection_diagnostics_and_stats():
     }
     assert all(isinstance(value, int) for value in records[0].values())
     assert isinstance(mast.projection_peak_bond, int)
+    assert isinstance(mast.truncation_error, float)
+    assert isinstance(mast.bond_cap_hits, int)
 
     stats = mast.stats()
     assert isinstance(stats, dict)
     assert set(stats) == STATS_KEYS
     assert all(isinstance(value, int) for value in stats.values())
+
+    with pytest.raises(
+        ValueError,
+        match="max_truncation_error must be finite and non-negative",
+    ):
+        exp.Mast(1, 1, max_truncation_error=math.nan)
 
 
 def test_mast_diagnostic_getters_do_not_materialize_pending_rotations():
@@ -250,6 +260,8 @@ def test_mast_diagnostic_getters_do_not_materialize_pending_rotations():
     assert mast.num_ancillas_used == 0
     assert mast.remaining_injections == 2
     assert isinstance(mast.max_bond_dim, int)
+    assert mast.truncation_error == 0.0
+    assert mast.bond_cap_hits == 0
     assert mast.projection_records() == []
     assert mast.projection_peak_bond == 0
     assert mast.stats()["total_nonclifford"] == 0

@@ -804,9 +804,7 @@ def test_native_int64_axis0_row_sweep_matches_numpy(
         dtype=np.int64,
     )
 
-    np.testing.assert_array_equal(
-        np.asarray(reduction(Array(expected), axis=0)), numpy_reduction(expected, axis=0)
-    )
+    np.testing.assert_array_equal(np.asarray(reduction(Array(expected), axis=0)), numpy_reduction(expected, axis=0))
 
 
 @pytest.mark.parametrize(("dtype_name", "numpy_dtype", "_values"), ARRAY_INTERFACE_DTYPES)
@@ -864,9 +862,7 @@ def test_native_float_reductions_preserve_nan_inf_and_axis_results(dtype: Any) -
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("nan_index", [0, 1, 2])
-def test_native_float_extremes_propagate_nan_independent_of_position(
-    dtype: Any, nan_index: int
-) -> None:
+def test_native_float_extremes_propagate_nan_independent_of_position(dtype: Any, nan_index: int) -> None:
     values = np.array([1.0, 2.0, 3.0], dtype=dtype)
     values[nan_index] = np.nan
     actual = Array(values)
@@ -898,9 +894,7 @@ def test_native_float_extremes_preserve_numpy_signed_zero(
 
     expected_axis = np.array([values, values[::-1]], dtype=dtype)
     actual_axis = np.asarray(reduction(Array(expected_axis), axis=0))
-    np.testing.assert_array_equal(
-        np.signbit(actual_axis), np.signbit(numpy_reduction(expected_axis, axis=0))
-    )
+    np.testing.assert_array_equal(np.signbit(actual_axis), np.signbit(numpy_reduction(expected_axis, axis=0)))
 
 
 @pytest.mark.performance

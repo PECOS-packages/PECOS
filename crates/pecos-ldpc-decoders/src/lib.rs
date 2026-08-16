@@ -24,7 +24,7 @@ pub mod sparse;
 // Re-export main decoder types
 pub use decoders::{
     BeliefFindDecoder, BpLsdDecoder, BpOsdDecoder, ClusterStatistics, FlipDecoder, LsdStatistics,
-    SoftInfoBpDecoder, UfMethod, UnionFindDecoder,
+    SoftInfoBpDecoder, UfMethod, UnionFindDecoder, WeightedUnionFindDecoder,
 };
 pub use quantum::{CssCode, MbpDecoder};
 pub use sparse::SparseMatrix;

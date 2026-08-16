@@ -14,6 +14,10 @@
 //! - `uf` - Syndrome-graph Union-Find decoder (pure Rust)
 //! - `all` - Enable all decoders
 
+pub mod spec;
+
+pub use spec::{DecodeModel, DecoderSpec, ExecutionTraits};
+
 // Re-export core traits
 pub use pecos_decoder_core::{
     BatchDecoder, CssDecoder, Decoder, DecoderError, DecodingResultTrait, ObservableDecoder,
@@ -57,6 +61,7 @@ pub use pecos_ldpc_decoders::{
     UfMethod,
     UnionFindBuilder,
     UnionFindDecoder,
+    WeightedUnionFindDecoder,
 };
 
 // Re-export MWPF decoder when feature is enabled

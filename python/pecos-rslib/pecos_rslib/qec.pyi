@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pecos_rslib import ParityCheckMatrix, StabilizerCodeSpec, TickCircuit
+from pecos_rslib import ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
 
 class BivariateBicycleCode:
     """A validated bivariate-bicycle CSS code."""
@@ -322,6 +322,21 @@ def randomized_code_distance_upper_bound(
 def x_distance(spec: StabilizerCodeSpec, max_weight: int) -> FaultDistanceResult | None: ...
 def z_distance(spec: StabilizerCodeSpec, max_weight: int) -> FaultDistanceResult | None: ...
 def stabilizer_code_distance(spec: StabilizerCodeSpec, max_weight: int) -> StabilizerDistanceSearchResult: ...
+
+class DistanceResult:
+    @property
+    def distance(self) -> int: ...
+    @property
+    def min_weight_operator(self) -> PauliString: ...
+
+def subsystem_dressed_distance(
+    num_qubits: int,
+    stabilizers: list[PauliString],
+    gauge_generators: list[PauliString],
+    logical_zs: list[PauliString],
+    logical_xs: list[PauliString],
+    max_weight: int,
+) -> DistanceResult | None: ...
 
 # The native QEC module predates this focused stub. Preserve the untyped behavior of its other
 # classes and functions until that complete API is migrated rather than falsely narrowing them.

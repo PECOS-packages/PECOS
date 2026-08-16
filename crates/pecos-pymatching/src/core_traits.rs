@@ -209,7 +209,7 @@ impl ObservableDecoder for PyMatchingDecoder {
         shots: &[u8],
         num_shots: usize,
         num_detectors: usize,
-    ) -> Result<Vec<u64>, DecoderError> {
+    ) -> Result<Vec<pecos_decoder_core::obs_mask::ObsMask>, DecoderError> {
         use crate::decoder::BatchConfig;
         let config = BatchConfig {
             bit_packed_input: false,
@@ -220,26 +220,15 @@ impl ObservableDecoder for PyMatchingDecoder {
             .decode_batch_with_config(shots, num_shots, num_detectors, config)
             .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
 
-        // This narrow batch API packs observables into a u64 (8 bit-packed
-        // bytes), so it caps at 64 observables; a wider decode would overflow the
-        // shift. Fail loud rather than truncate -- callers needing >64 observables
-        // use the wide per-shot `decode_obs` path.
-        if result.predictions.first().is_some_and(|p| p.len() > 8) {
-            return Err(DecoderError::InvalidConfiguration(
-                "decode_batch_to_observables packs observables into a u64 and supports at most \
-                 64 observables; use decode_obs for wider observable sets"
-                    .to_string(),
-            ));
-        }
-
-        // Convert per-shot bit-packed predictions to u64 masks.
+        // Convert each bit-packed prediction into little-endian words. The
+        // bridge already emits every observable byte, including above bit 63.
         let mut masks = Vec::with_capacity(num_shots);
         for pred in &result.predictions {
-            let mut mask = 0u64;
-            for (byte_idx, &byte) in pred.iter().enumerate() {
-                mask |= u64::from(byte) << (byte_idx * 8);
+            let mut words = vec![0u64; pred.len().div_ceil(8)];
+            for (byte_index, &byte) in pred.iter().enumerate() {
+                words[byte_index / 8] |= u64::from(byte) << ((byte_index % 8) * 8);
             }
-            masks.push(mask);
+            masks.push(pecos_decoder_core::obs_mask::ObsMask::from_words(&words));
         }
         Ok(masks)
     }
@@ -280,5 +269,37 @@ mod tests {
             PyMatchingDecoder::from_dense_matrix_with_config(&check_matrix.view(), config).unwrap();
 
         assert_eq!(decoder.check_count(), 2);
+    }
+
+    #[test]
+    fn native_observable_batch_is_correct_at_64_and_65_observables() {
+        for observable in [63, 64] {
+            let dem = format!("error(0.1) D0 L{observable}\n");
+            let mut decoder = PyMatchingDecoder::from_dem(&dem).unwrap();
+            let masks = decoder
+                .decode_batch_to_observables(&[1, 0, 1], 3, 1)
+                .unwrap();
+            assert_eq!(masks.len(), 3);
+            assert!(masks[0].get(observable));
+            assert!(masks[1].is_zero());
+            assert!(masks[2].get(observable));
+            assert_eq!(masks[0], decoder.decode_obs(&[1]).unwrap());
+        }
+    }
+
+    #[test]
+    fn correlated_mode_changes_the_correlation_sensitive_fixture() {
+        let dem = "error(0.01) D0 D1 ^ D2 D3 L0\nerror(0.1) D2\nerror(0.1) D3\n";
+        let mut correlated = PyMatchingDecoder::from_dem_with_correlations(dem, true).unwrap();
+        let mut uncorrelated = PyMatchingDecoder::from_dem_with_correlations(dem, false).unwrap();
+
+        assert_eq!(
+            correlated.decode_obs(&[1, 1, 1, 1]).unwrap().to_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            uncorrelated.decode_obs(&[1, 1, 1, 1]).unwrap().to_u64(),
+            Some(0)
+        );
     }
 }

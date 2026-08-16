@@ -2399,6 +2399,26 @@ class qec:
         ) -> None: ...
         @staticmethod
         def load(path: str | os.PathLike[str]) -> qec.SampleBatch: ...
+        def decode(
+            self,
+            dem: str | None = ...,
+            decoder: decoders.DecoderSpec | str = ...,
+            *,
+            workers: int | None = ...,
+            predictions: bool = ...,
+            timing: bool = ...,
+            allow_dem_mismatch: bool = ...,
+        ) -> qec.DecodeResult:
+            """Decode all shots with planned native, sequential, or parallel execution.
+
+            ``decoder`` is a typed decoder spec or legacy string. ``dem=None``
+            requires a corpus-loaded batch with an embedded DEM. Explicit
+            ``workers`` requests that exact count; automatic execution respects
+            stateful and wall-clock-limited decoder contracts. Predictions are
+            wide Python integers, and timing forces per-shot dispatch.
+            """
+            ...
+
         def decode_count(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> int: ...
         def decode_each(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> list[int]: ...
         def decode_count_parallel(
@@ -2436,12 +2456,27 @@ class qec:
         num_errors: int
         logical_error_rate: float
         total_seconds: float
+        wall_elapsed: float
+        summed_decode_elapsed: float
+        num_timing_samples: int
         per_shot_mean: float
         per_shot_median: float
         per_shot_p99: float
         per_shot_min: float
         per_shot_max: float
-        quantiles: list[tuple[float, float]]
+        quantiles: list[float]
+
+    class DecodeResult:
+        num_shots: int
+        num_errors: int
+        logical_error_rate: float
+        execution_path: str
+        workers_used: int
+        reproducibility_warnings: list[str]
+        sampling_seed_used: int | None
+        predictions: list[int] | None
+        stats: qec.DecodeStats | None
+        def interval(self, alpha: float = ...) -> tuple[float, float]: ...
 
     class DemSampler:
         @staticmethod

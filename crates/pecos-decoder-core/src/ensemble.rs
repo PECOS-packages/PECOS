@@ -18,6 +18,7 @@
 
 use crate::ObservableDecoder;
 use crate::errors::DecoderError;
+use crate::obs_mask::ObsMask;
 
 /// Voting strategy for combining decoder predictions.
 #[derive(Debug, Clone)]
@@ -38,7 +39,7 @@ pub struct EnsembleDecoder {
     decoders: Vec<Box<dyn ObservableDecoder>>,
     strategy: VotingStrategy,
     /// Reusable buffer for collecting predictions.
-    predictions: Vec<u64>,
+    predictions: Vec<ObsMask>,
 }
 
 impl EnsembleDecoder {
@@ -87,40 +88,49 @@ impl EnsembleDecoder {
 }
 
 impl ObservableDecoder for EnsembleDecoder {
-    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
         if self.decoders.is_empty() {
-            return Ok(crate::obs_mask::ObsMask::new());
+            return Ok(ObsMask::new());
         }
 
         // Collect predictions from all decoders.
         self.predictions.clear();
         for decoder in &mut self.decoders {
-            self.predictions
-                .push(decoder.decode_to_observables(syndrome)?);
+            self.predictions.push(decoder.decode_obs(syndrome)?);
         }
 
         // Vote on each observable bit independently.
-        let mut result = 0u64;
-        for bit in 0..64 {
-            let mask = 1u64 << bit;
-
-            // Check if any decoder cares about this bit.
-            let any_set = self.predictions.iter().any(|&p| p & mask != 0);
+        let mut result = ObsMask::new();
+        let num_bits = self
+            .predictions
+            .iter()
+            .map(|prediction| prediction.words().len() * u64::BITS as usize)
+            .max()
+            .unwrap_or(0);
+        for bit in 0..num_bits {
+            let any_set = self
+                .predictions
+                .iter()
+                .any(|prediction| prediction.get(bit));
             if !any_set {
                 continue;
             }
 
             let vote_for_flip = match &self.strategy {
                 VotingStrategy::Majority => {
-                    let count = self.predictions.iter().filter(|&&p| p & mask != 0).count();
+                    let count = self
+                        .predictions
+                        .iter()
+                        .filter(|prediction| prediction.get(bit))
+                        .count();
                     // Strict majority: more than half must vote flip.
                     count * 2 > self.decoders.len()
                 }
                 VotingStrategy::Weighted(weights) => {
                     let mut weight_flip = 0.0;
                     let mut weight_no_flip = 0.0;
-                    for (i, &pred) in self.predictions.iter().enumerate() {
-                        if pred & mask != 0 {
+                    for (i, prediction) in self.predictions.iter().enumerate() {
+                        if prediction.get(bit) {
                             weight_flip += weights[i];
                         } else {
                             weight_no_flip += weights[i];
@@ -131,11 +141,11 @@ impl ObservableDecoder for EnsembleDecoder {
             };
 
             if vote_for_flip {
-                result |= mask;
+                result.set(bit);
             }
         }
 
-        Ok(crate::obs_mask::ObsMask::from_u64(result))
+        Ok(result)
     }
 }
 
@@ -168,32 +178,39 @@ impl ParallelEnsembleDecoder {
 }
 
 impl ObservableDecoder for ParallelEnsembleDecoder {
-    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
         use rayon::prelude::*;
 
         if self.decoders.is_empty() {
-            return Ok(crate::obs_mask::ObsMask::new());
+            return Ok(ObsMask::new());
         }
 
         // Decode all members in parallel.
-        let predictions: Result<Vec<u64>, DecoderError> = self
+        let predictions: Result<Vec<ObsMask>, DecoderError> = self
             .decoders
             .par_iter_mut()
-            .map(|decoder| decoder.decode_to_observables(syndrome))
+            .map(|decoder| decoder.decode_obs(syndrome))
             .collect();
         let predictions = predictions?;
 
         // Majority vote.
         let half = predictions.len() / 2;
-        let mut result = 0u64;
-        for bit in 0..64 {
-            let mask = 1u64 << bit;
-            let count = predictions.iter().filter(|&&p| p & mask != 0).count();
+        let mut result = ObsMask::new();
+        let num_bits = predictions
+            .iter()
+            .map(|prediction| prediction.words().len() * u64::BITS as usize)
+            .max()
+            .unwrap_or(0);
+        for bit in 0..num_bits {
+            let count = predictions
+                .iter()
+                .filter(|prediction| prediction.get(bit))
+                .count();
             if count > half {
-                result |= mask;
+                result.set(bit);
             }
         }
-        Ok(crate::obs_mask::ObsMask::from_u64(result))
+        Ok(result)
     }
 }
 
@@ -210,6 +227,16 @@ mod tests {
             _syndrome: &[u8],
         ) -> Result<crate::obs_mask::ObsMask, DecoderError> {
             Ok(crate::obs_mask::ObsMask::from_u64(self.0))
+        }
+    }
+
+    struct FixedWideDecoder(usize);
+
+    impl ObservableDecoder for FixedWideDecoder {
+        fn decode_obs(&mut self, _syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+            let mut mask = ObsMask::new();
+            mask.set(self.0);
+            Ok(mask)
         }
     }
 
@@ -269,5 +296,35 @@ mod tests {
         let decoders: Vec<Box<dyn ObservableDecoder>> = vec![Box::new(FixedDecoder(42))];
         let mut ensemble = EnsembleDecoder::new(decoders);
         assert_eq!(ensemble.decode_to_observables(&[]).unwrap(), 42);
+    }
+
+    #[test]
+    fn majority_vote_is_correct_at_64_and_65_observables() {
+        for bit in [63, 64] {
+            let decoders: Vec<Box<dyn ObservableDecoder>> = vec![
+                Box::new(FixedWideDecoder(bit)),
+                Box::new(FixedWideDecoder(bit)),
+                Box::new(FixedDecoder(0)),
+            ];
+            let mut ensemble = EnsembleDecoder::new(decoders);
+            let prediction = ensemble.decode_obs(&[]).unwrap();
+            assert!(prediction.get(bit));
+            assert_eq!(prediction.count_ones(), 1);
+        }
+    }
+
+    #[test]
+    fn parallel_majority_vote_is_correct_at_64_and_65_observables() {
+        for bit in [63, 64] {
+            let decoders: Vec<Box<dyn ObservableDecoder + Send>> = vec![
+                Box::new(FixedWideDecoder(bit)),
+                Box::new(FixedWideDecoder(bit)),
+                Box::new(FixedDecoder(0)),
+            ];
+            let mut ensemble = ParallelEnsembleDecoder::new(decoders);
+            let prediction = ensemble.decode_obs(&[]).unwrap();
+            assert!(prediction.get(bit));
+            assert_eq!(prediction.count_ones(), 1);
+        }
     }
 }

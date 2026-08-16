@@ -8,6 +8,7 @@ import math
 
 import pecos_rslib_exp as exp
 import pytest
+from pecos.quantum import TickCircuit
 
 STATS_KEYS = {
     "total_nonclifford",
@@ -28,6 +29,21 @@ def assert_complex_tuple(value):
     assert isinstance(value, tuple)
     assert len(value) == 2
     assert all(isinstance(component, float) for component in value)
+
+
+def test_sim_neo_stab_mps_boolean_builder_options():
+    circuit = TickCircuit()
+    circuit.tick().x([0])
+    circuit.tick().mz([0])
+
+    backends = [
+        exp.stab_mps().lazy_measure().merge_rz(),
+        exp.stab_mps().lazy_measure(True).merge_rz(True),
+        exp.stab_mps().lazy_measure(False).merge_rz(False),
+    ]
+    for backend in backends:
+        result = exp.sim_neo(circuit).quantum(backend).sampling(exp.monte_carlo(1)).seed(7).run()
+        assert [list(row) for row in result] == [[1]]
 
 
 def test_stab_mps_analysis_and_noise_exposure():

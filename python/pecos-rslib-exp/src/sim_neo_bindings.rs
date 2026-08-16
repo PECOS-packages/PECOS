@@ -439,8 +439,13 @@ impl PyStabMpsBuilder {
         }
     }
 
-    fn lazy_measure(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner.lazy_measure = true;
+    /// Set whether measurements are deferred for non-Clifford states.
+    ///
+    /// Calling without an argument enables lazy measurement; an explicit bool
+    /// sets the option exactly.
+    #[pyo3(signature = (enabled=true))]
+    fn lazy_measure(mut slf: PyRefMut<'_, Self>, enabled: bool) -> PyRefMut<'_, Self> {
+        slf.inner.lazy_measure = enabled;
         slf
     }
 
@@ -461,8 +466,13 @@ impl PyStabMpsBuilder {
         Ok(slf)
     }
 
-    fn merge_rz(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
-        slf.inner.merge_rz = true;
+    /// Set whether consecutive RZ rotations on the same qubit are merged.
+    ///
+    /// Calling without an argument enables RZ merging; an explicit bool sets
+    /// the option exactly.
+    #[pyo3(signature = (enabled=true))]
+    fn merge_rz(mut slf: PyRefMut<'_, Self>, enabled: bool) -> PyRefMut<'_, Self> {
+        slf.inner.merge_rz = enabled;
         slf
     }
 }

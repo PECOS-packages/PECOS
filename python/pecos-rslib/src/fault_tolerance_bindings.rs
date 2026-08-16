@@ -78,6 +78,7 @@ use pecos_qec::fault_tolerance::fault_distance_upper_bound::{
     FaultDistanceOsdMethod as RustFaultDistanceOsdMethod,
     FaultDistanceUpperBoundConfig as RustFaultDistanceUpperBoundConfig,
     FaultDistanceUpperBoundResult as RustFaultDistanceUpperBoundResult,
+    randomized_code_distance_upper_bound as rust_randomized_code_distance_upper_bound,
     randomized_fault_distance_upper_bound as rust_randomized_fault_distance_upper_bound,
 };
 use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
@@ -8655,6 +8656,21 @@ fn connected_cluster_code_distance(
         .map(PyFaultDistanceResult::from)
 }
 
+/// Samples natively verified qubit witnesses for a binary code-distance upper bound.
+///
+/// Returned ``mechanism_indices`` are qubit indices. A return value is only an upper bound and
+/// never certifies exactness.
+#[pyfunction]
+fn randomized_code_distance_upper_bound(
+    h: &PyParityCheckMatrix,
+    l: &PyParityCheckMatrix,
+    config: &PyFaultDistanceUpperBoundConfig,
+) -> PyResult<Option<PyFaultDistanceUpperBoundResult>> {
+    rust_randomized_code_distance_upper_bound(&h.inner, &l.inner, &config.inner)
+        .map(|result| result.map(PyFaultDistanceUpperBoundResult::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
 /// Computes pure-X connected-cluster distance for a CSS stabilizer code.
 #[pyfunction]
 fn x_distance(
@@ -8996,6 +9012,10 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(verify_dem_equivalence, &qec)?)?;
     qec.add_function(wrap_pyfunction!(assert_dems_equivalent, &qec)?)?;
     qec.add_function(wrap_pyfunction!(connected_cluster_code_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(
+        randomized_code_distance_upper_bound,
+        &qec
+    )?)?;
     qec.add_function(wrap_pyfunction!(bounded_enumeration_code_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bounded_enumeration_x_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bounded_enumeration_z_distance, &qec)?)?;

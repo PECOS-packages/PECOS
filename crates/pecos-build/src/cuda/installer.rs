@@ -666,6 +666,20 @@ mod tests {
             &link,
             Path::new("../include/cuda_runtime.h")
         ));
+        // The prefix trap: a sister directory that shares a string prefix with the install
+        // dir must be rejected. `../../cuda-evil/x` resolves to `/out/cuda-evil/x`, which a
+        // naive string `starts_with` would accept; the component-wise check must not.
+        assert!(!symlink_target_stays_within(
+            root,
+            &link,
+            Path::new("../../cuda-evil/libcublas.so")
+        ));
+        // Popping above the root is rejected even when the tail re-enters a same-named dir.
+        assert!(!symlink_target_stays_within(
+            root,
+            &link,
+            Path::new("../lib/../../cuda-evil/x")
+        ));
     }
 
     /// The redist `lib/` trees ship versioned soname symlink chains. Merging must recreate

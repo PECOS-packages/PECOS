@@ -691,6 +691,18 @@ def test_empty_unsigned_axis_extreme_raises_like_axisless_case(
         numpy_reduction(np.empty((2, 0), dtype=numpy_dtype), axis=1)
 
 
+@pytest.mark.parametrize(("reduction", "numpy_reduction"), [(num.max, np.max), (num.min, np.min)])
+@pytest.mark.parametrize("numpy_dtype", [np.bool_, np.int64, np.float32, np.float64])
+def test_empty_native_axis_extreme_raises_for_every_ordered_dtype(
+    reduction: Callable[..., Any], numpy_reduction: Callable[..., Any], numpy_dtype: Any
+) -> None:
+    source = Array(np.empty((2, 0), dtype=numpy_dtype))
+    with pytest.raises(ValueError, match="^zero-size array reduction has no identity$"):
+        reduction(source, axis=1)
+    with pytest.raises(ValueError, match="zero-size array to reduction operation"):
+        numpy_reduction(np.empty((2, 0), dtype=numpy_dtype), axis=1)
+
+
 @pytest.mark.parametrize(("_canonical", "_short", "expected", "numpy_dtype"), UNSIGNED_DTYPES)
 def test_reversed_unsigned_numpy_views_are_copied_in_logical_order(
     _canonical: str,
@@ -779,6 +791,22 @@ def test_native_array_extremes_use_all_ordered_numeric_dtypes(
     np.testing.assert_array_equal(np.asarray(reduction(actual, axis=1)), numpy_reduction(expected, axis=1))
 
 
+@pytest.mark.parametrize(("reduction", "numpy_reduction"), [(num.max, np.max), (num.min, np.min)])
+def test_native_int64_axis0_row_sweep_matches_numpy(
+    reduction: Callable[..., Any], numpy_reduction: Callable[..., Any]
+) -> None:
+    expected = np.array(
+        [
+            [np.iinfo(np.int64).min, 5, 9, -3],
+            [4, np.iinfo(np.int64).max, -8, 7],
+            [2, -6, 3, 0],
+        ],
+        dtype=np.int64,
+    )
+
+    np.testing.assert_array_equal(np.asarray(reduction(Array(expected), axis=0)), numpy_reduction(expected, axis=0))
+
+
 @pytest.mark.parametrize(("dtype_name", "numpy_dtype", "_values"), ARRAY_INTERFACE_DTYPES)
 @pytest.mark.parametrize(("reduction", "numpy_reduction"), [(num.any, np.any), (num.all, np.all)])
 def test_native_array_truth_reductions_use_all_numeric_dtypes(
@@ -811,16 +839,62 @@ def test_native_array_mean_uses_all_supported_numeric_dtypes(
     np.testing.assert_array_equal(np.asarray(num.mean(actual, axis=0)), np.mean(expected, axis=0))
 
 
-def test_native_float_reductions_preserve_nan_inf_and_axis_results() -> None:
-    values = np.array([[np.nan, np.inf, -np.inf, 1.0], [2.0, np.nan, 3.0, -4.0]])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_native_float_reductions_preserve_nan_inf_and_axis_results(dtype: Any) -> None:
+    values = np.array(
+        [
+            [np.nan, np.inf, -np.inf, 1.0],
+            [2.0, np.nan, 3.0, -4.0],
+            [5.0, 6.0, 7.0, 8.0],
+        ],
+        dtype=dtype,
+    )
     actual = Array(values)
 
     assert np.isnan(num.sum(actual))
-    assert num.max(actual) == 3.0
+    assert np.isnan(num.max(actual))
     assert np.isnan(num.min(actual))
-    np.testing.assert_array_equal(np.asarray(num.sum(actual, axis=1)), np.array([np.nan, np.nan]))
-    np.testing.assert_array_equal(np.asarray(num.max(actual, axis=1)), np.array([np.inf, 3.0]))
-    np.testing.assert_array_equal(np.asarray(num.min(actual, axis=1)), np.array([-np.inf, -4.0]))
+    for axis in (0, 1):
+        np.testing.assert_array_equal(np.asarray(num.sum(actual, axis=axis)), np.sum(values, axis=axis))
+        np.testing.assert_array_equal(np.asarray(num.max(actual, axis=axis)), np.max(values, axis=axis))
+        np.testing.assert_array_equal(np.asarray(num.min(actual, axis=axis)), np.min(values, axis=axis))
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("nan_index", [0, 1, 2])
+def test_native_float_extremes_propagate_nan_independent_of_position(dtype: Any, nan_index: int) -> None:
+    values = np.array([1.0, 2.0, 3.0], dtype=dtype)
+    values[nan_index] = np.nan
+    actual = Array(values)
+
+    assert np.isnan(num.max(actual))
+    assert np.isnan(num.min(actual))
+
+    if dtype == np.float64:
+        assert np.isnan(num.max(values))
+        assert np.isnan(num.min(values))
+        assert np.isnan(num.max(values.tolist()))
+        assert np.isnan(num.min(values.tolist()))
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("values", [[0.0, -0.0], [-0.0, 0.0]])
+@pytest.mark.parametrize(("reduction", "numpy_reduction"), [(num.max, np.max), (num.min, np.min)])
+def test_native_float_extremes_preserve_numpy_signed_zero(
+    dtype: Any,
+    values: list[float],
+    reduction: Callable[..., Any],
+    numpy_reduction: Callable[..., Any],
+) -> None:
+    expected = np.array(values, dtype=dtype)
+    actual = reduction(Array(expected))
+
+    assert actual == 0.0
+    assert np.signbit(actual) == np.signbit(numpy_reduction(expected))
+
+    expected_axis = np.array([values, values[::-1]], dtype=dtype)
+    actual_axis = np.asarray(reduction(Array(expected_axis), axis=0))
+    np.testing.assert_array_equal(np.signbit(actual_axis), np.signbit(numpy_reduction(expected_axis, axis=0)))
 
 
 @pytest.mark.performance

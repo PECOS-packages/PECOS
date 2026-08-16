@@ -139,8 +139,8 @@ assert paulis.tolist() == [pecos.Pauli.X, pecos.Pauli.Z]
 
 ## Semantic differences from NumPy
 
-The PECOS array layer is NumPy-*compatible*, not NumPy-*identical*. Two
-deliberate or known divergences matter in practice.
+The PECOS array layer is NumPy-*compatible*, not NumPy-*identical*. One
+deliberate divergence matters in practice.
 
 ### Basic slicing returns copies, not views
 
@@ -169,15 +169,10 @@ action-at-a-distance through forgotten aliases -- at the cost of NumPy's
 in-place slice-mutation idiom. To mutate a region in place, assign to the
 slice directly (`a[1:3] = new_values`), which works in both libraries.
 
-### Truthiness is container-style, not NumPy-style
-
-`bool()` on a PECOS array currently reports "is it non-empty", like a Python
-list (issue #531) -- so `bool(pecos.array([0]))` is `True`, where NumPy would
-say `False`,
-and multi-element arrays are truthy where NumPy raises the ambiguity error.
-`pecos.bool_` implements the exact NumPy semantics if you need them. Prefer
-explicit `len(a) > 0`, `pecos.any(a)`, or `pecos.all(a)` over `if a:` so the
-intent survives either behavior.
+Truthiness follows NumPy exactly (issue #531): `bool()` of a size-1 array is
+its element's truth, and empty or multi-element arrays raise the same
+ambiguity errors NumPy raises. Prefer explicit `len(a) > 0`, `pecos.any(a)`,
+or `pecos.all(a)` over `if a:` -- they say what you mean.
 
 ## Choosing a boundary
 

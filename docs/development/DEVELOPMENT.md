@@ -176,8 +176,32 @@ Two more migration boundaries currently need local workarounds:
 
 - Elementwise `Array ^ Array` is not available yet (#458). For arrays already known to contain only
   binary values, elementwise inequality has the same result; do not use that substitution for general integers.
+- Bit shifts, unsigned arithmetic, and bitwise boolean operators are not available on `Array` (#458).
+  For binary values, cast to `int64` and double instead of shifting; use `where()` for boolean
+  selection. `Array * Array` is matrix multiplication, so use `elemwise_mul()` when the intended
+  operation is elementwise.
 - Spell NumPy's `dtype=float` as `dtype=dtypes.float64`, especially with `asarray()`, to preserve
   NumPy's 64-bit width explicitly.
+
+The decoder-side bit packing and boolean-selection patterns remain explicit and exact:
+
+```python
+from pecos import any as array_any, array, dtypes, sum as array_sum, where
+
+low = array([1, 0], dtype=dtypes.uint8).astype(dtypes.int64)
+high = array([0, 1], dtype=dtypes.uint8).astype(dtypes.int64)
+packed = (low + high * 2).astype(dtypes.uint8)
+assert packed.tolist() == [1, 2]
+
+observable_bits = array([[1, 0], [1, 1]], dtype=dtypes.int64)
+weights = array([1, 2], dtype=dtypes.int64)
+observable_masks = array_sum(observable_bits.elemwise_mul(weights), axis=1)
+assert list(observable_masks) == [1, 3]
+
+active = array([True, False], dtype=dtypes.bool_)
+values = array([0, 2], dtype=dtypes.uint8)
+assert array_any(where(active, False, values != 0))
+```
 
 Elementwise comparison returns a boolean `Array`, and `array_sum()` accepts it directly -- counting
 mismatches needs no cast:

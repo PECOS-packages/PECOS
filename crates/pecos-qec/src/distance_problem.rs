@@ -926,6 +926,23 @@ impl DistanceProblem {
         })
     }
 
+    pub(crate) fn verified_witness_indices(
+        &self,
+        assignment: &[bool],
+    ) -> Result<Vec<usize>, WitnessError> {
+        self.verify_witness(assignment)?;
+        Ok(match self.weight_mode {
+            WeightMode::Bit => assignment
+                .iter()
+                .enumerate()
+                .filter_map(|(index, &selected)| selected.then_some(index))
+                .collect(),
+            WeightMode::QubitSupport { num_qubits } => (0..num_qubits)
+                .filter(|&qubit| assignment[qubit] || assignment[num_qubits + qubit])
+                .collect(),
+        })
+    }
+
     /// Incrementally certifies distance through `max_weight` using a pluggable SAT solver.
     ///
     /// A valid all-zero assignment is returned directly. Otherwise, the solver is called once per

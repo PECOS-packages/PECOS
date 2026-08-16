@@ -148,10 +148,6 @@ sha2 = "0.11"
 tar = "0.4"
 xz2 = "0.1"
 bzip2 = "0.6"
-# Maintained successor to the abandoned sevenz-rust (RUSTSEC-2026-0245). Default
-# features add an encoder plus codecs the CUDA installer does not use; the LZMA/LZMA2
-# and BCJ decode paths PECOS needs are unconditional.
-sevenz-rust2 = { version = "0.21", default-features = false }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 zstd = "0.13"
 

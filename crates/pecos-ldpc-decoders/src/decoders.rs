@@ -1020,6 +1020,43 @@ impl UnionFindDecoder {
     }
 }
 
+/// DEM-aware weighted Union-Find adapter for the shared observable interface.
+pub struct WeightedUnionFindDecoder {
+    decoder: UnionFindDecoder,
+    dem: pecos_decoder_core::DemCheckMatrix,
+    llrs: Vec<f64>,
+}
+
+impl WeightedUnionFindDecoder {
+    /// Wrap a Union-Find decoder with DEM priors and observable mappings.
+    #[must_use]
+    pub fn new(
+        decoder: UnionFindDecoder,
+        dem: pecos_decoder_core::DemCheckMatrix,
+        llrs: Vec<f64>,
+    ) -> Self {
+        Self { decoder, dem, llrs }
+    }
+}
+
+impl pecos_decoder_core::ObservableDecoder for WeightedUnionFindDecoder {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
+        let syndrome = Array1::from_vec(syndrome.to_vec());
+        // Grow one bit at a time in LLR order. Zero means all candidates per
+        // step and is translated at the Rust boundary since the segfault fix.
+        let result = self
+            .decoder
+            .decode(&syndrome.view(), &self.llrs, 1)
+            .map_err(|error| pecos_decoder_core::DecoderError::DecodingFailed(error.to_string()))?;
+        Ok(self
+            .dem
+            .observables_obsmask_from_correction(result.decoding.as_slice().unwrap_or(&[])))
+    }
+}
+
 /// `BeliefFind` Decoder - Combines BP with Union Find
 ///
 /// This decoder first attempts BP decoding, and if that fails,

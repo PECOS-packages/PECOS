@@ -10,7 +10,7 @@
 // either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Randomized decoder-based upper bounds for detector-error-model fault distance.
+//! Randomized decoder-based upper bounds for fault and code distance.
 //!
 //! Each sample augments the detector incidence matrix with an enforced nonempty observable
 //! parity, then applies BP-OSD ([arXiv:1904.02703](https://arxiv.org/abs/1904.02703)). Sampling
@@ -19,9 +19,10 @@
 //! natively before it can tighten the upper bound. The result is never an exactness claim.
 
 use super::dem_builder::DetectorErrorModel;
-use crate::DistanceProblem;
+use crate::{DistanceProblem, DistanceProblemError, ParityCheckMatrix, StabilizerCodeSpec};
 use ndarray::Array1;
 use pecos_ldpc_decoders::{BpOsdDecoder, InputVectorType, SparseMatrix};
+use pecos_quantum::F2Matrix;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 
@@ -76,7 +77,7 @@ pub struct FaultDistanceUpperBoundConfig {
     pub omp_threads: usize,
 }
 
-/// A natively verified randomized fault-distance upper bound and its witness.
+/// A natively verified randomized fault- or code-distance upper bound and its witness.
 ///
 /// This result is only an upper bound. It does not certify that a lighter undetectable logical
 /// fault is absent.
@@ -84,7 +85,7 @@ pub struct FaultDistanceUpperBoundConfig {
 pub struct FaultDistanceUpperBoundResult {
     /// Hamming weight of the witnessed undetectable logical fault.
     pub weight: usize,
-    /// Witnessing mechanism indices in [`DetectorErrorModel::to_mechanisms`] order.
+    /// Witnessing indices: DEM mechanism indices for fault bounds, qubit indices for code bounds.
     pub mechanism_indices: Vec<usize>,
     /// Number of observable-subset samples attempted.
     pub samples_run: usize,
@@ -116,6 +117,9 @@ pub enum FaultDistanceUpperBoundError {
     /// BP-OSD construction or decoding failed.
     #[error(transparent)]
     Decoder(#[from] pecos_ldpc_decoders::LdpcError),
+    /// The code matrices or stabilizer specification do not define a valid distance problem.
+    #[error(transparent)]
+    DistanceProblem(#[from] DistanceProblemError),
 }
 
 fn validate_config(
@@ -167,19 +171,12 @@ fn sampled_subset(
     }
 }
 
-fn verified_mechanism_indices(problem: &DistanceProblem, candidate: &[u8]) -> Option<Vec<usize>> {
+fn verified_witness_indices(problem: &DistanceProblem, candidate: &[u8]) -> Option<Vec<usize>> {
     if candidate.iter().any(|&bit| bit > 1) {
         return None;
     }
     let assignment: Vec<_> = candidate.iter().map(|&bit| bit == 1).collect();
-    problem.verify_witness(&assignment).ok()?;
-    Some(
-        assignment
-            .iter()
-            .enumerate()
-            .filter_map(|(index, &selected)| selected.then_some(index))
-            .collect(),
-    )
+    problem.verified_witness_indices(&assignment).ok()
 }
 
 fn update_verified_upper_bound(
@@ -187,7 +184,7 @@ fn update_verified_upper_bound(
     candidate: &[u8],
     best: &mut Option<Vec<usize>>,
 ) {
-    let Some(indices) = verified_mechanism_indices(problem, candidate) else {
+    let Some(indices) = verified_witness_indices(problem, candidate) else {
         return;
     };
     if best
@@ -222,11 +219,35 @@ fn detector_entries(
     Ok((detector_rows, row_indices, column_indices))
 }
 
+fn parity_check_entries(
+    matrix: &F2Matrix,
+) -> Result<(Vec<u32>, Vec<u32>), FaultDistanceUpperBoundError> {
+    let mut row_indices = Vec::new();
+    let mut column_indices = Vec::new();
+    for (row, entries) in matrix.rows().iter().enumerate() {
+        let row = u32::try_from(row).map_err(|_| {
+            FaultDistanceUpperBoundError::SparseMatrix(
+                "check row count exceeds the u32 index space".to_string(),
+            )
+        })?;
+        for (column, &entry) in entries.iter().enumerate() {
+            if entry == 1 {
+                row_indices.push(row);
+                column_indices.push(u32::try_from(column).map_err(|_| {
+                    FaultDistanceUpperBoundError::TooManyMechanisms(matrix.num_cols())
+                })?);
+            }
+        }
+    }
+    Ok((row_indices, column_indices))
+}
+
 fn augmented_matrix(
-    mechanisms: &[(f64, Vec<u32>, Vec<u32>)],
+    num_columns: usize,
     detector_rows: usize,
     detector_row_indices: &[u32],
     detector_column_indices: &[u32],
+    logical_matrix: &F2Matrix,
     observable_subset: &[bool],
 ) -> Result<Option<SparseMatrix>, FaultDistanceUpperBoundError> {
     let logical_row = u32::try_from(detector_rows).map_err(|_| {
@@ -237,10 +258,11 @@ fn augmented_matrix(
     let mut row_indices = detector_row_indices.to_vec();
     let mut column_indices = detector_column_indices.to_vec();
     let mut logical_row_nonempty = false;
-    for (column, (_, _, observables)) in mechanisms.iter().enumerate() {
-        let odd = observables
+    for column in 0..num_columns {
+        let odd = observable_subset
             .iter()
-            .filter(|&&observable| observable_subset[observable as usize])
+            .enumerate()
+            .filter(|&(row, selected)| *selected && logical_matrix.get(row, column) == 1)
             .count()
             % 2
             == 1;
@@ -248,23 +270,88 @@ fn augmented_matrix(
             logical_row_nonempty = true;
             row_indices.push(logical_row);
             column_indices.push(
-                u32::try_from(column).map_err(|_| {
-                    FaultDistanceUpperBoundError::TooManyMechanisms(mechanisms.len())
-                })?,
+                u32::try_from(column)
+                    .map_err(|_| FaultDistanceUpperBoundError::TooManyMechanisms(num_columns))?,
             );
         }
     }
     if !logical_row_nonempty {
         return Ok(None);
     }
-    SparseMatrix::from_coo(
-        detector_rows + 1,
-        mechanisms.len(),
-        row_indices,
-        column_indices,
-    )
-    .map(Some)
-    .map_err(FaultDistanceUpperBoundError::SparseMatrix)
+    SparseMatrix::from_coo(detector_rows + 1, num_columns, row_indices, column_indices)
+        .map(Some)
+        .map_err(FaultDistanceUpperBoundError::SparseMatrix)
+}
+
+fn randomized_distance_upper_bound(
+    detector_rows: usize,
+    detector_row_indices: &[u32],
+    detector_column_indices: &[u32],
+    observable_count: usize,
+    problem: &DistanceProblem,
+    config: &FaultDistanceUpperBoundConfig,
+) -> Result<Option<FaultDistanceUpperBoundResult>, FaultDistanceUpperBoundError> {
+    if config.samples == 0 {
+        return Ok(None);
+    }
+    validate_config(config)?;
+
+    let (h, l) = problem.matrices();
+    debug_assert_eq!(h.num_rows(), detector_rows);
+    debug_assert_eq!(l.num_rows(), observable_count);
+    if observable_count == 0 || problem.num_vars() == 0 {
+        return Ok(None);
+    }
+    let mut rng = SmallRng::seed_from_u64(config.seed);
+    let mut best = None;
+
+    for sample in 0..config.samples {
+        let subset = sampled_subset(
+            sample,
+            config.observable_subset_strategy,
+            observable_count,
+            &mut rng,
+        );
+        let Some(pcm) = augmented_matrix(
+            problem.num_vars(),
+            detector_rows,
+            detector_row_indices,
+            detector_column_indices,
+            l,
+            &subset,
+        )?
+        else {
+            continue;
+        };
+        let mut decoder = BpOsdDecoder::builder(&pcm)
+            .error_rate(config.error_rate)
+            .max_iter(config.max_iterations)
+            .bp_method(config.bp_method)
+            .bp_schedule(config.bp_schedule)
+            .ms_scaling_factor(config.min_sum_scaling_factor)
+            .osd_method(config.osd_method)
+            .osd_order(config.osd_order)
+            .input_vector_type(InputVectorType::Syndrome)
+            .omp_threads(config.omp_threads)
+            .serial_schedule_order(Vec::new())
+            .random_schedule_seed(-1)
+            .build()?;
+        let mut syndrome = Array1::zeros(detector_rows + 1);
+        syndrome[detector_rows] = 1;
+        let decoded = decoder.decode(&syndrome.view())?;
+        update_verified_upper_bound(
+            problem,
+            decoded.decoding.as_slice().unwrap_or(&[]),
+            &mut best,
+        );
+    }
+
+    Ok(best.map(|mechanism_indices| FaultDistanceUpperBoundResult {
+        weight: mechanism_indices.len(),
+        mechanism_indices,
+        samples_run: config.samples,
+        bound_kind: FaultDistanceBoundKind::UpperBound,
+    }))
 }
 
 /// Samples natively verified decoder witnesses to obtain a fault-distance upper bound.
@@ -298,61 +385,77 @@ pub fn randomized_fault_distance_upper_bound(
         .max()
         .unwrap_or(0)
         .max(dem.num_observables());
-    if observable_count == 0 || mechanisms.is_empty() {
-        return Ok(None);
-    }
     let (detector_rows, detector_row_indices, detector_column_indices) =
         detector_entries(dem, &mechanisms)?;
     let problem = DistanceProblem::from_dem(dem);
-    let mut rng = SmallRng::seed_from_u64(config.seed);
-    let mut best = None;
+    randomized_distance_upper_bound(
+        detector_rows,
+        &detector_row_indices,
+        &detector_column_indices,
+        observable_count,
+        &problem,
+        config,
+    )
+}
 
-    for sample in 0..config.samples {
-        let subset = sampled_subset(
-            sample,
-            config.observable_subset_strategy,
-            observable_count,
-            &mut rng,
-        );
-        let Some(pcm) = augmented_matrix(
-            &mechanisms,
-            detector_rows,
-            &detector_row_indices,
-            &detector_column_indices,
-            &subset,
-        )?
-        else {
-            continue;
-        };
-        let mut decoder = BpOsdDecoder::builder(&pcm)
-            .error_rate(config.error_rate)
-            .max_iter(config.max_iterations)
-            .bp_method(config.bp_method)
-            .bp_schedule(config.bp_schedule)
-            .ms_scaling_factor(config.min_sum_scaling_factor)
-            .osd_method(config.osd_method)
-            .osd_order(config.osd_order)
-            .input_vector_type(InputVectorType::Syndrome)
-            .omp_threads(config.omp_threads)
-            .serial_schedule_order(Vec::new())
-            .random_schedule_seed(-1)
-            .build()?;
-        let mut syndrome = Array1::zeros(detector_rows + 1);
-        syndrome[detector_rows] = 1;
-        let decoded = decoder.decode(&syndrome.view())?;
-        update_verified_upper_bound(
-            &problem,
-            decoded.decoding.as_slice().unwrap_or(&[]),
-            &mut best,
-        );
-    }
+/// Samples natively verified qubit witnesses for a binary code-distance upper bound.
+///
+/// For each sampled nonempty logical-row subset, this applies BP-OSD to
+/// `[H; l_S] e = [0; 1]`. Returned `mechanism_indices` are qubit indices. The result is only an
+/// upper bound and never certifies exactness.
+///
+/// `Ok(None)` means no verified witness was found, including when there are zero samples, zero
+/// logical rows, or zero qubits.
+///
+/// # Errors
+///
+/// Returns an error for mismatched matrix widths, invalid explicit decoder parameters, an
+/// unrepresentable augmented sparse system, or a decoder construction/decoding failure.
+pub fn randomized_code_distance_upper_bound(
+    h: &ParityCheckMatrix,
+    l: &ParityCheckMatrix,
+    config: &FaultDistanceUpperBoundConfig,
+) -> Result<Option<FaultDistanceUpperBoundResult>, FaultDistanceUpperBoundError> {
+    let problem = DistanceProblem::from_css_checks(h, l)?;
+    let (row_indices, column_indices) = parity_check_entries(h.matrix())?;
+    randomized_distance_upper_bound(
+        h.num_checks(),
+        &row_indices,
+        &column_indices,
+        l.num_checks(),
+        &problem,
+        config,
+    )
+}
 
-    Ok(best.map(|mechanism_indices| FaultDistanceUpperBoundResult {
-        weight: mechanism_indices.len(),
-        mechanism_indices,
-        samples_run: config.samples,
-        bound_kind: FaultDistanceBoundKind::UpperBound,
-    }))
+/// Samples natively verified qubit witnesses for a stabilizer-code distance upper bound.
+///
+/// The symplectic decoder variables use `[X|Z]` order, but returned `mechanism_indices` are
+/// physical-qubit indices and `weight` is physical-qubit support. The result is only an upper
+/// bound and never certifies exactness. The specification must be a complete ordinary code.
+///
+/// # Errors
+///
+/// Returns an error for an incomplete or ill-formed stabilizer specification, invalid explicit
+/// decoder parameters, an unrepresentable augmented sparse system, or a decoder
+/// construction/decoding failure.
+pub fn randomized_stabilizer_code_distance_upper_bound(
+    spec: &StabilizerCodeSpec,
+    config: &FaultDistanceUpperBoundConfig,
+) -> Result<Option<FaultDistanceUpperBoundResult>, FaultDistanceUpperBoundError> {
+    spec.verify_as_complete_code()
+        .map_err(DistanceProblemError::from)?;
+    let problem = DistanceProblem::from_stabilizer_spec(spec)?;
+    let (h, l) = problem.matrices();
+    let (row_indices, column_indices) = parity_check_entries(h)?;
+    randomized_distance_upper_bound(
+        h.num_rows(),
+        &row_indices,
+        &column_indices,
+        l.num_rows(),
+        &problem,
+        config,
+    )
 }
 
 #[cfg(test)]
@@ -460,5 +563,180 @@ mod tests {
             randomized_fault_distance_upper_bound(&empty, &config(32, 11)).unwrap(),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod code_tests {
+    use super::*;
+    use crate::{StabilizerCode, StabilizerCodeSpecError};
+    use std::time::Instant;
+
+    fn config(samples: usize, seed: u64) -> FaultDistanceUpperBoundConfig {
+        FaultDistanceUpperBoundConfig {
+            samples,
+            seed,
+            observable_subset_strategy: FaultDistanceObservableSubsetStrategy::EachSingleThenRandom,
+            error_rate: 0.1,
+            max_iterations: 100,
+            bp_method: FaultDistanceBpMethod::ProductSum,
+            bp_schedule: FaultDistanceBpSchedule::Parallel,
+            min_sum_scaling_factor: 1.0,
+            osd_method: FaultDistanceOsdMethod::Osd0,
+            osd_order: 0,
+            omp_threads: 1,
+        }
+    }
+
+    fn repetition_pair(n: usize) -> (ParityCheckMatrix, ParityCheckMatrix) {
+        let h = ParityCheckMatrix::from_dense(
+            (0..n - 1)
+                .map(|row| {
+                    let mut check = vec![0; n];
+                    check[row] = 1;
+                    check[row + 1] = 1;
+                    check
+                })
+                .collect(),
+        )
+        .unwrap();
+        let l = ParityCheckMatrix::from_dense(vec![vec![1; n]]).unwrap();
+        (h, l)
+    }
+
+    fn stabilizer_spec(code: &StabilizerCode) -> StabilizerCodeSpec {
+        StabilizerCodeSpec::from_stabilizer_code(code).unwrap()
+    }
+
+    #[test]
+    fn repetition_code_upper_bound_is_sound_and_tight() {
+        let (h, l) = repetition_pair(9);
+        let result = randomized_code_distance_upper_bound(&h, &l, &config(1, 7))
+            .unwrap()
+            .expect("the repetition code has a nonzero codeword");
+
+        assert!(result.weight >= 9);
+        assert_eq!(result.weight, 9, "one sample reaches the exact value");
+        assert_eq!(result.mechanism_indices, (0..9).collect::<Vec<_>>());
+        assert_eq!(result.bound_kind, FaultDistanceBoundKind::UpperBound);
+    }
+
+    #[test]
+    fn steane_and_five_qubit_upper_bounds_are_sound_and_tight() {
+        for (label, spec, samples) in [
+            ("Steane", stabilizer_spec(&StabilizerCode::steane()), 32),
+            (
+                "five-qubit",
+                stabilizer_spec(&StabilizerCode::five_qubit()),
+                32,
+            ),
+        ] {
+            let result =
+                randomized_stabilizer_code_distance_upper_bound(&spec, &config(samples, 17))
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{label} sampling found no witness"));
+            assert!(result.weight >= 3, "{label} upper bound must be sound");
+            assert_eq!(result.weight, 3, "{label} sampling reaches exact value");
+            assert_eq!(result.mechanism_indices.len(), result.weight);
+            assert!(
+                result
+                    .mechanism_indices
+                    .iter()
+                    .all(|&qubit| qubit < spec.num_qubits())
+            );
+            assert_eq!(result.bound_kind, FaultDistanceBoundKind::UpperBound);
+        }
+    }
+
+    #[test]
+    fn code_upper_bound_is_deterministic_for_same_seed() {
+        let spec = stabilizer_spec(&StabilizerCode::five_qubit());
+        let config = config(32, 991);
+        let first = randomized_stabilizer_code_distance_upper_bound(&spec, &config).unwrap();
+        let second = randomized_stabilizer_code_distance_upper_bound(&spec, &config).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn code_native_verifier_rejects_invalid_decoder_vector() {
+        let (h, l) = repetition_pair(3);
+        let problem = DistanceProblem::from_css_checks(&h, &l).unwrap();
+        let mut best = Some(vec![0, 1, 2]);
+
+        update_verified_upper_bound(&problem, &[1, 0, 0], &mut best);
+
+        assert_eq!(best, Some(vec![0, 1, 2]));
+    }
+
+    #[test]
+    fn zero_samples_and_empty_code_dimensions_return_none() {
+        let (h, l) = repetition_pair(3);
+        assert_eq!(
+            randomized_code_distance_upper_bound(&h, &l, &config(0, 5)).unwrap(),
+            None
+        );
+
+        let no_logicals = ParityCheckMatrix::zeros(0, 3);
+        assert_eq!(
+            randomized_code_distance_upper_bound(&h, &no_logicals, &config(8, 5)).unwrap(),
+            None
+        );
+
+        let no_qubits = ParityCheckMatrix::zeros(0, 0);
+        assert_eq!(
+            randomized_code_distance_upper_bound(&no_qubits, &no_qubits, &config(8, 5)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn full_rank_checks_without_a_logical_witness_return_none() {
+        let h = ParityCheckMatrix::from_dense(vec![vec![1, 0, 0], vec![0, 1, 0], vec![0, 0, 1]])
+            .unwrap();
+        let l = ParityCheckMatrix::from_dense(vec![vec![1, 1, 1]]).unwrap();
+        assert_eq!(
+            randomized_code_distance_upper_bound(&h, &l, &config(8, 11)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn stabilizer_entry_rejects_a_spec_with_no_logical_qubits() {
+        let spec = StabilizerCodeSpec::from_stabilizers(1, vec![pecos_core::Z(0)]).unwrap();
+        assert!(matches!(
+            randomized_stabilizer_code_distance_upper_bound(&spec, &config(8, 3)),
+            Err(FaultDistanceUpperBoundError::DistanceProblem(
+                DistanceProblemError::StabilizerSpec(StabilizerCodeSpecError::NoLogicalQubits)
+            ))
+        ));
+    }
+
+    #[test]
+    #[ignore = "timing probe for randomized gross-code upper bounds"]
+    fn randomized_gross_144_12_12_timing_probe() {
+        let code = crate::BivariateBicycleCode::new(
+            12,
+            6,
+            &[(3, 0), (0, 1), (0, 2)],
+            &[(0, 3), (1, 0), (2, 0)],
+        )
+        .unwrap();
+        assert_eq!(code.num_qubits(), 144);
+        assert_eq!(code.num_logical_qubits(), 12);
+
+        for samples in [12, 64, 256] {
+            let started = Instant::now();
+            let result = randomized_code_distance_upper_bound(
+                code.hx(),
+                code.logical_x(),
+                &config(samples, 17),
+            )
+            .unwrap();
+            println!(
+                "gross [[144,12,12]] samples={samples}: result={result:?}, elapsed={:?}",
+                started.elapsed()
+            );
+            assert!(result.is_none_or(|bound| bound.weight >= 12));
+        }
     }
 }

@@ -18,6 +18,7 @@ remembering: **PECOS to NumPy is a zero-copy view; NumPy to PECOS is a copy.**
 `pecos.asarray` accepts any object exposing the NumPy array interface,
 including non-contiguous views, and copies the data into a native PECOS array:
 
+<!-- numpy-interop: feeding NumPy data into PECOS -->
 ```python
 import numpy as np
 import pecos
@@ -39,6 +40,7 @@ assert pecos.asarray(t).tolist() == t.tolist()
 
 Dtypes round-trip exactly for the numeric types both libraries share:
 
+<!-- numpy-interop: verifying dtype round-trips through both libraries -->
 ```python
 import numpy as np
 import pecos
@@ -55,6 +57,7 @@ for dt in [np.bool_, np.uint8, np.int64, np.float32, np.float64]:
 PECOS arrays implement `__array_interface__`, so `np.asarray` wraps the PECOS
 array's memory directly -- no copy, regardless of size:
 
+<!-- numpy-interop: wrapping a PECOS array as a NumPy view -->
 ```python
 import numpy as np
 import pecos
@@ -69,6 +72,7 @@ assert view.base is a  # a view into the PECOS array's memory, not a copy
 
 Because it is a writable view, mutations flow through -- in both directions:
 
+<!-- numpy-interop: demonstrating that the NumPy view writes through -->
 ```python
 import numpy as np
 import pecos
@@ -87,6 +91,7 @@ PECOS array while the NumPy view survives is safe (`view.base` holds it).
 When you want an independent snapshot instead of a live view, use `np.array`,
 which copies by default:
 
+<!-- numpy-interop: taking an isolated NumPy copy of a PECOS array -->
 ```python
 import numpy as np
 import pecos
@@ -116,6 +121,7 @@ assert float(total) + 1.0 == 5.0
 Arrays of symbolic Pauli operators have no NumPy dtype and do not convert;
 use `tolist()` to extract the elements:
 
+<!-- numpy-interop: showing that symbolic Pauli arrays do not convert -->
 ```python
 import numpy as np
 import pecos
@@ -141,6 +147,7 @@ deliberate or known divergences matter in practice.
 In NumPy, `a[1:3]` is a view: writing through it mutates `a`. In PECOS,
 basic slicing returns an independent copy (see issue #500):
 
+<!-- numpy-interop: contrasting PECOS slice-copy with NumPy slice-view semantics -->
 ```python
 import numpy as np
 import pecos

@@ -56,7 +56,8 @@ pub use fault_distance_upper_bound::{
     FaultDistanceBoundKind, FaultDistanceBpMethod, FaultDistanceBpSchedule,
     FaultDistanceObservableSubsetStrategy, FaultDistanceOsdMethod, FaultDistanceUpperBoundConfig,
     FaultDistanceUpperBoundError, FaultDistanceUpperBoundResult,
-    randomized_fault_distance_upper_bound,
+    randomized_code_distance_upper_bound, randomized_fault_distance_upper_bound,
+    randomized_stabilizer_code_distance_upper_bound,
 };
 pub use flag_verification::{FlagFaultToleranceReport, FlagViolation};
 pub use gadget_checker::{

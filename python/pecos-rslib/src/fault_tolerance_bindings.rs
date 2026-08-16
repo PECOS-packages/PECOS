@@ -109,7 +109,8 @@ use pecos_qec::{
     bounded_enumeration_z_distance as rust_bounded_enumeration_z_distance,
     certified_distance as rust_certified_distance,
     connected_cluster_code_distance as rust_connected_cluster_code_distance,
-    stabilizer_code_distance as rust_stabilizer_code_distance, x_distance as rust_x_distance,
+    stabilizer_code_distance as rust_stabilizer_code_distance,
+    subsystem_dressed_distance as rust_subsystem_dressed_distance, x_distance as rust_x_distance,
     z_distance as rust_z_distance,
 };
 use pecos_quantum::DagCircuit;
@@ -8687,6 +8688,72 @@ fn stabilizer_code_distance(
         .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
+/// A minimum-weight logical operator and its weight.
+#[pyclass(name = "DistanceResult", module = "pecos_rslib.qec")]
+pub struct PyDistanceResult {
+    inner: RustDistanceResult,
+}
+
+impl From<RustDistanceResult> for PyDistanceResult {
+    fn from(inner: RustDistanceResult) -> Self {
+        Self { inner }
+    }
+}
+
+#[pymethods]
+impl PyDistanceResult {
+    /// The distance: the weight of the minimum-weight logical operator.
+    #[getter]
+    fn distance(&self) -> usize {
+        self.inner.distance
+    }
+
+    /// A logical operator achieving the minimum weight.
+    #[getter]
+    fn min_weight_operator(&self) -> crate::pauli_bindings::PauliString {
+        crate::pauli_bindings::PauliString::from_rust(self.inner.min_weight_operator.clone())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("DistanceResult(distance={})", self.inner.distance)
+    }
+}
+
+/// Computes the dressed distance of a subsystem (gauge) code by qubit-support weight.
+///
+/// `stabilizers` are the stabilizer generators, `gauge_generators` the remaining gauge
+/// generators, and the logicals bare representatives commuting with the full gauge group.
+/// Returns `None` if no logical operator exists at weight at most `max_weight`.
+///
+/// Raises `ValueError` if the specification is ill-formed (for example a logical that
+/// anticommutes with a stabilizer, or a gauge/center split that cannot describe paired
+/// gauge qubits).
+#[pyfunction]
+fn subsystem_dressed_distance(
+    num_qubits: usize,
+    stabilizers: Vec<crate::pauli_bindings::PauliString>,
+    gauge_generators: Vec<crate::pauli_bindings::PauliString>,
+    logical_zs: Vec<crate::pauli_bindings::PauliString>,
+    logical_xs: Vec<crate::pauli_bindings::PauliString>,
+    max_weight: usize,
+) -> PyResult<Option<PyDistanceResult>> {
+    let stabilizers = stabilizers.into_iter().map(|p| p.to_rust()).collect();
+    let gauge_generators: Vec<_> = gauge_generators.into_iter().map(|p| p.to_rust()).collect();
+    let logical_zs = logical_zs.into_iter().map(|p| p.to_rust()).collect();
+    let logical_xs = logical_xs.into_iter().map(|p| p.to_rust()).collect();
+
+    rust_subsystem_dressed_distance(
+        num_qubits,
+        stabilizers,
+        &gauge_generators,
+        logical_zs,
+        logical_xs,
+        max_weight,
+    )
+    .map(|result| result.map(PyDistanceResult::from))
+    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
 // =============================================================================
 // Module Registration
 // =============================================================================
@@ -8939,6 +9006,8 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(x_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(z_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(stabilizer_code_distance, &qec)?)?;
+    qec.add_class::<PyDistanceResult>()?;
+    qec.add_function(wrap_pyfunction!(subsystem_dressed_distance, &qec)?)?;
 
     // Correlation analysis
     qec.add_function(wrap_pyfunction!(detector_flip_matrix, &qec)?)?;

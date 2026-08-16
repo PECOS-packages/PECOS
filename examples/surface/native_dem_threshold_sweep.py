@@ -758,7 +758,7 @@ def _native_sampler_runtime(
     # on its first sample. Pay that once when the cached runtime is created so
     # subsequent point evaluations stay on the true steady-state path.
     warm_det_events, _ = sampler.sample(num_shots=1, seed=0)
-    _decode_one_shot(dem_decoder, warm_det_events[0].astype(int).tolist())
+    _decode_one_shot(dem_decoder, warm_det_events[0].astype(dtypes.int64).tolist())
     # Filter logical_observable lines for decoders that need it
     dem_str_filtered = "\n".join(line for line in dem_str.split("\n") if not line.startswith("logical_observable"))
     return _NativeSamplerRuntime(

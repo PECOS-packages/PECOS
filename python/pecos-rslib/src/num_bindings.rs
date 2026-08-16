@@ -1200,17 +1200,55 @@ fn compare_indices(py: Python<'_>, size: usize, threshold: f64) -> PyResult<Py<P
 #[pyfunction]
 #[pyo3(signature = (a, axis=None))]
 fn mean(py: Python<'_>, a: &Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>() {
+        macro_rules! mean_as_f64 {
+            ($array:expr, $convert:expr) => {{
+                if axis.is_none() {
+                    if $array.is_empty() {
+                        return f64::NAN.into_py_any(py);
+                    }
+                    #[allow(clippy::cast_precision_loss)]
+                    let denominator = $array.len() as f64;
+                    let result = $array.iter().copied().map($convert).sum::<f64>() / denominator;
+                    return result.into_py_any(py);
+                }
+                let converted = $array.mapv($convert);
+                return mean_f64_array(py, &converted, axis);
+            }};
+        }
+
+        match &array.data {
+            ArrayData::I8(array) => mean_as_f64!(array, f64::from),
+            ArrayData::I16(array) => mean_as_f64!(array, f64::from),
+            ArrayData::I32(array) => mean_as_f64!(array, f64::from),
+            ArrayData::I64(array) => mean_as_f64!(array, |value| value as f64),
+            ArrayData::U8(array) => mean_as_f64!(array, f64::from),
+            ArrayData::U16(array) => mean_as_f64!(array, f64::from),
+            ArrayData::U32(array) => mean_as_f64!(array, f64::from),
+            ArrayData::U64(array) => mean_as_f64!(array, |value| value as f64),
+            ArrayData::F32(array) => mean_as_f64!(array, f64::from),
+            ArrayData::F64(array) => return mean_f64_array(py, array, axis),
+            ArrayData::Bool(_)
+            | ArrayData::Complex64(_)
+            | ArrayData::Complex128(_)
+            | ArrayData::Pauli(_)
+            | ArrayData::PauliString(_) => {}
+        }
+    }
+
     // Use ensure_f64_array which handles PECOS Arrays, numpy arrays, and Python sequences
     let array = array_buffer::ensure_f64_array(a, "a")?;
+    mean_f64_array(py, &array, axis)
+}
 
+fn mean_f64_array(py: Python<'_>, array: &ArrayD<f64>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
     match axis {
         None => {
-            // No axis specified - compute mean of flattened array
-            let flat: Vec<f64> = array.iter().copied().collect();
-            if flat.is_empty() {
+            if array.is_empty() {
                 return Ok(f64::NAN.into_pyobject(py)?.into_any().unbind());
             }
-            let result = crate::prelude::mean(&flat);
+            #[allow(clippy::cast_precision_loss)]
+            let result = array.iter().sum::<f64>() / array.len() as f64;
             Ok(result.into_pyobject(py)?.into_any().unbind())
         }
         Some(axis_val) => {
@@ -3680,6 +3718,108 @@ fn sum_unsigned_array(py: Python<'_>, array: &Array, axis: Option<isize>) -> PyR
     }
 }
 
+fn sum_native_array(py: Python<'_>, array: &Array, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    use num_complex::Complex64;
+
+    macro_rules! sum_as_i64 {
+        ($array:expr) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                let result =
+                    $array.map_axis(Axis(axis), |lane| lane.iter().copied().map(i64::from).sum());
+                return Ok(array_buffer::i64_array_to_py(py, &result).into());
+            }
+            return $array
+                .iter()
+                .copied()
+                .map(i64::from)
+                .sum::<i64>()
+                .into_py_any(py);
+        }};
+    }
+
+    macro_rules! sum_as_f64 {
+        ($array:expr) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                let result =
+                    $array.map_axis(Axis(axis), |lane| lane.iter().copied().map(f64::from).sum());
+                return Ok(array_buffer::f64_array_to_py(py, &result).into());
+            }
+            return $array
+                .iter()
+                .copied()
+                .map(f64::from)
+                .sum::<f64>()
+                .into_py_any(py);
+        }};
+    }
+
+    match &array.data {
+        ArrayData::Bool(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                let result = array.map_axis(Axis(axis), |lane| {
+                    lane.iter().map(|&value| i64::from(value)).sum()
+                });
+                Ok(array_buffer::i64_array_to_py(py, &result).into())
+            } else {
+                array
+                    .iter()
+                    .map(|&value| i64::from(value))
+                    .sum::<i64>()
+                    .into_py_any(py)
+            }
+        }
+        ArrayData::I8(array) => sum_as_i64!(array),
+        ArrayData::I16(array) => sum_as_i64!(array),
+        ArrayData::I32(array) => sum_as_i64!(array),
+        ArrayData::I64(array) => sum_as_i64!(array),
+        ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_) => {
+            sum_unsigned_array(py, array, axis)
+        }
+        ArrayData::F32(array) => sum_as_f64!(array),
+        ArrayData::F64(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                let result = array.sum_axis(Axis(axis));
+                Ok(array_buffer::f64_array_to_py(py, &result).into())
+            } else {
+                array.iter().sum::<f64>().into_py_any(py)
+            }
+        }
+        ArrayData::Complex64(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                let result = array.map_axis(Axis(axis), |lane| {
+                    lane.iter()
+                        .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
+                        .sum()
+                });
+                Ok(array_buffer::complex64_array_to_py(py, &result).into())
+            } else {
+                array
+                    .iter()
+                    .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
+                    .sum::<Complex64>()
+                    .into_py_any(py)
+            }
+        }
+        ArrayData::Complex128(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                let result = array.sum_axis(Axis(axis));
+                Ok(array_buffer::complex64_array_to_py(py, &result).into())
+            } else {
+                array.iter().copied().sum::<Complex64>().into_py_any(py)
+            }
+        }
+        ArrayData::Pauli(_) | ArrayData::PauliString(_) => Err(PyTypeError::new_err(
+            "sum() argument must be a list, tuple, or numpy array of numbers",
+        )),
+    }
+}
+
 fn extreme_unsigned_array(
     py: Python<'_>,
     array: &Array,
@@ -3732,6 +3872,154 @@ fn extreme_unsigned_array(
         ArrayData::U32(array) => extreme_unsigned!(array, U32, u32::MIN, u32::MAX),
         ArrayData::U64(array) => extreme_unsigned!(array, U64, u64::MIN, u64::MAX),
         _ => Err(PyTypeError::new_err("expected an unsigned integer array")),
+    }
+}
+
+fn extreme_native_array(
+    py: Python<'_>,
+    array: &Array,
+    axis: Option<isize>,
+    find_maximum: bool,
+) -> PyResult<Py<PyAny>> {
+    macro_rules! extreme_signed {
+        ($array:expr) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                let initial = if find_maximum { i64::MIN } else { i64::MAX };
+                let result = $array.map_axis(Axis(axis), |lane| {
+                    lane.iter()
+                        .copied()
+                        .map(i64::from)
+                        .fold(initial, |current, value| {
+                            if (find_maximum && value > current)
+                                || (!find_maximum && value < current)
+                            {
+                                value
+                            } else {
+                                current
+                            }
+                        })
+                });
+                return Ok(array_buffer::i64_array_to_py(py, &result).into());
+            }
+
+            let value = if find_maximum {
+                $array.iter().copied().map(i64::from).max()
+            } else {
+                $array.iter().copied().map(i64::from).min()
+            }
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(if find_maximum {
+                    "max() of empty sequence"
+                } else {
+                    "min() of empty sequence"
+                })
+            })?;
+            return value.into_py_any(py);
+        }};
+    }
+
+    macro_rules! extreme_float {
+        ($array:expr, $minimum:expr, $maximum:expr, $convert:expr) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                let initial = if find_maximum { $minimum } else { $maximum };
+                let result = $array
+                    .fold_axis(Axis(axis), initial, |&current, &value| {
+                        if (find_maximum && value > current) || (!find_maximum && value < current) {
+                            value
+                        } else {
+                            current
+                        }
+                    })
+                    .mapv($convert);
+                return Ok(array_buffer::f64_array_to_py(py, &result).into());
+            }
+
+            let value = if find_maximum {
+                $array
+                    .iter()
+                    .max_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
+            } else {
+                $array
+                    .iter()
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
+            }
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(if find_maximum {
+                    "max() of empty sequence"
+                } else {
+                    "min() of empty sequence"
+                })
+            })?;
+            return ($convert)(*value).into_py_any(py);
+        }};
+    }
+
+    match &array.data {
+        ArrayData::Bool(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                let result = array.map_axis(Axis(axis), |lane| {
+                    if find_maximum {
+                        lane.iter().any(|&value| value)
+                    } else {
+                        lane.iter().all(|&value| value)
+                    }
+                });
+                Ok(Py::new(py, Array::from_array_bool(result.into_dyn()))?.into_any())
+            } else {
+                let value = if find_maximum {
+                    array.iter().copied().max()
+                } else {
+                    array.iter().copied().min()
+                }
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(if find_maximum {
+                        "max() of empty sequence"
+                    } else {
+                        "min() of empty sequence"
+                    })
+                })?;
+                value.into_py_any(py)
+            }
+        }
+        ArrayData::I8(array) => extreme_signed!(array),
+        ArrayData::I16(array) => extreme_signed!(array),
+        ArrayData::I32(array) => extreme_signed!(array),
+        ArrayData::I64(array) => extreme_signed!(array),
+        ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_) => {
+            extreme_unsigned_array(py, array, axis, find_maximum)
+        }
+        ArrayData::F32(array) => {
+            extreme_float!(array, f32::NEG_INFINITY, f32::INFINITY, f64::from)
+        }
+        ArrayData::F64(array) => {
+            extreme_float!(
+                array,
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+                core::convert::identity
+            )
+        }
+        ArrayData::Complex64(_) | ArrayData::Complex128(_) => {
+            let name = if find_maximum { "max" } else { "min" };
+            if axis.is_some() {
+                Err(PyTypeError::new_err(format!(
+                    "{name}() with axis requires a numpy array of numbers"
+                )))
+            } else {
+                Err(PyTypeError::new_err(format!(
+                    "{name}() argument must be a list, tuple, or numpy array of numbers"
+                )))
+            }
+        }
+        ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
+            let name = if find_maximum { "max" } else { "min" };
+            Err(PyTypeError::new_err(format!(
+                "{name}() argument must be a list, tuple, or numpy array of numbers"
+            )))
+        }
     }
 }
 
@@ -3795,13 +4083,8 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return Ok(scalar);
     }
 
-    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
-        && matches!(
-            array.data,
-            ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_)
-        )
-    {
-        return sum_unsigned_array(py, &array, axis);
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>() {
+        return sum_native_array(py, &array, axis);
     }
     if input_has_unsigned_dtype(&a) {
         let converted = array(py, a, None)?;
@@ -4002,13 +4285,8 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return extract_zero_dimensional_scalar(py, &a);
     }
 
-    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
-        && matches!(
-            array.data,
-            ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_)
-        )
-    {
-        return extreme_unsigned_array(py, &array, axis, true);
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>() {
+        return extreme_native_array(py, &array, axis, true);
     }
     if input_has_unsigned_dtype(&a) {
         let converted = array(py, a, None)?;
@@ -4160,13 +4438,8 @@ fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return extract_zero_dimensional_scalar(py, &a);
     }
 
-    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
-        && matches!(
-            array.data,
-            ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_)
-        )
-    {
-        return extreme_unsigned_array(py, &array, axis, false);
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>() {
+        return extreme_native_array(py, &array, axis, false);
     }
     if input_has_unsigned_dtype(&a) {
         let converted = array(py, a, None)?;
@@ -4596,6 +4869,12 @@ fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return scalar.bind(py).is_truthy()?.into_py_any(py);
     }
 
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
+        && !matches!(array.data, ArrayData::Pauli(_) | ArrayData::PauliString(_))
+    {
+        return array.all(py, axis, None, None, None);
+    }
+
     if let Some(axis_val) = axis {
         // axis reduction: extract array, convert to bool, reduce with all_axis
         let bool_arr = if let Ok(arr) = array_buffer::extract_bool_array(&a) {
@@ -4685,6 +4964,12 @@ fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
     if uses_zero_dimensional_reduction_axis(&a, axis)? {
         let scalar = extract_zero_dimensional_scalar(py, &a)?;
         return scalar.bind(py).is_truthy()?.into_py_any(py);
+    }
+
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
+        && !matches!(array.data, ArrayData::Pauli(_) | ArrayData::PauliString(_))
+    {
+        return array.any(py, axis, None, None, None);
     }
 
     if let Some(axis_val) = axis {

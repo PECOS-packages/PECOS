@@ -485,8 +485,8 @@ impl TrellisDecoder {
                 close_mask,
                 active_mask: open_detectors.clone(),
                 suffix_compatibility: Vec::new(),
-                log_odds: (probability / (1.0 - probability)).ln(),
-                log_one_minus_probability: (1.0 - probability).ln(),
+                log_odds: libm::log(probability / (1.0 - probability)),
+                log_one_minus_probability: libm::log(1.0 - probability),
             });
         }
 
@@ -1049,8 +1049,8 @@ fn build_suffix_compatibility_tables(
                 SuffixCompatibility {
                     word_index: detector / WORD_BITS,
                     bit_mask: 1 << (detector % WORD_BITS),
-                    log_probability_zero: 1.0_f64.midpoint(eta).ln(),
-                    log_probability_one: 1.0_f64.midpoint(-eta).ln(),
+                    log_probability_zero: libm::log(1.0_f64.midpoint(eta)),
+                    log_probability_one: libm::log(1.0_f64.midpoint(-eta)),
                 }
             })
             .collect();
@@ -1062,7 +1062,7 @@ fn build_suffix_compatibility_tables(
 }
 
 fn bp_score_probability(posterior_llr: f64) -> f64 {
-    let probability = 1.0 / (1.0 + posterior_llr.exp());
+    let probability = 1.0 / (1.0 + libm::exp(posterior_llr));
     probability.clamp(BP_SCORE_PROBABILITY_MIN, 1.0 - BP_SCORE_PROBABILITY_MIN)
 }
 
@@ -1139,7 +1139,7 @@ fn logaddexp(left: f64, right: f64) -> f64 {
     } else {
         (left, right)
     };
-    high + (low - high).exp().ln_1p()
+    high + libm::log1p(libm::exp(low - high))
 }
 
 fn unexplainable_error() -> DecoderError {
@@ -1272,7 +1272,7 @@ mod tests {
         .unwrap();
         let result = decoder.decode(&[1]).unwrap();
         assert_eq!(result.processed_columns, 1);
-        assert_eq!(result.log_evidence.to_bits(), 0.5_f64.ln().to_bits());
+        assert_eq!(result.log_evidence.to_bits(), libm::log(0.5).to_bits());
     }
 
     #[test]

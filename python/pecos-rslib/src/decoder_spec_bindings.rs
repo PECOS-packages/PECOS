@@ -37,7 +37,7 @@ impl PyDecoderSpec {
     fn parse(type_string: &str) -> PyResult<Self> {
         pecos_decoders::DecoderSpec::parse(type_string)
             .map(Self::new)
-            .map_err(parse_error_to_py)
+            .map_err(crate::fault_tolerance_bindings::decoder_parse_error_to_py)
     }
 
     #[getter]
@@ -64,14 +64,18 @@ impl PyDecoderSpec {
             .into_any()
             .unbind())
     }
-}
 
-fn parse_error_to_py(error: DecoderError) -> PyErr {
-    let message = match error {
-        DecoderError::InvalidConfiguration(message) => message,
-        error => error.to_string(),
-    };
-    PyValueError::new_err(message)
+    fn __hash__(&self) -> u64 {
+        // Deliberately coarse: hashing only the family keeps the
+        // equal-implies-equal-hash invariant trivially true (float knobs make a
+        // finer structural hash subtle, e.g. -0.0 == 0.0 with distinct bits).
+        // Same-family specs collide and fall back to __eq__, which is fine for
+        // the small spec collections this type is keyed in.
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        spec_family_name(&self.inner).hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 fn invalid_choice(parameter: &str, value: &str, accepted: &str) -> PyErr {
@@ -137,14 +141,6 @@ fn usize_value(parameter: &str, value: i64, allow_zero: bool) -> PyResult<usize>
     usize::try_from(value).map_err(|_| {
         PyValueError::new_err(format!(
             "{parameter} has invalid value {value}; accepted values: integers representable as usize"
-        ))
-    })
-}
-
-fn u64_value(parameter: &str, value: i64) -> PyResult<u64> {
-    u64::try_from(value).map_err(|_| {
-        PyValueError::new_err(format!(
-            "{parameter} has invalid value {value}; accepted values: non-negative integers"
         ))
     })
 }
@@ -259,6 +255,9 @@ fn mwpf_solver(value: &str) -> PyResult<MwpfSolverType> {
 
 #[derive(FromPyObject)]
 enum PyRelayStoppingCriterion {
+    // Listed first so a Python bool is caught here and rejected instead of
+    // being read as the int subclass it is (True would mean NConvergences(1)).
+    Bool(bool),
     Name(String),
     Count(i64),
 }
@@ -271,6 +270,11 @@ impl Default for PyRelayStoppingCriterion {
 
 fn parse_stopping_criterion(value: PyRelayStoppingCriterion) -> PyResult<RelayStoppingCriterion> {
     match value {
+        PyRelayStoppingCriterion::Bool(_) => Err(invalid_choice(
+            "stopping_criterion",
+            "a bool",
+            "'pre_iter', 'all', 'first_convergence', or a positive integer",
+        )),
         PyRelayStoppingCriterion::Name(value) => match value.as_str() {
             "pre_iter" => Ok(RelayStoppingCriterion::PreIter),
             "all" => Ok(RelayStoppingCriterion::All),
@@ -416,7 +420,7 @@ fn relay_bp(
     set_max_iter: i64,
     gamma_dist_interval: (f64, f64),
     stopping_criterion: PyRelayStoppingCriterion,
-    seed: i64,
+    seed: u64,
 ) -> PyResult<PyDecoderSpec> {
     let gamma_min = finite("gamma_dist_interval", gamma_dist_interval.0)?;
     let gamma_max = finite("gamma_dist_interval", gamma_dist_interval.1)?;
@@ -441,7 +445,7 @@ fn relay_bp(
             set_max_iter: usize_value("set_max_iter", set_max_iter, false)?,
             gamma_dist_interval: (gamma_min, gamma_max),
             stopping_criterion,
-            seed: u64_value("seed", seed)?,
+            seed,
         },
     )))
 }
@@ -535,14 +539,14 @@ fn perturbed(
     inner: Option<PyRef<'_, PyDecoderSpec>>,
     k: i64,
     sigma: f64,
-    seed: i64,
+    seed: u64,
 ) -> PyResult<PyDecoderSpec> {
     let defaults = PerturbedConfig::default();
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::Perturbed(
         PerturbedConfig {
             k: usize_value("k", k, false)?,
             sigma: non_negative("sigma", sigma)?,
-            seed: u64_value("seed", seed)?,
+            seed,
             inner: Box::new(cloned_or_default(inner, &defaults.inner)),
         },
     )))
@@ -553,7 +557,7 @@ fn perturbed(
 fn beamsearch(
     beam_width: i64,
     sigma: f64,
-    seed: i64,
+    seed: u64,
     step: i64,
     buffer: i64,
     commit_weight_max: f64,
@@ -564,7 +568,7 @@ fn beamsearch(
         BeamSearchConfig {
             beam_width: usize_value("beam_width", beam_width, false)?,
             perturbation_sigma: non_negative("sigma", sigma)?,
-            seed: u64_value("seed", seed)?,
+            seed,
             step_size: usize_value("step", step, true)?,
             buffer_size: usize_value("buffer", buffer, true)?,
             commit_weight_max: non_negative("commit_weight_max", commit_weight_max)?,
@@ -627,13 +631,13 @@ fn belief_find() -> PyDecoderSpec {
 
 #[pyfunction]
 #[pyo3(signature = (*, k=5, sigma=0.5, seed=42))]
-fn perturbed_fb_corr(k: i64, sigma: f64, seed: i64) -> PyResult<PyDecoderSpec> {
+fn perturbed_fb_corr(k: i64, sigma: f64, seed: u64) -> PyResult<PyDecoderSpec> {
     Ok(PyDecoderSpec::new(
         pecos_decoders::DecoderSpec::PerturbedFusionBlossomCorrelated(
             PerturbedFusionBlossomConfig {
                 k: usize_value("k", k, false)?,
                 sigma: non_negative("sigma", sigma)?,
-                seed: u64_value("seed", seed)?,
+                seed,
             },
         ),
     ))
@@ -650,7 +654,35 @@ fn push_option<T: std::fmt::Debug>(args: &mut Vec<String>, name: &str, value: Op
 }
 
 fn finish_repr(family: &str, args: Vec<String>) -> String {
-    format!("DecoderSpec.{family}({})", args.join(", "))
+    // The repr names the real factory callable in pecos.decoders; there is no
+    // DecoderSpec.<family> constructor.
+    format!("{family}({})", args.join(", "))
+}
+
+/// Family name of a spec, used for the deliberately coarse `__hash__`.
+fn spec_family_name(spec: &pecos_decoders::DecoderSpec) -> &'static str {
+    match spec {
+        pecos_decoders::DecoderSpec::PyMatching(_) => "pymatching",
+        pecos_decoders::DecoderSpec::Tesseract(_) => "tesseract",
+        pecos_decoders::DecoderSpec::KMwpm(_) => "k_mwpm",
+        pecos_decoders::DecoderSpec::AStar => "astar",
+        pecos_decoders::DecoderSpec::AStarFull => "astar_full",
+        pecos_decoders::DecoderSpec::FusionBlossom(_) => "fusion_blossom",
+        pecos_decoders::DecoderSpec::PerturbedFusionBlossomCorrelated(_) => "perturbed_fb_corr",
+        pecos_decoders::DecoderSpec::BpOsd(_) => "bp_osd",
+        pecos_decoders::DecoderSpec::BpLsd(_) => "bp_lsd",
+        pecos_decoders::DecoderSpec::BeliefFind => "belief_find",
+        pecos_decoders::DecoderSpec::UnionFind => "union_find",
+        pecos_decoders::DecoderSpec::RelayBp(_) => "relay_bp",
+        pecos_decoders::DecoderSpec::MinSumBp(_) => "min_sum_bp",
+        pecos_decoders::DecoderSpec::PecosUf(_) => "pecos_uf",
+        pecos_decoders::DecoderSpec::BeliefMatching(_) => "belief_matching",
+        pecos_decoders::DecoderSpec::Windowed(_) => "windowed",
+        pecos_decoders::DecoderSpec::Mwpf(_) => "mwpf",
+        pecos_decoders::DecoderSpec::Perturbed(_) => "perturbed",
+        pecos_decoders::DecoderSpec::BeamSearch(_) => "beamsearch",
+        pecos_decoders::DecoderSpec::Ensemble(_) => "ensemble",
+    }
 }
 
 fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
@@ -744,7 +776,8 @@ fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
                 args.push(format!("mode={:?}", belief_matching_mode_name(config.mode)));
             }
             if let Some(full_dem) = &config.embedded_full_dem {
-                args.push(format!("embedded_full_dem={full_dem:?}"));
+                // The embedded DEM can be megabytes; never inline it in a repr.
+                args.push(format!("embedded_full_dem=<{} bytes>", full_dem.len()));
             }
             finish_repr("belief_matching", args)
         }

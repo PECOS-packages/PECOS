@@ -299,7 +299,16 @@ pub(super) fn execute(
         ExecutionPath::Parallel => {
             parallel(batch, spec, &model, plan.workers_used, predictions, timing)?
         }
-        ExecutionPath::NativeBatch => native_batch(batch, spec, &model, predictions)?,
+        ExecutionPath::NativeBatch => {
+            // The planner never selects the native path with timing requested
+            // (it cannot produce per-shot samples); assert the cross-crate
+            // invariant where we rely on it.
+            debug_assert!(
+                !timing,
+                "planner selected native batch with timing requested"
+            );
+            native_batch(batch, spec, &model, predictions)?
+        }
     };
     Ok(BatchExecutionOutput {
         num_errors: scored.mismatches,

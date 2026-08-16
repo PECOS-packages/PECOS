@@ -322,3 +322,39 @@ def test_nested_composite_propagates_wall_clock_dependency() -> None:
 
     assert spec.history_dependent is False
     assert spec.wall_clock_dependent is True
+
+
+def test_equal_specs_are_usable_as_dict_keys() -> None:
+    first = pymatching(correlated=True)
+    second = pymatching(correlated=True)
+    assert first == second
+    assert hash(first) == hash(second)
+    assert len({first, second}) == 1
+    assert {first: "value"}[second] == "value"
+
+
+def test_repr_names_the_real_factory_callable() -> None:
+    spec = pymatching(correlated=True)
+    assert repr(spec) == "pymatching(correlated=True)"
+    assert "DecoderSpec." not in repr(spec)
+    nested = ensemble(pymatching(correlated=False), relay_bp())
+    assert "DecoderSpec." not in repr(nested)
+
+
+def test_hybrid_repr_does_not_inline_the_embedded_dem() -> None:
+    dem = "error(0.1) D0 L0\n" * 200
+    spec = DecoderSpec.parse(f"belief_matching_hybrid:{dem}")
+    assert "error(0.1)" not in repr(spec)
+    assert "bytes>" in repr(spec)
+
+
+def test_seed_accepts_the_full_u64_range() -> None:
+    spec = perturbed(seed=2**64 - 1)
+    assert f"seed={2**64 - 1}" in repr(spec)
+    with pytest.raises(OverflowError):
+        relay_bp(seed=-1)
+
+
+def test_stopping_criterion_rejects_bool() -> None:
+    with pytest.raises(ValueError, match="stopping_criterion"):
+        relay_bp(stopping_criterion=True)

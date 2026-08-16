@@ -96,6 +96,12 @@ impl ObservableDecoder for ModelDimensionDecoder {
         self.inner
             .decode_batch_to_observables(shots, num_shots, num_detectors)
     }
+
+    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+        // Forward rather than inherit the trait default: an inner decoder that
+        // overrides this method must keep its own semantics when wrapped.
+        self.inner.decode_to_observables(syndrome)
+    }
 }
 
 fn build_single(spec: &DecoderSpec, dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderError> {

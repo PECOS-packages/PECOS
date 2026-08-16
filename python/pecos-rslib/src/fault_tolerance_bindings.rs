@@ -2540,7 +2540,7 @@ fn subgraph_to_dem_string(graph: &pecos_decoder_core::DemMatchingGraph) -> Strin
 
 /// Convert a decoder-spec parse error into Python's invalid-value exception.
 /// Convert a decoder type-string parse error into the legacy `ValueError`.
-fn decoder_parse_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
+pub(crate) fn decoder_parse_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
     let message = match error {
         pecos_decoders::DecoderError::InvalidConfiguration(message) => message,
         error => error.to_string(),

@@ -10,9 +10,7 @@ import threading
 
 import pytest
 
-pytest.importorskip("pecos_rslib")
-
-from pecos_rslib.decoders import (  # noqa: E402
+from pecos_rslib.decoders import (
     bp_osd,
     fusion_blossom,
     mwpf,
@@ -21,8 +19,8 @@ from pecos_rslib.decoders import (  # noqa: E402
     relay_bp,
     tesseract,
 )
-from pecos_rslib import TickCircuit  # noqa: E402
-from pecos_rslib.qec import DagFaultAnalyzer, DemSampler, SampleBatch  # noqa: E402
+from pecos_rslib import TickCircuit
+from pecos_rslib.qec import DagFaultAnalyzer, DemSampler, SampleBatch
 
 DEM = "error(0.1) D0 L0\n"
 

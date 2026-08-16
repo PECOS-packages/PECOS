@@ -463,6 +463,36 @@ fn symlink_file(target: &Path, link: &Path) -> Result<()> {
     Ok(())
 }
 
+/// True if a symlink written at `link_path` with contents `link_target` resolves to a path
+/// inside `root`.
+///
+/// The target is resolved lexically against the link's parent directory (the link does not
+/// exist yet, so the filesystem cannot resolve it): absolute targets and targets that climb
+/// out of `root` with `..` are rejected. `root` is an absolute, `..`-free path, so lexical
+/// resolution is sufficient here.
+fn symlink_target_stays_within(root: &Path, link_path: &Path, link_target: &Path) -> bool {
+    if link_target.is_absolute() {
+        return false;
+    }
+    let Some(parent) = link_path.parent() else {
+        return false;
+    };
+    let mut resolved = parent.to_path_buf();
+    for component in link_target.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !resolved.pop() {
+                    return false;
+                }
+            }
+            std::path::Component::Normal(name) => resolved.push(name),
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => return false,
+        }
+    }
+    resolved.starts_with(root)
+}
+
 /// Recursively merges a component's top-level children into the CUDA installation.
 ///
 /// Uses the non-following [`std::fs::DirEntry::file_type`] to classify each entry, and
@@ -484,6 +514,17 @@ fn merge_component_dir(component_dir: &Path, cuda_dir: &Path) -> Result<()> {
             // Redist archives only carry relative symlinks pointing beside the link; recreate
             // it verbatim so `.so` version resolution keeps working without duplicating bytes.
             let link_target = fs::read_link(&source)?;
+            // Defense in depth against a symlink that resolves outside the install tree.
+            // The archive is SHA256-verified, so this can only fire on an NVIDIA-authored
+            // link, but a link whose target is absolute or climbs out with `..` would let a
+            // later reader escape `cuda_dir`; reject it rather than recreate it.
+            if !symlink_target_stays_within(cuda_dir, &target, &link_target) {
+                return Err(Error::Archive(format!(
+                    "CUDA component symlink {} points outside the installation: {}",
+                    target.display(),
+                    link_target.display()
+                )));
+            }
             if target.symlink_metadata().is_ok() {
                 fs::remove_file(&target)?;
             }
@@ -591,6 +632,40 @@ mod tests {
 
         assert!(cuda_dir.join("bin/nvcc").exists());
         assert!(cuda_dir.join("include/cuda_runtime.h").exists());
+    }
+
+    #[test]
+    fn symlink_target_containment_accepts_sonames_and_rejects_escapes() {
+        let root = Path::new("/out/cuda");
+        let link = root.join("lib/libcublas.so");
+        // Legitimate relative soname links pointing beside themselves are accepted.
+        assert!(symlink_target_stays_within(
+            root,
+            &link,
+            Path::new("libcublas.so.12")
+        ));
+        assert!(symlink_target_stays_within(
+            root,
+            &link,
+            Path::new("./libcublas.so.12")
+        ));
+        // Absolute and climbing-out targets are rejected.
+        assert!(!symlink_target_stays_within(
+            root,
+            &link,
+            Path::new("/etc/passwd")
+        ));
+        assert!(!symlink_target_stays_within(
+            root,
+            &link,
+            Path::new("../../../etc/passwd")
+        ));
+        // A `..` that stays inside is fine (lib/../include/foo -> /out/cuda/include/foo).
+        assert!(symlink_target_stays_within(
+            root,
+            &link,
+            Path::new("../include/cuda_runtime.h")
+        ));
     }
 
     /// The redist `lib/` trees ship versioned soname symlink chains. Merging must recreate

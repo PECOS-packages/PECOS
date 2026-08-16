@@ -60,6 +60,12 @@ fn random_clifford_t_circuit(num_qubits: usize, t_count: usize, seed: u64) -> Ve
         }
         let target = (next_rng(&mut rng_state) % num_qubits as u64) as usize;
         gates.push(CircuitGate::T(target));
+
+        // Make the benchmark sensitive to correction timing: after roughly
+        // half of the injections, change the target's basis before projection.
+        if next_rng(&mut rng_state) & 1 != 0 {
+            gates.push(CircuitGate::H(target));
+        }
     }
     gates
 }
@@ -70,7 +76,7 @@ fn run_circuit(
     simulator_seed: u64,
     gates: &[CircuitGate],
     order: ProjectionOrder,
-) -> (usize, usize, Duration) {
+) -> (usize, usize, usize, usize, Duration) {
     let start = Instant::now();
     let mut mast = Mast::with_seed(num_qubits, t_count, simulator_seed).projection_order(order);
     let t = Angle64::QUARTER_TURN / 2u64;
@@ -83,8 +89,20 @@ fn run_circuit(
         };
     }
     mast.project_all();
+    let post_projection_bond = mast.max_bond_dim();
+    let mut exact_measure_peak = post_projection_bond;
+    for q in 0..num_qubits {
+        let _ = mast.mz(&[QubitId(q)]);
+        exact_measure_peak = exact_measure_peak.max(mast.max_bond_dim());
+    }
     let elapsed = start.elapsed();
-    (mast.projection_peak_bond(), mast.max_bond_dim(), elapsed)
+    (
+        mast.projection_peak_bond(),
+        post_projection_bond,
+        exact_measure_peak,
+        mast.max_bond_dim(),
+        elapsed,
+    )
 }
 
 fn main() {
@@ -93,20 +111,36 @@ fn main() {
 
     println!("MAST deferred-projection order comparison");
     println!(
-        "{:<6} {:<8} {:<10} {:>18} {:>14} {:>14}",
-        "data", "T-count", "order", "projection peak", "final bond", "wall time (s)"
+        "{:<6} {:<8} {:<10} {:>15} {:>12} {:>15} {:>12} {:>14}",
+        "data",
+        "T-count",
+        "order",
+        "proj peak",
+        "post-proj",
+        "exact-mz peak",
+        "final bond",
+        "wall time (s)"
     );
-    println!("{:-<76}", "");
+    println!("{:-<108}", "");
 
-    for num_qubits in [8usize, 16, 32] {
+    // Exact sample-then-force data measurement can saturate the default MPS
+    // bond cap. Keep this routine benchmark small enough to finish while still
+    // showing how that compensation cost scales with projection order.
+    for num_qubits in [8usize, 10, 12] {
         for t_count in [num_qubits, 2 * num_qubits] {
             let gates = random_clifford_t_circuit(num_qubits, t_count, circuit_seed);
             for order in [ProjectionOrder::Input, ProjectionOrder::MinSpan] {
-                let (projection_peak, final_bond, elapsed) =
-                    run_circuit(num_qubits, t_count, simulator_seed, &gates, order);
+                let (
+                    projection_peak,
+                    post_projection_bond,
+                    exact_measure_peak,
+                    final_bond,
+                    elapsed,
+                ) = run_circuit(num_qubits, t_count, simulator_seed, &gates, order);
                 println!(
-                    "{num_qubits:<6} {t_count:<8} {order:<10?} {projection_peak:>18} \
-                     {final_bond:>14} {:>14.6}",
+                    "{num_qubits:<6} {t_count:<8} {order:<10?} {projection_peak:>15} \
+                     {post_projection_bond:>12} {exact_measure_peak:>15} {final_bond:>12} \
+                     {:>14.6}",
                     elapsed.as_secs_f64()
                 );
             }

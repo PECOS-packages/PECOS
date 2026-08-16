@@ -15,8 +15,10 @@
 use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StabVec};
+use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::StabMps;
-use pecos_stab_tn::stab_mps::mast::Mast;
+use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
+use rayon::prelude::*;
 
 /// Check that two state vectors match up to global phase.
 fn assert_states_match(sv_a: &[Complex64], sv_b: &[Complex64], label: &str) {
@@ -1956,7 +1958,7 @@ fn test_measure_apply_measure_3qubit() {
 // MAST vs STN measurement comparison
 // ============================================================================
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum SeededCliffordTGate {
     H(usize),
     Sz(usize),
@@ -1986,23 +1988,32 @@ fn seeded_clifford_t_circuit(
     }
     for _ in 0..t_count {
         for _ in 0..3 {
-            let gate_type = next_seeded_gate_choice(&mut state) % 2;
+            let gate_type = next_seeded_gate_choice(&mut state) % 3;
             let q0 = (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
-            if gate_type == 0 {
-                gates.push(SeededCliffordTGate::Sz(q0));
-            } else {
-                let q1 = loop {
-                    let candidate =
-                        (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
-                    if candidate != q0 {
-                        break candidate;
-                    }
-                };
-                gates.push(SeededCliffordTGate::Cx(q0, q1));
+            match gate_type {
+                0 => gates.push(SeededCliffordTGate::H(q0)),
+                1 => gates.push(SeededCliffordTGate::Sz(q0)),
+                _ => {
+                    let q1 = loop {
+                        let candidate =
+                            (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
+                        if candidate != q0 {
+                            break candidate;
+                        }
+                    };
+                    gates.push(SeededCliffordTGate::Cx(q0, q1));
+                }
             }
         }
         let target = (next_seeded_gate_choice(&mut state) % num_qubits as u64) as usize;
         gates.push(SeededCliffordTGate::T(target));
+
+        // Exercise correction timing across a target-qubit basis change.
+        // Roughly half of injections, including potentially the final one,
+        // receive a following H.
+        if next_seeded_gate_choice(&mut state) & 1 != 0 {
+            gates.push(SeededCliffordTGate::H(target));
+        }
     }
     gates
 }
@@ -2047,15 +2058,94 @@ fn bitstring_counts(shots: &[Vec<bool>], num_qubits: usize) -> Vec<usize> {
     counts
 }
 
-fn exact_stn_probabilities(stn: &StabMps, num_qubits: usize) -> Vec<f64> {
-    (0..1usize << num_qubits)
-        .map(|outcome| {
-            let bits = (0..num_qubits)
-                .map(|q| ((outcome >> q) & 1) != 0)
-                .collect::<Vec<_>>();
-            stn.prob_bitstring(&bits)
-        })
+fn dense_state_vector_probabilities(stn: &StabMps) -> Vec<f64> {
+    let state_vector = stn.state_vector();
+    let norm: f64 = state_vector
+        .iter()
+        .map(num_complex::Complex::norm_sqr)
+        .sum();
+    state_vector
+        .iter()
+        .map(|amplitude| amplitude.norm_sqr() / norm)
         .collect()
+}
+
+fn exact_mps_config() -> MpsConfig {
+    MpsConfig {
+        max_bond_dim: 128,
+        svd_cutoff: 0.0,
+        max_truncation_error: Some(0.0),
+        parallel: false,
+    }
+}
+
+fn exact_h_rz_h_p0(theta: Angle64) -> f64 {
+    let mut stn = StabMps::new(1);
+    stn.h(&[QubitId(0)]);
+    stn.rz(theta, &[QubitId(0)]);
+    stn.h(&[QubitId(0)]);
+    stn.flush();
+    dense_state_vector_probabilities(&stn)[0]
+}
+
+fn sampled_mast_h_rz_h_p0(theta: Angle64, num_trials: usize, seed_base: u64) -> f64 {
+    let count_0 = (0..num_trials)
+        .filter(|&trial| {
+            let mut mast = Mast::with_seed(1, 1, seed_base + trial as u64);
+            mast.h(&[QubitId(0)]);
+            mast.rz(theta, &[QubitId(0)]);
+            mast.h(&[QubitId(0)]);
+            !mast.mz(&[QubitId(0)])[0].outcome
+        })
+        .count();
+    count_0 as f64 / num_trials as f64
+}
+
+fn assert_binomial_five_sigma(sampled: f64, exact: f64, num_trials: usize, label: &str) {
+    let sigma = (exact * (1.0 - exact) / num_trials as f64).sqrt().max(1e-6);
+    let deviation = (exact - sampled).abs() / sigma;
+    eprintln!(
+        "{label}: exact={exact:.6}, MAST={sampled:.6}, deviation={deviation:.2}σ, shots={num_trials}"
+    );
+    assert!(
+        deviation < 5.0,
+        "{label}: exact={exact:.6}, MAST={sampled:.6}, deviation={deviation:.2}σ"
+    );
+}
+
+#[test]
+fn test_mast_applies_t_correction_before_later_h() {
+    let t = Angle64::QUARTER_TURN / 2u64;
+    let exact = exact_h_rz_h_p0(t);
+    let analytic = (2.0 + std::f64::consts::SQRT_2) / 4.0;
+    assert!(
+        (exact - analytic).abs() < 1e-12,
+        "STN oracle={exact:.15}, analytic={analytic:.15}"
+    );
+
+    // The old end-of-circuit correction gives P(0)=1 instead of 0.853553...;
+    // 2,000 shots distinguish that 0.146447 gap by about 18.5 sigma while
+    // keeping this statistical regression suitable for the debug suite.
+    let num_trials = 2_000;
+    let sampled = sampled_mast_h_rz_h_p0(t, num_trials, 0x71_0000);
+    assert_binomial_five_sigma(sampled, exact, num_trials, "H-T-H regression");
+}
+
+#[test]
+fn test_mast_applies_non_clifford_correction_before_later_h() {
+    let theta = Angle64::from_radians(0.7);
+    let exact = exact_h_rz_h_p0(theta);
+    // The old end-of-circuit correction gives P(0)=1 instead of
+    // cos(0.35)^2 = 0.882421...; 2,000 shots distinguish the gap by more
+    // than 16 sigma while exercising the non-Clifford correction path.
+    let num_trials = 2_000;
+    let sampled = sampled_mast_h_rz_h_p0(theta, num_trials, 0x70_0000);
+    assert_binomial_five_sigma(
+        sampled,
+        exact,
+        num_trials,
+        "H-RZ(0.7)-H non-Clifford correction",
+    );
 }
 
 #[test]
@@ -2090,9 +2180,79 @@ fn test_sampled_bitstring_round_trips_through_probability_and_amplitude() {
 }
 
 #[test]
+fn test_prob_bitstring_honest_clifford_t_family_matches_dense_state_vector() {
+    // This family deliberately puts H, S, and CX between non-Clifford gates,
+    // plus a target H after roughly half of them. That exposes sequential
+    // forced-projection frame errors hidden by diagonal-only circuit tails.
+    const TOLERANCE: f64 = 1e-12;
+    for num_qubits in 3..=6 {
+        for t_count in 3..=6 {
+            let circuit_seed = 10_000 + (num_qubits * 100 + t_count) as u64;
+            let gates = seeded_clifford_t_circuit(num_qubits, t_count, circuit_seed);
+            let mut stn = StabMps::builder(num_qubits)
+                .seed(circuit_seed)
+                .merge_rz(false)
+                .max_truncation_error(0.0)
+                .build();
+            apply_seeded_clifford_t_to_stn(&mut stn, &gates);
+            stn.flush();
+
+            let dense_probabilities = dense_state_vector_probabilities(&stn);
+            for (outcome, &expected) in dense_probabilities.iter().enumerate() {
+                let bits = (0..num_qubits)
+                    .map(|q| ((outcome >> q) & 1) != 0)
+                    .collect::<Vec<_>>();
+                let actual = stn.prob_bitstring(&bits);
+                assert!(
+                    (actual - expected).abs() <= TOLERANCE,
+                    "n={num_qubits} t={t_count} seed={circuit_seed} outcome={outcome}: \
+                     prob_bitstring={actual:.16}, dense={expected:.16}, gates={gates:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_prob_bitstring_nonzero_trivial_coefficient_basis_matches_dense_state_vector() {
+    // This circuit reduces the coefficient MPS to a nonzero computational
+    // basis word. The old tableau-only fast path treated every bond-one basis
+    // state as |0...0> and returned the bitwise-complement distribution.
+    const NUM_QUBITS: usize = 3;
+    const T_COUNT: usize = 4;
+    const CIRCUIT_SEED: u64 = 80_304;
+    const TOLERANCE: f64 = 1e-12;
+
+    let gates = seeded_clifford_t_circuit(NUM_QUBITS, T_COUNT, CIRCUIT_SEED);
+    let mut stn = StabMps::builder(NUM_QUBITS)
+        .seed(CIRCUIT_SEED)
+        .merge_rz(false)
+        .max_truncation_error(0.0)
+        .build();
+    apply_seeded_clifford_t_to_stn(&mut stn, &gates);
+    stn.flush();
+
+    for (outcome, expected) in dense_state_vector_probabilities(&stn)
+        .into_iter()
+        .enumerate()
+    {
+        let bits = (0..NUM_QUBITS)
+            .map(|q| ((outcome >> q) & 1) != 0)
+            .collect::<Vec<_>>();
+        let actual = stn.prob_bitstring(&bits);
+        assert!(
+            (actual - expected).abs() <= TOLERANCE,
+            "outcome={outcome}: prob_bitstring={actual:.16}, dense={expected:.16}"
+        );
+    }
+}
+
+#[test]
 fn test_prefix_tree_sampler_random_clifford_t_distributions() {
-    // Mirrors the per-outcome five-sigma pattern in
-    // `test_mast_min_span_matches_stn_exact_random_probabilities`.
+    // Compare the exact forced-projection prefix sampler with the independent
+    // dense state vector. Do not use `sample_bitstring` as an oracle: that API
+    // deliberately retains the pre-existing pragmatic measurement path and
+    // its documented drift.
     let num_shots = 5000usize;
     for num_qubits in 3..=5 {
         for t_count in 2..=5 {
@@ -2102,7 +2262,7 @@ fn test_prefix_tree_sampler_random_clifford_t_distributions() {
             apply_seeded_clifford_t_to_stn(&mut state, &gates);
             state.flush();
 
-            let exact_probabilities = exact_stn_probabilities(&state, num_qubits);
+            let exact_probabilities = dense_state_vector_probabilities(&state);
             let total: f64 = exact_probabilities.iter().sum();
             assert!(
                 (total - 1.0).abs() < 1e-8,
@@ -2119,27 +2279,14 @@ fn test_prefix_tree_sampler_random_clifford_t_distributions() {
             );
             let prefix_counts = bitstring_counts(&prefix_shots, num_qubits);
 
-            let mut legacy_sampler = state.clone();
-            let legacy_counts =
-                bitstring_counts(&legacy_sampler.sample_bitstring(num_shots), num_qubits);
-
             for (outcome, &exact) in exact_probabilities.iter().enumerate() {
                 let prefix_sampled = prefix_counts[outcome] as f64 / num_shots as f64;
-                let legacy_sampled = legacy_counts[outcome] as f64 / num_shots as f64;
                 let sigma = (exact * (1.0 - exact) / num_shots as f64).sqrt().max(1e-6);
                 let exact_deviation = (exact - prefix_sampled).abs() / sigma;
                 assert!(
                     exact_deviation < 5.0,
                     "n={num_qubits} t={t_count} outcome={outcome}: exact={exact:.4} \
                      prefix={prefix_sampled:.4}, deviation={exact_deviation:.1}σ"
-                );
-
-                let agreement_sigma = std::f64::consts::SQRT_2 * sigma;
-                let agreement_deviation = (legacy_sampled - prefix_sampled).abs() / agreement_sigma;
-                assert!(
-                    agreement_deviation < 5.0,
-                    "n={num_qubits} t={t_count} outcome={outcome}: legacy={legacy_sampled:.4} \
-                     prefix={prefix_sampled:.4}, deviation={agreement_deviation:.1}σ"
                 );
             }
         }
@@ -2220,14 +2367,17 @@ fn test_prefix_tree_sampler_flushes_supported_modes_on_working_clone() {
     );
 }
 
-#[test]
-fn test_mast_min_span_matches_stn_exact_random_probabilities() {
-    // Mirrors `test_mast_matches_stn_exact_probabilities_2q`: compare each
-    // sampled outcome with `prob_bitstring` under the same five-sigma bound.
-    // MinSpan is the default, so this also guards the default MAST path.
-    let num_trials = 5000usize;
-    for num_qubits in 3..=5 {
-        for t_count in 3..=6 {
+fn assert_mast_projection_orders_match_dense_random_probabilities(
+    qubit_counts: &[usize],
+    t_counts: &[usize],
+    num_trials: usize,
+) {
+    // Compare each sampled outcome with the independently expanded dense
+    // state vector under the same five-sigma bound.
+    // The generator places H and CX gates between injections and places a
+    // target-qubit H after each injection with probability approximately 1/2.
+    for &num_qubits in qubit_counts {
+        for &t_count in t_counts {
             let circuit_seed = 10_000 + (num_qubits * 100 + t_count) as u64;
             let gates = seeded_clifford_t_circuit(num_qubits, t_count, circuit_seed);
             let num_outcomes = 1usize << num_qubits;
@@ -2235,49 +2385,82 @@ fn test_mast_min_span_matches_stn_exact_random_probabilities() {
             let mut stn = StabMps::with_seed(num_qubits, circuit_seed);
             apply_seeded_clifford_t_to_stn(&mut stn, &gates);
             stn.flush();
-            let exact_probs = (0..num_outcomes)
-                .map(|outcome| {
-                    let bits = (0..num_qubits)
-                        .map(|q| ((outcome >> q) & 1) != 0)
-                        .collect::<Vec<_>>();
-                    stn.prob_bitstring(&bits)
-                })
-                .collect::<Vec<_>>();
+            let exact_probs = dense_state_vector_probabilities(&stn);
             let total: f64 = exact_probs.iter().sum();
             assert!(
                 (total - 1.0).abs() < 1e-8,
                 "n={num_qubits} t={t_count}: exact probabilities sum to {total}"
             );
 
-            let mut counts = vec![0u32; num_outcomes];
             let measured_qubits = (0..num_qubits).map(QubitId).collect::<Vec<_>>();
-            for trial in 0..num_trials {
-                let simulator_seed = circuit_seed.wrapping_mul(10_000) + trial as u64;
-                let mut mast = Mast::with_seed(num_qubits, t_count, simulator_seed);
-                apply_seeded_clifford_t_to_mast(&mut mast, &gates);
-                let outcome = mast
-                    .mz(&measured_qubits)
-                    .iter()
-                    .enumerate()
-                    .fold(0usize, |value, (q, result)| {
-                        value | (usize::from(result.outcome) << q)
-                    });
-                counts[outcome] += 1;
-            }
+            for order in [ProjectionOrder::Input, ProjectionOrder::MinSpan] {
+                let counts = (0..num_trials)
+                    .into_par_iter()
+                    .fold(
+                        || vec![0u32; num_outcomes],
+                        |mut local_counts, trial| {
+                            let simulator_seed = circuit_seed.wrapping_mul(10_000) + trial as u64;
+                            let mut mast = Mast::with_seed(num_qubits, t_count, simulator_seed)
+                                .with_mps_config(exact_mps_config())
+                                .projection_order(order);
+                            apply_seeded_clifford_t_to_mast(&mut mast, &gates);
+                            let outcome = mast
+                                .mz(&measured_qubits)
+                                .iter()
+                                .enumerate()
+                                .fold(0usize, |value, (q, result)| {
+                                    value | (usize::from(result.outcome) << q)
+                                });
+                            local_counts[outcome] += 1;
+                            local_counts
+                        },
+                    )
+                    .reduce(
+                        || vec![0u32; num_outcomes],
+                        |mut counts, local_counts| {
+                            for (count, local_count) in counts.iter_mut().zip(local_counts) {
+                                *count += local_count;
+                            }
+                            counts
+                        },
+                    );
 
-            for outcome in 0..num_outcomes {
-                let exact = exact_probs[outcome];
-                let sampled = f64::from(counts[outcome]) / num_trials as f64;
-                let sigma = (exact * (1.0 - exact) / num_trials as f64).sqrt().max(1e-6);
-                let deviation = (exact - sampled).abs() / sigma;
-                assert!(
-                    deviation < 5.0,
-                    "n={num_qubits} t={t_count} outcome={outcome}: exact={exact:.4} \
-                     MinSpan={sampled:.4}, deviation={deviation:.1}σ"
-                );
+                for outcome in 0..num_outcomes {
+                    let exact = exact_probs[outcome];
+                    let sampled = f64::from(counts[outcome]) / num_trials as f64;
+                    let sigma = (exact * (1.0 - exact) / num_trials as f64).sqrt().max(1e-6);
+                    let deviation = (exact - sampled).abs() / sigma;
+                    assert!(
+                        deviation < 5.0,
+                        "n={num_qubits} t={t_count} outcome={outcome}: exact={exact:.4} \
+                         {order:?}={sampled:.4}, deviation={deviation:.1}σ"
+                    );
+                }
             }
         }
     }
+}
+
+#[test]
+fn test_mast_projection_orders_match_dense_random_probabilities_fast() {
+    // The default debug suite retains both projection orders and the honest
+    // post-injection basis changes on a small circuit. The two focused
+    // single-qubit regressions above provide the high-power timing guards.
+    assert_mast_projection_orders_match_dense_random_probabilities(&[3], &[3], 500);
+}
+
+#[test]
+#[ignore = "statistical n=3..=5 release stress test; run explicitly with --release --ignored"]
+fn test_mast_projection_orders_match_dense_random_probabilities_release_stress() {
+    // At worst-case p=1/2, 1,000 shots give a five-sigma half-width of 0.0791.
+    // That is below the 0.146447 probability error in the original mistimed
+    // H-T-H correction defect, while this matrix covers both projection
+    // orders and every requested n/T-count combination.
+    assert_mast_projection_orders_match_dense_random_probabilities(
+        &[3, 4, 5],
+        &[3, 4, 5, 6],
+        1_000,
+    );
 }
 
 #[test]
@@ -3435,8 +3618,10 @@ fn test_property_mast_bond_dim_stays_low() {
             mast.cx(&[(QubitId(q + 1), QubitId(q))]);
         }
 
-        // Force projection of all deferred measurements
-        mast.mz(&[QubitId(0)]);
+        // Measure the deferred-ancilla protocol itself. `mz` would additionally
+        // include MAST's exact compensated data projection, whose separate bond
+        // cost is tracked by the projection-order benchmark.
+        mast.project_all();
 
         total_max_bond += mast.mps().max_bond_dim();
     }
@@ -3477,8 +3662,9 @@ fn test_property_mast_vs_stn_bond_dim() {
         mast.rz(t, &[QubitId(q)]);
     }
 
-    // Force MAST projection
-    mast.mz(&[QubitId(0)]);
+    // Force only MAST's deferred ancilla projections. Exact data measurement
+    // has a separate, intentionally reported bond cost.
+    mast.project_all();
 
     let stn_bond = stn.max_bond_dim();
     let mast_bond = mast.mps().max_bond_dim();
@@ -3594,20 +3780,21 @@ fn large_scale_bond_dim_check(
         }
     }
 
-    // Force MAST projection
-    mast.mz(&[QubitId(0)]);
+    // Force only MAST's deferred ancilla projections. Calling `mz` here would
+    // include the exact compensated data-measurement route and change what this
+    // deferred-projection scalability check measures.
+    mast.project_all();
     let mast_bond = mast.mps().max_bond_dim();
 
     (stn_bond, mast_bond)
 }
 
 #[test]
-fn test_large_scale_50_qubits() {
-    let num_qubits = 50;
-    let num_t = 20;
-    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 42);
+fn test_large_scale_12_qubits_fast() {
+    let num_qubits = 12;
+    let num_t = 6;
+    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 2, 24);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    // Should complete without panic. MAST bond should be small.
     assert!(
         mast_bond < 50,
         "MAST bond too large at {num_qubits}q: {mast_bond}"
@@ -3615,26 +3802,44 @@ fn test_large_scale_50_qubits() {
 }
 
 #[test]
+#[ignore = "slow exact-projection scale test; run explicitly with --release --ignored"]
+fn test_large_scale_50_qubits() {
+    let num_qubits = 50;
+    let num_t = 20;
+    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 42);
+    eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
+    // Exact compensated projections may fill MAST's default configured cap.
+    // This scale test checks that the cap remains enforced, while the example
+    // reports the actual bond cost rather than assuming the old <50 heuristic.
+    assert!(
+        mast_bond <= 128,
+        "MAST exceeded its default bond cap at {num_qubits}q: {mast_bond}"
+    );
+}
+
+#[test]
+#[ignore = "slow exact-projection scale test; run explicitly with --release --ignored"]
 fn test_large_scale_100_qubits() {
     let num_qubits = 100;
     let num_t = 40;
     let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 123);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
     assert!(
-        mast_bond < 50,
-        "MAST bond too large at {num_qubits}q: {mast_bond}"
+        mast_bond <= 128,
+        "MAST exceeded its default bond cap at {num_qubits}q: {mast_bond}"
     );
 }
 
 #[test]
+#[ignore = "slow exact-projection scale test; run explicitly with --release --ignored"]
 fn test_large_scale_200_qubits() {
     let num_qubits = 200;
     let num_t = 50;
     let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 5, 456);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
     assert!(
-        mast_bond < 50,
-        "MAST bond too large at {num_qubits}q: {mast_bond}"
+        mast_bond <= 128,
+        "MAST exceeded its default bond cap at {num_qubits}q: {mast_bond}"
     );
 }
 

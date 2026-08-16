@@ -3758,6 +3758,84 @@ mod tests {
         }
     }
 
+    fn seed_10504_honest_basis_change_circuit() -> StabMps {
+        let q = |index| QubitId(index);
+        let t = Angle64::QUARTER_TURN / 2u64;
+        let mut stn = StabMps::builder(5)
+            .seed(10_504)
+            .merge_rz(false)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[q(0), q(1), q(2), q(3)]);
+        stn.cx(&[(q(4), q(1))]);
+        stn.cx(&[(q(0), q(4))]);
+        stn.rz(t, &[q(3)]);
+        stn.cx(&[(q(0), q(4))]);
+        stn.sz(&[q(0)]);
+        stn.cx(&[(q(2), q(3))]);
+        stn.rz(t, &[q(1)]);
+        stn.h(&[q(1)]);
+        stn.sz(&[q(3)]);
+        stn.h(&[q(2)]);
+        stn.sz(&[q(1)]);
+        stn.rz(t, &[q(4)]);
+        stn.h(&[q(4)]);
+        stn.cx(&[(q(4), q(1))]);
+        stn.cx(&[(q(0), q(3))]);
+        stn.cx(&[(q(2), q(4))]);
+        stn.rz(t, &[q(4)]);
+        stn.h(&[q(4)]);
+        stn
+    }
+
+    /// Regression for the phase-complete tableau gauge required after a
+    /// nondeterministic forced projection. Before the fix, projecting q1
+    /// omitted a virtual Z gauge. The resulting q4 decomposition was
+    /// `i X_1 Z_1`, but its conditional P(0) was reversed from 0.75 to 0.25.
+    #[test]
+    fn test_seed_10504_imaginary_phase_sequential_projection() {
+        let stn = seed_10504_honest_basis_change_circuit();
+        let full_state = stn.state_vector();
+        let mut tableau = stn.tableau.clone();
+        let mut mps = stn.mps.clone();
+        for q in 0..5 {
+            let mut expected_numerator = 0.0;
+            let mut expected_denominator = 0.0;
+            for (index, amplitude) in full_state.iter().enumerate() {
+                if (0..q).all(|prior| (index >> prior) & 1 == 0) {
+                    let weight = amplitude.norm_sqr();
+                    expected_denominator += weight;
+                    if (index >> q) & 1 == 0 {
+                        expected_numerator += weight;
+                    }
+                }
+            }
+            let expected = expected_numerator / expected_denominator;
+            let actual = measure::project_forced_z(&mut tableau, &mut mps, q, false);
+            assert!(
+                (actual - expected).abs() <= 1e-12,
+                "q={q}: forced conditional probability={actual}, dense oracle={expected}"
+            );
+            if q == 4 {
+                assert!((expected - 0.75).abs() <= 1e-12);
+            }
+        }
+
+        let expected_probability = full_state[0].norm_sqr();
+        let actual_probability = stn.prob_bitstring(&[false; 5]);
+        assert!(
+            (actual_probability - expected_probability).abs() <= 1e-12,
+            "prob_bitstring={actual_probability}, dense oracle={expected_probability}"
+        );
+
+        let expected_amplitude = full_state[0];
+        let actual_amplitude = stn.amplitude_iterative(&[false; 5]);
+        assert!(
+            (actual_amplitude - expected_amplitude).norm() <= 1e-12,
+            "amplitude_iterative={actual_amplitude}, dense oracle={expected_amplitude}"
+        );
+    }
+
     /// Regression: `prob_bitstring` matches SV across 30 random Clifford+T
     /// circuits at n=4..=6 after Bug #1 (Z-then-X), Bug #2 (`multiply_row`
     /// phase), and Bug #3 (MPS CNOT compensation via long-range gate) fixes.

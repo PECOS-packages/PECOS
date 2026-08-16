@@ -26,6 +26,7 @@ use super::pauli_decomp::{ZDecomposition, decompose_z};
 use crate::mps::Mps;
 use nalgebra::DMatrix;
 use num_complex::Complex64;
+use pecos_core::BitSet;
 use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, MeasurementResult, SparseStabY};
 
@@ -42,6 +43,37 @@ fn is_mps_trivial(mps: &Mps) -> bool {
                 .sum();
             b0_norm < 1e-12 || b1_norm < 1e-12
         })
+}
+
+/// Put a computational-basis product coefficient MPS into `|0...0>` while
+/// preserving the represented physical state by absorbing its basis Xs into
+/// the Clifford tableau.
+///
+/// The tableau-only measurement fast path is valid for `C|0...0>`, not for a
+/// general `C|b>`. Non-Clifford evolution and earlier exact projections can
+/// produce the latter even though every MPS bond is one.
+fn canonicalize_trivial_mps_basis(tableau: &mut SparseStabY, mps: &mut Mps) {
+    let x_gate = DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    );
+    for site in 0..mps.num_sites() {
+        let chi_r = mps.bond_dim(site + 1);
+        let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[site], 0, chi_r);
+        let block_0_norm: f64 = block_0.iter().map(num_complex::Complex::norm_sqr).sum();
+        if block_0_norm < 1e-12 {
+            // C|...1...> = (C X_site)(X_site|...1...>).
+            crate::stab_mps::tableau_compose::right_compose_x(tableau, site);
+            mps.apply_one_site_gate(site, &x_gate)
+                .expect("MPS op on valid site");
+        }
+    }
 }
 
 /// Compute `<mps| phase · X_flip · Z_sign |mps>` via clone + inner product.
@@ -206,38 +238,40 @@ fn pre_reduce_for_measurement(
     }
 
     let replaced_idx = find_replaced_stabilizer(tableau, q_idx);
-    let n = tableau.num_qubits();
-
     let anticom: Vec<usize> = tableau.stabs().col_x[q_idx]
         .iter()
         .filter(|&id| id != replaced_idx)
         .collect();
 
-    // Clone stabs/destabs ONCE before the loop (not per iteration).
-    // For stabs: replaced_idx is the SOURCE row and never modified, so one
-    // clone suffices for all iterations.
-    // For destabs: replaced_idx IS modified (accumulated), but the SOURCE
-    // rows (other_id) are all distinct and untouched. One clone captures
-    // all of them before any mutation.
-    let stabs_snapshot = tableau.stabs().clone();
-    let destabs_snapshot = tableau.destabs().clone();
-    for other_id in anticom {
-        crate::stab_mps::tableau_compose::multiply_row(
-            tableau.stabs_mut(),
-            other_id,
-            &stabs_snapshot,
-            replaced_idx,
-            n,
-        );
-        crate::stab_mps::tableau_compose::multiply_row(
-            tableau.destabs_mut(),
-            replaced_idx,
-            &destabs_snapshot,
-            other_id,
-            n,
-        );
-        if apply_mps_compensation {
+    if apply_mps_compensation {
+        // Exact callers need the phase-complete Clifford composition and the
+        // matching inverse action on the coefficient MPS.
+        for other_id in anticom {
+            crate::stab_mps::tableau_compose::right_compose_cx(tableau, replaced_idx, other_id);
             apply_cnot_to_mps(mps, replaced_idx, other_id);
+        }
+    } else {
+        // Preserve the established pragmatic measurement path byte-for-byte:
+        // it intentionally updates only the structural row frame and does not
+        // compensate the MPS. Its tracked drift is outside the exact route.
+        let n = tableau.num_qubits();
+        let stabs_snapshot = tableau.stabs().clone();
+        let destabs_snapshot = tableau.destabs().clone();
+        for other_id in anticom {
+            crate::stab_mps::tableau_compose::multiply_row(
+                tableau.stabs_mut(),
+                other_id,
+                &stabs_snapshot,
+                replaced_idx,
+                n,
+            );
+            crate::stab_mps::tableau_compose::multiply_row(
+                tableau.destabs_mut(),
+                replaced_idx,
+                &destabs_snapshot,
+                other_id,
+                n,
+            );
         }
     }
 }
@@ -667,6 +701,197 @@ pub(super) fn projected_mps_basis_index(tableau: &SparseStabY, outcomes: &[bool]
     index
 }
 
+/// Right-compose the phase-complete measurement basis rotation `W`.
+///
+/// Keeping an independently predicted tableau lets the exact projection path
+/// recover the Pauli gauge omitted by `SparseStabY::nondeterministic_meas`
+/// when it structurally XORs destabilizer rows without propagating their
+/// phases.
+fn right_compose_measurement_basis_rotation(
+    tableau: &mut SparseStabY,
+    id: usize,
+    phase: Complex64,
+    sign_sites: &[usize],
+    outcome: bool,
+) {
+    let signed_phase = Complex64::new(if outcome { -1.0 } else { 1.0 }, 0.0) * phase;
+    let id_in_sign = sign_sites.contains(&id);
+
+    if signed_phase.im.abs() < 1e-9 {
+        assert!(
+            !id_in_sign,
+            "real measurement phase {signed_phase:?} must not overlap the flip site"
+        );
+        if signed_phase.re < 0.0 {
+            crate::stab_mps::tableau_compose::right_compose_z(tableau, id);
+        }
+        for &site in sign_sites {
+            if site != id {
+                crate::stab_mps::tableau_compose::right_compose_cz(tableau, id, site);
+            }
+        }
+    } else {
+        assert!(
+            id_in_sign,
+            "imaginary measurement phase {signed_phase:?} must overlap the flip site"
+        );
+        assert!(
+            signed_phase.re.abs() < 1e-9,
+            "measurement phase must be a fourth root of unity: {signed_phase:?}"
+        );
+        for &site in sign_sites {
+            if site != id {
+                crate::stab_mps::tableau_compose::right_compose_cz(tableau, id, site);
+            }
+        }
+        if signed_phase.im > 0.0 {
+            crate::stab_mps::tableau_compose::right_compose_sz(tableau, id);
+        } else {
+            crate::stab_mps::tableau_compose::right_compose_szdg(tableau, id);
+        }
+    }
+    crate::stab_mps::tableau_compose::right_compose_h(tableau, id);
+}
+
+/// Apply the inverse of the virtual Pauli gauge between two structurally
+/// identical Clifford tableaux.
+///
+/// A stabilizer-row sign difference is a right-composed X on that virtual
+/// site; a destabilizer-row sign difference is a right-composed Z. The
+/// predicted tableau is composed as X sites followed by Z sites, so applying
+/// those gates to the MPS in the same circuit order realizes the adjoint
+/// `P^-1 = P^dagger`, including the X/Z phase on overlapping sites.
+fn compensate_measurement_pauli_gauge(
+    mps: &mut Mps,
+    predicted: &SparseStabY,
+    measured: &SparseStabY,
+) {
+    assert_eq!(predicted.num_qubits(), measured.num_qubits());
+    let rows_match = |predicted_rows: &[BitSet], measured_rows: &[BitSet]| {
+        predicted_rows
+            .iter()
+            .zip(measured_rows)
+            .all(|(predicted_row, measured_row)| predicted_row.iter().eq(measured_row.iter()))
+    };
+    // Compare semantic set contents rather than BitSet's backing allocation:
+    // operations above bit 63 can leave different numbers of trailing zero
+    // words in otherwise identical sparse rows.
+    assert!(rows_match(
+        &predicted.stabs().row_x,
+        &measured.stabs().row_x
+    ));
+    assert!(rows_match(
+        &predicted.stabs().row_z,
+        &measured.stabs().row_z
+    ));
+    assert!(rows_match(
+        &predicted.destabs().row_x,
+        &measured.destabs().row_x
+    ));
+    assert!(rows_match(
+        &predicted.destabs().row_z,
+        &measured.destabs().row_z
+    ));
+    assert!(
+        predicted
+            .stabs()
+            .signs_i
+            .iter()
+            .eq(measured.stabs().signs_i.iter())
+    );
+    assert!(
+        predicted
+            .destabs()
+            .signs_i
+            .iter()
+            .eq(measured.destabs().signs_i.iter())
+    );
+
+    let x_gate = DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    );
+    let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
+
+    for site in 0..predicted.num_qubits() {
+        let differs = predicted.stabs().signs_minus.contains(site)
+            != measured.stabs().signs_minus.contains(site);
+        if differs {
+            mps.apply_one_site_gate(site, &x_gate)
+                .expect("MPS op on valid site");
+        }
+    }
+    for site in 0..predicted.num_qubits() {
+        let differs = predicted.destabs().signs_minus.contains(site)
+            != measured.destabs().signs_minus.contains(site);
+        if differs {
+            mps.apply_diagonal_one_site(site, &z_diag)
+                .expect("MPS op on valid site");
+        }
+    }
+}
+
+/// Convert a normalized single-flip Pauli eigenstate into the coefficient
+/// basis selected by the corresponding tableau measurement.
+///
+/// For every real or imaginary signed phase handled by `W`, the projected
+/// eigenvalue equation relates the flip site's two blocks so that
+/// `W^-1 |psi_projected> = sqrt(2) P_0 |psi_projected>`. Selecting the zero
+/// block is both exact and local; it avoids materializing W's potentially
+/// long-range CZ chain on an MPS that is already known to lie in this
+/// eigenspace.
+fn collapse_projected_flip_site(mps: &mut Mps, id: usize) {
+    let chi_r = mps.bond_dim(id + 1);
+    let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[id], 0, chi_r)
+        * Complex64::new(std::f64::consts::SQRT_2, 0.0);
+    let zero = DMatrix::zeros(mps.tensors()[id].nrows(), chi_r);
+    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 0, chi_r, &block_0);
+    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 1, chi_r, &zero);
+}
+
+/// Project a real single-site X branch and absorb its measurement-basis H
+/// without constructing a rank-doubled MPS sum.
+fn project_single_flip_without_sign(
+    mps: &mut Mps,
+    id: usize,
+    signed_phase: Complex64,
+    probability: f64,
+) {
+    assert!(
+        signed_phase.im.abs() < 1e-9,
+        "single-flip branch without Z support must have real phase"
+    );
+    let chi_r = mps.bond_dim(id + 1);
+    let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[id], 0, chi_r);
+    let block_1 = crate::mps::tensor::phys_block(&mps.tensors()[id], 1, chi_r);
+    let denominator = Complex64::new((2.0 * probability).max(1e-20).sqrt(), 0.0);
+    let projected = (block_0 + block_1 * signed_phase) / denominator;
+    let zero = DMatrix::zeros(mps.tensors()[id].nrows(), chi_r);
+    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 0, chi_r, &projected);
+    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 1, chi_r, &zero);
+}
+
+/// Remove the direct-sum projector's structurally oversized virtual bonds
+/// without discarding any component of the state.
+///
+/// A right-canonical QR sweep is an exact factorization and bounds every bond
+/// by the Hilbert-space dimension to its right. This avoids applying the
+/// cutoff-based SVD compressor to the cancellation-heavy projected sum. Only
+/// a bond that still exceeds the caller's explicit approximation cap is sent
+/// through the configured compressor.
+fn reduce_exact_projection_bonds(mps: &mut Mps) {
+    mps.right_canonicalize();
+    if mps.max_bond_dim() > mps.config().max_bond_dim {
+        mps.compress();
+    }
+}
+
 /// Project qubit `q_idx` onto a forced Z-basis outcome and return the
 /// probability of that outcome given the current state.
 ///
@@ -684,130 +909,109 @@ pub fn project_forced_z(
     outcome: bool,
 ) -> f64 {
     if is_mps_trivial(mps) {
-        // Trivial MPS: delegate to tableau's deterministic/random path logic
-        // but force the outcome. The tableau tracks signs; for a deterministic
-        // result the probability is 1 if the outcome matches, 0 otherwise.
-        // For a random result probability is 0.5.
+        // A trivial coefficient MPS represents a pure stabilizer state. First
+        // absorb a possible nonzero virtual basis word into the tableau; only
+        // then can its forced update supply the exact probability and state.
+        canonicalize_trivial_mps_basis(tableau, mps);
         let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
-        let prob = match decomp {
+        let probability = match decomp {
             ZDecomposition::Stabilizer { phase, .. } => {
-                let det_outcome = phase.re < 0.0;
-                if det_outcome == outcome { 1.0 } else { 0.0 }
+                if (phase.re < 0.0) == outcome {
+                    1.0
+                } else {
+                    0.0
+                }
             }
             ZDecomposition::DestabilizerFlip { .. } => 0.5,
         };
-        if prob > 0.0 {
+        if probability > 0.0 {
             tableau.mz_forced(q_idx, outcome);
         }
-        return prob;
+        return probability;
     }
 
+    // Reduce to one virtual X site while compensating every generator-basis
+    // CNOT on the MPS. This preserves C·MPS exactly.
     pre_reduce_for_measurement(tableau, mps, q_idx, true);
-    let ev = z_expectation_value(tableau, mps, q_idx).re;
-    let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
+    let norm_squared = mps.norm_squared();
+    assert!(norm_squared > 1e-20, "cannot project a zero-norm MPS");
+    let expectation = (z_expectation_value(tableau, mps, q_idx).re / norm_squared).clamp(-1.0, 1.0);
+    let decomposition = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
 
-    match decomp {
+    match decomposition {
         ZDecomposition::Stabilizer { phase, sign_sites } => {
-            if sign_sites.is_empty() {
-                let det_outcome = phase.re < 0.0;
-                if det_outcome == outcome {
-                    tableau.mz_forced(q_idx, outcome);
-                    return 1.0;
-                }
+            let probability = forced_outcome_probability(expectation, outcome);
+            if probability < 1e-20 {
                 return 0.0;
             }
-            let prob = forced_outcome_probability(ev, outcome);
-            if prob < 1e-20 {
-                return 0.0;
-            }
-            let sign_f = if outcome { -1.0 } else { 1.0 };
-
-            let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
-            let mut mps_z = mps.clone();
-            for &k in &sign_sites {
-                mps_z
-                    .apply_diagonal_one_site(k, &z_diag)
-                    .expect("MPS op on valid site");
-            }
-            mps_z.scale(
-                Complex64::new(sign_f, 0.0) * phase
-                    / Complex64::new(2.0 * prob.max(1e-20).sqrt(), 0.0),
+            apply_pauli_projection(
+                mps,
+                &[],
+                &sign_sites,
+                phase,
+                if outcome { -1.0 } else { 1.0 },
+                probability,
             );
-            mps.scale(Complex64::new(1.0 / (2.0 * prob.max(1e-20).sqrt()), 0.0));
-            *mps = mps.add(&mps_z);
-            mps.compress();
-            tableau.mz_forced(q_idx, outcome);
-            prob
+            // The physical observable was already in the stabilizer span, so
+            // mz_forced performs no Clifford-basis change. The projected
+            // stabilizer-sign superposition remains encoded in the MPS.
+            if !sign_sites.is_empty() {
+                reduce_exact_projection_bonds(mps);
+            }
+            mps.normalize();
+            probability
         }
-
         ZDecomposition::DestabilizerFlip {
             flip_sites,
             phase,
             sign_sites,
         } => {
-            let prob = forced_outcome_probability(ev, outcome);
-            if prob < 1e-20 {
+            debug_assert_eq!(
+                flip_sites.len(),
+                1,
+                "forced projection must have one flip after pre-reduction"
+            );
+            let probability = forced_outcome_probability(expectation, outcome);
+            if probability < 1e-20 {
                 return 0.0;
             }
             let sign_f = if outcome { -1.0 } else { 1.0 };
-
-            if flip_sites.len() == 1 && sign_sites.is_empty() {
-                let k = flip_sites[0];
-                let chi_r = mps.bond_dim(k + 1);
-                let sp = Complex64::new(sign_f, 0.0) * phase;
-                let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[k], 0, chi_r);
-                let block_1 = crate::mps::tensor::phys_block(&mps.tensors()[k], 1, chi_r);
-                let projected = (&block_0 + &block_1 * sp)
-                    / Complex64::new((2.0 * prob).max(1e-20).sqrt(), 0.0);
-                let zero = DMatrix::zeros(mps.tensors()[k].nrows(), chi_r);
-                crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 0, chi_r, &projected);
-                crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 1, chi_r, &zero);
-                mps.normalize();
+            let is_local_projection = sign_sites.is_empty();
+            if is_local_projection {
+                project_single_flip_without_sign(
+                    mps,
+                    flip_sites[0],
+                    Complex64::new(sign_f, 0.0) * phase,
+                    probability,
+                );
             } else {
-                let x_gate = DMatrix::from_row_slice(
-                    2,
-                    2,
-                    &[
-                        Complex64::new(0.0, 0.0),
-                        Complex64::new(1.0, 0.0),
-                        Complex64::new(1.0, 0.0),
-                        Complex64::new(0.0, 0.0),
-                    ],
-                );
-                let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
-                let mut mps_z = mps.clone();
-                // Order must match z_expectation_value: Z first, then X.
-                // At overlap sites, this yields XZ = Y-convention Y (not ZX
-                // = -Y_conv). Inconsistent order would project onto the
-                // opposite-sign operator, leaving state in wrong subspace.
-                for &k in &sign_sites {
-                    mps_z
-                        .apply_diagonal_one_site(k, &z_diag)
-                        .expect("MPS op on valid site");
-                }
-                for &j in &flip_sites {
-                    mps_z
-                        .apply_one_site_gate(j, &x_gate)
-                        .expect("MPS op on valid site");
-                }
-                mps_z.scale(
-                    Complex64::new(sign_f, 0.0) * phase
-                        / Complex64::new(2.0 * prob.max(1e-20).sqrt(), 0.0),
-                );
-                mps.scale(Complex64::new(1.0 / (2.0 * prob.max(1e-20).sqrt()), 0.0));
-                *mps = mps.add(&mps_z);
-                mps.compress();
-                if flip_sites.len() == 1 {
-                    let k = flip_sites[0];
-                    let chi_r = mps.bond_dim(k + 1);
-                    let zero = DMatrix::zeros(mps.tensors()[k].nrows(), chi_r);
-                    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 1, chi_r, &zero);
-                }
-                mps.normalize();
+                apply_pauli_projection(mps, &flip_sites, &sign_sites, phase, sign_f, probability);
+                // On the projected Pauli eigenspace, W^-1 is exactly sqrt(2)
+                // times selection of the flip site's zero block.
+                collapse_projected_flip_site(mps, flip_sites[0]);
             }
 
-            tableau.mz_forced(q_idx, outcome);
-            prob
+            assert!(
+                tableau.tracks_destab_signs(),
+                "exact forced projection requires destabilizer-sign tracking"
+            );
+            let mut predicted_tableau = tableau.clone();
+            right_compose_measurement_basis_rotation(
+                &mut predicted_tableau,
+                flip_sites[0],
+                phase,
+                &sign_sites,
+                outcome,
+            );
+
+            let result = tableau.mz_forced(q_idx, outcome);
+            debug_assert_eq!(result.outcome, outcome);
+            compensate_measurement_pauli_gauge(mps, &predicted_tableau, tableau);
+            if !is_local_projection {
+                reduce_exact_projection_bonds(mps);
+            }
+            mps.normalize();
+            probability
         }
     }
 }
@@ -916,6 +1120,7 @@ pub fn measure_qubit_stab_mps_lazy(
             let sign_f = if outcome { -1.0 } else { 1.0 };
             let prob = if outcome { 1.0 - prob_plus } else { prob_plus };
             apply_pauli_projection(mps, &flip_conj, &sign_conj, phase_conj, sign_f, prob);
+            mps.compress();
             MeasurementResult {
                 outcome,
                 is_deterministic: is_determ,
@@ -963,6 +1168,7 @@ pub fn measure_qubit_stab_mps_lazy(
 
             // Project stored MPS via conjugated Pauli.
             apply_pauli_projection(mps, &flip_conj, &sign_conj, phase_conj, sign_f, prob);
+            mps.compress();
             // Absorb W⁻¹ into V. W satisfies:
             //   W · Z_id · W† = sp · X_flip · Z_sign  (MPS-frame post-measurement Pauli)
             // where `sp = sign_f · phase_conj` (sign_f = -1 if outcome else +1).
@@ -1081,7 +1287,6 @@ fn apply_pauli_projection(
     mps_z.scale(Complex64::new(sign_f, 0.0) * phase / denom);
     mps.scale(Complex64::new(1.0, 0.0) / denom);
     *mps = mps.add(&mps_z);
-    mps.compress();
 }
 
 /// Measure qubit `q_idx` in the Z basis using the STN protocol.

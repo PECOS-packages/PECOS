@@ -2761,6 +2761,127 @@ class decoders:
 
     ObservableFlips = ObservableFlips
 
+    class DecoderSpec:
+        """Immutable typed decoder construction specification."""
+
+        @staticmethod
+        def parse(type_string: str) -> decoders.DecoderSpec: ...
+        @property
+        def history_dependent(self) -> bool: ...
+        @property
+        def wall_clock_dependent(self) -> bool: ...
+        def __repr__(self) -> str: ...
+        def __eq__(self, other: object) -> bool: ...
+
+    @staticmethod
+    def pymatching(*, correlated: bool, error_probability: float | None = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def tesseract(
+        *,
+        preset: str = ...,
+        det_beam: int | None = ...,
+        beam_climbing: bool | None = ...,
+        verbose: bool | None = ...,
+        no_revisit_dets: bool | None = ...,
+        pqlimit: int | None = ...,
+        det_penalty: float | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def bp_osd(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        bp_schedule: str = ...,
+        ms_scaling_factor: float | None = ...,
+        osd_order: int = ...,
+        random_schedule_seed: int | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def bp_lsd(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        bp_schedule: str = ...,
+        ms_scaling_factor: float | None = ...,
+        lsd_order: int = ...,
+        bits_per_step: int = ...,
+        random_schedule_seed: int | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def fusion_blossom(*, correlated: bool = ..., solver: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def relay_bp(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        alpha: float | None = ...,
+        alpha_iteration_scaling_factor: float = ...,
+        gamma0: float | None = ...,
+        pre_iter: int = ...,
+        num_sets: int = ...,
+        set_max_iter: int = ...,
+        gamma_dist_interval: tuple[float, float] = ...,
+        stopping_criterion: str | int = ...,
+        seed: int = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def min_sum_bp(
+        *, error_rate: float | None = ..., max_iter: int = ..., alpha: float | None = ...
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def pecos_uf(*, preset: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def belief_matching(*, mode: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def windowed(
+        *,
+        step: int = ...,
+        buffer: int = ...,
+        mode: str = ...,
+        seam: int = ...,
+        core_extend: int = ...,
+        commit_weight_max: float = ...,
+        inner: decoders.DecoderSpec | None = ...,
+        sandwich_phase2: decoders.DecoderSpec | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def mwpf(
+        *,
+        solver: str = ...,
+        cluster_node_limit: int = ...,
+        timeout: float | None = ...,
+        only_solve_primal_once: bool = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def perturbed(
+        *, inner: decoders.DecoderSpec | None = ..., k: int = ..., sigma: float = ..., seed: int = ...
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def beamsearch(
+        *,
+        beam_width: int = ...,
+        sigma: float = ...,
+        seed: int = ...,
+        step: int = ...,
+        buffer: int = ...,
+        commit_weight_max: float = ...,
+        phase2: decoders.DecoderSpec | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def ensemble(*members: decoders.DecoderSpec) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def k_mwpm(*, k: int = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def astar() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def astar_full() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def union_find() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def belief_find() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def perturbed_fb_corr(*, k: int = ..., sigma: float = ..., seed: int = ...) -> decoders.DecoderSpec: ...
+
     class BpResult:
         """Result from belief propagation decoders.
 

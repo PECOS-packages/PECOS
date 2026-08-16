@@ -3229,6 +3229,8 @@ pub fn register_decoders_module(parent_module: &Bound<'_, PyModule>) -> PyResult
     decoders_module.add_class::<PyDemAwareResult>()?;
     decoders_module.add_class::<PyDemAwareDecoder>()?;
 
+    crate::decoder_spec_bindings::register_decoder_specs(&decoders_module)?;
+
     // Add submodule to parent
     parent_module.add_submodule(&decoders_module)?;
 

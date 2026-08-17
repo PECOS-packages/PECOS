@@ -24,3 +24,4 @@ go/pecos-go-ffi
 julia/pecos-julia-ffi
 python/pecos-rslib
 python/pecos-rslib-llvm
+python/selene-plugins/pecos-selene-general-noise

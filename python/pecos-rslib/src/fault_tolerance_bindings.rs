@@ -134,35 +134,12 @@ mod sampler_decode;
 use decoder_comparison::{
     PyDecoderComparisonResult, compare_decoder_outcomes, validate_comparison_arguments,
 };
-use decoder_scoring::{
-    MaskedObservableDecoder, ShotDecodeError, TimedObservableDecoder, count_decoder_mismatches,
-};
 use sample_corpus::{CorpusError, CorpusToSave, LoadedCorpus};
-
-/// Resolve a caller-supplied worker count.
-///
-/// `None` means "use rayon's default". An explicit zero is caller error: the
-/// parallel decode paths divide the shot count by this value to size chunks,
-/// so a zero would panic across the FFI boundary instead of reporting a
-/// problem the caller can fix.
-fn resolve_worker_count(num_workers: Option<usize>) -> PyResult<usize> {
-    match num_workers {
-        Some(0) => Err(pyo3::exceptions::PyValueError::new_err(
-            "num_workers must be at least 1 (omit it to use one worker per CPU)",
-        )),
-        Some(count) => Ok(count),
-        None => Ok(rayon::current_num_threads()),
-    }
-}
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
 /// Per-shot detector rows paired with per-shot observable/DEM-output rows.
 type PyDetectorObservableRows = (Vec<Vec<bool>>, Vec<Vec<bool>>);
-
-fn map_shot_decode_error(error: ShotDecodeError) -> PyErr {
-    pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
-}
 
 fn idle_family_from_axis_rates(px: f64, py: f64, pz: f64) -> IdleNoiseFamily {
     if px == 0.0 && py == 0.0 && pz == 0.0 {
@@ -2549,7 +2526,7 @@ pub(crate) fn decoder_parse_error_to_py(error: pecos_decoders::DecoderError) -> 
     PyErr::new::<pyo3::exceptions::PyValueError, _>(message)
 }
 
-/// Convert a decoder build error into the legacy Python exception categories.
+/// Convert a decoder build error into the public Python exception categories.
 fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
     match &error {
         pecos_decoders::DecoderError::BackendUnavailable { family: "mwpf", .. } => {
@@ -2571,8 +2548,7 @@ fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
 
 /// Create an `ObservableDecoder` from a DEM string and decoder type name.
 ///
-/// This is the shared factory used by `SampleBatch.decode_count`,
-/// `DemSampler.sample_decode_count`, and the parallel variants.
+/// This shared factory is used by decoder-object construction and comparison.
 fn create_observable_decoder(
     dem: &str,
     decoder_type: &str,
@@ -3143,79 +3119,6 @@ impl PySampleBatch {
         batch_decode::PyDecodeResult::from_execution(py, self.num_shots, plan, output)
     }
 
-    /// Decode all samples with the given decoder type and return the error count.
-    ///
-    /// This runs entirely in Rust -- no per-shot Python crossing.
-    ///
-    /// Args:
-    ///     dem: DEM string in standard DEM text format for the decoder.
-    ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
-    ///                   "`pymatching_uncorrelated`", "tesseract", "`bp_osd`",
-    ///                   "`bp_lsd`", "`union_find`", "`relay_bp`", or "`min_sum_bp`".
-    ///
-    /// Returns:
-    ///     Number of logical errors.
-    #[pyo3(signature = (dem, decoder_type="pymatching", *, allow_dem_mismatch=false))]
-    fn decode_count(
-        &self,
-        dem: &str,
-        decoder_type: &str,
-        allow_dem_mismatch: bool,
-    ) -> PyResult<usize> {
-        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
-        let mut decoder = create_observable_decoder(dem, decoder_type)?;
-        let mut syndrome = vec![0u8; self.num_detectors];
-        count_decoder_mismatches(
-            0..self.num_shots,
-            &mut syndrome,
-            |shot, buffer| {
-                self.extract_syndrome(shot, buffer);
-                self.extract_obs_mask_wide(shot)
-            },
-            decoder.as_mut(),
-        )
-        .map_err(map_shot_decode_error)
-    }
-
-    /// Decode every shot and return the predicted observable mask per shot.
-    ///
-    /// Mirrors `decode_count` but returns the raw per-shot predictions instead
-    /// of an aggregate error count, so callers can localize disagreements
-    /// against a reference decoder.
-    ///
-    /// Args:
-    ///     dem: DEM string for the decoder.
-    ///     `decoder_type`: Decoder type string.
-    ///
-    /// Returns:
-    ///     List of predicted observable masks (Python ints; arbitrary precision,
-    ///     so more than 64 observables are not truncated), one per shot.
-    #[pyo3(signature = (dem, decoder_type="pymatching", *, allow_dem_mismatch=false))]
-    fn decode_each(
-        &self,
-        py: Python<'_>,
-        dem: &str,
-        decoder_type: &str,
-        allow_dem_mismatch: bool,
-    ) -> PyResult<Vec<Py<pyo3::PyAny>>> {
-        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
-        let mut decoder = create_observable_decoder(dem, decoder_type)?;
-        let mut predictions = Vec::with_capacity(self.num_shots);
-        let mut syndrome = vec![0u8; self.num_detectors];
-        for shot in 0..self.num_shots {
-            self.extract_syndrome(shot, &mut syndrome);
-            // Propagate a decode failure rather than masking it as a sentinel
-            // observable value (which would read as a spurious disagreement).
-            let predicted = decoder.decode_obs(&syndrome).map_err(|error| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "decoder failed on shot {shot}: {error}"
-                ))
-            })?;
-            predictions.push(obsmask_to_py(py, &predicted)?);
-        }
-        Ok(predictions)
-    }
-
     /// Decode every shot with a decoder under test (DUT) and a reference decoder.
     ///
     /// Both decoders receive the same shots in the same order. Each result is
@@ -3260,283 +3163,6 @@ impl PySampleBatch {
         );
         PyDecoderComparisonResult::new(counts, alpha)
             .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
-    }
-
-    /// Parallel decode: distributes samples across rayon workers.
-    ///
-    /// Each worker creates its own decoder instance. Faster for slow decoders.
-    ///
-    /// Args:
-    ///     dem: DEM string for the decoder.
-    ///     `decoder_type`: Decoder type string.
-    ///     `num_workers`: Number of parallel workers (default: number of CPUs).
-    ///
-    /// Returns:
-    ///     Number of logical errors.
-    #[pyo3(signature = (dem, decoder_type="pymatching", num_workers=None, *, allow_dem_mismatch=false))]
-    fn decode_count_parallel(
-        &self,
-        dem: &str,
-        decoder_type: &str,
-        num_workers: Option<usize>,
-        allow_dem_mismatch: bool,
-    ) -> PyResult<usize> {
-        use rayon::prelude::*;
-
-        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
-        drop(create_observable_decoder(dem, decoder_type)?);
-        let n_workers = resolve_worker_count(num_workers)?;
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(n_workers)
-            .build()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        let dem_str = dem.to_string();
-        let dt = decoder_type.to_string();
-        let n = self.num_shots;
-        let num_dets = self.num_detectors;
-
-        // Materialize row-major data for parallel decode.
-        let detection_events: Vec<Vec<u8>> = (0..n)
-            .map(|i| {
-                let mut s = vec![0u8; num_dets];
-                self.extract_syndrome(i, &mut s);
-                s
-            })
-            .collect();
-        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> =
-            (0..n).map(|i| self.extract_obs_mask_wide(i)).collect();
-
-        let worker_results: Vec<Result<usize, ShotDecodeError>> = pool.install(|| {
-            let chunk_size = n.div_ceil(n_workers);
-            (0..n_workers)
-                .into_par_iter()
-                .map(|worker_id| {
-                    let start = worker_id * chunk_size;
-                    let end = (start + chunk_size).min(n);
-                    if start >= end {
-                        return Ok(0);
-                    }
-
-                    // Safe after the identical factory call was validated above.
-                    let mut decoder = create_observable_decoder(&dem_str, &dt).unwrap();
-                    let mut syndrome = vec![0u8; num_dets];
-                    count_decoder_mismatches(
-                        start..end,
-                        &mut syndrome,
-                        |shot, buffer| {
-                            buffer.copy_from_slice(&detection_events[shot]);
-                            observable_masks[shot].clone()
-                        },
-                        decoder.as_mut(),
-                    )
-                })
-                .collect()
-        });
-
-        worker_results
-            .into_iter()
-            .try_fold(0usize, |total, result| {
-                result
-                    .map(|count| total + count)
-                    .map_err(map_shot_decode_error)
-            })
-    }
-
-    /// Batch decode all samples at once using `PyMatching`'s batch API.
-    ///
-    /// Sends all detection events in a single flat array to the decoder,
-    /// which can vectorize across shots. Faster than per-shot decode for
-    /// `PyMatching`. Only supports pymatching decoder.
-    ///
-    /// Returns:
-    ///     Number of logical errors.
-    #[pyo3(signature = (dem, *, allow_dem_mismatch=false))]
-    fn decode_count_batch(&self, dem: &str, allow_dem_mismatch: bool) -> PyResult<usize> {
-        use pecos_decoders::{BatchConfig, PyMatchingDecoder};
-
-        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
-        let mut decoder = PyMatchingDecoder::from_dem(dem)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        let num_detectors = decoder.num_detectors();
-
-        // Flatten all detection events into a single contiguous array
-        let mut flat = Vec::with_capacity(self.num_shots * num_detectors);
-        let mut syndrome = vec![0u8; self.num_detectors];
-        for i in 0..self.num_shots {
-            self.extract_syndrome(i, &mut syndrome);
-            // Pad or truncate to decoder's num_detectors
-            let take = syndrome.len().min(num_detectors);
-            flat.extend_from_slice(&syndrome[..take]);
-            flat.extend(std::iter::repeat_n(0, num_detectors - take));
-        }
-
-        let config = BatchConfig {
-            bit_packed_input: false,
-            bit_packed_output: false,
-            return_weights: false,
-        };
-
-        let result = decoder
-            .decode_batch_with_config(&flat, self.num_shots, num_detectors, config)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        // Count errors by comparing predictions to true observable masks. The
-        // predicted mask is a wide ObsMask (inline for <=64 observables, correct
-        // beyond), so a DEM with more than 64 observables is not truncated.
-        let num_observables = decoder.num_observables();
-        let mut num_errors = 0usize;
-        for (i, prediction) in result.predictions.iter().enumerate() {
-            let mut predicted = pecos_decoder_core::obs_mask::ObsMask::new();
-            for (j, &v) in prediction.iter().enumerate() {
-                if v != 0 && j < num_observables {
-                    predicted.set(j);
-                }
-            }
-            if predicted != self.extract_obs_mask_wide(i) {
-                num_errors += 1;
-            }
-        }
-
-        Ok(num_errors)
-    }
-
-    /// Decode all samples and collect per-shot timing statistics.
-    ///
-    /// Returns a `DecodeStats` with error count, total time, median, and
-    /// percentile per-shot decode times. Useful for understanding decoder
-    /// performance characteristics (heavy tails, etc.).
-    ///
-    /// Args:
-    ///     dem: DEM string for the decoder.
-    ///     `decoder_type`: Decoder type string.
-    ///
-    /// Returns:
-    ///     `DecodeStats` with timing breakdown.
-    #[pyo3(signature = (dem, decoder_type="pymatching", *, allow_dem_mismatch=false))]
-    fn decode_stats(
-        &self,
-        dem: &str,
-        decoder_type: &str,
-        allow_dem_mismatch: bool,
-    ) -> PyResult<PyDecodeStats> {
-        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
-        let decoder = create_observable_decoder(dem, decoder_type)?;
-        let mut decoder = TimedObservableDecoder::new(decoder, self.num_shots);
-        let mut syndrome = vec![0u8; self.num_detectors];
-        let num_errors = count_decoder_mismatches(
-            0..self.num_shots,
-            &mut syndrome,
-            |shot, buffer| {
-                self.extract_syndrome(shot, buffer);
-                self.extract_obs_mask_wide(shot)
-            },
-            &mut decoder,
-        )
-        .map_err(map_shot_decode_error)?;
-        let per_shot_seconds = decoder.into_times();
-
-        Ok(PyDecodeStats::from_times(
-            self.num_shots,
-            num_errors,
-            per_shot_seconds,
-        ))
-    }
-
-    /// Decode all shots with per-shot timing, using parallel workers.
-    ///
-    /// Like `decode_stats` but distributes shots across rayon threads.
-    /// Useful for slow decoders (MWPF, Tesseract, BP+OSD) where a single
-    /// shot can take seconds.
-    ///
-    /// Per-shot timing is still collected (each worker times its own shots).
-    /// The total wall-clock time is approximately `serial_total / num_workers`.
-    ///
-    /// Args:
-    ///     dem: DEM string for the decoder.
-    ///     `decoder_type`: Decoder type string.
-    ///     `num_workers`: Number of parallel workers (default: number of CPUs).
-    #[pyo3(signature = (dem, decoder_type="mwpf", num_workers=None, *, allow_dem_mismatch=false))]
-    fn decode_stats_parallel(
-        &self,
-        dem: &str,
-        decoder_type: &str,
-        num_workers: Option<usize>,
-        allow_dem_mismatch: bool,
-    ) -> PyResult<PyDecodeStats> {
-        use rayon::prelude::*;
-
-        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
-        let n_workers = resolve_worker_count(num_workers)?;
-
-        // Validate decoder type early.
-        create_observable_decoder(dem, decoder_type)?;
-
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(n_workers)
-            .build()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        let dem_str = dem.to_string();
-        let dt = decoder_type.to_string();
-        let num_dets = self.num_detectors;
-
-        // Materialize row-major data for parallel decode.
-        let detection_events: Vec<Vec<u8>> = (0..self.num_shots)
-            .map(|i| {
-                let mut s = vec![0u8; num_dets];
-                self.extract_syndrome(i, &mut s);
-                s
-            })
-            .collect();
-        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> = (0..self.num_shots)
-            .map(|i| self.extract_obs_mask_wide(i))
-            .collect();
-
-        // Each worker decodes a contiguous slice and returns its count and timings.
-        let results: Vec<Result<(usize, Vec<f64>), ShotDecodeError>> = pool.install(|| {
-            let chunk_size = self.num_shots.div_ceil(n_workers);
-            (0..n_workers)
-                .into_par_iter()
-                .map(|worker_id| {
-                    let start = worker_id * chunk_size;
-                    let end = (start + chunk_size).min(self.num_shots);
-                    if start >= end {
-                        return Ok((0, Vec::new()));
-                    }
-
-                    // Safe after the identical factory call was validated above.
-                    let decoder = create_observable_decoder(&dem_str, &dt).unwrap();
-                    let mut decoder = TimedObservableDecoder::new(decoder, end - start);
-                    let mut syndrome = vec![0u8; num_dets];
-                    let errors = count_decoder_mismatches(
-                        start..end,
-                        &mut syndrome,
-                        |shot, buffer| {
-                            buffer.copy_from_slice(&detection_events[shot]);
-                            observable_masks[shot].clone()
-                        },
-                        &mut decoder,
-                    )?;
-                    Ok((errors, decoder.into_times()))
-                })
-                .collect()
-        });
-
-        let mut total_errors = 0usize;
-        let mut all_times = Vec::with_capacity(self.num_shots);
-        for result in results {
-            let (errs, times) = result.map_err(map_shot_decode_error)?;
-            total_errors += errs;
-            all_times.extend(times);
-        }
-
-        Ok(PyDecodeStats::from_times(
-            self.num_shots,
-            total_errors,
-            all_times,
-        ))
     }
 
     fn __repr__(&self) -> String {
@@ -3584,25 +3210,12 @@ pub struct PyDecodeStats {
 impl PyDecodeStats {
     // Shot counts and error counts are well within f64 mantissa range (2^52).
     // Percentile index computation is bounded by array length.
-    fn from_times(num_shots: usize, num_errors: usize, times: Vec<f64>) -> Self {
-        // Legacy timing methods do not define an end-to-end measurement
-        // boundary. Keep their two newer elapsed fields at the documented zero
-        // default while preserving every existing statistic.
-        Self::from_times_with_elapsed(num_shots, num_errors, times, 0.0, 0.0)
-    }
-
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
     )]
-    fn from_times_with_elapsed(
-        num_shots: usize,
-        num_errors: usize,
-        mut times: Vec<f64>,
-        wall_elapsed: f64,
-        summed_decode_elapsed: f64,
-    ) -> Self {
+    fn from_times(num_shots: usize, num_errors: usize, mut times: Vec<f64>) -> Self {
         let num_timing_samples = times.len();
         let total_seconds: f64 = times.iter().sum();
         let per_shot_mean = if num_shots > 0 {
@@ -3633,8 +3246,8 @@ impl PyDecodeStats {
                 0.0
             },
             total_seconds,
-            wall_elapsed,
-            summed_decode_elapsed,
+            wall_elapsed: 0.0,
+            summed_decode_elapsed: 0.0,
             num_timing_samples,
             per_shot_mean,
             per_shot_median: percentile(50.0),
@@ -3643,6 +3256,19 @@ impl PyDecodeStats {
             per_shot_max: times.last().copied().unwrap_or(0.0),
             quantiles,
         }
+    }
+
+    fn from_times_with_elapsed(
+        num_shots: usize,
+        num_errors: usize,
+        times: Vec<f64>,
+        wall_elapsed: f64,
+        summed_decode_elapsed: f64,
+    ) -> Self {
+        let mut stats = Self::from_times(num_shots, num_errors, times);
+        stats.wall_elapsed = wall_elapsed;
+        stats.summed_decode_elapsed = summed_decode_elapsed;
+        stats
     }
 }
 
@@ -4273,9 +3899,9 @@ impl PyDemSampler {
     /// is capped at `ceil(num_shots / 1024)` regardless of the requested workers.
     ///
     /// Predictions and truth are restricted to the sampler's observable DEM
-    /// outputs, matching `sample_decode_count`; `SampleBatch.decode` scores
-    /// against the full DEM-output row instead, so the two can differ on
-    /// samplers whose DEM outputs exceed their observables.
+    /// outputs. `SampleBatch.decode` scores against the full DEM-output row
+    /// instead, so the two can differ on samplers whose DEM outputs exceed
+    /// their observables.
     ///
     /// Args:
     ///     dem: DEM text used to construct the decoder. It may deliberately be
@@ -4382,155 +4008,6 @@ impl PyDemSampler {
             output,
             actual_seed,
         )
-    }
-
-    /// Sample and decode in a tight Rust loop, returning only the error count.
-    ///
-    /// This is the fastest path for threshold estimation -- no per-shot data
-    /// crosses the Rust/Python boundary. The sampler produces detection events,
-    /// the decoder decodes them via the `ObservableDecoder` trait, and errors
-    /// are counted, all in Rust.
-    ///
-    /// Args:
-    ///     dem: DEM string in standard DEM text format for the decoder.
-    ///     `num_shots`: Number of shots to sample and decode.
-    ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
-    ///                   "`pymatching_uncorrelated`", "tesseract", or another
-    ///                   decoder accepted by `create_observable_decoder`.
-    ///     seed: Optional random seed for reproducibility.
-    ///
-    /// Returns:
-    ///     Number of logical errors (mismatches between decoder prediction and true flip).
-    #[pyo3(signature = (dem, num_shots, decoder_type="pymatching", seed=None))]
-    fn sample_decode_count(
-        &self,
-        dem: &str,
-        num_shots: usize,
-        decoder_type: &str,
-        seed: Option<u64>,
-    ) -> PyResult<usize> {
-        use pecos_random::PecosRng;
-        use rand::RngExt;
-
-        let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
-        let mut rng = PecosRng::seed_from_u64(actual_seed);
-
-        let decoder = create_observable_decoder(dem, decoder_type)?;
-        let observable_mask = self.inner.observable_dem_output_mask();
-        let mut decoder = MaskedObservableDecoder::new(decoder, observable_mask.clone());
-
-        // Tight sample+decode loop -- no Python involvement.
-        // Single-threaded: sample and decode sequentially.
-        let mut syndrome = vec![0u8; self.inner.num_detectors()];
-        count_decoder_mismatches(
-            0..num_shots,
-            &mut syndrome,
-            |_, buffer| {
-                let (det_events, obs_flips) = self.inner.sample(&mut rng);
-                debug_assert_eq!(det_events.len(), buffer.len());
-                for (value, event) in buffer.iter_mut().zip(det_events) {
-                    *value = u8::from(event);
-                }
-                self.inner
-                    .observable_mask_from_dem_output_flips(&obs_flips, &observable_mask)
-            },
-            &mut decoder,
-        )
-        .map_err(map_shot_decode_error)
-    }
-
-    /// Parallel sample+decode: distributes shots across threads.
-    ///
-    /// Each thread gets its own sampler clone and decoder instance.
-    /// Much faster for slow decoders (Tesseract) where decode time dominates.
-    ///
-    /// Args:
-    ///     dem: DEM string in standard DEM text format for the decoder.
-    ///     `num_shots`: Number of shots to sample and decode.
-    ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
-    ///                   "`pymatching_uncorrelated`", "tesseract", "`bp_osd`",
-    ///                   "`bp_lsd`", or "`union_find`".
-    ///     seed: Optional base random seed. Each thread gets seed + `thread_id`.
-    ///     `num_workers`: Number of parallel workers (default: number of CPUs).
-    ///
-    /// Returns:
-    ///     Number of logical errors.
-    #[pyo3(signature = (dem, num_shots, decoder_type="pymatching", seed=None, num_workers=None))]
-    fn sample_decode_count_parallel(
-        &self,
-        dem: &str,
-        num_shots: usize,
-        decoder_type: &str,
-        seed: Option<u64>,
-        num_workers: Option<usize>,
-    ) -> PyResult<usize> {
-        use rayon::prelude::*;
-
-        let actual_seed = seed.unwrap_or(0);
-        let n_workers = resolve_worker_count(num_workers)?;
-
-        // Validate decoder type early
-        create_observable_decoder(dem, decoder_type)?;
-
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(n_workers)
-            .build()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        let shots_per_worker = num_shots / n_workers;
-        let remainder = num_shots % n_workers;
-
-        let sampler = &self.inner;
-        let observable_mask = sampler.observable_dem_output_mask();
-        let dem_str = dem.to_string();
-        let dt = decoder_type.to_string();
-
-        let worker_results: Vec<Result<usize, ShotDecodeError>> = pool.install(|| {
-            (0..n_workers)
-                .into_par_iter()
-                .map(|worker_id| {
-                    use pecos_random::PecosRng;
-
-                    let my_shots = shots_per_worker + usize::from(worker_id < remainder);
-                    if my_shots == 0 {
-                        return Ok(0);
-                    }
-                    let start = worker_id * shots_per_worker + worker_id.min(remainder);
-                    let end = start + my_shots;
-
-                    let my_sampler = sampler.clone();
-                    let mut my_rng =
-                        PecosRng::seed_from_u64(actual_seed.wrapping_add(worker_id as u64));
-                    // unwrap is safe: we validated above
-                    let decoder = create_observable_decoder(&dem_str, &dt).unwrap();
-                    let mut decoder =
-                        MaskedObservableDecoder::new(decoder, observable_mask.clone());
-                    let mut syndrome = vec![0u8; my_sampler.num_detectors()];
-                    count_decoder_mismatches(
-                        start..end,
-                        &mut syndrome,
-                        |_, buffer| {
-                            let (det_events, obs_flips) = my_sampler.sample(&mut my_rng);
-                            debug_assert_eq!(det_events.len(), buffer.len());
-                            for (value, event) in buffer.iter_mut().zip(det_events) {
-                                *value = u8::from(event);
-                            }
-                            my_sampler
-                                .observable_mask_from_dem_output_flips(&obs_flips, &observable_mask)
-                        },
-                        &mut decoder,
-                    )
-                })
-                .collect()
-        });
-
-        worker_results
-            .into_iter()
-            .try_fold(0usize, |total, result| {
-                result
-                    .map(|count| total + count)
-                    .map_err(map_shot_decode_error)
-            })
     }
 
     fn __repr__(&self) -> String {

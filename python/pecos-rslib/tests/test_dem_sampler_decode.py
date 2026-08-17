@@ -191,43 +191,6 @@ def test_timing_counts_decode_calls_and_combines_with_predictions() -> None:
     assert result.stats.wall_elapsed >= result.stats.summed_decode_elapsed
 
 
-def test_legacy_sampling_streams_remain_frozen() -> None:
-    sampler = _sampler()
-
-    # Stream-stability pins for the pre-ABI legacy paths. These rows and count
-    # guard their original continuous and geometric RNG streams, respectively.
-    assert sampler.sample_decode_count(DEM, 12, "pymatching", seed=91) == 3
-    batch = sampler.sample_batch(12, seed=91)
-    assert batch.detector_events() == [
-        [True],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [True],
-        [True],
-    ]
-    assert batch.observable_flips() == [
-        [True],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [False],
-        [True],
-        [False],
-    ]
-
-
 def test_worker_count_is_clamped_to_the_number_of_sampling_chunks() -> None:
     # A sampling chunk is the unit of parallel work, so a caller asking for more
     # workers than there are chunks must be told what actually ran -- and must not

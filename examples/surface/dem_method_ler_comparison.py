@@ -245,7 +245,8 @@ def _sample_from_sim(tc, noise_params, shots, seed, backend="statevec"):
     if backend == "stabilizer":
         quantum_backend = stabilizer()
     elif backend == "stab_mps":
-        quantum_backend = stab_mps()
+        # New merge/truncation defaults change LERs; pin the legacy configuration for reproducibility.
+        quantum_backend = stab_mps().max_bond_dim(64).max_truncation_error(0.0).merge_rz(enabled=False)
     else:
         quantum_backend = statevec()
 

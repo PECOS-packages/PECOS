@@ -28,8 +28,8 @@
 //!
 //! Implementation for each gate (right-compose):
 //! - `H_q`:     swap stabs row q with destabs row q (and their signs)
-//! - `S_q`:     destabs[q] *= stabs[q], with phase +i correction
-//! - CX(c,t): stabs[t] *= stabs[c], destabs[c] *= destabs[t]
+//! - `S_q`: `destabs[q] *= stabs[q]`, with phase +i correction
+//! - CX(c,t): `stabs[t] *= stabs[c]`, `destabs[c] *= destabs[t]`
 //!
 //! Reference: Aaronson & Gottesman, "Improved Simulation of Stabilizer Circuits"
 //! (PRA 70, 052328 (2004)); stabilizer-TN reference compose(..., front=True).
@@ -348,10 +348,10 @@ pub fn right_compose_sz<R: pecos_random::Rng + pecos_random::SeedableRng + std::
 /// Right-compose CX(control, target) gate onto the tableau.
 ///
 /// CX(c, t) acting on the right:
-/// - `Z_c` unchanged -> stabs[c] unchanged
-/// - `Z_t` -> `Z_c` `Z_t` -> stabs[t] *= stabs[c]
-/// - `X_c` -> `X_c` `X_t` -> destabs[c] *= destabs[t]
-/// - `X_t` unchanged -> destabs[t] unchanged
+/// - `Z_c` unchanged -> `stabs[c]` unchanged
+/// - `Z_t` -> `Z_c` `Z_t` -> `stabs[t] *= stabs[c]`
+/// - `X_c` -> `X_c` `X_t` -> `destabs[c] *= destabs[t]`
+/// - `X_t` unchanged -> `destabs[t]` unchanged
 pub fn right_compose_cx<R: pecos_random::Rng + pecos_random::SeedableRng + std::fmt::Debug>(
     tableau: &mut SparseStabY<R>,
     control: usize,
@@ -376,7 +376,7 @@ pub fn right_compose_cx<R: pecos_random::Rng + pecos_random::SeedableRng + std::
 /// Right-compose `S_z^dagger` (inverse phase) gate onto the tableau.
 ///
 /// Sdg Z Sdg^dagger = Z (unchanged), Sdg X Sdg^dagger = -Y = -iXZ.
-/// So destabs[q] gets multiplied by stabs[q] with a -i phase.
+/// So `destabs[q]` gets multiplied by `stabs[q]` with a -i phase.
 pub fn right_compose_szdg<R: pecos_random::Rng + pecos_random::SeedableRng + std::fmt::Debug>(
     tableau: &mut SparseStabY<R>,
     q: usize,
@@ -431,7 +431,7 @@ pub fn right_compose_szdg<R: pecos_random::Rng + pecos_random::SeedableRng + std
 
 /// Right-compose X gate on qubit q onto the tableau.
 ///
-/// X Z X = -Z, X X X = X. So stabs[q] sign flips, destabs[q] unchanged.
+/// X Z X = -Z, X X X = X. So `stabs[q]` sign flips, `destabs[q]` is unchanged.
 pub fn right_compose_x<R: pecos_random::Rng + pecos_random::SeedableRng + std::fmt::Debug>(
     tableau: &mut SparseStabY<R>,
     q: usize,
@@ -444,7 +444,7 @@ pub fn right_compose_x<R: pecos_random::Rng + pecos_random::SeedableRng + std::f
 
 /// Right-compose Z gate on qubit q onto the tableau.
 ///
-/// Z Z Z = Z, Z X Z = -X. So destabs[q] sign flips, stabs[q] unchanged.
+/// Z Z Z = Z, Z X Z = -X. So `destabs[q]` sign flips, `stabs[q]` is unchanged.
 pub fn right_compose_z<R: pecos_random::Rng + pecos_random::SeedableRng + std::fmt::Debug>(
     tableau: &mut SparseStabY<R>,
     q: usize,
@@ -484,8 +484,8 @@ pub fn right_compose_cy<R: pecos_random::Rng + pecos_random::SeedableRng + std::
 ///
 /// CZ = `H_2` CX(1,2) `H_2`. The effect on generators:
 /// - `Z_1` -> `Z_1`, `Z_2` -> `Z_2` (stabs unchanged)
-/// - `X_1` -> `X_1` `Z_2` (destabs[1] *= stabs[2])
-/// - `X_2` -> `Z_1` `X_2` (destabs[2] *= stabs[1])
+/// - `X_1` -> `X_1` `Z_2` (`destabs[1] *= stabs[2]`)
+/// - `X_2` -> `Z_1` `X_2` (`destabs[2] *= stabs[1]`)
 pub fn right_compose_cz<R: pecos_random::Rng + pecos_random::SeedableRng + std::fmt::Debug>(
     tableau: &mut SparseStabY<R>,
     q1: usize,

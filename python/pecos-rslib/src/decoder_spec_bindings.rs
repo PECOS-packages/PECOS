@@ -1,6 +1,5 @@
 //! Python value-object bindings for typed decoder specifications.
 
-use pecos_decoders::DecoderError;
 use pecos_decoders::spec::{
     BeamSearchConfig, BeliefMatchingConfig, BeliefMatchingMode, BpLsdConfig, BpOsdConfig,
     BpSchedule, EnsembleConfig, FusionBlossomConfig, FusionBlossomSolverType, KMwpmConfig,
@@ -270,9 +269,9 @@ impl Default for PyRelayStoppingCriterion {
 
 fn parse_stopping_criterion(value: PyRelayStoppingCriterion) -> PyResult<RelayStoppingCriterion> {
     match value {
-        PyRelayStoppingCriterion::Bool(_) => Err(invalid_choice(
+        PyRelayStoppingCriterion::Bool(value) => Err(invalid_choice(
             "stopping_criterion",
-            "a bool",
+            if value { "True" } else { "False" },
             "'pre_iter', 'all', 'first_convergence', or a positive integer",
         )),
         PyRelayStoppingCriterion::Name(value) => match value.as_str() {

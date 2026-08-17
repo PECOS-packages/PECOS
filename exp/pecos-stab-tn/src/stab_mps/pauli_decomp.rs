@@ -36,8 +36,11 @@ use pecos_simulators::GensGeneric;
 /// Single-qubit Pauli kind for `decompose_pauli_string`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PauliKindForDecomp {
+    /// Pauli X.
     X,
+    /// Pauli Y.
     Y,
+    /// Pauli Z.
     Z,
 }
 

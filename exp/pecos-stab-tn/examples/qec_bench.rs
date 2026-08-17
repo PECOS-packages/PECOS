@@ -156,8 +156,8 @@ fn ion_trap_memory_scenario(
 }
 
 /// MAST-style: T-injection using ancilla pattern, final measurement.
-fn mast_scenario(num_qubits: usize, num_t_gates: usize, lazy: bool, seed: u64) -> (f64, usize) {
-    let mut mast = Mast::with_seed(num_qubits, num_t_gates, seed).with_lazy_measure(lazy);
+fn mast_scenario(num_qubits: usize, num_t_gates: usize, seed: u64) -> (f64, usize) {
+    let mut mast = Mast::with_seed(num_qubits, num_t_gates, seed);
     let t = Angle64::QUARTER_TURN / 2u64;
 
     let start = Instant::now();
@@ -192,7 +192,6 @@ fn main() {
     let t_angle = Angle64::QUARTER_TURN / 2u64; // T = RZ(π/4)
     let num_data = 8;
     let num_rounds = 20;
-    let max_bond = 64;
     let seed = 42;
 
     println!(
@@ -206,21 +205,22 @@ fn main() {
     );
     println!("{:-<90}", "");
 
-    let configs: &[(&str, bool, Option<f64>, bool)] = &[
-        ("default", false, None, false),
-        ("lazy_measure", true, None, false),
-        ("max_truncation_error=1e-8", false, Some(1e-8), false),
-        ("merge_rz", false, None, true),
+    let configs: &[(&str, bool, Option<f64>, bool, usize)] = &[
+        ("legacy defaults", false, Some(0.0), false, 64),
+        ("legacy + lazy_measure", true, Some(0.0), false, 64),
+        ("max_truncation_error=1e-8", false, Some(1e-8), false, 64),
+        ("merge_rz", false, None, true, 64),
         (
             "merge_rz + max_truncation_error=1e-8",
             false,
             Some(1e-8),
             true,
+            64,
         ),
-        ("for_qec()", false, Some(1e-8), true),
+        ("general defaults (cap pinned)", false, Some(1e-8), true, 64),
     ];
 
-    for &(name, lazy, trunc, merge) in configs {
+    for &(name, lazy, trunc, merge, max_bond) in configs {
         let (t, bond, parity) = build_and_run(&BenchConfig {
             num_data,
             num_rounds,
@@ -240,7 +240,7 @@ fn main() {
     );
 
     // -------------------------------------------------------------------------
-    // MAST-style scenario: where lazy_measure actually helps.
+    // MAST-style exact-measurement scenario.
     // -------------------------------------------------------------------------
     println!();
     println!("MAST-like scenario: deep random Clifford+T measured via ancilla injection");
@@ -251,20 +251,19 @@ fn main() {
     let n_q = 8;
     let n_t = 8;
     let num_trials = 20;
-    for (name, lazy) in [("eager", false), ("lazy", true)] {
-        let mut total_time = 0.0;
-        let mut total_bond = 0usize;
-        for trial in 0..num_trials {
-            let (t, b) = mast_scenario(n_q, n_t, lazy, 20000 + trial as u64);
-            total_time += t;
-            total_bond += b;
-        }
-        println!(
-            "{name:<30} {:>12.4} {:>12.1}",
-            total_time / f64::from(num_trials),
-            total_bond as f64 / f64::from(num_trials)
-        );
+    let mut total_time = 0.0;
+    let mut total_bond = 0usize;
+    for trial in 0..num_trials {
+        let (t, b) = mast_scenario(n_q, n_t, 20000 + trial as u64);
+        total_time += t;
+        total_bond += b;
     }
+    println!(
+        "{:<30} {:>12.4} {:>12.1}",
+        "exact measurement",
+        total_time / f64::from(num_trials),
+        total_bond as f64 / f64::from(num_trials)
+    );
     println!("{:-<70}", "");
 
     // -------------------------------------------------------------------------
@@ -277,7 +276,7 @@ fn main() {
     println!("{:<30} {:>12} {:>12}", "config", "time (s)", "max bond");
     println!("{:-<70}", "");
     let small_angle = Angle64::from_radians(0.01);
-    for (name, merge) in [("default", false), ("merge_rz", true)] {
+    for (name, merge) in [("merge_rz=off", false), ("merge_rz=on (default)", true)] {
         let (t, b) = ion_trap_memory_scenario(6, 10, 50, small_angle, merge, 42);
         println!("{name:<30} {t:>12.4} {b:>12}");
     }

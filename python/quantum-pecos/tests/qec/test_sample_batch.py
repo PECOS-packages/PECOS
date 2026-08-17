@@ -4,6 +4,7 @@
 """Tests for SampleBatch columnar storage and validation."""
 
 import pytest
+from pecos.decoders import pymatching
 from pecos_rslib.qec import DemSampler, ParsedDem, SampleBatch
 
 
@@ -120,7 +121,7 @@ class TestGeneratedSampleBatch:
         mask = batch.get_observable_flips(0).mask
         assert isinstance(mask, int)
 
-    def test_decode_count(self, d3_setup):
+    def test_decode(self, d3_setup):
         import stim
         from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 
@@ -132,7 +133,7 @@ class TestGeneratedSampleBatch:
         )
 
         batch = sampler.sample_batch(1000, seed=42)
-        errors = batch.decode_count(dem_str, "pymatching")
+        errors = batch.decode(dem_str, pymatching(correlated=True)).num_errors
         assert isinstance(errors, int)
         assert 0 <= errors <= 1000
 
@@ -141,12 +142,26 @@ def test_seeded_healthy_decoder_counts_and_stats_are_unchanged() -> None:
     dem = "error(0.1) D0 L0\nerror(0.2) D0\n"
     batch = DemSampler.from_dem_string(dem).sample_batch(257, seed=314159)
 
-    assert batch.decode_count(dem, "pymatching") == 48
-    assert batch.decode_count_batch(dem) == 48
-    assert batch.decode_count_parallel(dem, "pymatching", num_workers=3) == 48
+    sequential = batch.decode(
+        dem,
+        pymatching(correlated=True),
+        workers=1,
+        timing=True,
+    )
+    parallel = batch.decode(
+        dem,
+        pymatching(correlated=True),
+        workers=3,
+        timing=True,
+    )
+    native = batch.decode(dem, pymatching(correlated=False))
 
-    stats = batch.decode_stats(dem, "pymatching")
-    parallel_stats = batch.decode_stats_parallel(dem, "pymatching", num_workers=3)
-    assert stats.num_shots == parallel_stats.num_shots == 257
-    assert stats.num_errors == parallel_stats.num_errors == 48
-    assert stats.logical_error_rate == parallel_stats.logical_error_rate == 48 / 257
+    assert sequential.execution_path == "sequential"
+    assert parallel.execution_path == "parallel"
+    assert native.execution_path == "native_batch"
+    assert sequential.num_errors == parallel.num_errors == native.num_errors == 48
+    assert sequential.num_shots == parallel.num_shots == native.num_shots == 257
+    assert sequential.logical_error_rate == parallel.logical_error_rate == native.logical_error_rate == 48 / 257
+    assert sequential.stats is not None
+    assert parallel.stats is not None
+    assert sequential.stats.num_timing_samples == parallel.stats.num_timing_samples == 257

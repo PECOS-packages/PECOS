@@ -57,7 +57,7 @@ The accuracy fields answer different questions:
 
 Python state reads automatically flush lazy operations and merged rotations. When Pauli-frame tracking is enabled, call `flush_pauli_frame_to_state()` before a read that must include the physical frame.
 
-`StabMps` defaults `merge_rz` to true for throughput. `Mast` defaults it to false so each RZ immediately exposes its injection and ancilla-capacity cost. Numerical flag redetection is opt-in and self-disables while lazy deferred operations are pending, because the stored tensors then differ from the effective MPS-frame state.
+`StabMps` defaults `merge_rz` to true for throughput. `Mast` defaults it to false so each RZ immediately exposes its injection and ancilla-capacity cost. Numerical flag redetection is opt-in. In `StabMps` it self-disables while lazy deferred operations are pending, because the stored tensors then differ from the effective MPS-frame state.
 
 ## `Mast` quickstart
 
@@ -85,7 +85,9 @@ outcome = mast.run_1q_gate("MZ", 0)
 assert outcome in (0, 1)
 ```
 
-`flush()` is not the MAST completion operation: it materializes lazy-measurement operations and pending merged rotations, but leaves already deferred injections alone. Finish with `project_all()` or measure a data qubit with MZ.
+`flush()` is not the MAST completion operation: it materializes pending merged rotations, but leaves already deferred injections alone. Finish with `project_all()` or measure a data qubit with MZ.
+
+MAST predetermines each injection-gadget outcome from its exact half-probability distribution. That choice is exact for the untruncated state. If the coefficient MPS has been truncated, the predetermined branch can differ from the truncated representation's own outcome distribution; it still represents the exact, untruncated gadget protocol.
 
 ## Analyze first with `StabMpsCompile`
 

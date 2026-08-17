@@ -2298,7 +2298,10 @@ fn dense_state_vector_probabilities(stn: &StabMps) -> Vec<f64> {
 
 fn exact_mps_config() -> MpsConfig {
     MpsConfig {
-        max_bond_dim: 128,
+        // The largest case using this helper has eight total MPS sites
+        // (four data plus four injection ancillas), whose exact Schmidt-rank
+        // ceiling is 2^(8/2) = 16.
+        max_bond_dim: 16,
         svd_cutoff: 0.0,
         max_truncation_error: Some(0.0),
         parallel: false,
@@ -2637,6 +2640,11 @@ fn assert_mast_projection_orders_match_dense_random_probabilities(
                                 .fold(0usize, |value, (q, result)| {
                                     value | (usize::from(result.outcome) << q)
                                 });
+                            assert_eq!(
+                                mast.bond_cap_hits(),
+                                0,
+                                "n={num_qubits} t={t_count}: exact test cap was binding"
+                            );
                             local_counts[outcome] += 1;
                             local_counts
                         },
@@ -2669,10 +2677,10 @@ fn assert_mast_projection_orders_match_dense_random_probabilities(
 
 #[test]
 fn test_mast_projection_orders_match_dense_random_probabilities_fast() {
-    // The default debug suite retains both projection orders and the honest
-    // post-injection basis changes on a small circuit. The two focused
-    // single-qubit regressions above provide the high-power timing guards.
-    assert_mast_projection_orders_match_dense_random_probabilities(&[3], &[3], 500);
+    // The default lane covers both projection orders across n=3..=4 and
+    // T=3..=4. At worst-case p=1/2, 1,000 shots give a five-sigma half-width
+    // of 0.0791, below the original 0.146447 correction-timing defect.
+    assert_mast_projection_orders_match_dense_random_probabilities(&[3, 4], &[3, 4], 1_000);
 }
 
 #[test]
@@ -3844,10 +3852,9 @@ fn test_property_mast_bond_dim_stays_low() {
             mast.cx(&[(QubitId(q + 1), QubitId(q))]);
         }
 
-        // Measure the deferred-ancilla protocol itself. `mz` would additionally
-        // include MAST's exact compensated data projection, whose separate bond
-        // cost is tracked by the projection-order benchmark.
-        mast.project_all();
+        // Include the exact data-measurement route in the property: arm data
+        // measured an average final bond dimension of 10.8 for this workload.
+        let _ = mast.mz(&[QubitId(0)]);
 
         total_max_bond += mast.mps().max_bond_dim();
     }
@@ -3855,9 +3862,10 @@ fn test_property_mast_bond_dim_stays_low() {
     let avg_bond = total_max_bond as f64 / f64::from(num_trials);
     eprintln!("MAST average max bond dim for {num_qubits}q, {num_t_gates}T: {avg_bond:.1}");
 
-    // Paper claims ~3 for t <= N. Allow some slack for our small test.
+    // The injection protocol stays low-dimensional; allow headroom above the
+    // measured 10.8 average for exact compensated data measurement.
     assert!(
-        avg_bond < 10.0,
+        avg_bond < 13.0,
         "MAST bond dim should stay low for t <= N, got avg={avg_bond:.1}"
     );
 }
@@ -3888,9 +3896,8 @@ fn test_property_mast_vs_stn_bond_dim() {
         mast.rz(t, &[QubitId(q)]);
     }
 
-    // Force only MAST's deferred ancilla projections. Exact data measurement
-    // has a separate, intentionally reported bond cost.
-    mast.project_all();
+    // Complete deferred projections and exercise exact data measurement.
+    let _ = mast.mz(&[QubitId(0)]);
 
     let stn_bond = stn.max_bond_dim();
     let mast_bond = mast.mps().max_bond_dim();
@@ -3951,6 +3958,7 @@ fn large_scale_bond_dim_check(
     num_qubits: usize,
     num_t_gates: usize,
     num_clifford_layers: usize,
+    mast_max_bond_dim: usize,
     seed: u64,
 ) -> (usize, usize) {
     // STN path
@@ -3993,7 +4001,10 @@ fn large_scale_bond_dim_check(
     let stn_bond = stn.max_bond_dim();
 
     // MAST path (same circuit structure)
-    let mut mast = Mast::with_seed(num_qubits, num_t_gates + 4, seed);
+    let mut mast = Mast::with_seed(num_qubits, num_t_gates + 4, seed).with_mps_config(MpsConfig {
+        max_bond_dim: mast_max_bond_dim,
+        ..MpsConfig::default()
+    });
     let mut rng = seed; // reset RNG to get same circuit
 
     for _layer in 0..num_clifford_layers {
@@ -4013,10 +4024,8 @@ fn large_scale_bond_dim_check(
         }
     }
 
-    // Force only MAST's deferred ancilla projections. Calling `mz` here would
-    // include the exact compensated data-measurement route and change what this
-    // deferred-projection scalability check measures.
-    mast.project_all();
+    // Complete deferred projections and exercise exact data measurement.
+    let _ = mast.mz(&[QubitId(0)]);
     let mast_bond = mast.mps().max_bond_dim();
 
     (stn_bond, mast_bond)
@@ -4026,7 +4035,7 @@ fn large_scale_bond_dim_check(
 fn test_large_scale_12_qubits_fast() {
     let num_qubits = 12;
     let num_t = 6;
-    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 2, 24);
+    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 2, 128, 24);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
     assert!(
         mast_bond < 50,
@@ -4035,18 +4044,22 @@ fn test_large_scale_12_qubits_fast() {
 }
 
 #[test]
-#[ignore = "slow exact-projection scale test; run explicitly with --release --ignored"]
 fn test_large_scale_50_qubits() {
+    // Regression for semantic BitSet row comparison in project_forced_z. The
+    // 50 data sites plus 19 allocated ancilla sites cross the 64-site boundary;
+    // 15 injections reach site 64. A small bond cap keeps this debug test fast
+    // without changing the tableau-allocation mismatch it exercises.
     let num_qubits = 50;
-    let num_t = 20;
-    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 42);
+    let num_t = 15;
+    let configured_cap = 4;
+    let (stn_bond, mast_bond) =
+        large_scale_bond_dim_check(num_qubits, num_t, 3, configured_cap, 42);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    // Exact compensated projections may fill MAST's default configured cap.
-    // This scale test checks that the cap remains enforced, while the example
-    // reports the actual bond cost rather than assuming the old <50 heuristic.
-    assert!(
-        mast_bond <= 128,
-        "MAST exceeded its default bond cap at {num_qubits}q: {mast_bond}"
+    // Exact-route data measurement saturates the configured cap at scale, so
+    // accuracy is truncation-limited here rather than merely bounded by it.
+    assert_eq!(
+        mast_bond, configured_cap,
+        "MAST did not saturate its configured bond cap"
     );
 }
 
@@ -4055,12 +4068,11 @@ fn test_large_scale_50_qubits() {
 fn test_large_scale_100_qubits() {
     let num_qubits = 100;
     let num_t = 40;
-    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 123);
+    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 128, 123);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    assert!(
-        mast_bond <= 128,
-        "MAST exceeded its default bond cap at {num_qubits}q: {mast_bond}"
-    );
+    // Exact-route data measurement saturates the configured cap at scale, so
+    // accuracy is truncation-limited here rather than merely bounded by it.
+    assert_eq!(mast_bond, 128, "MAST did not saturate its default bond cap");
 }
 
 #[test]
@@ -4068,12 +4080,11 @@ fn test_large_scale_100_qubits() {
 fn test_large_scale_200_qubits() {
     let num_qubits = 200;
     let num_t = 50;
-    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 5, 456);
+    let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 5, 128, 456);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    assert!(
-        mast_bond <= 128,
-        "MAST exceeded its default bond cap at {num_qubits}q: {mast_bond}"
-    );
+    // Exact-route data measurement saturates the configured cap at scale, so
+    // accuracy is truncation-limited here rather than merely bounded by it.
+    assert_eq!(mast_bond, 128, "MAST did not saturate its default bond cap");
 }
 
 #[test]
@@ -4086,7 +4097,7 @@ fn test_large_scale_bond_dim_curve() {
     eprintln!("\nBond dim curve for {num_qubits} qubits:");
     eprintln!("  T-count  STN-bond  MAST-bond");
     for &num_t in &t_counts {
-        let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 789);
+        let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 128, 789);
         eprintln!("  {num_t:>7}  {stn_bond:>8}  {mast_bond:>9}");
     }
 }
@@ -4125,7 +4136,7 @@ fn test_large_scale_measurement_works() {
 // Shared measurement stress test suite
 // ============================================================================
 
-pecos_simulators::measurement_stress_test_suite!(StabMps, 4, StabMps::new(4));
+pecos_simulators::measurement_stress_test_suite!(StabMps, 4, StabMps::with_seed(4, 42));
 
 // ============================================================================
 // Performance profiling (run with --nocapture to see timing)

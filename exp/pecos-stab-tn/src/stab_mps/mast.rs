@@ -22,6 +22,10 @@
 //! 4. Defer the ancilla projection until the end
 //!
 //! At the end of the circuit, all deferred measurements are performed.
+//! The predetermined half-probability gadget outcomes are exact for the
+//! untruncated state. Under MPS truncation they can differ from the truncated
+//! representation's own outcome distribution; the forced outcome continues to
+//! implement the exact, untruncated injection gadget.
 //! For random circuits with t <= N, most projections are non-entangling,
 //! keeping the MPS bond dimension bounded by ~3 on average.
 //!
@@ -92,9 +96,13 @@ struct DeferredMeasurement {
 /// injection points. Call [`Self::project_all`] explicitly to project every
 /// magic-state ancilla. Alternatively, measuring data through
 /// [`CliffordGateable::mz`] calls `project_all()` first and then performs the
-/// requested Z measurements. [`Self::flush`] only materializes lazy operations
-/// and pending merged RZ rotations; it does not project already deferred
-/// injections.
+/// requested Z measurements. [`Self::flush`] only materializes pending merged
+/// RZ rotations; it does not project already deferred injections.
+///
+/// The injection gadget's predetermined outcomes have exact probability 1/2
+/// for the untruncated state. If MPS truncation has occurred, that predetermined
+/// branch can deviate from the truncated representation's own distribution;
+/// it remains the branch required by the exact, untruncated gadget protocol.
 ///
 /// Data-qubit measurements use an exact sample-then-force route: evaluate the
 /// physical Z expectation, sample that probability, then apply the normalized
@@ -140,14 +148,6 @@ pub struct Mast {
     rng: PecosRng,
     /// Runtime counters for non-Clifford decomposition paths.
     pub stats: super::StabMpsStats,
-    /// Deferred virtual-frame Clifford V retained for configuration
-    /// compatibility. MAST materializes it before exact projection or data
-    /// measurement (see `super::measure::DeferredOp`).
-    deferred_ops: Vec<super::measure::DeferredOp>,
-    /// Whether lazy virtual-frame compatibility is enabled. MAST's exact
-    /// measurement route flushes any queued operations rather than adding new
-    /// ones. Set via `with_lazy_measure(true)`.
-    lazy_measure: bool,
     /// Pending non-Clifford RZ angle per qubit when `merge_rz` is on.
     /// Flushed when any other gate touches the qubit (except RZ-same-qubit
     /// merges, Z/S/Sdg/CZ commutes). Mirror of `StabMps`'s field.
@@ -190,8 +190,6 @@ impl Mast {
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
             rng,
             stats: super::StabMpsStats::default(),
-            deferred_ops: Vec::new(),
-            lazy_measure: false,
             pending_rz: vec![None; total],
             merge_rz: false,
         }
@@ -201,8 +199,9 @@ impl Mast {
     ///
     /// Seeds both the simulator's [`pecos_random::PecosRng`] and its tableau.
     /// Identically configured fresh instances reproduce an identical sequence
-    /// of predetermined gadget outcomes and measurements. `reset()` rewinds
-    /// both streams to this seed.
+    /// of predetermined gadget outcomes and measurements. On reset, both
+    /// rebuilt RNGs are seeded from the current simulator stream, giving
+    /// deterministic continuation rather than replaying this seed.
     ///
     /// # Panics
     ///
@@ -231,8 +230,6 @@ impl Mast {
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
             rng,
             stats: super::StabMpsStats::default(),
-            deferred_ops: Vec::new(),
-            lazy_measure: false,
             pending_rz: vec![None; total],
             merge_rz: false,
         }
@@ -253,17 +250,6 @@ impl Mast {
         self
     }
 
-    /// Retain compatibility with lazy virtual-frame configuration. MAST data
-    /// measurements always use its exact sample-then-force route, which
-    /// materializes any queued virtual-frame operations before evaluating the
-    /// Z expectation. Fluent-style setter; returns `self` for chaining after
-    /// `new`/`with_seed`.
-    #[must_use]
-    pub fn with_lazy_measure(mut self, lazy: bool) -> Self {
-        self.lazy_measure = lazy;
-        self
-    }
-
     /// Enable RZ batching on the same qubit. See `StabMpsBuilder::merge_rz`
     /// for semantics. MAST defaults this to false so each RZ immediately makes
     /// its injection and ancilla-capacity cost visible; `StabMps` defaults it
@@ -275,9 +261,7 @@ impl Mast {
     }
 
     /// Numerically recover missing exact-disentangling |0> flags at product
-    /// sites. Redetection self-disables while lazy deferred operations are
-    /// pending because stored tensors then differ from the effective MPS-frame
-    /// state. Default: false.
+    /// sites. Default: false.
     #[must_use]
     pub fn with_numerical_flag_redetection(mut self, enable: bool) -> Self {
         self.numerical_flag_redetection = enable;
@@ -333,10 +317,9 @@ impl Mast {
         self.inject_magic_state(theta, q);
     }
 
-    /// Materialize lazy-measurement deferred operations and all pending merged
-    /// RZ rotations. Public; useful before read operations.
+    /// Materialize all pending merged RZ rotations. Public; useful before read
+    /// operations.
     pub fn flush(&mut self) {
-        super::measure::flush_deferred_ops(&mut self.mps, &mut self.deferred_ops);
         if !self.merge_rz {
             return;
         }
@@ -390,9 +373,8 @@ impl Mast {
     #[must_use]
     /// Borrow the coefficient MPS over data qubits and preallocated ancillas.
     ///
-    /// Call [`Self::flush`] first if pending merged rotations or lazy operations
-    /// must be included, and [`Self::project_all`] first if deferred injections
-    /// must be completed.
+    /// Call [`Self::flush`] first if pending merged rotations must be included,
+    /// and [`Self::project_all`] first if deferred injections must be completed.
     pub fn mps(&self) -> &Mps {
         &self.mps
     }
@@ -433,13 +415,6 @@ impl Mast {
             "exceeded max_non_clifford ancilla slots"
         );
 
-        // `apply_rz_stab_mps` operates on an exact C·MPS representation. A
-        // prior lazy measurement instead leaves C·V·stored_MPS, so materialize
-        // V before preparing the magic state or applying a non-Clifford
-        // immediate correction. During the usual defer-then-project workflow
-        // this queue is empty and the flush is a no-op.
-        super::measure::flush_deferred_ops(&mut self.mps, &mut self.deferred_ops);
-
         // The injection-gadget measurement is exactly uniform and independent
         // of the data state, so its outcome may be chosen at the injection
         // point while the physical ancilla projection remains deferred.
@@ -469,11 +444,7 @@ impl Mast {
             true,
             &mut non_clifford::RzContext {
                 disent_flags: &mut self.disent_flags,
-                // Redetection reads stored tensors; with pending lazy deferred
-                // ops the effective state is V * stored MPS, so stored |0> does
-                // not imply effective |0>.
-                numerical_flag_redetection: self.numerical_flag_redetection
-                    && self.deferred_ops.is_empty(),
+                numerical_flag_redetection: self.numerical_flag_redetection,
                 gf2_matrix: &mut self.gf2_matrix,
                 stats: &mut self.stats,
             },
@@ -546,13 +517,6 @@ impl Mast {
     ///
     /// Calling `mz` on data qubits performs this completion step automatically.
     pub fn project_all(&mut self) {
-        if !self.deferred_ops.is_empty() && !self.deferred.is_empty() {
-            // The normalized forced projector requires the exact C·MPS
-            // representation. Materializing V keeps locality diagnostics
-            // aligned with the projector that will actually be applied.
-            super::measure::flush_deferred_ops(&mut self.mps, &mut self.deferred_ops);
-        }
-
         match self.projection_order {
             ProjectionOrder::Input => {
                 // Preserve the original drain and reverse-iteration path.
@@ -582,12 +546,7 @@ impl Mast {
     }
 
     fn projection_locality(&self, ancilla: usize) -> (usize, usize) {
-        let deferred_ops = if self.lazy_measure {
-            self.deferred_ops.as_slice()
-        } else {
-            &[]
-        };
-        let support = super::measure::conjugated_z_support(&self.tableau, ancilla, deferred_ops);
+        let support = super::measure::conjugated_z_support(&self.tableau, ancilla, &[]);
         let span = support
             .first()
             .zip(support.last())
@@ -662,11 +621,16 @@ impl QuantumSimulator for Mast {
     /// Reset data, ancillas, capacity use, and diagnostics as if newly
     /// constructed with the retained configuration.
     ///
-    /// A construction seed rewinds both simulator RNGs to the start of that
-    /// seed's stream. Without a construction seed, reset obtains fresh entropy.
+    /// For a seeded simulator, the rebuilt tableau seed and continuing
+    /// simulator-RNG seed are drawn from the current simulator stream. This is
+    /// deterministic continuation, not replay of the construction stream. An
+    /// unseeded simulator obtains fresh entropy.
     fn reset(&mut self) -> &mut Self {
-        (self.tableau, self.rng) =
-            super::initial_tableau_and_rng(self.total_qubits, self.construction_seed);
+        (self.tableau, self.rng) = super::reset_tableau_and_rng(
+            self.total_qubits,
+            self.construction_seed.is_some(),
+            &mut self.rng,
+        );
         self.mps = Mps::new(self.total_qubits, self.config.clone());
         self.next_ancilla = self.num_data_qubits;
         self.deferred.clear();
@@ -676,7 +640,6 @@ impl QuantumSimulator for Mast {
         self.disent_flags = vec![Some(super::SiteEigenstate::Z(false)); self.total_qubits];
         self.gf2_matrix.reset();
         self.stats = super::StabMpsStats::default();
-        self.deferred_ops.clear();
         for slot in &mut self.pending_rz {
             *slot = None;
         }
@@ -726,9 +689,6 @@ impl CliffordGateable for Mast {
         }
         // Project all deferred measurements first
         self.project_all();
-        // The exact forced projector has no virtual-frame variant. Materialize
-        // any queued operations before sampling so it receives exact C·MPS.
-        super::measure::flush_deferred_ops(&mut self.mps, &mut self.deferred_ops);
         // Then sample and force-project each data qubit through the exact route.
         qubits
             .iter()
@@ -971,23 +931,36 @@ mod tests {
     }
 
     #[test]
-    fn test_mast_seeded_reset_replays_measurements_and_clears_diagnostics() {
+    fn test_mast_seeded_reset_continues_measurements_and_clears_diagnostics() {
         let run = |mast: &mut Mast| {
             mast.h(&[QubitId(0)]);
             mast.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
             mast.mz(&[QubitId(0)])[0].outcome
         };
 
-        let mut mast = Mast::with_seed(1, 2, 0x5eed);
-        let first = run(&mut mast);
-        assert_eq!(mast.projection_records().len(), 1);
-        mast.stats.total_nonclifford = 7;
-        mast.reset();
-        assert!(mast.projection_records().is_empty());
-        assert_eq!(mast.projection_peak_bond(), 0);
-        assert_eq!(mast.stats.total_nonclifford, 0);
-        let second = run(&mut mast);
-        assert_eq!(first, second);
+        let collect = || {
+            let mut mast = Mast::with_seed(1, 2, 0x5eed);
+            let mut outcomes = Vec::with_capacity(200);
+            for _ in 0..200 {
+                mast.reset();
+                assert!(mast.projection_records().is_empty());
+                assert_eq!(mast.projection_peak_bond(), 0);
+                assert_eq!(mast.stats.total_nonclifford, 0);
+                outcomes.push(run(&mut mast));
+                assert_eq!(mast.projection_records().len(), 1);
+            }
+            outcomes
+        };
+
+        let first = collect();
+        let second = collect();
+        assert_eq!(first, second, "seeded reset continuation must reproduce");
+        let ones = first.iter().filter(|&&outcome| outcome).count();
+        eprintln!("Mast seeded reset loop: zeros={}, ones={ones}", 200 - ones);
+        assert!(
+            ones > 0 && ones < 200,
+            "reset loop must produce both outcomes"
+        );
     }
 
     #[test]
@@ -1514,19 +1487,5 @@ mod tests {
             0,
             "CZ should not flush pending_rz, merge persists"
         );
-    }
-
-    #[test]
-    fn test_mast_with_lazy_measure_bell_correlation() {
-        // Fluent setter on MAST: measurements via lazy path.
-        for trial in 0..10 {
-            let mut m = Mast::with_seed(2, 4, 5000 + trial).with_lazy_measure(true);
-            m.h(&[QubitId(0)]);
-            m.cx(&[(QubitId(0), QubitId(1))]);
-            m.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
-            let r0 = m.mz(&[QubitId(0)])[0].outcome;
-            let r1 = m.mz(&[QubitId(1)])[0].outcome;
-            assert_eq!(r0, r1, "lazy MAST Bell+T trial {trial}");
-        }
     }
 }

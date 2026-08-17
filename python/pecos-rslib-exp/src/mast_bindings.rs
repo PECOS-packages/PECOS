@@ -20,7 +20,9 @@ use pyo3::types::{PyDict, PySet, PyTuple};
 /// Python MAST simulator.
 ///
 /// Telemetry and capacity reads report stored state without materializing
-/// pending lazy-measurement operations or merged RZ rotations. Exceeding the
+/// pending merged RZ rotations. The predetermined half-probability injection
+/// outcomes are exact for the untruncated state; after MPS truncation they can
+/// differ from the truncated representation's own distribution. Exceeding the
 /// constructor's `max_non_clifford` capacity raises a `PanicException`;
 /// `remaining_injections` exposes available capacity, and
 /// `StabMpsCompile.advise()` reports the required capacity for an analyzed
@@ -78,8 +80,7 @@ impl PyMast {
     /// `None` preserves the Rust default, while an explicit bool calls the
     /// corresponding Rust setter. `merge_rz` defaults to false so injection
     /// capacity use remains visible immediately; `StabMps` defaults it to true
-    /// for throughput. Numerical flag redetection self-disables while lazy
-    /// deferred operations are pending. `max_bond_dim` and
+    /// for throughput. `max_bond_dim` and
     /// `max_truncation_error` override the coefficient-MPS defaults; the latter
     /// must be finite and non-negative. Exceeding `max_non_clifford` raises a
     /// `PanicException`; inspect `remaining_injections` before adding work.
@@ -88,14 +89,15 @@ impl PyMast {
     ///
     /// `seed` initializes PECOS's buffered RapidHash RNG and the tableau. Fresh
     /// instances with the same configuration and call sequence reproduce
-    /// stochastic results; `reset()` rewinds both streams to the seed.
+    /// stochastic results. For seeded simulators, `reset()` draws the rebuilt
+    /// tableau and continuing simulator-RNG seeds from the current simulator
+    /// stream rather than replaying the construction stream.
     #[pyo3(signature = (
         num_qubits,
         max_non_clifford,
         seed=None,
         max_bond_dim=None,
         max_truncation_error=None,
-        lazy_measure=None,
         merge_rz=None,
         projection_order=None,
         numerical_flag_redetection=None,
@@ -106,7 +108,6 @@ impl PyMast {
         seed: Option<u64>,
         max_bond_dim: Option<usize>,
         max_truncation_error: Option<f64>,
-        lazy_measure: Option<bool>,
         merge_rz: Option<bool>,
         projection_order: Option<&str>,
         numerical_flag_redetection: Option<bool>,
@@ -136,9 +137,6 @@ impl PyMast {
             }
             mast = mast.with_mps_config(config);
         }
-        if let Some(value) = lazy_measure {
-            mast = mast.with_lazy_measure(value);
-        }
         if let Some(value) = merge_rz {
             mast = mast.with_merge_rz(value);
         }
@@ -162,8 +160,10 @@ impl PyMast {
 
     /// Reset data, ancillas, capacity use, and diagnostics, returning `self`.
     ///
-    /// Configuration is retained. A seeded simulator rewinds both RNG streams
-    /// to the construction seed; an unseeded simulator obtains fresh entropy.
+    /// Configuration is retained. A seeded simulator draws the rebuilt tableau
+    /// and continuing simulator-RNG seeds from its current simulator stream,
+    /// giving deterministic continuation. An unseeded simulator obtains fresh
+    /// entropy.
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner.reset();
         slf
@@ -215,8 +215,8 @@ impl PyMast {
     #[getter]
     /// Accumulated approximate infidelity from SVD truncation.
     ///
-    /// This is a pure stored-state diagnostic: pending lazy operations and
-    /// merged rotations are not materialized.
+    /// This is a pure stored-state diagnostic: pending merged rotations are not
+    /// materialized.
     fn truncation_error(&self) -> f64 {
         self.inner.truncation_error()
     }
@@ -224,8 +224,8 @@ impl PyMast {
     #[getter]
     /// Number of SVDs where `max_bond_dim` was the binding cap.
     ///
-    /// This is a pure stored-state diagnostic: pending lazy operations and
-    /// merged rotations are not materialized.
+    /// This is a pure stored-state diagnostic: pending merged rotations are not
+    /// materialized.
     fn bond_cap_hits(&self) -> u64 {
         self.inner.bond_cap_hits()
     }
@@ -269,7 +269,7 @@ impl PyMast {
         crate::stab_mps_stats_to_dict(py, &self.inner.stats)
     }
 
-    /// Materialize lazy-measurement operations and pending merged RZ rotations.
+    /// Materialize pending merged RZ rotations.
     ///
     /// Flushing a non-Clifford merged rotation can consume injection capacity.
     /// This does not project already deferred injections.

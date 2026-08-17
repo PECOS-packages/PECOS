@@ -168,18 +168,20 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
         exp.stab_mps().max_truncation_error(math.nan)
 
 
-def test_seeded_reset_replays_and_unseeded_reset_smoke():
+def test_seeded_reset_continues_and_unseeded_reset_smoke():
     def run_stab_mps(sim):
         sim.run_1q_gate("H", 0)
         sim.run_1q_gate("T", 0)
         return sim.run_1q_gate("MZ", 0)
 
     stn = exp.StabMps(1, seed=0x5EED, merge_rz=False)
-    first_stn_outcome = run_stab_mps(stn)
-    assert stn.stats()["total_nonclifford"] > 0
-    assert stn.reset() is stn
-    assert all(value == 0 for value in stn.stats().values())
-    assert run_stab_mps(stn) == first_stn_outcome
+    stn_outcomes = []
+    for _ in range(200):
+        assert stn.reset() is stn
+        assert all(value == 0 for value in stn.stats().values())
+        stn_outcomes.append(run_stab_mps(stn))
+        assert stn.stats()["total_nonclifford"] > 0
+    assert set(stn_outcomes) == {0, 1}
 
     unseeded_stn = exp.StabMps(1)
     unseeded_stn.run_1q_gate("H", 0)
@@ -192,13 +194,15 @@ def test_seeded_reset_replays_and_unseeded_reset_smoke():
         return sim.run_1q_gate("MZ", 0)
 
     mast = exp.Mast(1, 2, seed=0x5EED, merge_rz=False)
-    first_mast_outcome = run_mast(mast)
-    assert len(mast.projection_records()) == 1
-    assert mast.reset() is mast
-    assert mast.projection_records() == []
-    assert mast.projection_peak_bond == 0
-    assert all(value == 0 for value in mast.stats().values())
-    assert run_mast(mast) == first_mast_outcome
+    mast_outcomes = []
+    for _ in range(200):
+        assert mast.reset() is mast
+        assert mast.projection_records() == []
+        assert mast.projection_peak_bond == 0
+        assert all(value == 0 for value in mast.stats().values())
+        mast_outcomes.append(run_mast(mast))
+        assert len(mast.projection_records()) == 1
+    assert set(mast_outcomes) == {0, 1}
 
     unseeded_mast = exp.Mast(1, 1)
     unseeded_mast.run_1q_gate("H", 0)
@@ -207,13 +211,15 @@ def test_seeded_reset_replays_and_unseeded_reset_smoke():
 
 
 def test_mast_configuration_projection_diagnostics_and_stats():
+    with pytest.raises(TypeError):
+        exp.Mast(1, 1, lazy_measure=True)
+
     mast = exp.Mast(
         1,
         1,
         seed=5,
         max_bond_dim=1,
         max_truncation_error=0.0,
-        lazy_measure=False,
         merge_rz=False,
         numerical_flag_redetection=True,
         projection_order="input",

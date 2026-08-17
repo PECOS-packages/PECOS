@@ -61,6 +61,26 @@ fn initial_tableau_and_rng(num_qubits: usize, seed: Option<u64>) -> (SparseStabY
     (tableau, rng)
 }
 
+fn reset_tableau_and_rng(
+    num_qubits: usize,
+    was_seeded: bool,
+    current_rng: &mut PecosRng,
+) -> (SparseStabY, PecosRng) {
+    if was_seeded {
+        // A seeded reset continues deterministically from the live simulator
+        // stream instead of replaying the construction stream. Give the two
+        // rebuilt RNGs independent seeds drawn in a stable order.
+        let tableau_seed = current_rng.next_u64();
+        let simulator_seed = current_rng.next_u64();
+        return (
+            SparseStabY::with_seed(num_qubits, tableau_seed).with_destab_sign_tracking(),
+            PecosRng::seed_from_u64(simulator_seed),
+        );
+    }
+
+    initial_tableau_and_rng(num_qubits, None)
+}
+
 /// Known Pauli eigenstate at an MPS site, used for exact disentangling.
 ///
 /// For every variant, `false` denotes the `+1` eigenstate and `true` the
@@ -238,8 +258,8 @@ impl StabMpsBuilder {
     /// calls, measurements, and sampling calls consume the same random stream.
     /// Reproducibility covers those stochastic results, not floating-point
     /// equivalence across different PECOS versions or platforms. `reset()`
-    /// rewinds both RNGs to this seed, so rerunning the same calls replays the
-    /// stream from the start.
+    /// deterministically seeds its rebuilt tableau and continuing simulator RNG
+    /// from the current simulator-RNG stream; it does not replay this seed.
     #[must_use]
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
@@ -608,7 +628,9 @@ impl StabMps {
     ///
     /// This seeds both the simulator's [`pecos_random::PecosRng`] and the
     /// stabilizer tableau. Identically configured fresh instances reproduce an
-    /// identical call sequence; `reset()` rewinds both streams to this seed.
+    /// identical call sequence. On reset, both rebuilt RNGs are seeded from the
+    /// current simulator stream, giving deterministic continuation rather than
+    /// replaying the construction stream.
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self::builder(num_qubits).seed(seed).build()
@@ -2154,10 +2176,16 @@ impl QuantumSimulator for StabMps {
     /// Reset the state and diagnostics as if newly constructed with the
     /// retained configuration.
     ///
-    /// A construction seed rewinds both simulator RNGs to the start of that
-    /// seed's stream. Without a construction seed, reset obtains fresh entropy.
+    /// For a seeded simulator, the rebuilt tableau seed and continuing
+    /// simulator-RNG seed are drawn from the current simulator stream. This is
+    /// deterministic continuation, not replay of the construction stream. An
+    /// unseeded simulator obtains fresh entropy.
     fn reset(&mut self) -> &mut Self {
-        (self.tableau, self.rng) = initial_tableau_and_rng(self.num_qubits, self.construction_seed);
+        (self.tableau, self.rng) = reset_tableau_and_rng(
+            self.num_qubits,
+            self.construction_seed.is_some(),
+            &mut self.rng,
+        );
         self.mps = Mps::new(self.num_qubits, self.config.clone());
         self.global_phase = Complex64::new(1.0, 0.0);
         self.disent_flags = vec![Some(SiteEigenstate::Z(false)); self.num_qubits];
@@ -5062,7 +5090,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stn_seeded_reset_replays_measurements_and_clears_stats() {
+    fn test_stn_seeded_reset_continues_measurements_and_clears_stats() {
         let run = |stn: &mut StabMps| {
             stn.h(&[QubitId(0)]);
             let tableau_outcome = stn.mz(&[QubitId(0)])[0].outcome;
@@ -5073,14 +5101,32 @@ mod tests {
             [tableau_outcome, mps_outcome]
         };
 
-        let mut stn = StabMps::builder(2).seed(0x5eed).merge_rz(false).build();
-        let first = run(&mut stn);
-        assert!(stn.stats.total_nonclifford > 0);
-        stn.reset();
-        assert_eq!(stn.stats.total_nonclifford, 0);
-        assert_eq!(stn.stats.single_site, 0);
-        let second = run(&mut stn);
-        assert_eq!(first, second);
+        let collect = || {
+            let mut stn = StabMps::builder(2).seed(0x5eed).merge_rz(false).build();
+            let mut outcomes = Vec::with_capacity(200);
+            for _ in 0..200 {
+                stn.reset();
+                assert_eq!(stn.stats.total_nonclifford, 0);
+                assert_eq!(stn.stats.single_site, 0);
+                let result = run(&mut stn);
+                assert!(stn.stats.total_nonclifford > 0);
+                outcomes.push(result);
+            }
+            outcomes
+        };
+
+        let first = collect();
+        let second = collect();
+        assert_eq!(first, second, "seeded reset continuation must reproduce");
+        let ones = first.iter().filter(|result| result[0]).count();
+        eprintln!(
+            "StabMps seeded reset loop: zeros={}, ones={ones}",
+            200 - ones
+        );
+        assert!(
+            ones > 0 && ones < 200,
+            "reset loop must produce both outcomes"
+        );
     }
 
     #[test]

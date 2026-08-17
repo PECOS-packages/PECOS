@@ -388,7 +388,9 @@ impl PyStabMps {
     ///
     /// `seed` seeds PECOS's buffered RapidHash RNG and the stabilizer tableau.
     /// Fresh instances with the same configuration and call sequence reproduce
-    /// stochastic results; `reset()` rewinds both streams to the seed.
+    /// stochastic results. For seeded simulators, `reset()` draws the rebuilt
+    /// tableau and continuing simulator-RNG seeds from the current simulator
+    /// stream rather than replaying the construction stream.
     #[new]
     #[pyo3(signature = (
         num_qubits,
@@ -463,8 +465,10 @@ impl PyStabMps {
 
     /// Reset the quantum state and diagnostics to `|0...0>` and return `self`.
     ///
-    /// Configuration is retained. A seeded simulator rewinds both RNG streams
-    /// to the construction seed; an unseeded simulator obtains fresh entropy.
+    /// Configuration is retained. A seeded simulator draws the rebuilt tableau
+    /// and continuing simulator-RNG seeds from its current simulator stream,
+    /// giving deterministic continuation. An unseeded simulator obtains fresh
+    /// entropy.
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner.reset();
         slf

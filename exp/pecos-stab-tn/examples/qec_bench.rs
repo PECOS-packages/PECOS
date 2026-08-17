@@ -156,8 +156,8 @@ fn ion_trap_memory_scenario(
 }
 
 /// MAST-style: T-injection using ancilla pattern, final measurement.
-fn mast_scenario(num_qubits: usize, num_t_gates: usize, lazy: bool, seed: u64) -> (f64, usize) {
-    let mut mast = Mast::with_seed(num_qubits, num_t_gates, seed).with_lazy_measure(lazy);
+fn mast_scenario(num_qubits: usize, num_t_gates: usize, seed: u64) -> (f64, usize) {
+    let mut mast = Mast::with_seed(num_qubits, num_t_gates, seed);
     let t = Angle64::QUARTER_TURN / 2u64;
 
     let start = Instant::now();
@@ -240,7 +240,7 @@ fn main() {
     );
 
     // -------------------------------------------------------------------------
-    // MAST-style scenario: where lazy_measure actually helps.
+    // MAST-style exact-measurement scenario.
     // -------------------------------------------------------------------------
     println!();
     println!("MAST-like scenario: deep random Clifford+T measured via ancilla injection");
@@ -251,20 +251,19 @@ fn main() {
     let n_q = 8;
     let n_t = 8;
     let num_trials = 20;
-    for (name, lazy) in [("eager", false), ("lazy", true)] {
-        let mut total_time = 0.0;
-        let mut total_bond = 0usize;
-        for trial in 0..num_trials {
-            let (t, b) = mast_scenario(n_q, n_t, lazy, 20000 + trial as u64);
-            total_time += t;
-            total_bond += b;
-        }
-        println!(
-            "{name:<30} {:>12.4} {:>12.1}",
-            total_time / f64::from(num_trials),
-            total_bond as f64 / f64::from(num_trials)
-        );
+    let mut total_time = 0.0;
+    let mut total_bond = 0usize;
+    for trial in 0..num_trials {
+        let (t, b) = mast_scenario(n_q, n_t, 20000 + trial as u64);
+        total_time += t;
+        total_bond += b;
     }
+    println!(
+        "{:<30} {:>12.4} {:>12.1}",
+        "exact measurement",
+        total_time / f64::from(num_trials),
+        total_bond as f64 / f64::from(num_trials)
+    );
     println!("{:-<70}", "");
 
     // -------------------------------------------------------------------------

@@ -53,6 +53,11 @@ fn is_mps_trivial(mps: &Mps) -> bool {
 /// general `C|b>`. Non-Clifford evolution and earlier exact projections can
 /// produce the latter even though every MPS bond is one.
 fn canonicalize_trivial_mps_basis(tableau: &mut SparseStabY, mps: &mut Mps) {
+    let norm_squared = mps.norm_squared();
+    debug_assert!(
+        (norm_squared - 1.0).abs() < 1e-8,
+        "trivial-basis canonicalization requires a normalized MPS, got norm²={norm_squared}"
+    );
     let x_gate = DMatrix::from_row_slice(
         2,
         2,
@@ -67,6 +72,9 @@ fn canonicalize_trivial_mps_basis(tableau: &mut SparseStabY, mps: &mut Mps) {
         let chi_r = mps.bond_dim(site + 1);
         let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[site], 0, chi_r);
         let block_0_norm: f64 = block_0.iter().map(num_complex::Complex::norm_sqr).sum();
+        // Every project_forced_z entry path normalizes before this helper can
+        // be reached again, so the block weight has unit-state scale and this
+        // absolute zero threshold is intentional.
         if block_0_norm < 1e-12 {
             // C|...1...> = (C X_site)(X_site|...1...>).
             crate::stab_mps::tableau_compose::right_compose_x(tableau, site);
@@ -756,11 +764,9 @@ fn right_compose_measurement_basis_rotation(
 /// Apply the inverse of the virtual Pauli gauge between two structurally
 /// identical Clifford tableaux.
 ///
-/// A stabilizer-row sign difference is a right-composed X on that virtual
-/// site; a destabilizer-row sign difference is a right-composed Z. The
-/// predicted tableau is composed as X sites followed by Z sites, so applying
-/// those gates to the MPS in the same circuit order realizes the adjoint
-/// `P^-1 = P^dagger`, including the X/Z phase on overlapping sites.
+/// The forced measurement outcome fixes the stabilizer-row signs, leaving only
+/// destabilizer-row sign differences. Each such difference is a right-composed
+/// Z on that virtual site, so applying Z to the MPS realizes the inverse gauge.
 fn compensate_measurement_pauli_gauge(
     mps: &mut Mps,
     predicted: &SparseStabY,
@@ -807,26 +813,20 @@ fn compensate_measurement_pauli_gauge(
             .eq(measured.destabs().signs_i.iter())
     );
 
-    let x_gate = DMatrix::from_row_slice(
-        2,
-        2,
-        &[
-            Complex64::new(0.0, 0.0),
-            Complex64::new(1.0, 0.0),
-            Complex64::new(1.0, 0.0),
-            Complex64::new(0.0, 0.0),
-        ],
-    );
     let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
 
-    for site in 0..predicted.num_qubits() {
-        let differs = predicted.stabs().signs_minus.contains(site)
-            != measured.stabs().signs_minus.contains(site);
-        if differs {
-            mps.apply_one_site_gate(site, &x_gate)
-                .expect("MPS op on valid site");
-        }
-    }
+    // `SparseStabY::apply_outcome`, called by the nondeterministic
+    // `mz_forced` path, forces the replacement stabilizer row's sign to the
+    // requested outcome. The predicted basis rotation encodes that same sign,
+    // so an X-gauge difference is structurally unreachable here.
+    debug_assert!(
+        predicted
+            .stabs()
+            .signs_minus
+            .iter()
+            .eq(measured.stabs().signs_minus.iter()),
+        "apply_outcome must leave no stabilizer-sign (X-gauge) difference"
+    );
     for site in 0..predicted.num_qubits() {
         let differs = predicted.destabs().signs_minus.contains(site)
             != measured.destabs().signs_minus.contains(site);

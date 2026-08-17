@@ -1,7 +1,40 @@
-//! Pure planning primitives for batch decoder execution.
+//! Deterministic planning and canonical-sampling primitives for batch decoding.
 
 use std::fmt;
 use std::ops::Range;
+
+use pecos_random::{PecosRng, nth_derived_seed};
+
+/// Frozen version of the worker-count-independent fused-sampling protocol.
+pub const SAMPLING_ABI_VERSION: u32 = 1;
+
+/// Number of shots assigned to each reproducible sampling RNG stream.
+///
+/// ABI v1 always performs exactly one `DemSampler::sample` call per shot;
+/// geometric and bulk samplers must not be substituted for these chunks.
+/// A final partial chunk consumes only its stream prefix, so the stream for
+/// `N` shots is a prefix of the stream for any larger shot count at one seed.
+pub const SAMPLING_CHUNK_SHOTS: usize = 1024;
+
+/// `SplitMix` derivation-domain tag for fused DEM sampling (ASCII `PECOSDEM`).
+///
+/// Applying XOR with this tag guarantees distinct derivation inputs at equal
+/// indices and pseudorandom decorrelation across domains. It does not prove global
+/// cross-domain non-collision: different domain offsets share one `SplitMix`
+/// orbit. Within one run, derived chunk seeds are collision-free because the
+/// fixed-base derivation is bijective in the chunk index.
+pub const DEM_SAMPLING_DOMAIN_TAG: u64 = 0x5045_434F_5344_454D;
+
+/// Derive the canonical ABI-v1 RNG seed for one fused-sampling chunk.
+///
+/// A chunk uses `PecosRng::seed_from_u64` on this value. `PecosRng` expands it
+/// into four `ParallelRapidRng` streams through `SplitMix`; the resulting streams
+/// are deterministic, unique per chunk index, and pseudorandomly decorrelated,
+/// but this is not a formal proof that their generated sequences never overlap.
+#[must_use]
+pub fn sampling_chunk_seed(seed: u64, chunk_index: u64) -> u64 {
+    nth_derived_seed(seed ^ DEM_SAMPLING_DOMAIN_TAG, chunk_index)
+}
 
 /// Below this many shots, setting up worker threads dominates generic decoding.
 pub const SMALL_BATCH_SEQUENTIAL_THRESHOLD: usize = 1000;
@@ -246,9 +279,251 @@ pub fn native_scratch_len(num_shots: usize, num_detectors: usize) -> Option<usiz
         .checked_mul(num_detectors)
 }
 
+/// Iterator over the frozen ABI-v1 fused-sampling chunk partition.
+#[derive(Clone, Debug)]
+pub struct SamplingChunks {
+    next: usize,
+    num_shots: usize,
+}
+
+impl Iterator for SamplingChunks {
+    type Item = Range<usize>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next >= self.num_shots {
+            return None;
+        }
+        let start = self.next;
+        let end = start
+            .saturating_add(SAMPLING_CHUNK_SHOTS)
+            .min(self.num_shots);
+        self.next = end;
+        Some(start..end)
+    }
+}
+
+/// Partition shots as `[0..1024), [1024..2048), ...` for sampling ABI v1.
+#[must_use]
+pub const fn sampling_chunks(num_shots: usize) -> SamplingChunks {
+    SamplingChunks { next: 0, num_shots }
+}
+
+/// Upper bound on useful workers for fused sampling.
+///
+/// A sampling chunk is the unit of parallel work, so threads beyond one per
+/// chunk can never be given anything to do. Both the thread pool and the
+/// reported `workers_used` derive from this, so the number a caller sees is
+/// the number that could actually run.
+#[must_use]
+pub fn fused_worker_cap(num_shots: usize) -> usize {
+    num_shots.div_ceil(SAMPLING_CHUNK_SHOTS).max(1)
+}
+
+/// The single seam constructing the canonical per-chunk RNG for sampling ABI v1.
+///
+/// Every execution path — sequential, parallel, native — must obtain its chunk
+/// RNG here so the seed derivation and the index-width policy can never
+/// diverge between paths.
+///
+/// # Panics
+///
+/// Panics if `chunk_index` does not fit `u64`, which cannot happen on any
+/// supported target (pointer width is at most 64 bits).
+#[must_use]
+pub fn sampling_chunk_rng(seed: u64, chunk_index: usize) -> PecosRng {
+    let chunk_index =
+        u64::try_from(chunk_index).expect("chunk index fits u64 on all supported targets");
+    PecosRng::seed_from_u64(sampling_chunk_seed(seed, chunk_index))
+}
+
+/// Run a sequential fused loop with one fresh canonical RNG per sampling chunk.
+///
+/// The callback is invoked strictly in absolute shot order. State captured by
+/// it—most importantly a history-dependent decoder—is preserved across chunk
+/// boundaries. The callback must consume exactly one `DemSampler::sample` call
+/// per invocation to conform to sampling ABI v1.
+///
+/// # Errors
+///
+/// Returns the first callback error.
+pub fn for_each_canonical_sample<E>(
+    num_shots: usize,
+    seed: u64,
+    mut sample_shot: impl FnMut(usize, &mut PecosRng) -> Result<(), E>,
+) -> Result<(), E> {
+    for (chunk_index, range) in sampling_chunks(num_shots).enumerate() {
+        let mut rng = sampling_chunk_rng(seed, chunk_index);
+        for shot_index in range {
+            sample_shot(shot_index, &mut rng)?;
+        }
+    }
+    Ok(())
+}
+
+/// One chunk result tagged independently of scheduler completion order.
+#[derive(Debug, Eq, PartialEq)]
+pub struct IndexedChunk<T> {
+    pub chunk_index: usize,
+    pub value: T,
+}
+
+/// A missing, duplicated, or out-of-range chunk index during final assembly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChunkAssemblyError {
+    pub expected_index: usize,
+    pub actual_index: Option<usize>,
+}
+
+impl fmt::Display for ChunkAssemblyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "sampling chunk assembly expected index {}, got {:?}",
+            self.expected_index, self.actual_index
+        )
+    }
+}
+
+impl std::error::Error for ChunkAssemblyError {}
+
+/// Sort scheduler results into canonical chunk order and verify `0..N` exactly.
+///
+/// # Errors
+///
+/// Returns [`ChunkAssemblyError`] if an index is missing, duplicated, or extra.
+pub fn assemble_indexed_chunks<T>(
+    mut chunks: Vec<IndexedChunk<T>>,
+    expected_chunks: usize,
+) -> Result<Vec<T>, ChunkAssemblyError> {
+    chunks.sort_unstable_by_key(|chunk| chunk.chunk_index);
+    for expected_index in 0..expected_chunks {
+        let actual_index = chunks.get(expected_index).map(|chunk| chunk.chunk_index);
+        if actual_index != Some(expected_index) {
+            return Err(ChunkAssemblyError {
+                expected_index,
+                actual_index,
+            });
+        }
+    }
+    if chunks.len() != expected_chunks {
+        return Err(ChunkAssemblyError {
+            expected_index: expected_chunks,
+            actual_index: chunks.get(expected_chunks).map(|chunk| chunk.chunk_index),
+        });
+    }
+    Ok(chunks.into_iter().map(|chunk| chunk.value).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sampling_seed_pins_are_frozen_for_reproducibility_abi_v1() {
+        // Reproducibility ABI v1 — never update these literals without a
+        // deliberate version bump and release note.
+        assert_eq!(SAMPLING_ABI_VERSION, 1);
+        assert_eq!(sampling_chunk_seed(0, 0), 0x20D0_F923_7F7F_D397);
+        assert_eq!(sampling_chunk_seed(0, 1), 0x4D24_F3DD_891B_E6D1);
+        assert_eq!(sampling_chunk_seed(42, 7), 0x4C26_E1A7_0BF0_C0AE);
+    }
+
+    #[test]
+    fn sampling_chunk_partition_is_frozen() {
+        assert!(sampling_chunks(0).next().is_none());
+        for (num_shots, expected) in [(1, 0..1), (1023, 0..1023), (1024, 0..1024)] {
+            let mut chunks = sampling_chunks(num_shots);
+            assert_eq!(chunks.next(), Some(expected));
+            assert_eq!(chunks.next(), None);
+        }
+        assert_eq!(
+            sampling_chunks(1025).collect::<Vec<_>>(),
+            [0..1024, 1024..1025]
+        );
+        assert_eq!(
+            sampling_chunks(2065).collect::<Vec<_>>(),
+            [0..1024, 1024..2048, 2048..2065]
+        );
+    }
+
+    #[test]
+    fn assembly_uses_chunk_indices_not_completion_order() {
+        use std::sync::mpsc;
+
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let slow_tx = completed_tx.clone();
+            scope.spawn(move || {
+                release_rx.recv().unwrap();
+                slow_tx
+                    .send(IndexedChunk {
+                        chunk_index: 0,
+                        value: vec![0, 1],
+                    })
+                    .unwrap();
+            });
+            let fast_tx = completed_tx.clone();
+            scope.spawn(move || {
+                fast_tx
+                    .send(IndexedChunk {
+                        chunk_index: 1,
+                        value: vec![1024, 1025],
+                    })
+                    .unwrap();
+                release_tx.send(()).unwrap();
+            });
+        });
+        drop(completed_tx);
+
+        let completion_order = completed_rx.into_iter().collect::<Vec<_>>();
+        assert_eq!(completion_order[0].chunk_index, 1);
+        assert_eq!(
+            assemble_indexed_chunks(completion_order, 2).unwrap(),
+            vec![vec![0, 1], vec![1024, 1025]]
+        );
+    }
+
+    #[test]
+    fn history_dependent_state_crosses_sampling_chunk_boundary() {
+        #[derive(Default)]
+        struct StatefulDecoder {
+            calls: u64,
+        }
+
+        impl StatefulDecoder {
+            fn decode(&mut self, sample: u64) -> u64 {
+                self.calls += 1;
+                sample ^ self.calls
+            }
+        }
+
+        const SHOTS: usize = SAMPLING_CHUNK_SHOTS + 17;
+        const SEED: u64 = 91;
+        let mut fused_decoder = StatefulDecoder::default();
+        let mut fused = Vec::with_capacity(SHOTS);
+        for_each_canonical_sample(SHOTS, SEED, |_, rng| {
+            fused.push(fused_decoder.decode(rng.next_u64()));
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .unwrap();
+
+        let mut manual_decoder = StatefulDecoder::default();
+        let mut manual = Vec::with_capacity(SHOTS);
+        for (chunk_index, range) in sampling_chunks(SHOTS).enumerate() {
+            let mut rng = PecosRng::seed_from_u64(sampling_chunk_seed(
+                SEED,
+                u64::try_from(chunk_index).unwrap(),
+            ));
+            for _ in range {
+                manual.push(manual_decoder.decode(rng.next_u64()));
+            }
+        }
+
+        assert_eq!(fused, manual);
+        assert_eq!(fused_decoder.calls, u64::try_from(SHOTS).unwrap());
+        assert_eq!(manual_decoder.calls, u64::try_from(SHOTS).unwrap());
+    }
 
     fn inputs() -> ExecutionPlanInputs {
         ExecutionPlanInputs {

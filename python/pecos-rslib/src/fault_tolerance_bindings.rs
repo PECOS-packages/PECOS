@@ -129,6 +129,7 @@ mod batch_decode;
 mod decoder_comparison;
 mod decoder_scoring;
 mod sample_corpus;
+mod sampler_decode;
 
 use decoder_comparison::{
     PyDecoderComparisonResult, compare_decoder_outcomes, validate_comparison_arguments,
@@ -4250,6 +4251,135 @@ impl PyDemSampler {
         dict.set_item("tracked_paulis", &labels.tracked_pauli_labels)?;
         dict.set_item("dual_detectors", &labels.dual_detectors)?;
         Ok(dict.unbind())
+    }
+
+    /// Sample, decode, and score shots through the planned batch executor.
+    ///
+    /// Sampling ABI v1 guarantees that a fixed `(seed, num_shots)` produces the
+    /// same SHOT stream for every worker count and execution path, including
+    /// sequential and native. Each canonical 1024-shot chunk owns a
+    /// deterministic RNG stream and consumes exactly one single-shot sampler
+    /// call per shot.
+    ///
+    /// Predictions and error counts match as well, EXCEPT when
+    /// `reproducibility_warnings` on the result is non-empty: a wall-clock-limited
+    /// decoder (for example `mwpf(timeout=...)`) run in parallel can decode
+    /// differently because CPU contention changes which shots reach the solver's
+    /// deadline. Timing measurements are always outside the guarantee.
+    ///
+    /// Parallelism is granted per 1024-shot chunk, so the effective concurrency
+    /// is capped at `ceil(num_shots / 1024)` regardless of the requested workers.
+    ///
+    /// Predictions and truth are restricted to the sampler's observable DEM
+    /// outputs, matching `sample_decode_count`; `SampleBatch.decode` scores
+    /// against the full DEM-output row instead, so the two can differ on
+    /// samplers whose DEM outputs exceed their observables.
+    ///
+    /// Args:
+    ///     dem: DEM text used to construct the decoder. It may deliberately be
+    ///         a different projection from the sampler's own model.
+    ///     `num_shots`: Number of shots to sample and decode.
+    ///     decoder: A typed `DecoderSpec` or legacy decoder string.
+    ///     seed: Optional sampling seed. The resolved seed is returned as
+    ///         `sampling_seed_used` and can replay the run.
+    ///     workers: Optional exact worker count.
+    ///     predictions: Retain predictions in absolute shot order.
+    ///     timing: Retain decode-call timings. Sampling time is excluded from
+    ///         individual samples but included in `wall_elapsed`.
+    ///
+    /// Returns:
+    ///     `DecodeResult` scored against the sampler's observable flips.
+    #[pyo3(signature = (dem, num_shots, decoder=None, *, seed=None, workers=None, predictions=false, timing=false))]
+    fn decode(
+        &self,
+        py: Python<'_>,
+        dem: &str,
+        num_shots: usize,
+        decoder: Option<&Bound<'_, PyAny>>,
+        seed: Option<u64>,
+        workers: Option<i64>,
+        predictions: bool,
+        timing: bool,
+    ) -> PyResult<batch_decode::PyDecodeResult> {
+        use rand::RngExt;
+
+        // Raw samples are measurements, not syndromes. Preserve the established
+        // precedence by rejecting that mode before inspecting the decoder.
+        if self.inner.mode() == OutputMode::RawMeasurements {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "raw-measurement DemSampler outputs are measurements, not detector events, and cannot be decoded",
+            ));
+        }
+
+        let decoder = decoder.ok_or_else(|| {
+            pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
+        })?;
+        let spec = if decoder.is_instance_of::<PyString>() {
+            let decoder_type = decoder.extract::<&str>()?;
+            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
+        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
+            spec.inner.clone()
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
+            ));
+        };
+
+        let explicit_workers = workers
+            .map(|workers| {
+                if workers <= 0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "workers must be at least 1",
+                    ));
+                }
+                usize::try_from(workers).map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "workers is too large for this platform",
+                    )
+                })
+            })
+            .transpose()?;
+        let mut plan =
+            pecos_decoders::batch::plan_execution(pecos_decoders::batch::ExecutionPlanInputs {
+                traits: spec.execution_traits(),
+                num_shots,
+                native_batch_capable: spec.native_batch_capable(),
+                timing,
+                explicit_workers,
+                available_threads: rayon::current_num_threads(),
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+
+        // Report the workers that can actually run: the fused unit of work is a
+        // sampling chunk, so anything beyond one worker per chunk would idle.
+        if plan.path == pecos_decoders::batch::ExecutionPath::Parallel {
+            plan.workers_used = plan
+                .workers_used
+                .min(pecos_decoders::batch::fused_worker_cap(num_shots));
+        }
+
+        // Resolve entropy once before dispatch, including for an empty run.
+        let actual_seed = seed.unwrap_or_else(|| rand::rng().random());
+        let output = py
+            .detach(|| {
+                sampler_decode::execute(
+                    &self.inner,
+                    dem,
+                    &spec,
+                    &plan,
+                    num_shots,
+                    actual_seed,
+                    sampler_decode::DecodeOptions::new(predictions, timing),
+                )
+            })
+            .map_err(batch_decode::BatchExecutionError::into_pyerr)?;
+        batch_decode::PyDecodeResult::from_sampler_execution(
+            py,
+            num_shots,
+            plan,
+            output,
+            actual_seed,
+        )
     }
 
     /// Sample and decode in a tight Rust loop, returning only the error count.

@@ -23,6 +23,10 @@ pub(super) enum BatchExecutionError {
         batch_detectors: usize,
         decoder_detectors: usize,
     },
+    SamplerDimension {
+        sampler_detectors: usize,
+        decoder_detectors: usize,
+    },
     Decode(ShotDecodeError),
     Runtime(String),
 }
@@ -38,13 +42,20 @@ impl BatchExecutionError {
                 "SampleBatch has {batch_detectors} detectors, but the decoder model has \
                  {decoder_detectors}"
             )),
+            Self::SamplerDimension {
+                sampler_detectors,
+                decoder_detectors,
+            } => PyValueError::new_err(format!(
+                "DemSampler has {sampler_detectors} detectors, but the decoder model has \
+                 {decoder_detectors}"
+            )),
             Self::Decode(error) => PyRuntimeError::new_err(error.to_string()),
             Self::Runtime(message) => PyRuntimeError::new_err(message),
         }
     }
 }
 
-fn decode_model(spec: &DecoderSpec, dem: &str) -> DecodeModel {
+pub(super) fn decode_model(spec: &DecoderSpec, dem: &str) -> DecodeModel {
     spec.embedded_hybrid_full_dem().map_or_else(
         || DecodeModel::SingleDem(dem.to_string()),
         |full| DecodeModel::HybridDem {
@@ -158,6 +169,15 @@ fn parallel(
             }) => {
                 return Err(BatchExecutionError::Dimension {
                     batch_detectors,
+                    decoder_detectors,
+                });
+            }
+            Err(BatchExecutionError::SamplerDimension {
+                sampler_detectors,
+                decoder_detectors,
+            }) => {
+                return Err(BatchExecutionError::SamplerDimension {
+                    sampler_detectors,
                     decoder_detectors,
                 });
             }
@@ -355,6 +375,26 @@ impl PyDecodeResult {
         plan: ExecutionPlan,
         output: BatchExecutionOutput,
     ) -> PyResult<Self> {
+        Self::from_execution_with_seed(py, num_shots, plan, output, None)
+    }
+
+    pub(super) fn from_sampler_execution(
+        py: Python<'_>,
+        num_shots: usize,
+        plan: ExecutionPlan,
+        output: BatchExecutionOutput,
+        sampling_seed_used: u64,
+    ) -> PyResult<Self> {
+        Self::from_execution_with_seed(py, num_shots, plan, output, Some(sampling_seed_used))
+    }
+
+    fn from_execution_with_seed(
+        py: Python<'_>,
+        num_shots: usize,
+        plan: ExecutionPlan,
+        output: BatchExecutionOutput,
+        sampling_seed_used: Option<u64>,
+    ) -> PyResult<Self> {
         let predictions = output
             .predictions
             .map(|masks| {
@@ -387,7 +427,7 @@ impl PyDecodeResult {
             execution_path: plan.path.as_str().to_string(),
             workers_used: plan.workers_used,
             reproducibility_warnings: plan.reproducibility_warnings,
-            sampling_seed_used: None,
+            sampling_seed_used,
             predictions,
             stats,
         })

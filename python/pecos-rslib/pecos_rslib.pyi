@@ -2548,6 +2548,28 @@ class qec:
         def sample_tracked_paulis(self, seed: int | None = ...) -> list[bool]: ...
         def sample_tracked_pauli_batch(self, num_shots: int, seed: int | None = ...) -> list[list[bool]]: ...
         def sample_statistics(self, num_shots: int, seed: int | None = ...) -> dict[str, Any]: ...
+        def decode(
+            self,
+            dem: str,
+            num_shots: int,
+            decoder: decoders.DecoderSpec | str,
+            *,
+            seed: int | None = ...,
+            workers: int | None = ...,
+            predictions: bool = ...,
+            timing: bool = ...,
+        ) -> qec.DecodeResult:
+            """Sample and decode under sampling ABI v1.
+
+            A fixed seed produces the same shot stream for all worker counts and
+            execution paths. Predictions and counts match too, except when
+            ``reproducibility_warnings`` is non-empty -- a wall-clock-limited
+            decoder run in parallel can decode differently under CPU contention.
+            The resolved replay seed is returned in ``sampling_seed_used``;
+            timing is always outside the reproducibility guarantee.
+            """
+            ...
+
         def sample_decode_count(
             self,
             dem: str,

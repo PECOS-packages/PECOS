@@ -1,4 +1,4 @@
-#!/usr/bin/env uv run python
+#!/usr/bin/env -S uv run python
 """Regenerate result-tag HUGR fixtures with the pinned Guppy version."""
 
 from pathlib import Path

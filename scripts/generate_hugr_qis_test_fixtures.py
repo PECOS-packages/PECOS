@@ -1,4 +1,4 @@
-#!/usr/bin/env uv run python
+#!/usr/bin/env -S uv run python
 """Generate current-Guppy HUGR fixtures for pecos-hugr-qis tests."""
 
 from pathlib import Path

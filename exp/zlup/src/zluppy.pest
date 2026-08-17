@@ -937,7 +937,9 @@ keyword = @{
     "struct" | "enum" | "union" | "packed" | "set" |
     "if" | "else" | "for" | "switch" | "tick" |
     "return" | "break" | "continue" | "defer" | "errdefer" |
-    "and" | "or" | "orelse" | "try" | "catch" |
+    // "orelse" must precede "or": pest's ordered choice never backtracks into
+    // a matched alternative, so with "or" first the rule can never match "orelse".
+    "and" | "orelse" | "or" | "try" | "catch" |
     "true" | "false" | "none" | "undefined" | "Self" |
     "test" | "error" | "type" | "anytype" | "unit" |
     "qubit" | "bit" | "alias" |

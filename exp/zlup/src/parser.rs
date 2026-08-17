@@ -19,6 +19,14 @@ use pest_derive::Parser;
 #[grammar = "zluppy.pest"]
 struct ZluppyParser;
 
+/// Whether `text` is exactly a reserved zluppy keyword, per the grammar's
+/// `keyword` rule. Keywords can never be used as identifiers.
+#[must_use]
+pub fn is_keyword(text: &str) -> bool {
+    ZluppyParser::parse(Rule::keyword, text)
+        .is_ok_and(|mut pairs| pairs.next().is_some_and(|pair| pair.as_str() == text))
+}
+
 /// Parser state.
 pub struct ParserState<'a> {
     source: &'a str,

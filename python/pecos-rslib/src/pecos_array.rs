@@ -78,9 +78,10 @@ enum IndexOp {
     Advanced(Vec<ArrayD<usize>>),
 }
 
-/// Source coordinates in NumPy result order, shared by reads and writes.
+/// Logical C-order source offsets in NumPy result order, shared by reads and writes.
 struct ResolvedSelection {
-    coordinates: ArrayD<Vec<usize>>,
+    /// Logical C-order offsets into the source array, in result order.
+    offsets: ArrayD<usize>,
     shape: Vec<usize>,
 }
 
@@ -1227,6 +1228,14 @@ impl Array {
         })
     }
 
+    /// Implement `__bool__` with `NumPy` truth-value semantics: a size-1 array
+    /// yields its element's truth, everything else is ambiguous and raises.
+    /// Without this, Python falls back to `__len__` and gives container-style
+    /// truthiness, where `bool(array([0]))` is `True` (issue #531).
+    fn __bool__(&self) -> PyResult<bool> {
+        self.truth_value()
+    }
+
     /// Implement __len__ to return the size of the first dimension
     /// This matches `NumPy`'s behavior where len(arr) returns arr.shape[0]
     fn __len__(&self) -> PyResult<usize> {
@@ -1469,7 +1478,7 @@ impl Array {
             }
             ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
                 return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Pauli and PauliString arrays cannot be converted to NumPy via __array_interface__ (use __array__() method instead)",
+                    "Pauli and PauliString arrays are symbolic and have no NumPy dtype; use tolist() to extract the elements",
                 ));
             }
         }
@@ -2124,6 +2133,26 @@ impl Array {
 }
 
 impl Array {
+    /// `NumPy` truth-value semantics, shared by `Array.__bool__` and the
+    /// `dtypes.bool_` constructor: exactly one element yields that element's
+    /// truth; empty and multi-element arrays are ambiguous and raise with
+    /// `NumPy`'s error messages.
+    pub(crate) fn truth_value(&self) -> PyResult<bool> {
+        let truth_values = self.data.to_bool_array();
+        match truth_values.len() {
+            0 => Err(pyo3::exceptions::PyValueError::new_err(
+                "The truth value of an empty array is ambiguous. Use `array.size > 0` to check that an array is not empty.",
+            )),
+            1 => Ok(truth_values
+                .first()
+                .copied()
+                .expect("length-1 array has a first element")),
+            _ => Err(pyo3::exceptions::PyValueError::new_err(
+                "The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()",
+            )),
+        }
+    }
+
     fn array_view_to_list<'py, T, U, F>(
         array: ArrayViewD<'_, T>,
         py: Python<'py>,
@@ -2282,12 +2311,25 @@ impl Array {
         let mut coordinates = (0..mask.ndim())
             .map(|_| Vec::with_capacity(selected_count))
             .collect::<Vec<_>>();
-        for (index, &selected) in mask.indexed_iter() {
-            if selected {
-                for (axis_coordinates, &coordinate) in
-                    coordinates.iter_mut().zip(index.slice().iter())
-                {
-                    axis_coordinates.push(coordinate);
+        if mask.ndim() == 1 {
+            for (coordinate, &selected) in mask.iter().enumerate() {
+                if selected {
+                    coordinates[0].push(coordinate);
+                }
+            }
+        } else {
+            let mut mask_strides = vec![1usize; mask.ndim()];
+            for axis in (0..mask.ndim() - 1).rev() {
+                mask_strides[axis] = mask_strides[axis + 1] * mask.shape()[axis + 1];
+            }
+            for (linear_index, &selected) in mask.iter().enumerate() {
+                if !selected {
+                    continue;
+                }
+                let mut remainder = linear_index;
+                for (axis_coordinates, &stride) in coordinates.iter_mut().zip(&mask_strides) {
+                    axis_coordinates.push(remainder / stride);
+                    remainder %= stride;
                 }
             }
         }
@@ -2313,6 +2355,42 @@ impl Array {
         integer_values: &mut Vec<i128>,
     ) -> PyResult<()> {
         if depth < shape.len() {
+            if let Ok(list) = value.cast::<PyList>() {
+                if list.len() != shape[depth] {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "advanced index sequences must have a rectangular shape",
+                    ));
+                }
+                for item in list.iter() {
+                    Self::collect_sequence_indices(
+                        &item,
+                        depth + 1,
+                        shape,
+                        all_bool,
+                        bool_values,
+                        integer_values,
+                    )?;
+                }
+                return Ok(());
+            }
+            if let Ok(tuple) = value.cast::<PyTuple>() {
+                if tuple.len() != shape[depth] {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "advanced index sequences must have a rectangular shape",
+                    ));
+                }
+                for item in tuple.iter() {
+                    Self::collect_sequence_indices(
+                        &item,
+                        depth + 1,
+                        shape,
+                        all_bool,
+                        bool_values,
+                        integer_values,
+                    )?;
+                }
+                return Ok(());
+            }
             let sequence = value.cast::<PySequence>().map_err(|_| {
                 pyo3::exceptions::PyValueError::new_err(
                     "advanced index sequences must have a rectangular shape",
@@ -2349,11 +2427,15 @@ impl Array {
         }
 
         *all_bool = false;
-        let indexed = value.call_method0("__index__").map_err(|_| {
-            pyo3::exceptions::PyTypeError::new_err(
-                "advanced indices must contain only integers or only booleans",
-            )
-        })?;
+        let indexed = if value.is_exact_instance_of::<PyInt>() {
+            value.clone()
+        } else {
+            value.call_method0("__index__").map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "advanced indices must contain only integers or only booleans",
+                )
+            })?
+        };
         let integer = if let Ok(signed) = indexed.extract::<i64>() {
             i128::from(signed)
         } else if let Ok(unsigned) = indexed.extract::<u64>() {
@@ -2368,6 +2450,69 @@ impl Array {
     }
 
     /// Parse one integer-array or boolean-mask component of an index tuple.
+    fn parse_flat_builtin_index_list(
+        list: &Bound<'_, PyList>,
+        axis: usize,
+        source_shape: &[usize],
+    ) -> PyResult<Option<IndexOp>> {
+        let len = list.len();
+        let Some(first) = list.iter().next() else {
+            return Ok(Some(IndexOp::Advanced(vec![
+                ArrayD::from_shape_vec(IxDyn(&[0]), Vec::new()).map_err(|error| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "internal error constructing empty index: {error}"
+                    ))
+                })?,
+            ])));
+        };
+
+        if first.is_exact_instance_of::<PyBool>() {
+            let mut values = Vec::with_capacity(len);
+            for item in list.iter() {
+                if !item.is_exact_instance_of::<PyBool>() {
+                    return Ok(None);
+                }
+                values.push(item.extract::<bool>()?);
+            }
+            let mask = ArrayD::from_shape_vec(IxDyn(&[len]), values).map_err(|error| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "internal error constructing boolean index: {error}"
+                ))
+            })?;
+            return Self::boolean_mask_index(&mask, axis, source_shape).map(Some);
+        }
+
+        if first.is_exact_instance_of::<PyInt>() {
+            let mut values = Vec::with_capacity(len);
+            for item in list.iter() {
+                if !item.is_exact_instance_of::<PyInt>() {
+                    return Ok(None);
+                }
+                let value = if let Ok(signed) = item.extract::<i64>() {
+                    i128::from(signed)
+                } else if let Ok(unsigned) = item.extract::<u64>() {
+                    i128::from(unsigned)
+                } else {
+                    return Ok(None);
+                };
+                values.push(Self::normalize_advanced_index(
+                    value,
+                    axis,
+                    source_shape[axis],
+                )?);
+            }
+            return Ok(Some(IndexOp::Advanced(vec![
+                ArrayD::from_shape_vec(IxDyn(&[len]), values).map_err(|error| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "internal error constructing integer index: {error}"
+                    ))
+                })?,
+            ])));
+        }
+
+        Ok(None)
+    }
+
     fn parse_advanced_index(
         index: &Bound<'_, PyAny>,
         axis: usize,
@@ -2394,6 +2539,12 @@ impl Array {
                     source_shape[axis],
                 )?])),
             };
+        }
+
+        if let Ok(list) = index.cast::<PyList>()
+            && let Some(parsed) = Self::parse_flat_builtin_index_list(list, axis, source_shape)?
+        {
+            return Ok(parsed);
         }
 
         let shape = Self::infer_shape(index)?;
@@ -2642,6 +2793,32 @@ impl Array {
                 self.data.dtype().to_numpy_str(),
                 target_dtype.to_numpy_str()
             )));
+        }
+
+        let integer_range = |dtype| match dtype {
+            DType::Bool => Some((0, 1)),
+            DType::I8 => Some((i128::from(i8::MIN), i128::from(i8::MAX))),
+            DType::I16 => Some((i128::from(i16::MIN), i128::from(i16::MAX))),
+            DType::I32 => Some((i128::from(i32::MIN), i128::from(i32::MAX))),
+            DType::I64 => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
+            DType::U8 => Some((0, i128::from(u8::MAX))),
+            DType::U16 => Some((0, i128::from(u16::MAX))),
+            DType::U32 => Some((0, i128::from(u32::MAX))),
+            DType::U64 => Some((0, i128::from(u64::MAX))),
+            DType::F32
+            | DType::F64
+            | DType::Complex64
+            | DType::Complex128
+            | DType::Pauli
+            | DType::PauliString => None,
+        };
+        if let (Some((source_minimum, source_maximum)), Some((target_minimum, target_maximum))) = (
+            integer_range(self.data.dtype()),
+            integer_range(target_dtype),
+        ) && source_minimum >= target_minimum
+            && source_maximum <= target_maximum
+        {
+            return Ok(());
         }
 
         let Some((minimum, maximum_exclusive)) = (match target_dtype {
@@ -2898,10 +3075,125 @@ impl Array {
     }
 
     /// Parse nested Python sequences (lists/tuples) into Array - pure Rust implementation
+    fn try_from_flat_builtin_list(data: &Bound<'_, PyList>) -> PyResult<Option<Self>> {
+        let len = data.len();
+        let shape = IxDyn(&[len]);
+        let Some(first) = data.iter().next() else {
+            return Ok(Some(Self {
+                data: ArrayData::I64(ArrayD::from_shape_vec(shape, Vec::new()).map_err(
+                    |error| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "internal error constructing empty array: {error}"
+                        ))
+                    },
+                )?),
+            }));
+        };
+
+        if first.is_exact_instance_of::<PyBool>() {
+            let mut values = Vec::with_capacity(len);
+            for item in data.iter() {
+                if !item.is_exact_instance_of::<PyBool>() {
+                    return Ok(None);
+                }
+                values.push(item.extract::<bool>()?);
+            }
+            return Ok(Some(Self {
+                data: ArrayData::Bool(ArrayD::from_shape_vec(shape, values).map_err(|error| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "internal error constructing boolean array: {error}"
+                    ))
+                })?),
+            }));
+        }
+
+        if first.is_exact_instance_of::<PyInt>() {
+            let mut signed = Vec::with_capacity(len);
+            let mut unsigned = None::<Vec<u64>>;
+            for item in data.iter() {
+                if !item.is_exact_instance_of::<PyInt>() {
+                    return Ok(None);
+                }
+                if let Ok(value) = item.extract::<i64>() {
+                    if let Some(values) = &mut unsigned {
+                        let Ok(value) = u64::try_from(value) else {
+                            return Ok(None);
+                        };
+                        values.push(value);
+                    } else {
+                        signed.push(value);
+                    }
+                } else if let Ok(value) = item.extract::<u64>() {
+                    if unsigned.is_none() {
+                        if signed.iter().any(|&value| value < 0) {
+                            return Ok(None);
+                        }
+                        let mut values = Vec::with_capacity(len);
+                        values.extend(signed.drain(..).map(|value| value as u64));
+                        unsigned = Some(values);
+                    }
+                    unsigned
+                        .as_mut()
+                        .expect("unsigned buffer was initialized")
+                        .push(value);
+                } else {
+                    return Ok(None);
+                }
+            }
+            return Ok(Some(if let Some(values) = unsigned {
+                Self {
+                    data: ArrayData::U64(ArrayD::from_shape_vec(shape, values).map_err(
+                        |error| {
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "internal error constructing unsigned integer array: {error}"
+                            ))
+                        },
+                    )?),
+                }
+            } else {
+                Self {
+                    data: ArrayData::I64(ArrayD::from_shape_vec(shape, signed).map_err(
+                        |error| {
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "internal error constructing signed integer array: {error}"
+                            ))
+                        },
+                    )?),
+                }
+            }));
+        }
+
+        if first.is_exact_instance_of::<PyFloat>() {
+            let mut values = Vec::with_capacity(len);
+            for item in data.iter() {
+                if !item.is_exact_instance_of::<PyFloat>() {
+                    return Ok(None);
+                }
+                values.push(item.cast::<PyFloat>()?.value());
+            }
+            return Ok(Some(Self {
+                data: ArrayData::F64(ArrayD::from_shape_vec(shape, values).map_err(|error| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "internal error constructing floating-point array: {error}"
+                    ))
+                })?),
+            }));
+        }
+
+        Ok(None)
+    }
+
     fn from_nested_sequence(
         data: &Bound<'_, PyAny>,
         dtype: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        if dtype.is_none()
+            && let Ok(list) = data.cast::<PyList>()
+            && let Some(array) = Self::try_from_flat_builtin_list(list)?
+        {
+            return Ok(array);
+        }
+
         // Determine shape and element type
         let shape = Self::infer_shape(data)?;
         let ndim = shape.len();
@@ -3284,6 +3576,14 @@ impl Array {
                     }
                 }
             }
+        } else if let Ok(list) = data.cast::<PyList>() {
+            for item in list.iter() {
+                Self::flatten_sequence(&item, bufs, explicit_dtype)?;
+            }
+        } else if let Ok(tuple) = data.cast::<PyTuple>() {
+            for item in tuple.iter() {
+                Self::flatten_sequence(&item, bufs, explicit_dtype)?;
+            }
         } else if let Ok(seq) = data.cast::<PySequence>() {
             // It's a sequence - recurse
             for i in 0..seq.len()? {
@@ -3417,10 +3717,68 @@ impl Array {
         Ok(())
     }
 
+    fn push_inferred_integer(indexed: &Bound<'_, PyAny>, bufs: &mut FlatBuffers) -> PyResult<bool> {
+        if let Ok(value) = indexed.extract::<i64>() {
+            match bufs.elem_type {
+                ElemType::Complex128 | ElemType::Complex64 => bufs
+                    .complexes
+                    .push(num_complex::Complex::new(value as f64, 0.0)),
+                ElemType::F64 | ElemType::F32 => bufs.f64s.push(value as f64),
+                ElemType::Bool => bufs.bools.push(value != 0),
+                ElemType::U64 => bufs.u64s.push(u64::try_from(value).map_err(|_| {
+                    pyo3::exceptions::PyOverflowError::new_err(format!(
+                        "value {value} is out of range for uint64"
+                    ))
+                })?),
+                _ => {
+                    bufs.elem_type = ElemType::I64;
+                    bufs.i64s.push(value);
+                }
+            }
+            return Ok(true);
+        }
+
+        if let Ok(value) = indexed.extract::<u64>() {
+            match bufs.elem_type {
+                ElemType::Complex128 | ElemType::Complex64 => bufs
+                    .complexes
+                    .push(num_complex::Complex::new(value as f64, 0.0)),
+                ElemType::F64 | ElemType::F32 => bufs.f64s.push(value as f64),
+                ElemType::Bool => bufs.bools.push(value != 0),
+                ElemType::I64 | ElemType::U64 => {
+                    for signed in bufs.i64s.drain(..) {
+                        bufs.u64s.push(u64::try_from(signed).map_err(|_| {
+                            pyo3::exceptions::PyOverflowError::new_err(format!(
+                                "value {signed} cannot be combined with uint64 values"
+                            ))
+                        })?);
+                    }
+                    bufs.elem_type = ElemType::U64;
+                    bufs.u64s.push(value);
+                }
+                _ => bufs.u64s.push(value),
+            }
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    fn push_inferred_float(value: f64, bufs: &mut FlatBuffers) -> PyResult<()> {
+        if matches!(bufs.elem_type, ElemType::I64) {
+            Self::promote_type_to_float(&mut bufs.elem_type, &mut bufs.f64s, &mut bufs.i64s)?;
+        }
+        if bufs.elem_type == ElemType::Complex128 {
+            bufs.complexes.push(num_complex::Complex::new(value, 0.0));
+        } else {
+            bufs.elem_type = ElemType::F64;
+            bufs.f64s.push(value);
+        }
+        Ok(())
+    }
+
     /// Extract value and infer type automatically
     fn extract_and_infer_type(data: &Bound<'_, PyAny>, bufs: &mut FlatBuffers) -> PyResult<()> {
-        use pyo3::types::PyBool;
-
         // Priority order: PauliString > Pauli > Bool > Int > Complex > Float
         if data.is_instance_of::<PauliString>() {
             bufs.elem_type = ElemType::PauliString;
@@ -3460,80 +3818,28 @@ impl Array {
             bufs.elem_type = ElemType::Complex128;
             let val = data.extract::<num_complex::Complex<f64>>()?;
             bufs.complexes.push(val);
+        } else if data.is_exact_instance_of::<PyInt>() {
+            if !Self::push_inferred_integer(data, bufs)? {
+                return Self::push_inferred_float(data.extract::<f64>()?, bufs);
+            }
+        } else if let Ok(value) = data.cast::<PyFloat>() {
+            Self::push_inferred_float(value.value(), bufs)?;
         } else {
             // Priority 3: Normalize Python and NumPy integer-like scalars through
             // __index__, so every integer source reaches the same checked buffers.
-            let type_name = data.get_type().name()?;
-            if let Ok(indexed) = data.call_method0("__index__") {
-                if let Ok(ival) = indexed.extract::<i64>() {
-                    match bufs.elem_type {
-                        ElemType::Complex128 | ElemType::Complex64 => {
-                            bufs.complexes
-                                .push(num_complex::Complex::new(ival as f64, 0.0));
-                        }
-                        ElemType::F64 | ElemType::F32 => {
-                            bufs.f64s.push(ival as f64);
-                        }
-                        ElemType::Bool => {
-                            bufs.bools.push(ival != 0);
-                        }
-                        ElemType::U64 => bufs.u64s.push(u64::try_from(ival).map_err(|_| {
-                            pyo3::exceptions::PyOverflowError::new_err(format!(
-                                "value {ival} is out of range for uint64"
-                            ))
-                        })?),
-                        _ => {
-                            // First value or already in signed integer mode.
-                            bufs.elem_type = ElemType::I64;
-                            bufs.i64s.push(ival);
-                        }
-                    }
-                    return Ok(());
-                }
-
-                if let Ok(uval) = indexed.extract::<u64>() {
-                    match bufs.elem_type {
-                        ElemType::Complex128 | ElemType::Complex64 => bufs
-                            .complexes
-                            .push(num_complex::Complex::new(uval as f64, 0.0)),
-                        ElemType::F64 | ElemType::F32 => bufs.f64s.push(uval as f64),
-                        ElemType::Bool => bufs.bools.push(uval != 0),
-                        ElemType::I64 | ElemType::U64 => {
-                            for value in bufs.i64s.drain(..) {
-                                bufs.u64s.push(u64::try_from(value).map_err(|_| {
-                                    pyo3::exceptions::PyOverflowError::new_err(format!(
-                                        "value {value} cannot be combined with uint64 values"
-                                    ))
-                                })?);
-                            }
-                            bufs.elem_type = ElemType::U64;
-                            bufs.u64s.push(uval);
-                        }
-                        _ => bufs.u64s.push(uval),
-                    }
-                    return Ok(());
-                }
-            }
-
-            // Try as float
-            if let Ok(val) = data.extract::<f64>() {
-                if matches!(bufs.elem_type, ElemType::I64) {
-                    Self::promote_type_to_float(
-                        &mut bufs.elem_type,
-                        &mut bufs.f64s,
-                        &mut bufs.i64s,
-                    )?;
-                }
-                if bufs.elem_type == ElemType::Complex128 {
-                    bufs.complexes.push(num_complex::Complex::new(val, 0.0));
-                } else {
-                    bufs.elem_type = ElemType::F64;
-                    bufs.f64s.push(val);
-                }
+            if let Ok(indexed) = data.call_method0("__index__")
+                && Self::push_inferred_integer(&indexed, bufs)?
+            {
                 return Ok(());
             }
 
+            // Try as float
+            if let Ok(value) = data.extract::<f64>() {
+                return Self::push_inferred_float(value, bufs);
+            }
+
             // If we got here, extraction failed
+            let type_name = data.get_type().name()?;
             return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                 "Cannot extract numeric value from {type_name}"
             )));
@@ -6378,18 +6684,28 @@ impl Array {
         }
     }
 
-    /// Resolve the complete index tuple into result-ordered source coordinates.
+    /// Resolve the complete index tuple into result-ordered logical source offsets.
     fn resolve_selection(
         index_ops: &[IndexOp],
         source_shape: &[usize],
     ) -> PyResult<ResolvedSelection> {
-        enum ResolvedAxis {
+        enum ResolvedAxis<'a> {
             Constant(usize),
             Basic {
                 output_axis: usize,
                 indices: Vec<usize>,
             },
-            Advanced(ArrayD<usize>),
+            Advanced(ArrayViewD<'a, usize>),
+        }
+
+        if source_shape.len() == 1
+            && let [IndexOp::Advanced(arrays)] = index_ops
+            && let [offsets] = arrays.as_slice()
+        {
+            return Ok(ResolvedSelection {
+                offsets: offsets.clone(),
+                shape: offsets.shape().to_vec(),
+            });
         }
 
         let has_advanced = index_ops
@@ -6500,16 +6816,14 @@ impl Array {
                 }
                 IndexOp::Advanced(arrays) => {
                     for array in arrays {
-                        let broadcast = array
-                            .broadcast(IxDyn(&advanced_shape))
-                            .ok_or_else(|| {
+                        let broadcast =
+                            array.broadcast(IxDyn(&advanced_shape)).ok_or_else(|| {
                                 pyo3::exceptions::PyIndexError::new_err(format!(
                                     "shape mismatch: index shape {:?} cannot broadcast to {:?}",
                                     array.shape(),
                                     advanced_shape
                                 ))
-                            })?
-                            .to_owned();
+                            })?;
                         resolved_axes.push(ResolvedAxis::Advanced(broadcast));
                     }
                 }
@@ -6523,26 +6837,44 @@ impl Array {
             basic_ordinal += 1;
         }
 
-        let coordinate_options = ArrayD::from_shape_fn(IxDyn(&result_shape), |output_index| {
+        let mut source_strides = vec![1usize; source_shape.len()];
+        for axis in (0..source_shape.len().saturating_sub(1)).rev() {
+            source_strides[axis] = source_strides[axis + 1]
+                .checked_mul(source_shape[axis + 1])
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(
+                        "internal error computing source array strides",
+                    )
+                })?;
+        }
+
+        let offset_options = ArrayD::from_shape_fn(IxDyn(&result_shape), |output_index| {
             let output = output_index.slice();
             let advanced_index = output
                 .get(advanced_output_start..advanced_output_start.saturating_add(advanced_rank))?;
             resolved_axes
                 .iter()
-                .map(|axis| match axis {
-                    ResolvedAxis::Constant(index) => Some(*index),
-                    ResolvedAxis::Basic {
-                        output_axis,
-                        indices,
-                    } => output
-                        .get(*output_axis)
-                        .and_then(|&position| indices.get(position))
-                        .copied(),
-                    ResolvedAxis::Advanced(indices) => indices.get(IxDyn(advanced_index)).copied(),
+                .zip(&source_strides)
+                .try_fold(0usize, |offset, (axis, &stride)| {
+                    let coordinate = match axis {
+                        ResolvedAxis::Constant(index) => Some(*index),
+                        ResolvedAxis::Basic {
+                            output_axis,
+                            indices,
+                        } => output
+                            .get(*output_axis)
+                            .and_then(|&position| indices.get(position))
+                            .copied(),
+                        ResolvedAxis::Advanced(indices) => {
+                            indices.get(IxDyn(advanced_index)).copied()
+                        }
+                    }?;
+                    coordinate
+                        .checked_mul(stride)
+                        .and_then(|component| offset.checked_add(component))
                 })
-                .collect::<Option<Vec<_>>>()
         });
-        let coordinates = coordinate_options
+        let offsets = offset_options
             .into_iter()
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| {
@@ -6550,14 +6882,13 @@ impl Array {
                     "internal error constructing resolved index selection",
                 )
             })?;
-        let coordinates =
-            ArrayD::from_shape_vec(IxDyn(&result_shape), coordinates).map_err(|error| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "internal error shaping resolved index selection: {error}"
-                ))
-            })?;
+        let offsets = ArrayD::from_shape_vec(IxDyn(&result_shape), offsets).map_err(|error| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "internal error shaping resolved index selection: {error}"
+            ))
+        })?;
         Ok(ResolvedSelection {
-            coordinates,
+            offsets,
             shape: result_shape,
         })
     }
@@ -6566,10 +6897,16 @@ impl Array {
         source: &ArrayD<T>,
         selection: &ResolvedSelection,
     ) -> PyResult<ArrayD<T>> {
+        let standard_source = source.as_standard_layout();
+        let source_values = standard_source.as_slice().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "internal error obtaining contiguous source array",
+            )
+        })?;
         let values = selection
-            .coordinates
+            .offsets
             .iter()
-            .map(|coordinate| source.get(IxDyn(coordinate)).cloned())
+            .map(|&offset| source_values.get(offset).cloned())
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| {
                 pyo3::exceptions::PyRuntimeError::new_err(
@@ -6655,14 +6992,30 @@ impl Array {
         is_scalar: bool,
         selection: &ResolvedSelection,
     ) -> PyResult<()> {
+        let target_shape = target.shape().to_vec();
+        let mut target_strides = vec![1usize; target_shape.len()];
+        for axis in (0..target_shape.len().saturating_sub(1)).rev() {
+            target_strides[axis] = target_strides[axis + 1] * target_shape[axis + 1];
+        }
+        let mut coordinate = vec![0usize; target_shape.len()];
+        let resolve_coordinate = |offset: usize, coordinate: &mut [usize]| {
+            for ((coordinate, &stride), &axis_len) in coordinate
+                .iter_mut()
+                .zip(&target_strides)
+                .zip(&target_shape)
+            {
+                *coordinate = (offset / stride) % axis_len;
+            }
+        };
         if is_scalar {
             let scalar = source.first().cloned().ok_or_else(|| {
                 pyo3::exceptions::PyRuntimeError::new_err(
                     "internal error converting assignment value",
                 )
             })?;
-            for coordinate in &selection.coordinates {
-                let target_value = target.get_mut(IxDyn(coordinate)).ok_or_else(|| {
+            for &offset in &selection.offsets {
+                resolve_coordinate(offset, &mut coordinate);
+                let target_value = target.get_mut(IxDyn(&coordinate)).ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
                         "internal error: resolved assignment index is outside the target array",
                     )
@@ -6677,13 +7030,14 @@ impl Array {
                     source.shape()
                 )));
             }
-            for (output_index, coordinate) in selection.coordinates.indexed_iter() {
+            for (output_index, &offset) in selection.offsets.indexed_iter() {
                 let source_value = source.get(output_index).cloned().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
                         "internal error reading converted assignment value",
                     )
                 })?;
-                let target_value = target.get_mut(IxDyn(coordinate)).ok_or_else(|| {
+                resolve_coordinate(offset, &mut coordinate);
+                let target_value = target.get_mut(IxDyn(&coordinate)).ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
                         "internal error: resolved assignment index is outside the target array",
                     )

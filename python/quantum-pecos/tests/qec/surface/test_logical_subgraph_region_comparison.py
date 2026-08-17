@@ -395,8 +395,8 @@ def test_windowed_logical_subgraph_known_limitation_no_full_suppression():
     ), f"windowed LER regressed toward catastrophic: d3={ler_d3:.5f} d5={ler_d5:.5f} d7={ler_d7:.5f}"
 
 
-def test_decode_each_matches_decode_count():
-    """Requested predictions score consistently with the aggregate count."""
+def test_python_scored_predictions_match_the_rust_error_count():
+    """Scoring the returned predictions in Python reproduces the Rust count."""
     b = _cx_circuit()
     dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
     n = 3000

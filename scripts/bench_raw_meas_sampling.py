@@ -87,6 +87,10 @@ def main():
     import stim
     from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 
+    # Every row's execution path, so the note below describes all of them rather
+    # than whichever happened to run last.
+    decode_paths: set[str] = set()
+
     for d, shot_list in dec_configs:
         tc = build(d)
         sampler = DemSampler.from_circuit(tc, **noise_args)
@@ -98,12 +102,13 @@ def main():
             batch = sampler.sample_batch(shots, seed=42)
             t_gen = time.perf_counter() - t0
 
+            spec = pymatching(correlated=True)
             t0 = time.perf_counter()
             # Times whatever the planner selects by default -- the path a user
             # actually gets. That is PyMatching's vectorized batch API here, not
             # the per-shot loop the pre-unification benchmark measured, so these
             # decode timings are not comparable with numbers recorded before it.
-            decode_path = batch.decode(dem_str, pymatching(correlated=True)).execution_path
+            decode_paths.add(batch.decode(dem_str, spec).execution_path)
             t_dec = time.perf_counter() - t0
 
             t_total = t_gen + t_dec
@@ -118,7 +123,7 @@ def main():
 
     print("Notes:")
     print("  sample_batch is 3-6x faster with columnar SampleBatch storage.")
-    print(f"  Decode timings above use the '{decode_path}' execution path.")
+    print(f"  Decode timings above use the {sorted(decode_paths)} execution path(s).")
     print("  The gen% column reports how much of end-to-end time is generation.")
     if not FULL:
         print("  Use --full for larger shot counts and stable headline numbers.")

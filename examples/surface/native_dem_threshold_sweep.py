@@ -755,7 +755,7 @@ def _native_sampler_runtime(
         )
     # Fused decoding builds its own decoder from the spec, so this instance is
     # not on the measured path; building and exercising it once still fails fast
-    # if the requested decoder cannot be constructed from this DEM.
+    # if the requested decoder cannot be constructed from the unfiltered DEM.
     dem_decoder = _create_dem_decoder(decoder_type, dem_str)
     # The traced-QIS sampler stack has a noticeable one-time initialization cost
     # on its first sample. Pay that once when the cached runtime is created so

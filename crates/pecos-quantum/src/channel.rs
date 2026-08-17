@@ -634,6 +634,65 @@ impl PauliSum {
         Ok(self)
     }
 
+    /// Multiplies two Pauli sums after validating that they act on the same
+    /// number of qubits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChannelError::QubitCountMismatch`] when the two sums have
+    /// different qubit counts, or [`ChannelError::InvalidCoefficient`] when a
+    /// resulting coefficient is not finite.
+    pub fn try_mul(&self, rhs: &Self) -> Result<Self, ChannelError> {
+        if self.num_qubits != rhs.num_qubits {
+            return Err(ChannelError::QubitCountMismatch {
+                expected: self.num_qubits,
+                actual: rhs.num_qubits,
+            });
+        }
+
+        let mut product = Self::new(self.num_qubits);
+        for (pauli_a, coefficient_a) in &self.terms {
+            for (pauli_b, coefficient_b) in &rhs.terms {
+                let (product_pauli, phase_exponent) = pauli_a.multiply_with_phase(pauli_b);
+                let phase = match phase_exponent {
+                    0 => Complex64::new(1.0, 0.0),
+                    1 => Complex64::new(0.0, 1.0),
+                    2 => Complex64::new(-1.0, 0.0),
+                    3 => Complex64::new(0.0, -1.0),
+                    _ => unreachable!("Pauli product phase exponent must be in 0..4"),
+                };
+                product.add_term(product_pauli, coefficient_a * coefficient_b * phase)?;
+            }
+        }
+        Ok(product)
+    }
+
+    /// Returns the commutator `self * rhs - rhs * self`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChannelError::QubitCountMismatch`] when the two sums have
+    /// different qubit counts, or [`ChannelError::InvalidCoefficient`] when a
+    /// resulting coefficient is not finite.
+    pub fn commutator(&self, rhs: &Self) -> Result<Self, ChannelError> {
+        let forward = self.try_mul(rhs)?;
+        let reverse = rhs.try_mul(self)? * -1.0;
+        forward.try_add(reverse)
+    }
+
+    /// Returns the anticommutator `self * rhs + rhs * self`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChannelError::QubitCountMismatch`] when the two sums have
+    /// different qubit counts, or [`ChannelError::InvalidCoefficient`] when a
+    /// resulting coefficient is not finite.
+    pub fn anticommutator(&self, rhs: &Self) -> Result<Self, ChannelError> {
+        let forward = self.try_mul(rhs)?;
+        let reverse = rhs.try_mul(self)?;
+        forward.try_add(reverse)
+    }
+
     /// Returns the trace of the represented operator.
     ///
     /// The trace is `identity_coefficient * 2^num_qubits`.
@@ -682,6 +741,21 @@ impl Add for PauliSum {
     fn add(self, rhs: Self) -> Self::Output {
         self.try_add(rhs)
             .expect("cannot add PauliSum values with different qubit counts")
+    }
+}
+
+impl Mul for PauliSum {
+    type Output = Self;
+
+    /// Multiplies two Pauli sums.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the sums have different qubit counts. Use
+    /// [`PauliSum::try_mul`] to handle this case without panicking.
+    fn mul(self, rhs: Self) -> Self::Output {
+        self.try_mul(&rhs)
+            .expect("cannot multiply PauliSum values with different qubit counts")
     }
 }
 
@@ -3193,6 +3267,24 @@ mod tests {
         assert_close(a.im, b.im);
     }
 
+    fn pauli_sum_with_term(
+        num_qubits: usize,
+        pauli: PauliBitmaskSmall,
+        coefficient: Complex64,
+    ) -> PauliSum {
+        let mut sum = PauliSum::new(num_qubits);
+        sum.add_term(pauli, coefficient).unwrap();
+        sum
+    }
+
+    fn assert_pauli_sums_close(a: &PauliSum, b: &PauliSum) {
+        assert_eq!(a.num_qubits(), b.num_qubits());
+        assert_eq!(a.terms().len(), b.terms().len());
+        for (pauli, coefficient) in a.terms() {
+            assert_complex_close(*coefficient, *b.terms().get(pauli).unwrap());
+        }
+    }
+
     fn assert_matrix_close(a: &DMatrix<f64>, b: &DMatrix<f64>) {
         assert_eq!(a.shape(), b.shape());
         for row in 0..a.nrows() {
@@ -3431,6 +3523,167 @@ mod tests {
             Complex64::new(2.0, 0.0),
         );
         assert_complex_close(*sum.terms().get(&z0).unwrap(), Complex64::new(0.5, 0.0));
+    }
+
+    #[test]
+    fn pauli_sum_multiplies_single_pauli_terms() {
+        let x = PauliBitmaskSmall::x(0);
+        let y = PauliBitmaskSmall::y(0);
+        let z = PauliBitmaskSmall::z(0);
+        let identity = PauliBitmaskSmall::identity();
+        let coefficient = Complex64::new(1.0, 0.0);
+        let x_sum = pauli_sum_with_term(1, x.clone(), coefficient);
+        let y_sum = pauli_sum_with_term(1, y.clone(), coefficient);
+        let z_sum = pauli_sum_with_term(1, z.clone(), coefficient);
+
+        let xy = x_sum.try_mul(&y_sum).unwrap();
+        assert_eq!(xy.terms().len(), 1);
+        assert_eq!(xy.terms().get(&z), Some(&Complex64::new(0.0, 1.0)));
+
+        let yx = y_sum.try_mul(&x_sum).unwrap();
+        assert_eq!(yx.terms().len(), 1);
+        assert_eq!(yx.terms().get(&z), Some(&Complex64::new(0.0, -1.0)));
+
+        let zx = z_sum.try_mul(&x_sum).unwrap();
+        assert_eq!(zx.terms().len(), 1);
+        assert_eq!(zx.terms().get(&y), Some(&Complex64::new(0.0, 1.0)));
+
+        let xx = x_sum.try_mul(&x_sum).unwrap();
+        assert_eq!(xx.terms().len(), 1);
+        assert_eq!(xx.terms().get(&identity), Some(&Complex64::new(1.0, 0.0)));
+    }
+
+    #[test]
+    fn pauli_sum_product_propagates_coefficients_and_phase() {
+        let x = pauli_sum_with_term(1, PauliBitmaskSmall::x(0), Complex64::new(2.0, 0.0));
+        let y = pauli_sum_with_term(1, PauliBitmaskSmall::y(0), Complex64::new(0.0, 3.0));
+        let product = x.try_mul(&y).unwrap();
+
+        assert_eq!(product.terms().len(), 1);
+        assert_eq!(
+            product.terms().get(&PauliBitmaskSmall::z(0)),
+            Some(&Complex64::new(-6.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn pauli_sum_product_merges_and_drops_cancelled_terms() {
+        let identity = PauliBitmaskSmall::identity();
+        let x = PauliBitmaskSmall::x(0);
+        let one = Complex64::new(1.0, 0.0);
+
+        let mut left = PauliSum::new(1);
+        left.add_term(identity.clone(), one).unwrap();
+        left.add_term(x.clone(), one).unwrap();
+
+        let merged = left.try_mul(&left).unwrap();
+        assert_eq!(merged.terms().len(), 2);
+        assert_eq!(
+            merged.terms().get(&identity),
+            Some(&Complex64::new(2.0, 0.0))
+        );
+        assert_eq!(merged.terms().get(&x), Some(&Complex64::new(2.0, 0.0)));
+
+        let mut right = PauliSum::new(1);
+        right.add_term(identity, one).unwrap();
+        right.add_term(x, -one).unwrap();
+        let cancelled = left.try_mul(&right).unwrap();
+        assert!(cancelled.terms().is_empty());
+    }
+
+    #[test]
+    fn pauli_sum_commutators_match_pauli_algebra() {
+        let one = Complex64::new(1.0, 0.0);
+        let x = pauli_sum_with_term(1, PauliBitmaskSmall::x(0), one);
+        let y = pauli_sum_with_term(1, PauliBitmaskSmall::y(0), one);
+
+        let xy = x.commutator(&y).unwrap();
+        assert_eq!(xy.terms().len(), 1);
+        assert_eq!(
+            xy.terms().get(&PauliBitmaskSmall::z(0)),
+            Some(&Complex64::new(0.0, 2.0))
+        );
+        assert!(x.commutator(&x).unwrap().terms().is_empty());
+
+        let xx = PauliBitmaskSmall::x(0).multiply(&PauliBitmaskSmall::x(1));
+        let zz = PauliBitmaskSmall::z(0).multiply(&PauliBitmaskSmall::z(1));
+        let xx = pauli_sum_with_term(2, xx, one);
+        let zz = pauli_sum_with_term(2, zz, one);
+        assert!(xx.commutator(&zz).unwrap().terms().is_empty());
+    }
+
+    #[test]
+    fn pauli_sum_anticommutators_match_pauli_algebra() {
+        let one = Complex64::new(1.0, 0.0);
+        let x = pauli_sum_with_term(1, PauliBitmaskSmall::x(0), one);
+        let y = pauli_sum_with_term(1, PauliBitmaskSmall::y(0), one);
+
+        let xx = x.anticommutator(&x).unwrap();
+        assert_eq!(xx.terms().len(), 1);
+        assert_eq!(
+            xx.terms().get(&PauliBitmaskSmall::identity()),
+            Some(&Complex64::new(2.0, 0.0))
+        );
+        assert!(x.anticommutator(&y).unwrap().terms().is_empty());
+    }
+
+    #[test]
+    fn pauli_sum_products_report_qubit_mismatch() {
+        let a = PauliSum::new(1);
+        let b = PauliSum::new(2);
+        let expected = ChannelError::QubitCountMismatch {
+            expected: 1,
+            actual: 2,
+        };
+
+        assert_eq!(a.try_mul(&b).unwrap_err(), expected);
+        assert_eq!(a.commutator(&b).unwrap_err(), expected);
+        assert_eq!(a.anticommutator(&b).unwrap_err(), expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot multiply PauliSum values with different qubit counts")]
+    fn pauli_sum_product_operator_panics_on_qubit_mismatch() {
+        let _ = PauliSum::new(1) * PauliSum::new(2);
+    }
+
+    #[test]
+    fn pauli_sum_identity_is_multiplicative_identity() {
+        let identity =
+            pauli_sum_with_term(2, PauliBitmaskSmall::identity(), Complex64::new(1.0, 0.0));
+        let mut sum = PauliSum::new(2);
+        sum.add_term(PauliBitmaskSmall::x(0), Complex64::new(2.0, -1.0))
+            .unwrap();
+        sum.add_term(PauliBitmaskSmall::y(1), Complex64::new(-3.0, 4.0))
+            .unwrap();
+
+        assert_eq!(identity.try_mul(&sum).unwrap(), sum);
+        assert_eq!(sum.try_mul(&identity).unwrap(), sum);
+    }
+
+    #[test]
+    fn pauli_sum_product_is_associative() {
+        let identity = PauliBitmaskSmall::identity();
+        let mut a = PauliSum::new(1);
+        a.add_term(identity.clone(), Complex64::new(1.0, 1.0))
+            .unwrap();
+        a.add_term(PauliBitmaskSmall::x(0), Complex64::new(2.0, -1.0))
+            .unwrap();
+
+        let mut b = PauliSum::new(1);
+        b.add_term(identity, Complex64::new(-1.0, 2.0)).unwrap();
+        b.add_term(PauliBitmaskSmall::y(0), Complex64::new(3.0, 1.0))
+            .unwrap();
+
+        let mut c = PauliSum::new(1);
+        c.add_term(PauliBitmaskSmall::x(0), Complex64::new(2.0, 1.0))
+            .unwrap();
+        c.add_term(PauliBitmaskSmall::z(0), Complex64::new(-2.0, 3.0))
+            .unwrap();
+
+        let left = (a.clone() * b.clone()) * c.clone();
+        let right = a * (b * c);
+        assert_pauli_sums_close(&left, &right);
     }
 
     #[test]

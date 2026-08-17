@@ -68,6 +68,7 @@ from typing import TYPE_CHECKING, Any
 
 from pecos import array, asarray, dtypes, linspace, random, zeros
 from pecos import sum as array_sum
+from pecos.decoders import DecoderSpec
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -235,7 +236,6 @@ class _NativeSamplerRuntime:
 
     decoder_runtime: _DecoderRuntime
     sampler: Any
-    dem_decoder: Any
     dem_str: str | None = None
 
 
@@ -753,6 +753,9 @@ def _native_sampler_runtime(
             ancilla_budget=ancilla_budget,
             interaction_basis=interaction_basis,
         )
+    # Fused decoding builds its own decoder from the spec, so this instance is
+    # not on the measured path; building and exercising it once still fails fast
+    # if the requested decoder cannot be constructed from the unfiltered DEM.
     dem_decoder = _create_dem_decoder(decoder_type, dem_str)
     # The traced-QIS sampler stack has a noticeable one-time initialization cost
     # on its first sample. Pay that once when the cached runtime is created so
@@ -764,7 +767,6 @@ def _native_sampler_runtime(
     return _NativeSamplerRuntime(
         decoder_runtime=runtime,
         sampler=sampler,
-        dem_decoder=dem_decoder,
         dem_str=dem_str_filtered,
     )
 
@@ -1284,34 +1286,23 @@ def _run_memory_point(
             p_prep_scale=p_prep_scale,
         )
         sampler = native_runtime.sampler
-        dem_decoder = native_runtime.dem_decoder
 
         num_raw_errors = None
-        # Fast path: sample+decode entirely in Rust via ObservableDecoder trait.
-        # The DemSampler keeps all per-shot data in Rust -- nothing crosses to Python.
+        # Fused sampling and decoding stays in Rust. The unified execution
+        # planner selects native, sequential, or parallel decoding for the spec.
         dem_str_for_rust = native_runtime.dem_str
-        rust_sampler = getattr(sampler, "sampler", None)
+        if dem_str_for_rust is None:
+            msg = "native sampler runtime requires a decoder DEM"
+            raise RuntimeError(msg)
         rust_decoder_type = "pymatching" if decoder_type == "pymatching_correlated" else decoder_type
-        use_rust_sample_decode = dem_str_for_rust and rust_sampler and hasattr(rust_sampler, "sample_decode_count")
-        if use_rust_sample_decode:
-            # Use parallel path for slow decoders (Tesseract, BP+OSD, etc.)
-            if rust_decoder_type != "pymatching" and hasattr(rust_sampler, "sample_decode_count_parallel"):
-                num_logical_errors = rust_sampler.sample_decode_count_parallel(
-                    dem_str_for_rust,
-                    num_shots,
-                    rust_decoder_type,
-                    seed,
-                )
-            else:
-                num_logical_errors = rust_sampler.sample_decode_count(
-                    dem_str_for_rust,
-                    num_shots,
-                    rust_decoder_type,
-                    seed,
-                )
-        else:
-            detection_events, observable_flips = sampler.sample(num_shots=num_shots, seed=seed)
-            num_logical_errors = _decode_all_shots(dem_decoder, detection_events, observable_flips, num_shots)
+        spec = DecoderSpec.parse(rust_decoder_type)
+        num_logical_errors = sampler.sampler.decode(
+            dem_str_for_rust,
+            num_shots,
+            spec,
+            seed=seed,
+            workers=None,
+        ).num_errors
     else:
         msg = f"Unknown sample backend: {sample_backend}"
         raise ValueError(msg)

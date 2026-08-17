@@ -99,13 +99,15 @@ def run_sweep(
         noise = depolarizing().p1(p_depol).p2(p_depol).p_meas(p_depol).p_prep(p_depol).idle_rz(p_idle)
         builder = sim_neo(tc).noise(noise).shots(shots).seed(seed)
         if backend == "stabmps":
-            builder = builder.quantum(
-                (
-                    stab_mps().lazy_measure().max_bond_dim(max_bond_dim)
-                    if lazy_measure
-                    else stab_mps().max_bond_dim(max_bond_dim)
-                ),
+            # New merge/truncation defaults change LERs; pin the legacy configuration for reproducibility.
+            quantum_backend = (
+                stab_mps()
+                .lazy_measure(lazy_measure)
+                .max_bond_dim(max_bond_dim)
+                .max_truncation_error(0.0)
+                .merge_rz(enabled=False)
             )
+            builder = builder.quantum(quantum_backend)
         else:
             builder = builder.quantum(statevec())
         results = builder.run()

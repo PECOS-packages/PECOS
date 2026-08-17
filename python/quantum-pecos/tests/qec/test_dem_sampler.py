@@ -259,6 +259,7 @@ def test_dem_events_split_observables_and_tracked_paulis() -> None:
 
 def test_sample_decode_count_ignores_tracked_paulis() -> None:
     """Decoder error counting uses observables, not tracked Paulis."""
+    from pecos.decoders import pymatching
     from pecos_rslib import DagCircuit, PauliString
     from pecos_rslib.qec import DemSampler, DetectorErrorModel
 
@@ -293,7 +294,12 @@ def test_sample_decode_count_ignores_tracked_paulis() -> None:
     assert "logical_observable L0" in dem.to_string()
     assert "logical_observable L1" not in dem.to_string()
 
-    errors = sampler.sample_decode_count(dem.to_string(), 2000, seed=17)
+    errors = sampler.decode(
+        dem.to_string(),
+        2000,
+        pymatching(correlated=True),
+        seed=17,
+    ).num_errors
     assert errors == 0
 
 

@@ -47,7 +47,8 @@ pub struct MpsConfig {
     /// (sum of discarded `s_i^2` / sum of all `s_i^2`) exceeds this threshold.
     /// This allows low-entanglement bonds to use small chi (fast) while
     /// high-entanglement bonds grow up to `max_bond_dim` (accurate).
-    /// None = disabled (fixed `max_bond_dim` only).
+    /// `None` or a value of zero disables adaptive truncation; only
+    /// `svd_cutoff` and `max_bond_dim` can then discard singular values.
     pub max_truncation_error: Option<f64>,
     /// Use rayon for parallelizing independent MPS operations.
     pub parallel: bool,
@@ -56,9 +57,9 @@ pub struct MpsConfig {
 impl Default for MpsConfig {
     fn default() -> Self {
         Self {
-            max_bond_dim: 64,
+            max_bond_dim: 128,
             svd_cutoff: 1e-12,
-            max_truncation_error: None,
+            max_truncation_error: Some(1e-8),
             parallel: false,
         }
     }
@@ -142,11 +143,13 @@ impl Mps {
     }
 
     #[must_use]
+    /// Return the number of physical sites in the MPS chain.
     pub fn num_sites(&self) -> usize {
         self.num_sites
     }
 
     #[must_use]
+    /// Return the local physical dimension (two for qubit MPS instances).
     pub fn phys_dim(&self) -> usize {
         self.phys_dim
     }
@@ -158,11 +161,13 @@ impl Mps {
     }
 
     #[must_use]
+    /// Return the largest bond dimension currently present in the chain.
     pub fn max_bond_dim(&self) -> usize {
         *self.bond_dims.iter().max().unwrap_or(&1)
     }
 
     #[must_use]
+    /// Return the truncation and parallelism configuration used by this MPS.
     pub fn config(&self) -> &MpsConfig {
         &self.config
     }
@@ -564,9 +569,12 @@ impl Mps {
         result[(0, 0)]
     }
 
-    /// Compute the full state vector (2^N complex amplitudes).
+    /// Compute the full state vector (`2^N` complex amplitudes).
     ///
-    /// Only for testing on small systems.
+    /// This performs `2^N` MPS contractions and allocates `2^N` complex
+    /// values, so it is only suitable for testing and other small-system
+    /// reads. Prefer [`Self::amplitude`] for selected basis states and
+    /// [`Self::expectation_product`] for product-observable expectations.
     /// When `parallel` is enabled in the config, amplitude computations run on
     /// rayon's thread pool.
     ///
@@ -769,6 +777,55 @@ impl Clone for Mps {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+
+    #[test]
+    fn test_default_config_values() {
+        let config = MpsConfig::default();
+        assert_eq!(config.max_bond_dim, 128);
+        assert_relative_eq!(config.svd_cutoff, 1e-12);
+        assert_eq!(config.max_truncation_error, Some(1e-8));
+        assert!(!config.parallel);
+    }
+
+    #[test]
+    fn test_zero_max_truncation_error_disables_adaptive_compression() {
+        let mut zero = Mps::new(2, MpsConfig::default());
+        let mut small_branch = Mps::new(2, MpsConfig::default());
+        let x = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        );
+        small_branch.apply_one_site_gate(0, &x).unwrap();
+        small_branch.apply_one_site_gate(1, &x).unwrap();
+        small_branch.scale(Complex64::new(0.01, 0.0));
+        zero = zero.add(&small_branch);
+        zero.config.max_bond_dim = 128;
+        zero.config.svd_cutoff = 0.0;
+        zero.config.max_truncation_error = Some(0.0);
+
+        let mut adaptive = zero.clone();
+        adaptive.config.max_truncation_error = Some(1e-3);
+        let mut cutoff_limited = zero.clone();
+        cutoff_limited.config.svd_cutoff = 0.1;
+        let mut cap_limited = zero.clone();
+        cap_limited.config.max_bond_dim = 1;
+
+        zero.compress();
+        adaptive.compress();
+        cutoff_limited.compress();
+        cap_limited.compress();
+
+        assert_eq!(zero.bond_dim(1), 2, "zero must retain positive weight");
+        assert_eq!(adaptive.bond_dim(1), 1, "positive budget may discard it");
+        assert_eq!(cutoff_limited.bond_dim(1), 1, "SVD cutoff remains active");
+        assert_eq!(cap_limited.bond_dim(1), 1, "bond cap remains active");
+    }
 
     #[test]
     fn test_new_is_all_zeros_state() {

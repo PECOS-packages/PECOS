@@ -31,7 +31,7 @@ pub struct StabMpsBuilder {
     /// Maximum MPS bond dimension.
     pub max_bond_dim: usize,
     /// Maximum truncation error for MPS compression.
-    /// None = disabled (library default, use fixed bond dim cap only).
+    /// Zero disables adaptive truncation while preserving cutoff and cap truncation.
     pub max_truncation_error: Option<f64>,
     /// Merge consecutive RZ on same qubit before decomposition.
     pub merge_rz: bool,
@@ -41,9 +41,9 @@ impl Default for StabMpsBuilder {
     fn default() -> Self {
         Self {
             lazy_measure: false,
-            max_bond_dim: 64,
-            max_truncation_error: None,
-            merge_rz: false,
+            max_bond_dim: 128,
+            max_truncation_error: Some(1e-8),
+            merge_rz: true,
         }
     }
 }
@@ -70,8 +70,16 @@ impl StabMpsBuilder {
     }
 
     /// Set maximum truncation error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `err` is negative, NaN, or infinite.
     #[must_use]
     pub fn with_max_truncation_error(mut self, err: f64) -> Self {
+        assert!(
+            err.is_finite() && err >= 0.0,
+            "max_truncation_error must be finite and non-negative"
+        );
         self.max_truncation_error = Some(err);
         self
     }
@@ -92,16 +100,12 @@ impl SimulatorFactory for StabMpsBuilder {
         seed: Option<u64>,
     ) -> Box<dyn DynProgramRunner> {
         let mut builder = StabMps::builder(num_qubits);
-        if self.lazy_measure {
-            builder = builder.lazy_measure(true);
-        }
+        builder = builder.lazy_measure(self.lazy_measure);
         builder = builder.max_bond_dim(self.max_bond_dim);
         if let Some(err) = self.max_truncation_error {
             builder = builder.max_truncation_error(err);
         }
-        if self.merge_rz {
-            builder = builder.merge_rz(true);
-        }
+        builder = builder.merge_rz(self.merge_rz);
         if let Some(s) = seed {
             builder = builder.seed(s);
         }

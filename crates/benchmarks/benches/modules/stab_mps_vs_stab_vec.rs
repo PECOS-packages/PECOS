@@ -351,8 +351,8 @@ fn bench_adaptive_truncation<M: Measurement>(c: &mut Criterion<M>) {
     let num_qubits = 20;
     let depth = 2;
 
-    // Fixed max_bond_dim = 64 (default)
-    group.bench_function("fixed_chi64", |b| {
+    // General defaults: adaptive error budget 1e-8 and max_bond_dim = 128.
+    group.bench_function("general_defaults_cap128", |b| {
         b.iter(|| {
             let mut sim = StabMps::builder(num_qubits).seed(42).build();
             run_interleaved_circuit(&mut sim, num_qubits, depth);
@@ -360,8 +360,8 @@ fn bench_adaptive_truncation<M: Measurement>(c: &mut Criterion<M>) {
         });
     });
 
-    // Adaptive with error budget 1e-6, cap 64
-    group.bench_function("adaptive_1e-6_cap64", |b| {
+    // Adaptive with error budget 1e-6, default cap 128.
+    group.bench_function("adaptive_1e-6_cap128", |b| {
         b.iter(|| {
             let mut sim = StabMps::builder(num_qubits)
                 .seed(42)
@@ -372,8 +372,8 @@ fn bench_adaptive_truncation<M: Measurement>(c: &mut Criterion<M>) {
         });
     });
 
-    // Adaptive with error budget 1e-3, cap 64
-    group.bench_function("adaptive_1e-3_cap64", |b| {
+    // Adaptive with error budget 1e-3, default cap 128.
+    group.bench_function("adaptive_1e-3_cap128", |b| {
         b.iter(|| {
             let mut sim = StabMps::builder(num_qubits)
                 .seed(42)

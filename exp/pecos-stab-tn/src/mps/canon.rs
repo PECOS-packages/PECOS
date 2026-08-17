@@ -12,8 +12,10 @@
 
 //! MPS canonicalization via QR decomposition.
 //!
-//! Left-canonical form: each site tensor A[i] satisfies `sum_sigma` A[sigma]^dagger A[sigma] = I.
-//! Right-canonical form: each site tensor B[i] satisfies `sum_sigma` B[sigma] B[sigma]^dagger = I.
+//! Left-canonical form: each site tensor `A[i]` satisfies
+//! `sum_sigma A[sigma]^dagger A[sigma] = I`.
+//! Right-canonical form: each site tensor `B[i]` satisfies
+//! `sum_sigma B[sigma] B[sigma]^dagger = I`.
 
 use super::tensor::{reshape_left_group, reshape_left_ungroup};
 use nalgebra::DMatrix;

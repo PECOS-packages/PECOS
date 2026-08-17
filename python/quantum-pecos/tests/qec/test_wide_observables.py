@@ -12,6 +12,7 @@ and ``decode_count`` comparing wide masks end-to-end.
 from __future__ import annotations
 
 import pytest
+from pecos.decoders import pymatching
 from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem, SampleBatch
 
 
@@ -112,8 +113,8 @@ def test_observable_flips_mask_supports_the_formerly_rejected_wide_batch() -> No
     assert wide.get_observable_flips(0).mask == 1 << 64
 
 
-def test_sample_batch_decode_count_batch_handles_wide_dem() -> None:
-    # decode_count_batch builds wide ObsMask predictions from PyMatching's batch
+def test_sample_batch_native_decode_handles_wide_dem() -> None:
+    # The native uncorrelated PyMatching path builds wide ObsMask predictions
     # output, so a >64-observable DEM is decoded and compared with no truncation
     # or panic (no `1 << j` overflow).
     n = 70
@@ -121,12 +122,14 @@ def test_sample_batch_decode_count_batch_handles_wide_dem() -> None:
     syn = [0] * n
     syn[69] = 1  # detector 69 fires => boundary error flips observable 69
     batch = SampleBatch([syn, syn], [1 << 69, 1 << 69])  # truth: observable 69 set
-    assert batch.decode_count_batch(dem) == 0
+    result = batch.decode(dem, pymatching(correlated=False))
+    assert result.execution_path == "native_batch"
+    assert result.num_errors == 0
 
 
 def test_generic_decode_handles_wide_dem() -> None:
     # With wide inner decoders (PyMatching now packs an ObsMask directly), the
-    # generic decode_each / decode_count handle a >64-observable DEM end-to-end:
+    # generic predictions and counts handle a >64-observable DEM end-to-end:
     # predictions are wide Python ints with no truncation or panic.
     n = 70
     dem, _ = _wide_dem(n)
@@ -134,19 +137,28 @@ def test_generic_decode_handles_wide_dem() -> None:
     syn[69] = 1  # detector 69 => boundary error flips observable 69
     batch = SampleBatch([syn, syn], [1 << 69, 1 << 69])  # truth: observable 69 set
 
-    preds = batch.decode_each(dem, "pymatching")
+    sequential = batch.decode(
+        dem,
+        pymatching(correlated=True),
+        workers=1,
+        predictions=True,
+    )
+    parallel = batch.decode(dem, pymatching(correlated=True), workers=2)
+    preds = sequential.predictions
     assert preds == [1 << 69, 1 << 69]  # observable 69 predicted, not truncated
-    assert batch.decode_count(dem, "pymatching") == 0  # predictions match truth
-    assert batch.decode_count_parallel(dem, "pymatching") == 0
+    assert sequential.num_errors == 0  # predictions match truth
+    assert parallel.execution_path == "parallel"
+    assert parallel.num_errors == 0
 
 
-def test_decode_each_returns_python_ints() -> None:
-    # decode_each returns Python ints (arbitrary precision) rather than u64, so
+def test_decode_predictions_return_python_ints() -> None:
+    # Predictions are Python ints (arbitrary precision) rather than u64, so
     # the value is not truncated; for the <=64 case it equals the historical u64.
     n = 5
     dem, _ = _wide_dem(n)
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(8, seed=1)
-    preds = batch.decode_each(dem, "pymatching")
+    preds = batch.decode(dem, pymatching(correlated=True), predictions=True).predictions
+    assert preds is not None
     assert len(preds) == 8
     assert all(isinstance(p, int) for p in preds)
 
@@ -164,7 +176,7 @@ def test_matching_decoders_fail_loud_on_wide_dem(decoder_type: str) -> None:
     syn[69] = 1
     batch = SampleBatch([syn, syn], [1 << 69, 1 << 69])
     with pytest.raises(RuntimeError, match="64"):
-        batch.decode_count(dem, decoder_type)
+        _ = batch.decode(dem, decoder_type).num_errors
 
 
 def test_fusion_blossom_direct_constructors_reject_wide() -> None:

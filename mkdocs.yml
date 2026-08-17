@@ -51,6 +51,7 @@ nav:
 - User Guide:
   - Getting Started: user-guide/getting-started.md
   - PECOS Concepts: user-guide/pecos-concepts.md
+  - NumPy Interoperability: user-guide/numpy-interop.md
   - Command Line Interface: user-guide/cli.md
   - QASM Simulation: user-guide/qasm-simulation.md
   - WASM Foreign Objects: user-guide/wasm-foreign-objects.md

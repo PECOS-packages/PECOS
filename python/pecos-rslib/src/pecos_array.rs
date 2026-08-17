@@ -1469,7 +1469,7 @@ impl Array {
             }
             ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
                 return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Pauli and PauliString arrays cannot be converted to NumPy via __array_interface__ (use __array__() method instead)",
+                    "Pauli and PauliString arrays are symbolic and have no NumPy dtype; use tolist() to extract the elements",
                 ));
             }
         }

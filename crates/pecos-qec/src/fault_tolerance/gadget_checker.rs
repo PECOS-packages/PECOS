@@ -1584,8 +1584,7 @@ impl<'a> GadgetChecker<'a> {
         never_detected_stabilizers: &mut usize,
     ) {
         // Compute syndrome history
-        let history =
-            self.compute_syndrome_history(input_faults, internal_faults, rounds);
+        let history = self.compute_syndrome_history(input_faults, internal_faults, rounds);
 
         // Check if any round had a syndrome
         let ever_detected = history
@@ -1640,7 +1639,6 @@ impl<'a> GadgetChecker<'a> {
             })
             .collect()
     }
-
 
     /// Build history analysis from collected data.
     fn build_history_analysis(

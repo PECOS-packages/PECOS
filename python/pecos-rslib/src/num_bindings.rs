@@ -3759,7 +3759,7 @@ define_integer_axis0_rows_extreme!(maximum_axis0_rows, >);
 define_integer_axis0_rows_extreme!(minimum_axis0_rows, <);
 
 macro_rules! extreme_float_values {
-    ($values:expr, $identity:expr, $operation:ident) => {{
+    ($values:expr, $identity:expr, $operation:ident, $zero:expr) => {{
         let (extreme, has_nan) = $values.fold(($identity, false), |(extreme, has_nan), value| {
             (extreme.$operation(value), has_nan | value.is_nan())
         });
@@ -3768,14 +3768,11 @@ macro_rules! extreme_float_values {
                 .find(|value| value.is_nan())
                 .expect("NaN scan found a NaN")
         } else if extreme == 0.0 {
-            // NumPy returns the last zero it visits, preserving its sign. Float
-            // max/min otherwise select a particular signed zero independent of
-            // input order, so handle this uncommon tie after the vectorizable
-            // reduction.
-            $values
-                .filter(|value| *value == 0.0)
-                .last()
-                .expect("zero extreme came from a zero value")
+            // NumPy canonicalizes a zero maximum to +0 and a zero minimum to
+            // -0, independent of input order. Rust's float min/max preserve a
+            // sign based on the reduction order, so canonicalize after the
+            // vectorizable reduction.
+            $zero
         } else {
             extreme
         }
@@ -3783,7 +3780,7 @@ macro_rules! extreme_float_values {
 }
 
 macro_rules! define_float_slice_extreme {
-    ($name:ident, $type:ty, $identity:expr, $operation:ident) => {
+    ($name:ident, $type:ty, $identity:expr, $operation:ident, $zero:expr) => {
         fn $name(values: &[$type]) -> $type {
             let mut extremes = [$identity; 8];
             let mut any_nan = false;
@@ -3820,12 +3817,7 @@ macro_rules! define_float_slice_extreme {
                     .find(|value| value.is_nan())
                     .expect("NaN scan found a NaN")
             } else if extreme == 0.0 {
-                values
-                    .iter()
-                    .copied()
-                    .filter(|value| *value == 0.0)
-                    .last()
-                    .expect("zero extreme came from a zero value")
+                $zero
             } else {
                 extreme
             }
@@ -3833,10 +3825,10 @@ macro_rules! define_float_slice_extreme {
     };
 }
 
-define_float_slice_extreme!(maximum_f32_slice, f32, f32::NEG_INFINITY, max);
-define_float_slice_extreme!(minimum_f32_slice, f32, f32::INFINITY, min);
-define_float_slice_extreme!(maximum_f64_slice, f64, f64::NEG_INFINITY, max);
-define_float_slice_extreme!(minimum_f64_slice, f64, f64::INFINITY, min);
+define_float_slice_extreme!(maximum_f32_slice, f32, f32::NEG_INFINITY, max, 0.0_f32);
+define_float_slice_extreme!(minimum_f32_slice, f32, f32::INFINITY, min, -0.0_f32);
+define_float_slice_extreme!(maximum_f64_slice, f64, f64::NEG_INFINITY, max, 0.0_f64);
+define_float_slice_extreme!(minimum_f64_slice, f64, f64::INFINITY, min, -0.0_f64);
 
 fn checked_unsigned_sum<T>(mut values: impl Iterator<Item = T>) -> PyResult<u64>
 where
@@ -4179,9 +4171,19 @@ fn extreme_native_array(
                                 $minimum_slice(values)
                             }
                         } else if find_maximum {
-                            extreme_float_values!(lane.iter().copied(), <$type>::NEG_INFINITY, max)
+                            extreme_float_values!(
+                                lane.iter().copied(),
+                                <$type>::NEG_INFINITY,
+                                max,
+                                0.0 as $type
+                            )
                         } else {
-                            extreme_float_values!(lane.iter().copied(), <$type>::INFINITY, min)
+                            extreme_float_values!(
+                                lane.iter().copied(),
+                                <$type>::INFINITY,
+                                min,
+                                -0.0 as $type
+                            )
                         };
                         ($convert)(value)
                     })
@@ -4190,6 +4192,8 @@ fn extreme_native_array(
                         .fold_axis(Axis(axis), <$type>::NEG_INFINITY, |&current, &value| {
                             if current.is_nan() || (!value.is_nan() && current > value) {
                                 current
+                            } else if current == 0.0 && value == 0.0 {
+                                0.0 as $type
                             } else {
                                 value
                             }
@@ -4200,6 +4204,8 @@ fn extreme_native_array(
                         .fold_axis(Axis(axis), <$type>::INFINITY, |&current, &value| {
                             if current.is_nan() || (!value.is_nan() && current < value) {
                                 current
+                            } else if current == 0.0 && value == 0.0 {
+                                -0.0 as $type
                             } else {
                                 value
                             }
@@ -4225,9 +4231,19 @@ fn extreme_native_array(
                     $minimum_slice(values)
                 }
             } else if find_maximum {
-                extreme_float_values!($array.iter().copied(), <$type>::NEG_INFINITY, max)
+                extreme_float_values!(
+                    $array.iter().copied(),
+                    <$type>::NEG_INFINITY,
+                    max,
+                    0.0 as $type
+                )
             } else {
-                extreme_float_values!($array.iter().copied(), <$type>::INFINITY, min)
+                extreme_float_values!(
+                    $array.iter().copied(),
+                    <$type>::INFINITY,
+                    min,
+                    -0.0 as $type
+                )
             };
             return ($convert)(value).into_py_any(py);
         }};
@@ -4743,7 +4759,7 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             if let Some(values) = lane.as_slice() {
                 maximum_f64_slice(values)
             } else {
-                extreme_float_values!(lane.iter().copied(), f64::NEG_INFINITY, max)
+                extreme_float_values!(lane.iter().copied(), f64::NEG_INFINITY, max, 0.0_f64)
             }
         });
         return Ok(array_buffer::f64_array_to_py(py, &result).into());
@@ -4908,7 +4924,7 @@ fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             if let Some(values) = lane.as_slice() {
                 minimum_f64_slice(values)
             } else {
-                extreme_float_values!(lane.iter().copied(), f64::INFINITY, min)
+                extreme_float_values!(lane.iter().copied(), f64::INFINITY, min, -0.0_f64)
             }
         });
         return Ok(array_buffer::f64_array_to_py(py, &result).into());

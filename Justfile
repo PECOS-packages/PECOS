@@ -296,6 +296,7 @@ pytest *args:
         uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
         uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
         uv run --frozen pytest -n auto python/selene-plugins
+        uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
     fi
 
 # Run the substantive PR Python lane after building the test-only native bindings it needs.
@@ -309,6 +310,7 @@ pytest-ci-core:
     uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
     uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+    uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
 # Build and import the core Python packages on a target platform/interpreter.
 [group('test')]

@@ -149,6 +149,10 @@ impl MastSimulator {
                 MetricValue::U64(self.simulator.max_bond_dim() as u64),
             ))),
             1 => Ok(Some((
+                "truncation_error".to_string(),
+                MetricValue::F64(self.simulator.truncation_error()),
+            ))),
+            2 => Ok(Some((
                 "num_ancillas_used".to_string(),
                 MetricValue::U64(self.simulator.num_ancillas_used() as u64),
             ))),

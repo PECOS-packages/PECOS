@@ -104,6 +104,8 @@ enum PauliType {
 pub struct RzContext<'a> {
     /// Per-site disentangling eigenstate flags.
     pub disent_flags: &'a mut [Option<super::SiteEigenstate>],
+    /// Whether missing |0> flags may be recovered from product-site tensors.
+    pub numerical_flag_redetection: bool,
     /// GF(2) flip matrix for OFD diagnostics.
     pub gf2_matrix: &'a mut super::ofd::Gf2FlipMatrix,
     /// Running statistics for the STN simulator.
@@ -130,6 +132,7 @@ pub fn apply_rz_stab_mps(
 ) {
     let RzContext {
         disent_flags,
+        numerical_flag_redetection,
         gf2_matrix,
         stats,
     } = ctx;
@@ -230,6 +233,18 @@ pub fn apply_rz_stab_mps(
                     {
                         disent_site = Some(site);
                         break;
+                    }
+                }
+                if disent_site.is_none() && *numerical_flag_redetection {
+                    for &(site, pt) in &pauli_map {
+                        if matches!(pt, PauliType::X | PauliType::Y)
+                            && is_numerical_product_zero_site(mps, site)
+                        {
+                            disent_flags[site] = Some(super::SiteEigenstate::Z(false));
+                            stats.numerical_redetect += 1;
+                            disent_site = Some(site);
+                            break;
+                        }
                     }
                 }
             }
@@ -546,4 +561,23 @@ pub fn apply_rz_stab_mps(
     if normalize {
         mps.normalize();
     }
+}
+
+/// A bond-one `[c, 0]` tensor is |0> up to a nonzero scalar. The consuming
+/// disentangling path is linear in the site tensor, so only the second
+/// component relative to `|c|` matters; site 0 can also carry the global scale
+/// introduced by [`Mps::scale`].
+fn is_numerical_product_zero_site(mps: &Mps, site: usize) -> bool {
+    const TOLERANCE: f64 = 1e-12;
+    const MIN_SCALE: f64 = 1e-30;
+
+    if mps.bond_dim(site) != 1 || mps.bond_dim(site + 1) != 1 {
+        return false;
+    }
+
+    let tensor = &mps.tensors()[site];
+    let c = tensor[(0, 0)];
+    let second = tensor[(0, 1)];
+    let scale = c.norm();
+    scale > MIN_SCALE && second.norm() <= TOLERANCE * scale
 }

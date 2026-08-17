@@ -442,6 +442,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "batsat"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c46275d5d413790e96e7a74bab90591ba0aad8117662fadee8ba266685e5908a"
+dependencies = [
+ "bit-vec 0.5.1",
+]
+
+[[package]]
 name = "beef"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -521,6 +530,12 @@ checksum = "34ddef2995421ab6a5c779542c81ee77c115206f4ad9d5a8e05f4ff49716a3dd"
 dependencies = [
  "bit-vec 0.9.1",
 ]
+
+[[package]]
+name = "bit-vec"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f59bbe95d4e52a6398ec21238d31577f2b28a9d86807f06ca59d191d8440d0bb"
 
 [[package]]
 name = "bit-vec"
@@ -3316,12 +3331,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lzma-rust2"
-version = "0.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "243cb2271683c2855cad62142cbf38199db439b1b1e1ccdd5a011342894dd7cc"
-
-[[package]]
 name = "lzma-sys"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4099,7 +4108,6 @@ dependencies = [
  "reqwest",
  "rustls",
  "serde",
- "sevenz-rust2",
  "sha2 0.11.0",
  "tar",
  "tempfile",
@@ -4584,9 +4592,11 @@ dependencies = [
 name = "pecos-qec"
 version = "0.2.0-dev.0"
 dependencies = [
+ "batsat",
  "ndarray 0.17.2",
  "pecos-core",
  "pecos-decoder-core",
+ "pecos-ldpc-decoders",
  "pecos-neo",
  "pecos-num",
  "pecos-quantum",
@@ -4900,6 +4910,7 @@ dependencies = [
 name = "pecos-trellis"
 version = "0.2.0-dev.0"
 dependencies = [
+ "libm",
  "pecos-decoder-core",
  "rand 0.10.2",
  "rand_xoshiro 0.8.1",
@@ -6563,18 +6574,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
-]
-
-[[package]]
-name = "sevenz-rust2"
-version = "0.21.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20acd38118edb830eb5a0bfacaf83c687b9995f48d6983cdac3cb18ce1d571cc"
-dependencies = [
- "crc32fast",
- "js-sys",
- "lzma-rust2",
- "wasm-bindgen",
 ]
 
 [[package]]

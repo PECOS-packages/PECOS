@@ -1227,6 +1227,14 @@ impl Array {
         })
     }
 
+    /// Implement `__bool__` with `NumPy` truth-value semantics: a size-1 array
+    /// yields its element's truth, everything else is ambiguous and raises.
+    /// Without this, Python falls back to `__len__` and gives container-style
+    /// truthiness, where `bool(array([0]))` is `True` (issue #531).
+    fn __bool__(&self) -> PyResult<bool> {
+        self.truth_value()
+    }
+
     /// Implement __len__ to return the size of the first dimension
     /// This matches `NumPy`'s behavior where len(arr) returns arr.shape[0]
     fn __len__(&self) -> PyResult<usize> {
@@ -1469,7 +1477,7 @@ impl Array {
             }
             ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
                 return Err(pyo3::exceptions::PyTypeError::new_err(
-                    "Pauli and PauliString arrays cannot be converted to NumPy via __array_interface__ (use __array__() method instead)",
+                    "Pauli and PauliString arrays are symbolic and have no NumPy dtype; use tolist() to extract the elements",
                 ));
             }
         }
@@ -2124,6 +2132,26 @@ impl Array {
 }
 
 impl Array {
+    /// `NumPy` truth-value semantics, shared by `Array.__bool__` and the
+    /// `dtypes.bool_` constructor: exactly one element yields that element's
+    /// truth; empty and multi-element arrays are ambiguous and raise with
+    /// `NumPy`'s error messages.
+    pub(crate) fn truth_value(&self) -> PyResult<bool> {
+        let truth_values = self.data.to_bool_array();
+        match truth_values.len() {
+            0 => Err(pyo3::exceptions::PyValueError::new_err(
+                "The truth value of an empty array is ambiguous. Use `array.size > 0` to check that an array is not empty.",
+            )),
+            1 => Ok(truth_values
+                .first()
+                .copied()
+                .expect("length-1 array has a first element")),
+            _ => Err(pyo3::exceptions::PyValueError::new_err(
+                "The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()",
+            )),
+        }
+    }
+
     fn array_view_to_list<'py, T, U, F>(
         array: ArrayViewD<'_, T>,
         py: Python<'py>,

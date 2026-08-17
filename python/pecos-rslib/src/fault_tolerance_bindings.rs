@@ -42,9 +42,11 @@
 //! has_syndrome, causes_logical = influence_map.classify_fault(0, 1)  # loc 0, X fault
 //! ```
 
+use crate::code_matrix_bindings::PyParityCheckMatrix;
+use crate::dag_circuit_bindings::PyTickCircuit;
 use crate::pecos_array::{Array, ArrayData};
+use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
 use pecos_core::gate_type::GateType;
-use pecos_qec::fault_tolerance::PauliFrameLookup as RustPauliFrameLookup;
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
     ContributionEffectSummary as RustContributionEffectSummary,
@@ -62,10 +64,55 @@ use pecos_qec::fault_tolerance::dem_builder::{
     compare_dems_statistical as rust_compare_dems_statistical,
     verify_dem_equivalence as rust_verify_dem_equivalence,
 };
+use pecos_qec::fault_tolerance::fault_distance::{
+    FaultDistanceResult as RustFaultDistanceResult,
+    connected_cluster_fault_distance as rust_connected_cluster_fault_distance,
+    exhaustive_fault_distance as rust_exhaustive_fault_distance,
+    graphlike_fault_distance as rust_graphlike_fault_distance,
+    per_observable_fault_distances as rust_per_observable_fault_distances,
+};
+use pecos_qec::fault_tolerance::fault_distance_upper_bound::{
+    FaultDistanceBpMethod as RustFaultDistanceBpMethod,
+    FaultDistanceBpSchedule as RustFaultDistanceBpSchedule,
+    FaultDistanceObservableSubsetStrategy as RustFaultDistanceObservableSubsetStrategy,
+    FaultDistanceOsdMethod as RustFaultDistanceOsdMethod,
+    FaultDistanceUpperBoundConfig as RustFaultDistanceUpperBoundConfig,
+    FaultDistanceUpperBoundResult as RustFaultDistanceUpperBoundResult,
+    randomized_code_distance_upper_bound as rust_randomized_code_distance_upper_bound,
+    randomized_fault_distance_upper_bound as rust_randomized_fault_distance_upper_bound,
+};
 use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder as RustInfluenceBuilder;
 use pecos_qec::fault_tolerance::propagator::{
     DagFaultAnalyzer as RustDagFaultAnalyzer, DagFaultInfluenceMap as RustDagFaultInfluenceMap,
     DagSpacetimeLocation, Pauli,
+};
+use pecos_qec::fault_tolerance::{
+    CircuitDistanceResult as RustCircuitDistanceResult, FaultCheckConfig, FaultChecker,
+    FaultConfiguration, FlagFaultToleranceReport as RustFlagFaultToleranceReport,
+    FlagViolation as RustFlagViolation, HookError as RustHookError,
+    HookErrorReport as RustHookErrorReport, PauliFrameLookup as RustPauliFrameLookup,
+    PauliPropChecker, SpacetimeLocation,
+};
+use pecos_qec::{
+    BbMemoryBasis as RustBbMemoryBasis, BivariateBicycleCode as RustBivariateBicycleCode,
+    bb_memory_circuit as rust_bb_memory_circuit,
+    coloration_memory_circuit as rust_coloration_memory_circuit,
+};
+use pecos_qec::{
+    BoundedEnumerationDistance as RustBoundedEnumerationDistance,
+    CertifiedDistance as RustCertifiedDistance,
+    ClassicalDistanceSearchOutcome as RustClassicalDistanceSearchOutcome,
+    DistanceProblem as RustDistanceProblem, DistanceResult as RustDistanceResult,
+    StabilizerDistanceSearchOutcome as RustStabilizerDistanceSearchOutcome,
+    bounded_enumeration_code_distance as rust_bounded_enumeration_code_distance,
+    bounded_enumeration_stabilizer_distance as rust_bounded_enumeration_stabilizer_distance,
+    bounded_enumeration_x_distance as rust_bounded_enumeration_x_distance,
+    bounded_enumeration_z_distance as rust_bounded_enumeration_z_distance,
+    certified_distance as rust_certified_distance,
+    connected_cluster_code_distance as rust_connected_cluster_code_distance,
+    stabilizer_code_distance as rust_stabilizer_code_distance,
+    subsystem_dressed_distance as rust_subsystem_dressed_distance, x_distance as rust_x_distance,
+    z_distance as rust_z_distance,
 };
 use pecos_quantum::DagCircuit;
 use pecos_quantum::QubitId;
@@ -1307,6 +1354,205 @@ where
 // Detector Error Model
 // =============================================================================
 
+/// Result of a unit-weight mechanism-distance search.
+#[pyclass(
+    name = "FaultDistanceResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFaultDistanceResult {
+    #[pyo3(get)]
+    distance: usize,
+    #[pyo3(get)]
+    mechanism_indices: Vec<usize>,
+}
+
+impl From<RustFaultDistanceResult> for PyFaultDistanceResult {
+    fn from(result: RustFaultDistanceResult) -> Self {
+        Self {
+            distance: result.distance,
+            mechanism_indices: result.mechanism_indices,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFaultDistanceResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "FaultDistanceResult(distance={}, mechanism_indices={:?})",
+            self.distance, self.mechanism_indices
+        )
+    }
+}
+
+/// Fully explicit randomized fault-distance upper-bound configuration.
+#[pyclass(
+    frozen,
+    name = "FaultDistanceUpperBoundConfig",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFaultDistanceUpperBoundConfig {
+    inner: RustFaultDistanceUpperBoundConfig,
+}
+
+fn parse_fault_distance_subset_strategy(
+    value: &str,
+) -> PyResult<RustFaultDistanceObservableSubsetStrategy> {
+    match value {
+        "each_single_then_random" => {
+            Ok(RustFaultDistanceObservableSubsetStrategy::EachSingleThenRandom)
+        }
+        "random_nonempty" => Ok(RustFaultDistanceObservableSubsetStrategy::RandomNonempty),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "observable_subset_strategy must be 'each_single_then_random' or 'random_nonempty', got {value:?}"
+        ))),
+    }
+}
+
+fn parse_fault_distance_bp_method(value: &str) -> PyResult<RustFaultDistanceBpMethod> {
+    match value {
+        "product_sum" => Ok(RustFaultDistanceBpMethod::ProductSum),
+        "minimum_sum" => Ok(RustFaultDistanceBpMethod::MinimumSum),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "bp_method must be 'product_sum' or 'minimum_sum', got {value:?}"
+        ))),
+    }
+}
+
+fn parse_fault_distance_bp_schedule(value: &str) -> PyResult<RustFaultDistanceBpSchedule> {
+    match value {
+        "serial" => Ok(RustFaultDistanceBpSchedule::Serial),
+        "parallel" => Ok(RustFaultDistanceBpSchedule::Parallel),
+        "serial_relative" => Ok(RustFaultDistanceBpSchedule::SerialRelative),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "bp_schedule must be 'serial', 'parallel', or 'serial_relative', got {value:?}"
+        ))),
+    }
+}
+
+fn parse_fault_distance_osd_method(value: &str) -> PyResult<RustFaultDistanceOsdMethod> {
+    match value {
+        "off" => Ok(RustFaultDistanceOsdMethod::Off),
+        "osd_0" => Ok(RustFaultDistanceOsdMethod::Osd0),
+        "osd_e" => Ok(RustFaultDistanceOsdMethod::OsdE),
+        "osd_cs" => Ok(RustFaultDistanceOsdMethod::OsdCs),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "osd_method must be 'off', 'osd_0', 'osd_e', or 'osd_cs', got {value:?}"
+        ))),
+    }
+}
+
+#[pymethods]
+impl PyFaultDistanceUpperBoundConfig {
+    #[new]
+    #[pyo3(signature = (samples, seed, observable_subset_strategy, error_rate, max_iterations, bp_method, bp_schedule, min_sum_scaling_factor, osd_method, osd_order, omp_threads))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        samples: usize,
+        seed: u64,
+        observable_subset_strategy: &str,
+        error_rate: f64,
+        max_iterations: usize,
+        bp_method: &str,
+        bp_schedule: &str,
+        min_sum_scaling_factor: f64,
+        osd_method: &str,
+        osd_order: usize,
+        omp_threads: usize,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: RustFaultDistanceUpperBoundConfig {
+                samples,
+                seed,
+                observable_subset_strategy: parse_fault_distance_subset_strategy(
+                    observable_subset_strategy,
+                )?,
+                error_rate,
+                max_iterations,
+                bp_method: parse_fault_distance_bp_method(bp_method)?,
+                bp_schedule: parse_fault_distance_bp_schedule(bp_schedule)?,
+                min_sum_scaling_factor,
+                osd_method: parse_fault_distance_osd_method(osd_method)?,
+                osd_order,
+                omp_threads,
+            },
+        })
+    }
+
+    #[getter]
+    fn samples(&self) -> usize {
+        self.inner.samples
+    }
+
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.inner.seed
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FaultDistanceUpperBoundConfig(samples={}, seed={}, observable_subset_strategy={:?}, error_rate={}, max_iterations={}, bp_method={:?}, bp_schedule={:?}, min_sum_scaling_factor={}, osd_method={:?}, osd_order={}, omp_threads={})",
+            self.inner.samples,
+            self.inner.seed,
+            self.inner.observable_subset_strategy,
+            self.inner.error_rate,
+            self.inner.max_iterations,
+            self.inner.bp_method,
+            self.inner.bp_schedule,
+            self.inner.min_sum_scaling_factor,
+            self.inner.osd_method,
+            self.inner.osd_order,
+            self.inner.omp_threads,
+        )
+    }
+}
+
+/// Natively verified randomized fault-distance upper bound.
+#[pyclass(
+    frozen,
+    name = "FaultDistanceUpperBoundResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFaultDistanceUpperBoundResult {
+    #[pyo3(get)]
+    weight: usize,
+    #[pyo3(get)]
+    mechanism_indices: Vec<usize>,
+    #[pyo3(get)]
+    samples_run: usize,
+}
+
+impl From<RustFaultDistanceUpperBoundResult> for PyFaultDistanceUpperBoundResult {
+    fn from(result: RustFaultDistanceUpperBoundResult) -> Self {
+        Self {
+            weight: result.weight,
+            mechanism_indices: result.mechanism_indices,
+            samples_run: result.samples_run,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFaultDistanceUpperBoundResult {
+    #[getter]
+    fn bound_kind(&self) -> &'static str {
+        "upper_bound"
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FaultDistanceUpperBoundResult(weight={}, mechanism_indices={:?}, samples_run={}, bound_kind='upper_bound')",
+            self.weight, self.mechanism_indices, self.samples_run
+        )
+    }
+}
+
 /// A Detector Error Model (DEM) in standard DEM text format.
 ///
 /// This represents the error model of a quantum circuit, mapping error
@@ -1698,6 +1944,54 @@ impl PyDetectorErrorModel {
     #[getter]
     fn num_tracked_paulis(&self) -> usize {
         self.inner.num_tracked_paulis()
+    }
+
+    /// Compute exact fault distance when every mechanism is graphlike.
+    ///
+    /// Raises:
+    ///     `ValueError`: If any mechanism flips more than two detectors.
+    fn graphlike_fault_distance(&self) -> PyResult<Option<PyFaultDistanceResult>> {
+        rust_graphlike_fault_distance(&self.inner)
+            .map(|result| result.map(PyFaultDistanceResult::from))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Compute exact fault distance up to an explicit mechanism-count budget using
+    /// connected-cluster pruning.
+    fn connected_cluster_fault_distance(&self, max_weight: usize) -> Option<PyFaultDistanceResult> {
+        rust_connected_cluster_fault_distance(&self.inner, max_weight)
+            .map(PyFaultDistanceResult::from)
+    }
+
+    /// Compute one connected-cluster fault distance per observable.
+    fn per_observable_fault_distances(
+        &self,
+        max_weight: usize,
+    ) -> Vec<Option<PyFaultDistanceResult>> {
+        rust_per_observable_fault_distances(&self.inner, max_weight)
+            .into_iter()
+            .map(|result| result.map(PyFaultDistanceResult::from))
+            .collect()
+    }
+
+    /// Exhaustively compute fault distance up to an explicit mechanism-count budget.
+    ///
+    /// This supports hyperedges but has combinatorial cost in the number of mechanisms.
+    fn exhaustive_fault_distance(&self, max_weight: usize) -> Option<PyFaultDistanceResult> {
+        rust_exhaustive_fault_distance(&self.inner, max_weight).map(PyFaultDistanceResult::from)
+    }
+
+    /// Sample natively verified decoder witnesses for a fault-distance upper bound.
+    ///
+    /// A return value is only an upper bound and never certifies exactness. Invalid decoder
+    /// vectors are discarded by native detector and observable parity checks.
+    fn randomized_fault_distance_upper_bound(
+        &self,
+        config: &PyFaultDistanceUpperBoundConfig,
+    ) -> PyResult<Option<PyFaultDistanceUpperBoundResult>> {
+        rust_randomized_fault_distance_upper_bound(&self.inner, &config.inner)
+            .map(|result| result.map(PyFaultDistanceUpperBoundResult::from))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Convert the DEM to a string in standard DEM format.
@@ -2223,76 +2517,6 @@ impl PyDemBuilder {
 // Helper Functions
 // =============================================================================
 
-/// `UnionFind` decoder that passes LLRs (from DEM error priors) for weighted decoding.
-///
-/// The generic `CheckMatrixObservableDecoder` calls `Decoder::decode` which
-/// passes empty LLRs. This wrapper stores the LLRs and passes them through
-/// to the C++ UF decoder each shot, giving it edge-weight information.
-struct WeightedUfObservableDecoder {
-    decoder: pecos_decoders::UnionFindDecoder,
-    dcm: pecos_decoder_core::dem::DemCheckMatrix,
-    llrs: Vec<f64>,
-}
-
-impl pecos_decoders::ObservableDecoder for WeightedUfObservableDecoder {
-    fn decode_obs(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
-        let arr = ndarray::Array1::from_vec(syndrome.to_vec());
-        // bits_per_step=1: grow one bit at a time, sorted by LLR weight —
-        // the most conservative growth. Zero would mean "all candidates per
-        // step" (translated at the Rust boundary since the segfault fix).
-        let result = self
-            .decoder
-            .decode(&arr.view(), &self.llrs, 1)
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
-        Ok(self
-            .dcm
-            .observables_obsmask_from_correction(result.decoding.as_slice().unwrap_or(&[])))
-    }
-}
-
-/// Wrapper that relabels syndromes before passing to an inner decoder.
-///
-/// Used for Fusion Blossom parallel where detector IDs need to be
-/// round-contiguous for partitioning.
-struct RelabeledObservableDecoder {
-    decoder: pecos_decoders::FusionBlossomDecoder,
-    old_to_new: Vec<usize>,
-}
-
-impl pecos_decoders::ObservableDecoder for RelabeledObservableDecoder {
-    fn decode_obs(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
-        // Relabel syndrome into the expanded vertex space (detectors + virtual + gap)
-        let expected = self.decoder.num_nodes();
-        let mut relabeled = vec![0u8; expected];
-        for (old_id, &val) in syndrome.iter().enumerate() {
-            if old_id < self.old_to_new.len() {
-                let new_id = self.old_to_new[old_id];
-                if new_id < expected {
-                    relabeled[new_id] = val;
-                }
-            }
-        }
-        let arr = ndarray::Array1::from_vec(relabeled);
-        let result = self
-            .decoder
-            .decode(&arr.view())
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
-        let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
-        for (i, &v) in result.observable.iter().enumerate() {
-            if v != 0 {
-                mask.set(i);
-            }
-        }
-        Ok(mask)
-    }
-}
-
 /// Convert a `DemMatchingGraph` to a DEM string for inner decoder construction.
 fn subgraph_to_dem_string(graph: &pecos_decoder_core::DemMatchingGraph) -> String {
     let mut lines = Vec::new();
@@ -2311,6 +2535,36 @@ fn subgraph_to_dem_string(graph: &pecos_decoder_core::DemMatchingGraph) -> Strin
     lines.join("\n")
 }
 
+/// Convert a decoder-spec parse error into Python's invalid-value exception.
+/// Convert a decoder type-string parse error into the legacy `ValueError`.
+fn decoder_parse_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
+    let message = match error {
+        pecos_decoders::DecoderError::InvalidConfiguration(message) => message,
+        error => error.to_string(),
+    };
+    PyErr::new::<pyo3::exceptions::PyValueError, _>(message)
+}
+
+/// Convert a decoder build error into the legacy Python exception categories.
+fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
+    match &error {
+        pecos_decoders::DecoderError::BackendUnavailable { family: "mwpf", .. } => {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "MWPF decoder is not available in this build. \
+                 Install cmake (run `pecos setup`) and rebuild. \
+                 See: https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cmake-setup.md",
+            )
+        }
+        pecos_decoders::DecoderError::BackendUnavailable { .. } => {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string())
+        }
+        pecos_decoders::DecoderError::InternalError(message) => {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(message.clone())
+        }
+        _ => PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(error.to_string()),
+    }
+}
+
 /// Create an `ObservableDecoder` from a DEM string and decoder type name.
 ///
 /// This is the shared factory used by `SampleBatch.decode_count`,
@@ -2319,1115 +2573,16 @@ fn create_observable_decoder(
     dem: &str,
     decoder_type: &str,
 ) -> PyResult<Box<dyn pecos_decoders::ObservableDecoder>> {
-    use pecos_decoder_core::{CheckMatrixObservableDecoder, DemCheckMatrix};
-    use pecos_decoders::{
-        BeliefFindDecoder, BpLsdDecoder, BpMethod, BpOsdDecoder, BpSchedule, InputVectorType,
-        MinSumBpBuilder, OsdMethod, PyMatchingDecoder, RelayBpBuilder, SparseMatrix,
-        TesseractConfig, TesseractDecoder, UfMethod, UnionFindDecoder,
-    };
-
-    match decoder_type {
-        "pymatching" | "pymatching_correlated" => {
-            // Default: correlated matching enabled (exploits X-Z correlations
-            // from depolarizing noise for ~20% fewer errors at d>=5).
-            let d = PyMatchingDecoder::from_dem_with_correlations(dem, true)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            Ok(Box::new(d))
-        }
-        "pymatching_uncorrelated" => {
-            let d = PyMatchingDecoder::from_dem(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            Ok(Box::new(d))
-        }
-        "tesseract" => {
-            let d = TesseractDecoder::new(dem, TesseractConfig::fast())
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            Ok(Box::new(d))
-        }
-        s if s.starts_with("k_mwpm") => {
-            // K-MWPM: enumerate K matchings via decoding tree, majority vote.
-            // Uses UF as the inner MWPM solver (supports decode_with_weights).
-            use pecos_decoder_core::k_mwpm::{KMwpmConfig, KMwpmDecoder};
-            let mut k: usize = 10;
-            if let Some(params) = s.strip_prefix("k_mwpm:") {
-                for kv in params.split(',') {
-                    let parts: Vec<&str> = kv.splitn(2, '=').collect();
-                    if parts.len() == 2 && (parts[0] == "K" || parts[0] == "k") {
-                        k = parts[1].parse().unwrap_or(10);
-                    }
-                }
-            }
-            // Use FB (standard, non-correlated) as the inner MWPM.
-            // K-MWPM captures correlation benefit by exploring multiple matchings.
-            let fb = pecos_decoders::FusionBlossomDecoder::from_dem(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            Ok(Box::new(KMwpmDecoder::new(fb, KMwpmConfig { k })))
-        }
-        "astar" => {
-            let d =
-                pecos_decoders::AStarDecoder::from_dem(dem, pecos_decoders::AStarConfig::default())
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
-            Ok(Box::new(d))
-        }
-        "astar_full" => {
-            // A* on non-decomposed DEM (preserves hyperedges for Y-error correlations).
-            let d = pecos_decoders::AStarDecoder::from_dem_full(
-                dem,
-                pecos_decoders::AStarConfig::default(),
-            )
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            Ok(Box::new(d))
-        }
-        "fusion_blossom" => {
-            // Auto: use parallel for large problems (500+ detectors), serial otherwise
-            let graph = pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let has_coords = graph
-                .detector_coords
-                .iter()
-                .any(std::option::Option::is_some);
-            if graph.num_detectors >= 500 && has_coords {
-                return create_observable_decoder(dem, "fusion_blossom_parallel");
-            }
-            create_observable_decoder(dem, "fusion_blossom_serial")
-        }
-        "fusion_blossom_serial" => {
-            use pecos_decoder_core::DemMatchingGraph;
-            use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
-            let graph = DemMatchingGraph::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            // Matching decoders pack observables into a u64; reject >64-observable
-            // DEMs rather than overflow-panicking in build_obs_masks.
-            graph
-                .ensure_observables_fit_u64()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            // Use absolute weight scaling. Fusion Blossom uses integer weights;
-            // we multiply by 1000 for precision (matching the internal 1000x
-            // scaling in add_edge). The upstream tutorial uses relative scaling
-            // but that loses weight ordering when the range is narrow.
-
-            let config = FusionBlossomConfig {
-                num_nodes: Some(graph.num_detectors),
-                num_observables: graph.num_observables,
-                ..Default::default()
-            };
-            let mut decoder = FusionBlossomDecoder::new(config)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            for edge in &graph.edges {
-                let obs: Vec<usize> = edge.observables.iter().map(|&o| o as usize).collect();
-                let scaled_weight = edge.weight;
-                match edge.node2 {
-                    Some(n2) => {
-                        decoder
-                            .add_edge(edge.node1 as usize, n2 as usize, &obs, Some(scaled_weight))
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                            })?;
-                    }
-                    None => {
-                        decoder
-                            .add_boundary_edge(edge.node1 as usize, &obs, Some(scaled_weight))
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                            })?;
-                    }
-                }
-            }
-            Ok(Box::new(decoder))
-        }
-        "fusion_blossom_correlated" => {
-            use pecos_decoder_core::DemMatchingGraph;
-            use pecos_decoder_core::correlation_table::CorrelationTable;
-            use pecos_decoder_core::two_pass_decoder::TwoPassDecoder;
-            use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
-
-            let graph = DemMatchingGraph::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            // Matching decoders pack observables into a u64; reject >64-observable
-            // DEMs rather than overflow-panicking in build_obs_masks.
-            graph
-                .ensure_observables_fit_u64()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            let config = FusionBlossomConfig {
-                num_nodes: Some(graph.num_detectors),
-                num_observables: graph.num_observables,
-                ..Default::default()
-            };
-            let mut decoder = FusionBlossomDecoder::new(config)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            // Build edge index map and weights
-            let mut edge_index_map = std::collections::BTreeMap::new();
-            let mut base_weights = Vec::new();
-            for (idx, edge) in graph.edges.iter().enumerate() {
-                let obs: Vec<usize> = edge.observables.iter().map(|&o| o as usize).collect();
-                base_weights.push(edge.weight);
-                let key = if let Some(n2) = edge.node2 {
-                    decoder
-                        .add_edge(edge.node1 as usize, n2 as usize, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    if edge.node1 <= n2 {
-                        (edge.node1, n2)
-                    } else {
-                        (n2, edge.node1)
-                    }
-                } else {
-                    decoder
-                        .add_boundary_edge(edge.node1 as usize, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    (edge.node1, u32::MAX)
-                };
-                edge_index_map.insert(key, idx);
-            }
-
-            // Build correlation table from DEM decomposition
-            let corr_table =
-                CorrelationTable::from_dem_str(dem, &edge_index_map, graph.edges.len()).map_err(
-                    |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
-                )?;
-
-            let two_pass = TwoPassDecoder::new(decoder, base_weights, corr_table);
-            Ok(Box::new(two_pass))
-        }
-        s if s.starts_with("perturbed_fb_corr") => {
-            // Fast perturbed correlated FB ensemble.
-            // Parses DemCheckMatrix once, builds K members with perturbed weights
-            // via from_check_matrix_correlated (skips DEM text re-parsing).
-
-            use pecos_decoder_core::ensemble::EnsembleDecoder;
-            use pecos_decoders::FusionBlossomDecoder;
-
-            let mut k: usize = 5;
-            let mut sigma: f64 = 0.5;
-            let mut seed: u64 = 42;
-            if let Some(params) = s.strip_prefix("perturbed_fb_corr:") {
-                for kv in params.split(',') {
-                    let parts: Vec<&str> = kv.splitn(2, '=').collect();
-                    if parts.len() == 2 {
-                        match parts[0] {
-                            "K" | "k" => k = parts[1].parse().unwrap_or(5),
-                            "sigma" | "s" => sigma = parts[1].parse().unwrap_or(0.5),
-                            "seed" => seed = parts[1].parse().unwrap_or(42),
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
-            // Build K members using from_dem_correlated on perturbed DEM text.
-            // This is faster than the generic perturbed: path because it reuses
-            // the same DEM parsing approach that FB_corr uses (which handles
-            // duplicate edges correctly).
-            let mut members: Vec<Box<dyn pecos_decoders::ObservableDecoder>> =
-                Vec::with_capacity(k);
-
-            // Unperturbed anchor.
-            members.push(Box::new(
-                FusionBlossomDecoder::from_dem_correlated(dem).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?,
-            ));
-
-            // K-1 perturbed members.
-            let mut rng = pecos_random::PecosRng::seed_from_u64(seed);
-            let mut next_f64 = || rng.next_f64();
-            for _ in 1..k {
-                let perturbed =
-                    pecos_decoder_core::perturbed::perturb_dem(dem, sigma, &mut next_f64);
-                if let Ok(dec) = FusionBlossomDecoder::from_dem_correlated(&perturbed) {
-                    members.push(Box::new(dec));
-                }
-            }
-
-            Ok(Box::new(EnsembleDecoder::new(members)))
-        }
-        "fusion_blossom_parallel" => {
-            use pecos_decoder_core::DemMatchingGraph;
-            use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder, PartitionConfig};
-
-            let graph = DemMatchingGraph::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            // Matching decoders pack observables into a u64; reject >64-observable
-            // DEMs rather than overflow-panicking in build_obs_masks.
-            graph
-                .ensure_observables_fit_u64()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            // Group detectors by time coordinate for round-contiguous relabeling.
-            let mut round_groups: std::collections::BTreeMap<i64, Vec<u32>> =
-                std::collections::BTreeMap::new();
-            #[allow(clippy::cast_possible_truncation)] // time coords and detector IDs are small
-            for (id, coord) in graph.detector_coords.iter().enumerate() {
-                let t = coord
-                    .as_ref()
-                    .and_then(|c| c.get(2))
-                    .copied()
-                    .unwrap_or(0.0);
-                round_groups
-                    .entry((t * 1000.0) as i64)
-                    .or_default()
-                    .push(id as u32);
-            }
-            let num_rounds = round_groups.len();
-            if num_rounds < 2 {
-                // Not enough rounds to partition -- fall back to serial
-                return create_observable_decoder(dem, "fusion_blossom");
-            }
-
-            // Relabel: each round gets [detectors] [boundary_virtual] contiguously.
-            // This ensures boundary edges stay within the same vertex range as
-            // the round's detectors.
-            let num_dets = graph.num_detectors;
-            let mut old_to_new = vec![0usize; num_dets];
-            let mut det_to_round = vec![0usize; num_dets];
-            let mut new_id = 0usize;
-            let mut round_starts = Vec::new();
-            let mut round_ends = Vec::new(); // end of each round (after boundary vertex)
-            let mut partition_boundary = Vec::new();
-            for (round_idx, (_round, ids)) in round_groups.iter().enumerate() {
-                round_starts.push(new_id);
-                for &old_id in ids {
-                    old_to_new[old_id as usize] = new_id;
-                    det_to_round[old_id as usize] = round_idx;
-                    new_id += 1;
-                }
-                // Virtual boundary vertex for this round, right after detectors
-                partition_boundary.push(new_id);
-                new_id += 1;
-                round_ends.push(new_id);
-            }
-            let total_vertex_num = new_id;
-
-            let config = FusionBlossomConfig {
-                num_nodes: Some(total_vertex_num),
-                num_observables: graph.num_observables,
-                ..Default::default()
-            };
-            let mut decoder = FusionBlossomDecoder::new(config)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            // Mark per-partition boundary vertices as virtual
-            for &bnd in &partition_boundary {
-                decoder.virtual_vertices.push(bnd);
-            }
-
-            for edge in &graph.edges {
-                let obs: Vec<usize> = edge.observables.iter().map(|&o| o as usize).collect();
-                let n1 = old_to_new[edge.node1 as usize];
-                if let Some(n2) = edge.node2 {
-                    let n2 = old_to_new[n2 as usize];
-                    decoder
-                        .add_edge(n1, n2, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                } else {
-                    // Route boundary edge to this detector's round boundary vertex
-                    let round_idx = det_to_round[edge.node1 as usize];
-                    let bnd = partition_boundary[round_idx];
-                    decoder
-                        .add_edge(n1, bnd, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                }
-            }
-
-            // Build partition config matching the upstream time-partition pattern.
-            // Each partition covers multiple rounds. The interface between
-            // adjacent partitions is the first round of the later partition's
-            // rounds (which is skipped from its range, creating the gap).
-
-            // Partition ranges: each partition covers multiple rounds of detectors
-            // plus that partition's boundary vertices.
-            // Boundary vertices are at indices [num_dets, num_dets + num_rounds).
-            // We assign boundary vertex for round R to the partition that contains round R.
-            let partition_num = num_rounds.clamp(2, 4);
-
-            // Build partition config. Each partition covers multiple rounds.
-            // Partition boundaries fall between rounds. The first round of
-            // each non-first partition is the interface gap (its vertices
-            // are excluded from the partition range).
-            let mut part_config = PartitionConfig::new(total_vertex_num);
-            part_config.partitions.clear();
-
-            for p_idx in 0..partition_num {
-                let start_round = p_idx * num_rounds / partition_num;
-                let end_round = (p_idx + 1) * num_rounds / partition_num;
-                // First partition starts at its first round.
-                // Subsequent partitions skip their first round (interface gap).
-                let start_vertex = if p_idx == 0 {
-                    round_starts[start_round]
-                } else {
-                    round_starts[(start_round + 1).min(num_rounds - 1)]
-                };
-                let end_vertex = round_ends[end_round - 1];
-                if start_vertex < end_vertex {
-                    part_config
-                        .partitions
-                        .push(pecos_decoders::VertexRange::new(start_vertex, end_vertex));
-                }
-            }
-
-            // Linear fusion chain: merge adjacent partitions left to right
-            let n_parts = part_config.partitions.len();
-            part_config.fusions.clear();
-            if n_parts > 1 {
-                let mut active: Vec<usize> = (0..n_parts).collect();
-                while active.len() > 1 {
-                    let mut next_active = Vec::new();
-                    let mut i = 0;
-                    while i + 1 < active.len() {
-                        part_config.fusions.push((active[i], active[i + 1]));
-                        next_active.push(n_parts + part_config.fusions.len() - 1);
-                        i += 2;
-                    }
-                    if i < active.len() {
-                        next_active.push(active[i]);
-                    }
-                    active = next_active;
-                }
-            }
-
-            decoder.set_partition_config(part_config);
-
-            Ok(Box::new(RelabeledObservableDecoder {
-                decoder,
-                old_to_new,
-            }))
-        }
-        "bp_osd" | "bp_lsd" | "belief_find" | "union_find" | "relay_bp" | "min_sum_bp" => {
-            let dcm = DemCheckMatrix::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let sparse_h = SparseMatrix::from_dense(&dcm.check_matrix.view());
-            match decoder_type {
-                "bp_osd" => {
-                    let d = BpOsdDecoder::new(
-                        &sparse_h,
-                        None,
-                        Some(&dcm.error_priors),
-                        100,
-                        BpMethod::ProductSum,
-                        BpSchedule::Parallel,
-                        1.0,
-                        OsdMethod::Osd0,
-                        0,
-                        InputVectorType::Syndrome,
-                        None,
-                        None,
-                        None,
-                    )
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
-                    Ok(Box::new(CheckMatrixObservableDecoder::new(d, dcm)))
-                }
-                "bp_lsd" => {
-                    let d = BpLsdDecoder::new(
-                        &sparse_h,
-                        None,
-                        Some(&dcm.error_priors),
-                        100,
-                        BpMethod::ProductSum,
-                        BpSchedule::Parallel,
-                        1.0,
-                        OsdMethod::Off,
-                        0,
-                        0,
-                        InputVectorType::Syndrome,
-                        None,
-                        None,
-                        None,
-                    )
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
-                    Ok(Box::new(CheckMatrixObservableDecoder::new(d, dcm)))
-                }
-                "belief_find" => {
-                    let d = BeliefFindDecoder::new(
-                        &sparse_h,
-                        None,
-                        Some(&dcm.error_priors),
-                        100,
-                        BpMethod::ProductSum,
-                        1.0,
-                        BpSchedule::Parallel,
-                        None,
-                        None,
-                        None,
-                        UfMethod::Inversion,
-                        0,
-                    )
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
-                    Ok(Box::new(CheckMatrixObservableDecoder::new(d, dcm)))
-                }
-                "union_find" => {
-                    let d = UnionFindDecoder::new(&sparse_h, UfMethod::Inversion).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
-                    let llrs: Vec<f64> = dcm
-                        .error_priors
-                        .iter()
-                        .map(|&p| {
-                            if p > 0.0 && p < 1.0 {
-                                ((1.0 - p) / p).ln()
-                            } else {
-                                0.0
-                            }
-                        })
-                        .collect();
-                    Ok(Box::new(WeightedUfObservableDecoder {
-                        decoder: d,
-                        dcm,
-                        llrs,
-                    }))
-                }
-                "relay_bp" => {
-                    let h_view = dcm.check_matrix.view();
-                    let d = RelayBpBuilder::new(&h_view)
-                        .error_priors(&dcm.error_priors)
-                        .build()
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    Ok(Box::new(CheckMatrixObservableDecoder::new(d, dcm)))
-                }
-                "min_sum_bp" => {
-                    let h_view = dcm.check_matrix.view();
-                    let d = MinSumBpBuilder::new(&h_view)
-                        .error_priors(&dcm.error_priors)
-                        .build()
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    Ok(Box::new(CheckMatrixObservableDecoder::new(d, dcm)))
-                }
-                _ => unreachable!(),
-            }
-        }
-        // UF decoder: "pecos_uf" (fast), "pecos_uf:balanced", "pecos_uf:accurate"
-        // Also accepts legacy "pecos_uf_correlated" as alias for balanced.
-        "pecos_uf" | "pecos_uf:fast" => {
-            let d =
-                pecos_decoders::UfDecoder::from_dem(dem, pecos_decoders::UfDecoderConfig::fast())
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            Ok(Box::new(d))
-        }
-        "pecos_uf:balanced" | "pecos_uf_correlated" => {
-            // Two-pass correlated UF: first pass identifies matched edges,
-            // correlation table adjusts weights, second pass re-decodes.
-            use pecos_decoder_core::DemMatchingGraph;
-            use pecos_decoder_core::correlation_table::CorrelationTable;
-            use pecos_decoder_core::two_pass_decoder::TwoPassDecoder;
-
-            let graph = DemMatchingGraph::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            let mut edge_index_map = std::collections::BTreeMap::new();
-            let mut base_weights = Vec::with_capacity(graph.edges.len());
-            for (idx, edge) in graph.edges.iter().enumerate() {
-                base_weights.push(edge.weight);
-                let key = match edge.node2 {
-                    Some(n2) => {
-                        if edge.node1 <= n2 {
-                            (edge.node1, n2)
-                        } else {
-                            (n2, edge.node1)
-                        }
-                    }
-                    None => (edge.node1, u32::MAX),
-                };
-                edge_index_map.insert(key, idx);
-            }
-
-            let corr_table =
-                CorrelationTable::from_dem_str(dem, &edge_index_map, graph.edges.len()).map_err(
-                    |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
-                )?;
-
-            // Reject negative-weight edges (error priors p > 0.5) as a Python error
-            // rather than panicking on the negative-weight assert; the
-            // >64-observable guard now lives in `from_matching_graph`.
-            pecos_decoders::UfDecoder::check_non_negative_weights(&graph)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let uf = pecos_decoders::UfDecoder::from_matching_graph(
-                &graph,
-                pecos_decoders::UfDecoderConfig::balanced(),
-            )
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let two_pass = TwoPassDecoder::new(uf, base_weights, corr_table);
-            Ok(Box::new(two_pass))
-        }
-        "pecos_uf:bp" => {
-            // BP+UF hybrid: flooding BP (fast, good for d<=7).
-            let d =
-                pecos_decoders::BpUfDecoder::from_dem(dem, pecos_decoders::BpUfConfig::balanced())
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
-            Ok(Box::new(d))
-        }
-        "belief_matching_mgbp" => {
-            // Belief-matching with matching-graph BP (Hack et al. 2026 style).
-            // BP runs on the matching graph (simpler, better convergence)
-            // instead of the Tanner graph.
-            use pecos_decoder_core::DemMatchingGraph;
-            use pecos_decoder_core::bp_matching::BpMatchingDecoder;
-            use pecos_decoder_core::correlation_table::CorrelationTable;
-            use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
-
-            let bp = pecos_decoders::BpUfDecoder::from_dem(
-                dem,
-                pecos_decoders::BpUfConfig::matching_bp(),
-            )
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            let graph = DemMatchingGraph::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            // Matching decoders pack observables into a u64; reject >64-observable
-            // DEMs rather than overflow-panicking in build_obs_masks.
-            graph
-                .ensure_observables_fit_u64()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let config = FusionBlossomConfig {
-                num_nodes: Some(graph.num_detectors),
-                num_observables: graph.num_observables,
-                ..Default::default()
-            };
-            let mut fb = FusionBlossomDecoder::new(config)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let mut edge_index_map = std::collections::BTreeMap::new();
-            for (idx, edge) in graph.edges.iter().enumerate() {
-                let obs: Vec<usize> = edge.observables.iter().map(|&o| o as usize).collect();
-                let key = if let Some(n2) = edge.node2 {
-                    fb.add_edge(edge.node1 as usize, n2 as usize, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    if edge.node1 <= n2 {
-                        (edge.node1, n2)
-                    } else {
-                        (n2, edge.node1)
-                    }
-                } else {
-                    fb.add_boundary_edge(edge.node1 as usize, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    (edge.node1, u32::MAX)
-                };
-                edge_index_map.insert(key, idx);
-            }
-            let corr_table =
-                CorrelationTable::from_dem_str(dem, &edge_index_map, graph.edges.len()).map_err(
-                    |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
-                )?;
-            Ok(Box::new(BpMatchingDecoder::with_correlations(
-                fb, bp, corr_table,
-            )))
-        }
-        "pecos_uf:bp_serial" => {
-            // BP+UF hybrid: serial BP (slower, maintains threshold at d=7-11+).
-            let d =
-                pecos_decoders::BpUfDecoder::from_dem(dem, pecos_decoders::BpUfConfig::accurate())
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
-            Ok(Box::new(d))
-        }
-        "belief_matching" => {
-            // Belief-matching: BP soft info → Fusion Blossom MWPM with dynamic weights.
-            // Achieves ~0.94% circuit-level threshold (Higgott 2022).
-            use pecos_decoder_core::DemMatchingGraph;
-            use pecos_decoder_core::bp_matching::BpMatchingDecoder;
-            use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
-
-            // Build BP weight provider.
-            let bp =
-                pecos_decoders::BpUfDecoder::from_dem(dem, pecos_decoders::BpUfConfig::balanced())
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
-
-            // Build Fusion Blossom as the matching backend.
-            let graph = DemMatchingGraph::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            // Matching decoders pack observables into a u64; reject >64-observable
-            // DEMs rather than overflow-panicking in build_obs_masks.
-            graph
-                .ensure_observables_fit_u64()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let config = FusionBlossomConfig {
-                num_nodes: Some(graph.num_detectors),
-                num_observables: graph.num_observables,
-                ..Default::default()
-            };
-            let mut fb = FusionBlossomDecoder::new(config)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            for edge in &graph.edges {
-                let obs: Vec<usize> = edge.observables.iter().map(|&o| o as usize).collect();
-                match edge.node2 {
-                    Some(n2) => {
-                        fb.add_edge(edge.node1 as usize, n2 as usize, &obs, Some(edge.weight))
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                            })?;
-                    }
-                    None => {
-                        fb.add_boundary_edge(edge.node1 as usize, &obs, Some(edge.weight))
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                            })?;
-                    }
-                }
-            }
-
-            Ok(Box::new(BpMatchingDecoder::new(fb, bp)))
-        }
-        "belief_matching_correlated" => {
-            // Correlated belief-matching: BP + correlation table + Fusion Blossom MWPM.
-            // Two-pass: BP weights → MWPM → correlation adjustment → MWPM.
-            // Combines BP soft info with X-Z cross-lattice correlations.
-            use pecos_decoder_core::DemMatchingGraph;
-            use pecos_decoder_core::bp_matching::BpMatchingDecoder;
-            use pecos_decoder_core::correlation_table::CorrelationTable;
-            use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
-
-            let bp =
-                pecos_decoders::BpUfDecoder::from_dem(dem, pecos_decoders::BpUfConfig::balanced())
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                    })?;
-
-            let graph = DemMatchingGraph::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            // Matching decoders pack observables into a u64; reject >64-observable
-            // DEMs rather than overflow-panicking in build_obs_masks.
-            graph
-                .ensure_observables_fit_u64()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            // Build Fusion Blossom.
-            let config = FusionBlossomConfig {
-                num_nodes: Some(graph.num_detectors),
-                num_observables: graph.num_observables,
-                ..Default::default()
-            };
-            let mut fb = FusionBlossomDecoder::new(config)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            let mut edge_index_map = std::collections::BTreeMap::new();
-            for (idx, edge) in graph.edges.iter().enumerate() {
-                let obs: Vec<usize> = edge.observables.iter().map(|&o| o as usize).collect();
-                let key = if let Some(n2) = edge.node2 {
-                    fb.add_edge(edge.node1 as usize, n2 as usize, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    if edge.node1 <= n2 {
-                        (edge.node1, n2)
-                    } else {
-                        (n2, edge.node1)
-                    }
-                } else {
-                    fb.add_boundary_edge(edge.node1 as usize, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    (edge.node1, u32::MAX)
-                };
-                edge_index_map.insert(key, idx);
-            }
-
-            // Build correlation table from decomposed DEM.
-            let corr_table =
-                CorrelationTable::from_dem_str(dem, &edge_index_map, graph.edges.len()).map_err(
-                    |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
-                )?;
-
-            Ok(Box::new(BpMatchingDecoder::with_correlations(
-                fb, bp, corr_table,
-            )))
-        }
-        s if s.starts_with("belief_matching_hybrid:") => {
-            // Hybrid correlated belief-matching: non-decomposed DEM for BP,
-            // decomposed DEM for matching graph + correlations.
-            // Format: "belief_matching_hybrid:<full_dem_string>"
-            // The main `dem` param is the decomposed DEM.
-            use pecos_decoder_core::DemMatchingGraph;
-            use pecos_decoder_core::bp_matching::BpMatchingDecoder;
-            use pecos_decoder_core::correlation_table::CorrelationTable;
-            use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
-
-            let full_dem = &s["belief_matching_hybrid:".len()..];
-
-            // BP uses non-decomposed DEM, matching uses decomposed.
-            let bp = pecos_decoders::BpUfDecoder::from_dual_dem(
-                full_dem,
-                dem,
-                pecos_decoders::BpUfConfig::balanced(),
-            )
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            // Build Fusion Blossom from decomposed DEM.
-            let graph = DemMatchingGraph::from_dem_str(dem)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            // Matching decoders pack observables into a u64; reject >64-observable
-            // DEMs rather than overflow-panicking in build_obs_masks.
-            graph
-                .ensure_observables_fit_u64()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let config = FusionBlossomConfig {
-                num_nodes: Some(graph.num_detectors),
-                num_observables: graph.num_observables,
-                ..Default::default()
-            };
-            let mut fb = FusionBlossomDecoder::new(config)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let mut edge_index_map = std::collections::BTreeMap::new();
-            for (idx, edge) in graph.edges.iter().enumerate() {
-                let obs: Vec<usize> = edge.observables.iter().map(|&o| o as usize).collect();
-                let key = if let Some(n2) = edge.node2 {
-                    fb.add_edge(edge.node1 as usize, n2 as usize, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    if edge.node1 <= n2 {
-                        (edge.node1, n2)
-                    } else {
-                        (n2, edge.node1)
-                    }
-                } else {
-                    fb.add_boundary_edge(edge.node1 as usize, &obs, Some(edge.weight))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                    (edge.node1, u32::MAX)
-                };
-                edge_index_map.insert(key, idx);
-            }
-            let corr_table =
-                CorrelationTable::from_dem_str(dem, &edge_index_map, graph.edges.len()).map_err(
-                    |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
-                )?;
-
-            Ok(Box::new(BpMatchingDecoder::with_correlations(
-                fb, bp, corr_table,
-            )))
-        }
-        s if s.starts_with("windowed") => {
-            // Windowed decoder: "windowed" or "windowed:step=N,buf=M,inner=TYPE,mode=MODE"
-            // inner= takes the REST of the string (supports nested specs with commas).
-            let mut config = pecos_decoders::WindowedConfig::default();
-            let mut inner_type = "pecos_uf".to_string();
-            let mut mode = String::new();
-            if let Some(params) = s.strip_prefix("windowed:") {
-                // Split inner= from the rest: "step=5,buf=5,inner=perturbed:K=7,sigma=0.5"
-                // → params before inner, inner spec
-                let (own_params, inner_spec) = if let Some(idx) = params.find(",inner=") {
-                    (&params[..idx], Some(&params[idx + 7..]))
-                } else if let Some(idx) = params.find("inner=") {
-                    (&params[..idx.saturating_sub(1)], Some(&params[idx + 6..]))
-                } else {
-                    (params, None)
-                };
-                if let Some(spec) = inner_spec {
-                    inner_type = spec.to_string();
-                }
-                for kv in own_params.split(',') {
-                    let parts: Vec<&str> = kv.splitn(2, '=').collect();
-                    if parts.len() == 2 {
-                        match parts[0] {
-                            "step" => config.step_size = parts[1].parse().unwrap_or(0),
-                            "buf" | "buffer" => config.buffer_size = parts[1].parse().unwrap_or(0),
-                            "mode" => mode = parts[1].to_string(),
-                            "seam" => config.seam_half_width = parts[1].parse().unwrap_or(0),
-                            "ext" | "core_extend" => {
-                                config.core_extend = parts[1].parse().unwrap_or(0);
-                            }
-                            "wmax" | "commit_weight_max" => {
-                                config.commit_weight_max = parts[1].parse().unwrap_or(0.0);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
-            if mode == "sandwich" || (mode.is_empty() && config.buffer_size > 0) {
-                // Sandwich decoder (two-phase): best accuracy with buf > 0.
-                // Default: buf=step, wmax=2.5, PM residual decoder.
-                if config.buffer_size == 0 {
-                    config.buffer_size = config.step_size;
-                }
-                if config.commit_weight_max == 0.0 {
-                    config.commit_weight_max = 2.5;
-                }
-                let phase2_type = if inner_type == "pecos_uf" {
-                    "pymatching".to_string()
-                } else {
-                    inner_type.clone()
-                };
-                let phase1_factory = |sub_dem: &str| -> Result<
-                    pecos_decoders::UfDecoder,
-                    pecos_decoders::DecoderError,
-                > {
-                    pecos_decoders::UfDecoder::from_dem(
-                        sub_dem,
-                        pecos_decoders::UfDecoderConfig::windowed(),
-                    )
-                };
-                let phase2_factory = |sub_dem: &str| -> Result<
-                    Box<dyn pecos_decoders::ObservableDecoder>,
-                    pecos_decoders::DecoderError,
-                > {
-                    create_observable_decoder(sub_dem, &phase2_type)
-                        .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))
-                };
-                let dec = pecos_decoders::SandwichWindowedDecoder::from_dem(
-                    dem,
-                    config,
-                    phase1_factory,
-                    phase2_factory,
-                )
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-                Ok(Box::new(dec))
-            } else if mode == "overlap" {
-                // Single-phase overlapping (UF by default).
-                let factory = |sub_dem: &str| -> Result<
-                    pecos_decoders::UfDecoder,
-                    pecos_decoders::DecoderError,
-                > {
-                    pecos_decoders::UfDecoder::from_dem(
-                        sub_dem,
-                        pecos_decoders::UfDecoderConfig::windowed(),
-                    )
-                };
-                let dec =
-                    pecos_decoders::OverlappingWindowedDecoder::from_dem(dem, config, factory)
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                        })?;
-                Ok(Box::new(dec))
-            } else {
-                // Non-overlapping with pluggable inner decoder.
-                let factory = |sub_dem: &str| -> Result<
-                    Box<dyn pecos_decoders::ObservableDecoder>,
-                    pecos_decoders::DecoderError,
-                > {
-                    create_observable_decoder(sub_dem, &inner_type)
-                        .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))
-                };
-                let dec = pecos_decoders::WindowedDecoder::from_dem(dem, config, factory).map_err(
-                    |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
-                )?;
-                Ok(Box::new(dec))
-            }
-        }
-        "pecos_uf:accurate" => {
-            // UIUF CSS-aware mode. Single-DEM path falls back to balanced.
-            // For proper UIUF, use CssUfDecoder directly with separate X/Z DEMs
-            // via the PyCssUfDecoder Python class.
-            create_observable_decoder(dem, "pecos_uf:balanced")
-        }
-        #[cfg(feature = "mwpf")]
-        "mwpf" => {
-            let d =
-                pecos_decoders::MwpfDecoder::from_dem(dem, pecos_decoders::MwpfConfig::default())
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            Ok(Box::new(d))
-        }
-        #[cfg(feature = "mwpf")]
-        s if s.starts_with("mwpf:") => {
-            // Parse "mwpf:key=val,key=val" config overrides.
-            // Keys: c/cluster_node_limit, t/timeout, once/only_solve_primal_once, solver
-            let mut config = pecos_decoders::MwpfConfig::default();
-            for kv in s[5..].split(',') {
-                let parts: Vec<&str> = kv.splitn(2, '=').collect();
-                if parts.len() != 2 {
-                    continue;
-                }
-                match parts[0] {
-                    "c" | "cluster_node_limit" => {
-                        config.cluster_node_limit = parts[1].parse().unwrap_or(50);
-                    }
-                    "t" | "timeout" => {
-                        config.timeout = parts[1].parse().ok();
-                    }
-                    "once" | "only_solve_primal_once" => {
-                        config.only_solve_primal_once = parts[1] == "true" || parts[1] == "1";
-                    }
-                    "solver" => {
-                        config.solver_type = match parts[1] {
-                            "uf" | "union_find" => pecos_decoders::MwpfSolverType::UnionFind,
-                            "sh" | "single_hair" => pecos_decoders::MwpfSolverType::SingleHair,
-                            "bp" | "bp_hybrid" => pecos_decoders::MwpfSolverType::BpHybrid,
-                            _ => pecos_decoders::MwpfSolverType::JointSingleHair,
-                        };
-                    }
-                    _ => {}
-                }
-            }
-            let d = pecos_decoders::MwpfDecoder::from_dem(dem, config)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            Ok(Box::new(d))
-        }
-        #[cfg(not(feature = "mwpf"))]
-        s if s == "mwpf" || s.starts_with("mwpf:") => {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "MWPF decoder is not available in this build. \
-                 Install cmake (run `pecos setup`) and rebuild. \
-                 See: https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cmake-setup.md",
-            ))
-        }
-        s if s.starts_with("perturbed") => {
-            // Perturbed-weight ensemble: "perturbed" or "perturbed:K=15,sigma=0.7,inner=TYPE"
-            // inner= takes the REST of the string (supports nested decoder specs).
-            use pecos_decoder_core::perturbed::{PerturbedConfig, build_perturbed_ensemble};
-
-            let mut config = PerturbedConfig::default();
-            let mut inner_type = "pymatching".to_string();
-            if let Some(params) = s.strip_prefix("perturbed:") {
-                // Extract inner= (takes rest of string for nesting support)
-                let (own_params, inner_spec) = if let Some(idx) = params.find(",inner=") {
-                    (&params[..idx], Some(&params[idx + 7..]))
-                } else if let Some(idx) = params.find("inner=") {
-                    (&params[..idx.saturating_sub(1)], Some(&params[idx + 6..]))
-                } else {
-                    (params, None)
-                };
-                if let Some(spec) = inner_spec {
-                    inner_type = spec.to_string();
-                }
-                for kv in own_params.split(',') {
-                    let parts: Vec<&str> = kv.splitn(2, '=').collect();
-                    if parts.len() == 2 {
-                        match parts[0] {
-                            "K" | "k" => config.k = parts[1].parse().unwrap_or(15),
-                            "sigma" | "s" => config.sigma = parts[1].parse().unwrap_or(0.7),
-                            "seed" => config.seed = parts[1].parse().unwrap_or(42),
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
-            let ensemble = build_perturbed_ensemble(dem, &config, |sub_dem| {
-                create_observable_decoder(sub_dem, &inner_type)
-                    .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))
-            })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            Ok(Box::new(ensemble))
-        }
-        s if s.starts_with("beamsearch") => {
-            // Beam search windowed decoder: "beamsearch" or "beamsearch:K=5,sigma=0.5,buf=5"
-            let mut config = pecos_decoders::BeamSearchConfig::default();
-            if let Some(params) = s.strip_prefix("beamsearch:") {
-                for kv in params.split(',') {
-                    let parts: Vec<&str> = kv.splitn(2, '=').collect();
-                    if parts.len() == 2 {
-                        match parts[0] {
-                            "K" | "k" => config.beam_width = parts[1].parse().unwrap_or(5),
-                            "sigma" | "s" => {
-                                config.perturbation_sigma = parts[1].parse().unwrap_or(0.5);
-                            }
-                            "seed" => config.seed = parts[1].parse().unwrap_or(42),
-                            "step" => config.window.step_size = parts[1].parse().unwrap_or(0),
-                            "buf" | "buffer" => {
-                                config.window.buffer_size = parts[1].parse().unwrap_or(0);
-                            }
-                            "wmax" => {
-                                config.window.commit_weight_max = parts[1].parse().unwrap_or(0.0);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            // Match sandwich defaults: buf=step, wmax=2.5.
-            // When step=0 (auto), buf also needs to be auto. Set buf=5 as a
-            // reasonable default (will be auto-tuned by parse_dem_params).
-            if config.window.buffer_size == 0 {
-                if config.window.step_size > 0 {
-                    config.window.buffer_size = config.window.step_size;
-                } else {
-                    config.window.buffer_size = 5; // auto: will be refined by d_est
-                }
-            }
-            if config.window.commit_weight_max == 0.0 {
-                config.window.commit_weight_max = 2.5;
-            }
-
-            let phase1_factory = |sub_dem: &str| -> Result<
-                pecos_decoders::UfDecoder,
-                pecos_decoders::DecoderError,
-            > {
-                pecos_decoders::UfDecoder::from_dem(
-                    sub_dem,
-                    pecos_decoders::UfDecoderConfig::windowed(),
-                )
-            };
-            let phase2_factory = |sub_dem: &str| -> Result<
-                Box<dyn pecos_decoders::ObservableDecoder>,
-                pecos_decoders::DecoderError,
-            > {
-                create_observable_decoder(sub_dem, "pymatching")
-                    .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))
-            };
-            let dec = pecos_decoders::BeamSearchWindowedDecoder::from_dem(
-                dem,
-                config,
-                phase1_factory,
-                Some(phase2_factory),
-            )
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            Ok(Box::new(dec))
-        }
-        s if s.starts_with("ensemble:") => {
-            // Parse "ensemble:dec1,dec2,dec3" -- create multiple decoders and vote.
-            use pecos_decoder_core::ensemble::EnsembleDecoder;
-            let members_str = &s[9..];
-            let mut members: Vec<Box<dyn pecos_decoders::ObservableDecoder>> = Vec::new();
-            for spec in members_str.split(',') {
-                let spec = spec.trim();
-                if spec.is_empty() {
-                    continue;
-                }
-                members.push(create_observable_decoder(dem, spec)?);
-            }
-            if members.is_empty() {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "ensemble: needs at least one decoder",
-                ));
-            }
-            Ok(Box::new(EnsembleDecoder::new(members)))
-        }
-        // Per-logical-operator subgraph decoder: requires stab_coords from Python.
-        // This is NOT callable from the string-based create_observable_decoder API.
-        // Use the Python LogicalSubgraphDecoder class directly instead.
-        s if s == "logical_subgraph" || s.starts_with("logical_subgraph:") => {
-            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "logical_subgraph decoder requires stab_coords. \
-                 Use pecos_rslib.qec.LogicalSubgraphDecoder class directly.",
-            ))
-        }
-        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Unsupported decoder_type: {decoder_type}. \
-             Supported: pymatching, tesseract, mwpf, pecos_uf (or pecos_uf:fast/balanced/accurate), \
-             logical_subgraph, ensemble:d1,d2,..., bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp."
-        ))),
-    }
+    let spec =
+        pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?;
+    let model = spec.embedded_hybrid_full_dem().map_or_else(
+        || pecos_decoders::DecodeModel::SingleDem(dem.to_string()),
+        |full| pecos_decoders::DecodeModel::HybridDem {
+            full: full.to_string(),
+            decomposed: dem.to_string(),
+        },
+    );
+    spec.build(&model).map_err(decoder_build_error_to_py)
 }
 
 /// Pre-generated sample batch held in Rust memory.
@@ -7303,8 +6458,1372 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
 }
 
 // =============================================================================
+// Circuit fault-tolerance diagnosis and distance certification
+// =============================================================================
+
+/// A gate location in a tick circuit where a Pauli fault is injected.
+#[pyclass(
+    name = "CircuitFaultLocation",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyCircuitFaultLocation {
+    tick: usize,
+    gate_type: String,
+    qubits: Vec<usize>,
+    gate_index: usize,
+    before: bool,
+}
+
+impl From<&SpacetimeLocation> for PyCircuitFaultLocation {
+    fn from(location: &SpacetimeLocation) -> Self {
+        Self {
+            tick: location.tick,
+            gate_type: format!("{:?}", location.gate_type),
+            qubits: location.qubits.iter().map(QubitId::index).collect(),
+            gate_index: location.gate_index,
+            before: location.before,
+        }
+    }
+}
+
+#[pymethods]
+impl PyCircuitFaultLocation {
+    #[getter]
+    fn tick(&self) -> usize {
+        self.tick
+    }
+
+    #[getter]
+    fn gate_type(&self) -> String {
+        self.gate_type.clone()
+    }
+
+    #[getter]
+    fn qubits(&self) -> Vec<usize> {
+        self.qubits.clone()
+    }
+
+    #[getter]
+    fn gate_index(&self) -> usize {
+        self.gate_index
+    }
+
+    #[getter]
+    fn before(&self) -> bool {
+        self.before
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CircuitFaultLocation(tick={}, gate_type={:?}, qubits={:?}, gate_index={}, before={})",
+            self.tick, self.gate_type, self.qubits, self.gate_index, self.before
+        )
+    }
+}
+
+type PyCircuitFault = (PyCircuitFaultLocation, Vec<usize>);
+
+fn python_faults(configuration: &FaultConfiguration) -> Vec<PyCircuitFault> {
+    configuration
+        .faults
+        .iter()
+        .map(|fault| {
+            (
+                PyCircuitFaultLocation::from(&fault.location),
+                fault.paulis.iter().copied().map(usize::from).collect(),
+            )
+        })
+        .collect()
+}
+
+/// A single-location fault that amplifies into a multi-qubit data error.
+#[pyclass(name = "HookError", module = "pecos_rslib.qec", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyHookError {
+    location: PyCircuitFaultLocation,
+    fault_paulis: Vec<usize>,
+    data_support: Vec<usize>,
+    data_weight: usize,
+    detected: bool,
+    causes_logical_error: bool,
+}
+
+impl From<RustHookError> for PyHookError {
+    fn from(error: RustHookError) -> Self {
+        Self {
+            location: PyCircuitFaultLocation::from(&error.location),
+            fault_paulis: error.fault_paulis.into_iter().map(usize::from).collect(),
+            data_support: error.data_support,
+            data_weight: error.data_weight,
+            detected: error.detected,
+            causes_logical_error: error.causes_logical_error,
+        }
+    }
+}
+
+#[pymethods]
+impl PyHookError {
+    #[getter]
+    fn location(&self) -> PyCircuitFaultLocation {
+        self.location.clone()
+    }
+
+    #[getter]
+    fn fault_paulis(&self) -> Vec<usize> {
+        self.fault_paulis.clone()
+    }
+
+    #[getter]
+    fn data_support(&self) -> Vec<usize> {
+        self.data_support.clone()
+    }
+
+    #[getter]
+    fn data_weight(&self) -> usize {
+        self.data_weight
+    }
+
+    #[getter]
+    fn detected(&self) -> bool {
+        self.detected
+    }
+
+    #[getter]
+    fn causes_logical_error(&self) -> bool {
+        self.causes_logical_error
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HookError(location={}, fault_paulis={:?}, data_support={:?}, data_weight={}, detected={}, causes_logical_error={})",
+            self.location.__repr__(),
+            self.fault_paulis,
+            self.data_support,
+            self.data_weight,
+            self.detected,
+            self.causes_logical_error
+        )
+    }
+}
+
+/// Summary of hook-error diagnosis over the selected Pauli fault set.
+#[pyclass(
+    name = "HookErrorReport",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyHookErrorReport {
+    hook_errors: Vec<PyHookError>,
+    total_faults_examined: usize,
+    max_data_weight: usize,
+}
+
+impl From<RustHookErrorReport> for PyHookErrorReport {
+    fn from(report: RustHookErrorReport) -> Self {
+        Self {
+            hook_errors: report
+                .hook_errors
+                .into_iter()
+                .map(PyHookError::from)
+                .collect(),
+            total_faults_examined: report.total_faults_examined,
+            max_data_weight: report.max_data_weight,
+        }
+    }
+}
+
+#[pymethods]
+impl PyHookErrorReport {
+    #[getter]
+    fn hook_errors(&self) -> Vec<PyHookError> {
+        self.hook_errors.clone()
+    }
+
+    #[getter]
+    fn total_faults_examined(&self) -> usize {
+        self.total_faults_examined
+    }
+
+    #[getter]
+    fn max_data_weight(&self) -> usize {
+        self.max_data_weight
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HookErrorReport(hook_errors={}, total_faults_examined={}, max_data_weight={})",
+            self.hook_errors.len(),
+            self.total_faults_examined,
+            self.max_data_weight
+        )
+    }
+}
+
+/// A counterexample to the propagated-fault condition for a flag circuit.
+#[pyclass(
+    name = "FlagViolation",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFlagViolation {
+    faults: Vec<PyCircuitFault>,
+    num_faults: usize,
+    error_weight: usize,
+}
+
+impl From<RustFlagViolation> for PyFlagViolation {
+    fn from(violation: RustFlagViolation) -> Self {
+        Self {
+            faults: python_faults(&violation.faults),
+            num_faults: violation.num_faults,
+            error_weight: violation.error_weight,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFlagViolation {
+    #[getter]
+    fn faults(&self) -> Vec<PyCircuitFault> {
+        self.faults.clone()
+    }
+
+    #[getter]
+    fn num_faults(&self) -> usize {
+        self.num_faults
+    }
+
+    #[getter]
+    fn error_weight(&self) -> usize {
+        self.error_weight
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FlagViolation(num_faults={}, error_weight={}, faults={})",
+            self.num_faults,
+            self.error_weight,
+            self.faults.len()
+        )
+    }
+}
+
+/// Result of checking the propagated-fault condition through fault weight ``t``.
+#[pyclass(
+    name = "FlagFaultToleranceReport",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyFlagFaultToleranceReport {
+    fault_condition_satisfied: bool,
+    t: usize,
+    violations: Vec<PyFlagViolation>,
+    total_configurations_tested: usize,
+}
+
+impl From<RustFlagFaultToleranceReport> for PyFlagFaultToleranceReport {
+    fn from(report: RustFlagFaultToleranceReport) -> Self {
+        Self {
+            fault_condition_satisfied: report.fault_condition_satisfied,
+            t: report.t,
+            violations: report
+                .violations
+                .into_iter()
+                .map(PyFlagViolation::from)
+                .collect(),
+            total_configurations_tested: report.total_configurations_tested,
+        }
+    }
+}
+
+#[pymethods]
+impl PyFlagFaultToleranceReport {
+    #[getter]
+    fn fault_condition_satisfied(&self) -> bool {
+        self.fault_condition_satisfied
+    }
+
+    #[getter]
+    fn t(&self) -> usize {
+        self.t
+    }
+
+    #[getter]
+    fn violations(&self) -> Vec<PyFlagViolation> {
+        self.violations.clone()
+    }
+
+    #[getter]
+    fn total_configurations_tested(&self) -> usize {
+        self.total_configurations_tested
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FlagFaultToleranceReport(fault_condition_satisfied={}, t={}, violations={}, total_configurations_tested={})",
+            self.fault_condition_satisfied,
+            self.t,
+            self.violations.len(),
+            self.total_configurations_tested
+        )
+    }
+}
+
+/// A minimum circuit fault distance and its first iterator-ordered witness.
+#[pyclass(
+    name = "CircuitDistanceResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyCircuitDistanceResult {
+    distance: usize,
+    witness: Vec<PyCircuitFault>,
+    logical_index: usize,
+}
+
+impl From<RustCircuitDistanceResult> for PyCircuitDistanceResult {
+    fn from(result: RustCircuitDistanceResult) -> Self {
+        Self {
+            distance: result.distance,
+            witness: python_faults(&result.witness),
+            logical_index: result.logical_index,
+        }
+    }
+}
+
+#[pymethods]
+impl PyCircuitDistanceResult {
+    #[getter]
+    fn distance(&self) -> usize {
+        self.distance
+    }
+
+    #[getter]
+    fn witness(&self) -> Vec<PyCircuitFault> {
+        self.witness.clone()
+    }
+
+    #[getter]
+    fn logical_index(&self) -> usize {
+        self.logical_index
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CircuitDistanceResult(distance={}, logical_index={}, witness_faults={})",
+            self.distance,
+            self.logical_index,
+            self.witness.len()
+        )
+    }
+}
+
+fn selected_fault_config(x_only: bool, y_only: bool, z_only: bool) -> FaultCheckConfig {
+    let restricted = x_only || y_only || z_only;
+    FaultCheckConfig {
+        include_x: !restricted || x_only,
+        include_y: !restricted || y_only,
+        include_z: !restricted || z_only,
+        ..FaultCheckConfig::default()
+    }
+}
+
+fn logical_slices(logicals: &[(Vec<usize>, Vec<usize>)]) -> Vec<(&[usize], &[usize])> {
+    logicals
+        .iter()
+        .map(|(xs, zs)| (xs.as_slice(), zs.as_slice()))
+        .collect()
+}
+
+/// Fault-tolerance diagnostics and circuit distance searches for a tick circuit.
+///
+/// The analyzer owns a clone of the supplied circuit. Rust's ``PauliPropChecker`` and
+/// ``FaultChecker`` intentionally borrow a circuit, so each method constructs a fresh checker;
+/// checker construction only extracts circuit locations and is cheap at these analysis scales.
+#[pyclass(name = "CircuitFaultAnalyzer", module = "pecos_rslib.qec")]
+pub struct PyCircuitFaultAnalyzer {
+    circuit: pecos_quantum::TickCircuit,
+}
+
+#[pymethods]
+impl PyCircuitFaultAnalyzer {
+    #[new]
+    fn new(circuit: &PyTickCircuit) -> Self {
+        Self {
+            circuit: circuit.inner.clone(),
+        }
+    }
+
+    /// Diagnose single-location faults that amplify across the data block.
+    ///
+    /// With no Pauli-selection keyword, X, Y, and Z faults are all included. Setting any of
+    /// ``x_only``, ``y_only``, or ``z_only`` restricts enumeration to the selected union.
+    #[pyo3(signature = (data_qubits, z_ancillas, x_ancillas, logicals, min_data_weight, *, x_only=false, y_only=false, z_only=false))]
+    fn hook_errors(
+        &self,
+        data_qubits: Vec<usize>,
+        z_ancillas: Vec<usize>,
+        x_ancillas: Vec<usize>,
+        logicals: Vec<(Vec<usize>, Vec<usize>)>,
+        min_data_weight: usize,
+        x_only: bool,
+        y_only: bool,
+        z_only: bool,
+    ) -> PyHookErrorReport {
+        // Checkers borrow TickCircuit by design. The Python owner retains a clone and checker
+        // construction (location extraction) is cheap enough to repeat for each method call.
+        let checker = PauliPropChecker::new(&self.circuit)
+            .with_config(selected_fault_config(x_only, y_only, z_only));
+        let logicals = logical_slices(&logicals);
+        checker
+            .diagnose_hook_errors(
+                &data_qubits,
+                &z_ancillas,
+                &x_ancillas,
+                &logicals,
+                min_data_weight,
+            )
+            .into()
+    }
+
+    /// Verify the propagated-fault part of the Chao-Reichardt t-flag condition.
+    #[pyo3(signature = (data_qubits, flag_qubits, measured_stabilizer, t, *, x_only=false, y_only=false, z_only=false))]
+    fn flag_fault_condition(
+        &self,
+        data_qubits: Vec<usize>,
+        flag_qubits: Vec<usize>,
+        measured_stabilizer: (Vec<usize>, Vec<usize>),
+        t: usize,
+        x_only: bool,
+        y_only: bool,
+        z_only: bool,
+    ) -> PyFlagFaultToleranceReport {
+        let checker = PauliPropChecker::new(&self.circuit)
+            .with_config(selected_fault_config(x_only, y_only, z_only));
+        checker
+            .verify_flag_fault_tolerance(
+                &data_qubits,
+                &flag_qubits,
+                (&measured_stabilizer.0, &measured_stabilizer.1),
+                t,
+            )
+            .into()
+    }
+
+    /// Find the minimum undetectable logical fault weight through ``max_weight``.
+    #[pyo3(signature = (z_ancillas, x_ancillas, logicals, max_weight, *, x_only=false, y_only=false, z_only=false))]
+    fn fault_distance(
+        &self,
+        z_ancillas: Vec<usize>,
+        x_ancillas: Vec<usize>,
+        logicals: Vec<(Vec<usize>, Vec<usize>)>,
+        max_weight: usize,
+        x_only: bool,
+        y_only: bool,
+        z_only: bool,
+    ) -> Option<PyCircuitDistanceResult> {
+        let checker = FaultChecker::new(&self.circuit)
+            .with_config(selected_fault_config(x_only, y_only, z_only));
+        let logicals = logical_slices(&logicals);
+        checker
+            .circuit_fault_distance(&z_ancillas, &x_ancillas, &logicals, max_weight)
+            .map(PyCircuitDistanceResult::from)
+    }
+
+    /// Find one fault distance result for each supplied logical operator.
+    #[pyo3(signature = (z_ancillas, x_ancillas, logicals, max_weight, *, x_only=false, y_only=false, z_only=false))]
+    fn per_logical_fault_distances(
+        &self,
+        z_ancillas: Vec<usize>,
+        x_ancillas: Vec<usize>,
+        logicals: Vec<(Vec<usize>, Vec<usize>)>,
+        max_weight: usize,
+        x_only: bool,
+        y_only: bool,
+        z_only: bool,
+    ) -> Vec<Option<PyCircuitDistanceResult>> {
+        let checker = FaultChecker::new(&self.circuit)
+            .with_config(selected_fault_config(x_only, y_only, z_only));
+        let logicals = logical_slices(&logicals);
+        checker
+            .per_logical_circuit_fault_distances(&z_ancillas, &x_ancillas, &logicals, max_weight)
+            .into_iter()
+            .map(|result| result.map(PyCircuitDistanceResult::from))
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CircuitFaultAnalyzer(ticks={}, gates={})",
+            self.circuit.num_ticks(),
+            self.circuit.gate_count()
+        )
+    }
+}
+
+/// A natively checked SAT witness and the solver-trusted UNSAT prefix below it.
+#[pyclass(
+    name = "CertifiedDistance",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyCertifiedDistance {
+    distance: usize,
+    witness: Vec<bool>,
+    sat_certified: bool,
+    unsat_trusted_below: usize,
+}
+
+impl From<RustCertifiedDistance> for PyCertifiedDistance {
+    fn from(result: RustCertifiedDistance) -> Self {
+        Self {
+            distance: result.distance,
+            witness: result.witness,
+            sat_certified: result.sat_certified,
+            unsat_trusted_below: result.unsat_trusted_below,
+        }
+    }
+}
+
+#[pymethods]
+impl PyCertifiedDistance {
+    #[getter]
+    fn distance(&self) -> usize {
+        self.distance
+    }
+
+    #[getter]
+    fn witness(&self) -> Vec<bool> {
+        self.witness.clone()
+    }
+
+    #[getter]
+    fn sat_certified(&self) -> bool {
+        self.sat_certified
+    }
+
+    #[getter]
+    fn unsat_trusted_below(&self) -> usize {
+        self.unsat_trusted_below
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CertifiedDistance(distance={}, witness_weight={}, sat_certified={}, unsat_trusted_below={})",
+            self.distance, self.distance, self.sat_certified, self.unsat_trusted_below
+        )
+    }
+}
+
+/// Result of a budgeted stabilizer-code distance search.
+#[pyclass(
+    name = "StabilizerDistanceSearchResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyStabilizerDistanceSearchResult {
+    result: Option<RustDistanceResult>,
+    max_weight: Option<usize>,
+}
+
+impl From<RustStabilizerDistanceSearchOutcome> for PyStabilizerDistanceSearchResult {
+    fn from(outcome: RustStabilizerDistanceSearchOutcome) -> Self {
+        match outcome {
+            RustStabilizerDistanceSearchOutcome::Certified(result) => Self {
+                result: Some(result),
+                max_weight: None,
+            },
+            RustStabilizerDistanceSearchOutcome::BudgetExhausted { max_weight } => Self {
+                result: None,
+                max_weight: Some(max_weight),
+            },
+        }
+    }
+}
+
+#[pymethods]
+impl PyStabilizerDistanceSearchResult {
+    #[getter]
+    fn certified(&self) -> bool {
+        self.result.is_some()
+    }
+
+    #[getter]
+    fn distance(&self) -> Option<usize> {
+        self.result.as_ref().map(|result| result.distance)
+    }
+
+    #[getter]
+    fn min_weight_operator(&self) -> Option<crate::pauli_bindings::PauliString> {
+        self.result.as_ref().map(|result| {
+            crate::pauli_bindings::PauliString::from_rust(result.min_weight_operator.clone())
+        })
+    }
+
+    #[getter]
+    fn lower_bound(&self) -> usize {
+        self.result.as_ref().map_or_else(
+            || self.max_weight.unwrap_or(0) + 1,
+            |result| result.distance,
+        )
+    }
+
+    #[getter]
+    fn max_weight(&self) -> Option<usize> {
+        self.max_weight
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.result {
+            Some(result) => format!(
+                "StabilizerDistanceSearchResult(certified=True, distance={})",
+                result.distance
+            ),
+            None => format!(
+                "StabilizerDistanceSearchResult(certified=False, lower_bound={}, max_weight={})",
+                self.lower_bound(),
+                self.max_weight.unwrap_or(0)
+            ),
+        }
+    }
+}
+
+/// Result of a budgeted classical-code distance certification.
+#[pyclass(
+    name = "ClassicalDistanceSearchResult",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyClassicalDistanceSearchResult {
+    outcome: RustClassicalDistanceSearchOutcome,
+}
+
+impl From<RustClassicalDistanceSearchOutcome> for PyClassicalDistanceSearchResult {
+    fn from(outcome: RustClassicalDistanceSearchOutcome) -> Self {
+        Self { outcome }
+    }
+}
+
+#[pymethods]
+impl PyClassicalDistanceSearchResult {
+    #[getter]
+    fn certified(&self) -> bool {
+        !matches!(
+            self.outcome,
+            RustClassicalDistanceSearchOutcome::BudgetExhausted { .. }
+        )
+    }
+
+    #[getter]
+    fn distance(&self) -> Option<usize> {
+        match &self.outcome {
+            RustClassicalDistanceSearchOutcome::Certified(result) => Some(result.distance),
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword
+            | RustClassicalDistanceSearchOutcome::BudgetExhausted { .. } => None,
+        }
+    }
+
+    #[getter]
+    fn witness(&self) -> Option<Vec<bool>> {
+        match &self.outcome {
+            RustClassicalDistanceSearchOutcome::Certified(result) => Some(result.witness.clone()),
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword
+            | RustClassicalDistanceSearchOutcome::BudgetExhausted { .. } => None,
+        }
+    }
+
+    #[getter]
+    fn lower_bound(&self) -> Option<usize> {
+        match &self.outcome {
+            RustClassicalDistanceSearchOutcome::Certified(result) => Some(result.distance),
+            RustClassicalDistanceSearchOutcome::BudgetExhausted { max_weight } => {
+                Some(max_weight + 1)
+            }
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword => None,
+        }
+    }
+
+    #[getter]
+    fn max_weight(&self) -> Option<usize> {
+        match self.outcome {
+            RustClassicalDistanceSearchOutcome::BudgetExhausted { max_weight } => Some(max_weight),
+            RustClassicalDistanceSearchOutcome::Certified(_)
+            | RustClassicalDistanceSearchOutcome::NoNonzeroCodeword => None,
+        }
+    }
+
+    #[getter]
+    fn no_nonzero_codeword(&self) -> bool {
+        matches!(
+            self.outcome,
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword
+        )
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.outcome {
+            RustClassicalDistanceSearchOutcome::Certified(result) => format!(
+                "ClassicalDistanceSearchResult(certified=True, distance={})",
+                result.distance
+            ),
+            RustClassicalDistanceSearchOutcome::NoNonzeroCodeword => {
+                "ClassicalDistanceSearchResult(certified=True, no_nonzero_codeword=True)"
+                    .to_string()
+            }
+            RustClassicalDistanceSearchOutcome::BudgetExhausted { max_weight } => format!(
+                "ClassicalDistanceSearchResult(certified=False, lower_bound={}, max_weight={max_weight})",
+                max_weight + 1
+            ),
+        }
+    }
+}
+
+/// Native lower and upper bounds from bounded generator-row enumeration.
+#[pyclass(
+    name = "BoundedEnumerationDistance",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyBoundedEnumerationDistance {
+    lower_bound: usize,
+    upper_bound: usize,
+    witness: Vec<bool>,
+    certified: bool,
+    level: Option<usize>,
+    max_level: Option<usize>,
+    lb_certified: bool,
+}
+
+impl From<RustBoundedEnumerationDistance> for PyBoundedEnumerationDistance {
+    fn from(result: RustBoundedEnumerationDistance) -> Self {
+        match result {
+            RustBoundedEnumerationDistance::CertifiedByBounds {
+                distance,
+                witness,
+                lower_bound,
+                level,
+                lb_certified,
+            } => Self {
+                lower_bound,
+                upper_bound: distance,
+                witness,
+                certified: true,
+                level: Some(level),
+                max_level: None,
+                lb_certified,
+            },
+            RustBoundedEnumerationDistance::LevelLimitReached {
+                lower_bound,
+                upper_bound,
+                witness,
+                max_level,
+                lb_certified,
+            } => Self {
+                lower_bound,
+                upper_bound,
+                witness,
+                certified: false,
+                level: None,
+                max_level: Some(max_level),
+                lb_certified,
+            },
+        }
+    }
+}
+
+#[pymethods]
+impl PyBoundedEnumerationDistance {
+    #[getter]
+    fn lower_bound(&self) -> usize {
+        self.lower_bound
+    }
+
+    #[getter]
+    fn upper_bound(&self) -> usize {
+        self.upper_bound
+    }
+
+    #[getter]
+    fn distance(&self) -> Option<usize> {
+        self.certified.then_some(self.upper_bound)
+    }
+
+    #[getter]
+    fn witness(&self) -> Vec<bool> {
+        self.witness.clone()
+    }
+
+    #[getter]
+    fn certified(&self) -> bool {
+        self.certified
+    }
+
+    #[getter]
+    fn level(&self) -> Option<usize> {
+        self.level
+    }
+
+    #[getter]
+    fn max_level(&self) -> Option<usize> {
+        self.max_level
+    }
+
+    #[getter]
+    fn lb_certified(&self) -> bool {
+        self.lb_certified
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BoundedEnumerationDistance(lower_bound={}, upper_bound={}, certified={}, witness_weight={})",
+            self.lower_bound,
+            self.upper_bound,
+            self.certified,
+            self.witness.iter().filter(|&&selected| selected).count()
+        )
+    }
+}
+
+fn certify_python_problem(
+    problem: &RustDistanceProblem,
+    max_weight: usize,
+) -> PyResult<Option<PyCertifiedDistance>> {
+    rust_certified_distance(problem, max_weight)
+        .map(|result| result.map(PyCertifiedDistance::from))
+        .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
+}
+
+/// A binary problem whose solutions are undetectable with nonzero logical effect.
+#[pyclass(
+    name = "DistanceProblem",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyDistanceProblem {
+    inner: RustDistanceProblem,
+}
+
+#[pymethods]
+impl PyDistanceProblem {
+    #[classmethod]
+    fn from_css_checks(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        hx: &PyParityCheckMatrix,
+        lx: &PyParityCheckMatrix,
+    ) -> PyResult<Self> {
+        RustDistanceProblem::from_css_checks(&hx.inner, &lx.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    #[classmethod]
+    fn from_css_code_x_distance(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        spec: &PyStabilizerCodeSpec,
+    ) -> PyResult<Self> {
+        RustDistanceProblem::from_css_code_x_distance(&spec.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    #[classmethod]
+    fn from_css_code_z_distance(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        spec: &PyStabilizerCodeSpec,
+    ) -> PyResult<Self> {
+        RustDistanceProblem::from_css_code_z_distance(&spec.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    #[classmethod]
+    fn from_dem(_cls: &Bound<'_, pyo3::types::PyType>, dem: &PyDetectorErrorModel) -> Self {
+        Self {
+            inner: RustDistanceProblem::from_dem(&dem.inner),
+        }
+    }
+
+    #[getter]
+    fn num_vars(&self) -> usize {
+        self.inner.num_vars()
+    }
+
+    fn to_dimacs(&self, max_weight: usize) -> String {
+        self.inner.to_dimacs(max_weight)
+    }
+
+    fn to_wcnf(&self) -> String {
+        self.inner.to_wcnf()
+    }
+
+    fn verify_witness(&self, witness: Vec<bool>) -> PyResult<usize> {
+        self.inner
+            .verify_witness(&witness)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Certifies distance through ``max_weight`` using the in-process batsat SAT solver.
+    ///
+    /// A fresh deterministic solver instance is built for each weight from the internal clause
+    /// encoding. SAT answers are certified natively with ``DistanceProblem.verify_witness`` before
+    /// they are accepted. UNSAT answers, and therefore the exactness of a returned distance, rest
+    /// on trusting the solver. ``None`` means batsat reported every weight through ``max_weight``
+    /// UNSAT.
+    fn certified_distance(&self, max_weight: usize) -> PyResult<Option<PyCertifiedDistance>> {
+        certify_python_problem(&self.inner, max_weight)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("DistanceProblem(num_vars={})", self.inner.num_vars())
+    }
+}
+
+/// Certifies distance through ``max_weight`` using the in-process batsat SAT solver.
+///
+/// A fresh deterministic solver instance is built for each weight from the internal clause
+/// encoding. SAT answers are certified natively with ``DistanceProblem.verify_witness`` before
+/// they are accepted. UNSAT answers, and therefore the exactness of a returned distance, rest
+/// on trusting the solver. ``None`` means batsat reported every weight through ``max_weight``
+/// UNSAT.
+#[pyfunction]
+fn certified_distance(
+    problem: &PyDistanceProblem,
+    max_weight: usize,
+) -> PyResult<Option<PyCertifiedDistance>> {
+    certify_python_problem(&problem.inner, max_weight)
+}
+
+/// Certified minimum weight of ``representative + rowspan(group)`` over GF(2).
+///
+/// Weight 0 means the representative is in the group; certified without a solver call.
+/// SAT answers are natively verified; UNSAT answers are solver-trusted.
+#[pyfunction]
+fn certified_coset_weight(
+    group: &PyParityCheckMatrix,
+    representative: Vec<u8>,
+    max_weight: usize,
+) -> PyResult<Option<PyCertifiedDistance>> {
+    pecos_qec::certified_coset_weight(&group.inner, &representative, max_weight)
+        .map(|result| result.map(PyCertifiedDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Certified minimum qubit-support weight of ``operator * stabilizer group`` for any code.
+#[pyfunction]
+fn certified_stabilizer_coset_weight(
+    code: &PyStabilizerCodeSpec,
+    operator: &crate::pauli_bindings::PauliString,
+    max_weight: usize,
+) -> PyResult<Option<PyCertifiedDistance>> {
+    pecos_qec::certified_stabilizer_coset_weight(&code.inner, &operator.to_rust(), max_weight)
+        .map(|result| result.map(PyCertifiedDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Certified coset weight of every supplied logical generator (Z generators, then X generators).
+///
+/// The minimum of this list is not the code distance: two weight-two supplied generators can,
+/// for example, have a weight-one product in another logical coset.
+/// The supplied generators are measured as given; logical-basis completeness is not required.
+#[pyfunction]
+fn logical_generator_coset_weights(
+    code: &PyStabilizerCodeSpec,
+    max_weight: usize,
+) -> PyResult<Vec<Option<PyCertifiedDistance>>> {
+    pecos_qec::logical_generator_coset_weights(&code.inner, max_weight)
+        .map(|profile| {
+            profile
+                .into_iter()
+                .map(|entry| entry.map(PyCertifiedDistance::from))
+                .collect()
+        })
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Certified minimum weight of a nonzero kernel element of a classical parity-check matrix.
+#[pyfunction]
+fn certified_classical_distance(
+    h: &PyParityCheckMatrix,
+    max_weight: usize,
+) -> PyResult<PyClassicalDistanceSearchResult> {
+    pecos_qec::certified_classical_distance(&h.inner, max_weight)
+        .map(PyClassicalDistanceSearchResult::from)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes binary ``(H, L)`` distance using native bounded row enumeration.
+#[pyfunction]
+fn bounded_enumeration_code_distance(
+    h: &PyParityCheckMatrix,
+    l: &PyParityCheckMatrix,
+    max_level: usize,
+) -> Option<PyBoundedEnumerationDistance> {
+    rust_bounded_enumeration_code_distance(&h.inner, &l.inner, max_level)
+        .map(PyBoundedEnumerationDistance::from)
+}
+
+/// Computes pure-X bounded-enumeration distance for a CSS stabilizer code.
+#[pyfunction]
+fn bounded_enumeration_x_distance(
+    code: &PyStabilizerCodeSpec,
+    max_level: usize,
+) -> PyResult<Option<PyBoundedEnumerationDistance>> {
+    rust_bounded_enumeration_x_distance(&code.inner, max_level)
+        .map(|result| result.map(PyBoundedEnumerationDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes pure-Z bounded-enumeration distance for a CSS stabilizer code.
+#[pyfunction]
+fn bounded_enumeration_z_distance(
+    code: &PyStabilizerCodeSpec,
+    max_level: usize,
+) -> PyResult<Option<PyBoundedEnumerationDistance>> {
+    rust_bounded_enumeration_z_distance(&code.inner, max_level)
+        .map(|result| result.map(PyBoundedEnumerationDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes bounded-enumeration distance for any stabilizer code.
+#[pyfunction]
+fn bounded_enumeration_stabilizer_distance(
+    code: &PyStabilizerCodeSpec,
+    max_level: usize,
+) -> PyResult<Option<PyBoundedEnumerationDistance>> {
+    rust_bounded_enumeration_stabilizer_distance(&code.inner, max_level)
+        .map(|result| result.map(PyBoundedEnumerationDistance::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes connected-cluster distance for a binary check/logical matrix pair.
+#[pyfunction]
+fn connected_cluster_code_distance(
+    h: &PyParityCheckMatrix,
+    l: &PyParityCheckMatrix,
+    max_weight: usize,
+) -> Option<PyFaultDistanceResult> {
+    rust_connected_cluster_code_distance(&h.inner, &l.inner, max_weight)
+        .map(PyFaultDistanceResult::from)
+}
+
+/// Samples natively verified qubit witnesses for a binary code-distance upper bound.
+///
+/// Returned ``mechanism_indices`` are qubit indices. A return value is only an upper bound and
+/// never certifies exactness.
+#[pyfunction]
+fn randomized_code_distance_upper_bound(
+    h: &PyParityCheckMatrix,
+    l: &PyParityCheckMatrix,
+    config: &PyFaultDistanceUpperBoundConfig,
+) -> PyResult<Option<PyFaultDistanceUpperBoundResult>> {
+    rust_randomized_code_distance_upper_bound(&h.inner, &l.inner, &config.inner)
+        .map(|result| result.map(PyFaultDistanceUpperBoundResult::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes pure-X connected-cluster distance for a CSS stabilizer code.
+#[pyfunction]
+fn x_distance(
+    code: &PyStabilizerCodeSpec,
+    max_weight: usize,
+) -> PyResult<Option<PyFaultDistanceResult>> {
+    rust_x_distance(&code.inner, max_weight)
+        .map(|result| result.map(PyFaultDistanceResult::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes pure-Z connected-cluster distance for a CSS stabilizer code.
+#[pyfunction]
+fn z_distance(
+    code: &PyStabilizerCodeSpec,
+    max_weight: usize,
+) -> PyResult<Option<PyFaultDistanceResult>> {
+    rust_z_distance(&code.inner, max_weight)
+        .map(|result| result.map(PyFaultDistanceResult::from))
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// Computes connected-cluster distance for any stabilizer code.
+#[pyfunction]
+fn stabilizer_code_distance(
+    code: &PyStabilizerCodeSpec,
+    max_weight: usize,
+) -> PyResult<PyStabilizerDistanceSearchResult> {
+    rust_stabilizer_code_distance(&code.inner, max_weight)
+        .map(PyStabilizerDistanceSearchResult::from)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+/// A minimum-weight logical operator and its weight.
+#[pyclass(name = "DistanceResult", module = "pecos_rslib.qec")]
+pub struct PyDistanceResult {
+    inner: RustDistanceResult,
+}
+
+impl From<RustDistanceResult> for PyDistanceResult {
+    fn from(inner: RustDistanceResult) -> Self {
+        Self { inner }
+    }
+}
+
+#[pymethods]
+impl PyDistanceResult {
+    /// The distance: the weight of the minimum-weight logical operator.
+    #[getter]
+    fn distance(&self) -> usize {
+        self.inner.distance
+    }
+
+    /// A logical operator achieving the minimum weight.
+    #[getter]
+    fn min_weight_operator(&self) -> crate::pauli_bindings::PauliString {
+        crate::pauli_bindings::PauliString::from_rust(self.inner.min_weight_operator.clone())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("DistanceResult(distance={})", self.inner.distance)
+    }
+}
+
+/// Computes the dressed distance of a subsystem (gauge) code by qubit-support weight.
+///
+/// `stabilizers` are the stabilizer generators, `gauge_generators` the remaining gauge
+/// generators, and the logicals bare representatives commuting with the full gauge group.
+/// Returns `None` if no logical operator exists at weight at most `max_weight`.
+///
+/// Raises `ValueError` if the specification is ill-formed (for example a logical that
+/// anticommutes with a stabilizer, or a gauge/center split that cannot describe paired
+/// gauge qubits).
+#[pyfunction]
+fn subsystem_dressed_distance(
+    num_qubits: usize,
+    stabilizers: Vec<crate::pauli_bindings::PauliString>,
+    gauge_generators: Vec<crate::pauli_bindings::PauliString>,
+    logical_zs: Vec<crate::pauli_bindings::PauliString>,
+    logical_xs: Vec<crate::pauli_bindings::PauliString>,
+    max_weight: usize,
+) -> PyResult<Option<PyDistanceResult>> {
+    let stabilizers = stabilizers.into_iter().map(|p| p.to_rust()).collect();
+    let gauge_generators: Vec<_> = gauge_generators.into_iter().map(|p| p.to_rust()).collect();
+    let logical_zs = logical_zs.into_iter().map(|p| p.to_rust()).collect();
+    let logical_xs = logical_xs.into_iter().map(|p| p.to_rust()).collect();
+
+    rust_subsystem_dressed_distance(
+        num_qubits,
+        stabilizers,
+        &gauge_generators,
+        logical_zs,
+        logical_xs,
+        max_weight,
+    )
+    .map(|result| result.map(PyDistanceResult::from))
+    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
+
+// =============================================================================
 // Module Registration
 // =============================================================================
+
+/// A hypergraph-product CSS code built from two classical parity-check matrices.
+#[pyclass(name = "HypergraphProductCode", module = "pecos_rslib.qec")]
+pub struct PyHypergraphProductCode {
+    inner: pecos_qec::HypergraphProductCode,
+}
+
+#[pymethods]
+impl PyHypergraphProductCode {
+    /// Build the hypergraph product of two classical parity-check matrices.
+    #[new]
+    fn new(h1: &PyParityCheckMatrix, h2: &PyParityCheckMatrix) -> PyResult<Self> {
+        pecos_qec::HypergraphProductCode::new(&h1.inner, &h2.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    #[getter]
+    fn hx(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.hx().clone(),
+        }
+    }
+
+    #[getter]
+    fn hz(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.hz().clone(),
+        }
+    }
+
+    #[getter]
+    fn logical_x(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.logical_x().clone(),
+        }
+    }
+
+    #[getter]
+    fn logical_z(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.logical_z().clone(),
+        }
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
+    fn num_logical_qubits(&self) -> usize {
+        self.inner.num_logical_qubits()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HypergraphProductCode(n={}, k={})",
+            self.inner.num_qubits(),
+            self.inner.num_logical_qubits()
+        )
+    }
+}
+
+/// A validated bivariate-bicycle CSS code.
+#[pyclass(
+    name = "BivariateBicycleCode",
+    module = "pecos_rslib.qec",
+    skip_from_py_object
+)]
+#[derive(Clone, Debug)]
+pub struct PyBivariateBicycleCode {
+    inner: RustBivariateBicycleCode,
+}
+
+#[pymethods]
+impl PyBivariateBicycleCode {
+    /// Construct `QC(A, B)` from canonical `(x_power, y_power)` exponent lists.
+    #[new]
+    fn new(
+        l: usize,
+        m: usize,
+        a_terms: Vec<(usize, usize)>,
+        b_terms: Vec<(usize, usize)>,
+    ) -> PyResult<Self> {
+        let inner = RustBivariateBicycleCode::new(l, m, &a_terms, &b_terms)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    #[getter]
+    fn l_order(&self) -> usize {
+        self.inner.dimensions().0
+    }
+
+    #[getter]
+    fn m_order(&self) -> usize {
+        self.inner.dimensions().1
+    }
+
+    #[getter]
+    fn hx(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.hx().clone(),
+        }
+    }
+
+    #[getter]
+    fn hz(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.hz().clone(),
+        }
+    }
+
+    #[getter]
+    fn logical_x(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.logical_x().clone(),
+        }
+    }
+
+    #[getter]
+    fn logical_z(&self) -> PyParityCheckMatrix {
+        PyParityCheckMatrix {
+            inner: self.inner.logical_z().clone(),
+        }
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
+    fn num_logical_qubits(&self) -> usize {
+        self.inner.num_logical_qubits()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BivariateBicycleCode(l={}, m={}, n={}, k={})",
+            self.l_order(),
+            self.m_order(),
+            self.num_qubits(),
+            self.num_logical_qubits()
+        )
+    }
+}
+
+/// Build the Table 5 bivariate-bicycle memory circuit.
+#[pyfunction]
+fn bb_memory_circuit(
+    l: usize,
+    m: usize,
+    a_terms: Vec<(usize, usize)>,
+    b_terms: Vec<(usize, usize)>,
+    rounds: usize,
+    basis: &str,
+) -> PyResult<PyTickCircuit> {
+    let basis = match basis.to_ascii_uppercase().as_str() {
+        "X" => RustBbMemoryBasis::X,
+        "Z" => RustBbMemoryBasis::Z,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "basis must be 'X' or 'Z', got {basis:?}"
+            )));
+        }
+    };
+    let inner = rust_bb_memory_circuit(l, m, &a_terms, &b_terms, rounds, basis)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    Ok(PyTickCircuit { inner })
+}
+
+/// Build a generic CSS memory circuit from exact Tanner-graph edge colorings.
+#[pyfunction]
+fn coloration_memory_circuit(
+    hx: &PyParityCheckMatrix,
+    hz: &PyParityCheckMatrix,
+    rounds: usize,
+    basis: &str,
+) -> PyResult<PyTickCircuit> {
+    let basis = match basis.to_ascii_uppercase().as_str() {
+        "X" => RustBbMemoryBasis::X,
+        "Z" => RustBbMemoryBasis::Z,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "basis must be 'X' or 'Z', got {basis:?}"
+            )));
+        }
+    };
+    let inner = rust_coloration_memory_circuit(&hx.inner, &hz.inner, rounds, basis)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    Ok(PyTickCircuit { inner })
+}
 
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -7316,6 +7835,9 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDagFaultAnalyzer>()?;
     qec.add_class::<PyInfluenceBuilder>()?;
     qec.add_class::<PyPauliFrameLookup>()?;
+    qec.add_class::<PyFaultDistanceResult>()?;
+    qec.add_class::<PyFaultDistanceUpperBoundConfig>()?;
+    qec.add_class::<PyFaultDistanceUpperBoundResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
@@ -7330,12 +7852,43 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDemSamplerBuilder>()?;
     qec.add_class::<PyEquivalenceResult>()?;
     qec.add_class::<PyParsedDem>()?;
+    qec.add_class::<PyCircuitFaultLocation>()?;
+    qec.add_class::<PyHookError>()?;
+    qec.add_class::<PyHookErrorReport>()?;
+    qec.add_class::<PyFlagViolation>()?;
+    qec.add_class::<PyFlagFaultToleranceReport>()?;
+    qec.add_class::<PyCircuitDistanceResult>()?;
+    qec.add_class::<PyCircuitFaultAnalyzer>()?;
+    qec.add_class::<PyCertifiedDistance>()?;
+    qec.add_class::<PyStabilizerDistanceSearchResult>()?;
+    qec.add_class::<PyClassicalDistanceSearchResult>()?;
+    qec.add_class::<PyBoundedEnumerationDistance>()?;
+    qec.add_class::<PyDistanceProblem>()?;
+    qec.add_class::<PyBivariateBicycleCode>()?;
+    qec.add_class::<PyHypergraphProductCode>()?;
 
     // Add DEM equivalence functions
     qec.add_function(wrap_pyfunction!(compare_dems_exact, &qec)?)?;
     qec.add_function(wrap_pyfunction!(compare_dems_statistical, &qec)?)?;
     qec.add_function(wrap_pyfunction!(verify_dem_equivalence, &qec)?)?;
     qec.add_function(wrap_pyfunction!(assert_dems_equivalent, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(connected_cluster_code_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(
+        randomized_code_distance_upper_bound,
+        &qec
+    )?)?;
+    qec.add_function(wrap_pyfunction!(bounded_enumeration_code_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(bounded_enumeration_x_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(bounded_enumeration_z_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(
+        bounded_enumeration_stabilizer_distance,
+        &qec
+    )?)?;
+    qec.add_function(wrap_pyfunction!(x_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(z_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(stabilizer_code_distance, &qec)?)?;
+    qec.add_class::<PyDistanceResult>()?;
+    qec.add_function(wrap_pyfunction!(subsystem_dressed_distance, &qec)?)?;
 
     // Correlation analysis
     qec.add_function(wrap_pyfunction!(detector_flip_matrix, &qec)?)?;
@@ -7347,6 +7900,13 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(fit_dem_to_marginals, &qec)?)?;
     qec.add_function(wrap_pyfunction!(mechanisms_to_dem_string, &qec)?)?;
     qec.add_function(wrap_pyfunction!(decoder_dem_requirement, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(certified_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(certified_coset_weight, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(certified_stabilizer_coset_weight, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(logical_generator_coset_weights, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(certified_classical_distance, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(coloration_memory_circuit, &qec)?)?;
 
     // Add Pauli constants
     qec.add("PAULI_I", 0u8)?;

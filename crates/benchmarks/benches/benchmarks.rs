@@ -17,6 +17,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 mod modules {
     pub mod allocation_overhead;
+    pub mod code_distance;
     pub mod cpu_stabilizer_comparison;
     pub mod dem_builder;
     pub mod dem_sampler;
@@ -58,14 +59,15 @@ use modules::sparse_stab_vs_cpp;
 #[cfg(feature = "stab-tn")]
 use modules::stab_mps_vs_stab_vec;
 use modules::{
-    allocation_overhead, cpu_stabilizer_comparison, dem_builder, dem_sampler, dod_statevec,
-    fault_catalog, measurement_sampling, native_statevec_comparison, noise_models,
+    allocation_overhead, code_distance, cpu_stabilizer_comparison, dem_builder, dem_sampler,
+    dod_statevec, fault_catalog, measurement_sampling, native_statevec_comparison, noise_models,
     pecos_neo_comparison, quizx_eval, rng, set_ops, sparse_stab_w_vs_y, sparse_state_vec, stab_vec,
     stabilizer_sims, state_vec_sims, surface_code, tick_circuit_layout, trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
     allocation_overhead::benchmarks(c);
+    code_distance::benchmarks(c);
     stab_vec::benchmarks(c);
     cpu_stabilizer_comparison::benchmarks(c);
     quizx_eval::benchmarks(c);

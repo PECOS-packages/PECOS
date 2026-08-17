@@ -19,6 +19,12 @@
 //!
 //! Built on top of rustworkx-core and petgraph, providing both Rust and Python APIs.
 
+mod bipartite_edge_coloring;
+
+pub use bipartite_edge_coloring::{
+    BipartiteEdgeColoring, BipartiteEdgeColoringError, bipartite_edge_coloring,
+};
+
 // Re-export petgraph from rustworkx-core to ensure version consistency
 pub use rustworkx_core::petgraph;
 

@@ -492,10 +492,19 @@ fn propagate_tracked_pauli_forward(
         };
         match gate.gate_type {
             GateType::TrackedPauliMeta => {}
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ => {
+            GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ => {
                 if let Some(entries) = measurement_records.get(&node) {
                     for &(qubit, record) in entries {
-                        if prop.contains_x(qubit) {
+                        let flips = if gate.gate_type == GateType::MX {
+                            prop.contains_z(qubit)
+                        } else {
+                            prop.contains_x(qubit)
+                        };
+                        if flips {
                             affected_measurements.insert(record);
                         }
                     }
@@ -513,7 +522,7 @@ fn propagate_tracked_pauli_forward(
                     );
                 }
             }
-            GateType::PZ | GateType::QAlloc => {
+            GateType::PX | GateType::PZ | GateType::QAlloc => {
                 for qubit in &gate.qubits {
                     clear_qubit(&mut prop, qubit.index());
                 }

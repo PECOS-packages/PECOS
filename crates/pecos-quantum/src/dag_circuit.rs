@@ -2231,13 +2231,14 @@ impl DagCircuit {
     }
 
     /// Validate each reference against the gate it names and derive the ids
-    /// and Z-Pauli. Validation is a direct lookup per reference -- linear only
+    /// and basis-matched Pauli. Validation is a direct lookup per reference -- linear only
     /// in the named gate's batch width, never in the circuit: the gate must
     /// exist, consume measurement records, and hold the (qubit, id) pair.
     fn validated_ids_and_pauli(
         &self,
         measurements: &[MeasRef],
     ) -> Result<(Vec<MeasId>, pecos_core::PauliString), AnnotationRefError> {
+        let mut paulis = Vec::with_capacity(measurements.len());
         for m in measurements {
             let Some(gate) = self.gate(m.node) else {
                 return Err(AnnotationRefError::NoSuchNode { node: m.node });
@@ -2257,10 +2258,23 @@ impl DagCircuit {
                     meas_id: m.meas_id,
                 });
             }
+            paulis.push((
+                if gate.gate_type == GateType::MX {
+                    pecos_core::Pauli::X
+                } else {
+                    pecos_core::Pauli::Z
+                },
+                m.qubit,
+            ));
         }
         let ids = measurements.iter().map(|m| m.meas_id).collect();
-        let qubits: Vec<usize> = measurements.iter().map(|m| m.qubit.index()).collect();
-        Ok((ids, pecos_core::PauliString::zs(&qubits)))
+        Ok((
+            ids,
+            pecos_core::PauliString::with_phase_and_paulis(
+                pecos_core::QuarterPhase::PlusOne,
+                paulis,
+            ),
+        ))
     }
 
     /// Place a tracked-Pauli meta-gate at this point in the circuit.

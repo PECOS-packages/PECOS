@@ -113,6 +113,7 @@ bitflags = "2"
 bitvec = { version = "1", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 dyn-clone = "1"
+batsat = "0.5"
 smallvec = "1"
 
 # --- Concurrency ---
@@ -147,10 +148,6 @@ sha2 = "0.11"
 tar = "0.4"
 xz2 = "0.1"
 bzip2 = "0.6"
-# Maintained successor to the abandoned sevenz-rust (RUSTSEC-2026-0245). Default
-# features add an encoder plus codecs the CUDA installer does not use; the LZMA/LZMA2
-# and BCJ decode paths PECOS needs are unconditional.
-sevenz-rust2 = { version = "0.21", default-features = false }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 zstd = "0.13"
 
@@ -309,6 +306,13 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package.fusion-blossom]
 opt-level = 2
+
+# batsat's solver core is tested and shipped by upstream with release arithmetic;
+# under this workspace's debug profile its internal activity/restart arithmetic
+# overflows on instances with thousands of variables. Run the dependency at its
+# supported semantics; PECOS code keeps full debug overflow checks.
+[profile.dev.package.batsat]
+overflow-checks = false
 
 # Replace mwpf's vendored HiGHS wrapper with a pure-Rust LP shim so the mwpf feature does not require cmake.
 [patch."https://github.com/yuewuo/mwpf"]

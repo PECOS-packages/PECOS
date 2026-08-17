@@ -363,7 +363,10 @@ impl ProgrammedSimBuilder {
     }
 
     /// Stub when pecos is built without the `neo` feature.
+    // `self` is required for signature parity with the feature-enabled variant:
+    // the shared call site invokes `self.run_neo(shots)` under both cfgs.
     #[cfg(not(feature = "neo"))]
+    #[expect(clippy::unused_self)]
     fn run_neo(self, _shots: usize) -> Result<pecos_engines::shot_results::ShotVec, PecosError> {
         Err(PecosError::Input(
             "pecos was built without the 'neo' cargo feature; rebuild with features = [\"neo\"] \

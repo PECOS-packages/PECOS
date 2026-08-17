@@ -19,8 +19,8 @@ measured release times, so they catch the order-of-magnitude regression class
 while staying immune to runner jitter. They are meaningless on debug builds and
 run only under ``-m performance``.
 
-Ops that are still above the NumPy bar (see the #505 table) are guarded AT their
-current level so they cannot quietly get worse while awaiting optimization.
+The #505 array-layer paths use ceilings near 10x their measured release medians,
+matching the order-of-magnitude-tripwire philosophy above.
 """
 
 from __future__ import annotations
@@ -55,11 +55,14 @@ CEILINGS: list[tuple[str, float]] = [
     ("max_float64", 0.020),  # ~0.91 ms post-#506
     ("min_float64", 0.020),  # ~0.93 ms post-#506
     ("elementwise_ne", 0.002),  # ~0.025 ms
-    ("astype_u8_i64", 0.010),  # ~0.67 ms
+    ("astype_u8_i64", 0.006),  # ~0.50 ms post-#505
+    ("astype_f64_f32", 0.006),  # ~0.53 ms post-#505
     ("tolist_uint8", 0.030),  # ~2.7 ms post-#503 (was ~2,250 ms)
-    ("flatten_1000x1000", 0.040),  # ~3.1 ms; above NumPy bar, guarded at level
-    ("boolean_mask_read", 0.300),  # ~56 ms; above NumPy bar, guarded at level
-    ("fancy_read", 0.200),  # ~35 ms; above NumPy bar, guarded at level
+    ("array_int_list", 0.065),  # ~6.0 ms post-#505
+    ("array_float_list", 0.060),  # ~5.0 ms post-#505
+    ("flatten_1000x1000", 0.005),  # ~0.44 ms post-#505
+    ("boolean_mask_read", 0.050),  # ~5.2 ms post-#505 (was ~50 ms)
+    ("fancy_read", 0.015),  # ~1.5 ms post-#505 (was ~33 ms)
     ("binomial_vectorised", 0.100),  # vectorised sampling path from #487
 ]
 
@@ -73,6 +76,8 @@ def cases() -> dict[str, Callable[[], Any]]:
         dtype=dtypes.bool,
     )
     fancy = list(range(0, N, 7))
+    integer_list = list(range(N))
+    float_list = [float(value) for value in range(N)]
     n_arr = asarray(np.full(64, 1000, dtype=np.int64), dtype=dtypes.int64)
     p_arr = asarray(np.full(64, 0.01), dtype=dtypes.float64)
     square = asarray(np.random.default_rng(3).random((1000, 1000)), dtype=dtypes.float64)
@@ -84,7 +89,10 @@ def cases() -> dict[str, Callable[[], Any]]:
         "min_float64": lambda: pecos.min(float64_array),
         "elementwise_ne": lambda: uint8_array != uint8_array,
         "astype_u8_i64": lambda: uint8_array.astype(dtypes.int64),
+        "astype_f64_f32": lambda: float64_array.astype(dtypes.float32),
         "tolist_uint8": lambda: uint8_array.tolist(),
+        "array_int_list": lambda: pecos.array(integer_list),
+        "array_float_list": lambda: pecos.array(float_list),
         "flatten_1000x1000": lambda: square.flatten(),
         "boolean_mask_read": lambda: float64_array[mask],
         "fancy_read": lambda: float64_array[fancy],

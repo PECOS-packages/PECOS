@@ -40,7 +40,7 @@ pub struct RowMetadata {
 #[derive(Clone, Debug)]
 pub struct Gf2FlipMatrix {
     num_sites: usize,
-    /// Rows stored as bit vectors (Vec<bool> for clarity; could use bitvec for perf).
+    /// Rows stored as bit vectors (`Vec<bool>` for clarity; could use bitvec for perf).
     rows: Vec<Vec<bool>>,
     /// Metadata per row (parallel to `rows`). Populated by callers that want
     /// OFD fix-up info; left as default when only tracking rank.

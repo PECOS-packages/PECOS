@@ -97,6 +97,18 @@ pub enum SiteEigenstate {
     Y(bool),
 }
 
+fn repair_disent_flags(
+    disent_flags: &mut [Option<SiteEigenstate>],
+    update: &measure::ProjectionUpdate,
+) {
+    for &site in &update.modified_sites {
+        disent_flags[site] = None;
+    }
+    if let Some(site) = update.collapsed_site {
+        disent_flags[site] = Some(SiteEigenstate::Z(false));
+    }
+}
+
 /// Single-qubit Pauli kind for specifying multi-qubit Pauli strings
 /// (e.g., stabilizer generators of QEC codes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1980,8 +1992,9 @@ impl StabMps {
             // and cleared the frame, so there's nothing to propagate.
             self.tableau.x(&[q]);
         }
-        // Refresh the disent flag: after reset, q is a Z(+1) eigenstate.
-        self.disent_flags[idx] = Some(SiteEigenstate::Z(false));
+        // The physical reset is absorbed into the tableau. The coefficient-MPS
+        // proof established by `mz` belongs to its reported virtual collapse
+        // site, which need not be this physical qubit index.
         // Return the REPORTED outcome (frame-adjusted) — this is the
         // physical measurement the user observes before reset.
         reported
@@ -2130,8 +2143,8 @@ impl StabMps {
     /// Measure qubit q in the Z basis using the shared STN measurement protocol.
     fn measure_qubit(&mut self, q: QubitId) -> MeasurementResult {
         self.flush_pending_rz(q.index());
-        let result = if self.flags.lazy_measure() {
-            measure::measure_qubit_stab_mps_lazy(
+        let live_result = if self.flags.lazy_measure() {
+            measure::measure_qubit_stab_mps_lazy_with_update(
                 &mut self.tableau,
                 &mut self.mps,
                 &mut self.rng,
@@ -2148,15 +2161,15 @@ impl StabMps {
             if self.tableau.stabs().col_x[q.index()].len() > 1 {
                 self.pragmatic_drift_count += 1;
             }
-            measure::measure_qubit_stab_mps(
+            measure::measure_qubit_stab_mps_with_update(
                 &mut self.tableau,
                 &mut self.mps,
                 &mut self.rng,
                 q.index(),
             )
         };
-        // Set disentangling flag: measured qubit is now in a Z-eigenstate
-        self.disent_flags[q.index()] = Some(SiteEigenstate::Z(result.outcome));
+        repair_disent_flags(&mut self.disent_flags, &live_result.update);
+        let result = live_result.measurement;
         self.maybe_grow_bond_dim();
         // Pauli-frame XOR: the tracked X-bit flips the reported Z-basis
         // outcome, since X (and Y = XZ·sign) anticommute with Z. Z in the
@@ -7025,5 +7038,208 @@ mod tests {
         }
         let p0 = f64::from(count_0) / f64::from(num_trials);
         assert!((p0 - 0.75).abs() < 0.08, "lazy RX(pi/3) p(0) = {p0:.3}");
+    }
+
+    #[test]
+    fn test_disent_flag_measurement_continuation_matches_dense() {
+        use pecos_simulators::DenseStateVec;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Op {
+            H(usize),
+            Sz(usize),
+            Cx(usize, usize),
+            Cz(usize, usize),
+            Rz(usize, f64),
+        }
+
+        fn next(state: &mut u64) -> u64 {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            *state
+        }
+
+        fn random_distinct_pair(state: &mut u64, n: usize) -> (usize, usize) {
+            let first = (next(state) % n as u64) as usize;
+            let mut second = (next(state) % (n - 1) as u64) as usize;
+            if second >= first {
+                second += 1;
+            }
+            (first, second)
+        }
+
+        fn apply(op: Op, stn: &mut StabMps, dense: &mut DenseStateVec) {
+            match op {
+                Op::H(q) => {
+                    stn.h(&[QubitId(q)]);
+                    dense.h(&[QubitId(q)]);
+                }
+                Op::Sz(q) => {
+                    stn.sz(&[QubitId(q)]);
+                    dense.sz(&[QubitId(q)]);
+                }
+                Op::Cx(control, target) => {
+                    let pair = [(QubitId(control), QubitId(target))];
+                    stn.cx(&pair);
+                    dense.cx(&pair);
+                }
+                Op::Cz(first, second) => {
+                    let pair = [(QubitId(first), QubitId(second))];
+                    stn.cz(&pair);
+                    dense.cz(&pair);
+                }
+                Op::Rz(q, radians) => {
+                    let angle = Angle64::from_radians(radians);
+                    stn.rz(angle, &[QubitId(q)]);
+                    dense.rz(angle, &[QubitId(q)]);
+                }
+            }
+        }
+
+        fn fidelity(first: &[Complex64], second: &[Complex64]) -> f64 {
+            first
+                .iter()
+                .zip(second)
+                .map(|(a, b)| a.conj() * b)
+                .sum::<Complex64>()
+                .norm_sqr()
+        }
+
+        fn project_z(state: &[Complex64], qubit: usize, outcome: bool) -> Vec<Complex64> {
+            let probability = state
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| ((*index >> qubit) & 1 != 0) == outcome)
+                .map(|(_, amplitude)| amplitude.norm_sqr())
+                .sum::<f64>();
+            assert!(probability > 1e-14);
+            let scale = probability.sqrt().recip();
+            state
+                .iter()
+                .enumerate()
+                .map(|(index, &amplitude)| {
+                    if ((index >> qubit) & 1 != 0) == outcome {
+                        amplitude * scale
+                    } else {
+                        Complex64::new(0.0, 0.0)
+                    }
+                })
+                .collect()
+        }
+
+        fn is_product_zero_site(mps: &Mps, site: usize) -> bool {
+            if mps.bond_dim(site) != 1 || mps.bond_dim(site + 1) != 1 {
+                return false;
+            }
+            let tensor = &mps.tensors()[site];
+            let scale = tensor[(0, 0)].norm();
+            scale > 1e-30 && tensor[(0, 1)].norm() <= 1e-12 * scale
+        }
+
+        const N: usize = 5;
+        for lazy_measure in [false, true] {
+            for numerical_flag_redetection in [false, true] {
+                let (circuit_seed, continuation_seed) = if lazy_measure {
+                    (7_u64, 0_u64)
+                } else {
+                    (15, 5)
+                };
+                let mut random = circuit_seed + 1;
+                let mut stn = StabMps::builder(N)
+                    .seed(0x5000_0000 + circuit_seed)
+                    .max_bond_dim(64)
+                    .svd_cutoff(0.0)
+                    .max_truncation_error(0.0)
+                    .merge_rz(false)
+                    .lazy_measure(lazy_measure)
+                    .numerical_flag_redetection(numerical_flag_redetection)
+                    .build();
+                let mut dense = DenseStateVec::new(N);
+
+                for step in 0..18 {
+                    let choice = next(&mut random) % 8;
+                    let q = (next(&mut random) % N as u64) as usize;
+                    let op = match choice {
+                        0 | 1 => Op::H(q),
+                        2 => Op::Sz(q),
+                        3 | 4 => {
+                            let (control, target) = random_distinct_pair(&mut random, N);
+                            Op::Cx(control, target)
+                        }
+                        5 => {
+                            let (first, second) = random_distinct_pair(&mut random, N);
+                            Op::Cz(first, second)
+                        }
+                        _ => Op::Rz(q, if step & 1 == 0 { 0.37 } else { -0.61 }),
+                    };
+                    apply(op, &mut stn, &mut dense);
+                }
+
+                let dense_before_measurement = dense.state();
+                assert!(fidelity(&stn.state_vector(), &dense_before_measurement) > 1.0 - 1e-9);
+
+                let measured_qubit = 1;
+                let result = stn
+                    .mz(&[QubitId(measured_qubit)])
+                    .into_iter()
+                    .next()
+                    .expect("one measurement result");
+                assert!(!result.outcome);
+                let mut post_measurement = stn.clone();
+                post_measurement.flush();
+                assert!(lazy_measure || stn.pragmatic_drift_count() == 0);
+                let projected =
+                    project_z(&dense_before_measurement, measured_qubit, result.outcome);
+                let post_measurement_fidelity =
+                    fidelity(&post_measurement.state_vector(), &projected);
+                assert!(post_measurement_fidelity > 1.0 - 1e-9);
+                assert!(
+                    !matches!(
+                        stn.disent_flags[measured_qubit],
+                        Some(SiteEigenstate::Z(false))
+                    ) || is_product_zero_site(&stn.mps, measured_qubit),
+                    "physical measurement index retained an invalid |0> proof"
+                );
+                let mut oracle = DenseStateVec::from_state(
+                    &projected,
+                    PecosRng::seed_from_u64(continuation_seed),
+                );
+                let mut continuation_random = continuation_seed + 1;
+                for _ in 0..4 {
+                    let choice = next(&mut continuation_random) % 4;
+                    let q = (next(&mut continuation_random) % N as u64) as usize;
+                    let op = match choice {
+                        0 => Op::H(q),
+                        1 => Op::Sz(q),
+                        _ => {
+                            let (control, target) =
+                                random_distinct_pair(&mut continuation_random, N);
+                            Op::Cx(control, target)
+                        }
+                    };
+                    apply(op, &mut stn, &mut oracle);
+                }
+                let target = (next(&mut continuation_random) % N as u64) as usize;
+                apply(Op::Rz(target, 0.731), &mut stn, &mut oracle);
+
+                stn.flush();
+                let actual = stn.state_vector();
+                let expected = oracle.state();
+                let continued_fidelity = fidelity(&actual, &expected);
+                let max_probability_error = actual
+                    .iter()
+                    .zip(&expected)
+                    .map(|(a, b)| (a.norm_sqr() - b.norm_sqr()).abs())
+                    .fold(0.0_f64, f64::max);
+                eprintln!(
+                    "StabMps continuation: lazy={lazy_measure} redetect={numerical_flag_redetection} \
+                     seed={circuit_seed} fidelity={continued_fidelity:.16} \
+                     max_probability_error={max_probability_error:.3e}"
+                );
+                assert!(continued_fidelity > 1.0 - 1e-9);
+                assert!(max_probability_error < 1e-10);
+            }
+        }
     }
 }

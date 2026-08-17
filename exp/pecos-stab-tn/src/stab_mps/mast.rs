@@ -560,14 +560,15 @@ impl Mast {
 
         // The branch correction was applied at injection time. Project only
         // the ancilla, deterministically and with normalized output.
-        let probability = super::measure::project_forced_z(
+        let projection = super::measure::project_forced_z_with_update(
             &mut self.tableau,
             &mut self.mps,
             dm.ancilla,
             dm.predetermined_outcome,
         );
+        super::repair_disent_flags(&mut self.disent_flags, &projection.update);
         assert!(
-            probability > 1e-20,
+            projection.probability > 1e-20,
             "predetermined magic-state gadget branch has zero represented weight"
         );
 
@@ -604,10 +605,15 @@ impl Mast {
             self.rng.random_bool(probability_one)
         };
 
-        let projected_probability =
-            super::measure::project_forced_z(&mut self.tableau, &mut self.mps, q_idx, outcome);
+        let projection = super::measure::project_forced_z_with_update(
+            &mut self.tableau,
+            &mut self.mps,
+            q_idx,
+            outcome,
+        );
+        super::repair_disent_flags(&mut self.disent_flags, &projection.update);
         assert!(
-            projected_probability > 1e-20,
+            projection.probability > 1e-20,
             "sampled data-measurement branch has zero represented weight"
         );
         MeasurementResult {
@@ -752,6 +758,241 @@ impl ArbitraryRotationGateable for Mast {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+
+    #[test]
+    #[ignore = "dense 8-site MAST reconstruction regression; run explicitly with --release"]
+    fn test_mast_disent_flag_projection_continuation_matches_dense() {
+        use crate::stab_mps::StabMps;
+        use pecos_simulators::DenseStateVec;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Op {
+            H(usize),
+            Sz(usize),
+            Cx(usize, usize),
+            Cz(usize, usize),
+            Rz(usize, f64),
+        }
+
+        fn next(state: &mut u64) -> u64 {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            *state
+        }
+
+        fn random_distinct_pair(state: &mut u64, n: usize) -> (usize, usize) {
+            let first = (next(state) % n as u64) as usize;
+            let mut second = (next(state) % (n - 1) as u64) as usize;
+            if second >= first {
+                second += 1;
+            }
+            (first, second)
+        }
+
+        fn apply(op: Op, mast: &mut Mast, dense: &mut DenseStateVec) {
+            match op {
+                Op::H(q) => {
+                    mast.h(&[QubitId(q)]);
+                    dense.h(&[QubitId(q)]);
+                }
+                Op::Sz(q) => {
+                    mast.sz(&[QubitId(q)]);
+                    dense.sz(&[QubitId(q)]);
+                }
+                Op::Cx(control, target) => {
+                    let pair = [(QubitId(control), QubitId(target))];
+                    mast.cx(&pair);
+                    dense.cx(&pair);
+                }
+                Op::Cz(first, second) => {
+                    let pair = [(QubitId(first), QubitId(second))];
+                    mast.cz(&pair);
+                    dense.cz(&pair);
+                }
+                Op::Rz(q, radians) => {
+                    let angle = Angle64::from_radians(radians);
+                    mast.rz(angle, &[QubitId(q)]);
+                    dense.rz(angle, &[QubitId(q)]);
+                }
+            }
+        }
+
+        fn fidelity(first: &[Complex64], second: &[Complex64]) -> f64 {
+            first
+                .iter()
+                .zip(second)
+                .map(|(a, b)| a.conj() * b)
+                .sum::<Complex64>()
+                .norm_sqr()
+        }
+
+        fn project_z(state: &[Complex64], qubit: usize, outcome: bool) -> Vec<Complex64> {
+            let probability = state
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| ((*index >> qubit) & 1 != 0) == outcome)
+                .map(|(_, amplitude)| amplitude.norm_sqr())
+                .sum::<f64>();
+            assert!(probability > 1e-14);
+            let scale = probability.sqrt().recip();
+            state
+                .iter()
+                .enumerate()
+                .map(|(index, &amplitude)| {
+                    if ((index >> qubit) & 1 != 0) == outcome {
+                        amplitude * scale
+                    } else {
+                        Complex64::new(0.0, 0.0)
+                    }
+                })
+                .collect()
+        }
+
+        fn mast_data_state_vector(mast: &Mast) -> Vec<Complex64> {
+            let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+            view.tableau = mast.tableau.clone();
+            view.mps = mast.mps.clone();
+            view.global_phase = mast.global_phase;
+            let full = view.state_vector();
+            let data_dimension = 1_usize << mast.num_data_qubits;
+            let mut best = Vec::new();
+            let mut best_norm = 0.0;
+            let mut total_norm = 0.0;
+            for block in full.chunks_exact(data_dimension) {
+                let norm = block
+                    .iter()
+                    .map(num_complex::Complex::norm_sqr)
+                    .sum::<f64>();
+                total_norm += norm;
+                if norm > best_norm {
+                    best_norm = norm;
+                    best = block.to_vec();
+                }
+            }
+            // The dense tableau projector used only by this test becomes
+            // mildly ill-conditioned on the exact-mz continuation circuit.
+            assert!(best_norm > 0.99, "ancillas did not factor: {best_norm}");
+            assert!((total_norm - 1.0).abs() < 1e-8);
+            let scale = best_norm.sqrt().recip();
+            for amplitude in &mut best {
+                *amplitude *= scale;
+            }
+            best
+        }
+
+        fn exact_config() -> MpsConfig {
+            MpsConfig {
+                max_bond_dim: 64,
+                svd_cutoff: 0.0,
+                max_truncation_error: Some(0.0),
+                parallel: false,
+            }
+        }
+
+        const N: usize = 4;
+        for exact_data_measurement in [false, true] {
+            for numerical_flag_redetection in [false, true] {
+                let (circuit_seed, measured_qubit, continuation_seed) = if exact_data_measurement {
+                    (9_u64, 3_usize, 5_u64)
+                } else {
+                    (11, 0, 4)
+                };
+                let mut random = circuit_seed + 1;
+                let mut mast = Mast::with_seed(N, 4, 0x6000_0000 + circuit_seed)
+                    .with_mps_config(exact_config())
+                    .with_merge_rz(false)
+                    .with_numerical_flag_redetection(numerical_flag_redetection);
+                let mut dense = DenseStateVec::new(N);
+                let mut injections = 0;
+                for step in 0..18 {
+                    let choice = next(&mut random) % 8;
+                    let q = (next(&mut random) % N as u64) as usize;
+                    let op = match choice {
+                        0 | 1 => Op::H(q),
+                        2 => Op::Sz(q),
+                        3 | 4 => {
+                            let (control, target) = random_distinct_pair(&mut random, N);
+                            Op::Cx(control, target)
+                        }
+                        5 => {
+                            let (first, second) = random_distinct_pair(&mut random, N);
+                            Op::Cz(first, second)
+                        }
+                        _ if injections < 3 => {
+                            injections += 1;
+                            Op::Rz(q, if step & 1 == 0 { 0.37 } else { -0.61 })
+                        }
+                        _ => Op::H(q),
+                    };
+                    apply(op, &mut mast, &mut dense);
+                }
+                assert_eq!(injections, 3);
+                let dense_before_projection = dense.state();
+
+                let expected = if exact_data_measurement {
+                    let result = mast
+                        .mz(&[QubitId(measured_qubit)])
+                        .into_iter()
+                        .next()
+                        .expect("one measurement result");
+                    project_z(&dense_before_projection, measured_qubit, result.outcome)
+                } else {
+                    mast.project_all();
+                    dense_before_projection
+                };
+                let post_projection_fidelity = fidelity(&mast_data_state_vector(&mast), &expected);
+                assert!(post_projection_fidelity > 1.0 - 1e-9);
+
+                let mut oracle = DenseStateVec::from_state(
+                    &expected,
+                    PecosRng::seed_from_u64(continuation_seed),
+                );
+                let mut continuation_random = continuation_seed + 1;
+                for _ in 0..4 {
+                    let choice = next(&mut continuation_random) % 3;
+                    let q = (next(&mut continuation_random) % N as u64) as usize;
+                    let op = match choice {
+                        0 => Op::H(q),
+                        1 => Op::Sz(q),
+                        _ => {
+                            let (control, target) =
+                                random_distinct_pair(&mut continuation_random, N);
+                            Op::Cx(control, target)
+                        }
+                    };
+                    apply(op, &mut mast, &mut oracle);
+                }
+                let target = (next(&mut continuation_random) % N as u64) as usize;
+                apply(Op::Rz(target, 0.37), &mut mast, &mut oracle);
+                mast.project_all();
+
+                let actual = mast_data_state_vector(&mast);
+                let expected_continued = oracle.state();
+                let continued_fidelity = fidelity(&actual, &expected_continued);
+                let max_probability_error = actual
+                    .iter()
+                    .zip(&expected_continued)
+                    .map(|(a, b)| (a.norm_sqr() - b.norm_sqr()).abs())
+                    .fold(0.0_f64, f64::max);
+                eprintln!(
+                    "MAST continuation: exact_mz={exact_data_measurement} \
+                     redetect={numerical_flag_redetection} seed={circuit_seed} \
+                     fidelity={continued_fidelity:.16} \
+                     max_probability_error={max_probability_error:.3e} stats={:?}",
+                    mast.stats
+                );
+                let (minimum_fidelity, maximum_probability_error) = if exact_data_measurement {
+                    (1.0 - 1e-9, 1e-9)
+                } else {
+                    (1.0 - 1e-9, 1e-6)
+                };
+                assert!(continued_fidelity > minimum_fidelity);
+                assert!(max_probability_error < maximum_probability_error);
+            }
+        }
+    }
+
     #[test]
     fn test_mast_pure_clifford() {
         // Pure Clifford circuit should work like STN

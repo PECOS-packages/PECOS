@@ -30,6 +30,28 @@ use pecos_core::BitSet;
 use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, MeasurementResult, SparseStabY};
 
+/// Virtual coefficient-MPS sites whose disentangling proofs changed during a
+/// physical measurement projection.
+#[derive(Debug, Default)]
+pub(super) struct ProjectionUpdate {
+    /// Site placed exactly in `|0>` by the measurement basis rotation.
+    pub(super) collapsed_site: Option<usize>,
+    /// Other sites conservatively invalidated by compensating virtual gates.
+    pub(super) modified_sites: Vec<usize>,
+}
+
+/// Probability and virtual-site metadata returned by a forced projection.
+pub(super) struct ForcedProjectionResult {
+    pub(super) probability: f64,
+    pub(super) update: ProjectionUpdate,
+}
+
+/// Sampled measurement and virtual-site metadata for a live simulator update.
+pub(super) struct LiveMeasurementResult {
+    pub(super) measurement: MeasurementResult,
+    pub(super) update: ProjectionUpdate,
+}
+
 /// Check if the MPS is trivial (all sites in a computational basis state).
 fn is_mps_trivial(mps: &Mps) -> bool {
     mps.max_bond_dim() == 1
@@ -207,7 +229,7 @@ fn find_replaced_stabilizer(tableau: &SparseStabY, q_idx: usize) -> usize {
 
 /// Test hook for `pre_reduce_for_measurement`.
 pub fn pre_reduce_for_measurement_pub(tableau: &mut SparseStabY, mps: &mut Mps, q_idx: usize) {
-    pre_reduce_for_measurement(tableau, mps, q_idx, true);
+    let _ = pre_reduce_for_measurement(tableau, mps, q_idx, true);
 }
 
 /// Pre-reduce the stabilizer tableau so that `Z_q` anticommutes with at most
@@ -239,10 +261,10 @@ fn pre_reduce_for_measurement(
     mps: &mut Mps,
     q_idx: usize,
     apply_mps_compensation: bool,
-) {
+) -> Vec<usize> {
     let col_x = &tableau.stabs().col_x[q_idx];
     if col_x.len() <= 1 {
-        return;
+        return Vec::new();
     }
 
     let replaced_idx = find_replaced_stabilizer(tableau, q_idx);
@@ -254,10 +276,16 @@ fn pre_reduce_for_measurement(
     if apply_mps_compensation {
         // Exact callers need the phase-complete Clifford composition and the
         // matching inverse action on the coefficient MPS.
+        let mut modified_sites = Vec::with_capacity(1 + anticom.len());
+        modified_sites.push(replaced_idx);
         for other_id in anticom {
             crate::stab_mps::tableau_compose::right_compose_cx(tableau, replaced_idx, other_id);
             apply_cnot_to_mps(mps, replaced_idx, other_id);
+            modified_sites.push(other_id);
         }
+        modified_sites.sort_unstable();
+        modified_sites.dedup();
+        modified_sites
     } else {
         // Preserve the established pragmatic measurement path byte-for-byte:
         // it intentionally updates only the structural row frame and does not
@@ -281,6 +309,7 @@ fn pre_reduce_for_measurement(
                 n,
             );
         }
+        Vec::new()
     }
 }
 
@@ -892,8 +921,8 @@ fn reduce_exact_projection_bonds(mps: &mut Mps) {
     }
 }
 
-/// Project qubit `q_idx` onto a forced Z-basis outcome and return the
-/// probability of that outcome given the current state.
+/// Project qubit `q_idx` onto a forced Z-basis outcome and return its
+/// probability together with the affected virtual coefficient-MPS sites.
 ///
 /// Mirrors `measure_qubit_stab_mps` but deterministic: no RNG, the outcome is
 /// supplied by the caller. Useful for bitstring-probability computation
@@ -902,12 +931,12 @@ fn reduce_exact_projection_bonds(mps: &mut Mps) {
 /// # Panics
 ///
 /// Panics if any MPS gate application fails on a valid site.
-pub fn project_forced_z(
+pub(super) fn project_forced_z_with_update(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
     q_idx: usize,
     outcome: bool,
-) -> f64 {
+) -> ForcedProjectionResult {
     if is_mps_trivial(mps) {
         // A trivial coefficient MPS represents a pure stabilizer state. First
         // absorb a possible nonzero virtual basis word into the tableau; only
@@ -927,12 +956,15 @@ pub fn project_forced_z(
         if probability > 0.0 {
             tableau.mz_forced(q_idx, outcome);
         }
-        return probability;
+        return ForcedProjectionResult {
+            probability,
+            update: ProjectionUpdate::default(),
+        };
     }
 
     // Reduce to one virtual X site while compensating every generator-basis
     // CNOT on the MPS. This preserves C·MPS exactly.
-    pre_reduce_for_measurement(tableau, mps, q_idx, true);
+    let modified_sites = pre_reduce_for_measurement(tableau, mps, q_idx, true);
     let norm_squared = mps.norm_squared();
     assert!(norm_squared > 1e-20, "cannot project a zero-norm MPS");
     let expectation = (z_expectation_value(tableau, mps, q_idx).re / norm_squared).clamp(-1.0, 1.0);
@@ -942,7 +974,13 @@ pub fn project_forced_z(
         ZDecomposition::Stabilizer { phase, sign_sites } => {
             let probability = forced_outcome_probability(expectation, outcome);
             if probability < 1e-20 {
-                return 0.0;
+                return ForcedProjectionResult {
+                    probability: 0.0,
+                    update: ProjectionUpdate {
+                        collapsed_site: None,
+                        modified_sites,
+                    },
+                };
             }
             apply_pauli_projection(
                 mps,
@@ -959,7 +997,13 @@ pub fn project_forced_z(
                 reduce_exact_projection_bonds(mps);
             }
             mps.normalize();
-            probability
+            ForcedProjectionResult {
+                probability,
+                update: ProjectionUpdate {
+                    collapsed_site: None,
+                    modified_sites,
+                },
+            }
         }
         ZDecomposition::DestabilizerFlip {
             flip_sites,
@@ -973,7 +1017,13 @@ pub fn project_forced_z(
             );
             let probability = forced_outcome_probability(expectation, outcome);
             if probability < 1e-20 {
-                return 0.0;
+                return ForcedProjectionResult {
+                    probability: 0.0,
+                    update: ProjectionUpdate {
+                        collapsed_site: None,
+                        modified_sites,
+                    },
+                };
             }
             let sign_f = if outcome { -1.0 } else { 1.0 };
             let is_local_projection = sign_sites.is_empty();
@@ -1011,9 +1061,30 @@ pub fn project_forced_z(
                 reduce_exact_projection_bonds(mps);
             }
             mps.normalize();
-            probability
+            ForcedProjectionResult {
+                probability,
+                update: ProjectionUpdate {
+                    collapsed_site: Some(flip_sites[0]),
+                    modified_sites,
+                },
+            }
         }
     }
+}
+
+/// Project qubit `q_idx` onto a forced Z-basis outcome and return the
+/// probability of that outcome given the current state.
+///
+/// # Panics
+///
+/// Panics if an MPS operation fails on a valid site.
+pub fn project_forced_z(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    q_idx: usize,
+    outcome: bool,
+) -> f64 {
+    project_forced_z_with_update(tableau, mps, q_idx, outcome).probability
 }
 
 /// Measure qubit `q_idx` in the Z basis using the STN protocol.
@@ -1040,22 +1111,27 @@ pub fn project_forced_z(
 /// # Panics
 ///
 /// Panics if the tableau measurement iterator is empty (should not happen).
-pub fn measure_qubit_stab_mps_lazy(
+pub(super) fn measure_qubit_stab_mps_lazy_with_update(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
     rng: &mut PecosRng,
     q_idx: usize,
     deferred: &mut Vec<DeferredOp>,
-) -> MeasurementResult {
+) -> LiveMeasurementResult {
     if is_mps_trivial(mps) {
-        return tableau
+        let measurement = tableau
             .mz(&[pecos_core::QubitId(q_idx)])
             .into_iter()
             .next()
             .expect("MPS op on valid site");
+        return LiveMeasurementResult {
+            measurement,
+            update: ProjectionUpdate::default(),
+        };
     }
 
     // Push pre_reduce CNOTs to deferred instead of applying eagerly.
+    let mut modified_sites = Vec::new();
     {
         let col_x = &tableau.stabs().col_x[q_idx];
         if col_x.len() > 1 {
@@ -1067,6 +1143,7 @@ pub fn measure_qubit_stab_mps_lazy(
                 .collect();
             let stabs_snapshot = tableau.stabs().clone();
             let destabs_snapshot = tableau.destabs().clone();
+            modified_sites.push(replaced_idx);
             for other_id in anticom {
                 crate::stab_mps::tableau_compose::multiply_row(
                     tableau.stabs_mut(),
@@ -1083,9 +1160,12 @@ pub fn measure_qubit_stab_mps_lazy(
                     n,
                 );
                 deferred.push(DeferredOp::Cnot(replaced_idx, other_id));
+                modified_sites.push(other_id);
             }
         }
     }
+    modified_sites.sort_unstable();
+    modified_sites.dedup();
 
     let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
     match decomp {
@@ -1105,9 +1185,15 @@ pub fn measure_qubit_stab_mps_lazy(
             if sign_conj.is_empty() && flip_conj.is_empty() {
                 let outcome = phase_conj.re < 0.0;
                 tableau.mz_forced(q_idx, outcome);
-                return MeasurementResult {
-                    outcome,
-                    is_deterministic: true,
+                return LiveMeasurementResult {
+                    measurement: MeasurementResult {
+                        outcome,
+                        is_deterministic: true,
+                    },
+                    update: ProjectionUpdate {
+                        collapsed_site: None,
+                        modified_sites,
+                    },
                 };
             }
             let prob_plus = f64::midpoint(1.0, ev).clamp(0.0, 1.0);
@@ -1121,9 +1207,18 @@ pub fn measure_qubit_stab_mps_lazy(
             let prob = if outcome { 1.0 - prob_plus } else { prob_plus };
             apply_pauli_projection(mps, &flip_conj, &sign_conj, phase_conj, sign_f, prob);
             mps.compress();
-            MeasurementResult {
-                outcome,
-                is_deterministic: is_determ,
+            modified_sites.extend(flip_conj);
+            modified_sites.sort_unstable();
+            modified_sites.dedup();
+            LiveMeasurementResult {
+                measurement: MeasurementResult {
+                    outcome,
+                    is_deterministic: is_determ,
+                },
+                update: ProjectionUpdate {
+                    collapsed_site: None,
+                    modified_sites,
+                },
             }
         }
         ZDecomposition::DestabilizerFlip {
@@ -1237,12 +1332,37 @@ pub fn measure_qubit_stab_mps_lazy(
             deferred.push(DeferredOp::H(id));
 
             tableau.mz_forced(q_idx, outcome);
-            MeasurementResult {
-                outcome,
-                is_deterministic: false,
+            modified_sites.extend(flip_conj);
+            modified_sites.sort_unstable();
+            modified_sites.dedup();
+            LiveMeasurementResult {
+                measurement: MeasurementResult {
+                    outcome,
+                    is_deterministic: false,
+                },
+                update: ProjectionUpdate {
+                    collapsed_site: Some(id),
+                    modified_sites,
+                },
             }
         }
     }
+}
+
+/// Measure `q_idx` while accumulating virtual Clifford compensation in
+/// `deferred`.
+///
+/// # Panics
+///
+/// Panics if an MPS operation fails on a valid site.
+pub fn measure_qubit_stab_mps_lazy(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    rng: &mut PecosRng,
+    q_idx: usize,
+    deferred: &mut Vec<DeferredOp>,
+) -> MeasurementResult {
+    measure_qubit_stab_mps_lazy_with_update(tableau, mps, rng, q_idx, deferred).measurement
 }
 
 /// Apply projection `(I + sign_f · phase · X_flip · Z_sign) / 2` to `mps`,
@@ -1294,19 +1414,23 @@ fn apply_pauli_projection(
 /// # Panics
 ///
 /// Panics if the tableau measurement iterator is empty (should not happen).
-pub fn measure_qubit_stab_mps(
+pub(super) fn measure_qubit_stab_mps_with_update(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
     rng: &mut PecosRng,
     q_idx: usize,
-) -> MeasurementResult {
+) -> LiveMeasurementResult {
     // Trivial MPS: delegate to tableau
     if is_mps_trivial(mps) {
-        return tableau
+        let measurement = tableau
             .mz(&[pecos_core::QubitId(q_idx)])
             .into_iter()
             .next()
             .expect("MPS op on valid site");
+        return LiveMeasurementResult {
+            measurement,
+            update: ProjectionUpdate::default(),
+        };
     }
 
     // Pre-reduce the tableau so that Z_q has at most one anticommuting stabilizer.
@@ -1320,7 +1444,7 @@ pub fn measure_qubit_stab_mps(
     // measurement (SWAP chain -> exponential bond growth in MAST's
     // measurement-heavy workload). Exact-state paths
     // (`project_forced_z`, `project_forced_z_unnormalized`) pass `true`.
-    pre_reduce_for_measurement(tableau, mps, q_idx, false);
+    let _ = pre_reduce_for_measurement(tableau, mps, q_idx, false);
 
     // Compute the expectation value <Z_q>
     let ev = z_expectation_value(tableau, mps, q_idx).re;
@@ -1333,9 +1457,12 @@ pub fn measure_qubit_stab_mps(
             if sign_sites.is_empty() {
                 let outcome = phase.re < 0.0;
                 tableau.mz_forced(q_idx, outcome);
-                return MeasurementResult {
-                    outcome,
-                    is_deterministic: true,
+                return LiveMeasurementResult {
+                    measurement: MeasurementResult {
+                        outcome,
+                        is_deterministic: true,
+                    },
+                    update: ProjectionUpdate::default(),
                 };
             }
             let prob_plus = f64::midpoint(1.0, ev).clamp(0.0, 1.0);
@@ -1367,9 +1494,12 @@ pub fn measure_qubit_stab_mps(
             mps.compress();
 
             tableau.mz_forced(q_idx, outcome);
-            MeasurementResult {
-                outcome,
-                is_deterministic: is_determ,
+            LiveMeasurementResult {
+                measurement: MeasurementResult {
+                    outcome,
+                    is_deterministic: is_determ,
+                },
+                update: ProjectionUpdate::default(),
             }
         }
 
@@ -1449,12 +1579,38 @@ pub fn measure_qubit_stab_mps(
             }
 
             tableau.mz_forced(q_idx, outcome);
-            MeasurementResult {
-                outcome,
-                is_deterministic: false,
+            let collapsed_site = (flip_sites.len() == 1).then_some(flip_sites[0]);
+            let modified_sites = if collapsed_site.is_some() {
+                Vec::new()
+            } else {
+                flip_sites
+            };
+            LiveMeasurementResult {
+                measurement: MeasurementResult {
+                    outcome,
+                    is_deterministic: false,
+                },
+                update: ProjectionUpdate {
+                    collapsed_site,
+                    modified_sites,
+                },
             }
         }
     }
+}
+
+/// Measure qubit `q_idx` in the Z basis using the eager STN protocol.
+///
+/// # Panics
+///
+/// Panics if an MPS operation fails on a valid site.
+pub fn measure_qubit_stab_mps(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    rng: &mut PecosRng,
+    q_idx: usize,
+) -> MeasurementResult {
+    measure_qubit_stab_mps_with_update(tableau, mps, rng, q_idx).measurement
 }
 
 #[cfg(test)]

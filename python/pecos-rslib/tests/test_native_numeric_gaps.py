@@ -174,6 +174,38 @@ def test_flat_builtin_list_fast_path_matches_numpy(
     np.testing.assert_array_equal(np.asarray(actual), expected)
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        [True, 1],
+        [1, True],
+        [0, 1.5, True],
+        [True, 1.5],
+        [1.5, True],
+        [True, 2**63],
+        [2**64 - 1, True],
+        [True, 1j],
+        [1j, True],
+        [[True], [1]],
+        [[1, True], [2.5, False]],
+    ],
+    ids=repr,
+)
+def test_mixed_type_list_promotes_dtype_like_numpy(values: list[Any]) -> None:
+    """Bool sits at the bottom of the promotion lattice; a mixed literal must
+    never collapse to bool and destroy numeric values (issue #539)."""
+    expected = np.array(values)
+    actual = Array(values)
+
+    assert np.asarray(actual).dtype == expected.dtype
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
+def test_mixing_booleans_with_paulis_raises_type_error() -> None:
+    with pytest.raises(TypeError, match="cannot mix booleans with non-numeric"):
+        Array([Pauli.X, True])
+
+
 def test_uint8_honors_full_range_without_becoming_negative() -> None:
     result = num.array([0, 255], dtype=dtypes.uint8)
     assert result.tolist() == [0, 255]

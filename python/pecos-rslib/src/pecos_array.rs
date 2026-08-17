@@ -245,6 +245,39 @@ impl FlatBuffers {
         )
     }
 
+    /// Whether any element has been accumulated yet. Type inference needs
+    /// this to tell "default int64, nothing seen" apart from "int64 because
+    /// integers were seen" -- a leading bool may claim the dtype only in the
+    /// former case (issue #539).
+    fn has_values(&self) -> bool {
+        !(self.f64s.is_empty()
+            && self.complexes.is_empty()
+            && self.paulis.is_empty()
+            && self.paulistrings.is_empty()
+            && self.bools.is_empty()
+            && self.i64s.is_empty()
+            && self.u64s.is_empty())
+    }
+
+    /// Fold accumulated bools into the integer buffer as 0/1 and switch to
+    /// int64. Bool sits at the bottom of the promotion lattice: integers
+    /// arriving after bools lift the bools, never the reverse (issue #539).
+    fn promote_bools_to_i64(&mut self) {
+        for value in self.bools.drain(..) {
+            self.i64s.push(i64::from(value));
+        }
+        self.elem_type = ElemType::I64;
+    }
+
+    /// Fold accumulated bools into the float buffer as 0.0/1.0 and switch to
+    /// float64.
+    fn promote_bools_to_f64(&mut self) {
+        for value in self.bools.drain(..) {
+            self.f64s.push(f64::from(u8::from(value)));
+        }
+        self.elem_type = ElemType::F64;
+    }
+
     fn target_name(&self) -> &'static str {
         match self.elem_type {
             ElemType::I8 => "int8",
@@ -3724,7 +3757,10 @@ impl Array {
                     .complexes
                     .push(num_complex::Complex::new(value as f64, 0.0)),
                 ElemType::F64 | ElemType::F32 => bufs.f64s.push(value as f64),
-                ElemType::Bool => bufs.bools.push(value != 0),
+                ElemType::Bool => {
+                    bufs.promote_bools_to_i64();
+                    bufs.i64s.push(value);
+                }
                 ElemType::U64 => bufs.u64s.push(u64::try_from(value).map_err(|_| {
                     pyo3::exceptions::PyOverflowError::new_err(format!(
                         "value {value} is out of range for uint64"
@@ -3744,7 +3780,15 @@ impl Array {
                     .complexes
                     .push(num_complex::Complex::new(value as f64, 0.0)),
                 ElemType::F64 | ElemType::F32 => bufs.f64s.push(value as f64),
-                ElemType::Bool => bufs.bools.push(value != 0),
+                ElemType::Bool => {
+                    bufs.promote_bools_to_i64();
+                    for signed in bufs.i64s.drain(..) {
+                        bufs.u64s
+                            .push(u64::try_from(signed).expect("bools become 0 or 1"));
+                    }
+                    bufs.elem_type = ElemType::U64;
+                    bufs.u64s.push(value);
+                }
                 ElemType::I64 | ElemType::U64 => {
                     for signed in bufs.i64s.drain(..) {
                         bufs.u64s.push(u64::try_from(signed).map_err(|_| {
@@ -3768,6 +3812,9 @@ impl Array {
         if matches!(bufs.elem_type, ElemType::I64) {
             Self::promote_type_to_float(&mut bufs.elem_type, &mut bufs.f64s, &mut bufs.i64s)?;
         }
+        if bufs.elem_type == ElemType::Bool {
+            bufs.promote_bools_to_f64();
+        }
         if bufs.elem_type == ElemType::Complex128 {
             bufs.complexes.push(num_complex::Complex::new(value, 0.0));
         } else {
@@ -3789,18 +3836,29 @@ impl Array {
             let pauli = data.extract::<Pauli>()?;
             bufs.paulis.push(pauli);
         } else if data.is_instance_of::<PyBool>() {
-            // Priority 2: Auto-detect booleans
-            if bufs.elem_type != ElemType::Bool {
-                // Type promotion needed - convert existing values
-                Self::promote_type_to_bool(
-                    &mut bufs.elem_type,
-                    &mut bufs.bools,
-                    &mut bufs.i64s,
-                    &mut bufs.f64s,
-                )?;
-            }
+            // Bool is the bottom of the promotion lattice (matching NumPy):
+            // it claims the dtype only while nothing has been accumulated;
+            // otherwise it is absorbed into the already-promoted type as 0/1
+            // (issue #539).
             let val = data.extract::<bool>()?;
-            bufs.bools.push(val);
+            match bufs.elem_type {
+                ElemType::Bool => bufs.bools.push(val),
+                ElemType::I64 if !bufs.has_values() => {
+                    bufs.elem_type = ElemType::Bool;
+                    bufs.bools.push(val);
+                }
+                ElemType::I64 => bufs.i64s.push(i64::from(val)),
+                ElemType::U64 => bufs.u64s.push(u64::from(val)),
+                ElemType::F64 => bufs.f64s.push(f64::from(u8::from(val))),
+                ElemType::Complex128 => bufs
+                    .complexes
+                    .push(num_complex::Complex::new(f64::from(u8::from(val)), 0.0)),
+                _ => {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "cannot mix booleans with non-numeric elements in an array literal",
+                    ));
+                }
+            }
         } else if data.is_instance_of::<pyo3::types::PyComplex>() {
             // Found complex - promote if needed
             if matches!(
@@ -3849,31 +3907,6 @@ impl Array {
     }
 
     /// Promote existing values to bool
-    fn promote_type_to_bool(
-        elem_type: &mut ElemType,
-        flat_bool: &mut Vec<bool>,
-        flat_i64: &mut Vec<i64>,
-        flat_f64: &mut Vec<f64>,
-    ) -> PyResult<()> {
-        match elem_type {
-            ElemType::I64 => {
-                for &i in flat_i64.iter() {
-                    flat_bool.push(i != 0);
-                }
-                flat_i64.clear();
-            }
-            ElemType::F64 => {
-                for &f in flat_f64.iter() {
-                    flat_bool.push(f != 0.0);
-                }
-                flat_f64.clear();
-            }
-            _ => {}
-        }
-        *elem_type = ElemType::Bool;
-        Ok(())
-    }
-
     /// Promote existing values to float
     fn promote_type_to_float(
         elem_type: &mut ElemType,

@@ -115,6 +115,12 @@ impl DecoderSpec {
         }
     }
 
+    /// Whether this specification has a backend-native observable batch path.
+    #[must_use]
+    pub const fn native_batch_capable(&self) -> bool {
+        matches!(self, Self::PyMatching(_))
+    }
+
     /// Return the full DEM embedded by the legacy hybrid grammar, if present.
     #[must_use]
     pub fn embedded_hybrid_full_dem(&self) -> Option<&str> {

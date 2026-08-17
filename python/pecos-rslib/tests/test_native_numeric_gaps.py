@@ -954,6 +954,25 @@ def test_bool_dtype_size_one_native_array_uses_element_truth(value: int) -> None
     assert num.bool_(Array([value], dtype=dtypes.uint8)) is bool(np.array([value], dtype=np.uint8))
 
 
+@pytest.mark.parametrize("values", [[], [0, 0], [1, 2], [[0, 1], [2, 3]]])
+def test_array_dunder_bool_rejects_ambiguous_arrays_with_numpy_message(
+    values: list[Any],
+) -> None:
+    oracle = np.array(values, dtype=np.uint8)
+    with pytest.raises(ValueError, match="truth value") as numpy_error:
+        bool(oracle)
+    with pytest.raises(type(numpy_error.value)) as pecos_error:
+        bool(Array(values, dtype=dtypes.uint8))
+    assert str(pecos_error.value) == str(numpy_error.value)
+
+
+@pytest.mark.parametrize("values", [[0], [1], [[7]], [0.0], [2.5]])
+def test_array_dunder_bool_size_one_uses_element_truth(values: list[Any]) -> None:
+    oracle = np.array(values)
+    actual = Array(oracle)
+    assert bool(actual) is bool(oracle)
+
+
 @pytest.mark.parametrize(
     ("spelling", "expected"),
     [

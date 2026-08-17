@@ -338,6 +338,12 @@ an exact worker count. `result.execution_path` reports which path ran. Request
 `predictions=True` when you also need each shot's arbitrary-precision
 observable mask; the default avoids materializing them in Python.
 
+`num_errors` counts shots where the predicted observable mask differs from the
+true one anywhere, so with several observables it is the any-observable failure
+count. For a per-observable rate, take `predictions=True` and compare bit `i` of
+each predicted mask against bit `i` of the truth. With one observable the two
+rates coincide — but say which one you mean.
+
 The simulated shots decode the same way, against the same decoders:
 
 <!--continuation-->

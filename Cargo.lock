@@ -4891,6 +4891,7 @@ dependencies = [
 name = "pecos-trellis"
 version = "0.2.0-dev.0"
 dependencies = [
+ "libm",
  "pecos-decoder-core",
  "rand 0.10.2",
  "rand_xoshiro 0.8.1",

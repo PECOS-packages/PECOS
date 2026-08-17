@@ -33,6 +33,7 @@ proptest! {
         name in "[a-z][a-z0-9_]{0,20}",
         ret_type in prop_oneof!["unit", "u32", "bool", "f64"]
     ) {
+        prop_assume!(!zlup::parser::is_keyword(&name));
         let source = format!("fn {}() -> {} {{ return {}; }}",
             name,
             ret_type,
@@ -207,18 +208,38 @@ proptest! {
         rest in "[a-zA-Z0-9_]{0,30}"
     ) {
         let ident = format!("{}{}", first, rest);
-        prop_assume!(!matches!(
-            ident.as_str(),
-            "fn" | "pub" | "inline" | "comptime" | "mut" | "struct" | "enum"
-                | "union" | "packed" | "set" | "if" | "else" | "for" | "switch"
-                | "tick" | "return" | "break" | "continue" | "defer" | "errdefer"
-                | "and" | "or" | "orelse" | "try" | "catch" | "true" | "false"
-                | "none" | "undefined" | "Self" | "test" | "error" | "type" | "anytype"
-                | "unit" | "qubit" | "bit" | "alias" | "turns" | "rad"
-        ));
+        prop_assume!(!zlup::parser::is_keyword(&ident));
         let source = format!("{} := 42;", ident);
         let result = zlup::parse(&source);
         prop_assert!(result.is_ok(), "Failed to parse identifier: {}", ident);
+    }
+}
+
+/// Keywords must be recognized by `is_keyword` and refused as identifiers,
+/// while near-keywords remain valid identifiers.
+#[test]
+fn keywords_are_rejected_as_identifiers() {
+    for keyword in ["fn", "if", "return", "true", "unit", "qubit", "orelse"] {
+        assert!(
+            zlup::parser::is_keyword(keyword),
+            "{keyword} must be a keyword"
+        );
+        let source = format!("{keyword} := 42;");
+        assert!(
+            zlup::parse(&source).is_err(),
+            "keyword {keyword} must not parse as an identifier"
+        );
+    }
+    for near_keyword in ["fnord", "iffy", "returned", "unit_", "Fn"] {
+        assert!(
+            !zlup::parser::is_keyword(near_keyword),
+            "{near_keyword} must not be a keyword"
+        );
+        let source = format!("{near_keyword} := 42;");
+        assert!(
+            zlup::parse(&source).is_ok(),
+            "{near_keyword} must parse as an identifier"
+        );
     }
 }
 

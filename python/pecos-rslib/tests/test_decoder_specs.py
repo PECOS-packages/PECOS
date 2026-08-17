@@ -147,6 +147,7 @@ def test_every_factory_is_an_equal_immutable_value(family: str, factory: Callabl
     second = factory()
 
     assert isinstance(first, DecoderSpec)
+    assert first.family == family
     assert first == second
     assert family in repr(first)
     with pytest.raises(AttributeError):

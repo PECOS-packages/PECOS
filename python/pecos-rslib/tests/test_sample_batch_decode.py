@@ -42,13 +42,12 @@ def _batch(num_shots: int = 8) -> SampleBatch:
         ("pecos_uf", pecos_uf),
     ],
 )
-def test_spec_and_exact_legacy_factory_equivalent(legacy, factory) -> None:
+def test_spec_and_legacy_string_match_frozen_count(legacy, factory) -> None:
     batch = _batch()
-    expected = batch.decode_count(DEM, legacy)
-    assert batch.decode(DEM, factory(), workers=1).num_errors == expected
-    assert batch.decode(DEM, legacy, workers=1).num_errors == expected
-    if legacy == "pymatching":
-        assert expected > 0
+    # Behavior pin: all listed decoders predict the one detector's L0 edge,
+    # producing five mismatches against _batch's deliberately different truth.
+    assert batch.decode(DEM, factory(), workers=1).num_errors == 5
+    assert batch.decode(DEM, legacy, workers=1).num_errors == 5
 
 
 def test_native_and_generic_predictions_are_ordered_wide_python_ints() -> None:
@@ -60,7 +59,7 @@ def test_native_and_generic_predictions_are_ordered_wide_python_ints() -> None:
     generic = batch.decode(dem, spec, workers=1, predictions=True)
 
     assert native.execution_path == "native_batch"
-    assert native.predictions == generic.predictions == batch.decode_each(dem, "pymatching")
+    assert native.predictions == generic.predictions
     assert native.predictions == [1 << 64, 0, 1 << 64]
     assert native.num_errors == generic.num_errors == 0
 
@@ -200,7 +199,8 @@ def test_history_dependent_relay_bp_planning() -> None:
     spec = relay_bp()
     automatic = batch.decode(DEM, spec)
     assert automatic.execution_path == "sequential"
-    assert automatic.num_errors == batch.decode_count(DEM, "relay_bp")
+    # Behavior pin for the history-dependent planner path.
+    assert automatic.num_errors == 5
     assert batch.decode(DEM, spec, workers=1).num_errors == automatic.num_errors
     with pytest.raises(ValueError, match=r"worker count 4"):
         batch.decode(DEM, spec, workers=4)
@@ -220,7 +220,8 @@ def test_dem_none_requires_corpus_and_loaded_corpus_uses_embedded_dem(tmp_path) 
     path = tmp_path / "decode.pecos"
     generated.save(path, dem=DEM)
     loaded = SampleBatch.load(path)
-    assert loaded.decode(decoder="pymatching").num_errors == loaded.decode_count(DEM, "pymatching")
+    # The corpus was sampled from the same single-mechanism DEM, so decoding is exact.
+    assert loaded.decode(decoder=pymatching(correlated=True)).num_errors == 0
 
 
 def test_embedded_dem_guard_and_opt_out(tmp_path) -> None:
@@ -230,14 +231,14 @@ def test_embedded_dem_guard_and_opt_out(tmp_path) -> None:
     different = "error(0.2) D0 L0\n"
     with pytest.raises(ValueError, match="differs from the DEM embedded"):
         loaded.decode(different, "pymatching")
-    assert loaded.decode(
-        different,
-        "pymatching",
-        allow_dem_mismatch=True,
-    ).num_errors == loaded.decode_count(
-        different,
-        "pymatching",
-        allow_dem_mismatch=True,
+    # Behavior pin: both supplied shots disagree with this DEM's predictions.
+    assert (
+        loaded.decode(
+            different,
+            pymatching(correlated=True),
+            allow_dem_mismatch=True,
+        ).num_errors
+        == 2
     )
 
 

@@ -4255,14 +4255,20 @@ impl PyDemSampler {
 
     /// Sample, decode, and score shots through the planned batch executor.
     ///
-    /// `SAMPLING_ABI_VERSION = 1` guarantees that a fixed `(seed, num_shots)`
-    /// produces the same shot and prediction stream for every worker count, including
-    /// sequential and native execution. Each canonical 1024-shot chunk owns a
+    /// Sampling ABI v1 guarantees that a fixed `(seed, num_shots)` produces the
+    /// same SHOT stream for every worker count and execution path, including
+    /// sequential and native. Each canonical 1024-shot chunk owns a
     /// deterministic RNG stream and consumes exactly one single-shot sampler
-    /// call per shot. Timing measurements are outside this guarantee.
+    /// call per shot.
+    ///
+    /// Predictions and error counts match as well, EXCEPT when
+    /// `reproducibility_warnings` on the result is non-empty: a wall-clock-limited
+    /// decoder (for example `mwpf(timeout=...)`) run in parallel can decode
+    /// differently because CPU contention changes which shots reach the solver's
+    /// deadline. Timing measurements are always outside the guarantee.
     ///
     /// Parallelism is granted per 1024-shot chunk, so the effective concurrency
-    /// is capped at `ceil(num_shots / 1024)` regardless of `workers_used`.
+    /// is capped at `ceil(num_shots / 1024)` regardless of the requested workers.
     ///
     /// Predictions and truth are restricted to the sampler's observable DEM
     /// outputs, matching `sample_decode_count`; `SampleBatch.decode` scores
@@ -4333,7 +4339,7 @@ impl PyDemSampler {
                 })
             })
             .transpose()?;
-        let plan =
+        let mut plan =
             pecos_decoders::batch::plan_execution(pecos_decoders::batch::ExecutionPlanInputs {
                 traits: spec.execution_traits(),
                 num_shots,
@@ -4343,6 +4349,14 @@ impl PyDemSampler {
                 available_threads: rayon::current_num_threads(),
             })
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+
+        // Report the workers that can actually run: the fused unit of work is a
+        // sampling chunk, so anything beyond one worker per chunk would idle.
+        if plan.path == pecos_decoders::batch::ExecutionPath::Parallel {
+            plan.workers_used = plan
+                .workers_used
+                .min(pecos_decoders::batch::fused_worker_cap(num_shots));
+        }
 
         // Resolve entropy once before dispatch, including for an empty run.
         let actual_seed = seed.unwrap_or_else(|| rand::rng().random());

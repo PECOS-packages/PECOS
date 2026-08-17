@@ -71,11 +71,10 @@ def test_fused_stream_golden_values_span_chunk_boundaries() -> None:
         predictions=True,
     )
 
-    # Reproducibility ABI v1 drift pins. Generated once from the accepted
-    # implementation and independently re-derived by the reviewing orchestrator
-    # on two execution paths; they span
-    # both canonical 1024-shot chunk boundaries and must not be regenerated to
-    # accommodate an implementation change.
+    # Reproducibility ABI v1 drift pins, spanning both canonical 1024-shot chunk
+    # boundaries. A change here means the seeded sampling stream moved, which is a
+    # breaking change: bump the ABI version and release-note it rather than
+    # regenerating these literals.
     assert result.num_errors == 212
     assert result.predictions is not None
     assert {index: result.predictions[index] for index in [0, 1023, 1024, 2047, 2048, 2064]} == {
@@ -227,3 +226,21 @@ def test_legacy_sampling_streams_remain_frozen() -> None:
         [True],
         [False],
     ]
+
+
+def test_worker_count_is_clamped_to_the_number_of_sampling_chunks() -> None:
+    # A sampling chunk is the unit of parallel work, so a caller asking for more
+    # workers than there are chunks must be told what actually ran -- and must not
+    # hand an arbitrary thread count to the OS.
+    result = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=64)
+
+    assert result.execution_path == "parallel"
+    assert result.workers_used == 2  # ceil(1500 / 1024)
+
+    single_chunk = _sampler().decode(DEM, 100, tesseract(preset="fast"), seed=7, workers=8)
+    assert single_chunk.workers_used == 1
+
+    # Clamping must not perturb the guaranteed stream.
+    reference = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=1, predictions=True)
+    clamped = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=64, predictions=True)
+    assert clamped.predictions == reference.predictions

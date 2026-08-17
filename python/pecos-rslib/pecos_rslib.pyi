@@ -2559,12 +2559,14 @@ class qec:
             predictions: bool = ...,
             timing: bool = ...,
         ) -> qec.DecodeResult:
-            """Sample and decode using ``SAMPLING_ABI_VERSION = 1``.
+            """Sample and decode under sampling ABI v1.
 
-            A fixed seed produces the same shot stream and predictions for all
-            worker counts and execution paths. The resolved replay seed is
-            returned in ``sampling_seed_used``; per-shot timing is outside the
-            reproducibility guarantee.
+            A fixed seed produces the same shot stream for all worker counts and
+            execution paths. Predictions and counts match too, except when
+            ``reproducibility_warnings`` is non-empty -- a wall-clock-limited
+            decoder run in parallel can decode differently under CPU contention.
+            The resolved replay seed is returned in ``sampling_seed_used``;
+            timing is always outside the reproducibility guarantee.
             """
             ...
 

@@ -282,12 +282,15 @@ fn parallel(
     workers: usize,
     options: DecodeOptions,
 ) -> Result<DecodeRangeResult, BatchExecutionError> {
+    let chunks = sampling_chunks(num_shots).enumerate().collect::<Vec<_>>();
+    let expected_chunks = chunks.len();
+    // Clamp before building the pool: an explicit worker count is otherwise
+    // passed straight to the OS.
+    let workers = workers.min(pecos_decoders::batch::fused_worker_cap(num_shots));
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .build()
         .map_err(|error| BatchExecutionError::Runtime(error.to_string()))?;
-    let chunks = sampling_chunks(num_shots).enumerate().collect::<Vec<_>>();
-    let expected_chunks = chunks.len();
     let shot_sampler = ShotSampler::new(sampler);
 
     let scheduled = pool.install(|| {
@@ -454,7 +457,7 @@ pub(super) fn execute(
             // (it cannot produce per-shot samples); assert the cross-crate
             // invariant where we rely on it so a future planner change fails
             // loudly instead of silently returning empty stats.
-            debug_assert!(
+            assert!(
                 !options.timing,
                 "planner selected native batch with timing requested"
             );

@@ -308,6 +308,17 @@ pub const fn sampling_chunks(num_shots: usize) -> SamplingChunks {
     SamplingChunks { next: 0, num_shots }
 }
 
+/// Upper bound on useful workers for fused sampling.
+///
+/// A sampling chunk is the unit of parallel work, so threads beyond one per
+/// chunk can never be given anything to do. Both the thread pool and the
+/// reported `workers_used` derive from this, so the number a caller sees is
+/// the number that could actually run.
+#[must_use]
+pub fn fused_worker_cap(num_shots: usize) -> usize {
+    num_shots.div_ceil(SAMPLING_CHUNK_SHOTS).max(1)
+}
+
 /// The single seam constructing the canonical per-chunk RNG for sampling ABI v1.
 ///
 /// Every execution path — sequential, parallel, native — must obtain its chunk

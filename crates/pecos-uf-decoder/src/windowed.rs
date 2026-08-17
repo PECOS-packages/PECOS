@@ -527,6 +527,10 @@ fn parse_dem_params(
     config: &WindowedConfig,
 ) -> Result<(Vec<f64>, usize, usize, f64), DecoderError> {
     let graph = DemMatchingGraph::from_dem_str(dem)?;
+    // Every edge-tracking window family and its residual/beam aggregation use
+    // u64 observable masks internally. Reject a wider model before creating
+    // any sub-decoder so no global observable bit can be truncated.
+    graph.ensure_observables_fit_u64()?;
     let num_detectors = graph.num_detectors;
 
     let mut det_times = vec![0.0f64; num_detectors];
@@ -1187,6 +1191,71 @@ mod tests {
 
     fn uf_edge_factory(dem: &str) -> Result<crate::UfDecoder, DecoderError> {
         crate::UfDecoder::from_dem(dem, crate::UfDecoderConfig::windowed())
+    }
+
+    fn observable_width_dem(highest_observable: usize) -> String {
+        format!("error(0.1) D0 L{highest_observable}\ndetector(0, 0, 0) D0\n")
+    }
+
+    #[test]
+    fn every_windowed_family_accepts_64_and_rejects_65_observables() {
+        use pecos_decoder_core::streaming::StreamingDecoder;
+
+        let dem64 = observable_width_dem(63);
+        let dem65 = observable_width_dem(64);
+        let config = WindowedConfig {
+            step_size: 1,
+            buffer_size: 1,
+            ..Default::default()
+        };
+
+        let mut non_overlapping = WindowedDecoder::from_dem(&dem64, config, uf_factory).unwrap();
+        assert!(non_overlapping.decode_obs(&[0]).unwrap().is_zero());
+        assert!(WindowedDecoder::from_dem(&dem65, config, uf_factory).is_err());
+
+        let mut overlapping =
+            OverlappingWindowedDecoder::from_dem(&dem64, config, uf_edge_factory).unwrap();
+        assert!(overlapping.decode_obs(&[0]).unwrap().is_zero());
+        assert!(OverlappingWindowedDecoder::from_dem(&dem65, config, uf_edge_factory).is_err());
+
+        let mut sandwich =
+            SandwichWindowedDecoder::from_dem(&dem64, config, uf_edge_factory, uf_factory).unwrap();
+        assert!(sandwich.decode_obs(&[0]).unwrap().is_zero());
+        assert!(
+            SandwichWindowedDecoder::from_dem(&dem65, config, uf_edge_factory, uf_factory,)
+                .is_err()
+        );
+
+        let mut streaming =
+            StreamingWindowedDecoder::from_dem(&dem64, config, uf_edge_factory).unwrap();
+        streaming.feed_round(0, &[]).unwrap();
+        streaming.flush().unwrap();
+        assert_eq!(streaming.accumulated_obs(), 0);
+        assert!(StreamingWindowedDecoder::from_dem(&dem65, config, uf_edge_factory).is_err());
+
+        let beam_config = BeamSearchConfig {
+            window: config,
+            beam_width: 1,
+            perturbation_sigma: 0.0,
+            seed: 1,
+        };
+        let mut beam = BeamSearchWindowedDecoder::from_dem(
+            &dem64,
+            beam_config,
+            uf_edge_factory,
+            Some(uf_factory),
+        )
+        .unwrap();
+        assert!(beam.decode_obs(&[0]).unwrap().is_zero());
+        assert!(
+            BeamSearchWindowedDecoder::from_dem(
+                &dem65,
+                beam_config,
+                uf_edge_factory,
+                Some(uf_factory),
+            )
+            .is_err()
+        );
     }
 
     #[test]

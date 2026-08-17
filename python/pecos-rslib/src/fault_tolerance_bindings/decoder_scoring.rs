@@ -20,8 +20,21 @@ use std::ops::Range;
 /// A decoder failure annotated with the shot that caused it.
 #[derive(Debug)]
 pub(super) struct ShotDecodeError {
-    shot_index: usize,
-    source: DecoderError,
+    pub(super) shot_index: usize,
+    pub(super) source: DecoderError,
+}
+
+impl ShotDecodeError {
+    pub(super) const fn new(shot_index: usize, source: DecoderError) -> Self {
+        Self { shot_index, source }
+    }
+}
+
+/// Scored output from one contiguous sequential worker range.
+pub(super) struct DecodeRangeResult {
+    pub(super) mismatches: usize,
+    pub(super) predictions: Vec<ObsMask>,
+    pub(super) per_shot_seconds: Vec<f64>,
 }
 
 impl fmt::Display for ShotDecodeError {
@@ -48,18 +61,53 @@ impl std::error::Error for ShotDecodeError {
 pub(super) fn count_decoder_mismatches(
     shots: Range<usize>,
     syndrome: &mut [u8],
-    mut access_shot: impl FnMut(usize, &mut [u8]) -> ObsMask,
+    access_shot: impl FnMut(usize, &mut [u8]) -> ObsMask,
     decoder: &mut dyn ObservableDecoder,
 ) -> Result<usize, ShotDecodeError> {
-    let mut mismatches = 0;
+    decode_and_score_range(shots, syndrome, access_shot, decoder, false, false)
+        .map(|result| result.mismatches)
+}
+
+/// Decode, score, and optionally retain predictions and per-shot elapsed times.
+///
+/// The syndrome allocation belongs to the caller and is reused for every shot
+/// in the range. Predictions and timings are allocated only when requested.
+pub(super) fn decode_and_score_range(
+    shots: Range<usize>,
+    syndrome: &mut [u8],
+    mut access_shot: impl FnMut(usize, &mut [u8]) -> ObsMask,
+    decoder: &mut dyn ObservableDecoder,
+    collect_predictions: bool,
+    collect_timings: bool,
+) -> Result<DecodeRangeResult, ShotDecodeError> {
+    let capacity = shots.len();
+    let mut result = DecodeRangeResult {
+        mismatches: 0,
+        predictions: if collect_predictions {
+            Vec::with_capacity(capacity)
+        } else {
+            Vec::new()
+        },
+        per_shot_seconds: if collect_timings {
+            Vec::with_capacity(capacity)
+        } else {
+            Vec::new()
+        },
+    };
     for shot_index in shots {
         let truth = access_shot(shot_index, syndrome);
-        let prediction = decoder
-            .decode_obs(syndrome)
-            .map_err(|source| ShotDecodeError { shot_index, source })?;
-        mismatches += usize::from(prediction != truth);
+        let start = collect_timings.then(std::time::Instant::now);
+        let decoded = decoder.decode_obs(syndrome);
+        if let Some(start) = start {
+            result.per_shot_seconds.push(start.elapsed().as_secs_f64());
+        }
+        let prediction = decoded.map_err(|source| ShotDecodeError::new(shot_index, source))?;
+        result.mismatches += usize::from(prediction != truth);
+        if collect_predictions {
+            result.predictions.push(prediction);
+        }
     }
-    Ok(mismatches)
+    Ok(result)
 }
 
 /// Observable-decoder adapter that keeps only caller-selected observables.

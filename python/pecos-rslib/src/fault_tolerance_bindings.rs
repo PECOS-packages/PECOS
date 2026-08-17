@@ -44,6 +44,7 @@
 
 use crate::code_matrix_bindings::PyParityCheckMatrix;
 use crate::dag_circuit_bindings::PyTickCircuit;
+use crate::decoder_spec_bindings::PyDecoderSpec;
 use crate::pecos_array::{Array, ArrayData};
 use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
 use pecos_core::gate_type::GateType;
@@ -118,11 +119,13 @@ use pecos_quantum::DagCircuit;
 use pecos_quantum::QubitId;
 use pyo3::Py;
 use pyo3::prelude::*;
+use pyo3::types::PyString;
 
 use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
+mod batch_decode;
 mod decoder_comparison;
 mod decoder_scoring;
 mod sample_corpus;
@@ -2537,7 +2540,7 @@ fn subgraph_to_dem_string(graph: &pecos_decoder_core::DemMatchingGraph) -> Strin
 
 /// Convert a decoder-spec parse error into Python's invalid-value exception.
 /// Convert a decoder type-string parse error into the legacy `ValueError`.
-fn decoder_parse_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
+pub(crate) fn decoder_parse_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
     let message = match error {
         pecos_decoders::DecoderError::InvalidConfiguration(message) => message,
         error => error.to_string(),
@@ -3061,6 +3064,82 @@ impl PySampleBatch {
         ))
     }
 
+    /// Decode and score every shot using a typed decoder specification or a
+    /// legacy decoder string.
+    ///
+    /// `dem=None` uses the exact DEM embedded by `SampleBatch.load`; generated
+    /// batches require an explicit DEM. Automatic execution honors decoder
+    /// statefulness, uses native batching where available, and otherwise chooses
+    /// sequential or bounded parallel per-shot execution. Set `workers` to opt
+    /// into an exact worker count, `predictions` to retain wide per-shot masks,
+    /// and `timing` to retain per-shot elapsed-time statistics.
+    #[pyo3(signature = (dem=None, decoder=None, *, workers=None, predictions=false, timing=false, allow_dem_mismatch=false))]
+    fn decode(
+        &self,
+        py: Python<'_>,
+        dem: Option<&str>,
+        decoder: Option<&Bound<'_, PyAny>>,
+        workers: Option<i64>,
+        predictions: bool,
+        timing: bool,
+        allow_dem_mismatch: bool,
+    ) -> PyResult<batch_decode::PyDecodeResult> {
+        let resolved_dem = dem.or(self.dem.as_deref()).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "dem is required because this SampleBatch has no embedded DEM",
+            )
+        })?;
+
+        // Preserve the legacy validation precedence: reject raw rows and an
+        // embedded-model mismatch before inspecting or constructing a decoder.
+        self.ensure_dem_matches(resolved_dem, allow_dem_mismatch)?;
+
+        let decoder = decoder.ok_or_else(|| {
+            pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
+        })?;
+        let spec = if decoder.is_instance_of::<PyString>() {
+            let decoder_type = decoder.extract::<&str>()?;
+            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
+        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
+            spec.inner.clone()
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
+            ));
+        };
+
+        let explicit_workers = workers
+            .map(|workers| {
+                if workers <= 0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "workers must be at least 1",
+                    ));
+                }
+                usize::try_from(workers).map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "workers is too large for this platform",
+                    )
+                })
+            })
+            .transpose()?;
+        let traits = spec.execution_traits();
+        let plan =
+            pecos_decoders::batch::plan_execution(pecos_decoders::batch::ExecutionPlanInputs {
+                traits,
+                num_shots: self.num_shots,
+                native_batch_capable: spec.native_batch_capable(),
+                timing,
+                explicit_workers,
+                available_threads: rayon::current_num_threads(),
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+
+        let output = py
+            .detach(|| batch_decode::execute(self, resolved_dem, &spec, &plan, predictions, timing))
+            .map_err(batch_decode::BatchExecutionError::into_pyerr)?;
+        batch_decode::PyDecodeResult::from_execution(py, self.num_shots, plan, output)
+    }
+
     /// Decode all samples with the given decoder type and return the error count.
     ///
     /// This runs entirely in Rust -- no per-shot Python crossing.
@@ -3474,6 +3553,15 @@ pub struct PyDecodeStats {
     pub logical_error_rate: f64,
     #[pyo3(get)]
     pub total_seconds: f64,
+    /// End-to-end elapsed time from decoder construction through Rust scoring.
+    #[pyo3(get)]
+    pub wall_elapsed: f64,
+    /// Sum of the elapsed durations of the individual `decode_obs` calls.
+    #[pyo3(get)]
+    pub summed_decode_elapsed: f64,
+    /// Number of individual per-shot timing samples summarized below.
+    #[pyo3(get)]
+    pub num_timing_samples: usize,
     #[pyo3(get)]
     pub per_shot_mean: f64,
     #[pyo3(get)]
@@ -3493,12 +3581,26 @@ pub struct PyDecodeStats {
 impl PyDecodeStats {
     // Shot counts and error counts are well within f64 mantissa range (2^52).
     // Percentile index computation is bounded by array length.
+    fn from_times(num_shots: usize, num_errors: usize, times: Vec<f64>) -> Self {
+        // Legacy timing methods do not define an end-to-end measurement
+        // boundary. Keep their two newer elapsed fields at the documented zero
+        // default while preserving every existing statistic.
+        Self::from_times_with_elapsed(num_shots, num_errors, times, 0.0, 0.0)
+    }
+
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
     )]
-    fn from_times(num_shots: usize, num_errors: usize, mut times: Vec<f64>) -> Self {
+    fn from_times_with_elapsed(
+        num_shots: usize,
+        num_errors: usize,
+        mut times: Vec<f64>,
+        wall_elapsed: f64,
+        summed_decode_elapsed: f64,
+    ) -> Self {
+        let num_timing_samples = times.len();
         let total_seconds: f64 = times.iter().sum();
         let per_shot_mean = if num_shots > 0 {
             total_seconds / num_shots as f64
@@ -3528,6 +3630,9 @@ impl PyDecodeStats {
                 0.0
             },
             total_seconds,
+            wall_elapsed,
+            summed_decode_elapsed,
+            num_timing_samples,
             per_shot_mean,
             per_shot_median: percentile(50.0),
             per_shot_p99: percentile(99.0),
@@ -7841,6 +7946,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDetectorErrorModel>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
+    qec.add_class::<batch_decode::PyDecodeResult>()?;
     qec.add_class::<PyDecoderComparisonResult>()?;
     qec.add_class::<PyCssUfDecoder>()?;
     qec.add_class::<PyLogicalSubgraphDecoder>()?;

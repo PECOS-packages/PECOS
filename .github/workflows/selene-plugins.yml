@@ -136,6 +136,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
         plugin:
+          - name: pecos-selene-general-noise
+            package: pecos_selene_general_noise
           - name: pecos-selene-stabilizer
             package: pecos_selene_stabilizer
           - name: pecos-selene-statevec

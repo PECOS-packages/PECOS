@@ -4807,6 +4807,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-selene-general-noise"
+version = "0.2.0-dev.0"
+dependencies = [
+ "anyhow",
+ "pecos-core",
+ "pecos-engines",
+ "selene-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pecos-selene-mast"
 version = "0.2.0-dev.0"
 dependencies = [

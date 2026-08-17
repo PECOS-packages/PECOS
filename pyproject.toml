@@ -20,6 +20,7 @@ members = [
   "python/pecos-rslib-cuda",
   "python/pecos-rslib-llvm",
   "python/quantum-pecos",
+  "python/selene-plugins/pecos-selene-general-noise",
   "python/selene-plugins/pecos-selene-mast",
   "python/selene-plugins/pecos-selene-stab-mps",
   "python/selene-plugins/pecos-selene-stab-vec",
@@ -99,6 +100,7 @@ reinstall-package = [
   "pecos-rslib-cuda",
   "pecos-rslib-exp",
   "pecos-rslib-llvm",
+  "pecos-selene-general-noise",
 ]
 
 [tool.black]

@@ -28,6 +28,7 @@ members = [
     "pecos-rslib-cuda",
     "pecos-rslib-exp",
     "pecos-rslib-llvm",
+    "pecos-selene-general-noise",
     "pecos-selene-mast",
     "pecos-selene-stab-mps",
     "pecos-selene-stab-vec",
@@ -3146,6 +3147,30 @@ test = [
 [package.metadata.requires-dev]
 dev = []
 test = [{ name = "pytest", specifier = ">=9.0" }]
+
+[[package]]
+name = "pecos-selene-general-noise"
+version = "0.10.0.dev0"
+source = { editable = "python/selene-plugins/pecos-selene-general-noise" }
+dependencies = [
+    { name = "selene-core" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "guppylang" },
+    { name = "pytest" },
+    { name = "selene-sim" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14,<1.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
+    { name = "selene-core", specifier = ">=0.2" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2,<0.3" },
+]
+provides-extras = ["test"]
 
 [[package]]
 name = "pecos-selene-mast"

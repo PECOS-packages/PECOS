@@ -155,6 +155,25 @@ def test_direct_unsigned_construction_matches_astype(
     assert direct.tolist() == via_cast.tolist()
 
 
+@pytest.mark.parametrize("constructor", [Array, pecos_rslib.array, num.array, num.asarray])
+@pytest.mark.parametrize(
+    "values",
+    [
+        [0, -1, 2, 2**31],
+        [0.0, -1.5, 2.25, float("inf")],
+    ],
+    ids=["builtin-int-list", "builtin-float-list"],
+)
+def test_flat_builtin_list_fast_path_matches_numpy(
+    constructor: Callable[..., Array], values: list[int] | list[float]
+) -> None:
+    expected = np.array(values)
+    actual = constructor(values)
+
+    assert np.asarray(actual).dtype == expected.dtype
+    np.testing.assert_array_equal(np.asarray(actual), expected)
+
+
 def test_uint8_honors_full_range_without_becoming_negative() -> None:
     result = num.array([0, 255], dtype=dtypes.uint8)
     assert result.tolist() == [0, 255]
@@ -1522,6 +1541,21 @@ def test_one_dimensional_boolean_mask_selects_rows_like_numpy() -> None:
 
     actual = Array(values)[Array(mask, dtype=dtypes.bool)]
     np.testing.assert_array_equal(np.asarray(actual), values[np.array(mask)])
+
+
+def test_nonstandard_layout_boolean_mask_read_and_write_match_numpy() -> None:
+    expected = np.arange(12, dtype=np.int64).reshape(3, 4)
+    actual = Array(expected)
+    mask_source = np.array([[True, False, True], [False, True, False], [True, False, False], [False, True, True]])
+    expected_mask = mask_source.T
+    actual_mask = Array(mask_source).T
+
+    np.testing.assert_array_equal(np.asarray(actual[actual_mask]), expected[expected_mask])
+
+    replacement = np.arange(expected[expected_mask].size, dtype=np.int64)
+    expected[expected_mask] = replacement
+    actual[actual_mask] = replacement
+    np.testing.assert_array_equal(np.asarray(actual), expected)
 
 
 @pytest.mark.parametrize("mask_ndim", [2, 3])

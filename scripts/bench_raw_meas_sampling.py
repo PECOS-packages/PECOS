@@ -14,6 +14,7 @@ Usage:
 import sys
 import time
 
+from pecos.decoders import pymatching
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 from pecos_rslib.qec import DemSampler
@@ -98,7 +99,11 @@ def main():
             t_gen = time.perf_counter() - t0
 
             t0 = time.perf_counter()
-            _ = batch.decode_count(dem_str, "pymatching")
+            # Times whatever the planner selects by default -- the path a user
+            # actually gets. That is PyMatching's vectorized batch API here, not
+            # the per-shot loop the pre-unification benchmark measured, so these
+            # decode timings are not comparable with numbers recorded before it.
+            decode_path = batch.decode(dem_str, pymatching(correlated=True)).execution_path
             t_dec = time.perf_counter() - t0
 
             t_total = t_gen + t_dec
@@ -113,7 +118,8 @@ def main():
 
     print("Notes:")
     print("  sample_batch is 3-6x faster with columnar SampleBatch storage.")
-    print("  End-to-end generate+decode is decode-dominated (<1% generation).")
+    print(f"  Decode timings above use the '{decode_path}' execution path.")
+    print("  The gen% column reports how much of end-to-end time is generation.")
     if not FULL:
         print("  Use --full for larger shot counts and stable headline numbers.")
 

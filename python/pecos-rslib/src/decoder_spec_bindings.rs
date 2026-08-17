@@ -39,6 +39,12 @@ impl PyDecoderSpec {
             .map_err(crate::fault_tolerance_bindings::decoder_parse_error_to_py)
     }
 
+    /// Stable decoder-family identifier used by decoder-facing integrations.
+    #[getter]
+    fn family(&self) -> &'static str {
+        spec_family_name(&self.inner)
+    }
+
     #[getter]
     fn history_dependent(&self) -> bool {
         self.inner.execution_traits().history_dependent

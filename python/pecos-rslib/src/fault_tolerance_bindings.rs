@@ -2603,9 +2603,11 @@ fn create_observable_decoder(
 /// # Example
 ///
 /// ```python
+/// from pecos.decoders import pymatching, tesseract
+///
 /// samples = sampler.sample_batch(10000, seed=42)
-/// pm_errors = samples.decode_count(dem, "pymatching")
-/// ts_errors = samples.decode_count(dem, "tesseract")
+/// pm_errors = samples.decode(dem, pymatching(correlated=True)).num_errors
+/// ts_errors = samples.decode(dem, tesseract()).num_errors
 /// # Both decoders ran on the exact same samples.
 /// ```
 #[pyclass(name = "SampleBatch", module = "pecos_rslib.qec")]

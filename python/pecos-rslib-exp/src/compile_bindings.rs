@@ -12,23 +12,16 @@
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
-use pecos_stab_tn::mps::MpsConfig;
-use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
+use pecos_stab_tn::stab_mps::compile::{InjectionMode, SimulatorKind, StabMpsCompile};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet, PyTuple};
 
-/// Python MAST simulator.
+/// Compile-only STN tractability analyzer.
 ///
-/// Telemetry and capacity reads report stored state without materializing
-/// pending merged RZ rotations. The predetermined half-probability injection
-/// outcomes are exact for the untruncated state; after MPS truncation they can
-/// differ from the truncated representation's own distribution. Exceeding the
-/// constructor's `max_non_clifford` capacity raises a `PanicException`;
-/// `remaining_injections` exposes available capacity, and
-/// `StabMpsCompile.advise()` reports the required capacity for an analyzed
-/// circuit. `project_all()` completes deferred injections explicitly; any MZ
-/// gate does so automatically before measuring data. Qubit indices are
-/// zero-based, and any bit rows elsewhere in the STN API use `bits[q] == qubit q`.
+/// Replay the same gate stream that will be executed, then call `recommend()`
+/// or `advise()`. The analyzer updates a stabilizer tableau and GF(2) flip
+/// matrix without allocating an MPS. Recommendations are heuristic. Qubits are
+/// zero-based; any bit rows elsewhere in the STN API use `bits[q] == qubit q`.
 ///
 /// # Gate symbols
 ///
@@ -47,12 +40,12 @@ use pyo3::types::{PyDict, PySet, PyTuple};
 /// | 1 | `MZ`, `Measure`, `measure Z` | none; returns 0 or 1 |
 /// | 2 | `CX`, `CNOT`; `CY`; `CZ`; `SXX`; `SXXdg`; `SYY`; `SYYdg`; `SZZ`; `SZZdg`; `SWAP` | none |
 /// | 2 | `RZZ` | `angle` in radians |
-#[pyclass(name = "Mast", module = "pecos_rslib_exp")]
-pub struct PyMast {
-    inner: Mast,
+#[pyclass(name = "StabMpsCompile", module = "pecos_rslib_exp")]
+pub struct PyStabMpsCompile {
+    inner: StabMpsCompile,
 }
 
-impl PyMast {
+impl PyStabMpsCompile {
     fn check_qubit(&self, q: isize, method: &str) -> PyResult<usize> {
         let Ok(q) = usize::try_from(q) else {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
@@ -70,231 +63,155 @@ impl PyMast {
     }
 }
 
+fn simulator_name(kind: SimulatorKind) -> &'static str {
+    match kind {
+        SimulatorKind::StateVector => "state_vector",
+        SimulatorKind::CHForm => "ch_form",
+        SimulatorKind::StabVec => "stab_vec",
+        SimulatorKind::StabMps => "stab_mps",
+        SimulatorKind::Mast => "mast",
+    }
+}
+
+fn injection_name(mode: InjectionMode) -> &'static str {
+    match mode {
+        InjectionMode::Direct => "direct",
+        InjectionMode::Immediate => "immediate",
+        InjectionMode::Deferred => "deferred",
+    }
+}
+
 #[pymethods]
-impl PyMast {
+impl PyStabMpsCompile {
+    /// Create an empty compile-only analyzer for `num_qubits` qubits.
+    ///
+    /// Gate replay costs approximately `O(t*n**2)` for `t` non-Clifford gates
+    /// and `n` qubits, without coefficient-MPS allocation.
     #[new]
-    /// Create a MAST simulator.
-    ///
-    /// `projection_order` accepts `"min_span"` or `"input"`; `None` uses
-    /// the Rust default (`"min_span"`). Boolean options are tri-state:
-    /// `None` preserves the Rust default, while an explicit bool calls the
-    /// corresponding Rust setter. `merge_rz` defaults to false so injection
-    /// capacity use remains visible immediately; `StabMps` defaults it to true
-    /// for throughput. `max_bond_dim` and
-    /// `max_truncation_error` override the coefficient-MPS defaults; the latter
-    /// must be finite and non-negative. Exceeding `max_non_clifford` raises a
-    /// `PanicException`; inspect `remaining_injections` before adding work.
-    /// `StabMpsCompile.advise()` reports the required deferred capacity for an
-    /// analyzed circuit.
-    ///
-    /// `seed` initializes PECOS's buffered RapidHash RNG and the tableau. Fresh
-    /// instances with the same configuration and call sequence reproduce
-    /// stochastic results. For seeded simulators, `reset()` draws the rebuilt
-    /// tableau and continuing simulator-RNG seeds from the current simulator
-    /// stream rather than replaying the construction stream.
-    #[pyo3(signature = (
-        num_qubits,
-        max_non_clifford,
-        seed=None,
-        max_bond_dim=None,
-        max_truncation_error=None,
-        merge_rz=None,
-        projection_order=None,
-        numerical_flag_redetection=None,
-    ))]
-    fn new(
-        num_qubits: usize,
-        max_non_clifford: usize,
-        seed: Option<u64>,
-        max_bond_dim: Option<usize>,
-        max_truncation_error: Option<f64>,
-        merge_rz: Option<bool>,
-        projection_order: Option<&str>,
-        numerical_flag_redetection: Option<bool>,
-    ) -> PyResult<Self> {
-        if num_qubits.checked_add(max_non_clifford).is_none() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "num_qubits + max_non_clifford exceeds platform capacity",
-            ));
+    fn new(num_qubits: usize) -> Self {
+        Self {
+            inner: StabMpsCompile::new(num_qubits),
         }
-        if max_truncation_error.is_some_and(|error| !error.is_finite() || error < 0.0) {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "max_truncation_error must be finite and non-negative",
-            ));
-        }
-        let mut mast = if let Some(s) = seed {
-            Mast::with_seed(num_qubits, max_non_clifford, s)
-        } else {
-            Mast::new(num_qubits, max_non_clifford)
-        };
-        if max_bond_dim.is_some() || max_truncation_error.is_some() {
-            let mut config = MpsConfig::default();
-            if let Some(value) = max_bond_dim {
-                config.max_bond_dim = value;
-            }
-            if let Some(value) = max_truncation_error {
-                config.max_truncation_error = Some(value);
-            }
-            mast = mast.with_mps_config(config);
-        }
-        if let Some(value) = merge_rz {
-            mast = mast.with_merge_rz(value);
-        }
-        if let Some(value) = numerical_flag_redetection {
-            mast = mast.with_numerical_flag_redetection(value);
-        }
-        if let Some(order) = projection_order {
-            let order = match order {
-                "min_span" => ProjectionOrder::MinSpan,
-                "input" => ProjectionOrder::Input,
-                _ => {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        "projection_order must be 'min_span' or 'input'",
-                    ));
-                }
-            };
-            mast = mast.projection_order(order);
-        }
-        Ok(PyMast { inner: mast })
     }
 
-    /// Reset data, ancillas, capacity use, and diagnostics, returning `self`.
-    ///
-    /// Configuration is retained. A seeded simulator draws the rebuilt tableau
-    /// and continuing simulator-RNG seeds from its current simulator stream,
-    /// giving deterministic continuation. An unseeded simulator obtains fresh
-    /// entropy.
+    /// Clear the replayed circuit and all counters, returning `self`.
     fn reset(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.inner.reset();
         slf
     }
 
     #[getter]
-    /// Number of addressable data qubits.
-    ///
-    /// Preallocated injection ancillas are internal and excluded.
+    /// Number of qubits being analyzed.
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
     }
 
     #[getter]
-    /// Number of data qubits, equal to `num_qubits` for this binding.
-    fn num_data_qubits(&self) -> usize {
-        self.inner.num_data_qubits()
+    /// Non-Clifford gates that OFD would absorb by consuming a free qubit.
+    fn absorbed(&self) -> u64 {
+        self.inner.absorbed()
     }
 
     #[getter]
-    /// Number of fresh ancilla slots consumed by injections.
-    ///
-    /// Pending unflushed rotations are not reflected and can consume capacity
-    /// when later materialized.
-    fn num_ancillas_used(&self) -> usize {
-        self.inner.num_ancillas_used()
+    /// Non-Clifford gates predicted to grow the coefficient-MPS bond dimension.
+    fn grown(&self) -> u64 {
+        self.inner.grown()
     }
 
     #[getter]
-    /// Number of additional injections available before capacity is exhausted.
-    ///
-    /// Pending unflushed rotations are not reflected and can consume capacity
-    /// when later materialized.
-    /// Exceeding capacity through a later gate raises `PanicException`.
-    fn remaining_injections(&self) -> usize {
-        self.inner.remaining_injections()
+    /// Non-Clifford RZ gates reduced to the stabilizer-only branch.
+    fn stabilizer(&self) -> u64 {
+        self.inner.stabilizer()
     }
 
     #[getter]
-    /// Largest bond dimension currently present in the coefficient MPS.
-    ///
-    /// Pending unflushed operations are not reflected and can later consume
-    /// injection capacity. Deferred injections remain unprojected until
-    /// `project_all()` or an MZ gate.
-    fn max_bond_dim(&self) -> usize {
-        self.inner.max_bond_dim()
+    /// Total analyzed non-Clifford gates: absorbed plus grown plus stabilizer.
+    fn total_nonclifford(&self) -> u64 {
+        self.inner.total_nonclifford()
     }
 
     #[getter]
-    /// Accumulated approximate infidelity from SVD truncation.
-    ///
-    /// This is a pure stored-state diagnostic: pending merged rotations are not
-    /// materialized.
-    fn truncation_error(&self) -> f64 {
-        self.inner.truncation_error()
+    /// Total analyzed non-Clifford RZ gates.
+    fn nonclifford_rz_total(&self) -> u64 {
+        self.inner.nonclifford_rz_total()
     }
 
     #[getter]
-    /// Number of SVDs where `max_bond_dim` was the binding cap.
-    ///
-    /// This is a pure stored-state diagnostic: pending merged rotations are not
-    /// materialized.
-    fn bond_cap_hits(&self) -> u64 {
-        self.inner.bond_cap_hits()
-    }
-
-    /// Return diagnostics for deferred magic-state projections since reset.
-    ///
-    /// Pending unflushed operations are not reflected and can later consume
-    /// injection capacity. Each dictionary reports ancilla, support size, MPS
-    /// span, and bond dimensions before and after projection.
-    fn projection_records(&self, py: Python<'_>) -> PyResult<Vec<Py<PyDict>>> {
-        self.inner
-            .projection_records()
-            .iter()
-            .map(|record| {
-                let result = PyDict::new(py);
-                result.set_item("ancilla", record.ancilla)?;
-                result.set_item("support_size", record.support_size)?;
-                result.set_item("mps_span", record.mps_span)?;
-                result.set_item("bond_before", record.bond_before)?;
-                result.set_item("bond_after", record.bond_after)?;
-                Ok(result.unbind())
-            })
-            .collect()
+    /// RZ gates whose deferred-injection `RZ(2*angle)` correction is Clifford.
+    fn injectable_clifford_correction(&self) -> u64 {
+        self.inner.injectable_clifford_correction()
     }
 
     #[getter]
-    /// Peak MPS bond dimension observed during deferred projections.
-    ///
-    /// Returns zero until `project_all()` or an MZ gate projects an injection.
-    /// Pending unflushed operations are not reflected and can later consume
-    /// injection capacity.
-    fn projection_peak_bond(&self) -> usize {
-        self.inner.projection_peak_bond()
+    /// OFD nullity: tracked flip-pattern count minus GF(2) rank.
+    fn nullity(&self) -> usize {
+        self.inner.nullity()
     }
 
-    /// Return runtime non-Clifford path counters as a dictionary.
-    ///
-    /// Pending unflushed operations are not reflected and can later consume
-    /// injection capacity. Deferred injections remain unprojected.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        crate::stab_mps_stats_to_dict(py, &self.inner.stats)
+    #[getter]
+    /// GF(2) rank of accumulated flip patterns.
+    fn rank(&self) -> usize {
+        self.inner.rank()
     }
 
-    /// Materialize pending merged RZ rotations.
+    #[getter]
+    /// Theoretical STN bond upper bound, `2**nullity`.
     ///
-    /// Flushing a non-Clifford merged rotation can consume injection capacity.
-    /// This does not project already deferred injections.
-    fn flush(&mut self) {
-        self.inner.flush();
+    /// Saturates at the platform's maximum unsigned integer on overflow.
+    fn bond_dim_bound(&self) -> usize {
+        self.inner.bond_dim_bound()
     }
 
-    /// Project all deferred magic-state ancillas and apply their corrections.
+    /// Return a heuristic simulator recommendation dictionary.
     ///
-    /// This is the explicit MAST completion step. An MZ gate calls it
-    /// automatically before measuring the requested data qubit.
-    fn project_all(&mut self) {
-        self.inner.project_all();
+    /// The `simulator` and `reason` fields use these ordered thresholds: pure
+    /// Clifford -> `ch_form`; otherwise `n <= 14` -> `state_vector`; otherwise
+    /// nullity `<= 6` -> `stab_mps`; otherwise non-Clifford count `<= 40` ->
+    /// `stab_vec`; otherwise -> `stab_mps` with adaptive growth suggested.
+    fn recommend(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let recommendation = self.inner.recommend();
+        let result = PyDict::new(py);
+        result.set_item("simulator", simulator_name(recommendation.kind))?;
+        result.set_item("reason", recommendation.reason)?;
+        Ok(result.unbind())
     }
 
-    // ---- Gate dispatch ----
+    /// Return simulator, injection, capacity, warning, and reason fields.
+    ///
+    /// `ancilla_budget` counts fresh ancillas available for deferral. `None`
+    /// yields `deferred_feasible=None` and a warning; a sufficient budget yields
+    /// deferred injection; an insufficient nonzero budget yields immediate
+    /// injection; zero yields direct application and the same insufficient-
+    /// budget warning. Injection is always direct when the selected simulator
+    /// is not `stab_mps` or `mast`. `deferred_ancillas_required` counts every
+    /// non-Clifford RZ, while `injectable_count` counts only gates with Clifford
+    /// corrections. Recommendations are heuristic.
+    #[pyo3(signature = (ancilla_budget=None))]
+    fn advise(&self, py: Python<'_>, ancilla_budget: Option<usize>) -> PyResult<Py<PyDict>> {
+        let advice = self.inner.advise(ancilla_budget);
+        let result = PyDict::new(py);
+        result.set_item("simulator", simulator_name(advice.simulator))?;
+        result.set_item("injection", injection_name(advice.injection))?;
+        result.set_item("injectable_count", advice.injectable_count)?;
+        result.set_item(
+            "deferred_ancillas_required",
+            advice.deferred_ancillas_required,
+        )?;
+        result.set_item("deferred_feasible", advice.deferred_feasible)?;
+        result.set_item("warnings", advice.warnings)?;
+        result.set_item("reason", advice.reason)?;
+        Ok(result.unbind())
+    }
 
-    /// Apply one accepted gate symbol to one data qubit.
+    // ---- Gate dispatch (matches StabMps and Mast) ----
+
+    /// Replay one accepted gate symbol on one qubit.
     ///
     /// `location` is zero-based. RX, RY, and RZ require
-    /// `params={"angle": radians}`. MZ returns `0` or `1` and first completes
-    /// every deferred injection; other gates return `None`. Raises `IndexError`
-    /// for an invalid qubit, `ValueError` for an unknown symbol or invalid angle,
-    /// and `PanicException` if injection capacity is exceeded. See `run_gate`
-    /// for the complete symbol table.
+    /// `params={"angle": radians}`. Measurement symbols return `0` or `1`;
+    /// other gates return `None`. Raises `IndexError` for an invalid qubit and
+    /// `ValueError` for an unknown symbol or invalid angle. See `run_gate` for
+    /// the complete symbol table.
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_1q_gate(
         &mut self,
@@ -407,13 +324,12 @@ impl PyMast {
         }
     }
 
-    /// Apply one accepted two-qubit gate to an ordered data-qubit pair.
+    /// Replay one accepted two-qubit gate on an ordered qubit pair.
     ///
     /// `location` must be a two-element tuple of distinct zero-based indices;
     /// the first is the control for controlled gates. RZZ requires
-    /// `params={"angle": radians}`. Raises `IndexError`, `ValueError`, or
-    /// `PanicException` for invalid indices/arguments or exhausted injection
-    /// capacity. See `run_gate` for the complete symbol table.
+    /// `params={"angle": radians}`. Raises `IndexError` or `ValueError` for
+    /// invalid arguments. See `run_gate` for the complete symbol table.
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_2q_gate(
         &mut self,
@@ -486,7 +402,7 @@ impl PyMast {
         }
     }
 
-    /// Apply a gate to a set of one- or two-qubit locations.
+    /// Replay a gate on a set of one- or two-qubit locations.
     ///
     /// `locations` must be a `set`; each item is either a zero-based qubit
     /// integer or an ordered two-integer tuple. Rotation keyword `angle` is in
@@ -511,9 +427,8 @@ impl PyMast {
     /// | 2 | `RZZ` | `angle` in radians |
     ///
     /// Raises `TypeError` when `locations` or its items have the wrong Python
-    /// shape, `IndexError` for an out-of-range qubit, `ValueError` for bad arity,
-    /// repeated pair members, an unsupported symbol, or an invalid angle, and
-    /// `PanicException` if injection capacity is exceeded.
+    /// shape, `IndexError` for an out-of-range qubit, and `ValueError` for bad
+    /// arity, repeated pair members, an unsupported symbol, or an invalid angle.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,
@@ -546,6 +461,6 @@ impl PyMast {
                 output.set_item(location, value)?;
             }
         }
-        Ok(output.into())
+        Ok(output.unbind())
     }
 }

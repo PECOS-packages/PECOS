@@ -42,37 +42,70 @@ pub mod tableau_compose;
 use crate::mps::{Mps, MpsConfig};
 use nalgebra::DMatrix;
 use num_complex::Complex64;
-use pecos_core::{Angle64, QubitId};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_random::PecosRng;
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, SparseStabY,
 };
 
-/// Known eigenstate at an MPS site, for exact disentangling.
-/// Tracks which Pauli basis the site is a definite eigenstate of.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SiteEigenstate {
-    /// |0⟩ or |1⟩ (Z eigenstate). Compatible with X or Y Pauli rotations.
-    Z(bool),
-    /// |+⟩ or |−⟩ (X eigenstate). Compatible with Z or Y Pauli rotations.
-    X(bool),
-    /// |+i⟩ or |−i⟩ (Y eigenstate). Compatible with X or Z Pauli rotations.
-    Y(bool),
+fn initial_tableau_and_rng(num_qubits: usize, seed: Option<u64>) -> (SparseStabY, PecosRng) {
+    if let Some(seed) = seed {
+        return (
+            SparseStabY::with_seed(num_qubits, seed).with_destab_sign_tracking(),
+            PecosRng::seed_from_u64(seed),
+        );
+    }
+
+    let tableau = SparseStabY::new(num_qubits).with_destab_sign_tracking();
+    let rng = tableau.rng().clone();
+    (tableau, rng)
 }
 
-/// A gate applied in the MPS index space (for disentangling).
-#[derive(Clone)]
-pub(crate) struct MpsIndexGate {
-    site: usize,
-    inverse_matrix: DMatrix<Complex64>,
+fn reset_tableau_and_rng(
+    num_qubits: usize,
+    was_seeded: bool,
+    current_rng: &mut PecosRng,
+) -> (SparseStabY, PecosRng) {
+    if was_seeded {
+        // A seeded reset continues deterministically from the live simulator
+        // stream instead of replaying the construction stream. Give the two
+        // rebuilt RNGs independent seeds drawn in a stable order.
+        let tableau_seed = current_rng.next_u64();
+        let simulator_seed = current_rng.next_u64();
+        return (
+            SparseStabY::with_seed(num_qubits, tableau_seed).with_destab_sign_tracking(),
+            PecosRng::seed_from_u64(simulator_seed),
+        );
+    }
+
+    initial_tableau_and_rng(num_qubits, None)
+}
+
+/// Known Pauli eigenstate at an MPS site, used for exact disentangling.
+///
+/// For every variant, `false` denotes the `+1` eigenstate and `true` the
+/// `-1` eigenstate. Thus `Z(false)` is `|0>`, `Z(true)` is `|1>`,
+/// `X(false)` is `|+>`, `X(true)` is `|->`, `Y(false)` is `|+i>`, and
+/// `Y(true)` is `|-i>`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SiteEigenstate {
+    /// A Z eigenstate: `false` is `|0>` and `true` is `|1>`.
+    Z(bool),
+    /// An X eigenstate: `false` is `|+>` and `true` is `|->`.
+    X(bool),
+    /// A Y eigenstate: `false` is `|+i>` and `true` is `|-i>`.
+    Y(bool),
 }
 
 /// Single-qubit Pauli kind for specifying multi-qubit Pauli strings
 /// (e.g., stabilizer generators of QEC codes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PauliKind {
+    /// Pauli X.
     X,
+    /// Pauli Y.
     Y,
+    /// Pauli Z.
     Z,
 }
 
@@ -87,7 +120,10 @@ enum SingleQubitCliffordKind {
     Z,
 }
 
-/// Runtime feature flags for `StabMps`, stored as a bitfield.
+/// Runtime feature flags for [`StabMps`], stored as a bitfield.
+///
+/// Each accessor and setter mirrors the equivalently named option on
+/// [`StabMpsBuilder`].
 #[derive(Clone, Copy, Debug)]
 pub struct StabMpsFlags(u8);
 
@@ -96,11 +132,12 @@ impl StabMpsFlags {
     const LAZY_MEASURE: u8 = 1 << 1;
     const MERGE_RZ: u8 = 1 << 2;
     const PAULI_FRAME_TRACKING: u8 = 1 << 3;
+    const NUMERICAL_FLAG_REDETECTION: u8 = 1 << 4;
 
-    /// Default flags: normalize enabled, everything else off.
+    /// Default flags: normalization and RZ merging enabled, everything else off.
     #[must_use]
     pub const fn new() -> Self {
-        Self(Self::NORMALIZE_AFTER_GATE)
+        Self(Self::NORMALIZE_AFTER_GATE | Self::MERGE_RZ)
     }
 
     fn get(self, bit: u8) -> bool {
@@ -116,32 +153,49 @@ impl StabMpsFlags {
     }
 
     #[must_use]
+    /// Return whether non-Clifford gates are followed by MPS normalization.
     pub fn normalize_after_gate(self) -> bool {
         self.get(Self::NORMALIZE_AFTER_GATE)
     }
+    /// Set whether non-Clifford gates are followed by MPS normalization.
     pub fn set_normalize_after_gate(&mut self, v: bool) {
         self.set(Self::NORMALIZE_AFTER_GATE, v);
     }
     #[must_use]
+    /// Return whether measurement uses the deferred virtual-frame path.
     pub fn lazy_measure(self) -> bool {
         self.get(Self::LAZY_MEASURE)
     }
+    /// Set whether measurement uses the deferred virtual-frame path.
     pub fn set_lazy_measure(&mut self, v: bool) {
         self.set(Self::LAZY_MEASURE, v);
     }
     #[must_use]
+    /// Return whether consecutive same-qubit RZ rotations are merged.
     pub fn merge_rz(self) -> bool {
         self.get(Self::MERGE_RZ)
     }
+    /// Set whether consecutive same-qubit RZ rotations are merged.
     pub fn set_merge_rz(&mut self, v: bool) {
         self.set(Self::MERGE_RZ, v);
     }
     #[must_use]
+    /// Return whether Pauli errors are tracked in a classical frame.
     pub fn pauli_frame_tracking(self) -> bool {
         self.get(Self::PAULI_FRAME_TRACKING)
     }
+    /// Set whether Pauli errors are tracked in a classical frame.
     pub fn set_pauli_frame_tracking(&mut self, v: bool) {
         self.set(Self::PAULI_FRAME_TRACKING, v);
+    }
+    #[must_use]
+    /// Return whether product-site eigenstate flags are recovered numerically.
+    pub fn numerical_flag_redetection(self) -> bool {
+        self.get(Self::NUMERICAL_FLAG_REDETECTION)
+    }
+    /// Set whether product-site eigenstate flags are recovered numerically.
+    pub fn set_numerical_flag_redetection(&mut self, v: bool) {
+        self.set(Self::NUMERICAL_FLAG_REDETECTION, v);
     }
 }
 
@@ -168,7 +222,7 @@ impl StabMpsBuilder {
     /// Maximum MPS bond dimension. Singular values beyond this are discarded
     /// during SVD truncation after two-site gates.
     ///
-    /// - Default: 64
+    /// - Default: 128
     /// - Higher values give more accuracy at the cost of memory and time
     /// - For n qubits, the exact max is 2^(n/2)
     #[must_use]
@@ -198,7 +252,14 @@ impl StabMpsBuilder {
         self
     }
 
-    /// Set the RNG seed for reproducible measurements.
+    /// Seed the simulator's [`pecos_random::PecosRng`] and stabilizer-tableau RNG.
+    ///
+    /// Fresh simulators built with the same seed, configuration, gates, noise
+    /// calls, measurements, and sampling calls consume the same random stream.
+    /// Reproducibility covers those stochastic results, not floating-point
+    /// equivalence across different PECOS versions or platforms. `reset()`
+    /// deterministically seeds its rebuilt tableau and continuing simulator RNG
+    /// from the current simulator-RNG stream; it does not replay this seed.
     #[must_use]
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
@@ -211,11 +272,21 @@ impl StabMpsBuilder {
     /// while bonds with high entanglement grow up to `max_bond_dim` (accurate).
     /// The discarded weight at each SVD stays below this fraction.
     ///
-    /// - Default: None (disabled, use fixed `max_bond_dim` only)
-    /// - Typical values: 1e-6 to 1e-3
+    /// - Default: 1e-8
+    /// - Typical values: 1e-8 to 1e-3
+    /// - `0.0` disables the adaptive bound: no positive discarded weight is
+    ///   permitted, so only `svd_cutoff` and `max_bond_dim` truncate
     /// - `max_bond_dim` still acts as a hard cap
+    ///
+    /// # Panics
+    ///
+    /// Panics if `error` is negative, NaN, or infinite.
     #[must_use]
     pub fn max_truncation_error(mut self, error: f64) -> Self {
+        assert!(
+            error.is_finite() && error >= 0.0,
+            "max_truncation_error must be finite and non-negative"
+        );
         self.max_truncation_error = Some(error);
         self
     }
@@ -262,7 +333,7 @@ impl StabMpsBuilder {
     /// `auto_grow_max_bond_dim`, default 4096).
     ///
     /// Removes the manual tuning step for deep T-heavy circuits where
-    /// the default cap of 64 is insufficient. Cost: rebuild bond
+    /// the default cap of 128 is insufficient. Cost: rebuild bond
     /// allocation on growth (rare). Benefit: avoids surprise truncation
     /// when entanglement spikes.
     ///
@@ -313,7 +384,9 @@ impl StabMpsBuilder {
     /// models where every idle qubit receives a small RZ each time step:
     /// adjacent idle rounds merge into one non-Clifford op.
     ///
-    /// - Default: false.
+    /// - Default: true.
+    ///   MAST instead defaults to false so injection and ancilla-capacity use
+    ///   remains visible after each RZ call.
     /// - Semantics: strictly equivalent to applying each `rz` individually
     ///   (tableau and MPS paths both reduce non-Clifford count). No
     ///   accuracy trade-off.
@@ -325,17 +398,23 @@ impl StabMpsBuilder {
         self
     }
 
-    /// Preset for QEC-style workloads: stabilizer-code circuits with
-    /// non-Clifford noise (T gates, small-angle RZ), syndrome extraction,
-    /// magic-state distillation.
+    /// Numerically recover missing exact-disentangling |0> flags at product sites.
     ///
-    /// Sets:
-    /// - `max_truncation_error(1e-8)` — adaptive bond dim; bonds with low
-    ///   entanglement shrink naturally, saving time on deep circuits.
-    /// - Keeps `lazy_measure = false` — benchmarks (see `examples/qec_bench.rs`)
-    ///   show the default eager path is faster for typical QEC workloads.
-    /// - `max_bond_dim(128)` — 2× the library default, giving more headroom
-    ///   for adversarial T-heavy subcircuits before truncation hits the cap.
+    /// When enabled, a failed symbolic flag search checks candidate bond-one MPS
+    /// tensors using a fixed relative tolerance of 1e-12. Redetection
+    /// self-disables while lazy deferred operations are pending because the
+    /// stored tensors then differ from the effective MPS-frame state. Default:
+    /// false.
+    #[must_use]
+    pub fn numerical_flag_redetection(mut self, enable: bool) -> Self {
+        self.flags.set_numerical_flag_redetection(enable);
+        self
+    }
+
+    /// QEC-style preset retained for source compatibility.
+    ///
+    /// This now matches the general defaults: `max_bond_dim(128)`,
+    /// `max_truncation_error(1e-8)`, `merge_rz(true)`, and eager measurement.
     ///
     /// Override any of these with subsequent builder calls:
     /// ```
@@ -349,7 +428,7 @@ impl StabMpsBuilder {
         self.for_qec_with_bond_dim(128)
     }
 
-    /// Like `for_qec()` but with a caller-chosen `max_bond_dim` cap.
+    /// Like the general defaults but with a caller-chosen `max_bond_dim` cap.
     /// Use when the default 128 is too tight (deep T-heavy circuits)
     /// or too loose (memory-constrained environments).
     #[must_use]
@@ -368,23 +447,13 @@ impl StabMpsBuilder {
             max_truncation_error: self.max_truncation_error,
             parallel: self.parallel,
         };
-        let (tableau, rng) = if let Some(seed) = self.seed {
-            (
-                SparseStabY::with_seed(self.num_qubits, seed).with_destab_sign_tracking(),
-                PecosRng::seed_from_u64(seed),
-            )
-        } else {
-            (
-                SparseStabY::new(self.num_qubits).with_destab_sign_tracking(),
-                PecosRng::seed_from_u64(0),
-            )
-        };
+        let (tableau, rng) = initial_tableau_and_rng(self.num_qubits, self.seed);
         StabMps {
             num_qubits: self.num_qubits,
+            construction_seed: self.seed,
             tableau,
             mps: Mps::new(self.num_qubits, config.clone()),
             config,
-            mps_corrections: Vec::new(),
             global_phase: Complex64::new(1.0, 0.0),
             disent_flags: vec![Some(SiteEigenstate::Z(false)); self.num_qubits],
             gf2_matrix: ofd::Gf2FlipMatrix::new(self.num_qubits),
@@ -404,15 +473,65 @@ impl StabMpsBuilder {
     }
 }
 
-/// Stabilizer Tensor Network simulator.
+/// Stabilizer tensor-network simulator for Clifford circuits with non-Clifford rotations.
+///
+/// Clifford gates update a stabilizer tableau, while non-Clifford rotations
+/// update an MPS of coefficients. This is usually preferable to a dense state
+/// vector when the OFD nullity and resulting MPS bond dimensions remain small.
+///
+/// # Quick start
+///
+/// ```
+/// use pecos_core::{Angle64, QubitId};
+/// use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
+/// use pecos_stab_tn::stab_mps::StabMps;
+///
+/// let mut sim = StabMps::builder(2)
+///     .seed(7)
+///     .lazy_measure(true)
+///     .build();
+/// sim.h(&[QubitId(0)]);
+/// sim.cx(&[(QubitId(0), QubitId(1))]);
+/// sim.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(1)]);
+///
+/// let outcome = sim.mz(&[QubitId(0)])[0].outcome;
+/// sim.flush();
+/// let bits = [outcome, outcome];
+/// assert!((sim.prob_bitstring(&bits) - 1.0).abs() < 1e-12);
+/// ```
+///
+/// Bitstrings always use qubit-index order: `bits[q]` is qubit `q`. See the
+/// crate-level **Bitstring convention** section for conversion to a state-vector
+/// index.
+///
+/// # Read validity and accuracy checklist
+///
+/// Rust callers must call [`Self::flush`] before state and diagnostic reads when
+/// lazy measurement or merged RZ is enabled. If Pauli-frame tracking is enabled,
+/// call [`Self::flush_pauli_frame_to_state`] as well before reads that must include
+/// the physical Pauli frame. The Python bindings automatically perform
+/// `flush()` for state and MPS-diagnostic reads, but not for the pure
+/// `is_state_exact()` and `pragmatic_drift_count` diagnostics, and they do not
+/// implicitly materialize a Pauli frame.
+///
+/// Before relying on a state read, check all four diagnostics:
+///
+/// 1. [`Self::is_state_exact`] is `true` after the required flushes. It excludes
+///    MPS truncation from its definition of exactness.
+/// 2. [`Self::pragmatic_drift_count`] is zero. Nonzero drift from eager random
+///    measurement is irreversible; use `lazy_measure(true)` when later exact
+///    amplitudes are required.
+/// 3. [`Self::truncation_error`] is acceptable for the application.
+/// 4. [`Self::bond_cap_hits`] is zero, or the configured bond cap is known to be
+///    adequate despite having bound an SVD.
 #[derive(Clone)]
 pub struct StabMps {
     num_qubits: usize,
+    /// Seed supplied at construction, or `None` for entropy-backed resets.
+    construction_seed: Option<u64>,
     tableau: SparseStabY,
     mps: Mps,
     config: MpsConfig,
-    /// Inverse of disentangling gates applied to MPS (in index space).
-    mps_corrections: Vec<MpsIndexGate>,
     /// Global phase accumulated from Clifford-angle RZ gates.
     global_phase: Complex64,
     /// Per-site eigenstate tracking for exact disentangling.
@@ -453,6 +572,8 @@ pub struct StabMpsStats {
     pub single_site: u64,
     /// Non-Cliffords that fired multi-site disent (tableau right-compose).
     pub multi_disent: u64,
+    /// Missing |0> flags recovered numerically at product sites.
+    pub numerical_redetect: u64,
     /// Non-Cliffords that fell through to the std multi-site CNOT cascade path.
     pub multi_std: u64,
     /// Non-Cliffords that hit the Stabilizer branch (scalar or diagonal).
@@ -473,6 +594,13 @@ pub struct StabMpsStats {
     pub ofd_in_span_disent: u64,
 }
 
+struct PrefixSamplingContext<'a> {
+    rng: &'a mut PecosRng,
+    frame_x: &'a [bool],
+    num_qubits: usize,
+    output: &'a mut Vec<Vec<bool>>,
+}
+
 impl StabMps {
     /// Create a builder for configuring the simulator.
     #[must_use]
@@ -480,9 +608,9 @@ impl StabMps {
         StabMpsBuilder {
             num_qubits,
             seed: None,
-            max_bond_dim: 64,
+            max_bond_dim: 128,
             svd_cutoff: 1e-12,
-            max_truncation_error: None,
+            max_truncation_error: Some(1e-8),
             parallel: false,
             auto_grow_bond_dim: None,
             auto_grow_max_bond_dim: 4096,
@@ -496,13 +624,20 @@ impl StabMps {
         Self::builder(num_qubits).build()
     }
 
-    /// Create with a specific seed for reproducibility.
+    /// Create with a specific seed for reproducible stochastic operations.
+    ///
+    /// This seeds both the simulator's [`pecos_random::PecosRng`] and the
+    /// stabilizer tableau. Identically configured fresh instances reproduce an
+    /// identical call sequence. On reset, both rebuilt RNGs are seeded from the
+    /// current simulator stream, giving deterministic continuation rather than
+    /// replaying the construction stream.
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self::builder(num_qubits).seed(seed).build()
     }
 
     #[must_use]
+    /// Return the number of simulated qubits.
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
     }
@@ -558,13 +693,19 @@ impl StabMps {
         &self.gf2_matrix
     }
 
-    /// Wavefunction amplitude ⟨s|C|ψ⟩ for a given bitstring `s`.
+    /// Wavefunction amplitude `⟨s|C|psi⟩` for a given bitstring `s`.
     ///
     /// `bitstring` has length `num_qubits`; bit k corresponds to qubit k.
     /// Returns the unnormalized amplitude coefficient.
+    /// See the crate-level **Bitstring convention** section.
     ///
-    /// For n ≤ 14 uses `state_vector()` directly. Paper Liu-Clark 2412.17209
-    /// Section VI.B gives an iterative CAMPS-native algorithm for larger n.
+    /// This materializes the full dense state using [`Self::state_vector`], with
+    /// `O(2^n)` memory and greater construction cost than a single amplitude
+    /// needs; it is limited to `n <= 14`. Prefer [`Self::amplitude_iterative`]
+    /// for scalable selected-amplitude reads.
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// # Panics
     /// Panics if bitstring length doesn't match `num_qubits`, or n > 14.
@@ -577,12 +718,12 @@ impl StabMps {
         );
         assert!(self.num_qubits <= 14, "amplitude requires n <= 14");
         let sv = self.state_vector();
-        // Convert bitstring to index per state_vector convention:
-        // x = Σ_k σ_k * 2^{n-1-k} where σ_0 is MSB.
+        // Convert bitstring to the state_vector's little-endian index:
+        // x = Σ_q bitstring[q] * 2^q.
         let mut idx = 0usize;
-        for (k, &b) in bitstring.iter().enumerate() {
+        for (q, &b) in bitstring.iter().enumerate() {
             if b {
-                idx |= 1 << (self.num_qubits - 1 - k);
+                idx |= 1 << q;
             }
         }
         sv[idx]
@@ -597,6 +738,9 @@ impl StabMps {
     /// Building block for code-state fidelity at large `n` (sum over
     /// stabilizer group of `⟨Ψ|g|Ψ⟩`), variational energy estimation,
     /// and arbitrary-observable readout.
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// # Method
     /// Tableau-based decomposition: writes `P` as
@@ -641,6 +785,9 @@ impl StabMps {
     /// Scales to arbitrary `n` (uses `amplitude_iterative` for `⟨x|Ψ⟩` and
     /// CH-form `amplitude` + sequential measurement for `⟨x|s⟩` and
     /// stabilizer Born sampling).
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// Note: requires `n ≤ 64` due to CH-form's `usize`-indexed amplitude
     /// API; that's already a much higher limit than the SV path's `n ≤ 14`.
@@ -725,11 +872,8 @@ impl StabMps {
                 // from the correct Born distribution. Skip defensively.
                 continue;
             }
-            // Compute <x|Ψ> via amplitude_iterative.
-            // Convert bitstring to amplitude_iterative's convention:
-            // amplitude(bs) treats bs[k] as qubit (n-1-k), so we reverse.
-            let bs_rev: Vec<bool> = bitstring.iter().rev().copied().collect();
-            let amp_xpsi = self.amplitude_iterative(&bs_rev);
+            // Compute <x|Ψ>; both APIs use bitstring[q] for qubit q.
+            let amp_xpsi = self.amplitude_iterative(&bitstring);
             acc += amp_xpsi / amp_xs;
             samples_used += 1;
         }
@@ -768,6 +912,9 @@ impl StabMps {
     /// `StabMps::overlap_with_stabilizer` (CD Loschmidt MC) targeting one
     /// specific code state at a time.
     ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
+    ///
     /// # Panics
     /// Panics if any qubit index in a generator is ≥ `num_qubits`, or if
     /// `2^k` overflows `usize` (e.g., k > 62 on 64-bit).
@@ -804,12 +951,17 @@ impl StabMps {
 
     /// Complex amplitude ⟨s|Ψ⟩ via iterative forced projection without
     /// renormalization (Liu-Clark 2412.17209 Section VI.B).
+    /// `bitstring[q]` specifies qubit `q`; see the crate-level
+    /// **Bitstring convention** section.
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// Scales beyond `amplitude`'s n ≤ 14 limit by working directly on the
-    /// MPS + tableau. After forcing all N outcomes, the tableau encodes |s⟩
-    /// as a computational basis state and the MPS (left unnormalized)
-    /// contains the amplitude at its |0^N⟩ coefficient:
-    ///   amp(s) = `global_phase` · `ν_final(0^N)`.
+    /// MPS + tableau. After forcing all N outcomes, the tableau encodes the
+    /// physical Z constraints and the MPS (left unnormalized) contains one
+    /// selected virtual-basis coefficient. The final tableau's GF(2) sign
+    /// equations identify that coefficient without enumerating the state.
     ///
     /// # Correctness
     /// Exact match to `amplitude` (SV-based) at n ≤ 14 for Clifford+T
@@ -827,20 +979,21 @@ impl StabMps {
         );
         let mut tab = self.tableau.clone();
         let mut mps = self.mps.clone();
-        let n = self.num_qubits;
-        // Convention: `amplitude(bs)` treats `bs[k]` as qubit (n-1-k), so
-        // project qubit q with bitstring[n-1-q].
-        for q in 0..n {
-            let s_q = bitstring[n - 1 - q];
+        for (q, &s_q) in bitstring.iter().enumerate() {
             if !measure::project_forced_z_unnormalized(&mut tab, &mut mps, q, s_q) {
                 return Complex64::new(0.0, 0.0);
             }
         }
-        let zero: Vec<u8> = vec![0u8; n];
-        self.global_phase * mps.amplitude(&zero)
+        let mps_index = measure::projected_mps_basis_index(&tab, bitstring);
+        self.global_phase * mps.amplitude(&mps_index)
     }
 
     /// Probability of measuring `bitstring` in the computational basis.
+    /// `bitstring[q]` specifies qubit `q`; see the crate-level
+    /// **Bitstring convention** section.
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// Implements Liu-Clark 2412.17209 Algorithm 3 (Section VI.A): iterative
     /// forced projection of the CAMPS state. For each qubit k:
@@ -863,11 +1016,8 @@ impl StabMps {
         );
         let mut tab = self.tableau.clone();
         let mut mps = self.mps.clone();
-        let n = self.num_qubits;
         let mut total_prob: f64 = 1.0;
-        // Convention: bitstring[k] is qubit (n-1-k) (matches `amplitude`).
-        for q in 0..n {
-            let s_q = bitstring[n - 1 - q];
+        for (q, &s_q) in bitstring.iter().enumerate() {
             let pi_q = measure::project_forced_z(&mut tab, &mut mps, q, s_q);
             total_prob *= pi_q;
             if total_prob < 1e-30 {
@@ -879,6 +1029,9 @@ impl StabMps {
 
     /// Second Rényi entropy `S_2` = -`ln(Tr_A(ρ_A²))` at a bipartition
     /// (qubits 0..cut vs qubits cut..N).
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is enabled,
+    /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// Uses the full `state_vector` for computation — works only for n <= 14.
     /// Paper Liu-Clark 2412.17209 Section VI.C gives an MPS-based algorithm
@@ -941,6 +1094,8 @@ impl StabMps {
     /// Complexity: ∏_j (1 + `non_zero_bloch_components(j)`) combinations. For
     /// Clifford+T with sparse T gates most sites give count=1 → 2^N fallback.
     /// Full-magic sites give count=3 -> 4^N worst case. Error if > 2^22.
+    /// Call [`Self::flush`] before this read when lazy measurement or RZ
+    /// merging is enabled, and materialize a tracked Pauli frame if required.
     ///
     /// # Errors
     ///
@@ -963,6 +1118,8 @@ impl StabMps {
     /// Scales to much larger n than PCE when applicable: `2^null_dim`
     /// enumerations vs 2^N. For pure-Clifford Bell on n=100, `null_dim` is
     /// typically 0-2.
+    /// Call [`Self::flush`] before this read when lazy measurement or RZ
+    /// merging is enabled, and materialize a tracked Pauli frame if required.
     ///
     /// # Errors
     ///
@@ -988,7 +1145,11 @@ impl StabMps {
         renyi::compute_s2_pce(&self.mps, &self.tableau, &mask)
     }
 
-    /// Access the MPS (for testing).
+    /// Access the stored coefficient MPS.
+    ///
+    /// Call [`Self::flush`] first if the returned tensors must include pending
+    /// lazy-measurement operations or merged RZ rotations. A tracked Pauli
+    /// frame is stored separately until explicitly materialized.
     #[must_use]
     pub fn mps(&self) -> &Mps {
         &self.mps
@@ -996,6 +1157,7 @@ impl StabMps {
 
     /// Accumulated truncation error so far (approximate `1 - |⟨ψ_exact|ψ⟩|²`).
     /// Zero if no SVD has dropped any singular values above `svd_cutoff`.
+    /// Call [`Self::flush`] first to include SVDs triggered by pending work.
     #[must_use]
     pub fn truncation_error(&self) -> f64 {
         self.mps.truncation_error()
@@ -1004,12 +1166,17 @@ impl StabMps {
     /// Number of SVDs where `max_bond_dim` was the binding cap. If > 0 the
     /// state is under-resolved; consider raising `max_bond_dim` or loosening
     /// `max_truncation_error`.
+    /// Call [`Self::flush`] first to include SVDs triggered by pending work.
     #[must_use]
     pub fn bond_cap_hits(&self) -> u64 {
         self.mps.bond_cap_hits()
     }
 
-    /// Access the tableau (for testing).
+    /// Access the stored stabilizer tableau.
+    ///
+    /// Call [`Self::flush`] first when the read must include pending merged RZ
+    /// rotations. Lazy virtual-frame operations and a tracked Pauli frame can
+    /// remain represented outside this tableau.
     #[must_use]
     pub fn tableau(&self) -> &SparseStabY {
         &self.tableau
@@ -1017,17 +1184,39 @@ impl StabMps {
 
     /// Run Clifford disentangling sweeps to reduce MPS bond dimension.
     ///
-    /// Tries two-qubit Clifford gates at each bond. If one reduces entanglement,
-    /// it's applied to the MPS and the inverse to the tableau.
-    /// Returns the number of gates applied.
+    /// Each sweep examines every internal bond and tries 20 inequivalent
+    /// entangling two-qubit Clifford candidates, performing SVD-based entropy
+    /// estimates for them. If a candidate reduces entanglement, it is applied
+    /// exactly to the coefficient MPS and its inverse is right-composed into
+    /// the tableau, preserving the represented state for every read path. The
+    /// operation adds no approximation beyond the MPS configuration's normal
+    /// SVD truncation.
+    ///
+    /// Deferred lazy-measurement operations and pending merged RZ rotations
+    /// are materialized before the first sweep.
+    ///
+    /// This can be expensive compared with a gate update; use it after a batch
+    /// of non-Clifford gates or when observed bond growth justifies a sweep, not
+    /// after every gate. `max_sweeps` bounds full-chain passes. Returns the
+    /// number of accepted Clifford gates.
     pub fn disentangle(&mut self, max_sweeps: usize) -> usize {
-        disentangle::disentangle(&mut self.mps, &mut self.mps_corrections, max_sweeps)
+        self.flush();
+        disentangle::disentangle(
+            &mut self.mps,
+            &mut self.tableau,
+            &mut self.disent_flags,
+            max_sweeps,
+        )
     }
 
-    /// Compute the full state vector (for testing on small systems).
+    /// Compute the full state vector for a small system.
     ///
     /// Directly computes |psi> = `Σ_x` `ν_x` * D^x * |stab> from the MPS
     /// coefficients and the current stabilizer/destabilizer generators.
+    /// It allocates `2^n` complex amplitudes and constructs dense `2^n` by
+    /// `2^n` operators, and is therefore restricted to `n <= 14`. For scalable
+    /// reads, use [`Self::amplitude_iterative`], [`Self::prob_bitstring`],
+    /// [`Self::pauli_expectation`], or [`Self::sample_bitstrings`].
     ///
     /// # Accuracy caveats (read if you have outstanding measurements)
     ///
@@ -1039,8 +1228,10 @@ impl StabMps {
     ///   `state_vector`/`amplitude` reads can drift. If exact state is
     ///   needed, use `StabMpsBuilder::lazy_measure(true)`.
     /// - **Merged-RZ pending buffer** (`merge_rz = true`): any pending
-    ///   merged-RZ angle has not been applied yet. Call `StabMps::flush()`
-    ///   first.
+    ///   merged-RZ angle has not been applied yet.
+    /// - **Lazy-measurement deferred operations** (`lazy_measure = true`):
+    ///   queued virtual-frame operations have not been applied to the stored
+    ///   MPS yet. Call `StabMps::flush()` before either kind of read.
     /// - **Pauli-frame tracking** (`pauli_frame_tracking = true`): the
     ///   frame's Pauli bits are not in the returned state vector. Call
     ///   `StabMps::flush_pauli_frame_to_state()` first for frame-applied
@@ -1058,26 +1249,7 @@ impl StabMps {
 
         let n = self.num_qubits;
         let dim = 1usize << n;
-        let mut mps_sv = self.mps.state_vector();
-
-        // Undo disentangling corrections (reverse order) so MPS SV matches the tableau.
-        // MPS uses MSB-first: bit (n-1-k) = destabilizer index k.
-        for correction in self.mps_corrections.iter().rev() {
-            let k = correction.site;
-            let bit_hi = n - 1 - k;
-            let bit_lo = n - 1 - (k + 1);
-            let mat = &correction.inverse_matrix;
-            let mut new_sv = vec![Complex64::new(0.0, 0.0); dim];
-            for (idx, &sv_val) in mps_sv.iter().enumerate() {
-                let sigma_in = ((idx >> bit_hi) & 1) * 2 + ((idx >> bit_lo) & 1);
-                let base = idx & !(1 << bit_hi) & !(1 << bit_lo);
-                for sigma_out in 0..4usize {
-                    let out_idx = base | ((sigma_out >> 1) << bit_hi) | ((sigma_out & 1) << bit_lo);
-                    new_sv[out_idx] += mat[(sigma_out, sigma_in)] * sv_val;
-                }
-            }
-            mps_sv = new_sv;
-        }
+        let mps_sv = self.mps.state_vector();
 
         // Build Pauli matrices for generator construction.
         let i2 = DMatrix::<Complex64>::identity(2, 2);
@@ -1208,11 +1380,20 @@ impl StabMps {
     /// returns the bitstring. The original simulator state is unchanged
     /// (only the internal RNG advances, to ensure each shot uses a
     /// distinct RNG seed).
+    /// This method and [`Self::sample_bitstrings`] do not share an RNG stream,
+    /// so identically seeded runs are not shot-for-shot comparable across them.
     ///
-    /// `bitstring[k]` corresponds to qubit `k`'s outcome.
+    /// `bitstring[k]` corresponds to qubit `k`'s outcome. See the crate-level
+    /// **Bitstring convention** section.
     ///
     /// Useful for shot-based experiments (logical error rate estimation,
     /// outcome distribution histograms, etc.).
+    ///
+    /// Prefer [`Self::sample_bitstrings`] for multiple shots: this method pays
+    /// for a full simulator clone and all-qubit collapse per shot, whereas the
+    /// plural method shares each distinct measurement prefix. The repository's
+    /// `sampling_methods` release example measures tens-to-hundreds-fold speedups
+    /// for its 1,000-shot workloads (hardware and circuit dependent).
     pub fn sample_bitstring(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         use pecos_core::RngManageable;
         let mut shots = Vec::with_capacity(num_shots);
@@ -1235,6 +1416,136 @@ impl StabMps {
             shots.push(bitstring);
         }
         shots
+    }
+
+    /// Sample `num_shots` bitstrings from the current Born distribution,
+    /// sharing each distinct measurement-prefix projection across all shots
+    /// that take that branch.
+    ///
+    /// The original simulator state is preserved; only its RNG advances.
+    /// This method and [`Self::sample_bitstring`] do not share an RNG stream,
+    /// so identically seeded runs are not shot-for-shot comparable across them.
+    /// A working clone first materializes any lazy-measurement frame and then
+    /// all pending merged RZ rotations. Tracked Pauli X bits remain classical:
+    /// as in [`Self::sample_bitstring`], they swap reported Z outcomes without
+    /// changing the stored-state collapse. Pauli Z bits and frame phase do not
+    /// affect computational-basis probabilities.
+    ///
+    /// At each prefix containing `k` shots, a candidate zero child is cloned and
+    /// passed once through [`measure::project_forced_z`]. Its returned probability
+    /// drives the split, and the already-projected candidate is reused if the
+    /// zero branch is inhabited. The one child similarly receives exactly one
+    /// forced projection on the untouched parent. Thus every descending path
+    /// follows the same atomic projection sequence as [`Self::prob_bitstring`].
+    /// The clamped `p0` is tested against `k` uniforms in branch-local shot order,
+    /// with all node draws completed before visiting either child. Probabilities
+    /// below `1e-20`, the forced projector's tolerance, are zero; if either child
+    /// is zero-probability, the node consumes no RNG draws.
+    ///
+    /// Children are visited depth-first, outcome 0 before outcome 1, measuring
+    /// qubits `0..num_qubits`. Returned bitstrings therefore use the same
+    /// `bitstring[q] == qubit q` convention as [`Self::sample_bitstring`] and
+    /// are in lexicographic tree order, with copies of each leaf adjacent.
+    /// See the crate-level **Bitstring convention** section.
+    ///
+    /// Prefer this method over [`Self::sample_bitstring`] for multiple shots:
+    /// it shares projections for common prefixes instead of cloning and
+    /// collapsing the whole simulator once per shot. The repository's
+    /// `sampling_methods` release example measures tens-to-hundreds-fold speedups
+    /// for its 1,000-shot workloads (hardware and circuit dependent).
+    pub fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
+        if num_shots == 0 {
+            return Vec::new();
+        }
+
+        let mut working = self.clone();
+        measure::flush_deferred_ops(&mut working.mps, &mut working.deferred_ops);
+        working.flush_all_pending_rz();
+        let frame_x = if working.flags.pauli_frame_tracking() {
+            working.pauli_frame_x.clone()
+        } else {
+            vec![false; self.num_qubits]
+        };
+
+        let mut shots = Vec::with_capacity(num_shots);
+        let mut prefix = Vec::with_capacity(self.num_qubits);
+        let mut context = PrefixSamplingContext {
+            rng: &mut self.rng,
+            frame_x: &frame_x,
+            num_qubits: self.num_qubits,
+            output: &mut shots,
+        };
+        Self::sample_prefix_tree(
+            &mut working.tableau,
+            &mut working.mps,
+            num_shots,
+            &mut prefix,
+            &mut context,
+        );
+        shots
+    }
+
+    fn sample_prefix_tree(
+        tableau: &mut SparseStabY,
+        mps: &mut Mps,
+        num_shots: usize,
+        prefix: &mut Vec<bool>,
+        context: &mut PrefixSamplingContext<'_>,
+    ) {
+        const ZERO_PROBABILITY_TOLERANCE: f64 = 1e-20;
+
+        let q = prefix.len();
+        if q == context.num_qubits {
+            context
+                .output
+                .extend(std::iter::repeat_n(prefix.clone(), num_shots));
+            return;
+        }
+
+        // Probability and projection are deliberately atomic. In particular,
+        // do not pre-reduce the shared parent and then call `project_forced_z`:
+        // pre-reduction can produce a trivial MPS, and a second entry would take
+        // the trivial fast path instead of completing the in-progress general
+        // projection as `prob_bitstring` does.
+        let mut zero_tableau = tableau.clone();
+        let mut zero_mps = mps.clone();
+        let probability_zero =
+            measure::project_forced_z(&mut zero_tableau, &mut zero_mps, q, context.frame_x[q])
+                .clamp(0.0, 1.0);
+        let probability_one = 1.0 - probability_zero;
+        let num_zero = if probability_zero < ZERO_PROBABILITY_TOLERANCE {
+            0
+        } else if probability_one < ZERO_PROBABILITY_TOLERANCE {
+            num_shots
+        } else {
+            (0..num_shots)
+                .filter(|_| context.rng.next_f64() < probability_zero)
+                .count()
+        };
+        let num_one = num_shots - num_zero;
+
+        if num_zero > 0 {
+            prefix.push(false);
+            Self::sample_prefix_tree(&mut zero_tableau, &mut zero_mps, num_zero, prefix, context);
+            prefix.pop();
+        }
+
+        if num_one > 0 {
+            let projected_probability =
+                measure::project_forced_z(tableau, mps, q, !context.frame_x[q]);
+            // Invariant: `probability_zero` and this forced-projection
+            // probability deterministically recompute the same expectation on
+            // identical parent states. A positive one-branch probability
+            // therefore cannot pair with a zero forced projection; this assert
+            // guards an internal consistency bug, not caller input.
+            assert!(
+                projected_probability > 0.0,
+                "positive-probability one branch rejected by forced projection at qubit {q}"
+            );
+            prefix.push(true);
+            Self::sample_prefix_tree(tableau, mps, num_one, prefix, context);
+            prefix.pop();
+        }
     }
 
     /// Auto-grow check: if `auto_grow_bond_dim` is enabled and the MPS
@@ -1398,9 +1709,9 @@ impl StabMps {
     ///
     /// Panics if any MPS gate application fails on a valid site.
     pub fn flush_pauli_frame_to_state(&mut self) {
-        // Flush pending RZ first so the tableau C reflects the true Clifford
-        // the frame will be composed with.
-        self.flush_all_pending_rz();
+        // Materialize the lazy virtual frame and pending RZs first so the
+        // tableau C and stored MPS are aligned before composing the Pauli frame.
+        self.flush();
 
         // Collect frame Paulis as a Pauli string.
         let mut paulis: Vec<(usize, pauli_decomp::PauliKindForDecomp)> = Vec::new();
@@ -1623,12 +1934,13 @@ impl StabMps {
         self.pragmatic_drift_count
     }
 
-    /// Apply any pending merged-RZ angles to the simulator state.
-    /// No-op when `merge_rz` is off. Call before `&self` read methods
-    /// (`state_vector`, `amplitude`, `prob_bitstring`, etc.) if `merge_rz`
-    /// is on and you want the read to reflect the most recent `rz` calls.
-    /// Measurements (`mz`) and `reset` flush automatically.
+    /// Materialize deferred lazy-measurement operations and any pending
+    /// merged-RZ angles into the simulator state. Call before `&self` read
+    /// methods (`state_vector`, `amplitude`, `prob_bitstring`, etc.) when
+    /// either feature is enabled. Measurements (`mz`) and `reset` flush the
+    /// state needed for their own operation automatically.
     pub fn flush(&mut self) {
+        measure::flush_deferred_ops(&mut self.mps, &mut self.deferred_ops);
         self.flush_all_pending_rz();
     }
 
@@ -1803,6 +2115,11 @@ impl StabMps {
             self.flags.normalize_after_gate(),
             &mut non_clifford::RzContext {
                 disent_flags: &mut self.disent_flags,
+                // Redetection reads stored tensors; with pending lazy deferred
+                // ops the effective state is V * stored MPS, so stored |0> does
+                // not imply effective |0>.
+                numerical_flag_redetection: self.flags.numerical_flag_redetection()
+                    && self.deferred_ops.is_empty(),
                 gf2_matrix: &mut self.gf2_matrix,
                 stats: &mut self.stats,
             },
@@ -1856,15 +2173,27 @@ impl StabMps {
 }
 
 impl QuantumSimulator for StabMps {
+    /// Reset the state and diagnostics as if newly constructed with the
+    /// retained configuration.
+    ///
+    /// For a seeded simulator, the rebuilt tableau seed and continuing
+    /// simulator-RNG seed are drawn from the current simulator stream. This is
+    /// deterministic continuation, not replay of the construction stream. An
+    /// unseeded simulator obtains fresh entropy.
     fn reset(&mut self) -> &mut Self {
-        self.tableau = SparseStabY::new(self.num_qubits).with_destab_sign_tracking();
+        (self.tableau, self.rng) = reset_tableau_and_rng(
+            self.num_qubits,
+            self.construction_seed.is_some(),
+            &mut self.rng,
+        );
         self.mps = Mps::new(self.num_qubits, self.config.clone());
-        self.mps_corrections.clear();
         self.global_phase = Complex64::new(1.0, 0.0);
         self.disent_flags = vec![Some(SiteEigenstate::Z(false)); self.num_qubits];
         self.gf2_matrix.reset();
+        self.stats = StabMpsStats::default();
         self.deferred_ops.clear();
         self.pragmatic_drift_count = 0;
+        self.last_truncation_error = 0.0;
         for slot in &mut self.pending_rz {
             *slot = None;
         }
@@ -2084,7 +2413,7 @@ mod tests {
     fn test_gf2_diagnostic_single_t() {
         // Single T gate: 1 non-Clifford gate, flip pattern has rank 1
         // Theoretical min bond dim = 2^(1-1) = 1
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         assert_eq!(stn.gf2_matrix().num_gates(), 1);
@@ -2095,7 +2424,7 @@ mod tests {
     #[test]
     fn test_gf2_diagnostic_two_independent_t() {
         // Two T gates on independent qubits: rank 2, min bond dim = 1
-        let mut stn = StabMps::new(4);
+        let mut stn = StabMps::builder(4).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.h(&[QubitId(2)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
@@ -2108,7 +2437,7 @@ mod tests {
     #[test]
     fn test_gf2_diagnostic_entangled_t() {
         // Entangled state + T gates: check GF(2) tracking works
-        let mut stn = StabMps::new(3);
+        let mut stn = StabMps::builder(3).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.cx(&[(QubitId(1), QubitId(2))]);
@@ -2128,7 +2457,7 @@ mod tests {
     #[test]
     fn test_gf2_stabilizer_case_not_tracked() {
         // T on |0⟩: Z_0 is a stabilizer, no flip sites, not tracked in GF(2) matrix
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         assert_eq!(stn.gf2_matrix().num_gates(), 0); // Stabilizer case: no flip
     }
@@ -2141,7 +2470,7 @@ mod tests {
     fn test_disentangle_single_site_case() {
         use pecos_simulators::DenseStateVec;
         let theta = Angle64::from_radians(0.7);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
         stn.h(&[QubitId(0)]);
@@ -2175,7 +2504,7 @@ mod tests {
     fn test_disentangle_multi_site_bell_plus_rz() {
         use pecos_simulators::DenseStateVec;
         let theta = Angle64::from_radians(0.7);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
         stn.h(&[QubitId(0)]);
@@ -2214,7 +2543,7 @@ mod tests {
     fn test_disentangle_yy_rotation() {
         use pecos_simulators::DenseStateVec;
         let theta = Angle64::from_radians(0.3);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
         // Construct a state where RZ decomposition has pauli_map=[(0,Y),(1,Y)]
@@ -2277,7 +2606,7 @@ mod tests {
     fn test_737_step14_std_only() {
         use pecos_simulators::DenseStateVec;
         let q = |i: usize| QubitId(i);
-        let mut stn = StabMps::new(4);
+        let mut stn = StabMps::builder(4).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(4);
         let apply = |stn: &mut StabMps, r: &mut DenseStateVec, step: usize| match step {
             0 => {
@@ -2371,7 +2700,7 @@ mod tests {
     #[test]
     fn test_span_decomposition_on_real_simulation() {
         let q = |i: usize| QubitId(i);
-        let mut stn = StabMps::with_seed(3, 42);
+        let mut stn = StabMps::builder(3).seed(42).merge_rz(false).build();
         // Bring qubits out of Z-eigenstate so T decomposes via DestabilizerFlip.
         stn.h(&[q(0), q(1), q(2)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[q(0)]);
@@ -2536,6 +2865,67 @@ mod tests {
         let s = stn.amplitude(&[false]);
         eprintln!("T|+⟩: iter={a} sv={s}");
         assert!((a - s).norm() < 1e-9);
+    }
+
+    #[test]
+    fn test_amplitude_iterative_h_rz_h_regression() {
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.9), &[QubitId(0)]);
+        stn.h(&[QubitId(0)]);
+
+        let amplitude = stn.amplitude_iterative(&[true]);
+        let probability = stn.prob_bitstring(&[true]);
+        let expected_probability = 0.45_f64.sin().powi(2);
+        assert_relative_eq!(probability, expected_probability, epsilon = 1e-12);
+        assert_relative_eq!(amplitude.norm_sqr(), probability, epsilon = 1e-12);
+        assert!((amplitude - stn.amplitude(&[true])).norm() < 1e-12);
+    }
+
+    #[test]
+    fn test_amplitude_iterative_h_after_rotation_randomized() {
+        for n in 3..=5 {
+            for circuit_seed in 0..4_u64 {
+                let mut stn = StabMps::builder(n)
+                    .seed(circuit_seed)
+                    .merge_rz(false)
+                    .max_truncation_error(0.0)
+                    .build();
+                let mut rng_state = 0x9e37_79b9_7f4a_7c15_u64 ^ circuit_seed ^ n as u64;
+                let random = |state: &mut u64| {
+                    *state ^= *state << 13;
+                    *state ^= *state >> 7;
+                    *state ^= *state << 17;
+                    *state
+                };
+
+                for rotation_qubit in 0..n {
+                    let theta = 0.17 + (random(&mut rng_state) % 101) as f64 * 0.011;
+                    stn.h(&[QubitId(rotation_qubit)]);
+                    stn.rz(Angle64::from_radians(theta), &[QubitId(rotation_qubit)]);
+                    stn.h(&[QubitId(rotation_qubit)]);
+
+                    if rotation_qubit + 1 < n {
+                        let pair = if random(&mut rng_state) & 1 == 0 {
+                            (rotation_qubit, rotation_qubit + 1)
+                        } else {
+                            (rotation_qubit + 1, rotation_qubit)
+                        };
+                        stn.cx(&[(QubitId(pair.0), QubitId(pair.1))]);
+                    }
+                }
+
+                let state_vector = stn.state_vector();
+                for (index, &expected) in state_vector.iter().enumerate() {
+                    let bitstring: Vec<bool> = (0..n).map(|q| (index >> q) & 1 == 1).collect();
+                    let actual = stn.amplitude_iterative(&bitstring);
+                    assert!(
+                        (actual - expected).norm() < 1e-10,
+                        "n={n} seed={circuit_seed} index={index}: iterative={actual}, state-vector={expected}"
+                    );
+                }
+            }
+        }
     }
 
     /// n=2 no-entangle H+T: amp(00) = (e^{-iπ/8}/√2)/√2 = e^{-iπ/8}/2.
@@ -2768,7 +3158,7 @@ mod tests {
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         let mut max_diff: f64 = 0.0;
         for idx in 0..16 {
-            let bs: Vec<bool> = (0..4).map(|k| (idx >> (3 - k)) & 1 == 1).collect();
+            let bs: Vec<bool> = (0..4).map(|q| (idx >> q) & 1 == 1).collect();
             let p = stn.prob_bitstring(&bs);
             let a = stn.amplitude(&bs);
             let diff = (p - a.norm_sqr()).abs();
@@ -3387,6 +3777,84 @@ mod tests {
         }
     }
 
+    fn seed_10504_honest_basis_change_circuit() -> StabMps {
+        let q = |index| QubitId(index);
+        let t = Angle64::QUARTER_TURN / 2u64;
+        let mut stn = StabMps::builder(5)
+            .seed(10_504)
+            .merge_rz(false)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[q(0), q(1), q(2), q(3)]);
+        stn.cx(&[(q(4), q(1))]);
+        stn.cx(&[(q(0), q(4))]);
+        stn.rz(t, &[q(3)]);
+        stn.cx(&[(q(0), q(4))]);
+        stn.sz(&[q(0)]);
+        stn.cx(&[(q(2), q(3))]);
+        stn.rz(t, &[q(1)]);
+        stn.h(&[q(1)]);
+        stn.sz(&[q(3)]);
+        stn.h(&[q(2)]);
+        stn.sz(&[q(1)]);
+        stn.rz(t, &[q(4)]);
+        stn.h(&[q(4)]);
+        stn.cx(&[(q(4), q(1))]);
+        stn.cx(&[(q(0), q(3))]);
+        stn.cx(&[(q(2), q(4))]);
+        stn.rz(t, &[q(4)]);
+        stn.h(&[q(4)]);
+        stn
+    }
+
+    /// Regression for the phase-complete tableau gauge required after a
+    /// nondeterministic forced projection. Before the fix, projecting q1
+    /// omitted a virtual Z gauge. The resulting q4 decomposition was
+    /// `i X_1 Z_1`, but its conditional P(0) was reversed from 0.75 to 0.25.
+    #[test]
+    fn test_seed_10504_imaginary_phase_sequential_projection() {
+        let stn = seed_10504_honest_basis_change_circuit();
+        let full_state = stn.state_vector();
+        let mut tableau = stn.tableau.clone();
+        let mut mps = stn.mps.clone();
+        for q in 0..5 {
+            let mut expected_numerator = 0.0;
+            let mut expected_denominator = 0.0;
+            for (index, amplitude) in full_state.iter().enumerate() {
+                if (0..q).all(|prior| (index >> prior) & 1 == 0) {
+                    let weight = amplitude.norm_sqr();
+                    expected_denominator += weight;
+                    if (index >> q) & 1 == 0 {
+                        expected_numerator += weight;
+                    }
+                }
+            }
+            let expected = expected_numerator / expected_denominator;
+            let actual = measure::project_forced_z(&mut tableau, &mut mps, q, false);
+            assert!(
+                (actual - expected).abs() <= 1e-12,
+                "q={q}: forced conditional probability={actual}, dense oracle={expected}"
+            );
+            if q == 4 {
+                assert!((expected - 0.75).abs() <= 1e-12);
+            }
+        }
+
+        let expected_probability = full_state[0].norm_sqr();
+        let actual_probability = stn.prob_bitstring(&[false; 5]);
+        assert!(
+            (actual_probability - expected_probability).abs() <= 1e-12,
+            "prob_bitstring={actual_probability}, dense oracle={expected_probability}"
+        );
+
+        let expected_amplitude = full_state[0];
+        let actual_amplitude = stn.amplitude_iterative(&[false; 5]);
+        assert!(
+            (actual_amplitude - expected_amplitude).norm() <= 1e-12,
+            "amplitude_iterative={actual_amplitude}, dense oracle={expected_amplitude}"
+        );
+    }
+
     /// Regression: `prob_bitstring` matches SV across 30 random Clifford+T
     /// circuits at n=4..=6 after Bug #1 (Z-then-X), Bug #2 (`multiply_row`
     /// phase), and Bug #3 (MPS CNOT compensation via long-range gate) fixes.
@@ -3429,7 +3897,7 @@ mod tests {
                 }
             }
             for idx in 0..(1usize << n) {
-                let bs: Vec<bool> = (0..n).map(|k| (idx >> (n - 1 - k)) & 1 == 1).collect();
+                let bs: Vec<bool> = (0..n).map(|q| (idx >> q) & 1 == 1).collect();
                 let a_sv = stn.amplitude(&bs);
                 // Probability must match exactly (primary correctness check).
                 let p = stn.prob_bitstring(&bs);
@@ -3456,7 +3924,7 @@ mod tests {
 
         let mut max_diff: f64 = 0.0;
         for idx in 0..16 {
-            let bs: Vec<bool> = (0..4).map(|k| (idx >> (3 - k)) & 1 == 1).collect();
+            let bs: Vec<bool> = (0..4).map(|q| (idx >> q) & 1 == 1).collect();
             let a_iter = stn.amplitude_iterative(&bs);
             let a_sv = stn.amplitude(&bs);
             let diff = (a_iter - a_sv).norm();
@@ -3484,10 +3952,10 @@ mod tests {
         stn.cx(&[(q(0), q(15))]);
         let bs0 = vec![false; n];
         let a00 = stn.amplitude_iterative(&bs0);
-        // bs[k] corresponds to qubit (n-1-k); flip q0 and q15.
+        // bs[q] corresponds to qubit q; flip q0 and q15.
         let mut bs1 = vec![false; n];
-        bs1[n - 1] = true;
-        bs1[n - 1 - 15] = true;
+        bs1[0] = true;
+        bs1[15] = true;
         let a11 = stn.amplitude_iterative(&bs1);
         eprintln!("n=30 Bell: a(0)={a00:.4}, a(q0,q15=1)={a11:.4}");
         assert!((a00.norm_sqr() - 0.5).abs() < 1e-9);
@@ -3508,7 +3976,7 @@ mod tests {
         // Check every bitstring.
         let mut max_diff = 0f64;
         for idx in 0..16 {
-            let bs: Vec<bool> = (0..4).map(|k| (idx >> (3 - k)) & 1 == 1).collect();
+            let bs: Vec<bool> = (0..4).map(|q| (idx >> q) & 1 == 1).collect();
             let p = stn.prob_bitstring(&bs);
             let a = stn.amplitude(&bs);
             let diff = (p - a.norm_sqr()).abs();
@@ -3528,11 +3996,11 @@ mod tests {
         let mut stn = StabMps::with_seed(n, 5);
         stn.h(&[q(0)]);
         stn.cx(&[(q(0), q(15))]);
-        // bs[k] corresponds to qubit (n-1-k). Bell correlator: q0, q15 same.
+        // bs[q] corresponds to qubit q. Bell correlator: q0, q15 same.
         let bs0 = vec![false; n];
         let mut bs1 = vec![false; n];
-        bs1[n - 1] = true;
-        bs1[n - 1 - 15] = true;
+        bs1[0] = true;
+        bs1[15] = true;
         let p00 = stn.prob_bitstring(&bs0);
         let p11 = stn.prob_bitstring(&bs1);
         eprintln!("n=30 Bell: P(all0)={p00:.3} P(q0,q15=1)={p11:.3}");
@@ -3540,7 +4008,7 @@ mod tests {
         assert!((p11 - 0.5).abs() < 1e-9);
         // Disallowed: q0=1, q15=0.
         let mut bs_bad = vec![false; n];
-        bs_bad[n - 1] = true;
+        bs_bad[0] = true;
         assert!(stn.prob_bitstring(&bs_bad).abs() < 1e-9);
     }
 
@@ -3854,7 +4322,7 @@ mod tests {
         let q = |i: usize| QubitId(i);
 
         // Case 1: 5q, all T on distinct qubits after H -> nullity=0, bond=1.
-        let mut stn = StabMps::with_seed(5, 1);
+        let mut stn = StabMps::builder(5).seed(1).merge_rz(false).build();
         stn.h(&[q(0), q(1), q(2), q(3), q(4)]);
         for i in 0..5 {
             stn.rz(Angle64::QUARTER_TURN / 2u64, &[q(i)]);
@@ -3864,7 +4332,7 @@ mod tests {
 
         // Case 2: 3q, same qubit T'd multiple times with Cliffords between
         // -> some dependencies, nullity > 0, bond > 1.
-        let mut stn2 = StabMps::with_seed(3, 2);
+        let mut stn2 = StabMps::builder(3).seed(2).merge_rz(false).build();
         stn2.h(&[q(0), q(1), q(2)]);
         // Build dependencies: T on q0, CNOT(0,1), T on q1 (depends on q0's pattern?)
         // Force bond dim to grow by interleaving differently.
@@ -3892,7 +4360,7 @@ mod tests {
     #[test]
     fn test_ofd_analysis_api() {
         let q = |i: usize| QubitId(i);
-        let mut stn = StabMps::with_seed(5, 42);
+        let mut stn = StabMps::builder(5).seed(42).merge_rz(false).build();
         // H on all, then T's interspersed with CNOTs.
         stn.h(&[q(0), q(1), q(2), q(3), q(4)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[q(0)]);
@@ -4091,7 +4559,7 @@ mod tests {
     fn test_trace_seed_107_disent() {
         let q0 = QubitId(0);
         let q1 = QubitId(1);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.cx(&[(q0, q1)]);
         stn.sz(&[q1]);
         stn.rz(Angle64::from_radians(4.8946), &[q1]);
@@ -4163,7 +4631,7 @@ mod tests {
         use pecos_simulators::DenseStateVec;
         let q0 = QubitId(0);
         let q1 = QubitId(1);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
         let apply_both = |_stn: &mut StabMps,
@@ -4548,7 +5016,7 @@ mod tests {
         // Each Rz has a single flip site (no entangling gate between them).
         // Disentangling fires on both, recording single-site patterns.
         let theta = Angle64::from_radians(0.3);
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
 
         stn.h(&[QubitId(0)]);
         stn.h(&[QubitId(1)]);
@@ -4589,14 +5057,14 @@ mod tests {
 
     #[test]
     fn test_stn_t_gate_on_zero() {
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]); // T = RZ(pi/4)
         assert_eq!(stn.max_bond_dim(), 1);
     }
 
     #[test]
     fn test_stn_t_gate_on_plus() {
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]); // T gate
         assert_eq!(stn.max_bond_dim(), 1);
@@ -4605,7 +5073,7 @@ mod tests {
 
     #[test]
     fn test_stn_multiple_t_gates() {
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
@@ -4619,6 +5087,56 @@ mod tests {
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         stn.reset();
         assert_eq!(stn.max_bond_dim(), 1);
+    }
+
+    #[test]
+    fn test_stn_seeded_reset_continues_measurements_and_clears_stats() {
+        let run = |stn: &mut StabMps| {
+            stn.h(&[QubitId(0)]);
+            let tableau_outcome = stn.mz(&[QubitId(0)])[0].outcome;
+            stn.h(&[QubitId(1)]);
+            stn.rz(Angle64::from_radians(0.7), &[QubitId(1)]);
+            stn.h(&[QubitId(1)]);
+            let mps_outcome = stn.mz(&[QubitId(1)])[0].outcome;
+            [tableau_outcome, mps_outcome]
+        };
+
+        let collect = || {
+            let mut stn = StabMps::builder(2).seed(0x5eed).merge_rz(false).build();
+            let mut outcomes = Vec::with_capacity(200);
+            for _ in 0..200 {
+                stn.reset();
+                assert_eq!(stn.stats.total_nonclifford, 0);
+                assert_eq!(stn.stats.single_site, 0);
+                let result = run(&mut stn);
+                assert!(stn.stats.total_nonclifford > 0);
+                outcomes.push(result);
+            }
+            outcomes
+        };
+
+        let first = collect();
+        let second = collect();
+        assert_eq!(first, second, "seeded reset continuation must reproduce");
+        let ones = first.iter().filter(|result| result[0]).count();
+        eprintln!(
+            "StabMps seeded reset loop: zeros={}, ones={ones}",
+            200 - ones
+        );
+        assert!(
+            ones > 0 && ones < 200,
+            "reset loop must produce both outcomes"
+        );
+    }
+
+    #[test]
+    fn test_stn_unseeded_reset_smoke() {
+        let mut stn = StabMps::new(1);
+        stn.h(&[QubitId(0)]);
+        let _ = stn.mz(&[QubitId(0)]);
+        stn.reset();
+        stn.h(&[QubitId(0)]);
+        let _ = stn.mz(&[QubitId(0)]);
     }
 
     // --- Cross-validation tests against StabVec ---
@@ -4663,7 +5181,7 @@ mod tests {
     #[test]
     fn test_cross_validate_t_on_plus() {
         // H then T on single qubit
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         let stn_sv = stn.state_vector();
@@ -4679,7 +5197,7 @@ mod tests {
     #[test]
     fn test_cross_validate_t_on_zero() {
         // T on |0>
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         let stn_sv = stn.state_vector();
 
@@ -4693,7 +5211,7 @@ mod tests {
     #[test]
     fn test_cross_validate_bell_plus_t() {
         // Bell state then T on q0
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
@@ -4712,7 +5230,7 @@ mod tests {
     fn test_cross_validate_rz_arbitrary_angle() {
         // RZ at non-Clifford, non-T angle
         let theta = Angle64::from_radians(1.234);
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(theta, &[QubitId(0)]);
         let stn_sv = stn.state_vector();
@@ -4729,7 +5247,7 @@ mod tests {
     fn test_cross_validate_multiple_rz() {
         // H, T, H, T on single qubit (two non-Clifford layers)
         let t_angle = Angle64::QUARTER_TURN / 2u64;
-        let mut stn = StabMps::new(1);
+        let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(t_angle, &[QubitId(0)]);
         stn.h(&[QubitId(0)]);
@@ -4750,7 +5268,7 @@ mod tests {
     fn test_cross_validate_two_t_gates_2qubit() {
         // Two T gates on different qubits: H(0), H(1), T(0), T(1)
         let t_angle = Angle64::QUARTER_TURN / 2u64;
-        let mut stn = StabMps::new(2);
+        let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.h(&[QubitId(1)]);
         stn.rz(t_angle, &[QubitId(0)]);
@@ -4771,7 +5289,7 @@ mod tests {
     fn test_cross_validate_3qubit_circuit() {
         // 3-qubit circuit with Cliffords and T gates
         let t_angle = Angle64::QUARTER_TURN / 2u64;
-        let mut stn = StabMps::new(3);
+        let mut stn = StabMps::builder(3).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(t_angle, &[QubitId(0)]);
@@ -4889,18 +5407,25 @@ mod tests {
 
     #[test]
     fn test_disentangle_preserves_state() {
-        // Create a circuit, disentangle, verify state vector is unchanged.
+        use pecos_simulators::DenseStateVec;
+
+        // Create a circuit, disentangle, verify against an independent dense oracle.
         let t_angle = Angle64::QUARTER_TURN / 2u64;
         let mut stn = StabMps::new(3);
+        let mut oracle = DenseStateVec::new(3);
         stn.h(&[QubitId(0)]);
+        oracle.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
+        oracle.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(t_angle, &[QubitId(0)]);
+        oracle.rz(t_angle, &[QubitId(0)]);
         stn.h(&[QubitId(2)]);
+        oracle.h(&[QubitId(2)]);
         stn.cx(&[(QubitId(1), QubitId(2))]);
+        oracle.cx(&[(QubitId(1), QubitId(2))]);
         stn.rz(t_angle, &[QubitId(2)]);
+        oracle.rz(t_angle, &[QubitId(2)]);
 
-        // Get state vector before disentangling
-        let sv_before = stn.state_vector();
         let bond_before = stn.max_bond_dim();
 
         // Disentangle
@@ -4911,15 +5436,16 @@ mod tests {
             stn.max_bond_dim()
         );
 
-        // State vector should be unchanged (up to global phase)
+        // State vector should match the dense oracle (up to global phase).
         let sv_after = stn.state_vector();
-        let overlap: Complex64 = sv_before
+        let expected = oracle.state();
+        let overlap: Complex64 = expected
             .iter()
             .zip(sv_after.iter())
             .map(|(a, b)| a.conj() * b)
             .sum();
         eprintln!("overlap = {:.6}", overlap.norm_sqr());
-        assert_state_vectors_match(&sv_before, &sv_after, "disentangle preserves state");
+        assert_state_vectors_match(&expected, &sv_after, "disentangle preserves state");
 
         // Bond dimension should not have increased
         assert!(
@@ -5216,6 +5742,24 @@ mod tests {
         assert!(!stn.is_state_exact(), "frame X set → not exact");
         stn.flush_pauli_frame_to_state();
         assert!(stn.is_state_exact(), "after frame flush → exact");
+    }
+
+    #[test]
+    fn test_flush_materializes_lazy_deferred_operations() {
+        let mut stn = StabMps::builder(2).seed(19).lazy_measure(true).build();
+        stn.h(&[QubitId(1)]);
+        stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(1)]);
+        stn.sz(&[QubitId(0)]);
+        stn.h(&[QubitId(0)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        let _ = stn.mz(&[QubitId(0)]);
+
+        assert!(!stn.is_state_exact(), "lazy operations should be pending");
+        stn.flush();
+        assert!(
+            stn.is_state_exact(),
+            "flush should materialize lazy operations"
+        );
     }
 
     #[test]
@@ -5966,9 +6510,8 @@ mod tests {
         let mut z_count = 0;
         let mut none_count = 0;
         let trials = 2000;
-        let mut stn = StabMps::with_seed(1, 42);
-        for _ in 0..trials {
-            stn.reset();
+        for trial in 0..trials {
+            let mut stn = StabMps::with_seed(1, 42 + trial as u64);
             match stn.apply_depolarizing(QubitId(0), 0.9) {
                 Some(PauliKind::X) => x_count += 1,
                 Some(PauliKind::Y) => y_count += 1,
@@ -6055,6 +6598,36 @@ mod tests {
             (est.norm_sqr() - 1.0).abs() < 0.01,
             "identical states fidelity should be 1.0, got |est|² = {}",
             est.norm_sqr()
+        );
+    }
+
+    #[test]
+    fn test_overlap_with_stabilizer_h_after_rotation_matches_state_vector() {
+        use pecos_simulators::CHForm;
+
+        let mut stn = StabMps::builder(3).merge_rz(false).build();
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.9), &[QubitId(0)]);
+        stn.h(&[QubitId(0)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        stn.h(&[QubitId(2)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(2)]);
+        stn.h(&[QubitId(2)]);
+        stn.cx(&[(QubitId(1), QubitId(2))]);
+
+        let mut stabilizer = CHForm::new_with_seed(3, 41);
+        stabilizer.x(&[QubitId(0), QubitId(2)]);
+        let state_vector = stn.state_vector();
+        let expected: Complex64 = state_vector
+            .iter()
+            .enumerate()
+            .map(|(index, amplitude)| stabilizer.amplitude(index).conj() * amplitude)
+            .sum();
+        let actual = stn.overlap_with_stabilizer(&stabilizer, 8, Some(73));
+
+        assert!(
+            (actual - expected).norm() < 1e-10,
+            "overlap estimate={actual}, state-vector overlap={expected}"
         );
     }
 
@@ -6156,7 +6729,7 @@ mod tests {
         let sv_merged = merged.state_vector();
         let nc_merged = merged.stats.total_nonclifford;
 
-        let mut eager = StabMps::with_seed(2, 7);
+        let mut eager = StabMps::builder(2).seed(7).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
         eager.z(&[QubitId(0)]);
@@ -6216,7 +6789,7 @@ mod tests {
         // applying RZ(t) twice. Compare state vectors.
         let t = Angle64::QUARTER_TURN / 2u64; // T
 
-        let mut eager = StabMps::with_seed(2, 7);
+        let mut eager = StabMps::builder(2).seed(7).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.cx(&[(QubitId(0), QubitId(1))]);
         eager.rz(t, &[QubitId(0)]);
@@ -6249,7 +6822,7 @@ mod tests {
         merged.flush();
         let sv_merged = merged.state_vector();
 
-        let mut eager = StabMps::with_seed(2, 11);
+        let mut eager = StabMps::builder(2).seed(11).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
         eager.h(&[QubitId(1)]);
@@ -6277,7 +6850,7 @@ mod tests {
         merged.flush();
         let sv_merged = merged.state_vector();
 
-        let mut eager = StabMps::with_seed(2, 13);
+        let mut eager = StabMps::builder(2).seed(13).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
         eager.h(&[QubitId(0)]);
@@ -6308,7 +6881,7 @@ mod tests {
             "two T merging to S should hit Clifford fast path, not non-Clifford"
         );
 
-        let mut eager = StabMps::with_seed(2, 17);
+        let mut eager = StabMps::builder(2).seed(17).merge_rz(false).build();
         eager.h(&[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
         eager.rz(t, &[QubitId(0)]);
@@ -6321,6 +6894,86 @@ mod tests {
         for (a, b) in sv_eager.iter().zip(sv_merged.iter()) {
             assert!((a - b).norm() < 1e-10, "T+T = S state mismatch");
         }
+    }
+
+    #[test]
+    fn test_builder_default_values() {
+        let stn = StabMps::builder(4).build();
+
+        assert_eq!(stn.config.max_bond_dim, 128);
+        assert_relative_eq!(stn.config.svd_cutoff, 1e-12);
+        assert_eq!(stn.config.max_truncation_error, Some(1e-8));
+        assert!(!stn.config.parallel);
+        assert!(stn.flags.normalize_after_gate());
+        assert!(!stn.flags.lazy_measure());
+        assert!(stn.flags.merge_rz());
+        assert!(!stn.flags.pauli_frame_tracking());
+        assert!(!stn.flags.numerical_flag_redetection());
+    }
+
+    #[test]
+    fn test_numerical_redetection_accepts_scaled_product_site() {
+        use pecos_simulators::DenseStateVec;
+
+        let t = Angle64::QUARTER_TURN / 2u64;
+        let final_angle = Angle64::from_radians(0.37);
+        let mut stn = StabMps::builder(2)
+            .merge_rz(false)
+            .numerical_flag_redetection(true)
+            .build();
+        let mut oracle = DenseStateVec::new(2);
+
+        stn.h(&[QubitId(0)]);
+        oracle.h(&[QubitId(0)]);
+        stn.rz(t, &[QubitId(0)]);
+        oracle.rz(t, &[QubitId(0)]);
+        stn.rz(-t, &[QubitId(0)]);
+        oracle.rz(-t, &[QubitId(0)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        oracle.cx(&[(QubitId(0), QubitId(1))]);
+
+        // Move an exactly cancelling gauge factor between the two bond-one
+        // product tensors. This preserves the physical state while making
+        // neither local |0> coefficient unit modulus; site 0 is where
+        // Mps::scale normally stores such a global factor.
+        stn.mps.tensors_mut()[0] *= Complex64::new(0.25, 0.0);
+        stn.mps.tensors_mut()[1] *= Complex64::new(4.0, 0.0);
+
+        stn.rz(final_angle, &[QubitId(1)]);
+        oracle.rz(final_angle, &[QubitId(1)]);
+
+        assert_eq!(stn.stats.numerical_redetect, 1);
+        let actual = stn.state_vector();
+        for (index, amplitude) in actual.iter().enumerate() {
+            assert_relative_eq!(
+                amplitude.re,
+                oracle.get_amplitude(index).re,
+                epsilon = 1e-12
+            );
+            assert_relative_eq!(
+                amplitude.im,
+                oracle.get_amplitude(index).im,
+                epsilon = 1e-12
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "max_truncation_error must be finite and non-negative")]
+    fn test_builder_rejects_negative_max_truncation_error() {
+        let _ = StabMps::builder(1).max_truncation_error(-1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_truncation_error must be finite and non-negative")]
+    fn test_builder_rejects_nan_max_truncation_error() {
+        let _ = StabMps::builder(1).max_truncation_error(f64::NAN);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_truncation_error must be finite and non-negative")]
+    fn test_builder_rejects_infinite_max_truncation_error() {
+        let _ = StabMps::builder(1).max_truncation_error(f64::INFINITY);
     }
 
     #[test]

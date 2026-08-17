@@ -686,7 +686,7 @@ fn fusion_blossom_config(
 /// Fusion Blossom MWPM decoder.
 ///
 /// Pure Rust implementation of minimum-weight perfect matching.
-/// Supports parallel decoding and visualization for debugging.
+/// Supports batch decoding across worker threads and visualization for debugging.
 ///
 /// # Construction
 ///
@@ -759,7 +759,7 @@ impl PyFusionBlossomDecoder {
     ///
     /// * `num_nodes` - Number of detector nodes
     /// * `num_observables` - Number of logical observables (default: 1)
-    /// * `solver` - Solver type: "serial" or "parallel" (default: "serial")
+    /// * `solver` - Solver type: "serial" or "legacy" (default: "serial")
     /// * `max_tree_size` - Maximum alternating-tree size before collapse (default: unlimited)
     #[new]
     #[pyo3(signature = (num_nodes, num_observables=1, solver="serial", *, max_tree_size=None))]
@@ -771,10 +771,16 @@ impl PyFusionBlossomDecoder {
     ) -> PyResult<Self> {
         let solver_type = match solver {
             "serial" => RustSolverType::Serial,
-            "parallel" | "legacy" => RustSolverType::Legacy,
+            "legacy" => RustSolverType::Legacy,
+            "parallel" => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "solver 'parallel' requires a partition configuration, which the Python \
+                     bindings do not expose; use 'serial' or 'legacy' (issue #464)",
+                ));
+            }
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "solver must be 'serial' or 'parallel'",
+                    "solver must be 'serial' or 'legacy'",
                 ));
             }
         };
@@ -3762,6 +3768,23 @@ mod dem_tuning_tests {
             .err()
             .unwrap();
         assert!(solver_error.to_string().contains("solver_type"));
+
+        // The manual constructor refuses 'parallel' rather than silently
+        // substituting the Legacy solver (issue #464).
+        let ctor_error = PyFusionBlossomDecoder::new(4, 1, "parallel", None)
+            .err()
+            .unwrap();
+        let message = ctor_error.to_string();
+        assert!(message.contains("partition configuration"));
+        assert!(message.contains("'legacy'"));
+
+        let ctor_error = PyFusionBlossomDecoder::new(4, 1, "fast", None)
+            .err()
+            .unwrap();
+        assert!(ctor_error.to_string().contains("solver"));
+
+        PyFusionBlossomDecoder::new(4, 1, "legacy", None).unwrap();
+        PyFusionBlossomDecoder::new(4, 1, "serial", None).unwrap();
 
         for (error, parameter) in [
             (

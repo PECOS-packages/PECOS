@@ -12,21 +12,39 @@
 
 use thiserror::Error;
 
+/// Failures reported by checked matrix-product-state operations.
 #[derive(Error, Debug)]
 pub enum MpsError {
+    /// A requested site does not exist in the MPS chain.
     #[error("site index {index} out of bounds (num_sites = {num_sites})")]
-    SiteOutOfBounds { index: usize, num_sites: usize },
+    SiteOutOfBounds {
+        /// Requested zero-based site index.
+        index: usize,
+        /// Number of sites in the MPS chain.
+        num_sites: usize,
+    },
 
+    /// A gate matrix does not have the dimension required by the target site or sites.
     #[error("gate dimension mismatch: expected {expected}x{expected}, got {rows}x{cols}")]
     GateDimMismatch {
+        /// Required number of rows and columns.
         expected: usize,
+        /// Actual row count.
         rows: usize,
+        /// Actual column count.
         cols: usize,
     },
 
+    /// The singular-value decomposition failed to converge.
     #[error("SVD failed to converge")]
     SvdFailed,
 
+    /// An adjacent-site operation received sites that are not ordered neighbors.
     #[error("sites {q0} and {q1} are not adjacent")]
-    NonAdjacentSites { q0: usize, q1: usize },
+    NonAdjacentSites {
+        /// First requested site.
+        q0: usize,
+        /// Second requested site.
+        q1: usize,
+    },
 }

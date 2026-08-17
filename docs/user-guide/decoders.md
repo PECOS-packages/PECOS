@@ -331,7 +331,26 @@ match decoder.decode(&syndrome.view()) {
    - Use multiple threads for batch decoding
    - Consider memory layout for cache efficiency
 
+## Hyperedge models and matching decoders
+
+Matching-style decoders (Fusion Blossom, PECOS UF, K-MWPM, belief matching)
+represent a model as a graph whose edges touch at most two detectors. Given a
+model containing mechanisms that touch three or more, they reject it rather than
+silently ignoring those mechanisms:
+
+```
+fusion_blossom needs a graphlike model, but this DEM has 113 mechanism(s)
+touching three or more detectors.
+```
+
+Decode such a model with a decoder that represents hyperedges directly --
+`bp_osd()` or `tesseract()` -- or supply a decomposed projection. See
+[Experimental Decoders](../experimental/decoders.md) for the Frontier and
+BP-Trellis decoders, which additionally report a per-shot complementary gap, and
+for provenance-based decomposition of a hyperedge model into a graphlike one.
+
 ## See Also
 
 - [Getting Started Guide](getting-started.md) - Main installation guide
 - [LLVM Setup Guide](llvm-setup.md) - For building with LLVM support
+- [Experimental Decoders](../experimental/decoders.md) - Frontier, BP-Trellis, complementary gap

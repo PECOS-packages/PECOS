@@ -32,10 +32,39 @@ use crate::{
 #[cfg(feature = "mwpf")]
 use crate::{MwpfConfig as MwpfEngineConfig, MwpfSolverType as MwpfEngineSolverType};
 
+/// Reject a hyperedge model for a decoder that can only represent a graph.
+///
+/// The matching-graph parser drops mechanisms touching three or more detectors,
+/// which would leave the decoder silently scoring against a model the caller
+/// never asked for -- including, in the worst case, one where an observable is
+/// unreachable. Fail at construction and name the remedy instead.
+fn ensure_graphlike_model(spec: &DecoderSpec, dem: &str) -> Result<(), DecoderError> {
+    if !spec.requires_graphlike_model() {
+        return Ok(());
+    }
+    let graph = pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)?;
+    if graph.skipped_hyperedges > 0 {
+        return Err(DecoderError::InvalidConfiguration(format!(
+            "{} needs a graphlike model, but this DEM has {} mechanism(s) touching three or \
+             more detectors. Decoding it here would silently ignore them. Pass a decomposed \
+             model (DetectorErrorModel.to_string_terminal_graphlike_decomposed() or \
+             to_string_source_graphlike_decomposed()), or use a decoder that accepts \
+             hyperedges such as bp_osd or tesseract.",
+            family_name(spec),
+            graph.skipped_hyperedges,
+        )));
+    }
+    Ok(())
+}
+
 pub(super) fn build(
     spec: &DecoderSpec,
     model: &DecodeModel,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    match model {
+        DecodeModel::SingleDem(dem) => ensure_graphlike_model(spec, dem)?,
+        DecodeModel::HybridDem { decomposed, .. } => ensure_graphlike_model(spec, decomposed)?,
+    }
     let decoder = match (spec, model) {
         (
             DecoderSpec::BeliefMatching(BeliefMatchingConfig {
@@ -1264,6 +1293,48 @@ fn build_ensemble(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const HYPEREDGE_DEM: &str = "error(0.1) D0 D1 D2 L0\nerror(0.05) D0\n";
+
+    #[test]
+    fn graphlike_decoders_reject_a_hyperedge_model_instead_of_dropping_it() {
+        // Regression: these decoders used to build fine and then score against a
+        // model with the hyperedges silently removed, which can make an
+        // observable unreachable and every shot a "logical error".
+        for spec in [
+            DecoderSpec::FusionBlossom(FusionBlossomConfig::default()),
+            DecoderSpec::PecosUf(PecosUfPreset::Fast),
+            DecoderSpec::KMwpm(KMwpmConfig::default()),
+            DecoderSpec::Perturbed(PerturbedConfig {
+                inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
+                ..PerturbedConfig::default()
+            }),
+        ] {
+            let Err(error) = spec.build(&DecodeModel::SingleDem(HYPEREDGE_DEM.to_string())) else {
+                panic!("graphlike decoder must reject a hyperedge model");
+            };
+            let message = error.to_string();
+            assert!(message.contains("graphlike"), "{message}");
+            assert!(
+                message.contains("to_string_terminal_graphlike_decomposed"),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn hyperedge_capable_decoders_still_accept_a_hyperedge_model() {
+        for spec in [
+            DecoderSpec::BpOsd(BpOsdConfig::default()),
+            DecoderSpec::Tesseract(TesseractConfig::default()),
+            DecoderSpec::PyMatching(PyMatchingConfig::default()),
+        ] {
+            assert!(
+                !spec.requires_graphlike_model(),
+                "{spec:?} must not be treated as graphlike-only",
+            );
+        }
+    }
 
     const DEM: &str = "error(0.1) D0 D1 L0\nerror(0.05) D1\n";
 

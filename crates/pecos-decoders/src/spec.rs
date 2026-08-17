@@ -121,6 +121,31 @@ impl DecoderSpec {
         matches!(self, Self::PyMatching(_))
     }
 
+    /// Whether this specification can only decode a graphlike model.
+    ///
+    /// Matching-style decoders build a graph whose edges carry at most two
+    /// detectors. Their DEM parser drops mechanisms with more detectors, so a
+    /// hyperedge model would silently decode against a truncated version of
+    /// itself; [`build`](Self::build) rejects that instead.
+    #[must_use]
+    pub fn requires_graphlike_model(&self) -> bool {
+        match self {
+            Self::FusionBlossom(_)
+            | Self::PerturbedFusionBlossomCorrelated(_)
+            | Self::KMwpm(_)
+            | Self::PecosUf(_)
+            | Self::BeliefMatching(_) => true,
+            Self::Windowed(config) => {
+                config.inner.requires_graphlike_model()
+                    || config.sandwich_phase2.requires_graphlike_model()
+            }
+            Self::Perturbed(config) => config.inner.requires_graphlike_model(),
+            Self::BeamSearch(config) => config.phase2.requires_graphlike_model(),
+            Self::Ensemble(config) => config.members.iter().any(Self::requires_graphlike_model),
+            _ => false,
+        }
+    }
+
     /// Return the full DEM embedded by the legacy hybrid grammar, if present.
     #[must_use]
     pub fn embedded_hybrid_full_dem(&self) -> Option<&str> {

@@ -94,6 +94,26 @@ assert dem.num_observables == 1
 print(dem.to_string())
 ```
 
+An inferred DEM is an ordinary `DetectorErrorModel`, so it samples and decodes
+exactly like one built from explicit detectors:
+
+<!--continuation-->
+```python
+from pecos.decoders import bp_osd
+
+batch = dem.to_sampler().sample_batch(500, seed=3)
+result = batch.decode(dem.to_string(), bp_osd())
+
+assert result.num_shots == 500
+print(f"logical errors: {result.num_errors} ({result.execution_path})")
+```
+
+`bp_osd()` consumes the raw model directly. Matching-style decoders need a
+graph-like projection instead — see
+[Decoders](decoders.md#hyperedge-models-and-matching-decoders) — and the
+experimental Frontier and BP-Trellis decoders additionally report a per-shot
+confidence gap; see [Experimental Decoders](../experimental/decoders.md).
+
 The two accepted `raw_binding` values are both identity-preserving. A compiler
 may retain a directly tagged measurement ID, or it may erase the ID while
 duplicating the value into raw and computed outputs; strict probe correlation

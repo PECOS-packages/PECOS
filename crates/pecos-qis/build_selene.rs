@@ -313,6 +313,7 @@ fn build_helios_from_cargo_dependency(out_dir: &Path) -> Result<(), String> {
     let helios_path = selene_root.join("selene-ext/interfaces/helios_qis");
     let interface_c = helios_path.join("c/src/interface.c");
     let helios_include_dir = helios_path.join("c/include");
+    let base_qis_include_dir = selene_root.join("selene-ext/interfaces/base_qis/c/include");
     let selene_include_dir = selene_root.join("selene-sim/c/include");
 
     if !interface_c.exists() {
@@ -344,6 +345,8 @@ fn build_helios_from_cargo_dependency(out_dir: &Path) -> Result<(), String> {
         .arg("-Wno-macro-redefined") // Suppress the redefinition warning
         .arg("-I")
         .arg(&helios_include_dir)
+        .arg("-I")
+        .arg(&base_qis_include_dir)
         .arg("-I")
         .arg(&selene_include_dir)
         .arg("-o")

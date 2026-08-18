@@ -18,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
     from guppylang import guppy
-    from guppylang.std.builtins import owned
-    from guppylang.std.quantum import cx, h, measure, pi, qubit, rz, x
+    from guppylang.std.angles import angle
+    from guppylang.std.builtins import array, owned, result
+    from guppylang.std.quantum import ch, cx, h, measure, pi, qubit, rx, ry, rz, x
 except ImportError as e:
     print(f"Error: Could not import guppylang: {e}")
     print("Please install guppylang: uv pip install guppylang")
@@ -40,8 +41,8 @@ def generate_bell_state_hugr() -> str:
         cx(q0, q1)
 
         # Measure both qubits
-        m0 = measure(q0)
-        m1 = measure(q1)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
 
         return m0, m1
 
@@ -61,7 +62,7 @@ def generate_single_hadamard_hugr() -> str:
         """Apply Hadamard gate to a single qubit."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR Package
     compiled = single_hadamard.compile()
@@ -86,9 +87,9 @@ def generate_ghz_state_hugr() -> str:
         cx(q1, q2)
 
         # Measure all qubits
-        m0 = measure(q0)
-        m1 = measure(q1)
-        m2 = measure(q2)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
+        m2 = measure(q2).read()
 
         return m0, m1, m2
 
@@ -119,7 +120,7 @@ def generate_rz_x_hugr() -> str:
         q1 = qubit()
         rz(q0, pi)
         x(q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     compiled = rz_x_circuit.compile()
     return compiled.to_str()
@@ -150,14 +151,14 @@ def generate_simple_conditional_hugr() -> str:
         h(q0)
 
         # Measure q0
-        m0 = measure(q0)
+        m0 = measure(q0).read()
 
         # Conditionally apply X to q1
         if m0:
             x(q1)
 
         # Measure q1
-        m1 = measure(q1)
+        m1 = measure(q1).read()
 
         return m0, m1
 
@@ -187,14 +188,14 @@ def generate_conditional_h_hugr() -> str:
 
         # Put control in superposition and measure
         h(q_control)
-        m_control = measure(q_control)
+        m_control = measure(q_control).read()
 
         # Conditionally apply H to result qubit
         if m_control:
             h(q_result)
 
         # Measure result qubit
-        m_result = measure(q_result)
+        m_result = measure(q_result).read()
 
         return m_control, m_result
 
@@ -227,7 +228,7 @@ def generate_conditional_branch_hugr() -> str:
         q1 = qubit()
 
         # Measure q0 (will be 0 since it starts in |0⟩)
-        m0 = measure(q0)
+        m0 = measure(q0).read()
 
         # Apply different gates based on measurement
         if m0:
@@ -236,7 +237,7 @@ def generate_conditional_branch_hugr() -> str:
             h(q1)  # This branch will be taken
 
         # Measure q1
-        m1 = measure(q1)
+        m1 = measure(q1).read()
 
         return m0, m1
 
@@ -268,7 +269,7 @@ def generate_simple_while_loop_hugr() -> str:
         while not result:
             q = qubit()
             h(q)
-            result = measure(q)
+            result = measure(q).read()
         return result
 
     compiled = simple_while_loop.compile()
@@ -299,7 +300,7 @@ def generate_function_call_hugr() -> str:
         """Main function that calls apply_h."""
         q = qubit()
         q = apply_h(q)
-        return measure(q)
+        return measure(q).read()
 
     compiled = function_call_main.compile()
     return compiled.to_str()
@@ -330,7 +331,7 @@ def generate_multiple_function_calls_hugr() -> str:
         q1 = qubit()
         q0 = apply_h_multi(q0)
         q1 = apply_h_multi(q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     compiled = multiple_calls_main.compile()
     return compiled.to_str()
@@ -364,7 +365,7 @@ def generate_nested_function_calls_hugr() -> str:
         """Main: call outer_func."""
         q = qubit()
         q = outer_func(q)
-        return measure(q)
+        return measure(q).read()
 
     compiled = nested_calls_main.compile()
     return compiled.to_str()
@@ -395,10 +396,79 @@ def generate_multi_qubit_function_hugr() -> str:
         q1 = qubit()
         h(q0)
         q0, q1 = apply_cx_func(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     compiled = multi_qubit_main.compile()
     return compiled.to_str()
+
+
+def generate_ch_gate_hugr() -> str:
+    """Generate a controlled-H circuit used by execution regression tests."""
+
+    @guppy
+    def ch_gate() -> tuple[bool, bool]:
+        control = qubit()
+        target = qubit()
+        x(control)
+        ch(control, target)
+        return measure(control).read(), measure(target).read()
+
+    return ch_gate.compile().to_str()
+
+
+def generate_forloop_h_hugr() -> str:
+    """Generate a fixed-trip loop with one Hadamard per iteration."""
+
+    @guppy
+    def forloop_h() -> bool:
+        q = qubit()
+        for _ in range(3):
+            h(q)
+        return measure(q).read()
+
+    return forloop_h.compile().to_str()
+
+
+def generate_rx_pi_tuple_const_hugr() -> str:
+    """Generate an Rx(pi) fixture with Guppy 1's measurement representation."""
+
+    @guppy
+    def rx_pi_tuple_const() -> bool:
+        q = qubit()
+        rx(q, pi)
+        return measure(q).read()
+
+    return rx_pi_tuple_const.compile().to_str()
+
+
+def generate_ry_angle_tuple_hugr() -> str:
+    """Generate an Ry(pi/2) fixture with a tuple-wrapped angle."""
+
+    @guppy
+    def ry_angle_tuple() -> bool:
+        q = qubit()
+        ry(q, angle(0.5))
+        return measure(q).read()
+
+    return ry_angle_tuple.compile().to_str()
+
+
+def generate_conditional_x_hugr() -> str:
+    """Generate a measured conditional-X circuit for engine tests."""
+
+    @guppy
+    def conditional_x() -> tuple[bool, bool]:
+        control = qubit()
+        target = qubit()
+        h(control)
+        control_measurement = measure(control).read()
+        if control_measurement:
+            x(target)
+        target_measurement = measure(target).read()
+        result("c", array(control_measurement, target_measurement))
+        return control_measurement, target_measurement
+
+    return conditional_x.compile().to_str()
 
 
 def main() -> int:
@@ -428,6 +498,11 @@ def main() -> int:
         "multiple_function_calls.hugr",
         "nested_function_calls.hugr",
         "multi_qubit_function.hugr",
+        "ch_gate.hugr",
+        "forloop_h_test.hugr",
+        "rx_pi_tuple_const.hugr",
+        "ry_angle_tuple.hugr",
+        "conditional_x.hugr",
     ]
     for filename in all_files:
         old_file = output_dir / filename
@@ -633,6 +708,30 @@ def main() -> int:
     except Exception as e:
         print(f"  Error generating multi-qubit function: {e}")
         return 1
+
+    additional_fixtures = {
+        "ch_gate.hugr": generate_ch_gate_hugr,
+        "forloop_h_test.hugr": generate_forloop_h_hugr,
+        "rx_pi_tuple_const.hugr": generate_rx_pi_tuple_const_hugr,
+        "ry_angle_tuple.hugr": generate_ry_angle_tuple_hugr,
+        "conditional_x.hugr": generate_conditional_x_hugr,
+    }
+    for filename, generate in additional_fixtures.items():
+        print(f"\nGenerating {filename}...")
+        try:
+            hugr_str = generate()
+            output_file = output_dir / filename
+            output_file.write_text(hugr_str)
+            print(f"  Created: {output_file} ({len(hugr_str)} chars)")
+        except Exception as e:
+            print(f"  Error generating {filename}: {e}")
+            return 1
+
+    for filename in all_files:
+        output_file = output_dir / filename
+        contents = output_file.read_text()
+        if not contents.endswith("\n"):
+            output_file.write_text(f"{contents}\n")
 
     print("\nSuccessfully generated all HUGR test data files!")
     print("\nNext steps:")

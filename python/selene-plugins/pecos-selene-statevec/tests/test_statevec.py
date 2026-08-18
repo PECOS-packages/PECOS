@@ -45,7 +45,7 @@ class TestStateVecBasic:
         @guppy
         def main() -> None:
             q = qubit()
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -62,7 +62,7 @@ class TestStateVecBasic:
         def main() -> None:
             q = qubit()
             h(q)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -86,8 +86,8 @@ class TestStateVecBellState:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            b0 = measure(q0)
-            b1 = measure(q1)
+            b0 = measure(q0).read()
+            b1 = measure(q1).read()
             result("q0", b0)
             result("q1", b1)
 
@@ -114,7 +114,7 @@ class TestStateVecArbitraryRotations:
             # T gate is Rz(pi/4)
             rz(q, pi / 4)
             h(q)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -136,7 +136,7 @@ class TestStateVecArbitraryRotations:
             # Non-Clifford angle (pi/8 is a common non-Clifford angle)
             rz(q, pi / 8)
             h(q)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())

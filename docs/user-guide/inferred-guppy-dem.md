@@ -2,7 +2,7 @@
 
 Use `infer_guppy_dem_annotations` when a Guppy program already emits raw
 physical measurements, detector bits, and logical-observable bits with
-`result()`, but does not separately expose the measurement parities that
+`output()`, but does not separately expose the measurement parities that
 define those detectors and observables. The program does not need to be
 edited: PECOS infers the parities, binds them to the runtime QIS trace, and
 builds the detector error model (DEM) with native PECOS fault propagation.
@@ -25,7 +25,7 @@ the program.
 Before calling the tool, check all of the following:
 
 1. Every physical measurement is emitted exactly once through one or more
-   `result(raw_tag, ...)` calls. Do not omit initialization, syndrome, flag,
+   `output(raw_tag, ...)` calls. Do not omit initialization, syndrome, flag,
    postselection, or final-readout measurements.
 2. Detector and observable outputs are Boolean XOR parities of those raw
    measurements. AND, OR, nonlinear expressions, constant-one offsets, and
@@ -49,7 +49,7 @@ provenance determines the physical identity of each raw output automatically.
 <!--test-name: inferred_guppy_dem_quick_start-->
 ```python
 from guppylang import guppy
-from guppylang.std.builtins import result
+from guppylang.std.builtins import output
 from guppylang.std.quantum import measure, qubit
 
 from pecos.qec import infer_guppy_dem_annotations
@@ -57,16 +57,16 @@ from pecos.qec import infer_guppy_dem_annotations
 
 @guppy
 def parity_readout() -> None:
-    m0 = measure(qubit())
-    m1 = measure(qubit())
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
 
     # Emit each physical result exactly once under the raw tag.
-    result("raw measurements", m0)
-    result("raw measurements", m1)
+    output("raw measurements", m0)
+    output("raw measurements", m1)
 
     # These are computed values, not additional measurements.
-    result("DETECTOR", m0 ^ m1)
-    result("obs", m0)
+    output("DETECTOR", m0 ^ m1)
+    output("obs", m0)
 
 
 inferred = infer_guppy_dem_annotations(
@@ -132,7 +132,7 @@ four physical measurements.
 <!--test-name: inferred_guppy_dem_round_arrays-->
 ```python
 from guppylang import guppy
-from guppylang.std.builtins import array, result
+from guppylang.std.builtins import array, output
 from guppylang.std.quantum import cx, measure, qubit
 
 from pecos.qec import infer_guppy_dem_annotations
@@ -145,22 +145,22 @@ def repetition_memory() -> None:
     a0 = qubit()
     cx(d0, a0)
     cx(d1, a0)
-    s0 = measure(a0)
-    result("DETECTOR", s0)
+    s0 = measure(a0).read()
+    output("DETECTOR", s0)
 
     a1 = qubit()
     cx(d0, a1)
     cx(d1, a1)
-    s1 = measure(a1)
-    result("DETECTOR", s0 ^ s1)
+    s1 = measure(a1).read()
+    output("DETECTOR", s0 ^ s1)
 
-    m0, m1 = measure(d0), measure(d1)
-    result("DETECTOR", s1 ^ m0 ^ m1)
-    result("obs", m0)
+    m0, m1 = measure(d0).read(), measure(d1).read()
+    output("DETECTOR", s1 ^ m0 ^ m1)
+    output("obs", m0)
 
     # Raw arrays can be emitted after the parities have been computed.
-    result("raw measurements", array(s0, s1))
-    result("raw measurements", array(m0, m1))
+    output("raw measurements", array(s0, s1))
+    output("raw measurements", array(m0, m1))
 
 
 inferred = infer_guppy_dem_annotations(
@@ -199,7 +199,7 @@ tracks the identity of each element even when an array is reordered.
 <!--test-name: inferred_guppy_dem_reordered_array-->
 ```python
 from guppylang import guppy
-from guppylang.std.builtins import array, result
+from guppylang.std.builtins import array, output
 from guppylang.std.quantum import measure, qubit
 
 from pecos.qec import infer_guppy_dem_annotations
@@ -207,12 +207,12 @@ from pecos.qec import infer_guppy_dem_annotations
 
 @guppy
 def reordered_readout() -> None:
-    m0 = measure(qubit())
-    m1 = measure(qubit())
-    m2 = measure(qubit())
-    result("DETECTOR", m2 ^ m0)
-    result("obs", m1)
-    result("raw measurements", array(m2, m0, m1))
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
+    m2 = measure(qubit()).read()
+    output("DETECTOR", m2 ^ m0)
+    output("obs", m1)
+    output("raw measurements", array(m2, m0, m1))
 
 
 inferred = infer_guppy_dem_annotations(
@@ -242,21 +242,22 @@ array-valued observable expands into one DEM observable per element.
 <!--test-name: inferred_guppy_dem_custom_tags-->
 ```python
 from guppylang import guppy
-from guppylang.std.builtins import array, result
-from guppylang.std.quantum import measure, qubit
+from guppylang.std.builtins import array, output
+from guppylang.std.quantum import collect_measurements, measure_array, qubit
 
 from pecos.qec import infer_guppy_dem_annotations
 
 
 @guppy
 def tagged_readout() -> None:
-    m0 = measure(qubit())
-    m1 = measure(qubit())
-    m2 = measure(qubit())
-    result("physical", array(m0, m1, m2))
-    result("events", m0 ^ m1)
-    result("logical_z", m0)
-    result("logical_x", array(m1, m2))
+    bits = collect_measurements(measure_array(array(qubit(), qubit(), qubit())))
+    m0 = bits[0]
+    m1 = bits[1]
+    m2 = bits[2]
+    output("physical", bits)
+    output("events", m0 ^ m1)
+    output("logical_z", m0)
+    output("logical_x", array(m1, m2))
 
 
 inferred = infer_guppy_dem_annotations(

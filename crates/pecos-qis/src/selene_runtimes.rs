@@ -7,6 +7,25 @@
 use crate::SeleneRuntime;
 use std::path::{Path, PathBuf};
 
+const SIMPLE_RUNTIME_DEFAULT_INIT_ARGS: &[&str] = &[
+    "--duration-ns-rxy=0",
+    "--duration-ns-rzz=0",
+    "--duration-ns-rz=0",
+    "--duration-ns-rpp=0",
+    "--duration-ns-measure=0",
+    "--duration-ns-reset=0",
+    "--duration-ns-measure-leaked=0",
+];
+
+const SOFT_RZ_RUNTIME_DEFAULT_INIT_ARGS: &[&str] = &[
+    "--duration-ns-rxy=0",
+    "--duration-ns-rzz=0",
+    "--duration-ns-measure=0",
+    "--duration-ns-reset=0",
+    "--duration-ns-measure-leaked=0",
+    "--max-batch-size=1",
+];
+
 fn platform_library_parts() -> (&'static str, &'static str) {
     if cfg!(target_os = "windows") {
         ("", "dll")
@@ -150,7 +169,14 @@ pub fn selene_simple_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
         "selene_simple_runtime: Found runtime at: {}",
         runtime_path.display()
     );
-    let runtime = SeleneRuntime::new(runtime_path);
+    let runtime = SeleneRuntime::with_plugin_config(
+        runtime_path,
+        SIMPLE_RUNTIME_DEFAULT_INIT_ARGS
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        Vec::new(),
+    );
     Ok(runtime)
 }
 
@@ -184,7 +210,14 @@ pub fn selene_simple_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
 /// Returns an error if the Selene soft RZ runtime library cannot be found.
 pub fn selene_soft_rz_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
     let runtime_path = find_built_selene_runtime("selene_soft_rz_runtime")?;
-    Ok(SeleneRuntime::new(runtime_path))
+    Ok(SeleneRuntime::with_plugin_config(
+        runtime_path,
+        SOFT_RZ_RUNTIME_DEFAULT_INIT_ARGS
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        Vec::new(),
+    ))
 }
 
 // Note: We only expose convenience functions for actual Selene runtime plugins.
@@ -363,7 +396,16 @@ pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
 /// Returns an error if the specified Selene runtime library cannot be found.
 pub fn selene_runtime_auto(lib_name: &str) -> Result<SeleneRuntime, RuntimeFetchError> {
     let runtime_path = find_built_selene_runtime(lib_name)?;
-    Ok(SeleneRuntime::new(runtime_path))
+    let init_args = match lib_name {
+        "selene_simple_runtime" => SIMPLE_RUNTIME_DEFAULT_INIT_ARGS,
+        "selene_soft_rz_runtime" => SOFT_RZ_RUNTIME_DEFAULT_INIT_ARGS,
+        _ => &[],
+    };
+    Ok(SeleneRuntime::with_plugin_config(
+        runtime_path,
+        init_args.iter().map(ToString::to_string).collect(),
+        Vec::new(),
+    ))
 }
 
 #[cfg(test)]
@@ -372,6 +414,21 @@ mod tests {
     use crate::test_env::{ENV_MUTEX, EnvVarGuard};
     use std::fs::File;
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn bundled_runtime_defaults_satisfy_selene_0_3_required_arguments() {
+        assert_eq!(SIMPLE_RUNTIME_DEFAULT_INIT_ARGS.len(), 7);
+        assert!(
+            SIMPLE_RUNTIME_DEFAULT_INIT_ARGS
+                .iter()
+                .all(|arg| arg.starts_with("--duration-ns-") && arg.ends_with("=0"))
+        );
+        assert_eq!(SOFT_RZ_RUNTIME_DEFAULT_INIT_ARGS.len(), 6);
+        assert_eq!(
+            SOFT_RZ_RUNTIME_DEFAULT_INIT_ARGS.last(),
+            Some(&"--max-batch-size=1")
+        );
+    }
 
     #[test]
     fn test_find_selene_runtime() {

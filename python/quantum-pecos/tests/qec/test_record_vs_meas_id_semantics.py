@@ -44,11 +44,11 @@ def _five_measurement_program() -> None:
     cx(d1, a0)
     cx(d1, a1)
     cx(d2, a1)
-    result("s0", measure(a0))
-    result("s1", measure(a1))
-    result("m0", measure(d0))
-    result("m1", measure(d1))
-    result("m2", measure(d2))
+    result("s0", measure(a0).read())
+    result("s1", measure(a1).read())
+    result("m0", measure(d0).read())
+    result("m1", measure(d1).read())
+    result("m2", measure(d2).read())
 
 
 def _stamped_circuit() -> TickCircuit:

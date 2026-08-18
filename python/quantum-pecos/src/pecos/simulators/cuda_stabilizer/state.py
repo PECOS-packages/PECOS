@@ -26,17 +26,9 @@ from pecos.simulators.cuda_stabilizer import bindings
 from pecos.simulators.sim_class_types import Stabilizer
 
 if TYPE_CHECKING:
-    import sys
+    from typing import Self
 
     from pecos.typing import SimulatorGateParams
-
-    # Handle Python 3.10 compatibility for Self type
-    if sys.version_info >= (3, 11):
-        from typing import Self
-    else:
-        from typing import TypeVar
-
-        Self = TypeVar("Self", bound="CudaStabilizer")
 
 
 class CudaStabilizer(Stabilizer):

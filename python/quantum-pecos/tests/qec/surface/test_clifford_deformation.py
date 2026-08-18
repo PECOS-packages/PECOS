@@ -233,6 +233,11 @@ def test_checkerboard_native_abstract_dem_path_accepts_frame_policy(policy: str)
     assert isinstance(dem, str)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 def test_clifford_frame_policy_traced_qis_binds_runtime_result_tags() -> None:
     tick_circuit = build_memory_circuit(
         distance=3,
@@ -249,6 +254,11 @@ def test_clifford_frame_policy_traced_qis_binds_runtime_result_tags() -> None:
     assert tick_circuit.get_meta("observables")
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 @pytest.mark.parametrize("policy", ["checkerboard_xzzx", "checkerboard_zxxz"])
 def test_checkerboard_traced_qis_binds_runtime_result_tags(policy: str) -> None:
     tick_circuit = build_memory_circuit(

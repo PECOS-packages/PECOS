@@ -85,7 +85,7 @@ class TestGuppyLLVMPipeline:
             """Generate a random bit using quantum superposition."""
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Test compilation
         try:
@@ -125,7 +125,7 @@ class TestGuppyLLVMPipeline:
             q0, q1 = qubit(), qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         # Execute the Bell state circuit
         try:
@@ -212,7 +212,7 @@ def test_superposition_statistics(n_qubits: int, expected_avg: float) -> None:
         def superposition_test() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
     elif n_qubits == 2:
 
@@ -221,7 +221,7 @@ def test_superposition_statistics(n_qubits: int, expected_avg: float) -> None:
             q1, q2 = qubit(), qubit()
             h(q1)
             h(q2)
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
     else:  # n_qubits == 3
 
@@ -231,7 +231,7 @@ def test_superposition_statistics(n_qubits: int, expected_avg: float) -> None:
             h(q1)
             h(q2)
             h(q3)
-            return measure(q1), measure(q2), measure(q3)
+            return measure(q1).read(), measure(q2).read(), measure(q3).read()
 
     # Run the test
     try:

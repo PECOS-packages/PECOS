@@ -1,7 +1,7 @@
 [project]
 name = "pecos-workspace"
 version = "0.10.0.dev0"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 # Meta-package; runtime deps live in the member packages. Test/example/dev
 # tooling is declared in [dependency-groups] below.
 dependencies = []
@@ -45,6 +45,7 @@ dev = [
   "mkdocs-material",                        # Material theme for MkDocs
   "mkdocstrings[python]",                   # Code documentation extraction
   "markdown-exec[ansi]",                    # Executable markdown blocks
+  "pyyaml>=6.0.3",
 ]
 test = [ # exact pins so workspace tests run against a reproducible environment
   # Note: sub-package test extras (pecos-rslib, selene plugins) intentionally
@@ -60,6 +61,7 @@ test = [ # exact pins so workspace tests run against a reproducible environment
   "stim==1.15.0",        # Stim-comparison and decomposition-invariant tests
   "matplotlib>=2.2.0",   # Surface-patch render tests import matplotlib directly
   "qir-qis==0.1.8",      # QIR spec-compliance validation gate over the audit corpus
+  "pytest-xdist>=3.8.0",
 ]
 examples = [ # extras used by the examples/ tree and notebook walkthroughs
   "jupyter>=1.1.1",
@@ -103,12 +105,11 @@ reinstall-package = [
 
 [tool.black]
 line-length = 120
-# Target the minimum supported Python (matches `requires-python = ">=3.10"`
-# above and `target-version = "py310"` in ruff.toml) so black produces code
+# Target the minimum supported Python so black produces code
 # that parses cleanly on every interpreter in the support range -- otherwise
 # black auto-targets the newest version satisfying requires-python and can
-# emit 3.14-only syntax that 3.10/3.11/3.12 can't parse.
-target-version = ["py310"]
+# emit 3.14-only syntax that 3.12/3.13 can't parse.
+target-version = ["py312"]
 
 [tool.pytest.ini_options]
 markers = [

@@ -25,8 +25,9 @@ from typing import TYPE_CHECKING
 import pecos_rslib
 
 if TYPE_CHECKING:
+    from typing import Self
+
     import pecos_rslib as prs
-    from typing_extensions import Self
 
     from pecos.programs import Hugr, PhirJson, Qasm, Qis
     from pecos.typing import CompiledPhirJson, CompiledQasm, CompiledQis

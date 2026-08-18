@@ -51,8 +51,9 @@ pub fn parse_hugr_bytes_to_phir(hugr_bytes: &[u8]) -> Result<ModuleOp> {
     };
     use tket_qsystem::extension::{futures, gpu, qsystem, result, wasm};
 
-    // Create extension registry with all required extensions
-    let extensions = ExtensionRegistry::new([
+    // Include all tket-owned extensions so Guppy output remains loadable as
+    // tket adds lowering forms such as global phase and modifiers.
+    let mut extensions = vec![
         prelude::PRELUDE.clone(),
         int_types::EXTENSION.clone(),
         int_ops::EXTENSION.clone(),
@@ -68,14 +69,11 @@ pub fn parse_hugr_bytes_to_phir(hugr_bytes: &[u8]) -> Result<ModuleOp> {
         futures::EXTENSION.clone(),
         result::EXTENSION.clone(),
         qsystem::EXTENSION.clone(),
-        tket::extension::rotation::ROTATION_EXTENSION.clone(),
-        tket::extension::TKET_EXTENSION.clone(),
-        tket::extension::TKET1_EXTENSION.clone(),
-        tket::extension::bool::BOOL_EXTENSION.clone(),
-        tket::extension::debug::DEBUG_EXTENSION.clone(),
         gpu::EXTENSION.clone(),
         wasm::EXTENSION.clone(),
-    ]);
+    ];
+    extensions.extend(tket::extension::tket_extensions());
+    let extensions = ExtensionRegistry::new(extensions);
 
     if hugr_bytes.is_empty() {
         return Err(PhirError::internal("Empty HUGR input".to_string()));
@@ -160,7 +158,7 @@ impl HugrToPhirConverter {
         // control flow would silently lose every other block (commonly
         // dropping the measurements -> empty results). Reject it up front so
         // callers fall back to `HugrEngine` instead of getting wrong output.
-        Self::reject_control_flow(hugr)?;
+        Self::reject_control_flow(hugr, hugr.entrypoint())?;
 
         let mut module = ModuleOp::new("hugr_module");
 
@@ -255,8 +253,29 @@ impl HugrToPhirConverter {
     /// under any CFG means real control flow, which this straight-line
     /// converter cannot represent: it keeps only the first block. Returning an
     /// error here turns that silent data loss into a clean failure.
-    fn reject_control_flow(hugr: &Hugr) -> Result<()> {
-        for node in hugr.nodes() {
+    fn reject_control_flow(hugr: &Hugr, entrypoint: Node) -> Result<()> {
+        for node in std::iter::once(entrypoint).chain(hugr.descendants(entrypoint)) {
+            // `topological_children` only traverses direct children of the
+            // selected container. Conditional regions and calls can therefore
+            // be accepted while their contained operations are silently
+            // omitted from the PHIR output. This straight-line converter must
+            // reject them until it gains recursive region/callee lowering.
+            if matches!(
+                hugr.get_optype(node),
+                OpType::Conditional(_)
+                    | OpType::Call(_)
+                    | OpType::CallIndirect(_)
+                    | OpType::LoadFunction(_)
+                    | OpType::TailLoop(_)
+            ) {
+                return Err(PhirError::Parse(Box::new(
+                    crate::error::ParseError::Unsupported {
+                        feature: "conditional or function-call HUGR structure".to_string(),
+                        format: "HUGR".to_string(),
+                        location: crate::error::SourceLocation::unknown(),
+                    },
+                )));
+            }
             if matches!(hugr.get_optype(node), OpType::CFG(_)) {
                 let blocks = hugr
                     .children(node)
@@ -278,29 +297,33 @@ impl HugrToPhirConverter {
 
     /// Find the container node whose children are the quantum operations.
     ///
-    /// Guppy-compiled HUGRs use: `Module -> FuncDefn -> CFG -> DataflowBlock`.
-    /// Other tools may use: `Module -> FuncDefn -> DFG`.
-    /// Handles both structures.
+    /// Older Guppy HUGRs use: `Module -> FuncDefn -> CFG -> DataflowBlock`.
+    /// Other tools may use: `Module -> FuncDefn -> DFG`, while Guppy 1 can
+    /// place straight-line operations directly under the entry `FuncDefn`.
+    /// Handles all three structures.
     fn find_operations_container(hugr: &Hugr) -> Option<Node> {
-        // First: look for FuncDefn and check its children
-        for node in hugr.nodes() {
-            if matches!(hugr.get_optype(node), OpType::FuncDefn(_)) {
-                for child in hugr.children(node) {
-                    match hugr.get_optype(child) {
-                        // Direct DFG body (e.g. from tket or manual construction)
-                        OpType::DFG(_) => return Some(child),
-                        // CFG body (Guppy output): find the first DataflowBlock
-                        OpType::CFG(_) => {
-                            for cfg_child in hugr.children(child) {
-                                if matches!(hugr.get_optype(cfg_child), OpType::DataflowBlock(_)) {
-                                    return Some(cfg_child);
-                                }
+        // Prefer the declared entrypoint: modules can contain helpers before
+        // the function representing the program being parsed.
+        let entrypoint = hugr.entrypoint();
+        if matches!(hugr.get_optype(entrypoint), OpType::FuncDefn(_)) {
+            for child in hugr.children(entrypoint) {
+                match hugr.get_optype(child) {
+                    // Direct DFG body (e.g. from tket or manual construction)
+                    OpType::DFG(_) => return Some(child),
+                    // CFG body (Guppy output): find the first DataflowBlock
+                    OpType::CFG(_) => {
+                        for cfg_child in hugr.children(child) {
+                            if matches!(hugr.get_optype(cfg_child), OpType::DataflowBlock(_)) {
+                                return Some(cfg_child);
                             }
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
+            // Guppy 1 inlines the entry program directly in the function
+            // definition instead of wrapping it in a DFG/CFG.
+            return Some(entrypoint);
         }
 
         // Fallback: find any DFG or DataflowBlock
@@ -718,6 +741,13 @@ fn trace_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, bool)> {
 /// `ConstInt { ... value: V ... }`.
 #[cfg(feature = "hugr")]
 fn extract_const_float(const_op: &tket::hugr::ops::Const) -> Option<(f64, bool)> {
+    // Guppy 1 emits rotations as `tket.rotation.ConstRotation`, whose value is
+    // represented in half turns rather than radians.
+    if let Some(rotation) = const_op.get_custom_value::<tket::extension::rotation::ConstRotation>()
+    {
+        return Some((rotation.half_turns(), true));
+    }
+
     let debug_str = format!("{const_op:?}");
 
     // Pattern: F64(number)
@@ -1097,6 +1127,16 @@ mod tests {
             hugr_name_to_quantum_op("Rx", arbitrary),
             Some(QuantumOp::RX(Angle64::from_radians(1.23)))
         );
+    }
+
+    #[cfg(feature = "hugr")]
+    #[test]
+    fn test_extract_const_rotation_in_half_turns() {
+        use tket::extension::rotation::ConstRotation;
+        use tket::hugr::ops::Const;
+
+        let rotation = Const::new(ConstRotation::PI.into());
+        assert_eq!(extract_const_float(&rotation), Some((1.0, true)));
     }
 
     #[test]

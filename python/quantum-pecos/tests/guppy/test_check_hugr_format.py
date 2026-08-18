@@ -15,7 +15,7 @@ def test_check_hugr_format() -> None:
     def simple() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR (a hugr.package.Package)
     hugr = simple.compile()

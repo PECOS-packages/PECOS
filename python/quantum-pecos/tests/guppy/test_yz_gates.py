@@ -13,7 +13,7 @@ def test_y_gate_only() -> None:
     def y_only() -> bool:
         q = qubit()
         y(q)
-        return measure(q)
+        return measure(q).read()
 
     results = sim(Guppy(y_only)).qubits(1).quantum(state_vector()).run(5).to_dict()
     # measurements is list of lists like [[1], [1], ...], extract last value from each shot
@@ -29,7 +29,7 @@ def test_z_gate_only() -> None:
     def z_only() -> bool:
         q = qubit()
         z(q)
-        return measure(q)
+        return measure(q).read()
 
     results = sim(Guppy(z_only)).qubits(1).quantum(state_vector()).run(5).to_dict()
     # measurements is list of lists like [[0], [0], ...], extract last value from each shot
@@ -45,11 +45,11 @@ def test_y_and_z_tuple() -> None:
     def yz_tuple() -> tuple[bool, bool]:
         q1 = qubit()
         y(q1)  # Y|0⟩ = i|1⟩
-        r1 = measure(q1)
+        r1 = measure(q1).read()
 
         q2 = qubit()
         z(q2)  # Z|0⟩ = |0⟩
-        r2 = measure(q2)
+        r2 = measure(q2).read()
 
         return r1, r2
 
@@ -69,15 +69,15 @@ def test_xyz_tuple() -> None:
     def xyz_tuple() -> tuple[bool, bool, bool]:
         q1 = qubit()
         x(q1)  # X|0⟩ = |1⟩
-        r1 = measure(q1)
+        r1 = measure(q1).read()
 
         q2 = qubit()
         y(q2)  # Y|0⟩ = i|1⟩
-        r2 = measure(q2)
+        r2 = measure(q2).read()
 
         q3 = qubit()
         z(q3)  # Z|0⟩ = |0⟩
-        r3 = measure(q3)
+        r3 = measure(q3).read()
 
         return r1, r2, r3
 

@@ -2565,7 +2565,7 @@ impl TickCircuit {
             return;
         }
 
-        let old_ticks: Vec<Tick> = self.ticks.drain(..).collect();
+        let old_ticks = std::mem::take(&mut self.ticks);
         let mut compacted: Vec<Tick> = Vec::new();
 
         for tick in old_ticks {

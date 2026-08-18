@@ -290,7 +290,7 @@ class TestHUGRSimulation:
         def simple_circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Compile to HUGR
         compiled = simple_circuit.compile()
@@ -351,7 +351,7 @@ class TestHUGRSimulation:
         def simple_h_measure() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Compile to HUGR
         compiled = simple_h_measure.compile()

@@ -26,7 +26,7 @@ mwpf = ["pecos-decoders/mwpf"]
 # Bundle of pyo3 features that maturin needs for the Python cdylib but that
 # break a plain `cargo test`:
 #   - extension-module: tell the linker NOT to link libpython
-#   - abi3-py310:        use the limited API; pyo3 then skips emitting
+#   - abi3-py312:        use the limited API; pyo3 then skips emitting
 #                        `rustc-link-lib=python` directives
 #   - generate-import-lib: Windows-only, generates abi3 import library
 # With these enabled, `cargo test` produces a test binary with unresolved
@@ -37,7 +37,7 @@ mwpf = ["pecos-decoders/mwpf"]
 # silently re-enabling it for the whole workspace.
 extension-module = [
     "pyo3/extension-module",
-    "pyo3/abi3-py310",
+    "pyo3/abi3-py312",
     "pyo3/generate-import-lib",
 ]
 

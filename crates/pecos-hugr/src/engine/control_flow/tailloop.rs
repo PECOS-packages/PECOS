@@ -40,6 +40,7 @@ use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
 use crate::engine::activation::{ContainerActivation, QueuePolicy};
+use crate::engine::analysis::collect_descendants;
 use crate::engine::types::{ActiveTailLoopInfo, TailLoopInfo};
 
 impl HugrEngine {
@@ -329,27 +330,40 @@ impl HugrEngine {
             .chain(&tailloop_info.classical_ops)
             .chain(&tailloop_info.bool_ops)
         {
-            act.reset_processed(op_node);
+            // Structural DFG body operations must clear their outputs too:
+            // otherwise a later iteration can observe an unpacked value from
+            // the previous loop-carried tuple.
+            act.reset(op_node);
             act.queue(op_node, QueuePolicy::IfReady);
         }
         for &cond_node in &tailloop_info.conditional_nodes {
-            act.reset_processed(cond_node);
+            act.reset(cond_node);
             act.queue(cond_node, QueuePolicy::Always);
         }
         for &nested in &tailloop_info.tailloop_nodes {
-            act.reset_processed(nested);
+            act.reset(nested);
             act.queue(nested, QueuePolicy::Always);
         }
         for &nested in &tailloop_info.cfg_nodes {
-            act.reset_processed(nested);
+            act.reset(nested);
             act.queue(nested, QueuePolicy::IfReady);
         }
         for child in hugr.children(tailloop_node) {
             if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
-                act.reset_processed(child);
+                act.reset(child);
                 act.queue(child, QueuePolicy::Always);
             }
-            act.reset_wires(child);
+        }
+        // Structural operations (for example tuple unpacking) do not appear
+        // in the executable-op inventories above, but their outputs are
+        // still iteration-local. Clear every body descendant so a consumer
+        // cannot read a prior iteration's structural value. The body Input
+        // carries the values just propagated from the Continue tag, so keep
+        // its outputs intact.
+        let mut body_descendants = std::collections::BTreeSet::new();
+        collect_descendants(hugr, tailloop_node, &mut body_descendants);
+        for node in body_descendants {
+            act.reset_wires(node);
         }
         act.keep_wires(tailloop_info.input_node);
 
@@ -399,6 +413,11 @@ impl HugrEngine {
             let input_port_idx = just_inputs_count + rest_idx;
 
             let output_in_port = IncomingPort::from(output_port_idx);
+            if let Some(value) = self.get_input_value(hugr, output_node, output_port_idx) {
+                self.wire_state
+                    .classical_values
+                    .insert((input_node, input_port_idx), value);
+            }
             if let Some((src_node, src_port)) =
                 hugr.single_linked_output(output_node, output_in_port)
             {
@@ -425,12 +444,8 @@ impl HugrEngine {
         // Tag inside a Conditional case and routed through the Conditional's
         // output), its payload elements ARE the next iteration's just_inputs.
         let control_port = IncomingPort::from(0);
-        if let Some((ctrl_src, ctrl_port)) = hugr.single_linked_output(output_node, control_port)
-            && let Some(crate::engine::types::ClassicalValue::Sum { tag: 0, values }) = self
-                .wire_state
-                .classical_values
-                .get(&(ctrl_src, ctrl_port.index()))
-                .cloned()
+        if let Some(crate::engine::types::ClassicalValue::Sum { tag: 0, values }) =
+            self.get_input_value(hugr, output_node, control_port.index())
         {
             for (port_idx, value) in values.into_iter().enumerate() {
                 if port_idx >= just_inputs_count {
@@ -531,6 +546,11 @@ impl HugrEngine {
             let tailloop_output_idx = just_outputs_count + rest_idx;
 
             let output_in_port = IncomingPort::from(output_port_idx);
+            if let Some(value) = self.get_input_value(hugr, output_node, output_port_idx) {
+                self.wire_state
+                    .classical_values
+                    .insert((tailloop_node, tailloop_output_idx), value);
+            }
             if let Some((src_node, src_port)) =
                 hugr.single_linked_output(output_node, output_in_port)
             {
@@ -562,12 +582,8 @@ impl HugrEngine {
         // Conditional's output rather than a direct Tag node), its payload
         // elements ARE the just_outputs.
         let control_port = IncomingPort::from(0);
-        if let Some((ctrl_src, ctrl_port)) = hugr.single_linked_output(output_node, control_port)
-            && let Some(crate::engine::types::ClassicalValue::Sum { tag: 1, values }) = self
-                .wire_state
-                .classical_values
-                .get(&(ctrl_src, ctrl_port.index()))
-                .cloned()
+        if let Some(crate::engine::types::ClassicalValue::Sum { tag: 1, values }) =
+            self.get_input_value(hugr, output_node, control_port.index())
         {
             for (port_idx, value) in values.into_iter().enumerate() {
                 if port_idx >= just_outputs_count {

@@ -18,7 +18,7 @@ anyhow = { workspace = true }
 pecos-core = { workspace = true }
 pecos-simulators = { workspace = true }
 pecos-stab-tn = { path = "../../../exp/pecos-stab-tn" }
-selene-core = { git = "https://github.com/Quantinuum/selene.git", rev = "01300ee5d4825e2dfc6500941d0540c3ff06988a" }
+selene-core = { git = "https://github.com/Quantinuum/selene.git", rev = "458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511" }
 
 [lints]
 workspace = true

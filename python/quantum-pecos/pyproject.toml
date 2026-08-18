@@ -24,7 +24,7 @@ maintainers =[
 ]
 description = """PECOS is a library for the evaluation, study, and design of quantum error correction protocols."""
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
@@ -32,19 +32,11 @@ dependencies = [
     "pecos-rslib-llvm==0.10.0.dev0",
     "phir>=0.3.3",
     "networkx>=2.1.0",
-    # Pin to the 0.21.x line (tket.bool era). guppylang 0.22+ emits the
-    # tket.measurement HUGR format, which our Rust tket (0.19) cannot read; do not
-    # uncap until the Rust tket stack is bumped to 0.20+.
-    "guppylang>=0.21.16,<0.22",
-    # tket 0.13.x pairs with the latest stable guppylang (0.21.16, tket.bool era).
-    # Do not bump past 0.13 until a stable guppylang emits tket.measurement (which
-    # needs Rust tket 0.20+). The old `tket<0.12.16` GLIBC-2.38 cap was stale.
-    "tket>=0.13,<0.14",
-    # hugr-py 0.16.x pairs with guppylang 0.21.16 / tket 0.13.x. The runtime relies on
-    # the binary Model envelope (`Package.to_bytes`/`from_bytes`); cap to the tested
-    # 0.16 line rather than accept an unverified newer serialization.
-    "hugr>=0.16,<0.17",
-    "selene-sim~=0.2.0",
+    # Guppy 1.0 release candidates and Selene 0.3 use the current tket/HUGR format.
+    "guppylang~=1.0.1",
+    "tket~=0.15.0",
+    "hugr~=0.18.0",
+    "selene-sim~=0.3.0",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -54,8 +46,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Physics",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -82,7 +72,7 @@ all = [
 # CUDA dependencies for the Python cuStateVec / MPS backends. See
 # docs/user-guide/cuda-setup.md. Requires a system CUDA toolkit and a matching NVIDIA
 # driver. Pick the extra matching your CUDA major -- do NOT install both (mixing
-# cupy-cudaXXx wheels is unsupported). Python 3.11+ required.
+# cupy-cudaXXx wheels is unsupported). Python 3.12+ required.
 #   uv pip install -e .[cuda13]   # CUDA 13, Turing/CC 7.5+ GPUs (recommended)
 #   uv pip install -e .[cuda12]   # CUDA 12
 # V100/Volta (CC 7.0): cuStateVec dropped Volta at 25.09, so pin
@@ -119,8 +109,8 @@ packages = ["src/pecos"]
 
 [tool.black]
 line-length = 120
-# See top-level pyproject.toml's [tool.black] for why this is pinned to py310.
-target-version = ["py310"]
+# See top-level pyproject.toml's [tool.black] for why this is pinned to py312.
+target-version = ["py312"]
 
 [tool.pytest.ini_options]
 markers = [

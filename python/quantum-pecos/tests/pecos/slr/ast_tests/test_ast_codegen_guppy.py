@@ -123,7 +123,7 @@ class TestAstToGuppyPrepMeasure:
         code = ast_to_guppy(ast)
 
         assert "c = array(False)" in code
-        assert "c[0] = measure(q_0)" in code
+        assert "c[0] = measure(q_0).read()" in code
         assert "-> array[bool, 1]:" in code
         assert "return c" in code
 
@@ -210,7 +210,7 @@ class TestAstToGuppyQEC:
         # Check operations
         assert "data_0, ancilla_0 = cx(data_0, ancilla_0)" in code
         assert "data_1, ancilla_0 = cx(data_1, ancilla_0)" in code
-        assert "c[0] = measure(ancilla_0)" in code
+        assert "c[0] = measure(ancilla_0).read()" in code
 
     def test_qeclib_block_internal_return_does_not_leak_as_main_return(self) -> None:
         """S5/M2 provenance guard.

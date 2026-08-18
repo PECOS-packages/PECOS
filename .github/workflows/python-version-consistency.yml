@@ -8,12 +8,24 @@ on:
     paths:
       - 'pyproject.toml'
       - 'python/**/pyproject.toml'
+      - 'exp/**/pyproject.toml'
+      - 'Cargo.toml'
+      - 'crates/**/Cargo.toml'
+      - 'python/**/Cargo.toml'
+      - 'exp/**/Cargo.toml'
+      - '.github/workflows/python-release.yml'
       - 'scripts/check_python_workspace.py'
       - '.github/workflows/python-version-consistency.yml'
   pull_request:
     paths:
       - 'pyproject.toml'
       - 'python/**/pyproject.toml'
+      - 'exp/**/pyproject.toml'
+      - 'Cargo.toml'
+      - 'crates/**/Cargo.toml'
+      - 'python/**/Cargo.toml'
+      - 'exp/**/Cargo.toml'
+      - '.github/workflows/python-release.yml'
       - 'scripts/check_python_workspace.py'
       - '.github/workflows/python-version-consistency.yml'
 
@@ -34,7 +46,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version-file: ".github/uv.toml"
 
       - name: Check Python workspace metadata
-        run: python scripts/check_python_workspace.py
+        run: uv run --frozen python scripts/check_python_workspace.py

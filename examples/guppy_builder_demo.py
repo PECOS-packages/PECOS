@@ -25,7 +25,7 @@ def bell_state() -> tuple[bool, bool]:
     q0, q1 = qubit(), qubit()
     h(q0)
     cx(q0, q1)
-    return measure(q0), measure(q1)
+    return measure(q0).read(), measure(q1).read()
 
 
 @guppy
@@ -35,7 +35,7 @@ def ghz_3qubit() -> tuple[bool, bool, bool]:
     h(q0)
     cx(q0, q1)
     cx(q1, q2)
-    return measure(q0), measure(q1), measure(q2)
+    return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
 
 def demo_builder_pattern() -> None:

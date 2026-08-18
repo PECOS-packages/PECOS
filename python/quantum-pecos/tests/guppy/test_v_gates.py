@@ -17,7 +17,7 @@ class TestVGates:
             q = qubit()
             h(q)
             v(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_v.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -35,7 +35,7 @@ class TestVGates:
             q = qubit()
             h(q)
             vdg(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_vdg.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -54,7 +54,7 @@ class TestVGates:
             h(q)
             v(q)
             vdg(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_v_vdg.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -70,7 +70,7 @@ class TestVGates:
             q = qubit()
             v(q)
             v(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_double_v.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -87,7 +87,7 @@ class TestVGates:
         def simple_v() -> bool:
             q = qubit()
             v(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = simple_v.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())

@@ -34,8 +34,8 @@ class TestGuppyResultMechanisms:
             h(q0)
             cx(q0, q1)
 
-            m0 = measure(q0)
-            m1 = measure(q1)
+            m0 = measure(q0).read()
+            m1 = measure(q1).read()
 
             # Tag individual results
             result("alice_measurement", m0)
@@ -49,7 +49,7 @@ class TestGuppyResultMechanisms:
             h(q0)
             cx(q0, q1)
 
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         @guppy
         def bell_mixed_output() -> bool:
@@ -58,8 +58,8 @@ class TestGuppyResultMechanisms:
             h(q0)
             cx(q0, q1)
 
-            m0 = measure(q0)
-            m1 = measure(q1)
+            m0 = measure(q0).read()
+            m1 = measure(q1).read()
 
             # Tag one result
             result("alice", m0)
@@ -182,7 +182,7 @@ class TestGuppyResultMechanisms:
             """Measure and use result()."""
             q = qubit()
             h(q)
-            m = measure(q)
+            m = measure(q).read()
             result("measurement", m)
 
         @guppy
@@ -283,7 +283,7 @@ class TestLLVMResultPatterns:
             """Simple function with result call."""
             q = qubit()
             h(q)
-            m = measure(q)
+            m = measure(q).read()
             result("test", m)
 
         # Compile to LLVM

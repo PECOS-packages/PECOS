@@ -30,7 +30,7 @@ class TestSeleneDirectIntegration:
             q0, q1 = qubit(), qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         # Step 2: Compile Guppy to HUGR
         hugr_bytes = compile_guppy_to_hugr(bell_state)
@@ -289,7 +289,7 @@ class TestGuppyToHUGRCompilation:
             """Apply H gate and measure."""
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr_bytes = compile_guppy_to_hugr(simple_h_gate)
         assert hugr_bytes is not None, "Should produce HUGR bytes"
@@ -310,7 +310,7 @@ class TestGuppyToHUGRCompilation:
             h(q0)
             cx(q0, q1)
             cx(q1, q2)
-            return measure(q0), measure(q1), measure(q2)
+            return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         hugr_bytes = compile_guppy_to_hugr(three_qubit_ghz)
         assert hugr_bytes is not None, "Should produce HUGR bytes"
@@ -329,7 +329,7 @@ class TestGuppyToHUGRCompilation:
             """Circuit with measurement and conditional logic."""
             q = qubit()
             h(q)
-            result = measure(q)
+            result = measure(q).read()
             if result:
                 return 1
             return 0

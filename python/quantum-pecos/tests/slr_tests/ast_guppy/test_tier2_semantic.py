@@ -312,7 +312,7 @@ def run() -> int:
             if label == "extra.zero_init_safety":
                 _assert_zero_init_predicate(label, ir, name="c")
             print(f"[A/B OK] {label}")
-        except AssertionError as exc:  # noqa: PERF203
+        except AssertionError as exc:
             failures.append(f"{label}: {exc}")
             print(f"[A/B FAIL] {label}: {exc}")
 
@@ -343,7 +343,7 @@ def run() -> int:
         # Per-program isolation is required in this reporting harness
         # (one Guppy/Selene failure must not abort the others); the
         # loop is ~2 items so the PERF203 try/except cost is irrelevant.
-        except Exception as exc:  # noqa: PERF203
+        except Exception as exc:
             failures.append(f"{label} (oracle): {type(exc).__name__}: {exc}")
             print(f"[C FAIL] {label}: {type(exc).__name__}: {exc}")
 

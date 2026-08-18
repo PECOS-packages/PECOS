@@ -43,17 +43,9 @@ _CUDA_ERROR_INITIALIZATION = 3
 _CUDA_DRIVER_ERROR_NOT_INITIALIZED = 3
 
 if TYPE_CHECKING:
-    import sys
+    from typing import Self
 
     from pecos import Array
-
-    # Handle Python 3.10 compatibility for Self type
-    if sys.version_info >= (3, 11):
-        from typing import Self
-    else:
-        from typing import TypeVar
-
-        Self = TypeVar("Self", bound="CuStateVec")
 
 
 class CuStateVec(StateVector):

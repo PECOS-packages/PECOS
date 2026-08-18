@@ -9,7 +9,7 @@ maintainers =[
     {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
 ]
 dependencies = []
-requires-python = ">= 3.10"
+requires-python = ">= 3.12"
 license = "Apache-2.0"
 
 [build-system]

@@ -27,7 +27,7 @@ def test_guppy_to_selene_pipeline() -> None:
         cx(q1, q2)
 
         # Measure both qubits
-        return measure(q1), measure(q2)
+        return measure(q1).read(), measure(q2).read()
 
     # Test that sim() auto-detects Guppy and converts to Selene Interface
     try:
@@ -80,7 +80,7 @@ def test_guppy_hadamard_compilation() -> None:
     def hadamard_test() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     try:
         # Try to compile and run
@@ -118,7 +118,7 @@ def test_guppy_cnot_compilation() -> None:
         q1 = qubit()
         q2 = qubit()
         cx(q1, q2)
-        return measure(q1), measure(q2)
+        return measure(q1).read(), measure(q2).read()
 
     try:
         # Try to compile and run

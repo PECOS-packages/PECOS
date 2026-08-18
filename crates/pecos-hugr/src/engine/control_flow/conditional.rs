@@ -40,7 +40,7 @@ use pecos_core::gate_type::GateType;
 use pecos_quantum::hugr_convert::{
     hugr_op_to_gate_type, is_rotation_gate, try_extract_rotation_angle,
 };
-use tket::hugr::ops::OpType;
+use tket::hugr::ops::{OpTrait, OpType};
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
@@ -373,7 +373,15 @@ impl HugrEngine {
         // Propagate ALL wires (qubit and classical) from Conditional inputs to the Case's Input node
         // Port 0 is the control (Sum type), ports 1+ are data inputs
         // following the payload values unpacked above.
-        let num_cond_inputs = hugr.num_inputs(cond_node);
+        // `HugrView::num_inputs` includes the order edge. Case-input
+        // propagation is defined over the Conditional's dataflow row only;
+        // treating the order edge as a value input shifts/overwrites case
+        // values in HUGR 0.29 and can leave a selected branch's `Tag`
+        // permanently starved.
+        let num_cond_inputs = hugr
+            .get_optype(cond_node)
+            .dataflow_signature()
+            .map_or(0, |signature| signature.input_count());
 
         // Start from port 1 (skip control), propagate all inputs. Reads go
         // through the tracing layer so a data input produced inside a

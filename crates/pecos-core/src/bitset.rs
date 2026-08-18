@@ -207,9 +207,7 @@ impl BitSet {
     /// Clear all elements from the set.
     #[inline]
     pub fn clear(&mut self) {
-        for w in &mut self.words {
-            *w = 0;
-        }
+        self.words.fill(0);
     }
 
     /// Take the contents of this set, leaving it empty but with capacity preserved.

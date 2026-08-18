@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib  # type: ignore[no-redef]
 
 
 def _repo_root() -> Path:

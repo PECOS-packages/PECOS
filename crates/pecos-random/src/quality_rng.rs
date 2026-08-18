@@ -257,16 +257,15 @@ impl SimdXoshiro256PlusPlus {
 
         // Process remaining in chunks of 4 directly (bypass buffer for efficiency)
         let remaining = &mut dest[i..];
-        let mut chunks = remaining.chunks_exact_mut(4);
+        let (chunks, remainder) = remaining.as_chunks_mut::<4>();
 
-        for chunk in chunks.by_ref() {
+        for chunk in chunks {
             let values = self.next_u64x4();
             let array: [u64; 4] = values.into();
             chunk.copy_from_slice(&array);
         }
 
         // Handle remainder by refilling buffer
-        let remainder = chunks.into_remainder();
         if !remainder.is_empty() {
             self.refill_buffer();
             for val in remainder {
@@ -502,14 +501,13 @@ impl TryRng for SimdXoshiro256PlusPlus {
     #[inline]
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         // Process 8 bytes at a time using next_u64
-        let mut chunks = dest.chunks_exact_mut(8);
-        for chunk in chunks.by_ref() {
+        let (chunks, remainder) = dest.as_chunks_mut::<8>();
+        for chunk in chunks {
             let bytes = self.next_u64().to_le_bytes();
             chunk.copy_from_slice(&bytes);
         }
 
         // Handle remainder
-        let remainder = chunks.into_remainder();
         if !remainder.is_empty() {
             let bytes = self.next_u64().to_le_bytes();
             for (i, byte) in remainder.iter_mut().enumerate() {

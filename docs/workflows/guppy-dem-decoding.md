@@ -47,8 +47,8 @@ def rep_code_memory() -> None:
     cx(d1, a0)
     cx(d1, a1)
     cx(d2, a1)
-    result("s0_r0", measure(a0))
-    result("s1_r0", measure(a1))
+    result("s0_r0", measure(a0).read())
+    result("s1_r0", measure(a1).read())
 
     # Round 1: same checks, fresh ancillas (measure() consumes its qubit).
     b0, b1 = qubit(), qubit()
@@ -56,13 +56,13 @@ def rep_code_memory() -> None:
     cx(d1, b0)
     cx(d1, b1)
     cx(d2, b1)
-    result("s0_r1", measure(b0))
-    result("s1_r1", measure(b1))
+    result("s0_r1", measure(b0).read())
+    result("s1_r1", measure(b1).read())
 
     # Final data readout in the Z basis.
-    result("m0", measure(d0))
-    result("m1", measure(d1))
-    result("m2", measure(d2))
+    result("m0", measure(d0).read())
+    result("m1", measure(d1).read())
+    result("m2", measure(d2).read())
 ```
 
 ## 2. Define detectors and observables

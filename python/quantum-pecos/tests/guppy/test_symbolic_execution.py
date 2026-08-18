@@ -42,7 +42,7 @@ class TestBasicSymbolicExecution:
         def single_h() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         result = execute_hugr_symbolic(single_h.compile().to_bytes())
 
@@ -57,7 +57,7 @@ class TestBasicSymbolicExecution:
         @guppy
         def no_gate() -> bool:
             q = qubit()
-            return measure(q)
+            return measure(q).read()
 
         result = execute_hugr_symbolic(no_gate.compile().to_bytes())
 
@@ -80,7 +80,7 @@ class TestBasicSymbolicExecution:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         result = execute_hugr_symbolic(bell_state.compile().to_bytes())
 
@@ -107,7 +107,7 @@ class TestBasicSymbolicExecution:
             h(q0)
             cx(q0, q1)
             cx(q1, q2)
-            return (measure(q0), measure(q1), measure(q2))
+            return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
         result = execute_hugr_symbolic(ghz_state.compile().to_bytes())
 
@@ -134,7 +134,7 @@ class TestTwoQubitGates:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         result = execute_hugr_symbolic(cx_circuit.compile().to_bytes())
         counts = result.sample_counts(10000)
@@ -160,7 +160,7 @@ class TestTwoQubitGates:
             h(q1)  # Prepare target in |+>
             cz(q0, q1)  # CZ creates phase correlation
             h(q1)  # Convert phase to amplitude correlation
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         result = execute_hugr_symbolic(cz_bell.compile().to_bytes())
 
@@ -179,7 +179,7 @@ class TestTwoQubitGates:
             q1 = qubit()
             h(q0)
             cy(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         result = execute_hugr_symbolic(cy_circuit.compile().to_bytes())
 
@@ -198,7 +198,7 @@ class TestSingleQubitGates:
         def x_gate() -> bool:
             q = qubit()
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         result = execute_hugr_symbolic(x_gate.compile().to_bytes())
         counts = result.sample_counts(100)
@@ -209,7 +209,7 @@ class TestSingleQubitGates:
         def z_gate() -> bool:
             q = qubit()
             z(q)
-            return measure(q)
+            return measure(q).read()
 
         result = execute_hugr_symbolic(z_gate.compile().to_bytes())
         counts = result.sample_counts(100)
@@ -220,7 +220,7 @@ class TestSingleQubitGates:
         def y_gate() -> bool:
             q = qubit()
             y(q)
-            return measure(q)
+            return measure(q).read()
 
         result = execute_hugr_symbolic(y_gate.compile().to_bytes())
         counts = result.sample_counts(100)
@@ -236,7 +236,7 @@ class TestSingleQubitGates:
             h(q)
             s(q)
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         result = execute_hugr_symbolic(s_gate.compile().to_bytes())
         # H-S-H is equivalent to sqrt(X), deterministic
@@ -255,7 +255,7 @@ class TestSamplingMethods:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         result = execute_hugr_symbolic(bell.compile().to_bytes())
         samples = result.sample(10)
@@ -276,7 +276,7 @@ class TestSamplingMethods:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         result = execute_hugr_symbolic(bell.compile().to_bytes())
         counts = result.sample_counts(1000)
@@ -296,7 +296,7 @@ class TestSamplingMethods:
             h(q0)
             cx(q0, q1)
             cx(q1, q2)
-            return (measure(q0), measure(q1), measure(q2))
+            return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
         result = execute_hugr_symbolic(ghz.compile().to_bytes())
 
@@ -321,7 +321,7 @@ class TestMeasurementStructure:
             x(q0)  # Flip to |1>
             # q1 stays |0>
             x(q2)  # Flip to |1>
-            return (measure(q0), measure(q1), measure(q2))
+            return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
         result = execute_hugr_symbolic(all_deterministic.compile().to_bytes())
 
@@ -343,7 +343,7 @@ class TestMeasurementStructure:
             h(q0)
             h(q1)
             h(q2)
-            return (measure(q0), measure(q1), measure(q2))
+            return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
         result = execute_hugr_symbolic(all_random.compile().to_bytes())
 
@@ -366,7 +366,7 @@ class TestMeasurementStructure:
             h(q0)  # Random
             x(q1)  # Deterministic |1>
             # q2 stays |0> - deterministic
-            return (measure(q0), measure(q1), measure(q2))
+            return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
         result = execute_hugr_symbolic(mixed.compile().to_bytes())
 
@@ -403,14 +403,14 @@ class TestRepetitionCode:
             # Syndrome Z0Z1 using CX gates
             cx(d0, a0)
             cx(d1, a0)
-            s0 = measure(a0)
+            s0 = measure(a0).read()
 
             # Syndrome Z1Z2 using CX gates
             cx(d1, a1)
             cx(d2, a1)
-            s1 = measure(a1)
+            s1 = measure(a1).read()
 
-            return (s0, s1, measure(d0), measure(d1), measure(d2))
+            return (s0, s1, measure(d0).read(), measure(d1).read(), measure(d2).read())
 
         result = execute_hugr_symbolic(repetition_code.compile().to_bytes())
 
@@ -439,7 +439,7 @@ class TestDagCircuitSymbolicExecution:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         hugr_bytes = bell.compile().to_bytes()
         dag = hugr_to_dag_circuit(hugr_bytes)
@@ -463,7 +463,7 @@ class TestDagCircuitSymbolicExecution:
             h(q0)
             cx(q0, q1)
             cx(q1, q2)
-            return (measure(q0), measure(q1), measure(q2))
+            return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
         hugr_bytes = ghz.compile().to_bytes()
 
@@ -492,7 +492,7 @@ class TestResultStringRepresentation:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         result = execute_hugr_symbolic(bell.compile().to_bytes())
 
@@ -515,7 +515,7 @@ class TestNoisySymbolicExecution:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         result = execute_hugr_symbolic_noisy(
             bell.compile().to_bytes(),
@@ -536,7 +536,7 @@ class TestNoisySymbolicExecution:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         result = execute_hugr_symbolic_noisy(
             bell.compile().to_bytes(),
@@ -558,7 +558,7 @@ class TestNoisySymbolicExecution:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         hugr_bytes = bell.compile().to_bytes()
 
@@ -587,7 +587,7 @@ class TestNoisySymbolicExecution:
         @guppy
         def deterministic_zero() -> bool:
             q = qubit()
-            return measure(q)
+            return measure(q).read()
 
         # With 100% measurement noise, all outcomes should flip from 0 to 1
         result = execute_hugr_symbolic_noisy(
@@ -610,7 +610,7 @@ class TestNoisySymbolicExecution:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return (measure(q0), measure(q1))
+            return (measure(q0).read(), measure(q1).read())
 
         hugr_bytes = bell.compile().to_bytes()
         dag = hugr_to_dag_circuit(hugr_bytes)
@@ -632,7 +632,7 @@ class TestNoisySymbolicExecution:
         def single_measure() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         result = execute_hugr_symbolic_noisy(
             single_measure.compile().to_bytes(),

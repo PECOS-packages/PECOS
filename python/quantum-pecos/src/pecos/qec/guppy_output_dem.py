@@ -335,11 +335,17 @@ def infer_guppy_dem_annotations(
 
     source_ids_json = circuit.get_meta("qis_source_measurement_ids")
     source_ids = json.loads(source_ids_json) if source_ids_json else []
-    if provenance_complete and (len(set(raw_ids)) != len(source_ids) or set(raw_ids) != set(source_ids)):
-        raise ValueError(
-            f"result tag {raw_tag!r} must expose every physical measurement exactly once; "
-            f"tag ids={raw_ids[:12]}, source ids={source_ids[:12]}",
-        )
+    if provenance_complete:
+        if len(set(raw_ids)) != len(source_ids) or set(raw_ids) != set(source_ids):
+            raise ValueError(
+                f"result tag {raw_tag!r} must expose every physical measurement exactly once; "
+                f"tag ids={raw_ids[:12]}, source ids={source_ids[:12]}",
+            )
+        if raw_ids != source_ids:
+            raise ValueError(
+                f"result tag {raw_tag!r} must expose physical measurements in certified source order; "
+                f"tag ids={raw_ids[:12]}, source ids={source_ids[:12]}",
+            )
     if not provenance_complete:
         if require_raw_provenance:
             provenance_trace = _capture_qis_operation_traces(

@@ -12,6 +12,7 @@ These tests verify:
 
 import numpy as np
 import pytest
+from pecos.decoders import pymatching, tesseract
 from pecos.qec.surface import (
     NoiseParameters,
     SurfaceDecoder,
@@ -311,6 +312,11 @@ class TestSurfaceDecoder:
         for decoder_type in ["pymatching", "pymatching_correlated", "pymatching_uncorrelated"]:
             assert decode_module._recommended_graphlike_decomposition_for_decoder(decoder_type) == "terminal_graphlike"
         assert decode_module._recommended_graphlike_decomposition_for_decoder("tesseract") == "source_graphlike"
+        assert (
+            decode_module._recommended_graphlike_decomposition_for_decoder(pymatching(correlated=True))
+            == "terminal_graphlike"
+        )
+        assert decode_module._recommended_graphlike_decomposition_for_decoder(tesseract()) == "source_graphlike"
 
     def test_get_dem(self) -> None:
         """Test DEM generation via decoder."""
@@ -767,12 +773,12 @@ class TestDemGeneration:
             sampler = ParsedDem.from_string(dem).to_dem_sampler()
 
             assert (
-                sampler.sample_decode_count(
+                sampler.decode(
                     dem,
                     16,
-                    decoder_type="pymatching",
+                    pymatching(correlated=True),
                     seed=1234,
-                )
+                ).num_errors
                 >= 0
             )
 

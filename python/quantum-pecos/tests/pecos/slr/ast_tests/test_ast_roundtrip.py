@@ -219,7 +219,7 @@ class TestRoundTripGuppy:
         ast = slr_to_ast(prog)
         guppy = ast_to_guppy(ast)
 
-        assert "c[0] = measure(q_0)" in guppy
+        assert "c[0] = measure(q_0).read()" in guppy
 
 
 class TestRoundTripStim:

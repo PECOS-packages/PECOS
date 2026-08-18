@@ -290,12 +290,13 @@ pytest *args:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{args}}" ]; then
-        uv run --frozen pytest {{args}}
+        uv run --frozen pytest -n auto {{args}}
     else
-        uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
-        uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-        uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
-        uv run --frozen pytest python/selene-plugins
+        uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+        uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+        uv run --frozen pytest -n auto python/selene-plugins
+        uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
     fi
 
 # Run the substantive PR Python lane after building the test-only native bindings it needs.
@@ -306,9 +307,10 @@ python-ci-core profile="debug": (validate-profile "python-ci-core" profile) (pyt
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
 [group('test')]
 pytest-ci-core:
-    uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
-    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-    uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
+    uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+    uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+    uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
 # Build and import the core Python packages on a target platform/interpreter.
 [group('test')]
@@ -348,7 +350,7 @@ test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
 
 # Fix formatting and linting issues (or: just lint check)
 [group('lint')]
-lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-env python-workspace-check
+lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-env python-workspace-check rust-workspace-check julia-version-check
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$({{pecos}} env)"
@@ -431,6 +433,16 @@ check: _msvc-bootstrap ensure-local-build-env
 [group('lint')]
 python-workspace-check:
     @uv run --frozen python scripts/check_python_workspace.py
+
+# Check Rust workspace crate versions
+[group('lint')]
+rust-workspace-check:
+    @uv run --frozen python scripts/check_rust_workspace.py
+
+# Check the Julia binding's version train
+[group('lint')]
+julia-version-check:
+    @uv run --frozen python scripts/check_julia_versions.py
 
 # Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]
@@ -630,7 +642,7 @@ docs-build:
 [group('docs')]
 docs-test:
     uv run --frozen python scripts/docs/generate_doc_tests.py
-    uv run --frozen pytest python/quantum-pecos/tests/docs/generated -v -k "not rust" -m "not slow"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests/docs/generated -v -k "not rust" -m "not slow"
 
 # =============================================================================
 # Deps Management (prefer `just setup` or `pecos install <target>`)
@@ -814,17 +826,17 @@ go-lint profile="release": (validate-profile "go-lint" profile) (go-build profil
 # Run performance tests with release build
 [group('test')]
 pytest-perf: build-release
-    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "performance" -v
+    uv run --frozen --group numpy-compat pytest -n 1 python/pecos-rslib/tests -m "performance" -v
 
 # Run tests for optional dependencies (only quantum-pecos carries the marker)
 [group('test')]
 pytest-dep:
-    uv run --frozen pytest python/quantum-pecos/tests -m "optional_dependency"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "optional_dependency"
 
 # Run the slower integration lane (excluded from the default fast lane)
 [group('test')]
 pytest-slow:
-    uv run --frozen pytest python/quantum-pecos/tests -m "slow and not optional_dependency"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "slow and not optional_dependency"
 
 
 
@@ -1169,6 +1181,25 @@ build-debug: (build "debug")
 build-release: (build "release")
 [private]
 build-native: (build "native")
+
+# Move every Python distribution onto a new version, then relock and verify
+[group('setup')]
+bump-python-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --frozen python scripts/bump_python_version.py {{version}}
+    just lock
+    just python-workspace-check
+
+# Move the Julia binding onto a new version, then verify
+[group('setup')]
+bump-julia-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --frozen python scripts/bump_julia_version.py {{version}}
+    cargo update --offline --manifest-path Cargo.toml -p pecos-julia-ffi
+    just julia-version-check
+    just rust-workspace-check
 
 # Re-resolve uv lockfiles minimally (no dependency updates), e.g. after a version bump
 [group('setup')]

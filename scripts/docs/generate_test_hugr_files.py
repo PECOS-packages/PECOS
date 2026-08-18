@@ -45,10 +45,10 @@ def generate_repetition_code_hugr() -> str:
         cx(d2, s1)
 
         # Extract syndromes as an array
-        result("syndrome", array(measure(s0), measure(s1)))
+        result("syndrome", array(measure(s0).read(), measure(s1).read()))
 
         # Measure data qubits (required by Guppy)
-        _ = measure(d0), measure(d1), measure(d2)
+        _ = measure(d0).read(), measure(d1).read(), measure(d2).read()
 
     # Compile to HUGR Package
     compiled = repetition_code.compile()

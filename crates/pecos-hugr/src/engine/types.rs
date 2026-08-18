@@ -82,6 +82,11 @@ pub struct MeasurementState {
     pub mappings: Vec<(Node, QubitId)>,
     /// Measurement results stored by qubit ID.
     pub results: BTreeMap<QubitId, u32>,
+    /// Measurement results stored by their immutable emission order.
+    ///
+    /// A qubit can be measured more than once, so `results` alone cannot
+    /// resolve a lazy future for an earlier measurement.
+    pub outcomes: BTreeMap<usize, u32>,
     /// Map from measurement node to the wire key where its classical output goes.
     pub output_wires: BTreeMap<Node, WireKey>,
     /// Number of measurements processed so far.
@@ -93,6 +98,7 @@ impl MeasurementState {
     pub fn reset(&mut self) {
         self.mappings.clear();
         self.results.clear();
+        self.outcomes.clear();
         self.output_wires.clear();
         self.processed_count = 0;
     }
@@ -853,6 +859,9 @@ pub struct ActiveCallInfo {
     /// variables inside the called body (e.g. `prelude.load_nat` of a
     /// generic bounded-nat parameter such as a loop bound).
     pub type_args: Vec<tket::hugr::types::TypeArg>,
+    /// Operations in a plain dataflow function body. Empty for CFG-bodied
+    /// functions, whose completion is driven by the CFG exit.
+    pub frame_ops: BTreeSet<Node>,
 }
 
 // --- TailLoop Control Flow Types ---
@@ -1001,5 +1010,15 @@ mod tests {
 
         let f = rng.next_f64();
         assert!((0.0..1.0).contains(&f)); // Should be in [0, 1)
+    }
+
+    #[test]
+    fn test_measurement_state_reset_clears_outcomes() {
+        let mut state = MeasurementState::default();
+        state.outcomes.insert(0, 1);
+
+        state.reset();
+
+        assert!(state.outcomes.is_empty());
     }
 }

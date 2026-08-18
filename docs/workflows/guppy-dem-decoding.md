@@ -47,8 +47,8 @@ def rep_code_memory() -> None:
     cx(d1, a0)
     cx(d1, a1)
     cx(d2, a1)
-    result("s0_r0", measure(a0))
-    result("s1_r0", measure(a1))
+    result("s0_r0", measure(a0).read())
+    result("s1_r0", measure(a1).read())
 
     # Round 1: same checks, fresh ancillas (measure() consumes its qubit).
     b0, b1 = qubit(), qubit()
@@ -56,13 +56,13 @@ def rep_code_memory() -> None:
     cx(d1, b0)
     cx(d1, b1)
     cx(d2, b1)
-    result("s0_r1", measure(b0))
-    result("s1_r1", measure(b1))
+    result("s0_r1", measure(b0).read())
+    result("s1_r1", measure(b1).read())
 
     # Final data readout in the Z basis.
-    result("m0", measure(d0))
-    result("m1", measure(d1))
-    result("m2", measure(d2))
+    result("m0", measure(d0).read())
+    result("m1", measure(d1).read())
+    result("m2", measure(d2).read())
 ```
 
 ## 2. Define detectors and observables
@@ -292,33 +292,33 @@ assert len(sim_shots) == 500
 
 ## 5. Decode the samples and compute logical error rates
 
-Each decoder is constructed from the DEM text form it accepts, then asked for a
-prediction per shot. A shot counts as a logical error when the predicted
-observable flip disagrees with the flip the sample actually carried.
-
-The result types reconcile their underlying shapes through `observable_flips`.
-Its sequence interface exposes per-observable booleans, while `.mask` exposes
-the same flips as an arbitrary-precision integer.
+Pass the same sampled batch to `batch.decode(...)` with a typed specification
+for each decoder. A shot counts as a logical error when the predicted
+observable flip disagrees with the flip the sample actually carried. The
+returned `DecodeResult` supplies the aggregate count and rate directly.
 
 <!--continuation-->
 ```python
-from pecos.decoders import BpOsdDecoder, ObservableFlips, PyMatchingDecoder, TesseractDecoder
+from pecos.decoders import bp_osd, pymatching, tesseract
 
-pymatching = PyMatchingDecoder.from_dem(terminal_graphlike_text)
-tesseract = TesseractDecoder.from_dem(source_graphlike_text, preset="fast", pqlimit=50_000)
-bp_osd = BpOsdDecoder.from_dem(raw_text, max_iter=10, osd_order=1)
+pymatching_result = batch.decode(
+    terminal_graphlike_text,
+    pymatching(correlated=True),
+)
+tesseract_result = batch.decode(
+    source_graphlike_text,
+    tesseract(preset="fast", pqlimit=50_000),
+    workers=None,
+)
+bp_osd_result = batch.decode(
+    raw_text,
+    bp_osd(max_iter=10, osd_order=1),
+    workers=None,
+)
 
-pymatching_errors = 0
-tesseract_errors = 0
-bp_osd_errors = 0
-
-for shot in range(batch.num_shots):
-    syndrome = batch.get_syndrome(shot)
-    actual = batch.get_observable_flips(shot)
-
-    pymatching_errors += pymatching.decode_syndrome(syndrome).observable_flips != actual
-    tesseract_errors += tesseract.decode_syndrome(syndrome).observable_flips != actual
-    bp_osd_errors += bp_osd.decode_syndrome(syndrome).observable_flips != actual
+pymatching_errors = pymatching_result.num_errors
+tesseract_errors = tesseract_result.num_errors
+bp_osd_errors = bp_osd_result.num_errors
 
 shots = batch.num_shots
 assert 0 < pymatching_errors < shots
@@ -329,28 +329,38 @@ print("DEM-sampled shots")
 print(f"pymatching  {pymatching_errors:5}   {pymatching_errors / shots:.4%}")
 print(f"tesseract   {tesseract_errors:5}   {tesseract_errors / shots:.4%}")
 print(f"bp_osd      {bp_osd_errors:5}   {bp_osd_errors / shots:.4%}")
+print(f"pymatching execution path: {pymatching_result.execution_path}")
 ```
 
-With one observable, any-observable and per-observable error rates coincide.
-With several, `predicted != actual` counts any-observable failures, while
-`predicted[i] != actual[i]` counts failures for observable `i`; say which rate
-you mean.
+With `workers=None`, PECOS automatically selects a native-batch, sequential, or
+parallel path based on the decoder and batch size. Pass `workers=N` to request
+an exact worker count. `result.execution_path` reports which path ran. Request
+`predictions=True` when you also need each shot's arbitrary-precision
+observable mask; the default avoids materializing them in Python.
+
+`num_errors` counts shots where the predicted observable mask differs from the
+true one anywhere, so with several observables it is the any-observable failure
+count. For a per-observable rate, take `predictions=True` and compare bit `i` of
+each predicted mask against bit `i` of the truth. With one observable the two
+rates coincide — but say which one you mean.
 
 The simulated shots decode the same way, against the same decoders:
 
 <!--continuation-->
 ```python
-sim_errors = 0
-for syndrome, observable_mask in sim_shots:
-    predicted = pymatching.decode_syndrome(syndrome).observable_flips
-    actual = ObservableFlips.from_mask(observable_mask, dem.num_observables)
-    sim_errors += predicted != actual
+from pecos_rslib.qec import SampleBatch
+
+sim_batch = SampleBatch(
+    [syndrome for syndrome, _ in sim_shots],
+    [observable_mask for _, observable_mask in sim_shots],
+)
+sim_errors = sim_batch.decode(
+    terminal_graphlike_text,
+    pymatching(correlated=True),
+).num_errors
 
 print(f"simulated shots, pymatching: {sim_errors}/{len(sim_shots)}")
 ```
-
-When you only need the count, `batch.decode_count(dem_text, "pymatching")` runs
-this same loop natively and returns the number of mismatches.
 
 At this noise level the three decoders land within about a percentage point of
 each other on this code; the gaps between decoders widen with code distance and

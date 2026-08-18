@@ -17,7 +17,7 @@ class TestAdvancedTypes:
             q = qubit()
             h(q)
             # Measurement returns a future internally in the HUGR
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_measure_future.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -35,8 +35,8 @@ class TestAdvancedTypes:
             q2 = qubit()
             h(q1)
             h(q2)
-            result1 = measure(q1)
-            result2 = measure(q2)
+            result1 = measure(q1).read()
+            result2 = measure(q2).read()
             return result1, result2
 
         hugr = test_multi_measure.compile()
@@ -54,7 +54,7 @@ class TestAdvancedTypes:
             q = qubit()
             h(q)
             # This will involve futures and potentially other advanced types
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_advanced.compile()
         pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -70,7 +70,7 @@ class TestAdvancedTypes:
         @guppy
         def test_compat() -> bool:
             q = qubit()
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_compat.compile()
         try:
@@ -100,9 +100,9 @@ class TestAdvancedTypes:
             h(q3)
 
             # Multiple measurements create multiple futures
-            r1 = measure(q1)
-            r2 = measure(q2)
-            r3 = measure(q3)
+            r1 = measure(q1).read()
+            r2 = measure(q2).read()
+            r3 = measure(q3).read()
 
             return r1, r2, r3
 

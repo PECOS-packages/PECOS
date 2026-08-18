@@ -271,26 +271,7 @@ impl DType {
         match self {
             DType::Bool => {
                 if let Ok(array) = value.extract::<PyRef<'_, crate::pecos_array::Array>>() {
-                    let truth_values = array.data.to_bool_array();
-                    let size = truth_values.len();
-                    if size == 0 {
-                        return Err(pyo3::exceptions::PyValueError::new_err(
-                            "The truth value of an empty array is ambiguous. Use `array.size > 0` to check that an array is not empty.",
-                        ));
-                    }
-                    if size != 1 {
-                        return Err(pyo3::exceptions::PyValueError::new_err(
-                            "The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()",
-                        ));
-                    }
-                    let bool_val = truth_values
-                        .first()
-                        .copied()
-                        .ok_or_else(|| {
-                            pyo3::exceptions::PyValueError::new_err(
-                                "The truth value of an empty array is ambiguous. Use `array.size > 0` to check that an array is not empty.",
-                            )
-                        })?;
+                    let bool_val = array.truth_value()?;
                     return Ok(PyBool::new(py, bool_val).to_owned().into_any().unbind());
                 }
 

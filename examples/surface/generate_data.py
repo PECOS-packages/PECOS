@@ -41,6 +41,7 @@ class DecoderStats:
     num_errors: int
     logical_error_rate: float
     total_decode_seconds: float
+    summed_decode_seconds: float
     per_shot_mean: float
     per_shot_median: float
     per_shot_p99: float
@@ -159,6 +160,7 @@ def generate(
     duration_multipliers: list[float],
 ) -> DataShard:
     """Run the full data generation and return a shard."""
+    from pecos.decoders import DecoderSpec
     from pecos.qec.surface import NoiseParameters
 
     config = {
@@ -237,31 +239,39 @@ def generate(
                 for decoder_name in decoders:
                     base = _decoder_base_name(decoder_name)
                     dem = dem_decomp if base in _MWPM_DECODERS else dem_full
-
-                    if base in _SLOW_DECODERS:
-                        stats = batch.decode_stats_parallel(dem, decoder_name)
-                    else:
-                        stats = batch.decode_stats(dem, decoder_name)
+                    spec = DecoderSpec.parse(decoder_name)
+                    workers = None if base in _SLOW_DECODERS else 1
+                    result = batch.decode(
+                        dem,
+                        spec,
+                        workers=workers,
+                        timing=True,
+                    )
+                    timing = result.stats
+                    if timing is None:
+                        msg = "timing=True returned no decode statistics"
+                        raise RuntimeError(msg)
 
                     point.decoder_stats.append(
                         DecoderStats(
                             decoder=decoder_name,
-                            num_errors=stats.num_errors,
-                            logical_error_rate=stats.logical_error_rate,
-                            total_decode_seconds=stats.total_seconds,
-                            per_shot_mean=stats.per_shot_mean,
-                            per_shot_median=stats.per_shot_median,
-                            per_shot_p99=stats.per_shot_p99,
-                            per_shot_max=stats.per_shot_max,
-                            quantiles=list(stats.quantiles),
+                            num_errors=result.num_errors,
+                            logical_error_rate=result.logical_error_rate,
+                            total_decode_seconds=timing.wall_elapsed,
+                            summed_decode_seconds=timing.summed_decode_elapsed,
+                            per_shot_mean=timing.per_shot_mean,
+                            per_shot_median=timing.per_shot_median,
+                            per_shot_p99=timing.per_shot_p99,
+                            per_shot_max=timing.per_shot_max,
+                            quantiles=list(timing.quantiles),
                         ),
                     )
 
                     print(
-                        f"    {decoder_name:20s}: {stats.num_errors:>4d}/{shots}  "
-                        f"LER={stats.logical_error_rate:.4f}  "
-                        f"median={stats.per_shot_median:.1e}s  "
-                        f"p99={stats.per_shot_p99:.1e}s",
+                        f"    {decoder_name:20s}: {result.num_errors:>4d}/{shots}  "
+                        f"LER={result.logical_error_rate:.4f}  "
+                        f"median={timing.per_shot_median:.1e}s  "
+                        f"p99={timing.per_shot_p99:.1e}s",
                     )
 
                 shard.points.append(point)

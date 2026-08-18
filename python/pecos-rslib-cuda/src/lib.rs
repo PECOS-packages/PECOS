@@ -917,8 +917,9 @@ fn pecos_rslib_cuda(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCuTensorNet>()?;
     m.add_class::<PyCuDensityMat>()?;
 
-    // Add version
-    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // The Python distribution version from pyproject.toml, injected by build.rs. The crate
+    // version (CARGO_PKG_VERSION) is a different number -- it rides the Rust workspace train.
+    m.add("__version__", env!("PECOS_PYTHON_VERSION"))?;
 
     Ok(())
 }

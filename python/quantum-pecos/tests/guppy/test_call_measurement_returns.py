@@ -16,7 +16,7 @@ def test_measurement_return_crosses_call() -> None:
     @guppy
     def measure_one(q: qubit @ owned) -> bool:
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     @guppy
     def main() -> None:
@@ -35,7 +35,7 @@ def test_measurement_result_in_same_block() -> None:
     def main() -> None:
         q = qubit()
         h(q)
-        result("value", measure(q))
+        result("value", measure(q).read())
 
     values = sim(Guppy(main)).quantum(state_vector()).seed(1).run(3).to_dict()["value"]
     assert len(values) == 3
@@ -48,7 +48,7 @@ def test_measurement_return_crosses_two_calls() -> None:
     @guppy
     def inner(q: qubit @ owned) -> bool:
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     @guppy
     def outer(q: qubit @ owned) -> bool:
@@ -76,7 +76,7 @@ def test_struct_helper_and_array_measurement_returns() -> None:
         h(ax)
         cx(ax, data[0])
         h(ax)
-        return measure_and_reset(ax)
+        return measure_and_reset(ax).read()
 
     @guppy
     def initialize(patch: Patch, ax: qubit) -> array[bool, 2]:
@@ -86,7 +86,7 @@ def test_struct_helper_and_array_measurement_returns() -> None:
 
     @guppy
     def final_measurement(patch: Patch @ owned) -> array[bool, 4]:
-        return array(measure(q) for q in patch.data)
+        return array(measure(q).read() for q in patch.data)
 
     @guppy
     def main() -> None:

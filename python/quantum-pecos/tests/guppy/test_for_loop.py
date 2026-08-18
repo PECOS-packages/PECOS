@@ -16,7 +16,7 @@ def loop_with_measure() -> int:
     for _i in range(3):
         q = qubit()
         h(q)
-        if measure(q):
+        if measure(q).read():
             count = count + 1
     return count
 

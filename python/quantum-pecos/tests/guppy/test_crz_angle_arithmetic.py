@@ -18,7 +18,7 @@ class TestCRzAngleArithmetic:
             q1 = qubit()
             h(q0)
             crz(q0, q1, pi)  # π angle
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = test_crz_pi.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -44,7 +44,7 @@ class TestCRzAngleArithmetic:
             q1 = qubit()
             h(q0)
             crz(q0, q1, pi / 2)  # π/2 angle
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = test_crz_pi_half.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -61,7 +61,7 @@ class TestCRzAngleArithmetic:
             q0 = qubit()
             q1 = qubit()
             crz(q0, q1, pi / 4)  # π/4 angle
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = test_crz_pi_fourth.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -81,7 +81,7 @@ class TestCRzAngleArithmetic:
             q1 = qubit()
             h(q0)
             crz(q0, q1, pi / 2)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = simple_crz.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -105,7 +105,7 @@ class TestCRzAngleArithmetic:
             q1 = qubit()
             # Use pi * 0 instead of 0.0 to get proper angle type
             crz(q0, q1, pi * 0)  # Zero angle
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = test_crz_zero.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())

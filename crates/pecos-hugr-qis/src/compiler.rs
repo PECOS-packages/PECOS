@@ -49,7 +49,7 @@ use tket::hugr::llvm::utils::fat::FatExt as _;
 use tket::hugr::llvm::{
     CodegenExtsBuilder,
     custom::CodegenExtsMap,
-    emit::{EmitHugr, Namer},
+    emit::{EmitDebugInfo, EmitHugr, Namer},
 };
 use tket::hugr::ops::DataflowParent;
 use tket::hugr::{Hugr, HugrView, Node};
@@ -61,7 +61,7 @@ use tket_qsystem::llvm::{
     debug::DebugCodegenExtension, prelude::QISPreludeCodegen, qsystem::QSystemCodegenExtension,
     random::RandomCodegenExtension, result::ResultsCodegenExtension, utils::UtilsCodegenExtension,
 };
-use tket_qsystem::{QSystemPass, QSystemPlatform};
+use tket_qsystem::{QSystemLLVMPass, QSystemPlatform, QSystemRebasePass};
 
 // Import read_hugr_envelope from utils module
 use crate::utils::read_hugr_envelope;
@@ -116,12 +116,10 @@ impl Default for CompileArgs {
     }
 }
 
-/// Process HUGR by applying required passes.
-///
-/// Note: `QSystemPass` internally calls `inline_constant_functions` when the
-/// `llvm` feature is enabled, so we don't need to call it separately.
+/// Process HUGR by applying the required `QSystem` and LLVM passes.
 fn process_hugr(hugr: &mut Hugr, platform: QSystemPlatform) -> Result<()> {
-    QSystemPass::defaults(platform).run(hugr)?;
+    QSystemRebasePass::defaults(platform).run(hugr)?;
+    QSystemLLVMPass::default().run(hugr)?;
     Ok(())
 }
 
@@ -197,12 +195,14 @@ fn get_hugr_llvm_module<'c>(
 ) -> Result<Module<'c>> {
     let module = context.create_module(module_name);
     let emit = EmitHugr::new(context, module, namer, exts);
-    Ok(emit
+    let (module, _debug_info) = emit
         .emit_module(
             hugr.try_fat(hugr.module_root())
                 .expect("module root must be a valid fat node"),
+            EmitDebugInfo::Exclude,
         )?
-        .finish())
+        .finish();
+    Ok(module)
 }
 
 /// Given an LLVM context and hugr, compile to an LLVM module
@@ -690,6 +690,56 @@ pub fn compile_hugr_bytes_to_bitcode_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn private_helper_name(helper: &str, suffix: usize) -> String {
+        format!("__hugr__.{helper}.{suffix}")
+    }
+
+    #[test]
+    fn helper_declarations_merge_to_one_public_symbol() {
+        let context = Context::create();
+        let module = context.create_module("helpers");
+        let i64_type = context.i64_type();
+        let pair = context.struct_type(&[i64_type.into(), i64_type.into()], false);
+        let ty = pair.fn_type(&[i64_type.into(), i64_type.into()], false);
+        module.add_function(
+            &private_helper_name(RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL, 1),
+            ty,
+            None,
+        );
+        module.add_function(
+            &private_helper_name(RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL, 2),
+            ty,
+            None,
+        );
+
+        normalize_pecos_helper_symbols_in_module(&module).unwrap();
+        assert!(
+            module
+                .get_function(RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL)
+                .is_some()
+        );
+        assert!(
+            !module
+                .to_string()
+                .contains("pecos_qis_runtime_barrier_qubits2_hugr.2")
+        );
+    }
+
+    #[test]
+    fn wrong_helper_signature_fails_loud() {
+        let context = Context::create();
+        let module = context.create_module("helpers");
+        let i64_type = context.i64_type();
+        module.add_function(
+            &private_helper_name(RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL, 1),
+            i64_type.fn_type(&[i64_type.into()], false),
+            None,
+        );
+
+        let err = normalize_pecos_helper_symbols_in_module(&module).unwrap_err();
+        assert!(err.to_string().contains("pecos-qis-ffi ABI"));
+    }
 
     #[test]
     fn normalize_trace_metadata_helper_symbol() {

@@ -94,11 +94,11 @@ A repetition code encodes a single logical qubit across multiple physical qubits
         cx(d2, s1)
 
         # Measure syndromes (first two measurements)
-        _ = measure(s0)
-        _ = measure(s1)
+        _ = measure(s0).read()
+        _ = measure(s1).read()
 
         # Measure data qubits (required by Guppy)
-        _ = measure(d0), measure(d1), measure(d2)
+        _ = measure(d0).read(), measure(d1).read(), measure(d2).read()
 
 
     # Run 10 shots with 10% depolarizing noise

@@ -97,7 +97,109 @@ pub enum SiteEigenstate {
     Y(bool),
 }
 
+/// Return the unnormalized stored-frame weight where `site` has coefficient bit one.
+///
+/// This is the representation-independent invariant behind a `Z(false)`
+/// disentangling proof.  In particular, it remains valid when either adjacent
+/// MPS bond is larger than one.
+fn stored_mps_one_weight(mps: &Mps, site: usize) -> f64 {
+    let one_projector = DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0, 0.0),
+        ],
+    );
+    mps.expectation_product(&[(site, one_projector)]).re
+}
+
+#[cfg(test)]
+fn stored_mps_one_marginal(mps: &Mps, site: usize) -> f64 {
+    let norm_squared = mps.norm_squared();
+    assert!(norm_squared > 1e-20, "stored MPS must have nonzero norm");
+    stored_mps_one_weight(mps, site) / norm_squared
+}
+
+/// Test whether a stored coefficient-MPS site is numerically exactly `|0>`.
+///
+/// Most candidates produced by projection have bond-one neighbours, so keep
+/// that O(1) tensor check first.  At larger bond dimension the local tensor is
+/// gauge-dependent; fall back to the physical one-site marginal instead.
+fn cheap_product_zero_site_test(mps: &Mps, site: usize) -> Option<bool> {
+    const TOLERANCE: f64 = 1e-12;
+    const MIN_SCALE: f64 = 1e-30;
+
+    if mps.bond_dim(site) == 1 && mps.bond_dim(site + 1) == 1 {
+        let tensor = &mps.tensors()[site];
+        let scale = tensor[(0, 0)].norm();
+        return Some(scale > MIN_SCALE && tensor[(0, 1)].norm() <= TOLERANCE * scale);
+    }
+
+    // Projection often writes an identically zero sigma=1 block while leaving
+    // entangled virtual bonds on both sides.  That structural zero is already
+    // a gauge-independent sufficient proof and avoids a chain contraction.
+    let tensor = &mps.tensors()[site];
+    let chi_r = mps.bond_dim(site + 1);
+    if (0..tensor.nrows()).all(|row| {
+        (chi_r..2 * chi_r).all(|column| tensor[(row, column)] == Complex64::new(0.0, 0.0))
+    }) {
+        return Some(true);
+    }
+
+    None
+}
+
+fn is_numerical_product_zero_site_with_norm(
+    mps: &Mps,
+    site: usize,
+    norm_squared: &mut Option<f64>,
+) -> bool {
+    const TOLERANCE: f64 = 1e-12;
+    if let Some(result) = cheap_product_zero_site_test(mps, site) {
+        return result;
+    }
+
+    let norm_squared = *norm_squared.get_or_insert_with(|| {
+        let norm_squared = mps.norm_squared();
+        assert!(norm_squared > 1e-20, "stored MPS must have nonzero norm");
+        norm_squared
+    });
+    (stored_mps_one_weight(mps, site) / norm_squared).abs() <= TOLERANCE
+}
+
+fn is_numerical_product_zero_site(mps: &Mps, site: usize) -> bool {
+    let mut norm_squared = None;
+    is_numerical_product_zero_site_with_norm(mps, site, &mut norm_squared)
+}
+
+fn refresh_disent_flag(mps: &Mps, disent_flags: &mut [Option<SiteEigenstate>], site: usize) {
+    disent_flags[site] =
+        is_numerical_product_zero_site(mps, site).then_some(SiteEigenstate::Z(false));
+}
+
 fn repair_disent_flags(
+    mps: &Mps,
+    disent_flags: &mut [Option<SiteEigenstate>],
+    update: &measure::ProjectionUpdate,
+) {
+    let mut norm_squared = None;
+    for &site in &update.modified_sites {
+        disent_flags[site] = is_numerical_product_zero_site_with_norm(mps, site, &mut norm_squared)
+            .then_some(SiteEigenstate::Z(false));
+    }
+    if let Some(site) = update
+        .collapsed_site
+        .filter(|site| !update.modified_sites.contains(site))
+    {
+        disent_flags[site] = is_numerical_product_zero_site_with_norm(mps, site, &mut norm_squared)
+            .then_some(SiteEigenstate::Z(false));
+    }
+}
+
+fn invalidate_disent_flags(
     disent_flags: &mut [Option<SiteEigenstate>],
     update: &measure::ProjectionUpdate,
 ) {
@@ -105,7 +207,26 @@ fn repair_disent_flags(
         disent_flags[site] = None;
     }
     if let Some(site) = update.collapsed_site {
-        disent_flags[site] = Some(SiteEigenstate::Z(false));
+        disent_flags[site] = None;
+    }
+}
+
+#[cfg(test)]
+fn assert_disent_flags_match_stored_mps(
+    mps: &Mps,
+    disent_flags: &[Option<SiteEigenstate>],
+    context: &str,
+) {
+    for (site, flag) in disent_flags.iter().enumerate() {
+        if matches!(flag, Some(SiteEigenstate::Z(false))) {
+            let marginal = stored_mps_one_marginal(mps, site);
+            assert!(
+                marginal <= 1e-10,
+                "stored |0> proof at site {site} has P(sigma=1)={marginal:.3e}; {context}; bonds=({}, {})",
+                mps.bond_dim(site),
+                mps.bond_dim(site + 1)
+            );
+        }
     }
 }
 
@@ -1993,9 +2114,16 @@ impl StabMps {
             // and cleared the frame, so there's nothing to propagate.
             self.tableau.x(&[q]);
         }
-        // The physical reset is absorbed into the tableau. The coefficient-MPS
-        // proof established by `mz` belongs to its reported virtual collapse
-        // site, which need not be this physical qubit index.
+        // The physical reset is absorbed into the tableau, so it does not by
+        // itself prove that the same-numbered coefficient site is |0>.  Recover
+        // that useful proof only when the stored MPS independently verifies it.
+        // A pending lazy frame makes such a stored-frame proof unusable (issue
+        // #555), so stay conservative in that regime.
+        if self.deferred_ops.is_empty() {
+            refresh_disent_flag(&self.mps, &mut self.disent_flags, idx);
+        } else {
+            self.disent_flags[idx] = None;
+        }
         // Return the REPORTED outcome (frame-adjusted) — this is the
         // physical measurement the user observes before reset.
         reported
@@ -2169,7 +2297,14 @@ impl StabMps {
                 q.index(),
             )
         };
-        repair_disent_flags(&mut self.disent_flags, &live_result.update);
+        if self.flags.lazy_measure() && !self.deferred_ops.is_empty() {
+            // Deferred virtual Cliffords mean a stored |0> is not necessarily
+            // an effective |0> (issue #555).  Invalidate touched sites, but do
+            // not install any new proof until that frame has been materialized.
+            invalidate_disent_flags(&mut self.disent_flags, &live_result.update);
+        } else {
+            repair_disent_flags(&self.mps, &mut self.disent_flags, &live_result.update);
+        }
         let result = live_result.measurement;
         self.maybe_grow_bond_dim();
         // Pauli-frame XOR: the tracked X-bit flips the reported Z-basis
@@ -2415,22 +2550,6 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
     use pecos_simulators::StabVec;
-
-    fn stored_mps_one_marginal(mps: &Mps, site: usize) -> f64 {
-        let one_projector = DMatrix::from_row_slice(
-            2,
-            2,
-            &[
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(1.0, 0.0),
-            ],
-        );
-        let norm_squared = mps.norm_squared();
-        assert!(norm_squared > 1e-20, "stored MPS must have nonzero norm");
-        mps.expectation_product(&[(site, one_projector)]).re / norm_squared
-    }
 
     #[test]
     fn test_stn_initial_state() {
@@ -7006,6 +7125,41 @@ mod tests {
     }
 
     #[test]
+    fn test_numerical_zero_site_fallback_accepts_entangled_bonds() {
+        let config = MpsConfig {
+            max_bond_dim: 8,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let mut plus = Mps::new(3, config.clone());
+        let mut minus = Mps::new(3, config);
+        let inv_sqrt2 = Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0);
+        let h = DMatrix::from_row_slice(2, 2, &[inv_sqrt2, inv_sqrt2, inv_sqrt2, -inv_sqrt2]);
+        let zero = Complex64::new(0.0, 0.0);
+        let one = Complex64::new(1.0, 0.0);
+        plus.apply_one_site_gate(1, &h).unwrap();
+        minus.apply_one_site_gate(1, &h).unwrap();
+        minus.apply_diagonal_one_site(1, &[one, -one]).unwrap();
+        let mut mps = plus.add(&minus);
+
+        assert!(mps.bond_dim(1) > 1 && mps.bond_dim(2) > 1);
+        let tensor = &mps.tensors()[1];
+        let chi_r = mps.bond_dim(2);
+        assert!(
+            (0..tensor.nrows())
+                .any(|row| (chi_r..2 * chi_r).any(|column| tensor[(row, column)] != zero)),
+            "test must exercise the marginal contraction, not structural-zero shortcut"
+        );
+        assert_relative_eq!(stored_mps_one_marginal(&mps, 1), 0.0, epsilon = 1e-14);
+        assert!(is_numerical_product_zero_site(&mps, 1));
+
+        let x = DMatrix::from_row_slice(2, 2, &[zero, one, one, zero]);
+        mps.apply_one_site_gate(1, &x).unwrap();
+        assert!(!is_numerical_product_zero_site(&mps, 1));
+    }
+
+    #[test]
     #[should_panic(expected = "max_truncation_error must be finite and non-negative")]
     fn test_builder_rejects_negative_max_truncation_error() {
         let _ = StabMps::builder(1).max_truncation_error(-1.0);
@@ -7075,7 +7229,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lazy_measurement_disent_flags_match_stored_mps_marginals() {
+    fn test_measurement_and_reset_disent_flags_match_stored_mps_marginals() {
         fn next(state: &mut u64) -> u64 {
             *state ^= *state << 13;
             *state ^= *state >> 7;
@@ -7093,56 +7247,90 @@ mod tests {
         }
 
         const NUM_QUBITS: usize = 5;
-        const NUM_CIRCUITS: u64 = 200;
+        const NUM_CIRCUITS: u64 = 50;
         const NUM_MEASUREMENTS: usize = 3;
         let mut flagged_sites = 0_usize;
         let mut false_proofs = Vec::new();
 
-        for circuit_seed in 0..NUM_CIRCUITS {
-            let mut random = circuit_seed + 1;
-            let mut stn = StabMps::builder(NUM_QUBITS)
-                .seed(0x6000_0000 + circuit_seed)
-                .max_bond_dim(64)
-                .svd_cutoff(0.0)
-                .max_truncation_error(0.0)
-                .merge_rz(false)
-                .lazy_measure(true)
-                .build();
+        for lazy_measure in [false, true] {
+            for numerical_flag_redetection in [false, true] {
+                for circuit_seed in 0..NUM_CIRCUITS {
+                    let mut random = circuit_seed + 1;
+                    let mut stn = StabMps::builder(NUM_QUBITS)
+                        .seed(0x6000_0000 + circuit_seed)
+                        .max_bond_dim(64)
+                        .svd_cutoff(0.0)
+                        .max_truncation_error(0.0)
+                        .merge_rz(false)
+                        .lazy_measure(lazy_measure)
+                        .numerical_flag_redetection(numerical_flag_redetection)
+                        .build();
 
-            for step in 0..18 {
-                let choice = next(&mut random) % 8;
-                let q = (next(&mut random) % NUM_QUBITS as u64) as usize;
-                match choice {
-                    0 | 1 => {
-                        stn.h(&[QubitId(q)]);
+                    for step in 0..18 {
+                        let choice = next(&mut random) % 8;
+                        let q = (next(&mut random) % NUM_QUBITS as u64) as usize;
+                        match choice {
+                            0 | 1 => {
+                                stn.h(&[QubitId(q)]);
+                            }
+                            2 => {
+                                stn.sz(&[QubitId(q)]);
+                            }
+                            3 | 4 => {
+                                let (control, target) =
+                                    random_distinct_pair(&mut random, NUM_QUBITS);
+                                stn.cx(&[(QubitId(control), QubitId(target))]);
+                            }
+                            5 => {
+                                let (first, second) = random_distinct_pair(&mut random, NUM_QUBITS);
+                                stn.cz(&[(QubitId(first), QubitId(second))]);
+                            }
+                            _ => {
+                                let radians = if step & 1 == 0 { 0.37 } else { -0.61 };
+                                stn.rz(Angle64::from_radians(radians), &[QubitId(q)]);
+                            }
+                        }
                     }
-                    2 => {
-                        stn.sz(&[QubitId(q)]);
-                    }
-                    3 | 4 => {
-                        let (control, target) = random_distinct_pair(&mut random, NUM_QUBITS);
-                        stn.cx(&[(QubitId(control), QubitId(target))]);
-                    }
-                    5 => {
-                        let (first, second) = random_distinct_pair(&mut random, NUM_QUBITS);
-                        stn.cz(&[(QubitId(first), QubitId(second))]);
-                    }
-                    _ => {
-                        let radians = if step & 1 == 0 { 0.37 } else { -0.61 };
-                        stn.rz(Angle64::from_radians(radians), &[QubitId(q)]);
-                    }
-                }
-            }
 
-            for measurement in 0..NUM_MEASUREMENTS {
-                let measured_qubit = (next(&mut random) % NUM_QUBITS as u64) as usize;
-                let _ = stn.mz(&[QubitId(measured_qubit)]);
-                for (site, flag) in stn.disent_flags.iter().enumerate() {
-                    if matches!(flag, Some(SiteEigenstate::Z(false))) {
-                        flagged_sites += 1;
-                        let marginal = stored_mps_one_marginal(&stn.mps, site);
-                        if marginal > 1e-10 {
-                            false_proofs.push((circuit_seed, measurement, site, marginal));
+                    for measurement in 0..NUM_MEASUREMENTS {
+                        let measured_qubit = (next(&mut random) % NUM_QUBITS as u64) as usize;
+                        let _ = stn.mz(&[QubitId(measured_qubit)]);
+                        for (site, flag) in stn.disent_flags.iter().enumerate() {
+                            if matches!(flag, Some(SiteEigenstate::Z(false))) {
+                                flagged_sites += 1;
+                                let marginal = stored_mps_one_marginal(&stn.mps, site);
+                                if marginal > 1e-10 {
+                                    false_proofs.push((
+                                        lazy_measure,
+                                        numerical_flag_redetection,
+                                        circuit_seed,
+                                        measurement,
+                                        "measurement",
+                                        site,
+                                        marginal,
+                                    ));
+                                }
+                            }
+                        }
+
+                        let reset_qubit = (next(&mut random) % NUM_QUBITS as u64) as usize;
+                        stn.reset_qubit(QubitId(reset_qubit));
+                        for (site, flag) in stn.disent_flags.iter().enumerate() {
+                            if matches!(flag, Some(SiteEigenstate::Z(false))) {
+                                flagged_sites += 1;
+                                let marginal = stored_mps_one_marginal(&stn.mps, site);
+                                if marginal > 1e-10 {
+                                    false_proofs.push((
+                                        lazy_measure,
+                                        numerical_flag_redetection,
+                                        circuit_seed,
+                                        measurement,
+                                        "reset",
+                                        site,
+                                        marginal,
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
@@ -7150,7 +7338,7 @@ mod tests {
         }
 
         eprintln!(
-            "lazy stored-frame flag census: circuits={NUM_CIRCUITS} measurements_per_circuit={NUM_MEASUREMENTS} flagged_sites={flagged_sites} false_proofs={}",
+            "stored-frame flag census: modes=4 circuits_per_mode={NUM_CIRCUITS} measurements_and_resets_per_circuit={NUM_MEASUREMENTS} flagged_sites={flagged_sites} false_proofs={}",
             false_proofs.len()
         );
         assert!(
@@ -7314,19 +7502,13 @@ mod tests {
                         project_z(&dense_before_measurement, measured_qubit, result.outcome);
                     let post_measurement_fidelity =
                         fidelity(&post_measurement.state_vector(), &projected);
-                    for (site, flag) in stn.disent_flags.iter().enumerate() {
-                        if matches!(flag, Some(SiteEigenstate::Z(false))) {
-                            let marginal = stored_mps_one_marginal(&stn.mps, site);
-                            assert!(
-                                marginal <= 1e-10,
-                                "stored |0> proof at site {site} has P(sigma=1)={marginal:.3e}; \
-                             lazy={lazy_measure} redetect={numerical_flag_redetection} \
-                             seed={circuit_seed} bonds=({}, {})",
-                                stn.mps.bond_dim(site),
-                                stn.mps.bond_dim(site + 1)
-                            );
-                        }
-                    }
+                    assert_disent_flags_match_stored_mps(
+                        &stn.mps,
+                        &stn.disent_flags,
+                        &format!(
+                            "measurement; lazy={lazy_measure} redetect={numerical_flag_redetection} seed={circuit_seed}"
+                        ),
+                    );
                     if !lazy_measure && stn.pragmatic_drift_count() > 0 {
                         // Eager pre-reduction deliberately records that exact
                         // amplitude comparisons are no longer valid. The stored

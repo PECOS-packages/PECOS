@@ -566,7 +566,7 @@ impl Mast {
             dm.ancilla,
             dm.predetermined_outcome,
         );
-        super::repair_disent_flags(&mut self.disent_flags, &projection.update);
+        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
         assert!(
             projection.probability > 1e-20,
             "predetermined magic-state gadget branch has zero represented weight"
@@ -611,7 +611,7 @@ impl Mast {
             q_idx,
             outcome,
         );
-        super::repair_disent_flags(&mut self.disent_flags, &projection.update);
+        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
         assert!(
             projection.probability > 1e-20,
             "sampled data-measurement branch has zero represented weight"
@@ -758,6 +758,76 @@ impl ArbitraryRotationGateable for Mast {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+
+    fn assert_mast_disent_flags_sound(mast: &Mast, context: &str) {
+        super::super::assert_disent_flags_match_stored_mps(&mast.mps, &mast.disent_flags, context);
+    }
+
+    fn project_next_and_assert(mast: &mut Mast, context: &str) {
+        let (position, support_size, mps_span) = match mast.projection_order {
+            ProjectionOrder::Input => {
+                let position = mast.deferred.len() - 1;
+                let (support_size, mps_span) =
+                    mast.projection_locality(mast.deferred[position].ancilla);
+                (position, support_size, mps_span)
+            }
+            ProjectionOrder::MinSpan => {
+                let mut selected = (0, usize::MAX, usize::MAX, usize::MAX);
+                for (position, dm) in mast.deferred.iter().enumerate() {
+                    let (support_size, mps_span) = mast.projection_locality(dm.ancilla);
+                    let candidate = (position, mps_span, support_size, dm.injection_index);
+                    if (candidate.1, candidate.2, candidate.3)
+                        < (selected.1, selected.2, selected.3)
+                    {
+                        selected = candidate;
+                    }
+                }
+                (selected.0, selected.2, selected.1)
+            }
+        };
+        let dm = mast.deferred.remove(position);
+        mast.project_deferred(dm, support_size, mps_span);
+        assert_mast_disent_flags_sound(mast, context);
+    }
+
+    #[test]
+    fn test_mast_projection_and_measurement_disent_flags_match_marginals() {
+        let t = Angle64::QUARTER_TURN / 2u64;
+        for projection_order in [ProjectionOrder::Input, ProjectionOrder::MinSpan] {
+            for numerical_flag_redetection in [false, true] {
+                let mut mast = Mast::with_seed(4, 4, 0x7000_0000)
+                    .with_merge_rz(false)
+                    .with_numerical_flag_redetection(numerical_flag_redetection)
+                    .projection_order(projection_order);
+                mast.h(&[QubitId(0), QubitId(2)]);
+                mast.cx(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+                mast.rz(t, &[QubitId(0)]);
+                mast.cz(&[(QubitId(1), QubitId(2))]);
+                mast.rz(t, &[QubitId(2)]);
+                mast.h(&[QubitId(1)]);
+                mast.rz(t, &[QubitId(1)]);
+
+                let mut projection = 0;
+                while !mast.deferred.is_empty() {
+                    project_next_and_assert(
+                        &mut mast,
+                        &format!(
+                            "MAST deferred projection {projection}; order={projection_order:?} redetect={numerical_flag_redetection}"
+                        ),
+                    );
+                    projection += 1;
+                }
+
+                let _ = mast.mz(&[QubitId(3)]);
+                assert_mast_disent_flags_sound(
+                    &mast,
+                    &format!(
+                        "MAST data measurement; order={projection_order:?} redetect={numerical_flag_redetection}"
+                    ),
+                );
+            }
+        }
+    }
 
     #[test]
     #[ignore = "dense 8-site MAST reconstruction regression; run explicitly with --release"]

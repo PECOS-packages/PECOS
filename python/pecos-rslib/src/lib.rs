@@ -41,6 +41,7 @@ mod code_matrix_bindings;
 mod coin_toss_bindings;
 mod dag_circuit_bindings;
 mod decoder_bindings;
+mod decoder_spec_bindings;
 mod dtypes;
 mod engine_bindings;
 mod engine_builders;

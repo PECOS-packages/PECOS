@@ -36,7 +36,7 @@ pub(super) fn build(
     spec: &DecoderSpec,
     model: &DecodeModel,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    match (spec, model) {
+    let decoder = match (spec, model) {
         (
             DecoderSpec::BeliefMatching(BeliefMatchingConfig {
                 mode: BeliefMatchingMode::Hybrid,
@@ -58,6 +58,49 @@ pub(super) fn build(
             "{} requires DecodeModel::SingleDem",
             family_name(spec)
         ))),
+    }?;
+    let dimension_dem = match model {
+        DecodeModel::SingleDem(dem) => dem,
+        DecodeModel::HybridDem { decomposed, .. } => decomposed,
+    };
+    let (num_detectors, _) = pecos_decoder_core::dem::utils::parse_dem_metadata(dimension_dem)?;
+    Ok(Box::new(ModelDimensionDecoder {
+        inner: decoder,
+        num_detectors,
+    }))
+}
+
+struct ModelDimensionDecoder {
+    inner: Box<dyn ObservableDecoder>,
+    num_detectors: usize,
+}
+
+impl ObservableDecoder for ModelDimensionDecoder {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.num_detectors)
+    }
+
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+        self.inner.decode_obs(syndrome)
+    }
+
+    fn decode_batch_to_observables(
+        &mut self,
+        shots: &[u8],
+        num_shots: usize,
+        num_detectors: usize,
+    ) -> Result<Vec<pecos_decoder_core::obs_mask::ObsMask>, DecoderError> {
+        self.inner
+            .decode_batch_to_observables(shots, num_shots, num_detectors)
+    }
+
+    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+        // Forward rather than inherit the trait default: an inner decoder that
+        // overrides this method must keep its own semantics when wrapped.
+        self.inner.decode_to_observables(syndrome)
     }
 }
 
@@ -1224,6 +1267,163 @@ mod tests {
 
     const DEM: &str = "error(0.1) D0 D1 L0\nerror(0.05) D1\n";
 
+    fn width_dem(highest_observable: usize) -> String {
+        format!("error(0.1) D0 L{highest_observable}\ndetector(0, 0, 0) D0\n")
+    }
+
+    fn assert_wide_correct(spec: &DecoderSpec) {
+        for observable in [63, 64] {
+            let mut decoder = spec
+                .clone()
+                .build(&DecodeModel::SingleDem(width_dem(observable)))
+                .unwrap();
+            assert!(
+                decoder.decode_obs(&[1]).unwrap().get(observable),
+                "{spec:?} did not preserve observable {observable}"
+            );
+        }
+    }
+
+    fn assert_64_then_65_rejected(spec: &DecoderSpec) {
+        let mut decoder = spec
+            .clone()
+            .build(&DecodeModel::SingleDem(width_dem(63)))
+            .unwrap();
+        assert!(decoder.decode_obs(&[0]).unwrap().is_zero());
+        let error = spec
+            .build(&DecodeModel::SingleDem(width_dem(64)))
+            .err()
+            .expect("65-observable model must fail during construction");
+        assert!(
+            error.to_string().contains("64"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[cfg(feature = "pymatching")]
+    #[test]
+    fn pymatching_and_wide_composites_preserve_64_and_65_observables() {
+        let pymatching = DecoderSpec::PyMatching(PyMatchingConfig::default());
+        assert_wide_correct(&pymatching);
+        assert_wide_correct(&DecoderSpec::Perturbed(PerturbedConfig {
+            inner: Box::new(pymatching.clone()),
+            k: 1,
+            ..PerturbedConfig::default()
+        }));
+        assert_wide_correct(&DecoderSpec::Ensemble(EnsembleConfig {
+            members: vec![pymatching],
+        }));
+    }
+
+    #[cfg(feature = "ldpc")]
+    #[test]
+    fn ldpc_family_preserves_64_and_65_observables() {
+        for spec in [
+            DecoderSpec::BpOsd(BpOsdConfig::default()),
+            DecoderSpec::BpLsd(BpLsdConfig::default()),
+            DecoderSpec::BeliefFind,
+            DecoderSpec::UnionFind,
+        ] {
+            assert_wide_correct(&spec);
+        }
+    }
+
+    #[cfg(feature = "relay-bp")]
+    #[test]
+    fn relay_family_preserves_64_and_65_observables() {
+        for spec in [
+            DecoderSpec::RelayBp(RelayBpConfig::default()),
+            DecoderSpec::MinSumBp(MinSumBpConfig::default()),
+        ] {
+            assert_wide_correct(&spec);
+        }
+    }
+
+    #[cfg(feature = "tesseract")]
+    #[test]
+    fn tesseract_accepts_64_and_rejects_65_observables() {
+        assert_64_then_65_rejected(&DecoderSpec::Tesseract(TesseractConfig::default()));
+    }
+
+    #[cfg(feature = "fusion-blossom")]
+    #[test]
+    fn fusion_family_accepts_64_and_rejects_65_observables() {
+        for spec in [
+            DecoderSpec::FusionBlossom(FusionBlossomConfig::default()),
+            DecoderSpec::KMwpm(KMwpmConfig::default()),
+            DecoderSpec::PerturbedFusionBlossomCorrelated(PerturbedFusionBlossomConfig {
+                k: 1,
+                ..PerturbedFusionBlossomConfig::default()
+            }),
+        ] {
+            assert_64_then_65_rejected(&spec);
+        }
+    }
+
+    #[cfg(feature = "uf")]
+    #[test]
+    fn uf_and_windowed_families_accept_64_and_reject_65_observables() {
+        for spec in [
+            DecoderSpec::AStar,
+            DecoderSpec::AStarFull,
+            DecoderSpec::PecosUf(PecosUfPreset::Fast),
+            DecoderSpec::PecosUf(PecosUfPreset::Bp),
+            DecoderSpec::Windowed(WindowedConfig::default()),
+            DecoderSpec::BeamSearch(BeamSearchConfig {
+                beam_width: 1,
+                ..BeamSearchConfig::default()
+            }),
+        ] {
+            assert_64_then_65_rejected(&spec);
+        }
+    }
+
+    #[cfg(all(feature = "uf", feature = "fusion-blossom"))]
+    #[test]
+    fn belief_matching_family_accepts_64_and_rejects_65_observables() {
+        for mode in [
+            BeliefMatchingMode::Standard,
+            BeliefMatchingMode::Correlated,
+            BeliefMatchingMode::MatchingGraphBp,
+        ] {
+            assert_64_then_65_rejected(&DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+                mode,
+                embedded_full_dem: None,
+            }));
+        }
+
+        let hybrid = DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+            mode: BeliefMatchingMode::Hybrid,
+            embedded_full_dem: None,
+        });
+        let dem64 = width_dem(63);
+        let mut decoder = hybrid
+            .build(&DecodeModel::HybridDem {
+                full: dem64.clone(),
+                decomposed: dem64,
+            })
+            .unwrap();
+        assert!(decoder.decode_obs(&[0]).unwrap().is_zero());
+        let dem65 = width_dem(64);
+        let error = hybrid
+            .build(&DecodeModel::HybridDem {
+                full: dem65.clone(),
+                decomposed: dem65,
+            })
+            .err()
+            .expect("65-observable hybrid model must fail during construction");
+        assert!(
+            error.to_string().contains("64"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[cfg(feature = "mwpf")]
+    #[test]
+    fn mwpf_accepts_64_and_rejects_65_observables() {
+        assert_64_then_65_rejected(&DecoderSpec::Mwpf(MwpfConfig::default()));
+    }
+
     #[test]
     fn resolves_windowed_modes_and_sandwich_defaults() {
         let DecoderSpec::Windowed(auto_config) =
@@ -1478,5 +1678,29 @@ mod tests {
             })
             .unwrap();
         assert!(decoder.decode_obs(&[0, 0]).is_ok());
+    }
+
+    #[cfg(all(feature = "uf", feature = "fusion-blossom"))]
+    #[test]
+    fn hybrid_model_keeps_full_and_decomposed_projections_in_order() {
+        const FULL: &str = "error(0.1) D0 L0\n";
+        const DECOMPOSED: &str = "error(0.1) D0\n";
+        let spec = DecoderSpec::parse(&format!("belief_matching_hybrid:{FULL}")).unwrap();
+
+        let mut ordered = spec
+            .build(&DecodeModel::HybridDem {
+                full: FULL.to_string(),
+                decomposed: DECOMPOSED.to_string(),
+            })
+            .unwrap();
+        let mut swapped = spec
+            .build(&DecodeModel::HybridDem {
+                full: DECOMPOSED.to_string(),
+                decomposed: FULL.to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(ordered.decode_obs(&[1]).unwrap().to_u64(), Some(0));
+        assert_eq!(swapped.decode_obs(&[1]).unwrap().to_u64(), Some(1));
     }
 }

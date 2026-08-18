@@ -4210,6 +4210,7 @@ dependencies = [
  "pecos-ldpc-decoders",
  "pecos-mwpf",
  "pecos-pymatching",
+ "pecos-random",
  "pecos-relay-bp",
  "pecos-tesseract",
  "pecos-uf-decoder",

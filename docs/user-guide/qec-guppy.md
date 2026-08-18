@@ -159,20 +159,21 @@ columns = (
 )
 evaluated = build.evaluate_result_columns(columns)
 
+from pecos.decoders import pymatching, tesseract
 from pecos_rslib.qec import SampleBatch
 
 detector_events = [events for events, _ in evaluated]
 observable_masks = [mask for _, mask in evaluated]
 batch = SampleBatch(detector_events, observable_masks)
 
-pymatching_errors = batch.decode_count(
+pymatching_errors = batch.decode(
     dem.to_string_terminal_graphlike_decomposed(),
-    "pymatching",
-)
-tesseract_errors = batch.decode_count(
+    pymatching(correlated=True),
+).num_errors
+tesseract_errors = batch.decode(
     dem.to_string_source_graphlike_decomposed(),
-    "tesseract",
-)
+    tesseract(preset="fast"),
+).num_errors
 ```
 
 `rec[-k]` is deliberately **not** interpreted against the runtime's final gate

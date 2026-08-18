@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     import stim
 
     from pecos import Array
+    from pecos.decoders import DecoderSpec
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -3650,7 +3651,7 @@ class SimulationResult:
     logical_error_rate: float
     raw_error_rate: float
     decoded: bool
-    decoder_type: str | None = None
+    decoder_type: str | DecoderSpec | None = None
     interaction_basis: str = "cx"
     check_plan: str = "cx_standard_v1"
     resolved_check_plan: dict[str, Any] | None = None
@@ -3671,8 +3672,17 @@ def _memory_noise_model(
     return NoiseParameters.uniform(p)
 
 
-def _recommended_graphlike_decomposition_for_decoder(decoder_type: str) -> NativeDemDecomposition:
-    base = decoder_type.split(":", 1)[0]
+def _decoder_family(decoder_type: str | DecoderSpec) -> str:
+    """Return the canonical family for a legacy string or typed decoder spec."""
+    if isinstance(decoder_type, str):
+        return decoder_type.split(":", 1)[0]
+    return decoder_type.family
+
+
+def _recommended_graphlike_decomposition_for_decoder(
+    decoder_type: str | DecoderSpec,
+) -> NativeDemDecomposition:
+    base = _decoder_family(decoder_type)
     if base in {"pymatching", "pymatching_correlated", "pymatching_uncorrelated"}:
         return "terminal_graphlike"
     return "source_graphlike"
@@ -3686,7 +3696,7 @@ def surface_code_memory(
     shots: int = 1000,
     rounds: int | None = None,
     basis: str = "Z",
-    decoder_type: str = "pymatching",
+    decoder_type: str | DecoderSpec = "pymatching",
     seed: int | None = None,
     decode: bool = True,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
@@ -3714,9 +3724,10 @@ def surface_code_memory(
         shots: Number of Monte Carlo shots.
         rounds: Number of syndrome-extraction rounds. Defaults to ``distance``.
         basis: Memory basis, ``"Z"`` or ``"X"``.
-        decoder_type: Decoder backend passed to ``SampleBatch.decode_count``.
-            PyMatching-family decoders use PECOS's terminal graphlike DEM
-            projection for this recommended workflow.
+        decoder_type: Typed decoder specification or legacy decoder string
+            passed to ``SampleBatch.decode``. PyMatching-family decoders use
+            PECOS's terminal graphlike DEM projection for this recommended
+            workflow.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
@@ -3743,8 +3754,15 @@ def surface_code_memory(
         ``SimulationResult`` with logical and raw error counts/rates.
 
     Example:
+        >>> from pecos.decoders import pymatching
         >>> from pecos.qec.surface import surface_code_memory
-        >>> result = surface_code_memory(distance=3, physical_error_rate=0.0, shots=4, rounds=1)
+        >>> result = surface_code_memory(
+        ...     distance=3,
+        ...     physical_error_rate=0.0,
+        ...     shots=4,
+        ...     rounds=1,
+        ...     decoder_type=pymatching(correlated=True),
+        ... )
         >>> result.logical_error_rate
         0.0
     """
@@ -3785,7 +3803,7 @@ def surface_code_memory(
     )
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(shots, seed)
     num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_flips(shot).mask != 0)
-    num_logical_errors = batch.decode_count(dem, decoder_type) if decode else num_raw_errors
+    num_logical_errors = batch.decode(dem, decoder_type).num_errors if decode else num_raw_errors
 
     return SimulationResult(
         distance=distance,
@@ -4335,11 +4353,16 @@ def decode_native_samples(
     num_shots: int,
     *,
     dem: str | None = None,
-    decoder_type: str = "pymatching",
+    decoder_type: str | DecoderSpec = "pymatching",
     seed: int | None = None,
     pauli_masks: Any | None = None,
 ) -> int:
-    """Sample, optionally apply a known Pauli-frame mask, de-mask, and decode."""
+    """Sample, optionally de-mask a Pauli frame, and batch-decode.
+
+    ``decoder_type`` accepts a typed :class:`pecos.decoders.DecoderSpec` or a
+    legacy decoder string. The de-masked records are decoded through the
+    unified ``SampleBatch.decode`` execution planner.
+    """
     from pecos_rslib.qec import SampleBatch
 
     dem_str = dem if dem is not None else sampler.dem_string
@@ -4368,7 +4391,7 @@ def decode_native_samples(
     uint64_mask = (1 << 64) - 1
     obs_masks = [sum(int(bit) << index for index, bit in enumerate(row)) & uint64_mask for row in obs_arr.tolist()]
     batch = SampleBatch(det_list, obs_masks, num_observables=obs_arr.shape[1])
-    return batch.decode_count(dem_str, decoder_type)
+    return batch.decode(dem_str, decoder_type).num_errors
 
 
 def demask_pauli_frame_records(

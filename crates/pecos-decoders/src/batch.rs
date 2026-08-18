@@ -42,6 +42,14 @@ pub const SMALL_BATCH_SEQUENTIAL_THRESHOLD: usize = 1000;
 /// Auto-planning gives each generic decoder worker at least this many shots.
 pub const MIN_SHOTS_PER_WORKER: usize = 256;
 
+/// Shots a generic parallel worker claims per trip to the shared cursor.
+///
+/// Search-based decoders vary by orders of magnitude from shot to shot, so
+/// workers pull small chunks dynamically rather than splitting the batch into
+/// one fixed slice each. Small enough to balance a heavy tail, large enough
+/// that the atomic fetch is not the bottleneck.
+pub const PARALLEL_CHUNK_SHOTS: usize = 64;
+
 /// Native decoders receive at most this many transposed shots at once.
 pub const NATIVE_SUB_BATCH_SHOTS: usize = 1024;
 

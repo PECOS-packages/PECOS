@@ -7,8 +7,7 @@ on:
   push:
     paths:
       - 'pyproject.toml'
-      - 'python/**/pyproject.toml'
-      - 'exp/**/pyproject.toml'
+      - '**/pyproject.toml'
       - 'Cargo.toml'
       - 'crates/**/Cargo.toml'
       - 'python/**/Cargo.toml'
@@ -19,8 +18,7 @@ on:
   pull_request:
     paths:
       - 'pyproject.toml'
-      - 'python/**/pyproject.toml'
-      - 'exp/**/pyproject.toml'
+      - '**/pyproject.toml'
       - 'Cargo.toml'
       - 'crates/**/Cargo.toml'
       - 'python/**/Cargo.toml'

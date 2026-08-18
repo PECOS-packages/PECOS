@@ -12,6 +12,8 @@ dependency pins, and uv workspace sources.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -19,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from packaging.requirements import InvalidRequirement, Requirement
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -26,6 +29,35 @@ DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 MINIMUM_PYTHON = "3.12"
 EXPECTED_PYTHON_CLASSIFIERS = {"3", "3.12", "3.13", "3.14"}
 RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/python-release.yml"
+
+
+def tracked_pyprojects() -> list[Path]:
+    """Every `pyproject.toml` tracked by git, so build output and stray venvs stay out."""
+    git = shutil.which("git")
+    if git is None:
+        msg = "git not found on PATH"
+        raise RuntimeError(msg)
+
+    result = subprocess.run(
+        [git, "ls-files", "*pyproject.toml"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [REPO_ROOT / line for line in result.stdout.split()]
+
+
+def is_distribution(data: dict[str, Any]) -> bool:
+    """Whether a `pyproject.toml` builds a wheel, as opposed to pinning a tooling environment.
+
+    A `[build-system]` table is what makes a project installable, and every distribution in
+    this repository ships on the same version train -- including ones outside the uv
+    workspace, like `exp/zluppy`, which keeps its own lockfile. Projects without one (the
+    root meta-package, `exp/zlup`'s mkdocs environment) only pin dependencies for a local
+    task, so they carry no train version.
+    """
+    return isinstance(data.get("build-system"), dict)
 
 
 @dataclass(frozen=True)
@@ -115,17 +147,46 @@ def iter_dependency_lists(data: dict[str, Any]) -> list[tuple[str, list[Any]]]:
     return lists
 
 
-def internal_dependencies(package: Package, workspace_names: set[str], errors: list[str]) -> set[str]:
+def internal_dependencies(
+    package: Package,
+    workspace_names: set[str],
+    errors: list[str],
+    *,
+    require_pin: bool = True,
+) -> set[str]:
+    """Internal dependency names, checking that each names the train version.
+
+    Workspace members publish to PyPI, so every internal dependency must pin the exact
+    version. A distribution outside the uv workspace may instead resolve a sibling through
+    a `[tool.uv.sources]` path, which carries no version to drift -- but if it does state
+    one, that version still has to be the train's.
+    """
     internal: set[str] = set()
     for section, deps in iter_dependency_lists(package.data):
         for dep in deps:
             if not isinstance(dep, str):
                 fail(errors, f"{rel(package.path)}: {section} contains non-string dependency {dep!r}")
                 continue
-            dep_name = dependency_name(dep)
-            if dep_name is None or dep_name not in workspace_names or dep_name == package.normalized_name:
+            try:
+                requirement = Requirement(dep)
+            except InvalidRequirement as err:
+                fail(errors, f"{rel(package.path)}: {section} dependency {dep!r} is not parsable: {err}")
+                continue
+            dep_name = normalize_name(requirement.name)
+            if dep_name not in workspace_names or dep_name == package.normalized_name:
                 continue
             internal.add(dep_name)
+            if not require_pin and not requirement.specifier:
+                # A bare internal dependency only resolves to the sibling in this repository
+                # because a [tool.uv.sources] entry points at it. Without one it would resolve
+                # from PyPI, unconstrained, and drift off the train silently.
+                if dep_name not in declared_sources(package):
+                    fail(
+                        errors,
+                        f"{rel(package.path)}: {section} dependency {dep!r} states no version and "
+                        "has no [tool.uv.sources] entry",
+                    )
+                continue
             if not has_exact_version_pin(dep, package.version):
                 fail(
                     errors,
@@ -133,6 +194,16 @@ def internal_dependencies(package: Package, workspace_names: set[str], errors: l
                     f"workspace package version =={package.version}",
                 )
     return internal
+
+
+def declared_sources(package: Package) -> set[str]:
+    """Every name with a `[tool.uv.sources]` entry, whatever kind of source it is."""
+    tool = package.data.get("tool", {})
+    uv = tool.get("uv", {}) if isinstance(tool, dict) else {}
+    sources = uv.get("sources", {}) if isinstance(uv, dict) else {}
+    if not isinstance(sources, dict):
+        return set()
+    return {normalize_name(name) for name in sources}
 
 
 def workspace_sources(package: Package, errors: list[str]) -> set[str]:
@@ -296,7 +367,8 @@ def main() -> int:
     errors: list[str] = []
 
     root = load_package(ROOT_PYPROJECT, errors)
-    package_paths = sorted((REPO_ROOT / "python").rglob("pyproject.toml"))
+    tracked = tracked_pyprojects()
+    package_paths = [path for path in tracked if path.is_relative_to(REPO_ROOT / "python")]
     packages = [pkg for path in package_paths if (pkg := load_package(path, errors)) is not None]
     if root is None:
         for error in errors:
@@ -306,17 +378,23 @@ def main() -> int:
     all_packages = [root, *packages]
     workspace_names = {pkg.normalized_name for pkg in all_packages}
 
-    project_paths = [
-        ROOT_PYPROJECT,
-        *package_paths,
-        REPO_ROOT / "exp/zluppy/pyproject.toml",
-        REPO_ROOT / "exp/zlup/pyproject.toml",
-    ]
-    for path in project_paths:
-        check_python_floor(path, load_toml(path), errors)
+    distribution_paths = []
+    for path in tracked:
+        data = load_toml(path)
+        check_python_floor(path, data, errors)
+        if is_distribution(data):
+            distribution_paths.append(path)
     check_release_python_abi(errors)
 
-    for pkg in all_packages:
+    version_tracked = list(all_packages)
+    already_loaded = {pkg.path for pkg in all_packages}
+    for path in distribution_paths:
+        if path in already_loaded:
+            continue
+        if (pkg := load_package(path, errors)) is not None:
+            version_tracked.append(pkg)
+
+    for pkg in version_tracked:
         if pkg.version != root.version:
             fail(
                 errors,
@@ -340,8 +418,12 @@ def main() -> int:
 
     check_cuda_extra_group(root.data, errors)
 
-    for pkg in all_packages:
-        internal = internal_dependencies(pkg, workspace_names, errors)
+    for pkg in version_tracked:
+        member = pkg in all_packages
+        internal = internal_dependencies(pkg, workspace_names, errors, require_pin=member)
+        if not member:
+            # Outside the uv workspace, so [tool.uv.sources] workspace entries do not apply.
+            continue
         sources = workspace_sources(pkg, errors)
         missing_sources = sorted(internal - sources)
         extra_sources = sorted((sources & workspace_names) - internal)
@@ -362,7 +444,7 @@ def main() -> int:
         return 1
 
     print(
-        f"Python workspace metadata OK: {len(packages)} packages, "
+        f"Python workspace metadata OK: {len(version_tracked)} versioned projects, "
         f"version {root.version}, {len(expected_members)} uv workspace members",
     )
     return 0

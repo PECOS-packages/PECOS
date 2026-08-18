@@ -12,6 +12,10 @@
 
 """PECOS StabVec Selene plugin."""
 
+from importlib.metadata import version
+
 from pecos_selene_stab_vec.plugin import StabVecPlugin
 
-__all__ = ["StabVecPlugin"]
+__version__ = version("pecos-selene-stab-vec")
+
+__all__ = ["StabVecPlugin", "__version__"]

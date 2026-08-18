@@ -350,7 +350,7 @@ test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
 
 # Fix formatting and linting issues (or: just lint check)
 [group('lint')]
-lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-env python-workspace-check
+lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-env python-workspace-check rust-workspace-check julia-version-check
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$({{pecos}} env)"
@@ -433,6 +433,16 @@ check: _msvc-bootstrap ensure-local-build-env
 [group('lint')]
 python-workspace-check:
     @uv run --frozen python scripts/check_python_workspace.py
+
+# Check Rust workspace crate versions
+[group('lint')]
+rust-workspace-check:
+    @uv run --frozen python scripts/check_rust_workspace.py
+
+# Check the Julia binding's version train
+[group('lint')]
+julia-version-check:
+    @uv run --frozen python scripts/check_julia_versions.py
 
 # Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]
@@ -1171,6 +1181,25 @@ build-debug: (build "debug")
 build-release: (build "release")
 [private]
 build-native: (build "native")
+
+# Move every Python distribution onto a new version, then relock and verify
+[group('setup')]
+bump-python-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --frozen python scripts/bump_python_version.py {{version}}
+    just lock
+    just python-workspace-check
+
+# Move the Julia binding onto a new version, then verify
+[group('setup')]
+bump-julia-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --frozen python scripts/bump_julia_version.py {{version}}
+    cargo update --offline --manifest-path Cargo.toml -p pecos-julia-ffi
+    just julia-version-check
+    just rust-workspace-check
 
 # Re-resolve uv lockfiles minimally (no dependency updates), e.g. after a version bump
 [group('setup')]

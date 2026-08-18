@@ -245,6 +245,25 @@ class InferredGuppyDemAnnotations:
         return DetectorErrorModel.from_circuit(self.circuit, **noise)
 
 
+_PROBE_RANK_MARGIN = 32
+
+
+def _auto_probe_shots(raw_width: int, validation_rows: int) -> int:
+    """Rows needed to infer every parity, plus margin for random-probe rank.
+
+    Affine inference needs one row per raw measurement, one for the affine
+    constant, and the requested validation rows. Probes are random GF(2)
+    vectors, though, and exactly that many rows are full rank only about 29% of
+    the time; each extra row halves the shortfall probability, so the margin
+    makes a rank failure vanishingly unlikely rather than routine.
+
+    Extra rows beyond full rank do not change the inferred DEM -- the affine
+    solution is exact and unique once the system has rank -- so this derives a
+    floor, not a quality knob.
+    """
+    return raw_width + 1 + validation_rows + _PROBE_RANK_MARGIN
+
+
 def infer_guppy_dem_annotations(
     program: object,
     *,
@@ -252,7 +271,7 @@ def infer_guppy_dem_annotations(
     raw_tag: str = "raw measurements",
     detector_tag: str = "DETECTOR",
     observable_tags: Sequence[str] = ("obs",),
-    probe_shots: int = 256,
+    probe_shots: int | None = None,
     provenance_shots: int = 32,
     validation_rows: int = 32,
     seed: int = 0,
@@ -289,7 +308,7 @@ def infer_guppy_dem_annotations(
 
     if not observable_tags:
         raise ValueError("observable_tags must contain at least one result tag")
-    if probe_shots <= 0 or provenance_shots < 2 or validation_rows < 1:
+    if (probe_shots is not None and probe_shots <= 0) or provenance_shots < 2 or validation_rows < 1:
         raise ValueError("probe_shots must be positive, provenance_shots at least 2, and validation_rows at least 1")
 
     trace = capture_qis_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
@@ -346,6 +365,9 @@ def infer_guppy_dem_annotations(
             raw_binding = "assumed_canonical_result_order"
     else:
         raw_binding = "runtime_result_ids"
+
+    if probe_shots is None:
+        probe_shots = _auto_probe_shots(raw_value_count, validation_rows)
 
     results = (
         pecos.sim(program)

@@ -343,7 +343,7 @@ It checks the measurement count, but it cannot detect a permutation.
 | `raw_tag` | `"raw measurements"` | Tag containing every physical measurement exactly once. |
 | `detector_tag` | `"DETECTOR"` | Tag containing all computed detection-event bits. |
 | `observable_tags` | `("obs",)` | Logical result tags, in DEM observable order. |
-| `probe_shots` | `256` | Coin-toss rows used to infer and validate affine parities. |
+| `probe_shots` | derived | Coin-toss rows used to infer and validate affine parities. Defaults to one row per raw measurement plus the affine constant, the validation rows, and a rank margin. |
 | `provenance_shots` | `32` | Rows used to correlate array elements with QIS IDs. |
 | `validation_rows` | `32` | Probe rows reserved for parity validation. |
 | `seed` | `0` | Reproducible trace and probe seed. |
@@ -364,8 +364,17 @@ The result is an `InferredGuppyDemAnnotations` with:
 | `build_dem(**noise)` | Build a PECOS `DetectorErrorModel` from the annotated circuit. |
 
 `probe_shots` must provide at least one row per raw measurement, one affine
-constant column, and the requested validation rows. For larger experiments,
-increase it if PECOS reports insufficient GF(2) rank.
+constant column, and the requested validation rows. Left unset it is derived
+from the traced circuit, so a larger experiment no longer fails for want of a
+bigger number; pass an explicit count only to override that.
+
+**More probe shots do not make a better DEM.** Inference solves an affine
+system over GF(2): once the probe matrix reaches full rank the solution is exact
+and unique, and further rows can only re-validate it. The derived default adds a
+margin because probes are random -- exactly the minimum number of random rows is
+full rank only about 29% of the time, and each extra row halves the shortfall
+probability. Raise `probe_shots` to buy validation confidence against a
+mis-inferred parity, not resolution.
 
 ## Failure guide
 

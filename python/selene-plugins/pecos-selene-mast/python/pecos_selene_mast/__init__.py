@@ -12,6 +12,10 @@
 
 """PECOS Mast Selene plugin."""
 
+from importlib.metadata import version
+
 from pecos_selene_mast.plugin import MastPlugin
 
-__all__ = ["MastPlugin"]
+__version__ = version("pecos-selene-mast")
+
+__all__ = ["MastPlugin", "__version__"]

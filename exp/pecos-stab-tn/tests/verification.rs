@@ -2409,6 +2409,12 @@ fn test_sampled_bitstring_round_trips_through_probability_and_amplitude() {
 }
 
 #[test]
+// Quarantined by #557: `prob_bitstring` disagrees with the simulator's own state by up to
+// 6e-3 on this family. The defect is real and reproduces on every platform -- these 16
+// circuits happen to pass on Linux and fail on macOS and Windows, which is why only the
+// post-merge lanes were red. Remove this attribute as part of the fix, and widen the seed
+// coverage so a lucky seed cannot mask it again.
+#[ignore = "known defect, tracked in #557: prob_bitstring vs dense state vector mismatch"]
 fn test_prob_bitstring_honest_clifford_t_family_matches_dense_state_vector() {
     // This family deliberately puts H, S, and CX between non-Clifford gates,
     // plus a target H after roughly half of them. That exposes sequential

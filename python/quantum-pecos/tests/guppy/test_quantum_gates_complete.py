@@ -35,19 +35,19 @@ class TestBasicGates:
         def test_x() -> bool:
             q = qubit()
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def test_y() -> bool:
             q = qubit()
             y(q)
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def test_z() -> bool:
             q = qubit()
             z(q)
-            return measure(q)
+            return measure(q).read()
 
         for func in [test_x, test_y, test_z]:
             hugr = func.compile()
@@ -62,13 +62,13 @@ class TestBasicGates:
         def test_s() -> bool:
             q = qubit()
             s(q)
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def test_t() -> bool:
             q = qubit()
             t(q)
-            return measure(q)
+            return measure(q).read()
 
         for func in [test_s, test_t]:
             hugr = func.compile()
@@ -83,7 +83,7 @@ class TestBasicGates:
         def test_h() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_h.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -102,14 +102,14 @@ class TestAdjointGates:
             q = qubit()
             h(q)
             sdg(q)
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def test_tdg_gate() -> bool:
             q = qubit()
             h(q)
             tdg(q)
-            return measure(q)
+            return measure(q).read()
 
         for func in [test_sdg_gate, test_tdg_gate]:
             hugr = func.compile()
@@ -129,7 +129,7 @@ class TestRotationGates:
         def test_rx_pi4() -> bool:
             q = qubit()
             rx(q, pi / 4)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_rx_pi4.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -143,7 +143,7 @@ class TestRotationGates:
         def test_ry_pi2() -> bool:
             q = qubit()
             ry(q, pi / 2)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_ry_pi2.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -157,7 +157,7 @@ class TestRotationGates:
         def test_rz_pi() -> bool:
             q = qubit()
             rz(q, pi)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_rz_pi.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -178,7 +178,7 @@ class TestControlGates:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = test_cx.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -195,7 +195,7 @@ class TestControlGates:
             q1 = qubit()
             h(q0)
             cy(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = test_cy.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -214,7 +214,7 @@ class TestControlGates:
             q1 = qubit()
             h(q0)
             cz(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = test_cz.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -230,7 +230,7 @@ class TestControlGates:
             q1 = qubit()
             h(q0)
             ch(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = test_ch.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -251,7 +251,7 @@ class TestComplexCircuits:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = bell.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -271,7 +271,7 @@ class TestComplexCircuits:
             h(q0)
             cx(q0, q1)
             cx(q0, q2)
-            return measure(q0), measure(q1), measure(q2)
+            return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         hugr = ghz.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -290,7 +290,7 @@ class TestComplexCircuits:
             rx(q1, pi / 4)
             cy(q0, q1)
             t(q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = mixed.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -309,7 +309,7 @@ class TestCompilerOutput:
         def simple() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = simple.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -332,7 +332,7 @@ class TestCompilerOutput:
         def only_h() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = only_h.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())

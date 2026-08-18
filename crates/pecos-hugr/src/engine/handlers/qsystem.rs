@@ -42,6 +42,21 @@ impl HugrEngine {
         debug!("Processing tket.qsystem operation: {op_name} at {node:?}");
 
         match op_name {
+            "FutureToMeasurement" => {
+                // Guppy 1 represents a lazy qsystem measurement as a
+                // `Future<bool>` and converts it to the public Measurement
+                // token before `tket.measurement.Read`. The token carries
+                // the same deferred future handle in the interpreter.
+                let Some(ClassicalValue::Future(future_id)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("FutureToMeasurement at {node:?}: future not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Future(future_id));
+                HandlerOutcome::Processed
+            }
             "LazyMeasure" => {
                 // LazyMeasure: Qubit -> Future<bool>
                 // Queue the measurement and create a Future handle

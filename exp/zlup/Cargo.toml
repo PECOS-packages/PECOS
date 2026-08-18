@@ -1,6 +1,6 @@
 [package]
 name = "zlup"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description = "Zlup: Experimental quantum language with Zig semantics and Rust/Python syntax for reliable QEC"
 license = "Apache-2.0"

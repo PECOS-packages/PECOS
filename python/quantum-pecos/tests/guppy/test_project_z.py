@@ -16,7 +16,7 @@ class TestProjectZOperation:
         def test_project_z() -> tuple[qubit, bool]:
             q = qubit()
             h(q)  # Put in superposition
-            result = project_z(q)  # Project onto Z basis
+            result = project_z(q).read()  # Project onto Z basis
             return q, result
 
         hugr = test_project_z.compile()
@@ -33,7 +33,7 @@ class TestProjectZOperation:
         def test_project_z_x() -> tuple[qubit, bool]:
             q = qubit()
             x(q)  # Flip to |1⟩
-            result = project_z(q)  # Project onto Z basis
+            result = project_z(q).read()  # Project onto Z basis
             return q, result
 
         hugr = test_project_z_x.compile()
@@ -49,7 +49,7 @@ class TestProjectZOperation:
         @guppy
         def simple_project_z() -> tuple[qubit, bool]:
             q = qubit()
-            result = project_z(q)
+            result = project_z(q).read()
             return q, result
 
         hugr = simple_project_z.compile()
@@ -67,7 +67,7 @@ class TestProjectZOperation:
         def test_project_z_compat() -> tuple[qubit, bool]:
             q = qubit()
             h(q)
-            result = project_z(q)
+            result = project_z(q).read()
             return q, result
 
         hugr = test_project_z_compat.compile()
@@ -92,8 +92,8 @@ class TestProjectZOperation:
             q2 = qubit()
             h(q1)
             h(q2)
-            result1 = project_z(q1)
-            result2 = project_z(q2)
+            result1 = project_z(q1).read()
+            result2 = project_z(q2).read()
             return q1, q2, result1, result2
 
         hugr = project_z_circuit.compile()

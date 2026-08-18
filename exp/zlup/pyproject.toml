@@ -2,7 +2,7 @@
 name = "zlup-docs"
 version = "0.1.0"
 description = "Zlup documentation"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",

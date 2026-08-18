@@ -19,19 +19,10 @@ defining interfaces and common functionality for quantum operations.
 from __future__ import annotations
 
 import copy
-import sys
 from abc import ABCMeta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from pecos.slr.gen_codes.gen_qasm import QASMGenerator
-
-# Handle Python 3.10 compatibility for Self type
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing import TypeVar
-
-    Self = TypeVar("Self", bound="QGate")
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

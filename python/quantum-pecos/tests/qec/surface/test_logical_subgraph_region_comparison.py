@@ -33,6 +33,7 @@ group-fill structure that makes each subgraph cleanly matchable.
 from __future__ import annotations
 
 import pytest
+from pecos.decoders import pecos_uf
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos_rslib.qec import (
     LogicalSubgraphDecoder,
@@ -394,18 +395,22 @@ def test_windowed_logical_subgraph_known_limitation_no_full_suppression():
     ), f"windowed LER regressed toward catastrophic: d3={ler_d3:.5f} d5={ler_d5:.5f} d7={ler_d7:.5f}"
 
 
-def test_decode_each_matches_decode_count():
-    """`SampleBatch.decode_each` returns per-shot predictions consistent with the
-    aggregate `decode_count` -- it is the per-shot primitive used to localize
-    where two decoders disagree."""
+def test_python_scored_predictions_match_the_rust_error_count():
+    """Scoring the returned predictions in Python reproduces the Rust count."""
     b = _cx_circuit()
     dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
     n = 3000
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(n, seed=5)
-    preds = batch.decode_each(dem, "pecos_uf:bp")
+    result = batch.decode(
+        dem,
+        pecos_uf(preset="bp"),
+        predictions=True,
+    )
+    preds = result.predictions
+    assert preds is not None
     assert len(preds) == n
     wrong = sum(1 for i, p in enumerate(preds) if p != batch.get_observable_flips(i).mask)
-    assert wrong == batch.decode_count(dem, "pecos_uf:bp")
+    assert wrong == result.num_errors
 
 
 if __name__ == "__main__":

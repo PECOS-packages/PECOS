@@ -26,17 +26,9 @@ from pecos.simulators.cuda_statevec import bindings
 from pecos.simulators.sim_class_types import StateVector
 
 if TYPE_CHECKING:
-    import sys
+    from typing import Self
 
     from pecos.typing import SimulatorGateParams
-
-    # Handle Python 3.10 compatibility for Self type
-    if sys.version_info >= (3, 11):
-        from typing import Self
-    else:
-        from typing import TypeVar
-
-        Self = TypeVar("Self", bound="CudaStateVec")
 
 
 class CudaStateVec(StateVector):

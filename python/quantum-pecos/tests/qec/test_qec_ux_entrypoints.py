@@ -39,14 +39,17 @@ def test_build_memory_circuit_is_public_surface_helper() -> None:
 
 
 def test_surface_code_memory_runs_native_zero_noise_quick_start() -> None:
+    from pecos.decoders import pymatching
     from pecos.qec.surface import surface_code_memory
 
+    spec = pymatching(correlated=True)
     result = surface_code_memory(
         distance=3,
         physical_error_rate=0.0,
         shots=4,
         rounds=1,
         seed=123,
+        decoder_type=spec,
     )
 
     assert result.distance == 3
@@ -54,6 +57,7 @@ def test_surface_code_memory_runs_native_zero_noise_quick_start() -> None:
     assert result.num_rounds == 1
     assert result.logical_error_rate == 0.0
     assert result.raw_error_rate == 0.0
+    assert result.decoder_type == spec
     assert result.interaction_basis == "cx"
 
 

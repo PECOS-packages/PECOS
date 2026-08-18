@@ -25,7 +25,7 @@ def example_hugr_compilation() -> None:
         """Generate a random bit using quantum superposition."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR
     package = quantum_random.compile()
@@ -50,7 +50,7 @@ def example_simulation() -> None:
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     # Run simulation
     results = sim(Guppy(bell_state)).seed(42).run(100)
@@ -70,7 +70,7 @@ def example_direct_guppy() -> None:
         h(q0)
         cx(q0, q1)
         cx(q1, q2)
-        return measure(q0), measure(q1), measure(q2)
+        return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
     # sim() accepts Guppy functions directly
     results = sim(ghz_state).seed(42).run(50)

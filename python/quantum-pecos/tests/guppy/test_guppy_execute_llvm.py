@@ -14,7 +14,7 @@ def simple_quantum_function() -> object:
     def simple_quantum() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     return simple_quantum
 

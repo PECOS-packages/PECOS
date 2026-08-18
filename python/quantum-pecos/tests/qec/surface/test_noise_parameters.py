@@ -21,8 +21,8 @@ def _two_qubit_program() -> None:
     q0 = qubit()
     q1 = qubit()
     cx(q0, q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 def _dem_bytes(noise: NoiseParameters) -> bytes:

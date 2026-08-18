@@ -67,13 +67,13 @@ def rep_code_round() -> None:
     cx(d1, a0)
     cx(d1, a1)
     cx(d2, a1)
-    result("s0", measure(a0))
-    result("s1", measure(a1))
+    result("s0", measure(a0).read())
+    result("s1", measure(a1).read())
     # Deferred tagging: bind now, tag later -- the tag->measurement
     # binding follows dataflow, not source order.
-    m0 = measure(d0)
-    m1 = measure(d1)
-    m2 = measure(d2)
+    m0 = measure(d0).read()
+    m1 = measure(d1).read()
+    m2 = measure(d2).read()
     result("m2", m2)
     result("m0", m0)
     result("m1", m1)
@@ -122,7 +122,7 @@ same measurements):
   traced circuit, robust to measurement reordering.
 - `"result_tags": ["s0", "m1"]` — Guppy `result(tag, ...)` names, recovered
   structurally from the compiled HUGR. The tag→measurement binding follows
-  **dataflow, not syntax**: `m = measure(q)` followed later by
+  **dataflow, not syntax**: `m = measure(q).read()` followed later by
   `result("tag", m)` is fully supported, in any order. Restrictions: the
   tagged value must be a raw scalar measurement (computed, constant, and
   array-valued results are rejected), and programs with runtime loops must
@@ -203,6 +203,7 @@ through Python. When Python data is needed, `detector_events()` and
 
 <!--test-name: dem_sample_batch_workflow-->
 ```python
+from pecos.decoders import pymatching
 from pecos_rslib.qec import ParsedDem, SampleBatch
 
 dem_text = "error(0.1) D0 L0"
@@ -219,21 +220,30 @@ assert len(detector_events) == len(observable_flips) == 32
 assert all(len(shot) == 1 for shot in detector_events)
 assert all(len(shot) == 1 for shot in observable_flips)
 
-# Aggregate errors, inspect individual predictions, or collect timings.
-error_count = batch.decode_count(dem_text, "pymatching")
-predictions = batch.decode_each(dem_text, "pymatching")
-stats = batch.decode_stats(dem_text, "pymatching")
+# Request counts, individual predictions, and timings from one entry point.
+result = batch.decode(
+    dem_text,
+    pymatching(correlated=True),
+    predictions=True,
+    timing=True,
+)
+error_count = result.num_errors
+predictions = result.predictions
+stats = result.stats
 
 assert 0 <= error_count <= batch.num_shots
+assert predictions is not None
 assert len(predictions) == batch.num_shots
+assert stats is not None
 assert stats.num_shots == batch.num_shots
 ```
 
-Use `decode_count` for a logical-error total, `decode_each` to inspect the
-prediction for every shot, and `decode_stats` for error counts plus per-shot
-timing statistics. The parallel `decode_count_parallel` and
-`decode_stats_parallel` variants distribute slow decoder work across multiple
-workers. A former raw-list call such as
+`batch.decode(...)` returns a `DecodeResult`: `.num_errors` and
+`.logical_error_rate` hold aggregates, optional `.predictions` preserves shot
+order, and optional `.stats` holds timing statistics. With the default
+`workers=None`, the execution planner selects the native-batch, sequential, or
+parallel path. Pass `workers=N` to request a specific worker count and inspect
+`.execution_path` to see which path ran. A former raw-list call such as
 `detectors, observables = sampler.sample_batch(...)` becomes a batch call
 followed by the two bulk accessors shown above.
 
@@ -294,8 +304,8 @@ from pecos.qec import DetectorErrorModel
 def noisy_pair() -> None:
     q0, q1 = qubit(), qubit()
     cx(q0, q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 common = {
@@ -477,8 +487,8 @@ from pecos.qec import DetectorErrorModel
 def idle_demo() -> None:
     q0, q1 = qubit(), qubit()
     cx(q0, q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 common = {
@@ -558,8 +568,8 @@ from pecos.qec import DetectorErrorModel
 def idle_demo() -> None:
     q0, q1 = qubit(), qubit()
     cx(q0, q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 dem = DetectorErrorModel.from_guppy(
@@ -604,8 +614,8 @@ from pecos.qec import DetectorErrorModel
 def idle_demo() -> None:
     q0, q1 = qubit(), qubit()
     cx(q0, q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 dem = DetectorErrorModel.from_guppy(
@@ -629,15 +639,20 @@ stim.DetectorErrorModel(dem.to_string_terminal_graphlike_decomposed())
 
 ## Decoding: PyMatching, Tesseract, and BP-OSD
 
-A sampled `SampleBatch` provides the uniform
-`batch.decode_count(dem_text, name)` interface. The names used here are
-`"pymatching"` (correlated matching by default), `"tesseract"`, and
-`"bp_osd"`. Passing the same batch to each decoder compares them on identical
-shots rather than on three independently sampled experiments.
+A sampled `SampleBatch` provides the uniform `batch.decode(dem_text, spec)`
+interface. Typed specs make choices such as correlated versus uncorrelated
+PyMatching explicit. Passing the same batch to each decoder compares them on
+identical shots rather than on three independently sampled experiments.
 
 <!--test-name: dem_from_guppy_decoder_comparison-->
 ```python
-from pecos.decoders import BpOsdDecoder, TesseractDecoder
+from pecos.decoders import (
+    BpOsdDecoder,
+    TesseractDecoder,
+    bp_osd as bp_osd_spec,
+    pymatching,
+    tesseract as tesseract_spec,
+)
 from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import SurfacePatch
@@ -659,21 +674,21 @@ dem = DetectorErrorModel.from_guppy(
 
 batch = dem.to_sampler().sample_batch(1000, 0)
 error_counts = {
-    "pymatching": batch.decode_count(
+    "pymatching": batch.decode(
         dem.to_string_terminal_graphlike_decomposed(),
-        "pymatching",
-    ),
-    "tesseract": batch.decode_count(
+        pymatching(correlated=True),
+    ).num_errors,
+    "tesseract": batch.decode(
         dem.to_string_source_graphlike_decomposed(),
-        "tesseract",
-    ),
-    "bp_osd": batch.decode_count(dem.to_string(), "bp_osd"),
+        tesseract_spec(preset="fast"),
+    ).num_errors,
+    "bp_osd": batch.decode(dem.to_string(), bp_osd_spec()).num_errors,
 }
 assert all(0 <= count <= batch.num_shots for count in error_counts.values())
 print(error_counts)
 
 # Construct a decoder directly when you need per-shot results. The "fast"
-# preset matches the configuration decode_count(..., "tesseract") uses.
+# preset matches the typed Tesseract spec used above.
 syndrome = batch.get_syndrome(0)
 tesseract = TesseractDecoder.from_dem(dem.to_string(), preset="fast")
 tesseract_result = tesseract.decode_syndrome(syndrome)
@@ -697,7 +712,7 @@ source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
 - **Measurement-dependent quantum control flow is unsupported and
   rejected.** `from_guppy` traces one ideal execution, so a program whose
   quantum operations depend on a measurement *outcome* (e.g.
-  `if measure(q): x(other)`) would yield a DEM built from a single sampled
+  `if measure(q).read(): x(other)`) would yield a DEM built from a single sampled
   branch — wrong and seed-dependent. Guppy programs whose compiled HUGR
   contains branching or looping control flow therefore raise `ValueError`
   before tracing; built-in generators such as `make_surface_code` cross

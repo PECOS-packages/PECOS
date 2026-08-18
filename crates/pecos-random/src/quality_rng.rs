@@ -50,6 +50,21 @@ use core::convert::Infallible;
 use rand_core::{SeedableRng, TryRng};
 use wide::u64x4;
 
+const GOLDEN_GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
+
+/// Return the `index`-th output of `SplitMix64::new(base)` in constant time.
+///
+/// Every arithmetic operation intentionally wraps modulo 2^64, including the
+/// `index + 1` step. This is a stable seed-derivation primitive; callers that
+/// persist derived streams should version their surrounding domain protocol.
+#[must_use]
+pub fn nth_derived_seed(base: u64, index: u64) -> u64 {
+    let mut z = base.wrapping_add(GOLDEN_GAMMA.wrapping_mul(index.wrapping_add(1)));
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
 /// `SplitMix64` - used to derive independent seeds from a single seed.
 ///
 /// This is the recommended way to seed Xoshiro generators and works well
@@ -69,11 +84,36 @@ impl SplitMix64 {
     /// Generate the next u64 value.
     #[inline]
     fn next_u64(&mut self) -> u64 {
-        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        self.state = self.state.wrapping_add(GOLDEN_GAMMA);
         let mut z = self.state;
         z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
         z ^ (z >> 31)
+    }
+}
+
+#[cfg(test)]
+mod seed_derivation_tests {
+    use super::*;
+
+    #[test]
+    fn closed_form_matches_sequential_splitmix_outputs() {
+        for base in [0, 1, 42, 0xDEAD_BEEF_CAFE_BABE, u64::MAX] {
+            let mut sequential = SplitMix64::new(base);
+            for index in 0..8 {
+                assert_eq!(nth_derived_seed(base, index), sequential.next_u64());
+            }
+        }
+    }
+
+    #[test]
+    fn reproducibility_golden_values_and_wrapping_corner_are_frozen() {
+        // Reproducibility ABI v1 — never update these literals without a
+        // deliberate version bump and release note.
+        assert_eq!(nth_derived_seed(0x0, 0x0), 0xE220_A839_7B1D_CDAF);
+        assert_eq!(nth_derived_seed(0x0, 0x1), 0x6E78_9E6A_A1B9_65F4);
+        assert_eq!(nth_derived_seed(0x2A, 0x7), 0xCCF6_35EE_9E9E_2FA4);
+        assert_eq!(nth_derived_seed(0x0, u64::MAX), 0x0);
     }
 }
 
@@ -217,16 +257,15 @@ impl SimdXoshiro256PlusPlus {
 
         // Process remaining in chunks of 4 directly (bypass buffer for efficiency)
         let remaining = &mut dest[i..];
-        let mut chunks = remaining.chunks_exact_mut(4);
+        let (chunks, remainder) = remaining.as_chunks_mut::<4>();
 
-        for chunk in chunks.by_ref() {
+        for chunk in chunks {
             let values = self.next_u64x4();
             let array: [u64; 4] = values.into();
             chunk.copy_from_slice(&array);
         }
 
         // Handle remainder by refilling buffer
-        let remainder = chunks.into_remainder();
         if !remainder.is_empty() {
             self.refill_buffer();
             for val in remainder {
@@ -462,14 +501,13 @@ impl TryRng for SimdXoshiro256PlusPlus {
     #[inline]
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         // Process 8 bytes at a time using next_u64
-        let mut chunks = dest.chunks_exact_mut(8);
-        for chunk in chunks.by_ref() {
+        let (chunks, remainder) = dest.as_chunks_mut::<8>();
+        for chunk in chunks {
             let bytes = self.next_u64().to_le_bytes();
             chunk.copy_from_slice(&bytes);
         }
 
         // Handle remainder
-        let remainder = chunks.into_remainder();
         if !remainder.is_empty() {
             let bytes = self.next_u64().to_le_bytes();
             for (i, byte) in remainder.iter_mut().enumerate() {

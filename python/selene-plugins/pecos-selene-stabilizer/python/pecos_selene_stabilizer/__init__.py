@@ -12,6 +12,10 @@
 
 """PECOS stabilizer simulator plugin for the Selene quantum emulator."""
 
+from importlib.metadata import version
+
 from pecos_selene_stabilizer.plugin import StabilizerPlugin
 
-__all__ = ["StabilizerPlugin"]
+__version__ = version("pecos-selene-stabilizer")
+
+__all__ = ["StabilizerPlugin", "__version__"]

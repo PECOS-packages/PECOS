@@ -52,7 +52,7 @@ class TestBasicConversion:
         def single_h() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         package = single_h.compile()
         hugr = package.modules[0]
@@ -77,7 +77,7 @@ class TestBasicConversion:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         package = bell.compile()
         hugr = package.modules[0]
@@ -102,7 +102,7 @@ class TestBasicConversion:
             x(q)
             y(q)
             z(q)
-            return measure(q)
+            return measure(q).read()
 
         package = multi_gate.compile()
         hugr = package.modules[0]
@@ -127,7 +127,7 @@ class TestBasicConversion:
             q1 = qubit()
             cx(q0, q1)
             cz(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         package = two_qubit.compile()
         hugr = package.modules[0]
@@ -150,7 +150,7 @@ class TestFilteringOptions:
             q = qubit()
             h(q)
             t(q)
-            return measure(q)
+            return measure(q).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -170,7 +170,7 @@ class TestFilteringOptions:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -189,7 +189,7 @@ class TestFilteringOptions:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -212,7 +212,7 @@ class TestNodeAttributes:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -238,7 +238,7 @@ class TestNodeAttributes:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -257,7 +257,7 @@ class TestNodeAttributes:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -283,7 +283,7 @@ class TestTopologicalSort:
             h(q)
             t(q)
             s(q)
-            return measure(q)
+            return measure(q).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -309,7 +309,7 @@ class TestTopologicalSort:
             q = qubit()
             h(q)
             t(q)
-            return measure(q)
+            return measure(q).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -339,7 +339,7 @@ class TestEdgeDependencies:
             q = qubit()
             h(q)
             t(q)
-            return measure(q)
+            return measure(q).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -360,7 +360,7 @@ class TestEdgeDependencies:
             h(q0)
             h(q1)  # Parallel to first H
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -381,7 +381,7 @@ class TestEmptyAndMinimalCircuits:
         @guppy
         def minimal() -> bool:
             q = qubit()
-            return measure(q)
+            return measure(q).read()
 
         package = minimal.compile()
         hugr = package.modules[0]
@@ -401,7 +401,7 @@ class TestEmptyAndMinimalCircuits:
         @guppy
         def minimal() -> bool:
             q = qubit()
-            return measure(q)
+            return measure(q).read()
 
         package = minimal.compile()
         hugr = package.modules[0]
@@ -425,7 +425,7 @@ class TestDAGProperties:
             h(q0)
             cx(q0, q1)
             h(q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -445,7 +445,7 @@ class TestDAGProperties:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -466,7 +466,7 @@ class TestDAGProperties:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         package = circuit.compile()
         hugr = package.modules[0]
@@ -489,7 +489,7 @@ class TestGuppyToDag:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         dag = guppy_to_dag(circuit)
 
@@ -509,7 +509,7 @@ class TestGuppyToDag:
             q = qubit()
             h(q)
             t(q)
-            return measure(q)
+            return measure(q).read()
 
         dag = guppy_to_dag(circuit, include_alloc=False, include_measure=False)
 
@@ -528,7 +528,7 @@ class TestGuppyToDag:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         # Using guppy_to_dag
         dag1 = guppy_to_dag(circuit)

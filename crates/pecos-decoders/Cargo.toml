@@ -13,6 +13,7 @@ description = "Unified decoder meta-crate for PECOS"
 
 [dependencies]
 pecos-decoder-core.workspace = true
+pecos-random.workspace = true
 pecos-ldpc-decoders = { workspace = true, optional = true }
 pecos-fusion-blossom = { workspace = true, optional = true }
 pecos-mwpf = { workspace = true, optional = true }

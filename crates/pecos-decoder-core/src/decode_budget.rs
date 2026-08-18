@@ -207,7 +207,12 @@ pub trait DecodeStrategy: Send + Sync {
     fn commit(&mut self, region: &DetectorRegion) -> Result<u64, DecoderError>;
 
     /// Total committed observable correction so far.
-    fn committed_obs(&self) -> u64;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] when a strategy's
+    /// committed correction cannot be represented by the legacy `u64` view.
+    fn committed_obs(&self) -> Result<u64, DecoderError>;
 
     /// Reset all state for the next shot.
     fn reset(&mut self);

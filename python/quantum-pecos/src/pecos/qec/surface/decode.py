@@ -47,7 +47,7 @@ import math
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from enum import Enum
+from enum import StrEnum
 from functools import cache
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     import stim
 
     from pecos import Array
+    from pecos.decoders import DecoderSpec
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -125,7 +126,7 @@ def _validate_probability(name: str, value: float) -> float:
     return probability
 
 
-class DecoderType(str, Enum):
+class DecoderType(StrEnum):
     """Available decoder backends."""
 
     PYMATCHING = "pymatching"
@@ -1019,6 +1020,7 @@ def _surface_runtime_measurement_remap_from_result_traces(
     """
     num_measurements = int(abstract_tc.get_meta("num_measurements"))
     scalar_trace_ids, array_trace_ids = _index_surface_result_trace_ids(result_traces)
+    _validate_surface_array_slot_provenance(result_traces, array_trace_ids)
     abstract_refs = _surface_abstract_measurement_result_refs(abstract_tc)
     if len(abstract_refs) != num_measurements:
         msg = f"expected {num_measurements} abstract measurement refs, got {len(abstract_refs)}"
@@ -1039,10 +1041,11 @@ def _surface_runtime_measurement_remap_from_result_traces(
         else:
             _, name, element = ref
             try:
-                remap[abstract_index] = array_trace_ids[name][0][element]
+                result_id = array_trace_ids[name][0][element]
             except (KeyError, IndexError) as exc:
                 msg = f"result tag {name!r}[{element}] is missing from the runtime trace"
                 raise ValueError(msg) from exc
+            remap[abstract_index] = result_id
 
     runtime_ids = sorted(remap.values())
     if runtime_ids != list(range(num_measurements)):
@@ -1053,6 +1056,53 @@ def _surface_runtime_measurement_remap_from_result_traces(
         )
         raise ValueError(msg)
     return remap
+
+
+def _validate_surface_array_slot_provenance(
+    result_traces: Sequence[Mapping[str, Any]],
+    array_trace_ids: Mapping[str, list[list[int]]],
+) -> None:
+    """Compare collected-array IDs against any emitted per-element evidence."""
+    unbound_final_slots: set[int] = set()
+    for trace in result_traces:
+        name = trace.get("name")
+        values = trace.get("values")
+        result_ids = trace.get("result_ids")
+        if not isinstance(name, str) or not isinstance(values, list) or not isinstance(result_ids, list):
+            continue
+        base_name, separator, element_text = name.rpartition(":meas:")
+        if not separator or not element_text.isdecimal() or len(values) != 1:
+            continue
+        element = int(element_text)
+        if base_name == "final" and not result_ids:
+            unbound_final_slots.add(element)
+            continue
+        if len(result_ids) != 1:
+            continue
+        base_arrays = array_trace_ids.get(base_name)
+        if not base_arrays or element >= len(base_arrays[0]):
+            continue
+        if int(result_ids[0]) != base_arrays[0][element]:
+            msg = (
+                f"runtime result tag {base_name!r}[{element}] has measurement id {base_arrays[0][element]}, "
+                f"but {name!r} certifies {result_ids[0]}"
+            )
+            raise ValueError(msg)
+
+    if unbound_final_slots:
+        final_arrays = array_trace_ids.get("final")
+        if not final_arrays:
+            msg = "final measurement slots have no scalar provenance or aggregate result IDs"
+            raise ValueError(msg)
+        final_ids = final_arrays[0]
+        expected_ids = list(range(final_ids[0], final_ids[0] + len(final_ids)))
+        if final_ids != expected_ids:
+            msg = (
+                "final aggregate result IDs must be contiguous in ascending source order when "
+                "per-element provenance is unavailable; got "
+                f"{final_ids}"
+            )
+            raise ValueError(msg)
 
 
 def _index_surface_result_trace_ids(
@@ -1070,7 +1120,10 @@ def _index_surface_result_trace_ids(
         if _is_surface_sideband_result_tag(name):
             continue
         if len(values) != len(result_ids):
-            if not result_ids and name in {"synx", "synz"}:
+            if not result_ids and name.startswith("final:meas:"):
+                # The aggregate tag below is validated against source order.
+                continue
+            if not result_ids and name in {"init_synx", "init_synz", "synx", "synz"}:
                 # Per-measurement scalar tags are the authoritative syndrome
                 # provenance. The aggregate array is intentionally unbound
                 # when those scalar reads have already been consumed.
@@ -3598,7 +3651,7 @@ class SimulationResult:
     logical_error_rate: float
     raw_error_rate: float
     decoded: bool
-    decoder_type: str | None = None
+    decoder_type: str | DecoderSpec | None = None
     interaction_basis: str = "cx"
     check_plan: str = "cx_standard_v1"
     resolved_check_plan: dict[str, Any] | None = None
@@ -3619,8 +3672,17 @@ def _memory_noise_model(
     return NoiseParameters.uniform(p)
 
 
-def _recommended_graphlike_decomposition_for_decoder(decoder_type: str) -> NativeDemDecomposition:
-    base = decoder_type.split(":", 1)[0]
+def _decoder_family(decoder_type: str | DecoderSpec) -> str:
+    """Return the canonical family for a legacy string or typed decoder spec."""
+    if isinstance(decoder_type, str):
+        return decoder_type.split(":", 1)[0]
+    return decoder_type.family
+
+
+def _recommended_graphlike_decomposition_for_decoder(
+    decoder_type: str | DecoderSpec,
+) -> NativeDemDecomposition:
+    base = _decoder_family(decoder_type)
     if base in {"pymatching", "pymatching_correlated", "pymatching_uncorrelated"}:
         return "terminal_graphlike"
     return "source_graphlike"
@@ -3634,7 +3696,7 @@ def surface_code_memory(
     shots: int = 1000,
     rounds: int | None = None,
     basis: str = "Z",
-    decoder_type: str = "pymatching",
+    decoder_type: str | DecoderSpec = "pymatching",
     seed: int | None = None,
     decode: bool = True,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
@@ -3662,9 +3724,10 @@ def surface_code_memory(
         shots: Number of Monte Carlo shots.
         rounds: Number of syndrome-extraction rounds. Defaults to ``distance``.
         basis: Memory basis, ``"Z"`` or ``"X"``.
-        decoder_type: Decoder backend passed to ``SampleBatch.decode_count``.
-            PyMatching-family decoders use PECOS's terminal graphlike DEM
-            projection for this recommended workflow.
+        decoder_type: Typed decoder specification or legacy decoder string
+            passed to ``SampleBatch.decode``. PyMatching-family decoders use
+            PECOS's terminal graphlike DEM projection for this recommended
+            workflow.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
@@ -3691,8 +3754,15 @@ def surface_code_memory(
         ``SimulationResult`` with logical and raw error counts/rates.
 
     Example:
+        >>> from pecos.decoders import pymatching
         >>> from pecos.qec.surface import surface_code_memory
-        >>> result = surface_code_memory(distance=3, physical_error_rate=0.0, shots=4, rounds=1)
+        >>> result = surface_code_memory(
+        ...     distance=3,
+        ...     physical_error_rate=0.0,
+        ...     shots=4,
+        ...     rounds=1,
+        ...     decoder_type=pymatching(correlated=True),
+        ... )
         >>> result.logical_error_rate
         0.0
     """
@@ -3733,7 +3803,7 @@ def surface_code_memory(
     )
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(shots, seed)
     num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_flips(shot).mask != 0)
-    num_logical_errors = batch.decode_count(dem, decoder_type) if decode else num_raw_errors
+    num_logical_errors = batch.decode(dem, decoder_type).num_errors if decode else num_raw_errors
 
     return SimulationResult(
         distance=distance,
@@ -4283,11 +4353,16 @@ def decode_native_samples(
     num_shots: int,
     *,
     dem: str | None = None,
-    decoder_type: str = "pymatching",
+    decoder_type: str | DecoderSpec = "pymatching",
     seed: int | None = None,
     pauli_masks: Any | None = None,
 ) -> int:
-    """Sample, optionally apply a known Pauli-frame mask, de-mask, and decode."""
+    """Sample, optionally de-mask a Pauli frame, and batch-decode.
+
+    ``decoder_type`` accepts a typed :class:`pecos.decoders.DecoderSpec` or a
+    legacy decoder string. The de-masked records are decoded through the
+    unified ``SampleBatch.decode`` execution planner.
+    """
     from pecos_rslib.qec import SampleBatch
 
     dem_str = dem if dem is not None else sampler.dem_string
@@ -4316,7 +4391,7 @@ def decode_native_samples(
     uint64_mask = (1 << 64) - 1
     obs_masks = [sum(int(bit) << index for index, bit in enumerate(row)) & uint64_mask for row in obs_arr.tolist()]
     batch = SampleBatch(det_list, obs_masks, num_observables=obs_arr.shape[1])
-    return batch.decode_count(dem_str, decoder_type)
+    return batch.decode(dem_str, decoder_type).num_errors
 
 
 def demask_pauli_frame_records(

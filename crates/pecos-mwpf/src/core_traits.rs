@@ -16,8 +16,8 @@ use crate::decoder::MwpfDecoder;
 
 /// Implement `ObservableDecoder` for `MwpfDecoder`.
 ///
-/// This is the primary trait used by the fast decode path
-/// (`SampleBatch.decode_count`, `sample_decode_count`, etc.).
+/// This is the primary trait used by the unified `SampleBatch.decode` and
+/// `DemSampler.decode` execution paths.
 impl pecos_decoder_core::ObservableDecoder for MwpfDecoder {
     fn decode_obs(
         &mut self,

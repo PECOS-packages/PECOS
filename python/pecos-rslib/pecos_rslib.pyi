@@ -2399,6 +2399,26 @@ class qec:
         ) -> None: ...
         @staticmethod
         def load(path: str | os.PathLike[str]) -> qec.SampleBatch: ...
+        def decode(
+            self,
+            dem: str | None = ...,
+            decoder: decoders.DecoderSpec | str = ...,
+            *,
+            workers: int | None = ...,
+            predictions: bool = ...,
+            timing: bool = ...,
+            allow_dem_mismatch: bool = ...,
+        ) -> qec.DecodeResult:
+            """Decode all shots with planned native, sequential, or parallel execution.
+
+            ``decoder`` is a typed decoder spec or legacy string. ``dem=None``
+            requires a corpus-loaded batch with an embedded DEM. Explicit
+            ``workers`` requests that exact count; automatic execution respects
+            stateful and wall-clock-limited decoder contracts. Predictions are
+            wide Python integers, and timing forces per-shot dispatch.
+            """
+            ...
+
         def decode_count(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> int: ...
         def decode_each(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> list[int]: ...
         def decode_count_parallel(
@@ -2436,12 +2456,27 @@ class qec:
         num_errors: int
         logical_error_rate: float
         total_seconds: float
+        wall_elapsed: float
+        summed_decode_elapsed: float
+        num_timing_samples: int
         per_shot_mean: float
         per_shot_median: float
         per_shot_p99: float
         per_shot_min: float
         per_shot_max: float
-        quantiles: list[tuple[float, float]]
+        quantiles: list[float]
+
+    class DecodeResult:
+        num_shots: int
+        num_errors: int
+        logical_error_rate: float
+        execution_path: str
+        workers_used: int
+        reproducibility_warnings: list[str]
+        sampling_seed_used: int | None
+        predictions: list[int] | None
+        stats: qec.DecodeStats | None
+        def interval(self, alpha: float = ...) -> tuple[float, float]: ...
 
     class DemSampler:
         @staticmethod
@@ -2513,6 +2548,28 @@ class qec:
         def sample_tracked_paulis(self, seed: int | None = ...) -> list[bool]: ...
         def sample_tracked_pauli_batch(self, num_shots: int, seed: int | None = ...) -> list[list[bool]]: ...
         def sample_statistics(self, num_shots: int, seed: int | None = ...) -> dict[str, Any]: ...
+        def decode(
+            self,
+            dem: str,
+            num_shots: int,
+            decoder: decoders.DecoderSpec | str,
+            *,
+            seed: int | None = ...,
+            workers: int | None = ...,
+            predictions: bool = ...,
+            timing: bool = ...,
+        ) -> qec.DecodeResult:
+            """Sample and decode under sampling ABI v1.
+
+            A fixed seed produces the same shot stream for all worker counts and
+            execution paths. Predictions and counts match too, except when
+            ``reproducibility_warnings`` is non-empty -- a wall-clock-limited
+            decoder run in parallel can decode differently under CPU contention.
+            The resolved replay seed is returned in ``sampling_seed_used``;
+            timing is always outside the reproducibility guarantee.
+            """
+            ...
+
         def sample_decode_count(
             self,
             dem: str,
@@ -2760,6 +2817,129 @@ class decoders:
     """Decoder submodule for quantum error correction."""
 
     ObservableFlips = ObservableFlips
+
+    class DecoderSpec:
+        """Immutable typed decoder construction specification."""
+
+        @staticmethod
+        def parse(type_string: str) -> decoders.DecoderSpec: ...
+        @property
+        def family(self) -> str: ...
+        @property
+        def history_dependent(self) -> bool: ...
+        @property
+        def wall_clock_dependent(self) -> bool: ...
+        def __repr__(self) -> str: ...
+        def __eq__(self, other: object) -> bool: ...
+
+    @staticmethod
+    def pymatching(*, correlated: bool, error_probability: float | None = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def tesseract(
+        *,
+        preset: str = ...,
+        det_beam: int | None = ...,
+        beam_climbing: bool | None = ...,
+        verbose: bool | None = ...,
+        no_revisit_dets: bool | None = ...,
+        pqlimit: int | None = ...,
+        det_penalty: float | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def bp_osd(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        bp_schedule: str = ...,
+        ms_scaling_factor: float | None = ...,
+        osd_order: int = ...,
+        random_schedule_seed: int | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def bp_lsd(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        bp_schedule: str = ...,
+        ms_scaling_factor: float | None = ...,
+        lsd_order: int = ...,
+        bits_per_step: int = ...,
+        random_schedule_seed: int | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def fusion_blossom(*, correlated: bool = ..., solver: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def relay_bp(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        alpha: float | None = ...,
+        alpha_iteration_scaling_factor: float = ...,
+        gamma0: float | None = ...,
+        pre_iter: int = ...,
+        num_sets: int = ...,
+        set_max_iter: int = ...,
+        gamma_dist_interval: tuple[float, float] = ...,
+        stopping_criterion: str | int = ...,
+        seed: int = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def min_sum_bp(
+        *, error_rate: float | None = ..., max_iter: int = ..., alpha: float | None = ...
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def pecos_uf(*, preset: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def belief_matching(*, mode: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def windowed(
+        *,
+        step: int = ...,
+        buffer: int = ...,
+        mode: str = ...,
+        seam: int = ...,
+        core_extend: int = ...,
+        commit_weight_max: float = ...,
+        inner: decoders.DecoderSpec | None = ...,
+        sandwich_phase2: decoders.DecoderSpec | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def mwpf(
+        *,
+        solver: str = ...,
+        cluster_node_limit: int = ...,
+        timeout: float | None = ...,
+        only_solve_primal_once: bool = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def perturbed(
+        *, inner: decoders.DecoderSpec | None = ..., k: int = ..., sigma: float = ..., seed: int = ...
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def beamsearch(
+        *,
+        beam_width: int = ...,
+        sigma: float = ...,
+        seed: int = ...,
+        step: int = ...,
+        buffer: int = ...,
+        commit_weight_max: float = ...,
+        phase2: decoders.DecoderSpec | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def ensemble(*members: decoders.DecoderSpec) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def k_mwpm(*, k: int = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def astar() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def astar_full() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def union_find() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def belief_find() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def perturbed_fb_corr(*, k: int = ..., sigma: float = ..., seed: int = ...) -> decoders.DecoderSpec: ...
 
     class BpResult:
         """Result from belief propagation decoders.

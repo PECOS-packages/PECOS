@@ -12,6 +12,8 @@ dependency pins, and uv workspace sources.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -26,6 +28,35 @@ DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 MINIMUM_PYTHON = "3.12"
 EXPECTED_PYTHON_CLASSIFIERS = {"3", "3.12", "3.13", "3.14"}
 RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/python-release.yml"
+
+
+def tracked_pyprojects() -> list[Path]:
+    """Every `pyproject.toml` tracked by git, so build output and stray venvs stay out."""
+    git = shutil.which("git")
+    if git is None:
+        msg = "git not found on PATH"
+        raise RuntimeError(msg)
+
+    result = subprocess.run(
+        [git, "ls-files", "*pyproject.toml"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [REPO_ROOT / line for line in result.stdout.split()]
+
+
+def is_distribution(data: dict[str, Any]) -> bool:
+    """Whether a `pyproject.toml` builds a wheel, as opposed to pinning a tooling environment.
+
+    A `[build-system]` table is what makes a project installable, and every distribution in
+    this repository ships on the same version train -- including ones outside the uv
+    workspace, like `exp/zluppy`, which keeps its own lockfile. Projects without one (the
+    root meta-package, `exp/zlup`'s mkdocs environment) only pin dependencies for a local
+    task, so they carry no train version.
+    """
+    return isinstance(data.get("build-system"), dict)
 
 
 @dataclass(frozen=True)
@@ -306,17 +337,23 @@ def main() -> int:
     all_packages = [root, *packages]
     workspace_names = {pkg.normalized_name for pkg in all_packages}
 
-    project_paths = [
-        ROOT_PYPROJECT,
-        *package_paths,
-        REPO_ROOT / "exp/zluppy/pyproject.toml",
-        REPO_ROOT / "exp/zlup/pyproject.toml",
-    ]
-    for path in project_paths:
-        check_python_floor(path, load_toml(path), errors)
+    distribution_paths = []
+    for path in tracked_pyprojects():
+        data = load_toml(path)
+        check_python_floor(path, data, errors)
+        if is_distribution(data):
+            distribution_paths.append(path)
     check_release_python_abi(errors)
 
-    for pkg in all_packages:
+    version_tracked = list(all_packages)
+    already_loaded = {pkg.path for pkg in all_packages}
+    for path in distribution_paths:
+        if path in already_loaded:
+            continue
+        if (pkg := load_package(path, errors)) is not None:
+            version_tracked.append(pkg)
+
+    for pkg in version_tracked:
         if pkg.version != root.version:
             fail(
                 errors,
@@ -362,7 +399,7 @@ def main() -> int:
         return 1
 
     print(
-        f"Python workspace metadata OK: {len(packages)} packages, "
+        f"Python workspace metadata OK: {len(version_tracked)} versioned projects, "
         f"version {root.version}, {len(expected_members)} uv workspace members",
     )
     return 0

@@ -350,7 +350,7 @@ test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
 
 # Fix formatting and linting issues (or: just lint check)
 [group('lint')]
-lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-env python-workspace-check
+lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-env python-workspace-check rust-workspace-check julia-version-check
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$({{pecos}} env)"
@@ -433,6 +433,16 @@ check: _msvc-bootstrap ensure-local-build-env
 [group('lint')]
 python-workspace-check:
     @uv run --frozen python scripts/check_python_workspace.py
+
+# Check Rust workspace crate versions
+[group('lint')]
+rust-workspace-check:
+    @uv run --frozen python scripts/check_rust_workspace.py
+
+# Check the Julia binding's version train
+[group('lint')]
+julia-version-check:
+    @uv run --frozen python scripts/check_julia_versions.py
 
 # Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]

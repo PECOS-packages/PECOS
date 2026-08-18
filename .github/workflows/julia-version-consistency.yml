@@ -34,84 +34,18 @@ jobs:
       with:
         persist-credentials: false
 
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: "3.12"
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        version-file: ".github/uv.toml"
+
     - name: Check Julia version consistency
-      run: |
-        echo "Checking Julia version consistency across files..."
-
-        # Define the files to check
-        declare -A version_files=(
-          ["PECOS.jl Project.toml"]="julia/PECOS.jl/Project.toml"
-          ["pecos-julia-ffi Cargo.toml"]="julia/pecos-julia-ffi/Cargo.toml"
-          ["build_tarballs.jl"]="julia/PECOS.jl/deps/build_tarballs.jl"
-        )
-
-        # Extract versions
-        echo "=== Extracting versions ==="
-
-        # PECOS.jl version
-        pecos_version=$(grep -E '^version = ".*"' julia/PECOS.jl/Project.toml | sed 's/version = "\(.*\)"/\1/')
-        echo "PECOS.jl version: $pecos_version"
-
-        # pecos-julia-ffi version
-        ffi_version=$(grep -E '^version = ".*"' julia/pecos-julia-ffi/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-        echo "pecos-julia-ffi version: $ffi_version"
-
-        # build_tarballs.jl version
-        bt_version=$(grep -E '^version = v".*"' julia/PECOS.jl/deps/build_tarballs.jl | sed 's/version = v"\([^"]*\)".*/\1/')
-        echo "build_tarballs.jl version: $bt_version"
-
-        # Check if all versions match
-        echo ""
-        echo "=== Version consistency check ==="
-
-        errors=0
-
-        if [ "$pecos_version" != "$ffi_version" ]; then
-          echo "ERROR: Version mismatch between PECOS.jl ($pecos_version) and pecos-julia-ffi ($ffi_version)"
-          errors=$((errors + 1))
-        fi
-
-        if [ "$pecos_version" != "$bt_version" ]; then
-          echo "ERROR: Version mismatch between PECOS.jl ($pecos_version) and build_tarballs.jl ($bt_version)"
-          errors=$((errors + 1))
-        fi
-
-        # Check Julia compat versions
-        echo ""
-        echo "=== Julia compatibility check ==="
-
-        julia_compat=$(grep -E 'julia = ".*"' julia/PECOS.jl/Project.toml | sed 's/julia = "\(.*\)"/\1/')
-        echo "PECOS.jl Julia compat: $julia_compat"
-
-        bt_julia_compat=$(grep -E 'julia_compat' julia/PECOS.jl/deps/build_tarballs.jl | grep -oE '"[0-9.]+"' | tr -d '"')
-        echo "build_tarballs.jl Julia compat: $bt_julia_compat"
-
-        if [ "$julia_compat" != "$bt_julia_compat" ]; then
-          echo "WARNING: Julia compatibility mismatch between PECOS.jl ($julia_compat) and build_tarballs.jl ($bt_julia_compat)"
-        fi
-
-        # Check library name consistency
-        echo ""
-        echo "=== Library name check ==="
-
-        lib_name_cargo=$(grep -E 'name = ".*"' julia/pecos-julia-ffi/Cargo.toml | head -1 | sed 's/name = "\(.*\)"/\1/')
-        echo "Cargo library name: $lib_name_cargo"
-
-        if [[ "$lib_name_cargo" != "pecos-julia-ffi" ]]; then
-          echo "ERROR: Unexpected library name in Cargo.toml: $lib_name_cargo"
-          errors=$((errors + 1))
-        fi
-
-        # Final result
-        echo ""
-        echo "=== Summary ==="
-
-        if [ $errors -eq 0 ]; then
-          echo "All version checks passed!"
-        else
-          echo "Found $errors version inconsistencies!"
-          exit 1
-        fi
+      run: uv run --frozen python scripts/check_julia_versions.py
 
     - name: Check for version tags
       run: |

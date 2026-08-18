@@ -3,17 +3,29 @@ name: Rust Version Consistency Check
 permissions:
   contents: read
 
-# bump
-
 on:
   push:
     paths:
       - 'Cargo.toml'
       - 'crates/**/Cargo.toml'
+      - 'python/**/Cargo.toml'
+      - 'exp/**/Cargo.toml'
+      - 'go/**/Cargo.toml'
+      - 'julia/**/Cargo.toml'
+      - 'julia/PECOS.jl/Project.toml'
+      - 'scripts/check_rust_workspace.py'
+      - '.github/workflows/rust-version-consistency.yml'
   pull_request:
     paths:
       - 'Cargo.toml'
       - 'crates/**/Cargo.toml'
+      - 'python/**/Cargo.toml'
+      - 'exp/**/Cargo.toml'
+      - 'go/**/Cargo.toml'
+      - 'julia/**/Cargo.toml'
+      - 'julia/PECOS.jl/Project.toml'
+      - 'scripts/check_rust_workspace.py'
+      - '.github/workflows/rust-version-consistency.yml'
 
 jobs:
   check_rust_versions:
@@ -29,37 +41,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check Rust crate configurations
-        run: |
-          # Check root Cargo.toml for workspace version
-          ROOT_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' Cargo.toml)
-          if [ -z "$ROOT_VERSION" ]; then
-            echo "Error: No version specified in root Cargo.toml"
-            exit 1
-          fi
-          echo "Workspace version: $ROOT_VERSION"
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
 
-          # Check each Cargo.toml in crates/
-          INCONSISTENT=false
-          for file in crates/*/Cargo.toml; do
-            echo "Checking $file"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version-file: ".github/uv.toml"
 
-            # Check if the crate is using workspace inheritance for version
-            if ! grep -q "version.workspace\s*=\s*true" "$file"; then
-              echo "Error: $file is not inheriting version from workspace"
-              INCONSISTENT=true
-            fi
-
-            # Check if version is explicitly specified (it shouldn't be)
-            if grep -qP '^version\s*=\s*"[^"]+"' "$file"; then
-              echo "Error: $file specifies its own version, should inherit from workspace"
-              INCONSISTENT=true
-            fi
-          done
-
-          if [ "$INCONSISTENT" = true ]; then
-            echo "Error: Inconsistencies found in Rust crate configurations"
-            exit 1
-          else
-            echo "Success: All Rust crates are correctly configured in the workspace"
-          fi
+      - name: Check Rust workspace crate versions
+        run: uv run --frozen python scripts/check_rust_workspace.py

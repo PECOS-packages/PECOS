@@ -17,6 +17,8 @@ permissions:
 on:
   push:
     branches: [ "main", "master", "development", "dev" ]
+    # The tag check below only means something when a release tag is what triggered the run.
+    tags: [ "jl-*" ]
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
   workflow_dispatch:

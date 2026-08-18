@@ -50,6 +50,19 @@ INDEPENDENT_MEMBERS = {
     "julia/pecos-julia-ffi": ForeignTrain("Julia", REPO_ROOT / "julia/PECOS.jl/Project.toml"),
 }
 
+# Manifests that are deliberately not workspace members: each declares its own `[workspace]`
+# or is a fixture built on its own. Everything else that is tracked must be a member --
+# without this, dropping a crate from `[workspace].members` (or adding it to `exclude`)
+# would hide it from `cargo metadata` and silently take it off the train.
+STANDALONE_MANIFESTS = {
+    "crates/pecos-pymatching/tests/pymatching/crates/pecos-chromobius",
+    "crates/pecos-pymatching/tests/pymatching/crates/pecos-tesseract",
+    "exp/zlup/ffi/zlup-ffi",
+    "exp/zlup/fuzz",
+    "python/quantum-pecos/tests/docs/rust_crate",
+    "scripts/native_bench/bench_pecos",
+}
+
 
 def rel(path: Path) -> str:
     return path.relative_to(REPO_ROOT).as_posix()
@@ -58,6 +71,23 @@ def rel(path: Path) -> str:
 def load_toml(path: Path) -> dict[str, Any]:
     with path.open("rb") as handle:
         return tomllib.load(handle)
+
+
+def tracked_manifests() -> list[Path]:
+    """Every `Cargo.toml` tracked by git, so build output and vendored trees stay out."""
+    git = shutil.which("git")
+    if git is None:
+        msg = "git not found on PATH"
+        raise RuntimeError(msg)
+
+    result = subprocess.run(
+        [git, "ls-files", "*Cargo.toml"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [REPO_ROOT / line for line in result.stdout.split()]
 
 
 def member_manifests() -> list[Path]:
@@ -88,7 +118,8 @@ def main() -> int:
     inherited = 0
     independent_seen: set[str] = set()
 
-    for manifest in member_manifests():
+    manifests = member_manifests()
+    for manifest in manifests:
         rel_dir = manifest.relative_to(REPO_ROOT).parent.as_posix()
         version = load_toml(manifest).get("package", {}).get("version")
 
@@ -119,6 +150,21 @@ def main() -> int:
     errors.extend(
         f"{SCRIPT_NAME}: INDEPENDENT_MEMBERS lists {rel_dir}, which is no longer a workspace member"
         for rel_dir in sorted(INDEPENDENT_MEMBERS.keys() - independent_seen)
+    )
+
+    # Membership itself is a checked property: `cargo metadata` reports what the workspace
+    # currently contains, which says nothing about what it should contain.
+    member_dirs = {manifest.relative_to(REPO_ROOT).parent.as_posix() for manifest in manifests}
+    tracked_dirs = {manifest.relative_to(REPO_ROOT).parent.as_posix() for manifest in tracked_manifests()}
+    unclaimed = tracked_dirs - member_dirs - STANDALONE_MANIFESTS - {"."}
+    errors.extend(
+        f"{rel_dir}/Cargo.toml: tracked but not a workspace member; add it to [workspace].members "
+        f"or to STANDALONE_MANIFESTS in {SCRIPT_NAME} with the reason"
+        for rel_dir in sorted(unclaimed)
+    )
+    errors.extend(
+        f"{SCRIPT_NAME}: STANDALONE_MANIFESTS lists {rel_dir}, which has no tracked Cargo.toml"
+        for rel_dir in sorted(STANDALONE_MANIFESTS - tracked_dirs)
     )
 
     if errors:

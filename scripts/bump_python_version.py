@@ -63,11 +63,26 @@ def main() -> int:
     targets = [ROOT_PYPROJECT]
     targets += [path for path in tracked_pyprojects() if path != ROOT_PYPROJECT and is_distribution(load_toml(path))]
 
-    stale, changes = rewrite_version(targets, old, args.version)
+    try:
+        stale, changes = rewrite_version(targets, old, args.version)
+    except OSError as err:
+        print(f"error: {err}; any files already written were restored", file=sys.stderr)
+        return 1
     if stale:
         for path in stale:
             print(
                 f"error: {rel(path)} does not carry version {old}; nothing was changed",
+                file=sys.stderr,
+            )
+        return 1
+
+    # A file can contain the old version somewhere other than its own `[project].version`
+    # -- a stale pin, say -- so confirm the declaration itself actually moved.
+    undeclared = [path for path in targets if load_toml(path).get("project", {}).get("version") != args.version]
+    if undeclared:
+        for path in undeclared:
+            print(
+                f"error: {rel(path)}: [project].version is still not {args.version}",
                 file=sys.stderr,
             )
         return 1

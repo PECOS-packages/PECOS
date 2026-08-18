@@ -25,6 +25,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
+VERSION_SPECIFIER_RE = re.compile(r"[=<>!~]")
 MINIMUM_PYTHON = "3.12"
 EXPECTED_PYTHON_CLASSIFIERS = {"3", "3.12", "3.13", "3.14"}
 RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/python-release.yml"
@@ -146,7 +147,20 @@ def iter_dependency_lists(data: dict[str, Any]) -> list[tuple[str, list[Any]]]:
     return lists
 
 
-def internal_dependencies(package: Package, workspace_names: set[str], errors: list[str]) -> set[str]:
+def internal_dependencies(
+    package: Package,
+    workspace_names: set[str],
+    errors: list[str],
+    *,
+    require_pin: bool = True,
+) -> set[str]:
+    """Internal dependency names, checking that each names the train version.
+
+    Workspace members publish to PyPI, so every internal dependency must pin the exact
+    version. A distribution outside the uv workspace may instead resolve a sibling through
+    a `[tool.uv.sources]` path, which carries no version to drift -- but if it does state
+    one, that version still has to be the train's.
+    """
     internal: set[str] = set()
     for section, deps in iter_dependency_lists(package.data):
         for dep in deps:
@@ -157,6 +171,8 @@ def internal_dependencies(package: Package, workspace_names: set[str], errors: l
             if dep_name is None or dep_name not in workspace_names or dep_name == package.normalized_name:
                 continue
             internal.add(dep_name)
+            if not require_pin and VERSION_SPECIFIER_RE.search(dep) is None:
+                continue
             if not has_exact_version_pin(dep, package.version):
                 fail(
                     errors,
@@ -327,7 +343,8 @@ def main() -> int:
     errors: list[str] = []
 
     root = load_package(ROOT_PYPROJECT, errors)
-    package_paths = sorted((REPO_ROOT / "python").rglob("pyproject.toml"))
+    tracked = tracked_pyprojects()
+    package_paths = [path for path in tracked if path.is_relative_to(REPO_ROOT / "python")]
     packages = [pkg for path in package_paths if (pkg := load_package(path, errors)) is not None]
     if root is None:
         for error in errors:
@@ -338,7 +355,7 @@ def main() -> int:
     workspace_names = {pkg.normalized_name for pkg in all_packages}
 
     distribution_paths = []
-    for path in tracked_pyprojects():
+    for path in tracked:
         data = load_toml(path)
         check_python_floor(path, data, errors)
         if is_distribution(data):
@@ -377,8 +394,12 @@ def main() -> int:
 
     check_cuda_extra_group(root.data, errors)
 
-    for pkg in all_packages:
-        internal = internal_dependencies(pkg, workspace_names, errors)
+    for pkg in version_tracked:
+        member = pkg in all_packages
+        internal = internal_dependencies(pkg, workspace_names, errors, require_pin=member)
+        if not member:
+            # Outside the uv workspace, so [tool.uv.sources] workspace entries do not apply.
+            continue
         sources = workspace_sources(pkg, errors)
         missing_sources = sorted(internal - sources)
         extra_sources = sorted((sources & workspace_names) - internal)

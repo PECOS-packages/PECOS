@@ -41,11 +41,20 @@ def rel(path: Path) -> str:
 
 
 def extract(pattern: re.Pattern[str], path: Path, what: str, errors: list[str]) -> str | None:
-    match = pattern.search(path.read_text())
-    if match is None:
+    """The one value `pattern` captures in `path`.
+
+    A second declaration is an error rather than something to ignore: Julia executes the
+    file, so a later assignment is what reaches `build_tarballs`, and reading only the first
+    match would compare a value the build never uses.
+    """
+    matches = pattern.findall(path.read_text())
+    if not matches:
         errors.append(f"{rel(path)}: no {what} found")
         return None
-    return match.group(1)
+    if len(matches) > 1:
+        errors.append(f"{rel(path)}: {len(matches)} {what} declarations found, expected one: {matches}")
+        return None
+    return matches[0]
 
 
 def main() -> int:
@@ -63,6 +72,10 @@ def main() -> int:
     if not isinstance(package_version, str) or not package_version:
         print(f"error: {rel(PROJECT_TOML)}: missing version", file=sys.stderr)
         return 1
+
+    if not isinstance(crate_version, str) or not crate_version:
+        errors.append(f"{rel(FFI_CARGO)}: missing [package].version")
+        crate_version = None
 
     for path, version in ((FFI_CARGO, crate_version), (BUILD_TARBALLS, tarball_version)):
         if version is not None and version != package_version:

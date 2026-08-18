@@ -2275,7 +2275,7 @@ dependencies = [
 
 [[package]]
 name = "guppy-zlup"
-version = "0.1.0"
+version = "0.2.0-dev.0"
 dependencies = [
  "clap 4.6.1",
  "insta",
@@ -4747,6 +4747,7 @@ version = "0.2.0-dev.0"
 dependencies = [
  "num-complex 0.4.6",
  "pecos-bp-trellis",
+ "pecos-build",
  "pecos-core",
  "pecos-eeg",
  "pecos-frontier",
@@ -4770,6 +4771,7 @@ version = "0.2.0-dev.0"
 dependencies = [
  "inkwell",
  "log",
+ "pecos-build",
  "pecos-hugr-qis",
  "pecos-llvm",
  "pyo3",
@@ -8804,7 +8806,7 @@ checksum = "b142a20ec14a91d5bc708c1dc21b080c550113d8aa77afa29635673a65dd02c5"
 
 [[package]]
 name = "zlup"
-version = "0.1.0"
+version = "0.2.0-dev.0"
 dependencies = [
  "clap 4.6.1",
  "criterion 0.5.1",

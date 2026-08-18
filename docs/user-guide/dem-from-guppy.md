@@ -67,13 +67,13 @@ def rep_code_round() -> None:
     cx(d1, a0)
     cx(d1, a1)
     cx(d2, a1)
-    result("s0", measure(a0))
-    result("s1", measure(a1))
+    result("s0", measure(a0).read())
+    result("s1", measure(a1).read())
     # Deferred tagging: bind now, tag later -- the tag->measurement
     # binding follows dataflow, not source order.
-    m0 = measure(d0)
-    m1 = measure(d1)
-    m2 = measure(d2)
+    m0 = measure(d0).read()
+    m1 = measure(d1).read()
+    m2 = measure(d2).read()
     result("m2", m2)
     result("m0", m0)
     result("m1", m1)
@@ -122,7 +122,7 @@ same measurements):
   traced circuit, robust to measurement reordering.
 - `"result_tags": ["s0", "m1"]` — Guppy `result(tag, ...)` names, recovered
   structurally from the compiled HUGR. The tag→measurement binding follows
-  **dataflow, not syntax**: `m = measure(q)` followed later by
+  **dataflow, not syntax**: `m = measure(q).read()` followed later by
   `result("tag", m)` is fully supported, in any order. Restrictions: the
   tagged value must be a raw scalar measurement (computed, constant, and
   array-valued results are rejected), and programs with runtime loops must
@@ -304,8 +304,8 @@ from pecos.qec import DetectorErrorModel
 def noisy_pair() -> None:
     q0, q1 = qubit(), qubit()
     cx(q0, q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 common = {
@@ -487,8 +487,8 @@ from pecos.qec import DetectorErrorModel
 def idle_demo() -> None:
     q0, q1 = qubit(), qubit()
     cx(q0, q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 common = {
@@ -568,8 +568,8 @@ from pecos.qec import DetectorErrorModel
 def idle_demo() -> None:
     q0, q1 = qubit(), qubit()
     cx(q0, q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 dem = DetectorErrorModel.from_guppy(
@@ -614,8 +614,8 @@ from pecos.qec import DetectorErrorModel
 def idle_demo() -> None:
     q0, q1 = qubit(), qubit()
     cx(q0, q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 dem = DetectorErrorModel.from_guppy(
@@ -712,7 +712,7 @@ source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
 - **Measurement-dependent quantum control flow is unsupported and
   rejected.** `from_guppy` traces one ideal execution, so a program whose
   quantum operations depend on a measurement *outcome* (e.g.
-  `if measure(q): x(other)`) would yield a DEM built from a single sampled
+  `if measure(q).read(): x(other)`) would yield a DEM built from a single sampled
   branch — wrong and seed-dependent. Guppy programs whose compiled HUGR
   contains branching or looping control flow therefore raise `ValueError`
   before tracing; built-in generators such as `make_surface_code` cross

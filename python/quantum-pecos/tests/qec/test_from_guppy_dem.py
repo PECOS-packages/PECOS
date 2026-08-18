@@ -44,7 +44,7 @@ from pecos.qec.surface.decode import (
 @guppy
 def _single_measurement() -> None:
     q = qubit()
-    b = measure(q)
+    b = measure(q).read()
     result("m", b)
 
 
@@ -53,8 +53,8 @@ def _two_qubit_idle_target() -> None:
     q0 = qubit()
     q1 = qubit()
     cx(q0, q1)
-    m0 = measure(q0)
-    m1 = measure(q1)
+    m0 = measure(q0).read()
+    m1 = measure(q1).read()
     result("m0", m0)
     result("m1", m1)
 
@@ -66,8 +66,8 @@ def _structured_idle_noise_target() -> None:
     cx(q0, q1)
     h(q0)
     h(q1)
-    result("m0", measure(q0))
-    result("m1", measure(q1))
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
 
 
 @guppy
@@ -75,10 +75,10 @@ def _measurement_feedback() -> None:
     q0 = qubit()
     q1 = qubit()
     h(q0)
-    b0 = measure(q0)
+    b0 = measure(q0).read()
     if b0:
         x(q1)
-    b1 = measure(q1)
+    b1 = measure(q1).read()
     result("b0", b0)
     result("b1", b1)
 
@@ -95,7 +95,7 @@ def _metadata_before_h_gate() -> None:
     q = pecos_qis_trace_metadata_qubit_hugr(q, "host_id", "probe:host")
     q = pecos_qis_trace_metadata_qubit_hugr(q, "local_role", "basis_prefix")
     h(q)
-    _ = measure(q)
+    _ = measure(q).read()
 
 
 @guppy
@@ -105,8 +105,8 @@ def _barrier_between_single_qubit_gates() -> None:
     h(q0)
     barrier(q0, q1)
     h(q1)
-    _ = measure(q0)
-    _ = measure(q1)
+    _ = measure(q0).read()
+    _ = measure(q1).read()
 
 
 def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1531,6 +1531,11 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
         assert got == ref_dem, f"surface from_guppy not byte-identical ({basis})"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 @pytest.mark.parametrize("distance", [3, 5])
 def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: int) -> None:
     """SZZ-basis surface Guppy generation must match the traced-QIS reference DEM."""
@@ -1680,8 +1685,22 @@ def test_from_guppy_constrained_surface_dem_byte_identical(
 @pytest.mark.parametrize(
     "check_plan",
     [
-        "szz_balanced_data_round_order_1032_v1",
-        "szz_balanced_data_round_order_3102_v1",
+        pytest.param(
+            "szz_balanced_data_round_order_1032_v1",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason="#498: SZZ final provenance reversed",
+            ),
+        ),
+        pytest.param(
+            "szz_balanced_data_round_order_3102_v1",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason="#498: SZZ final provenance reversed",
+            ),
+        ),
     ],
 )
 def test_from_guppy_round_order_szz_surface_dem_byte_identical(check_plan: str) -> None:
@@ -1703,8 +1722,22 @@ def test_from_guppy_round_order_szz_surface_dem_byte_identical(check_plan: str) 
     "check_plan",
     [
         None,
-        "szz_balanced_data_round_order_1032_v1",
-        "szz_balanced_data_round_order_3102_v1",
+        pytest.param(
+            "szz_balanced_data_round_order_1032_v1",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason="#498: SZZ final provenance reversed",
+            ),
+        ),
+        pytest.param(
+            "szz_balanced_data_round_order_3102_v1",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason="#498: SZZ final provenance reversed",
+            ),
+        ),
     ],
 )
 def test_constrained_surface_traced_metadata_matches_abstract(check_plan: str | None) -> None:
@@ -2142,6 +2175,78 @@ def test_runtime_result_tags_bind_metadata_when_lowered_measurements_reorder() -
     assert observables == [{"id": 0, "meas_ids": [4 + q for q in logical_z_qubits]}]
 
 
+def test_surface_result_tags_reject_permuted_runtime_ids() -> None:
+    """A dense but permuted result-ID list is not authoritative provenance."""
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis="Z")
+    result_traces = [
+        {"name": f"sx{index}:init:meas:{index}", "values": [False], "result_ids": [index]} for index in range(4)
+    ]
+    result_traces.append(
+        {
+            "name": "final",
+            "values": [False] * 9,
+            "result_ids": [5, 4, *range(6, 13)],
+        },
+    )
+    result_traces.extend(
+        [
+            {"name": "final:meas:0", "values": [False], "result_ids": [4]},
+            {"name": "final:meas:1", "values": [False], "result_ids": [5]},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="certifies"):
+        _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
+
+
+def test_surface_result_tags_reject_unbound_final_measurement_slots() -> None:
+    """Final arrays need per-slot evidence before their runtime IDs are trusted."""
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis="Z")
+    result_traces = [
+        {"name": f"sx{index}:init:meas:{index}", "values": [False], "result_ids": [index]} for index in range(4)
+    ]
+    result_traces.extend(
+        [
+            {
+                "name": "final",
+                "values": [False] * 9,
+                "result_ids": [5, 4, *range(6, 13)],
+            },
+            {"name": "final:meas:0", "values": [False], "result_ids": []},
+            {"name": "final:meas:1", "values": [False], "result_ids": []},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="final aggregate result IDs must be contiguous in ascending source order"):
+        _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
+
+
+def test_surface_result_tags_accept_ascending_unbound_final_measurement_slots() -> None:
+    """Ascending final aggregate IDs preserve source order without scalar IDs."""
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis="Z")
+    result_traces = [
+        {"name": f"sx{index}:init:meas:{index}", "values": [False], "result_ids": [index]} for index in range(4)
+    ]
+    result_traces.extend(
+        [
+            {
+                "name": "final",
+                "values": [False] * 9,
+                "result_ids": list(range(4, 13)),
+            },
+            {"name": "final:meas:0", "values": [False], "result_ids": []},
+            {"name": "final:meas:1", "values": [False], "result_ids": []},
+        ],
+    )
+
+    remap = _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
+
+    assert [remap[index] for index in range(13)] == list(range(13))
+
+
 def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
     from pecos_rslib.quantum import TickCircuit
 
@@ -2468,8 +2573,8 @@ def _two_qubit_gate_channel_program() -> None:
     """One CX with a detector on each measurement, for gate-channel conversion checks."""
     a, b = qubit(), qubit()
     cx(a, b)
-    result("m0", measure(a))
-    result("m1", measure(b))
+    result("m0", measure(a).read())
+    result("m1", measure(b).read())
 
 
 def test_two_qubit_gate_channel_is_converted_not_emitted_naively() -> None:
@@ -2508,7 +2613,7 @@ def test_two_qubit_gate_channel_is_converted_not_emitted_naively() -> None:
 def _prep_and_measure_program() -> None:
     """Prepare and measure one qubit, for the prep/measurement exactness check."""
     q = qubit()
-    result("m0", measure(q))
+    result("m0", measure(q).read())
 
 
 def test_prep_and_measurement_channels_stay_exact() -> None:

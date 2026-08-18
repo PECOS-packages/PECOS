@@ -14,7 +14,7 @@ from collections.abc import Callable
 
 from guppylang import guppy
 from guppylang.std.builtins import array, owned, result
-from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
+from guppylang.std.quantum import collect_measurements, cx, h, measure, measure_array, qubit, x
 
 
 @guppy.struct
@@ -112,14 +112,14 @@ def syndrome_extraction(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     h(ax3)
 
     # Measure ancillas
-    sx0 = measure(ax0)
-    sx1 = measure(ax1)
-    sx2 = measure(ax2)
-    sx3 = measure(ax3)
-    sz0 = measure(az0)
-    sz1 = measure(az1)
-    sz2 = measure(az2)
-    sz3 = measure(az3)
+    sx0 = measure(ax0).read()
+    sx1 = measure(ax1).read()
+    sx2 = measure(ax2).read()
+    sx3 = measure(ax3).read()
+    sz0 = measure(az0).read()
+    sz1 = measure(az1).read()
+    sz2 = measure(az2).read()
+    sz3 = measure(az3).read()
 
     synx = array(sx0, sx1, sx2, sx3)
     synz = array(sz0, sz1, sz2, sz3)
@@ -133,7 +133,7 @@ def syndrome_extraction(surf: SurfaceCode_3x3) -> Syndrome_3x3:
 @guppy
 def measure_z_basis(surf: SurfaceCode_3x3 @ owned) -> array[bool, 9]:
     """Destructively measure in Z basis."""
-    return measure_array(surf.data)
+    return collect_measurements(measure_array(surf.data))
 
 
 @guppy
@@ -141,7 +141,7 @@ def measure_x_basis(surf: SurfaceCode_3x3 @ owned) -> array[bool, 9]:
     """Destructively measure in X basis."""
     for i in range(9):
         h(surf.data[i])
-    return measure_array(surf.data)
+    return collect_measurements(measure_array(surf.data))
 
 
 # === Logical Operators ===

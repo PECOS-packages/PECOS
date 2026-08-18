@@ -74,10 +74,10 @@ def test_variant_scoped_isolates_parameterizations() -> None:
         def memory() -> None:
             for _ in range(comptime(num_rounds)):
                 q = qubit()
-                result("synx", array(measure(q)))
+                result("synx", array(measure(q).read()))
             anc = qubit()
             h(anc)
-            _ = measure(anc)
+            _ = measure(anc).read()
 
         return guppy(variant_scoped(memory, num_rounds))
 

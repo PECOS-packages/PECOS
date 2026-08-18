@@ -34,7 +34,7 @@ from pecos.circuit_converters.hugr_to_ast import guppy_to_ast, hugr_to_ast
 def my_circuit() -> bool:
     q = qubit()
     h(q)
-    return measure(q)
+    return measure(q).read()
 
 
 ast = guppy_to_ast(my_circuit)
@@ -129,7 +129,7 @@ def bell() -> tuple[bool, bool]:
     q1 = qubit()
     h(q0)
     cx(q0, q1)
-    return measure(q0), measure(q1)
+    return measure(q0).read(), measure(q1).read()
 
 
 # Convert to AST
@@ -158,7 +158,7 @@ from pecos.slr.ast.compare import ast_equal
 def my_circuit() -> bool:
     q = qubit()
     h(q)
-    return measure(q)
+    return measure(q).read()
 
 
 ast = guppy_to_ast(my_circuit)

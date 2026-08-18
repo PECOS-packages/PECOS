@@ -16,7 +16,7 @@ def test_measurement_value_crosses_branch() -> None:
     @guppy
     def main() -> None:
         q = qubit()
-        bit = measure_and_reset(q)
+        bit = measure_and_reset(q).read()
         flag = True
         if flag:
             x(q)
@@ -39,7 +39,7 @@ def test_called_measurement_value_crosses_branch() -> None:
 
     @guppy
     def measured_before_branch(q: qubit, flag: bool) -> tuple[bool, int]:
-        bit = measure_and_reset(q)
+        bit = measure_and_reset(q).read()
         if flag:
             x(q)
             marker = 10
@@ -69,10 +69,10 @@ def test_measurement_value_crosses_dynamic_branch() -> None:
     def main() -> None:
         flag_q = qubit()
         h(flag_q)
-        flag = measure(flag_q)
+        flag = measure(flag_q).read()
 
         q = qubit()
-        bit = measure_and_reset(q)
+        bit = measure_and_reset(q).read()
         if flag:
             x(q)
             marker = 10
@@ -95,7 +95,7 @@ def test_measurement_value_crosses_two_branches() -> None:
     @guppy
     def main() -> None:
         q = qubit()
-        bit = measure_and_reset(q)
+        bit = measure_and_reset(q).read()
         first = True
         if first:
             x(q)
@@ -127,7 +127,7 @@ def test_tailloop_remeasurement_uses_last_iteration() -> None:
         for i in range(3):
             if i == 2:
                 x(q)
-            last = measure_and_reset(q)
+            last = measure_and_reset(q).read()
 
         flag = True
         if flag:

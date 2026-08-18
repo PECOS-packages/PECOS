@@ -1,6 +1,6 @@
 [package]
 name = "pecos-rslib-exp"
-version = "0.2.0-dev.0"
+version.workspace = true
 edition.workspace = true
 authors.workspace = true
 homepage.workspace = true
@@ -20,7 +20,7 @@ doctest = false
 # See pecos-rslib's Cargo.toml for why this bundle is opt-in.
 extension-module = [
     "pyo3/extension-module",
-    "pyo3/abi3-py310",
+    "pyo3/abi3-py312",
     "pyo3/generate-import-lib",
 ]
 
@@ -42,6 +42,10 @@ pecos-trellis.workspace = true
 pyo3 = { workspace = true, features = ["num-complex"] }
 num-complex.workspace = true
 smallvec.workspace = true
+
+[build-dependencies]
+# Reads the wheel version out of pyproject.toml for the module's `__version__`.
+pecos-build = { workspace = true }
 
 [lints]
 workspace = true

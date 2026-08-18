@@ -6,6 +6,8 @@
 ///
 /// See: <https://pyo3.rs/v0.23.4/building-and-distribution>
 fn main() {
+    pecos_build::python::emit_python_version();
+
     // For macOS, add required linker args for Python extension modules.
     // This is only needed for manual `cargo build` - maturin handles this automatically.
     #[cfg(target_os = "macos")]

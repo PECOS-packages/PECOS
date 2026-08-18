@@ -36,8 +36,8 @@ def _scrambled_tagged_measurements() -> None:
     qb = qubit()
     h(qb)
     cx(qb, qa)
-    a = measure(qa)
-    b = measure(qb)
+    a = measure(qa).read()
+    b = measure(qb).read()
     result("b", b)
     result("a", a)
 
@@ -45,7 +45,7 @@ def _scrambled_tagged_measurements() -> None:
 @guppy
 def _transformed_measurement_result() -> None:
     q = qubit()
-    measured = measure(q)
+    measured = measure(q).read()
     result("not_m", not measured)
 
 
@@ -53,15 +53,15 @@ def _transformed_measurement_result() -> None:
 def _aggregate_measurement_result() -> None:
     qa = qubit()
     qb = qubit()
-    a = measure(qa)
-    b = measure(qb)
+    a = measure(qa).read()
+    b = measure(qb).read()
     result("pair", array(a, b))
 
 
 @guppy
 def _mixed_supported_result_occurrences() -> None:
     q = qubit()
-    measured = measure(q)
+    measured = measure(q).read()
     result("same", not measured)
     result("same", measured)
 
@@ -71,9 +71,9 @@ def _measurement_feedback_without_named_results() -> None:
     q0 = qubit()
     q1 = qubit()
     h(q0)
-    if measure(q0):
+    if measure(q0).read():
         x(q1)
-    _ = measure(q1)
+    _ = measure(q1).read()
 
 
 def _reordered_trace() -> tuple[TickCircuit, list[dict[str, object]]]:
@@ -734,6 +734,55 @@ def test_generator_layout_rejects_source_runtime_identity_mismatch() -> None:
             circuit,
             traces,
             required_tags=["first"],
+        )
+
+
+def test_generator_layout_rejects_permuted_array_runtime_result_ids() -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
+
+    with pytest.raises(ValueError, match="generator-certified layout requires 4"):
+        _generator_certified_result_traces(
+            (("physical", 0), ("physical", 1)),
+            circuit,
+            [{"name": "physical", "values": [False, True], "result_ids": [9, 4]}],
+            required_tags=["physical"],
+        )
+
+
+def test_generator_layout_allows_guppy_v1_array_without_scalar_ids() -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
+
+    traces = _generator_certified_result_traces(
+        (("physical", 0), ("physical", 1)),
+        circuit,
+        [{"name": "physical", "values": [False, True], "result_ids": []}],
+        required_tags=["physical"],
+    )
+
+    assert [trace["result_ids"] for trace in traces] == [[4], [9]]
+
+
+def test_generator_layout_checks_synthetic_array_slots_against_base_array_ids() -> None:
+    """Guppy v1 array provenance remains ordered even with synthetic tags."""
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    circuit.set_meta("guppy_source_measurement_ids", "[4,9]")
+    traces = [
+        {"name": "physical:meas:0", "values": [False], "result_ids": []},
+        {"name": "physical:meas:1", "values": [True], "result_ids": []},
+        {"name": "physical", "values": [False, True], "result_ids": [9, 4]},
+    ]
+
+    with pytest.raises(ValueError, match="generator-certified layout requires 4"):
+        _generator_certified_result_traces(
+            (("physical:meas:0", 0), ("physical:meas:1", 0)),
+            circuit,
+            traces,
+            required_tags=["physical:meas:0", "physical:meas:1"],
         )
 
 

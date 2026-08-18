@@ -164,6 +164,12 @@ impl BitmaskStorage for Vec<u64> {
             let lz = self_z.get(i).copied().unwrap_or(0);
             let rx = other_x.get(i).copied().unwrap_or(0);
             let rz = other_z.get(i).copied().unwrap_or(0);
+            // Every term needs a set bit from each operand, so a word where
+            // either side is all identity contributes nothing. Sparse Paulis
+            // on a wide register are mostly such words.
+            if (lx | lz) == 0 || (rx | rz) == 0 {
+                continue;
+            }
             // Reduce mod 4 each word so the accumulator stays small
             // regardless of input length.
             total = (total + phase_terms_u64(lx, lz, rx, rz)) % 4;
@@ -259,6 +265,12 @@ impl BitmaskStorage for SmallVec<[u64; 8]> {
             let lz = self_z.get(i).copied().unwrap_or(0);
             let rx = other_x.get(i).copied().unwrap_or(0);
             let rz = other_z.get(i).copied().unwrap_or(0);
+            // Every term needs a set bit from each operand, so a word where
+            // either side is all identity contributes nothing. Sparse Paulis
+            // on a wide register are mostly such words.
+            if (lx | lz) == 0 || (rx | rz) == 0 {
+                continue;
+            }
             // Reduce mod 4 each word so the accumulator stays small
             // regardless of input length.
             total = (total + phase_terms_u64(lx, lz, rx, rz)) % 4;

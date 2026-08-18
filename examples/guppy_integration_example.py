@@ -37,8 +37,8 @@ def example_bell_state() -> None:
         cx(q0, q1)
 
         # Measure both qubits
-        m0 = measure(q0)
-        m1 = measure(q1)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
 
         return (m0, m1)
 
@@ -102,7 +102,7 @@ def example_quantum_adder() -> None:
         """Simple quantum computation with classical result."""
         q = qubit()
         h(q)  # Put in superposition
-        return measure(q)  # Random bit
+        return measure(q).read()  # Random bit
 
     print("\n=== Quantum Random Bit Example ===")
     print("Expected: Random 0/1 distribution")

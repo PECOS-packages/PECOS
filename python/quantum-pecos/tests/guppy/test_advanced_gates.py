@@ -38,7 +38,7 @@ class TestThreeQubitGates:
             h(q0)
             h(q1)
             toffoli(q0, q1, q2)
-            return measure(q0), measure(q1), measure(q2)
+            return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         hugr = test_toffoli.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -66,7 +66,7 @@ class TestControlledRotations:
             q1 = qubit()
             h(q0)
             crz(q0, q1, pi / 4)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = test_crz.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -86,7 +86,7 @@ class TestCompilerFeatures:
         def simple() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = simple.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -112,7 +112,7 @@ class TestCompilerFeatures:
             cz(q0, q2)
 
             # Measurements
-            return measure(q0), measure(q1), measure(q2)
+            return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         hugr = complex_circuit.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -134,7 +134,7 @@ class TestCompilerFeatures:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         hugr = only_cnot.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())

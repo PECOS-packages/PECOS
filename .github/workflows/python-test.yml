@@ -237,7 +237,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            python-version: "3.10"
+            python-version: "3.12"
             artifact-name: python-compat-smoke-ubuntu
             build-llvm: true
             build-quantum-pecos: true
@@ -246,13 +246,13 @@ jobs:
           # several minutes and the pecos-rslib wheel compile alone takes
           # 10-12, so 20 minutes cancelled a healthy build (issue #360).
           - os: windows-2022
-            python-version: "3.10"
+            python-version: "3.12"
             artifact-name: python-compat-smoke-windows
             build-llvm: false
             build-quantum-pecos: false
             job-timeout: 30
           - os: macOS-latest
-            python-version: "3.10"
+            python-version: "3.12"
             artifact-name: python-compat-smoke-macos
             build-llvm: true
             build-quantum-pecos: false
@@ -390,7 +390,7 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact-name: python-compat-smoke-ubuntu
-            python-version: "3.10"
+            python-version: "3.12"
             include-llvm: true
             include-pecos: true
           - os: ubuntu-latest
@@ -400,7 +400,7 @@ jobs:
             include-pecos: true
           - os: windows-2022
             artifact-name: python-compat-smoke-windows
-            python-version: "3.10"
+            python-version: "3.12"
             include-llvm: false
             include-pecos: false
           - os: windows-2022
@@ -410,7 +410,7 @@ jobs:
             include-pecos: false
           - os: macOS-latest
             artifact-name: python-compat-smoke-macos
-            python-version: "3.10"
+            python-version: "3.12"
             include-llvm: true
             include-pecos: false
           - os: macOS-latest

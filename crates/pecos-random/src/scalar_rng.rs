@@ -103,16 +103,15 @@ impl PecosScalarRng {
 
     /// Fill a slice with random u64 values using parallel RNGs.
     pub fn fill_u64(&mut self, dest: &mut [u64]) {
-        let mut chunks = dest.chunks_exact_mut(4);
+        let (chunks, remainder) = dest.as_chunks_mut::<4>();
 
-        for chunk in chunks.by_ref() {
+        for chunk in chunks {
             let values = self.next_u64x4();
             let array: [u64; 4] = values.into();
             chunk.copy_from_slice(&array);
         }
 
         // Handle remainder using scalar RNG
-        let remainder = chunks.into_remainder();
         for val in remainder {
             *val = self.scalar_rng.next();
         }
@@ -278,13 +277,12 @@ impl TryRng for PecosScalarRng {
 
     #[inline]
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
-        let mut chunks = dest.chunks_exact_mut(8);
-        for chunk in chunks.by_ref() {
+        let (chunks, remainder) = dest.as_chunks_mut::<8>();
+        for chunk in chunks {
             let bytes = self.scalar_rng.next().to_le_bytes();
             chunk.copy_from_slice(&bytes);
         }
 
-        let remainder = chunks.into_remainder();
         if !remainder.is_empty() {
             let bytes = self.scalar_rng.next().to_le_bytes();
             for (i, byte) in remainder.iter_mut().enumerate() {

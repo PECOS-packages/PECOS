@@ -9,8 +9,8 @@ import json
 
 import pytest
 from guppylang import guppy
-from guppylang.std.builtins import array, result
-from guppylang.std.quantum import measure, qubit
+from guppylang.std.builtins import array, output
+from guppylang.std.quantum import collect_measurements, measure, measure_array, qubit
 from pecos.qec import infer_guppy_dem_annotations
 
 
@@ -19,7 +19,7 @@ def _measure_three_into_array() -> array[bool, 3]:
     q0 = qubit()
     q1 = qubit()
     q2 = qubit()
-    return array(measure(q0), measure(q1), measure(q2))
+    return array(measure(q0).read(), measure(q1).read(), measure(q2).read())
 
 
 @guppy
@@ -28,31 +28,56 @@ def _computed_parity_outputs() -> None:
     m0 = measurements[0]
     m1 = measurements[1]
     m2 = measurements[2]
-    result("DETECTOR", m0 ^ m1)
-    result("DETECTOR", m1 ^ m2)
-    result("raw measurements", measurements)
-    result("obs", m0 ^ m2)
+    output("DETECTOR", m0 ^ m1)
+    output("DETECTOR", m1 ^ m2)
+    output("raw measurements", measurements)
+    output("obs", m0 ^ m2)
 
 
 @guppy
 def _raw_results_incomplete() -> None:
     q0 = qubit()
     q1 = qubit()
-    m0 = measure(q0)
-    result("raw measurements", m0)
-    m1 = measure(q1)
-    result("DETECTOR", m0 ^ m1)
-    result("obs", m0)
+    m0 = measure(q0).read()
+    output("raw measurements", m0)
+    m1 = measure(q1).read()
+    output("DETECTOR", m0 ^ m1)
+    output("obs", m0)
 
 
 @guppy
 def _reordered_raw_array() -> None:
-    m0 = measure(qubit())
-    m1 = measure(qubit())
-    m2 = measure(qubit())
-    result("DETECTOR", m2 ^ m0)
-    result("raw measurements", array(m2, m0, m1))
-    result("obs", m1)
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
+    m2 = measure(qubit()).read()
+    output("DETECTOR", m2 ^ m0)
+    output("raw measurements", array(m2, m0, m1))
+    output("obs", m1)
+
+
+@guppy
+def _direct_array_outputs() -> None:
+    """Emit direct measurements in arrays without an intermediate return value."""
+    bits = collect_measurements(measure_array(array(qubit(), qubit(), qubit())))
+    m0 = bits[0]
+    m1 = bits[1]
+    m2 = bits[2]
+    output("physical", bits)
+    output("events", m0 ^ m1)
+    output("logical_z", m0)
+    output("logical_x", array(m1, m2))
+
+
+@guppy
+def _scalar_measurements_emitted_as_array() -> None:
+    """The public scalar-array output form that currently reverses IDs."""
+    m0 = measure(qubit()).read()
+    m1 = measure(qubit()).read()
+    m2 = measure(qubit()).read()
+    output("physical", array(m0, m1, m2))
+    output("events", m0 ^ m1)
+    output("logical_z", m0)
+    output("logical_x", array(m1, m2))
 
 
 def test_infers_computed_detector_and_observable_parities_and_builds_dem() -> None:
@@ -111,8 +136,74 @@ def test_correlated_provenance_preserves_reordered_raw_identity() -> None:
     assert inferred.raw_binding == "probe_correlated_result_ids"
 
 
+def test_direct_array_outputs_preserve_runtime_result_id_order() -> None:
+    inferred = infer_guppy_dem_annotations(
+        _direct_array_outputs,
+        num_qubits=3,
+        raw_tag="physical",
+        detector_tag="events",
+        observable_tags=("logical_z", "logical_x"),
+        probe_shots=32,
+        provenance_shots=16,
+        validation_rows=8,
+        seed=19,
+    )
+
+    assert inferred.raw_measurement_ids == (0, 1, 2)
+    assert inferred.detector_supports == ((0, 1),)
+    assert inferred.observable_supports == ((0,), (1,), (2,))
+    assert inferred.raw_binding == "runtime_result_ids"
+
+
+def test_direct_array_outputs_reject_permuted_runtime_result_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A complete direct-ID list is valid only in certified source order."""
+    from pecos.qec import guppy_output_dem
+
+    original = guppy_output_dem._named_trace_items  # noqa: SLF001
+
+    def permuted_named_trace_items(trace: object) -> list[dict[str, object]]:
+        items = original(trace)
+        rewritten: list[dict[str, object]] = []
+        for item in items:
+            if item.get("name") == "physical" and item.get("result_ids") == [0, 1, 2]:
+                rewritten.append({**item, "result_ids": [1, 0, 2]})
+            else:
+                rewritten.append(item)
+        return rewritten
+
+    monkeypatch.setattr(guppy_output_dem, "_named_trace_items", permuted_named_trace_items)
+    with pytest.raises(ValueError, match="certified source order"):
+        infer_guppy_dem_annotations(
+            _direct_array_outputs,
+            num_qubits=3,
+            raw_tag="physical",
+            detector_tag="events",
+            observable_tags=("logical_z", "logical_x"),
+            probe_shots=32,
+            provenance_shots=16,
+            validation_rows=8,
+            seed=19,
+        )
+
+
+def test_scalar_measurements_emitted_as_array_reject_reversed_runtime_ids() -> None:
+    """Keep the known Guppy-v1 array provenance reversal fail-loud."""
+    with pytest.raises(ValueError, match="certified source order"):
+        infer_guppy_dem_annotations(
+            _scalar_measurements_emitted_as_array,
+            num_qubits=3,
+            raw_tag="physical",
+            detector_tag="events",
+            observable_tags=("logical_z", "logical_x"),
+            probe_shots=32,
+            provenance_shots=16,
+            validation_rows=8,
+            seed=19,
+        )
+
+
 def test_raw_tag_must_cover_canonical_qis_measurement_order() -> None:
-    with pytest.raises(ValueError, match="emits 1 values during provenance probing"):
+    with pytest.raises(ValueError, match="must expose every physical measurement exactly once"):
         infer_guppy_dem_annotations(
             _raw_results_incomplete,
             num_qubits=2,

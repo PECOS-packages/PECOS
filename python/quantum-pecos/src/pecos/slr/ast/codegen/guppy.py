@@ -285,7 +285,7 @@ class GuppyContext:
 
         Default name is `f"{allocator}_{index}"`; if that collides with
         any declared allocator name, register name, or previously
-        assigned slot local, suffix `_` until unique. The result is the
+        assigned slot local, suffix `_` until unique. The output is the
         authority used by both linearity-state binding init and the
         emitter's `_local_name` so the entry-unpack LHS, the linearity
         bindings, and per-slot references all agree (this disambiguation
@@ -592,7 +592,7 @@ class AstToGuppy:
         self.context.root_allocators.setdefault(decl.name, decl.capacity)
 
     def _collect_implicit_measure_registers(self, body: tuple[Statement, ...]) -> None:
-        """Add result registers introduced only as measurement outputs."""
+        """Add output registers introduced only as measurement outputs."""
         max_indices: dict[str, int] = {}
         for stmt in body:
             self._collect_implicit_measure_register_refs(stmt, max_indices)
@@ -764,7 +764,7 @@ class AstToGuppy:
     def _imports(self) -> list[str]:
         imports = [
             "from guppylang import guppy",
-            "from guppylang.std.builtins import array, owned, result",
+            "from guppylang.std.builtins import array, owned, output",
             "from guppylang.std.mem import mem_swap",
             "from guppylang.std.quantum import discard, measure, qubit",
             f"from guppylang.std.quantum.functional import {FUNCTIONAL_GATE_IMPORTS}",
@@ -1059,7 +1059,7 @@ class AstToGuppy:
                     f"Print references inline CReg bit {reg}[{op.value.index}] before any "
                     f"Measure has written to it. Print would emit the auto-initialized False "
                     f"value (or read past the inferred register bound), not a measurement "
-                    f"result. Move the Print after a Measure(...) > {reg}[{op.value.index}] "
+                    f"output. Move the Print after a Measure(...) > {reg}[{op.value.index}] "
                     f"that runs on every path, or declare {reg!r} explicitly as a positional "
                     f"in Main(...) if you intend to print the zero-initialized state."
                 )
@@ -1071,7 +1071,7 @@ class AstToGuppy:
             # Reject whole-CReg Print of an inline CReg outright.
             # The user-stated `CReg(name, size)` size is lost during inline-from-
             # Measure inference (only Measure-targeted bit indices contribute to
-            # the inferred RegisterDecl.size). Emitting `result(tag, c)` for the
+            # the inferred RegisterDecl.size). Emitting `output(tag, c)` for the
             # inferred c can silently shrink the register relative to the user's
             # intent. Require either an explicit Main(...) declaration (then the
             # CReg is no longer inline and whole-CReg Print is allowed) or per-bit
@@ -1294,11 +1294,11 @@ class AstToGuppy:
             slot = self._slot_from_ref(target)
             local = linearity.consume(slot)
             if index < len(node.results):
-                result = self._render_bit_ref(node.results[index])
-                lines.append(f"{self.context.indent()}{result} = measure({local})")
+                output = self._render_bit_ref(node.results[index])
+                lines.append(f"{self.context.indent()}{output} = measure({local}).read()")
             else:
                 temp = self.context.temp("measurement")
-                lines.append(f"{self.context.indent()}{temp} = measure({local})")
+                lines.append(f"{self.context.indent()}{temp} = measure({local}).read()")
         return lines
 
     def _emit_assign(self, node: AssignOp) -> list[str]:
@@ -1772,10 +1772,10 @@ class AstToGuppy:
         return lines
 
     def _emit_print(self, node: PrintOp) -> list[str]:
-        """Lower PrintOp to a Guppy `result(<namespace>.<tag>, <value>)` call.
+        """Lower PrintOp to a Guppy `output(<namespace>.<tag>, <value>)` call.
 
         Per v2-print.md, Print is scope-orthogonal: it does not allocate, does
-        not touch the result-register set, and does not affect main's return
+        not touch the output-register set, and does not affect main's return
         type. Path-signature consistency for Print inside If branches and
         inline-CReg definite-assignment are enforced by separate validation
         passes; this emitter assumes both have already accepted the AST.
@@ -1805,7 +1805,7 @@ class AstToGuppy:
             msg = f"Unsupported Print value type for Guppy codegen: {type(node.value).__name__}"
             raise GuppyCodegenError(msg)
 
-        return [f'{self.context.indent()}result("{full_tag}", {value_expr})']
+        return [f'{self.context.indent()}output("{full_tag}", {value_expr})']
 
     def _emit_permute(self, node: PermuteOp) -> list[str]:
         if len(node.sources) != len(node.targets):

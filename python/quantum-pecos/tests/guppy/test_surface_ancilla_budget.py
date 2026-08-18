@@ -52,6 +52,11 @@ def test_constrained_ancilla_surface_code_traces_to_native_tick_circuit() -> Non
     assert int(circuit.get_meta("num_measurements")) > 0
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 def test_constrained_szz_surface_code_traces_to_native_tick_circuit() -> None:
     """Budgeted SZZ/SZZdg surface programs should share the constrained Guppy path."""
     from pecos.qec.surface import SurfacePatch

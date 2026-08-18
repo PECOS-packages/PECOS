@@ -40,7 +40,7 @@ def test_quantum_function() -> None:
         def quantum_coin() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         result = sim(Guppy(quantum_coin)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 

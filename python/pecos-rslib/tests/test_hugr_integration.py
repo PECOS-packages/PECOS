@@ -77,7 +77,7 @@ def test_convenience_functions() -> None:
     def simple_circuit() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR
     package = simple_circuit.compile()
@@ -163,7 +163,7 @@ def test_hugr_compiler_with_valid_data() -> None:
     @guppy
     def trivial_circuit() -> bool:
         q = qubit()
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR
     package = trivial_circuit.compile()

@@ -58,7 +58,7 @@ from pecos.qec.dem_spec import (
 )
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
+    from typing import Self
 
     from pecos.qec.dem_spec import Detector, Observable
     from pecos.qec.surface.decode import NoiseParameters
@@ -867,45 +867,46 @@ def _generator_certified_result_traces(
         msg = f"result_ref tag(s) are absent from the generator-certified layout: {missing_required}"
         raise ValueError(msg)
 
-    # Defense-in-depth: the layout binds by abstract-circuit position, which
-    # relies on the invariant that abstract measurement order equals source
-    # `result()` emission order. Every generator-certified scalar slot must
-    # be backed by the runtime trace's own scalar result id AND agree with
-    # the positional binding: a missing id (a provenance regression) or a
-    # disagreement (order drift in a future generator variant) fails loud
-    # instead of silently misbinding detectors.
-    runtime_scalar_ids: dict[tuple[str, int], int] = {}
-    runtime_occurrences: dict[str, int] = {}
+    # The program-bound generator certificate is the authoritative binding.
+    # Guppy 1 may omit scalar IDs for collected output arrays, so absent IDs
+    # are not an error. When the runtime does provide scalar or array IDs,
+    # however, they are independent evidence and must agree slot-for-slot
+    # with the generator-certified layout. In particular, this catches a
+    # reversed array provenance record without trusting it as the source of
+    # the binding.
+    runtime_ids_by_slot: dict[tuple[str, int], int] = {}
+    runtime_offsets: dict[str, int] = {}
     for trace in runtime_result_traces:
         tag = trace.get("name")
-        if not isinstance(tag, str):
-            continue
-        occurrence = runtime_occurrences.get(tag, 0)
-        runtime_occurrences[tag] = occurrence + 1
+        values = trace.get("values")
         result_ids = trace.get("result_ids")
-        if (
-            isinstance(result_ids, list)
-            and len(result_ids) == 1
-            and isinstance(result_ids[0], int)
-            and not isinstance(result_ids[0], bool)
-            and result_ids[0] >= 0
-        ):
-            runtime_scalar_ids[(tag, occurrence)] = result_ids[0]
-    for source_index, (tag, value_index) in enumerate(entries):
-        expected = int(source_measurement_ids[source_index])
-        actual = runtime_scalar_ids.get((tag, value_index))
-        if actual is None:
+        if not isinstance(tag, str) or not isinstance(values, list):
+            continue
+        offset = runtime_offsets.get(tag, 0)
+        runtime_offsets[tag] = offset + len(values)
+        if not isinstance(result_ids, list) or len(result_ids) != len(values):
+            continue
+        for element, result_id in enumerate(result_ids):
+            if isinstance(result_id, bool) or not isinstance(result_id, int) or result_id < 0:
+                msg = f"runtime result trace {tag!r}[{offset + element}] has an invalid measurement id"
+                raise ValueError(msg)
+            runtime_ids_by_slot[(tag, offset + element)] = result_id
+
+    for source_index, slot in enumerate(entries):
+        runtime_result_id = runtime_ids_by_slot.get(slot)
+        if runtime_result_id is None:
+            # Guppy v1 may expose an element's available provenance only on
+            # the collected base array ``tag``. Resolve that exact element
+            # before comparing it to the certified source order.
+            tag, value_index = slot
+            base_tag, separator, element_text = tag.rpartition(":meas:")
+            if separator and element_text.isdecimal() and value_index == 0:
+                runtime_result_id = runtime_ids_by_slot.get((base_tag, int(element_text)))
+        expected_result_id = source_measurement_ids[source_index]
+        if runtime_result_id is not None and runtime_result_id != expected_result_id:
             msg = (
-                f"runtime trace does not expose a scalar result id for generator "
-                f"slot ({tag!r}, occurrence {value_index}); the certified layout "
-                "cannot be cross-checked against runtime provenance"
-            )
-            raise ValueError(msg)
-        if actual != expected:
-            msg = (
-                f"generator layout binds {tag!r} occurrence {value_index} to source "
-                f"measurement {expected}, but the runtime trace reports result id "
-                f"{actual}; abstract and source measurement order have diverged"
+                f"runtime result trace {slot[0]!r}[{slot[1]}] has measurement id {runtime_result_id}, "
+                f"but the generator-certified layout requires {expected_result_id}"
             )
             raise ValueError(msg)
 

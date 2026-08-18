@@ -40,6 +40,70 @@ use tket::hugr::{Hugr, HugrView, Node};
 use crate::engine::HugrEngine;
 
 impl HugrEngine {
+    /// Complete an active Call whose callee is a plain dataflow function.
+    pub(crate) fn check_plain_func_call_completion(&mut self, hugr: &Hugr, _processed_node: Node) {
+        let ready_calls: Vec<Node> = self
+            .active_calls
+            .iter()
+            .filter(|(_, info)| {
+                self.func_defns
+                    .get(&info.func_defn_node)
+                    .is_some_and(|func| func.cfg_node.is_none())
+                    && info.frame_ops.iter().all(|node| self.node_settled(*node))
+            })
+            .map(|(&call_node, _)| call_node)
+            .collect();
+
+        for call_node in ready_calls {
+            let Some(call_info) = self.active_calls.get(&call_node).cloned() else {
+                continue;
+            };
+            let Some(func_info) = self.func_defns.get(&call_info.func_defn_node).cloned() else {
+                continue;
+            };
+            let outputs: Vec<_> = (0..func_info.num_outputs)
+                .map(|port| {
+                    (
+                        self.get_input_qubit(hugr, func_info.output_node, port),
+                        self.get_input_value(hugr, func_info.output_node, port),
+                    )
+                })
+                .collect();
+            if outputs
+                .iter()
+                .any(|(qubit, value)| qubit.is_none() && value.is_none())
+            {
+                continue;
+            }
+            for (port, (qubit, value)) in outputs.into_iter().enumerate() {
+                if let Some(qubit_id) = qubit {
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((call_node, port), qubit_id);
+                }
+                if let Some(value) = value {
+                    self.wire_state
+                        .classical_values
+                        .insert((call_node, port), value);
+                }
+            }
+            self.processed.insert(call_node);
+            self.active_calls.remove(&call_node);
+            self.check_scan_frame_completion(hugr, call_node);
+            self.check_case_completion(hugr, call_node);
+            self.check_cfg_block_completion(hugr, call_node);
+            self.check_tailloop_body_completion(hugr, call_node);
+            self.queue_ready_successors(hugr, call_node);
+            self.retry_deferred_nodes();
+            if let Some(pending) = self.pending_func_calls.get_mut(&call_info.func_defn_node)
+                && let Some(next_call) = pending.pop_front()
+                && !self.work_queue.contains(next_call)
+            {
+                self.work_queue.push_front(next_call);
+            }
+        }
+    }
+
     /// Fill-only repair of active calls' argument ports.
     ///
     /// A Call launches as soon as it is dispatched; an argument that is a

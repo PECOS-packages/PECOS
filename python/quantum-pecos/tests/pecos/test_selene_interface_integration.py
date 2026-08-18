@@ -210,7 +210,7 @@ def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
     def coin() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     results = pecos.sim(pecos.Guppy(coin)).classical(selene).qubits(1).seed(42).run(10).to_dict()
     assert len(results["measurement_0"]) == 10
@@ -228,7 +228,7 @@ def _run_selene_cwd_probe(tmp_path: Path, cargo_target_dir: Path | None = None) 
             @guppy
             def measure_one() -> bool:
                 q = qubit()
-                return measure(q)
+                return measure(q).read()
 
             results = (
                 pecos.sim(pecos.Guppy(measure_one))
@@ -381,9 +381,9 @@ def test_sim_guppy_reuses_physical_slot_after_measurement() -> None:
     def allocate_measure_allocate_again() -> tuple[bool, bool]:
         q0 = qubit()
         x(q0)
-        m0 = measure(q0)
+        m0 = measure(q0).read()
         q1 = qubit()
-        m1 = measure(q1)
+        m1 = measure(q1).read()
         return m0, m1
 
     results = (

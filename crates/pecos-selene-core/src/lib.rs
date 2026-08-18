@@ -10,6 +10,8 @@
 use anyhow::{Result, anyhow};
 use pecos_core::QubitId;
 use pecos_simulators::CliffordGateable;
+use selene_core::error_model::BatchResult;
+use selene_core::operation::{BatchOperation, Operation};
 use selene_core::simulator::SimulatorInterface;
 use selene_core::utils::MetricValue;
 use std::path::Path;
@@ -115,38 +117,71 @@ impl<B: SeleneSimBehavior> SimulatorInterface for SeleneAdapter<B> {
         Ok(())
     }
 
-    fn rxy(&mut self, qubit: u64, theta: f64, phi: f64) -> Result<()> {
-        self.check_qubit(qubit, "RXY")?;
-        self.behavior
-            .apply_rxy(QubitId(to_usize(qubit)), theta, phi)
-    }
-
-    fn rz(&mut self, qubit: u64, theta: f64) -> Result<()> {
-        self.check_qubit(qubit, "RZ")?;
-        self.behavior.apply_rz(QubitId(to_usize(qubit)), theta)
-    }
-
-    fn rzz(&mut self, qubit1: u64, qubit2: u64, theta: f64) -> Result<()> {
-        self.check_pair(qubit1, qubit2, "RZZ")?;
-        self.behavior
-            .apply_rzz(QubitId(to_usize(qubit1)), QubitId(to_usize(qubit2)), theta)
-    }
-
-    fn measure(&mut self, qubit: u64) -> Result<bool> {
-        self.check_qubit(qubit, "Measure")?;
-        let results = self.behavior.sim_mut().mz(&[QubitId(to_usize(qubit))]);
-        Ok(results[0].outcome)
+    fn handle_operations(&mut self, operations: BatchOperation) -> Result<BatchResult> {
+        let mut results = BatchResult::default();
+        for operation in operations {
+            match operation {
+                Operation::RXYGate {
+                    qubit_id,
+                    theta,
+                    phi,
+                } => {
+                    self.check_qubit(qubit_id, "RXY")?;
+                    self.behavior
+                        .apply_rxy(QubitId(to_usize(qubit_id)), theta, phi)?;
+                }
+                Operation::RZGate { qubit_id, theta } => {
+                    self.check_qubit(qubit_id, "RZ")?;
+                    self.behavior.apply_rz(QubitId(to_usize(qubit_id)), theta)?;
+                }
+                Operation::RZZGate {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta,
+                } => {
+                    self.check_pair(qubit_id_1, qubit_id_2, "RZZ")?;
+                    self.behavior.apply_rzz(
+                        QubitId(to_usize(qubit_id_1)),
+                        QubitId(to_usize(qubit_id_2)),
+                        theta,
+                    )?;
+                }
+                Operation::Measure {
+                    qubit_id,
+                    result_id,
+                } => {
+                    self.check_qubit(qubit_id, "Measure")?;
+                    let outcome =
+                        self.behavior.sim_mut().mz(&[QubitId(to_usize(qubit_id))])[0].outcome;
+                    results.set_bool_result(result_id, outcome);
+                }
+                Operation::MeasureLeaked {
+                    qubit_id,
+                    result_id,
+                } => {
+                    self.check_qubit(qubit_id, "MeasureLeaked")?;
+                    let outcome =
+                        self.behavior.sim_mut().mz(&[QubitId(to_usize(qubit_id))])[0].outcome;
+                    results.set_u64_result(result_id, u64::from(outcome));
+                }
+                Operation::Reset { qubit_id } => {
+                    self.check_qubit(qubit_id, "Reset")?;
+                    self.behavior.reset_qubit(QubitId(to_usize(qubit_id)))?;
+                }
+                Operation::RPPGate { .. } => {
+                    return Err(anyhow!("RPP gates are not supported by this simulator"));
+                }
+                Operation::Custom { .. } => {}
+                _ => return Err(anyhow!("Unsupported Selene operation")),
+            }
+        }
+        Ok(results)
     }
 
     fn postselect(&mut self, qubit: u64, target_value: bool) -> Result<()> {
         self.check_qubit(qubit, "Postselect")?;
         self.behavior
             .postselect(QubitId(to_usize(qubit)), target_value)
-    }
-
-    fn reset(&mut self, qubit: u64) -> Result<()> {
-        self.check_qubit(qubit, "Reset")?;
-        self.behavior.reset_qubit(QubitId(to_usize(qubit)))
     }
 
     fn get_metric(&mut self, nth_metric: u8) -> Result<Option<(String, MetricValue)>> {

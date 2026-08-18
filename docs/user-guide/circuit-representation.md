@@ -53,7 +53,7 @@ When using PECOS's `sim()` API, you wrap your program in one of these types:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
 
     results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).run(100)

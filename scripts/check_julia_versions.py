@@ -27,8 +27,10 @@ FFI_CARGO = REPO_ROOT / "julia/pecos-julia-ffi/Cargo.toml"
 BUILD_TARBALLS = REPO_ROOT / "julia/PECOS.jl/deps/build_tarballs.jl"
 FFI_CRATE_NAME = "pecos-julia-ffi"
 
-BUILD_TARBALLS_VERSION_RE = re.compile(r'^version = v"([^"]+)"', re.MULTILINE)
-BUILD_TARBALLS_COMPAT_RE = re.compile(r'julia_compat = "([^"]+)"')
+# Julia tolerates any whitespace around `=`, and the last assignment is the one that
+# reaches `build_tarballs`, so the patterns have to see every legal spelling to count them.
+BUILD_TARBALLS_VERSION_RE = re.compile(r'^\s*version\s*=\s*v"([^"]+)"', re.MULTILINE)
+BUILD_TARBALLS_COMPAT_RE = re.compile(r'^\s*julia_compat\s*=\s*"([^"]+)"', re.MULTILINE)
 
 
 def load_toml(path: Path) -> dict[str, Any]:

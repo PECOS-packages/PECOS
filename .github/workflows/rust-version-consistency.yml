@@ -7,22 +7,14 @@ on:
   push:
     paths:
       - 'Cargo.toml'
-      - 'crates/**/Cargo.toml'
-      - 'python/**/Cargo.toml'
-      - 'exp/**/Cargo.toml'
-      - 'go/**/Cargo.toml'
-      - 'julia/**/Cargo.toml'
+      - '**/Cargo.toml'
       - 'julia/PECOS.jl/Project.toml'
       - 'scripts/check_rust_workspace.py'
       - '.github/workflows/rust-version-consistency.yml'
   pull_request:
     paths:
       - 'Cargo.toml'
-      - 'crates/**/Cargo.toml'
-      - 'python/**/Cargo.toml'
-      - 'exp/**/Cargo.toml'
-      - 'go/**/Cargo.toml'
-      - 'julia/**/Cargo.toml'
+      - '**/Cargo.toml'
       - 'julia/PECOS.jl/Project.toml'
       - 'scripts/check_rust_workspace.py'
       - '.github/workflows/rust-version-consistency.yml'

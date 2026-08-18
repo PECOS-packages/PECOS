@@ -63,6 +63,15 @@ def main() -> int:
     targets = [ROOT_PYPROJECT]
     targets += [path for path in tracked_pyprojects() if path != ROOT_PYPROJECT and is_distribution(load_toml(path))]
 
+    # Confirm each file's own declaration is the version being moved, before writing
+    # anything: a file can carry `old` in a pin or a comment while its own version is
+    # already something else, and rewriting that would report success without moving it.
+    undeclared = [path for path in targets if load_toml(path).get("project", {}).get("version") != old]
+    if undeclared:
+        for path in undeclared:
+            print(f"error: {rel(path)}: [project].version is not {old}; nothing was changed", file=sys.stderr)
+        return 1
+
     try:
         stale, changes = rewrite_version(targets, old, args.version)
     except OSError as err:

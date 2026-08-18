@@ -166,6 +166,10 @@ def main() -> int:
         f"{SCRIPT_NAME}: STANDALONE_MANIFESTS lists {rel_dir}, which has no tracked Cargo.toml"
         for rel_dir in sorted(STANDALONE_MANIFESTS - tracked_dirs)
     )
+    errors.extend(
+        f"{SCRIPT_NAME}: STANDALONE_MANIFESTS lists {rel_dir}, which is now a workspace member"
+        for rel_dir in sorted(STANDALONE_MANIFESTS & member_dirs)
+    )
 
     if errors:
         for error in errors:

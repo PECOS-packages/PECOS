@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from typing import TYPE_CHECKING
 
 from check_julia_versions import (
     BUILD_TARBALLS,
@@ -23,6 +24,9 @@ from check_julia_versions import (
     rel,
 )
 from version_bump import rewrite_version
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Julia's VersionNumber is SemVer 2.0.0; this is the official recommended regex from
 # https://semver.org, which rejects the leading `v` and the loose two-part forms that a
@@ -36,6 +40,20 @@ SEMVER_RE = re.compile(
     # which would otherwise be written straight into a Julia manifest.
     re.ASCII,
 )
+
+
+def julia_declarations() -> dict[Path, str | None]:
+    """The version each of the three files declares.
+
+    A file with no declaration -- or more than one, which Julia would resolve to the last
+    assignment -- reports None, so neither the pre-check nor the post-check can pass on it.
+    """
+    tarball_versions = BUILD_TARBALLS_VERSION_RE.findall(BUILD_TARBALLS.read_text())
+    return {
+        PROJECT_TOML: load_toml(PROJECT_TOML).get("version"),
+        FFI_CARGO: load_toml(FFI_CARGO).get("package", {}).get("version"),
+        BUILD_TARBALLS: tarball_versions[0] if len(tarball_versions) == 1 else None,
+    }
 
 
 def main() -> int:
@@ -55,6 +73,14 @@ def main() -> int:
         print(f"error: already on version {old}", file=sys.stderr)
         return 1
 
+    # Confirm each declaration is the version being moved before writing anything: a file
+    # can carry `old` somewhere else while its own declaration is already something different.
+    undeclared = [path for path, version in julia_declarations().items() if version != old]
+    if undeclared:
+        for path in undeclared:
+            print(f"error: {rel(path)}: version is not {old}; nothing was changed", file=sys.stderr)
+        return 1
+
     try:
         stale, changes = rewrite_version([PROJECT_TOML, FFI_CARGO, BUILD_TARBALLS], old, args.version)
     except OSError as err:
@@ -65,16 +91,8 @@ def main() -> int:
             print(f"error: {rel(path)} does not carry version {old}; nothing was changed", file=sys.stderr)
         return 1
 
-    # Confirm the three declarations themselves moved, not just some other occurrence.
-    declared = {
-        PROJECT_TOML: load_toml(PROJECT_TOML).get("version"),
-        FFI_CARGO: load_toml(FFI_CARGO).get("package", {}).get("version"),
-        BUILD_TARBALLS: next(
-            iter(BUILD_TARBALLS_VERSION_RE.findall(BUILD_TARBALLS.read_text())),
-            None,
-        ),
-    }
-    undeclared = [path for path, version in declared.items() if version != args.version]
+    # And confirm they moved, rather than some other occurrence of the old version.
+    undeclared = [path for path, version in julia_declarations().items() if version != args.version]
     if undeclared:
         for path in undeclared:
             print(f"error: {rel(path)}: version is still not {args.version}", file=sys.stderr)

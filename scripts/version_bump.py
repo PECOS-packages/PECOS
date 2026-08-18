@@ -11,12 +11,14 @@ rewrite is checked before it starts and unwound if a write fails partway.
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
 # Characters that may not sit against a version literal. `\w`, `.` and `-` keep a longer
 # version from matching through this one; `+`, `!`, `:` and `/` keep local-version
@@ -32,6 +34,24 @@ def version_pattern(version: str) -> re.Pattern[str]:
     match a version or URL that merely contains this one.
     """
     return re.compile(rf"(?<!{BOUNDARY}){re.escape(version)}(?!{BOUNDARY})")
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """Replace `path`'s contents through a same-directory temporary file.
+
+    `Path.write_text` truncates first, so a write that fails partway leaves the file
+    damaged and outside the caller's record of what was written. Renaming a fully written
+    temporary file over the original means a file is either wholly old or wholly new.
+    """
+    handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(handle_fd, "w") as handle:
+            handle.write(text)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def rewrite_version(paths: Sequence[Path], old: str, new: str) -> tuple[list[Path], list[tuple[Path, int]]]:
@@ -52,11 +72,18 @@ def rewrite_version(paths: Sequence[Path], old: str, new: str) -> tuple[list[Pat
     try:
         for path, text in contents.items():
             updated, count = pattern.subn(new, text)
-            path.write_text(updated)
+            write_atomic(path, updated)
             changes.append((path, count))
-    except OSError:
+    except OSError as err:
+        unrestored = []
         for path, _ in changes:
-            path.write_text(contents[path])
+            try:
+                write_atomic(path, contents[path])
+            except OSError:
+                unrestored.append(path)
+        if unrestored:
+            msg = f"{err}; and these files could not be restored: {', '.join(str(p) for p in unrestored)}"
+            raise RuntimeError(msg) from err
         raise
 
     return [], changes

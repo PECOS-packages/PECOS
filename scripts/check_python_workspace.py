@@ -21,11 +21,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from packaging.requirements import InvalidRequirement, Requirement
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
-VERSION_SPECIFIER_RE = re.compile(r"[=<>!~]")
 MINIMUM_PYTHON = "3.12"
 EXPECTED_PYTHON_CLASSIFIERS = {"3", "3.12", "3.13", "3.14"}
 RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/python-release.yml"
@@ -167,11 +167,25 @@ def internal_dependencies(
             if not isinstance(dep, str):
                 fail(errors, f"{rel(package.path)}: {section} contains non-string dependency {dep!r}")
                 continue
-            dep_name = dependency_name(dep)
-            if dep_name is None or dep_name not in workspace_names or dep_name == package.normalized_name:
+            try:
+                requirement = Requirement(dep)
+            except InvalidRequirement as err:
+                fail(errors, f"{rel(package.path)}: {section} dependency {dep!r} is not parsable: {err}")
+                continue
+            dep_name = normalize_name(requirement.name)
+            if dep_name not in workspace_names or dep_name == package.normalized_name:
                 continue
             internal.add(dep_name)
-            if not require_pin and VERSION_SPECIFIER_RE.search(dep) is None:
+            if not require_pin and not requirement.specifier:
+                # A bare internal dependency only resolves to the sibling in this repository
+                # because a [tool.uv.sources] entry points at it. Without one it would resolve
+                # from PyPI, unconstrained, and drift off the train silently.
+                if dep_name not in declared_sources(package):
+                    fail(
+                        errors,
+                        f"{rel(package.path)}: {section} dependency {dep!r} states no version and "
+                        "has no [tool.uv.sources] entry",
+                    )
                 continue
             if not has_exact_version_pin(dep, package.version):
                 fail(
@@ -180,6 +194,16 @@ def internal_dependencies(
                     f"workspace package version =={package.version}",
                 )
     return internal
+
+
+def declared_sources(package: Package) -> set[str]:
+    """Every name with a `[tool.uv.sources]` entry, whatever kind of source it is."""
+    tool = package.data.get("tool", {})
+    uv = tool.get("uv", {}) if isinstance(tool, dict) else {}
+    sources = uv.get("sources", {}) if isinstance(uv, dict) else {}
+    if not isinstance(sources, dict):
+        return set()
+    return {normalize_name(name) for name in sources}
 
 
 def workspace_sources(package: Package, errors: list[str]) -> set[str]:

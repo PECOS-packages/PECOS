@@ -514,16 +514,19 @@ jobs:
         fi
 
     - name: Run Python compatibility smoke test
+      # Each module's __version__ is injected from its own pyproject.toml at build time, so
+      # this is where that wiring is checked against a real installation's metadata.
       run: |
         if [ "${{ matrix.include-pecos }}" = "true" ]; then
-          python -c 'from importlib.metadata import version; import pecos; import pecos_rslib; import pecos_rslib_llvm; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": version("pecos-rslib-llvm")})'
+          python scripts/ci/check_module_versions.py pecos pecos_rslib pecos_rslib_llvm
         else
           # On macOS with include-llvm: true, validate the installed LLVM wheel package
           # via metadata; importing the extension is currently not runtime-stable there.
           if [ "$(uname)" = "Darwin" ] && [ "${{ matrix.include-llvm }}" = "true" ]; then
-            python -c 'from importlib.metadata import version; import pecos_rslib; print({"pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": version("pecos-rslib-llvm")})'
+            python scripts/ci/check_module_versions.py pecos_rslib
+            python -c 'from importlib.metadata import version; print({"pecos_rslib_llvm": version("pecos-rslib-llvm")})'
           else
-            python -c 'import pecos_rslib; print({"pecos_rslib": pecos_rslib.__version__})'
+            python scripts/ci/check_module_versions.py pecos_rslib
           fi
         fi
 

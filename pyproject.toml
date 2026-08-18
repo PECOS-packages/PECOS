@@ -46,6 +46,7 @@ dev = [
   "mkdocstrings[python]",                   # Code documentation extraction
   "markdown-exec[ansi]",                    # Executable markdown blocks
   "pyyaml>=6.0.3",
+  "packaging",           # PEP 440 validation in scripts/bump_python_version.py
 ]
 test = [ # exact pins so workspace tests run against a reproducible environment
   # Note: sub-package test extras (pecos-rslib, selene plugins) intentionally

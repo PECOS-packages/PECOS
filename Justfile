@@ -1182,6 +1182,25 @@ build-release: (build "release")
 [private]
 build-native: (build "native")
 
+# Move every Python distribution onto a new version, then relock and verify
+[group('setup')]
+bump-python-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --frozen python scripts/bump_python_version.py {{version}}
+    just lock
+    just python-workspace-check
+
+# Move the Julia binding onto a new version, then verify
+[group('setup')]
+bump-julia-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --frozen python scripts/bump_julia_version.py {{version}}
+    cargo update --offline --manifest-path Cargo.toml -p pecos-julia-ffi
+    just julia-version-check
+    just rust-workspace-check
+
 # Re-resolve uv lockfiles minimally (no dependency updates), e.g. after a version bump
 [group('setup')]
 lock:

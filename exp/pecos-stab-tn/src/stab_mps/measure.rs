@@ -1333,6 +1333,7 @@ pub(super) fn measure_qubit_stab_mps_lazy_with_update(
 
             tableau.mz_forced(q_idx, outcome);
             modified_sites.extend(flip_conj);
+            modified_sites.push(id);
             modified_sites.sort_unstable();
             modified_sites.dedup();
             LiveMeasurementResult {
@@ -1341,7 +1342,12 @@ pub(super) fn measure_qubit_stab_mps_lazy_with_update(
                     is_deterministic: false,
                 },
                 update: ProjectionUpdate {
-                    collapsed_site: Some(id),
+                    // The queued W⁻¹ makes `id` equal |0> only in the
+                    // effective `V * stored_mps` frame. Disentangling flags
+                    // describe the stored tensors, where the conjugated
+                    // projection modified `id`, so no stored-frame collapse
+                    // proof may be installed here.
+                    collapsed_site: None,
                     modified_sites,
                 },
             }

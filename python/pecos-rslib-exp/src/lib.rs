@@ -86,6 +86,10 @@ pub(crate) fn extract_angle(
 
 #[pymodule]
 fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // The Python distribution version from pyproject.toml, injected by build.rs. The crate
+    // version (CARGO_PKG_VERSION) is a different number -- it rides the Rust workspace train.
+    m.add("__version__", env!("PECOS_PYTHON_VERSION"))?;
+
     m.add_class::<bp_trellis_bindings::PyBpTrellisDecoder>()?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisResult>()?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisObservableFlips>()?;

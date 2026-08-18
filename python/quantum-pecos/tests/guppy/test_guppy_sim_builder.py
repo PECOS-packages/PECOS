@@ -30,14 +30,14 @@ class TestGuppySimBuilder:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     @guppy
     def single_qubit() -> bool:
         """Single qubit in superposition."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     def test_basic_build_and_run(self) -> None:
         """Test basic build() and run() pattern."""
@@ -169,7 +169,7 @@ def test_api_demonstration() -> None:
         """Demo circuit that creates superposition and measures."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Show builder pattern
     sim_obj = sim(demo_circuit).qubits(10).quantum(state_vector()).seed(42).verbose(True).build()
@@ -207,7 +207,7 @@ def test_simulation_reset() -> None:
         """Create superposition and measure."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Build a simulation
     sim_obj = sim(superposition).qubits(10).quantum(state_vector()).seed(42).build()
@@ -247,7 +247,7 @@ def test_reset_returns_to_zero_state() -> None:
     def measure_without_gates() -> bool:
         """Measure a qubit without any gates - should always be 0 in |0⟩ state."""
         q = qubit()
-        return measure(q)
+        return measure(q).read()
 
     # Build a simulation
     sim_obj = sim(measure_without_gates).qubits(10).quantum(state_vector()).seed(42).build()

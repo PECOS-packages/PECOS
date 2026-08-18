@@ -2,11 +2,25 @@
 
 import pecos_rslib_llvm
 from guppylang import guppy
-from guppylang.std.quantum import measure, pi, qubit, rz
+from guppylang.std.quantum import angle, measure, pi, qubit, rz
 
 
 class TestRotationExtension:
     """Test rotation extension operations."""
+
+    def test_global_phase_lowering_loads(self) -> None:
+        """A full-turn RZ lowers to tket.global_phase in Guppy v1."""
+
+        @guppy
+        def test_global_phase() -> bool:
+            q = qubit()
+            rz(q, angle(2.0))
+            return measure(q).read()
+
+        hugr = test_global_phase.compile()
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+
+        assert "qmain" in output
 
     def test_rotation_with_angle_arithmetic(self) -> None:
         """Test rotation gates with angle arithmetic."""
@@ -16,7 +30,7 @@ class TestRotationExtension:
             q = qubit()
             # Use angle arithmetic - this should generate rotation operations
             rz(q, pi / 4 + pi / 8)  # Should involve angle addition
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_angle_ops.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -33,14 +47,14 @@ class TestRotationExtension:
             q = qubit()
             rz(q, pi / 2)  # First rotation
             rz(q, pi / 4)  # Second rotation
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_multi_angles.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
-        # Should have multiple RZ calls
+        # Guppy 1's optimizer may fuse consecutive Z rotations.
         rz_calls = output.count("tail call void @___rz")
-        assert rz_calls >= 2, f"Expected at least 2 RZ calls, got {rz_calls}"
+        assert rz_calls >= 1, f"Expected an RZ call, got {rz_calls}"
 
     def test_rotation_extension_compatibility(self) -> None:
         """Test that rotation extensions are handled correctly."""
@@ -48,8 +62,8 @@ class TestRotationExtension:
         @guppy
         def test_rotation_compat() -> bool:
             q = qubit()
-            rz(q, pi * 2.0)  # Full rotation
-            return measure(q)
+            rz(q, pi / 2)
+            return measure(q).read()
 
         hugr = test_rotation_compat.compile()
         pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -67,7 +81,7 @@ class TestRotationExtension:
             # Complex angle expression
             angle = pi / 3 + pi / 6  # Should be pi/2
             rz(q, angle)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_complex_angles.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -83,7 +97,7 @@ class TestRotationExtension:
         def simple_rotation() -> bool:
             q = qubit()
             rz(q, pi / 8)
-            return measure(q)
+            return measure(q).read()
 
         hugr = simple_rotation.compile()
         try:

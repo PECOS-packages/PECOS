@@ -134,7 +134,7 @@ class TestBasicQuantumOperations:
         def hadamard_test() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         results = pipeline_tester.test_function_on_both_pipelines(
             hadamard_test,
@@ -154,19 +154,19 @@ class TestBasicQuantumOperations:
         def pauli_x_test() -> bool:
             q = qubit()
             x(q)  # Should flip |0⟩ to |1⟩
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def pauli_y_test() -> bool:
             q = qubit()
             y(q)  # Should flip |0⟩ to |1⟩ with phase
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def pauli_z_test() -> bool:
             q = qubit()
             z(q)  # Should leave |0⟩ unchanged
-            return measure(q)
+            return measure(q).read()
 
         # Test X gate - should measure |1⟩ deterministically with fixed seed
         results_x = pipeline_tester.test_function_on_both_pipelines(
@@ -209,7 +209,7 @@ class TestBasicQuantumOperations:
             q0, q1 = qubit(), qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         results = pipeline_tester.test_function_on_both_pipelines(bell_state, shots=50)
 
@@ -256,14 +256,14 @@ class TestClassicalComputation:
         def boolean_and_test() -> bool:
             # Simple boolean logic with quantum measurement
             q = qubit()
-            result = measure(q)  # Will be False (|0⟩)
+            result = measure(q).read()  # Will be False (|0⟩)
             return result and True
 
         @guppy
         def boolean_or_test() -> bool:
             q = qubit()
             x(q)  # Flip to |1⟩
-            result = measure(q)  # Will be True
+            result = measure(q).read()  # Will be True
             return result or False
 
         # AND: measure(|0>) is deterministically 0
@@ -320,13 +320,13 @@ class TestHybridPrograms:
             q2 = qubit()
 
             # Measure first qubit
-            result1 = measure(q1)  # Will be False (|0⟩)
+            result1 = measure(q1).read()  # Will be False (|0⟩)
 
             # Apply gate to second qubit based on first measurement
             if result1:
                 x(q2)  # This won't execute since result1 is False
 
-            return measure(q2)  # Should be False
+            return measure(q2).read()  # Should be False
 
         results = pipeline_tester.test_function_on_both_pipelines(
             conditional_gate,
@@ -350,13 +350,13 @@ class TestHybridPrograms:
 
             # Create superposition on first qubit
             h(q1)
-            result1 = measure(q1)
+            result1 = measure(q1).read()
 
             # Apply correction to second qubit based on measurement
             if result1:
                 x(q2)  # Flip second qubit if first was |1⟩
 
-            return result1, measure(q2)
+            return result1, measure(q2).read()
 
         results = pipeline_tester.test_function_on_both_pipelines(
             feedback_circuit,
@@ -414,7 +414,7 @@ class TestAdvancedAlgorithms:
             cx(q0, q1)
 
             # Measure
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         results = pipeline_tester.test_function_on_both_pipelines(qft_2qubit, shots=100)
 
@@ -457,7 +457,7 @@ class TestAdvancedAlgorithms:
             h(q1)
 
             # Measure input qubits; the ancilla is discarded (linearity)
-            r = measure(q0), measure(q1)
+            r = measure(q0).read(), measure(q1).read()
             discard(anc)
             return r
 
@@ -487,7 +487,7 @@ class TestAdvancedAlgorithms:
             h(q1)
 
             # Measure input qubits; the ancilla is discarded (linearity)
-            r = measure(q0), measure(q1)
+            r = measure(q0).read(), measure(q1).read()
             discard(anc)
             return r
 
@@ -554,7 +554,7 @@ class TestAdvancedAlgorithms:
             h(q1)
 
             # Measure
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         results = pipeline_tester.test_function_on_both_pipelines(
             grover_2qubit,

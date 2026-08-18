@@ -410,7 +410,7 @@ def test_szz_guppy_source_can_disable_trace_metadata_for_execution() -> None:
     assert "def pecos_qis_trace_metadata_qubit_hugr(" not in guppy_source
     assert "pecos_qis_trace_metadata_qubit_hugr(" not in guppy_source
     assert "zz_phase(" in guppy_source
-    assert "result(" in guppy_source
+    assert "output(" in guppy_source
 
 
 def test_szz_runtime_barrier_fences_data_prefix_before_host() -> None:

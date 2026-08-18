@@ -4,7 +4,7 @@
 
 **Full development** (Python + Rust, recommended):
 
-- [Python 3.10+](https://www.python.org/downloads/)
+- [Python 3.12+](https://www.python.org/downloads/)
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) - Python package manager
 - [just](https://github.com/casey/just) - Command runner

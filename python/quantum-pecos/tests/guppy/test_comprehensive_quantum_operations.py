@@ -106,20 +106,20 @@ class TestBasicQuantumGates:
             q1 = qubit()
             h(q1)  # Hadamard
             x(q1)  # Pauli-X
-            result1 = measure(q1)
+            result1 = measure(q1).read()
 
             q2 = qubit()
             y(q2)  # Y gate on |0⟩ gives |1⟩
-            result2 = measure(q2)
+            result2 = measure(q2).read()
 
             q3 = qubit()
             z(q3)  # Z gate on |0⟩
-            result3 = measure(q3)
+            result3 = measure(q3).read()
 
             q4 = qubit()
             x(q4)  # Set to |1⟩
             z(q4)  # Z gate on |1⟩
-            result4 = measure(q4)
+            result4 = measure(q4).read()
 
             return result1, result2, result3, result4
 
@@ -153,21 +153,21 @@ class TestBasicQuantumGates:
             x(q1)
             s(q1)
             sdg(q1)
-            r1 = measure(q1)
+            r1 = measure(q1).read()
 
             # T and T† should cancel
             q2 = qubit()
             x(q2)
             t(q2)
             tdg(q2)
-            r2 = measure(q2)
+            r2 = measure(q2).read()
 
             # S² = Z
             q3 = qubit()
             x(q3)
             s(q3)
             s(q3)
-            r3 = measure(q3)
+            r3 = measure(q3).read()
 
             # T⁴ = Z
             q4 = qubit()
@@ -176,7 +176,7 @@ class TestBasicQuantumGates:
             t(q4)
             t(q4)
             t(q4)
-            r4 = measure(q4)
+            r4 = measure(q4).read()
 
             return r1, r2, r3, r4
 
@@ -195,17 +195,17 @@ class TestBasicQuantumGates:
             # Rx(π) is like X gate
             q1 = qubit()
             rx(q1, pi)
-            r1 = measure(q1)
+            r1 = measure(q1).read()
 
             # Ry(π) is like Y gate (up to phase)
             q2 = qubit()
             ry(q2, pi)
-            r2 = measure(q2)
+            r2 = measure(q2).read()
 
             # Rz doesn't affect |0⟩ measurement
             q3 = qubit()
             rz(q3, pi / 2)
-            r3 = measure(q3)
+            r3 = measure(q3).read()
 
             return r1, r2, r3
 
@@ -228,14 +228,14 @@ class TestBasicQuantumGates:
             q1, q2 = qubit(), qubit()
             x(q1)  # Control = |1⟩
             cx(q1, q2)  # Target flips
-            r1, r2 = measure(q1), measure(q2)
+            r1, r2 = measure(q1).read(), measure(q2).read()
 
             # Test CZ
             q3, q4 = qubit(), qubit()
             x(q3)
             x(q4)
             cz(q3, q4)  # Both |1⟩, get phase
-            r3, r4 = measure(q3), measure(q4)
+            r3, r4 = measure(q3).read(), measure(q4).read()
 
             return r1, r2, r3, r4
 
@@ -254,7 +254,7 @@ class TestBasicQuantumGates:
             # CH with control=0 does nothing
             q1, q2 = qubit(), qubit()
             ch(q1, q2)
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         results = sim(Guppy(ch_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
 
@@ -272,7 +272,7 @@ class TestBasicQuantumGates:
             x(q1)
             x(q2)
             toffoli(q1, q2, q3)
-            return measure(q1), measure(q2), measure(q3)
+            return measure(q1).read(), measure(q2).read(), measure(q3).read()
 
         results = sim(Guppy(toffoli_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
 
@@ -291,7 +291,7 @@ class TestQuantumStateManagement:
         @guppy
         def allocation_test() -> bool:
             q = qubit()
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(allocation_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
 
@@ -313,16 +313,16 @@ class TestQuantumStateManagement:
             # Regular measurement - X gate applied to qubit, should always measure True
             q1 = qubit()
             x(q1)
-            m1 = measure(q1)
+            m1 = measure(q1).read()
 
             # Measurement of superposition - should be probabilistic (50/50)
             q2 = qubit()
             h(q2)
-            m2 = measure(q2)
+            m2 = measure(q2).read()
 
             # Simple measurement of ground state - should always be False
             q3 = qubit()
-            m3 = measure(q3)
+            m3 = measure(q3).read()
 
             return m1, m2, m3
 
@@ -347,7 +347,7 @@ class TestQuantumStateManagement:
             # Can allocate new qubit after discard
             q2 = qubit()
             x(q2)
-            return measure(q2)
+            return measure(q2).read()
 
         results = sim(Guppy(discard_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
 
@@ -362,12 +362,12 @@ class TestQuantumStateManagement:
         def reset_test() -> tuple[bool, bool]:
             q = qubit()
             x(q)
-            before = measure(q)
+            before = measure(q).read()
 
             q2 = qubit()
             x(q2)
             reset(q2)
-            after = measure(q2)
+            after = measure(q2).read()
 
             return before, after
 
@@ -395,7 +395,7 @@ class TestLinearTypeSystem:
         def ownership_test() -> bool:
             q = qubit()
             q = apply_hadamard(q)  # Now we can use function calls with @owned
-            return measure(q)
+            return measure(q).read()
 
         # Use a seed for deterministic testing
         results = sim(Guppy(ownership_test)).qubits(10).quantum(state_vector()).seed(42).run(10)
@@ -418,7 +418,7 @@ class TestLinearTypeSystem:
             discard(q)  # Explicitly discard the first qubit
             q = qubit()  # Create new qubit
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(rebinding_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
 
@@ -442,13 +442,13 @@ class TestLinearTypeSystem:
         def test_with_x() -> bool:
             q = qubit()
             q = apply_gate_conditionally(q, True)  # Apply X gate
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def test_with_h() -> bool:
             q = qubit()
             q = apply_gate_conditionally(q, False)  # Apply H gate
-            return measure(q)
+            return measure(q).read()
 
         # Test X gate - should always return True
         results_x = sim(Guppy(test_with_x)).qubits(10).quantum(state_vector()).run(10).to_dict()
@@ -484,17 +484,17 @@ class TestQuantumClassicalHybrid:
 
             q1 = qubit()
             h(q1)
-            if measure(q1):
+            if measure(q1).read():
                 count += 1
 
             q2 = qubit()
             h(q2)
-            if measure(q2):
+            if measure(q2).read():
                 count += 2
 
             q3 = qubit()
             h(q3)
-            if measure(q3):
+            if measure(q3).read():
                 count += 4
 
             return count
@@ -537,19 +537,19 @@ class TestQuantumClassicalHybrid:
         def test_condition_0() -> bool:
             q = qubit()
             q = apply_conditional_gate(q, 0)
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def test_condition_1() -> bool:
             q = qubit()
             q = apply_conditional_gate(q, 1)
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def test_condition_2() -> bool:
             q = qubit()
             q = apply_conditional_gate(q, 2)
-            return measure(q)
+            return measure(q).read()
 
         # Test each condition
         results0 = sim(Guppy(test_condition_0)).qubits(10).quantum(state_vector()).run(10).to_dict()
@@ -588,7 +588,7 @@ class TestQuantumClassicalHybrid:
             for _i in range(4):
                 q = qubit()
                 h(q)
-                if measure(q):
+                if measure(q).read():
                     parity = not parity
 
             return parity
@@ -620,7 +620,7 @@ class TestQuantumCircuitPatterns:
             h(q)
             t(q)
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(sequential_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
 
@@ -642,7 +642,7 @@ class TestQuantumCircuitPatterns:
             h(q1)
             cx(q1, q2)
 
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         results = sim(Guppy(bell_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
 
@@ -664,7 +664,7 @@ class TestQuantumCircuitPatterns:
             cx(q1, q2)
             cx(q2, q3)
 
-            return measure(q1), measure(q2), measure(q3)
+            return measure(q1).read(), measure(q2).read(), measure(q3).read()
 
         results = sim(Guppy(ghz_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
 
@@ -686,15 +686,15 @@ class TestQuantumCircuitPatterns:
             # Try three times to get |1⟩
             q1 = qubit()
             h(q1)
-            r1 = measure(q1)
+            r1 = measure(q1).read()
 
             q2 = qubit()
             h(q2)
-            r2 = measure(q2)
+            r2 = measure(q2).read()
 
             q3 = qubit()
             h(q3)
-            r3 = measure(q3)
+            r3 = measure(q3).read()
 
             # In a real RUS pattern, we'd stop when we get |1⟩
             # Here we just measure all three
@@ -730,7 +730,7 @@ class TestStructuredQuantumData:
             h(q2)
             cx(q1, q2)
 
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         results = sim(Guppy(tuple_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
 
@@ -759,7 +759,7 @@ class TestStructuredQuantumData:
             q1 = qubit()
             q2 = qubit()
             q1, q2 = prepare_bell_pair(q1, q2)
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         results = sim(Guppy(create_and_measure_bell)).qubits(10).quantum(state_vector()).run(20).to_dict()
         decoded_results = get_decoded_results(results, n_bits=2)

@@ -27,7 +27,7 @@ class TestGuppyCompilation:
         def simple_quantum() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Verify function was created
         assert simple_quantum is not None, "Function should be created"
@@ -43,7 +43,7 @@ class TestGuppyCompilation:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         assert bell_state is not None, "Bell state function should be created"
         assert callable(bell_state), "Bell state should be callable"
@@ -57,7 +57,7 @@ class TestGuppyCompilation:
             for _i in range(n):
                 q = qubit()
                 h(q)
-                if measure(q):
+                if measure(q).read():
                     count += 1
             return count
 
@@ -75,7 +75,7 @@ class TestHUGRToLLVMCompilation:
         def simple_circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Compile to HUGR - the compile() method returns the Package directly
         package = simple_circuit.compile()
@@ -109,7 +109,7 @@ class TestHUGRToLLVMCompilation:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         # Compile to HUGR - the compile() method returns the Package directly
         package = bell_state.compile()
@@ -147,7 +147,7 @@ class TestSimAPI:
         def simple_circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         try:
             results = sim(Guppy(simple_circuit)).qubits(1).quantum(state_vector()).seed(42).run(10)
@@ -184,7 +184,7 @@ class TestSimAPI:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         try:
             results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(100)
@@ -217,7 +217,7 @@ class TestSimAPI:
         def noisy_circuit() -> bool:
             q = qubit()
             x(q)  # Put in |1⟩ state
-            return measure(q)
+            return measure(q).read()
 
         try:
             from pecos_rslib import depolarizing_noise
@@ -279,7 +279,7 @@ class TestCompletePipeline:
             cx(q1, q2)
 
             # Measure
-            return measure(q0), measure(q1), measure(q2)
+            return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         # Test compilation
         compiled = quantum_algorithm.compile()
@@ -318,7 +318,7 @@ class TestCompletePipeline:
             # This might cause issues in some backends
             q = qubit()
             # Missing any gates
-            return measure(q)
+            return measure(q).read()
 
         # Should still compile
         compiled = invalid_circuit.compile()

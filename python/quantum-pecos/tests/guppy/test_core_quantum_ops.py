@@ -79,7 +79,7 @@ class TestSingleQubitGates:
         def x_test() -> bool:
             q = qubit()
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(x_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         measurements = get_single_measurements(results)
@@ -92,7 +92,7 @@ class TestSingleQubitGates:
         def y_test() -> bool:
             q = qubit()
             y(q)
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(y_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         measurements = get_single_measurements(results)
@@ -105,7 +105,7 @@ class TestSingleQubitGates:
         def z_test() -> bool:
             q = qubit()
             z(q)
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(z_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         measurements = get_single_measurements(results)
@@ -118,7 +118,7 @@ class TestSingleQubitGates:
         def h_test() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Use more shots and fixed seed for stability
         results = sim(Guppy(h_test)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
@@ -137,7 +137,7 @@ class TestSingleQubitGates:
             q = qubit()
             x(q)  # |1⟩
             s(q)  # Phase gate
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(s_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         # S gate doesn't change computational basis
@@ -152,7 +152,7 @@ class TestSingleQubitGates:
             q = qubit()
             x(q)  # |1⟩
             t(q)  # π/8 gate
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(t_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         # T gate doesn't change computational basis
@@ -172,7 +172,7 @@ class TestTwoQubitGates:
             q2 = qubit()
             x(q1)  # Control = |1⟩
             cx(q1, q2)  # Target flips
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         results = sim(Guppy(cx_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         # Should get (True, True) for both qubits
@@ -189,7 +189,7 @@ class TestTwoQubitGates:
             x(q1)
             x(q2)
             cz(q1, q2)  # Phase when both |1⟩
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         results = sim(Guppy(cz_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         # CZ doesn't change computational basis, both qubits remain |1⟩
@@ -205,7 +205,7 @@ class TestTwoQubitGates:
             q2 = qubit()
             x(q1)  # Control = |1⟩
             cy(q1, q2)  # Apply Y to target
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         results = sim(Guppy(cy_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         # CY with control=1 applies Y to target, Y|0⟩ = i|1⟩, so both measure as |1⟩
@@ -224,7 +224,7 @@ class TestQuantumStateManagement:
             q = qubit()
             x(q)
             reset(q)
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(reset_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         # Reset should give |0⟩
@@ -242,7 +242,7 @@ class TestQuantumStateManagement:
             # Allocate new qubit
             q2 = qubit()
             x(q2)
-            return measure(q2)
+            return measure(q2).read()
 
         results = sim(Guppy(discard_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         measurements = get_single_measurements(results)
@@ -261,7 +261,7 @@ class TestQuantumCircuits:
             q2 = qubit()
             h(q1)
             cx(q1, q2)
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         results = sim(Guppy(bell_test)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
         # Bell state should be correlated
@@ -280,7 +280,7 @@ class TestQuantumCircuits:
             h(q1)
             cx(q1, q2)
             cx(q2, q3)
-            return measure(q1), measure(q2), measure(q3)
+            return measure(q1).read(), measure(q2).read(), measure(q3).read()
 
         results = sim(Guppy(ghz_test)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
         # GHZ state should be all-correlated
@@ -299,7 +299,7 @@ class TestRotationGates:
         def rx_test() -> bool:
             q = qubit()
             rx(q, pi)  # Rx(π) = X up to phase
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(rx_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         measurements = get_single_measurements(results)
@@ -312,7 +312,7 @@ class TestRotationGates:
         def ry_test() -> bool:
             q = qubit()
             ry(q, pi)  # Ry(π) flips qubit
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(ry_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         measurements = get_single_measurements(results)
@@ -325,7 +325,7 @@ class TestRotationGates:
         def rz_test() -> bool:
             q = qubit()
             rz(q, pi)  # Rz on |0⟩
-            return measure(q)
+            return measure(q).read()
 
         results = sim(Guppy(rz_test)).qubits(10).quantum(state_vector()).run(10).to_dict()
         # Rz doesn't change |0⟩ measurement
@@ -353,14 +353,14 @@ class TestControlFlow:
             """Test with condition=True."""
             q = qubit()
             q = apply_conditional_gate(q, True)
-            return measure(q)
+            return measure(q).read()
 
         @guppy
         def test_false_condition() -> bool:
             """Test with condition=False."""
             q = qubit()
             q = apply_conditional_gate(q, False)
-            return measure(q)
+            return measure(q).read()
 
         # Test with True condition - should apply X gate
         results_true = sim(Guppy(test_true_condition)).qubits(10).quantum(state_vector()).run(10).to_dict()
@@ -384,7 +384,7 @@ class TestControlFlow:
             for _i in range(3):
                 q = qubit()
                 h(q)
-                if measure(q):
+                if measure(q).read():
                     count += 1
             return count
 

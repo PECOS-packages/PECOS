@@ -122,8 +122,8 @@ from pecos.qec import (
 def program() -> None:
     q0 = qubit()
     q1 = qubit()
-    m0 = measure(q0)
-    m1 = measure(q1)
+    m0 = measure(q0).read()
+    m1 = measure(q1).read()
     result("m0", m0)
     result("m1", m1)
 
@@ -225,7 +225,7 @@ surface_build = build_dem_from_guppy(
 - DEM construction supports straight-line static schedules and trusted built-in
   generator certificates. Generic branching and looping Guppy programs are
   rejected because one trace cannot certify all quantum-operation paths.
-- Scalar `result(tag, measure(q))` provenance is the certified generic tag
+- Scalar `result(tag, measure(q).read())` provenance is the certified generic tag
   path. Repeated tags use `occurrence=...`.
 - Generic scalar binding currently relies on the committed-test invariant that
   Guppy HUGR measurement traversal and source QIS measurement emission use the
@@ -362,7 +362,7 @@ You can write QEC circuits directly in Guppy without using the factory functions
 ```python
 from guppylang import guppy
 from guppylang.std.builtins import array
-from guppylang.std.quantum import qubit, cx, measure, measure_array
+from guppylang.std.quantum import qubit, cx, collect_measurements, measure, measure_array
 
 
 @guppy.struct
@@ -386,8 +386,8 @@ def extract_rep_syndrome(data: array[qubit, 3]) -> RepSyndrome:
     cx(data[1], a1)
     cx(data[2], a1)
 
-    s0 = measure(a0)
-    s1 = measure(a1)
+    s0 = measure(a0).read()
+    s1 = measure(a1).read()
 
     return RepSyndrome(array(s0, s1))
 
@@ -397,7 +397,7 @@ def rep_code_experiment() -> tuple[array[bool, 3], RepSyndrome]:
     """Run one round of the 3-qubit repetition code."""
     data = array(qubit(), qubit(), qubit())
     syndrome = extract_rep_syndrome(data)
-    results = measure_array(data)
+    results = collect_measurements(measure_array(data))
     return results, syndrome
 
 
@@ -449,7 +449,7 @@ def measure_x_stab_0(ax: qubit, data: array[qubit, 9]) -> bool:
     cx(ax, data[0])
     cx(ax, data[1])
     h(ax)
-    return measure(ax)
+    return measure(ax).read()
 
 
 @guppy
@@ -457,7 +457,7 @@ def measure_z_stab_0(az: qubit, data: array[qubit, 9]) -> bool:
     """Measure Z stabilizer 0 (boundary): [0, 3]."""
     cx(data[0], az)
     cx(data[3], az)
-    return measure(az)
+    return measure(az).read()
 ```
 
 ### Syndrome Extraction

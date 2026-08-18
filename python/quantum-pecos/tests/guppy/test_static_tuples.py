@@ -11,7 +11,7 @@ def circuit_1_tuple() -> bool:
     """Test circuit returning a single boolean."""
     q = qubit()
     x(q)
-    return measure(q)
+    return measure(q).read()
 
 
 @guppy
@@ -19,10 +19,10 @@ def circuit_2_tuple() -> tuple[bool, bool]:
     """Test circuit returning a 2-tuple."""
     q1 = qubit()
     x(q1)
-    r1 = measure(q1)
+    r1 = measure(q1).read()
 
     q2 = qubit()
-    r2 = measure(q2)
+    r2 = measure(q2).read()
 
     return r1, r2
 
@@ -32,14 +32,14 @@ def circuit_3_tuple() -> tuple[bool, bool, bool]:
     """Test circuit returning a 3-tuple."""
     q1 = qubit()
     x(q1)
-    r1 = measure(q1)
+    r1 = measure(q1).read()
 
     q2 = qubit()
-    r2 = measure(q2)
+    r2 = measure(q2).read()
 
     q3 = qubit()
     x(q3)
-    r3 = measure(q3)
+    r3 = measure(q3).read()
 
     return r1, r2, r3
 
@@ -49,17 +49,17 @@ def circuit_4_tuple() -> tuple[bool, bool, bool, bool]:
     """Test circuit returning a 4-tuple."""
     q1 = qubit()
     x(q1)
-    r1 = measure(q1)
+    r1 = measure(q1).read()
 
     q2 = qubit()
-    r2 = measure(q2)
+    r2 = measure(q2).read()
 
     q3 = qubit()
     x(q3)
-    r3 = measure(q3)
+    r3 = measure(q3).read()
 
     q4 = qubit()
-    r4 = measure(q4)
+    r4 = measure(q4).read()
 
     return r1, r2, r3, r4
 
@@ -69,21 +69,21 @@ def circuit_5_tuple() -> tuple[bool, bool, bool, bool, bool]:
     """Test circuit returning a 5-tuple."""
     q1 = qubit()
     x(q1)
-    r1 = measure(q1)
+    r1 = measure(q1).read()
 
     q2 = qubit()
-    r2 = measure(q2)
+    r2 = measure(q2).read()
 
     q3 = qubit()
     x(q3)
-    r3 = measure(q3)
+    r3 = measure(q3).read()
 
     q4 = qubit()
-    r4 = measure(q4)
+    r4 = measure(q4).read()
 
     q5 = qubit()
     x(q5)
-    r5 = measure(q5)
+    r5 = measure(q5).read()
 
     return r1, r2, r3, r4, r5
 

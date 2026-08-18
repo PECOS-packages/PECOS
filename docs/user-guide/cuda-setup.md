@@ -65,7 +65,7 @@ CUDA or cuQuantum layer. When a marked parent forks, PECOS also emits a one-time
 
 - **Operating System**: Linux (Ubuntu 20.04+, Pop!_OS, or other distributions)
   - Windows users: Use WSL2 (Windows Subsystem for Linux)
-- **Python**: 3.10, 3.11, or 3.12
+- **Python**: 3.12, 3.13, or 3.14
 - **CUDA Toolkit**: Version 13.x (recommended) or 12.x
 
 ### Supported CUDA Versions
@@ -328,7 +328,7 @@ If you prefer using Conda instead of uv/pip, NVIDIA officially recommends it:
 
 ```bash
 # Create conda environment
-conda create -n pecos-cuda python=3.11
+conda create -n pecos-cuda python=3.12
 conda activate pecos-cuda
 
 # Install cuQuantum via conda-forge

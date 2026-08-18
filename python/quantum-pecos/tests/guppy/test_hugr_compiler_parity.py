@@ -60,6 +60,11 @@ def extract_qis_calls(llvm_ir: str) -> list[str]:
             or "___reset" in line
             or "___lazy_measure" in line
         ):
+            # Guppy 1 materializes bool reads as future-management calls in
+            # PECOS's compiler. They are runtime ownership plumbing, not QIS
+            # operations, and Selene is free to lower them differently.
+            if "___read_future_bool" in line or "___dec_future_refcount" in line:
+                continue
             # Normalize variable names to allow comparison
             # Replace all %variable.names with %VAR
             normalized = re.sub(r"%[a-zA-Z0-9._-]+", "%VAR", line)
@@ -133,8 +138,8 @@ def test_bell_state_compilation_parity() -> None:
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        m0 = measure(q0)
-        m1 = measure(q1)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
         return m0, m1
 
     # Compile to HUGR
@@ -156,7 +161,7 @@ def test_single_hadamard_compilation_parity() -> None:
         """Apply Hadamard and measure."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR
     hugr = hadamard_test.compile()
@@ -181,9 +186,9 @@ def test_ghz_state_compilation_parity() -> None:
         h(q0)
         cx(q0, q1)
         cx(q1, q2)
-        m0 = measure(q0)
-        m1 = measure(q1)
-        m2 = measure(q2)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
+        m2 = measure(q2).read()
         return m0, m1, m2
 
     # Compile to HUGR
@@ -223,11 +228,9 @@ def test_existing_hugr_files_parity() -> None:
             try:
                 hugr_bytes.decode("utf-8")
                 # For text format, skip since we need binary for Selene
-                pytest.skip(
-                    f"Skipping {hugr_file.name} - text format, need binary for Selene",
-                )
+                continue
             except UnicodeDecodeError:
-                pytest.skip(f"Skipping {hugr_file.name} - unknown binary format")
+                continue
 
 
 if __name__ == "__main__":
@@ -237,7 +240,7 @@ if __name__ == "__main__":
         """Simple test circuit with H gate and measurement."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     hugr = test_circuit.compile()
 

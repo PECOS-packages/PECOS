@@ -44,6 +44,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Harden apt against mirror flakiness
+        run: ./scripts/ci/harden-apt.sh
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc

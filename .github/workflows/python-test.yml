@@ -96,6 +96,9 @@ jobs:
     - name: Install just
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
+    - name: Harden apt against mirror flakiness
+      run: ./scripts/ci/harden-apt.sh
+
     - name: Ensure ripgrep is available
       run: |
         if ! command -v rg >/dev/null 2>&1; then

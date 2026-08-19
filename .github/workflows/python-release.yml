@@ -362,6 +362,10 @@ jobs:
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
         uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
+        # Bounded like the other CUDA installs so a stalled download fails instead of
+        # hanging the job. More generous than those: `method: local` pulls the full
+        # installer rather than network sub-packages.
+        timeout-minutes: 30
         with:
           cuda: '12.5.1'
           method: 'local'

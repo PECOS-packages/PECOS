@@ -66,6 +66,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Harden apt against mirror flakiness
+        run: ./scripts/ci/harden-apt.sh
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
@@ -91,6 +94,10 @@ jobs:
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         id: cuda-toolkit
+        # This step downloads from an external host and normally finishes in a couple of
+        # minutes. Without a bound, a stalled download hangs the job indefinitely -- one did
+        # so for four hours on 2026-08-18, and every dependent job waits behind it.
+        timeout-minutes: 15
         with:
           cuda: '12.6.3'
           method: 'network'
@@ -177,6 +184,9 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version-file: ".github/uv.toml"
+      - name: Harden apt against mirror flakiness
+        run: ./scripts/ci/harden-apt.sh
+
       - name: Install integrity check tools
         run: |
           sudo apt-get update
@@ -204,6 +214,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+
+      - name: Harden apt against mirror flakiness
+        if: matrix.os == 'ubuntu-latest'
+        run: ./scripts/ci/harden-apt.sh
 
       - name: Free disk space (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -272,6 +286,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         id: cuda-toolkit-test
+        # This step downloads from an external host and normally finishes in a couple of
+        # minutes. Without a bound, a stalled download hangs the job indefinitely -- one did
+        # so for four hours on 2026-08-18, and every dependent job waits behind it.
+        timeout-minutes: 15
         with:
           cuda: '12.6.3'
           method: 'network'

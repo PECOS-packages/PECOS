@@ -91,7 +91,12 @@ preflight -- complete set, consistent version, only expected files -- is the
 only thing standing between that and a stray upload.
 
 The dry run must show a real `twine check ... PASSED` per file (twine must be
-installed, e.g. `uv tool install twine`). The script prints only a
+installed, e.g. `uv tool install twine`). Keep it current: build tools raise the
+core-metadata version they emit over time, and a checker older than the metadata
+rejects the artifacts even though PyPI accepts them -- `uv tool upgrade twine` if a
+check fails naming a metadata version. The script prints which twine it is using, and
+validates every package before uploading any of them, so a stale checker stops the run
+rather than surfacing after the first packages are already public. It prints only a
 `Distribution checks passed` summary and swallows `twine check` output unless it
 fails, so confirm the per-file result directly:
 `uvx twine check pecos-distribution-<version>/*/*.whl pecos-distribution-<version>/*/*.tar.gz`

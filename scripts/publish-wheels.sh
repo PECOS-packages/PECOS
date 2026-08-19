@@ -159,7 +159,7 @@ preflight_package() {
 
 # Run twine's own validation for one package.
 #
-# Deliberately separate from publish_package: every package must be validated before
+# Deliberately separate from the upload step: every package must be validated before
 # ANY package uploads. Validating inside the upload loop means a checker that rejects
 # the last package only speaks up once the earlier ones are public, and a PyPI upload
 # cannot be taken back. A twine too old for the metadata the build tools now emit is
@@ -184,9 +184,38 @@ check_package_distributions() {
     fi
 }
 
-# Publish a package (assumed preflighted and checked). Fails the script on any error or
-# on a declined prompt -- callers rely on this to abort dependent uploads.
-publish_package() {
+# Ask the operator to approve one package's upload, showing what they are approving.
+#
+# Every confirmation is collected before the first upload runs. Prompting inside the
+# upload loop means approving package 1 and then declining package 2 leaves package 1
+# public and unrecallable -- the same partial release this script's up-front validation
+# exists to prevent, reached by a different route.
+confirm_package() {
+    local package_name=$1
+    local package_dir
+    package_dir=$(package_dir_for "$package_name")
+
+    if [ "$DRY_RUN" = true ] || [ "$ASSUME_YES" = true ]; then
+        return 0
+    fi
+
+    echo -e "\n${GREEN}=== $package_name ===${NC}"
+    ls -la "$package_dir"
+
+    # Full-line read: single-character reads mis-consume piped input. A
+    # read failure (EOF) aborts loudly rather than guessing.
+    if ! read -p "Upload $package_name to PyPI? (y/N) " -r; then
+        echo -e "${RED}Error: could not read confirmation (EOF); aborting.${NC}"
+        return 1
+    fi
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${RED}Declined $package_name; aborting before anything is uploaded.${NC}"
+        return 1
+    fi
+}
+
+# Upload a package (assumed preflighted, checked, and confirmed).
+upload_package() {
     local package_name=$1
     local package_dir
     package_dir=$(package_dir_for "$package_name")
@@ -201,23 +230,8 @@ publish_package() {
     fi
 
     echo -e "\n${GREEN}Uploading to PyPI...${NC}"
-    if [ "$ASSUME_YES" = true ]; then
-        REPLY="y"
-    else
-        # Full-line read: single-character reads mis-consume piped input. A
-        # read failure (EOF) aborts loudly rather than guessing.
-        if ! read -p "Are you sure you want to upload $package_name to PyPI? (y/N) " -r; then
-            echo -e "${RED}Error: could not read confirmation (EOF); aborting.${NC}"
-            return 1
-        fi
-    fi
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        $TWINE_CMD upload "$package_dir"/*
-        echo -e "${GREEN}Successfully uploaded $package_name!${NC}"
-    else
-        echo -e "${RED}Declined uploading $package_name; aborting (later packages depend on it).${NC}"
-        return 1
-    fi
+    $TWINE_CMD upload "$package_dir"/*
+    echo -e "${GREEN}Successfully uploaded $package_name!${NC}"
 }
 
 # Verify an exact pin exists on PyPI (used to guard publishing quantum-pecos
@@ -246,7 +260,8 @@ if [ -n "$PACKAGE" ]; then
             fi
         done
     fi
-    publish_package "$PACKAGE"
+    confirm_package "$PACKAGE"
+    upload_package "$PACKAGE"
 else
     # All-packages mode: preflight EVERYTHING before uploading anything, and
     # require one consistent version across the set.
@@ -264,10 +279,15 @@ else
         exit 1
     fi
     echo -e "${GREEN}Publishing all PECOS packages at version $unique${NC}"
-    # Dependencies first; publish_package aborts the script on failure or
-    # decline, so quantum-pecos cannot publish without its pinned deps.
+    # Confirm everything first: a decline part-way through the upload loop would leave
+    # the already-approved packages public.
     for pkg in "${ALL_PACKAGES[@]}"; do
-        publish_package "$pkg"
+        confirm_package "$pkg"
+    done
+    # Dependencies first; upload_package aborts the script on failure, so quantum-pecos
+    # cannot publish without its pinned deps.
+    for pkg in "${ALL_PACKAGES[@]}"; do
+        upload_package "$pkg"
     done
 fi
 

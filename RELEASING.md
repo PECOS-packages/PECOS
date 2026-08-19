@@ -108,9 +108,11 @@ and check the `PASSED` count equals the file count.
 ./scripts/publish-wheels.sh -f pecos-distribution
 ```
 
-Confirm each package at its prompt. Upload order matters and the script
-enforces it: all packages are preflighted (complete set, consistent version,
-only expected files) before anything uploads, dependencies go first
+Confirm each package at its prompt. Every confirmation is collected before the
+first upload, so declining part-way through leaves nothing published. Upload order
+matters and the script enforces it: all packages are preflighted (complete set,
+consistent version, only expected files) and `twine check`ed before anything
+uploads, dependencies go first
 (`pecos-rslib` -> `pecos-rslib-llvm` -> `quantum-pecos`, which pins both at
 exact versions), and any failure or declined prompt aborts the remaining
 uploads rather than continuing. Publishing `quantum-pecos` alone (`-p`) is

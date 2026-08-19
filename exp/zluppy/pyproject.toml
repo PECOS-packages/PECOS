@@ -1,6 +1,6 @@
 [project]
 name = "zluppy"
-version = "0.1.0"
+version = "0.11.0.dev0"
 description = "Python bindings for Zluppy quantum programming language"
 authors = [
     {name = "The PECOS Developers"},

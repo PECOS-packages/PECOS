@@ -11,6 +11,8 @@
 
 fn main() {
     env_logger::init();
+    pecos_build::python::emit_python_version();
+
     // RPATH configuration is Linux-only (ELF). macOS uses different mechanisms
     // (@rpath / install_name_tool) and doesn't support --disable-new-dtags.
     if cfg!(target_os = "linux") {

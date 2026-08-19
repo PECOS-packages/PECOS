@@ -174,17 +174,6 @@ pub fn z_expectation_value(tableau: &SparseStabY, mps: &Mps, q: usize) -> Comple
 }
 
 fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
-    // Pauli expectations are bounded by one. Contractions of an exact
-    // eigenstate can land a few ulps inside that endpoint; treating the
-    // resulting cancellation residue as a real outcome and normalizing it
-    // amplifies roundoff into a spurious state. This guard only snaps values
-    // already indistinguishable from +/-1 at contraction accuracy.
-    const EXPECTATION_ENDPOINT_TOLERANCE: f64 = 1e-14;
-    let expectation = if 1.0 - expectation.abs() <= EXPECTATION_ENDPOINT_TOLERANCE {
-        expectation.signum()
-    } else {
-        expectation
-    };
     let probability_zero = f64::midpoint(1.0, expectation).clamp(0.0, 1.0);
     if outcome {
         1.0 - probability_zero
@@ -257,9 +246,8 @@ pub fn pre_reduce_for_measurement_pub(tableau: &mut SparseStabY, mps: &mut Mps, 
 ///     `C'·MPS_new = C·MPS_old`. Non-adjacent CNOTs use
 ///     `apply_long_range_two_site_gate`.
 ///
-/// `apply_mps_compensation` is `true` for exact-state callers
-/// (`project_forced_z`, `project_forced_z_unnormalized`) used by
-/// `prob_bitstring` / `amplitude_iterative`. It is `false` for random
+/// `apply_mps_compensation` is `true` for the exact-state caller
+/// `project_forced_z`, used by `prob_bitstring` / `amplitude_iterative`. It is `false` for random
 /// measurement (`measure_qubit_stab_mps`): the state representation becomes
 /// inconsistent with the tableau after row ops, but measurement
 /// statistics stay correct and subsequent measurements remain
@@ -650,37 +638,6 @@ fn mps_site_block_is_structurally_zero(mps: &Mps, site: usize, block: usize) -> 
             }
         }
     }
-    true
-}
-
-/// Project qubit `q_idx` onto `outcome` without renormalizing. Returns
-/// `false` if the projection is to a zero-probability outcome.
-///
-/// Unlike `project_forced_z`, the MPS is left UNNORMALIZED: its norm drops
-/// by `sqrt(conditional_prob)` after this call. This is what lets the caller
-/// recover the complex amplitude from the selected virtual-basis coefficient.
-///
-/// # Panics
-///
-/// Panics if any MPS gate application fails on a valid site.
-pub fn project_forced_z_unnormalized(
-    tableau: &mut SparseStabY,
-    mps: &mut Mps,
-    q_idx: usize,
-    outcome: bool,
-) -> bool {
-    let carried_norm = mps.norm_squared().sqrt();
-    if carried_norm < 1e-30 {
-        return false;
-    }
-    // Keep the projector's absolute SVD cutoff independent of the accumulated
-    // prefix amplitude. The norm is restored after the normalized projection.
-    mps.scale(Complex64::new(carried_norm.recip(), 0.0));
-    let probability = project_forced_z(tableau, mps, q_idx, outcome);
-    if probability < 1e-20 {
-        return false;
-    }
-    mps.scale(Complex64::new(carried_norm * probability.sqrt(), 0.0));
     true
 }
 
@@ -1476,7 +1433,7 @@ pub(super) fn measure_qubit_stab_mps_with_update(
     // comparisons). Compensation would trigger O(N) long-range CNOTs per
     // measurement (SWAP chain -> exponential bond growth in MAST's
     // measurement-heavy workload). Exact-state paths
-    // (`project_forced_z`, `project_forced_z_unnormalized`) pass `true`.
+    // `project_forced_z` passes `true`.
     let _ = pre_reduce_for_measurement(tableau, mps, q_idx, false);
 
     // Compute the expectation value <Z_q>

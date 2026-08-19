@@ -153,8 +153,11 @@ fn cheap_product_zero_site_test(mps: &Mps, site: usize) -> Option<bool> {
     None
 }
 
-// Ten times the observed ~1e-16 contraction roundoff, with worst-case state
-// error 2*sqrt(epsilon) <= 6.33e-8 when the rejected component is dropped.
+// This threshold is based on the contraction error scale and the worst-case
+// state error 2*sqrt(epsilon) <= 6.33e-8, not on a measured firing-rate gain.
+// The exact workload census was unchanged at 2815 flags for 1e-12 and 1e-15;
+// its 2793-flag truncating configuration was newly added and has no before
+// value. Thus that workload contains no observed marginal in (1e-15, 1e-12].
 const PRODUCT_ZERO_PROBABILITY_TOLERANCE: f64 = 1e-15;
 
 #[cfg(test)]
@@ -382,7 +385,9 @@ impl StabMpsBuilder {
         self
     }
 
-    /// Minimum singular value to keep (absolute cutoff).
+    /// Minimum singular value to keep, relative to the norm of each MPS
+    /// matrix being split. In a canonical compression sweep this is relative
+    /// to the global state norm, so global rescaling does not change ranks.
     ///
     /// - Default: 1e-12
     /// - Lower values keep more precision
@@ -1141,7 +1146,15 @@ impl StabMps {
         let mps_index = measure::projected_mps_basis_index(&tab, bitstring);
         let coefficient = mps.amplitude(&mps_index);
         let coefficient_norm = coefficient.norm();
-        if coefficient_norm < 1e-30 {
+        assert!(
+            coefficient_norm.is_finite() && projected_norm.is_finite(),
+            "forced projection produced a non-finite amplitude component"
+        );
+        if coefficient_norm == 0.0 {
+            assert!(
+                projected_norm == 0.0,
+                "forced projection retained probability but selected a zero phase coefficient"
+            );
             return Complex64::new(0.0, 0.0);
         }
         self.global_phase * coefficient / coefficient_norm * projected_norm
@@ -3240,7 +3253,7 @@ mod tests {
     }
 
     #[test]
-    fn test_forced_projection_seed_33404_regression() {
+    fn test_forced_projection_seed_33404_phase_regression() {
         let t = Angle64::QUARTER_TURN / 2u64;
         let mut stn = StabMps::builder(4)
             .seed(33_404)
@@ -3264,17 +3277,18 @@ mod tests {
         stn.rz(t, &[QubitId(0)]);
         stn.flush();
 
-        let expected = stn.state_vector()[0].norm_sqr();
+        let expected_amplitude = stn.state_vector()[0];
+        let expected_probability = expected_amplitude.norm_sqr();
         let bitstring = [false; 4];
         let probability = stn.prob_bitstring(&bitstring);
-        let iterative_probability = stn.amplitude_iterative(&bitstring).norm_sqr();
+        let iterative_amplitude = stn.amplitude_iterative(&bitstring);
         assert!(
-            (probability - expected).abs() <= 1e-12,
-            "probability={probability:.16e}, expected={expected:.16e}"
+            (probability - expected_probability).abs() <= 1e-12,
+            "probability={probability:.16e}, expected={expected_probability:.16e}"
         );
         assert!(
-            (iterative_probability - expected).abs() <= 1e-12,
-            "iterative={iterative_probability:.16e}, expected={expected:.16e}"
+            (iterative_amplitude - expected_amplitude).norm() <= 1e-12,
+            "iterative amplitude={iterative_amplitude}, dense={expected_amplitude}"
         );
     }
 

@@ -40,7 +40,12 @@ use tensor::{
 pub struct MpsConfig {
     /// Maximum bond dimension (hard cap). Singular values beyond this are discarded.
     pub max_bond_dim: usize,
-    /// Minimum singular value to keep (absolute cutoff).
+    /// Minimum normalized singular value to keep.
+    ///
+    /// Each MPS split multiplies this dimensionless threshold by the
+    /// Frobenius norm of the matrix being decomposed. During canonical
+    /// compression that norm is the state norm, so truncation is invariant
+    /// under global rescaling of the state.
     pub svd_cutoff: f64,
     /// Maximum relative truncation error per SVD.
     /// When set, singular values are kept until the discarded weight
@@ -115,13 +120,11 @@ impl MpsEnvironmentCache<'_> {
     /// identity environments. No canonical form is required: both
     /// environments retain the complete gauge-independent contraction.
     ///
-    /// Returns `NaN` when the cached MPS has numerically zero norm, allowing
-    /// proof callers to conservatively reject the candidate without panicking.
-    ///
     /// # Panics
     ///
     /// Panics if the site was not included when the cache was built or if the
-    /// physical index is out of range.
+    /// physical index is out of range, or if the cached MPS has numerically
+    /// zero norm (for which a normalized marginal is undefined).
     #[must_use]
     pub fn one_site_basis_marginal(&self, site: usize, physical_index: usize) -> f64 {
         let candidate = self
@@ -132,9 +135,10 @@ impl MpsEnvironmentCache<'_> {
             physical_index < self.mps.phys_dim,
             "MPS physical index out of range"
         );
-        if self.norm_squared <= 1e-20 {
-            return f64::NAN;
-        }
+        assert!(
+            self.norm_squared > 1e-20,
+            "cannot evaluate a normalized marginal of a zero-norm MPS"
+        );
 
         let chi_r = self.mps.bond_dims[site + 1];
         let block = phys_block(&self.mps.tensors[site], physical_index, chi_r);
@@ -458,20 +462,21 @@ impl Mps {
 
         // Reshape for SVD: (chi_l * d, d * chi_r)
         let svd_matrix = reshape_two_site_for_svd(&gated, chi_l, chi_r, d);
+        let scaled_cutoff = self.config.svd_cutoff * svd_matrix.norm();
 
         // SVD split with truncation
         let (left, right, disc, hit) = if absorb_right {
             svd::truncated_svd_right_absorb_with_error(
                 &svd_matrix,
                 self.config.max_bond_dim,
-                self.config.svd_cutoff,
+                scaled_cutoff,
                 self.config.max_truncation_error,
             )?
         } else {
             svd::truncated_svd_left_absorb_with_error(
                 &svd_matrix,
                 self.config.max_bond_dim,
-                self.config.svd_cutoff,
+                scaled_cutoff,
                 self.config.max_truncation_error,
             )?
         };
@@ -501,6 +506,9 @@ impl Mps {
     /// inward with the transported site; right absorption moves it outward on
     /// the return path. Every truncating SVD therefore sees physical Schmidt
     /// weights rather than gauge-dependent local singular values.
+    ///
+    /// On success, an adjacent gate leaves the orthogonality center at `q0`;
+    /// a non-adjacent gate leaves it at `q1` after the returning SWAP chain.
     ///
     /// # Errors
     ///
@@ -932,6 +940,9 @@ impl Mps {
     ///
     /// Left-canonicalizes first, then sweeps right-to-left performing SVD
     /// truncation at each bond to enforce `max_bond_dim` and `svd_cutoff`.
+    /// `svd_cutoff` is relative to the centre tensor's Frobenius norm, which
+    /// equals the global state norm in this mixed-canonical sweep. Therefore a
+    /// global scalar does not change retained ranks or truncation telemetry.
     pub fn compress(&mut self) {
         if self.num_sites <= 1 {
             return;
@@ -952,10 +963,11 @@ impl Mps {
             // But we want to split the left bond, so transpose the grouping:
             // Reshape to (chi_l, d * chi_r) and do SVD to split as (chi_l, new_chi) * (new_chi, d * chi_r).
             let matrix = &self.tensors[q];
+            let scaled_cutoff = self.config.svd_cutoff * matrix.norm();
             if let Ok((us, vt, disc, hit)) = svd::truncated_svd_left_absorb_with_error(
                 matrix,
                 self.config.max_bond_dim,
-                self.config.svd_cutoff,
+                scaled_cutoff,
                 self.config.max_truncation_error,
             ) {
                 self.record_truncation(disc, hit);
@@ -1325,6 +1337,51 @@ mod tests {
     }
 
     #[test]
+    fn test_compress_cutoff_is_invariant_under_global_rescaling() {
+        let config = MpsConfig {
+            max_bond_dim: 8,
+            svd_cutoff: 1e-12,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let dominant = Mps::new(6, config.clone());
+        let mut small_branch = Mps::new(6, config);
+        let x = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        );
+        for site in 0..6 {
+            small_branch.apply_one_site_gate(site, &x).unwrap();
+        }
+        small_branch.scale(Complex64::new(1e-10, 0.0));
+        let state = dominant.add(&small_branch);
+
+        let mut reference = state.clone();
+        let mut scaled_down = state.clone();
+        scaled_down.scale(Complex64::new(1e-13, 0.0));
+        reference.compress();
+        scaled_down.compress();
+
+        assert_eq!(reference.bond_dims(), scaled_down.bond_dims());
+        assert_eq!(reference.bond_dims(), &[1, 2, 2, 2, 2, 2, 1]);
+        assert_relative_eq!(
+            reference.truncation_error(),
+            scaled_down.truncation_error(),
+            epsilon = 1e-15
+        );
+        assert!(
+            normalized_fidelity(&reference.state_vector(), &scaled_down.state_vector())
+                > 1.0 - 1e-12
+        );
+    }
+
+    #[test]
     fn test_new_is_all_zeros_state() {
         let mps = Mps::new(3, MpsConfig::default());
         assert_eq!(mps.num_sites(), 3);
@@ -1397,11 +1454,12 @@ mod tests {
     }
 
     #[test]
-    fn test_zero_norm_cached_marginal_is_conservatively_nan() {
+    #[should_panic(expected = "cannot evaluate a normalized marginal of a zero-norm MPS")]
+    fn test_zero_norm_cached_marginal_panics() {
         let mut mps = Mps::new(2, MpsConfig::default());
         mps.scale(Complex64::new(0.0, 0.0));
         let environments = mps.environment_cache(&[0]);
-        assert!(environments.one_site_basis_marginal(0, 1).is_nan());
+        let _ = environments.one_site_basis_marginal(0, 1);
     }
 
     #[test]

@@ -236,10 +236,25 @@ pub fn apply_rz_stab_mps(
                     }
                 }
                 if disent_site.is_none() && *numerical_flag_redetection {
-                    for &(site, pt) in &pauli_map {
-                        if matches!(pt, PauliType::X | PauliType::Y)
-                            && super::is_numerical_product_zero_site(mps, site)
-                        {
+                    let candidates: Vec<usize> = pauli_map
+                        .iter()
+                        .filter_map(|&(site, pt)| {
+                            matches!(pt, PauliType::X | PauliType::Y).then_some(site)
+                        })
+                        .collect();
+                    // A cheap success ends the old ordered search. Keep only
+                    // that prefix: unresolved sites before it still need the
+                    // batched fallback, while later sites cannot be selected.
+                    let candidate_count = candidates
+                        .iter()
+                        .position(|&site| {
+                            super::cheap_product_zero_site_test(mps, site) == Some(true)
+                        })
+                        .map_or(candidates.len(), |index| index + 1);
+                    let candidates = &candidates[..candidate_count];
+                    let verified = super::are_numerical_product_zero_sites(mps, candidates);
+                    for (&site, is_zero) in candidates.iter().zip(verified) {
+                        if is_zero {
                             disent_flags[site] = Some(super::SiteEigenstate::Z(false));
                             stats.numerical_redetect += 1;
                             disent_site = Some(site);

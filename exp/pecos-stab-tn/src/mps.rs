@@ -87,6 +87,90 @@ pub struct Mps {
     bond_cap_hits: u64,
 }
 
+/// Pass-scoped left and right identity environments for selected MPS sites.
+///
+/// The cache stores the contractions bordering each candidate, so one-site
+/// expectations can be evaluated without recontracting the rest of the chain
+/// for each site. It borrows the MPS immutably: callers cannot mutate the
+/// tensors while these environments are live, and dropping the cache
+/// invalidates the pass.
+pub struct MpsEnvironmentCache<'a> {
+    mps: &'a Mps,
+    sites: Vec<usize>,
+    left: Vec<DMatrix<Complex64>>,
+    right: Vec<DMatrix<Complex64>>,
+    norm_squared: f64,
+}
+
+impl MpsEnvironmentCache<'_> {
+    /// Return the cached squared norm `<psi|psi>`.
+    #[must_use]
+    pub fn norm_squared(&self) -> f64 {
+        self.norm_squared
+    }
+
+    /// Evaluate a normalized one-site computational-basis marginal.
+    ///
+    /// This contracts `|physical_index><physical_index|` between the cached
+    /// identity environments. No canonical form is required: both
+    /// environments retain the complete gauge-independent contraction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the site was not included when the cache was built, if the
+    /// physical index is out of range, or if the MPS has numerically zero
+    /// norm.
+    #[must_use]
+    pub fn one_site_basis_marginal(&self, site: usize, physical_index: usize) -> f64 {
+        let candidate = self
+            .sites
+            .binary_search(&site)
+            .expect("MPS site was not cached");
+        assert!(
+            physical_index < self.mps.phys_dim,
+            "MPS physical index out of range"
+        );
+        assert!(self.norm_squared > 1e-20, "MPS must have nonzero norm");
+
+        let chi_r = self.mps.bond_dims[site + 1];
+        let block = phys_block(&self.mps.tensors[site], physical_index, chi_r);
+        let local_transfer = block.conjugate().transpose() * &self.left[candidate] * block;
+        let weight: Complex64 = local_transfer
+            .component_mul(&self.right[candidate])
+            .iter()
+            .sum();
+        weight.re / self.norm_squared
+    }
+}
+
+fn advance_left_identity_environment(
+    environment: &DMatrix<Complex64>,
+    tensor: &DMatrix<Complex64>,
+    phys_dim: usize,
+    chi_r: usize,
+) -> DMatrix<Complex64> {
+    let mut next = DMatrix::zeros(chi_r, chi_r);
+    for sigma in 0..phys_dim {
+        let block = phys_block(tensor, sigma, chi_r);
+        next += block.conjugate().transpose() * environment * block;
+    }
+    next
+}
+
+fn advance_right_identity_environment(
+    environment: &DMatrix<Complex64>,
+    tensor: &DMatrix<Complex64>,
+    phys_dim: usize,
+    chi_r: usize,
+) -> DMatrix<Complex64> {
+    let mut previous = DMatrix::zeros(tensor.nrows(), tensor.nrows());
+    for sigma in 0..phys_dim {
+        let block = phys_block(tensor, sigma, chi_r);
+        previous += block.conjugate() * environment * block.transpose();
+    }
+    previous
+}
+
 impl Mps {
     /// Create an MPS initialized to |00...0> with bond dimension 1 everywhere.
     #[must_use]
@@ -295,6 +379,25 @@ impl Mps {
         q: usize,
         gate: &DMatrix<Complex64>,
     ) -> Result<(), MpsError> {
+        self.apply_two_site_gate_with_absorption(q, gate, false)
+    }
+
+    /// Apply an adjacent two-site gate while leaving the orthogonality center
+    /// on the right site.
+    pub(crate) fn apply_two_site_gate_right_absorb(
+        &mut self,
+        q: usize,
+        gate: &DMatrix<Complex64>,
+    ) -> Result<(), MpsError> {
+        self.apply_two_site_gate_with_absorption(q, gate, true)
+    }
+
+    fn apply_two_site_gate_with_absorption(
+        &mut self,
+        q: usize,
+        gate: &DMatrix<Complex64>,
+        absorb_right: bool,
+    ) -> Result<(), MpsError> {
         let d = self.phys_dim;
         let d2 = d * d;
         if gate.nrows() != d2 || gate.ncols() != d2 {
@@ -353,21 +456,30 @@ impl Mps {
         let svd_matrix = reshape_two_site_for_svd(&gated, chi_l, chi_r, d);
 
         // SVD split with truncation
-        let (u_s, vt, disc, hit) = svd::truncated_svd_left_absorb_with_error(
-            &svd_matrix,
-            self.config.max_bond_dim,
-            self.config.svd_cutoff,
-            self.config.max_truncation_error,
-        )?;
+        let (left, right, disc, hit) = if absorb_right {
+            svd::truncated_svd_right_absorb_with_error(
+                &svd_matrix,
+                self.config.max_bond_dim,
+                self.config.svd_cutoff,
+                self.config.max_truncation_error,
+            )?
+        } else {
+            svd::truncated_svd_left_absorb_with_error(
+                &svd_matrix,
+                self.config.max_bond_dim,
+                self.config.svd_cutoff,
+                self.config.max_truncation_error,
+            )?
+        };
         self.record_truncation(disc, hit);
 
-        let new_chi = u_s.ncols();
+        let new_chi = left.ncols();
 
-        // U_S: (chi_l * d, new_chi) -> reshape to (chi_l, d * new_chi)
-        self.tensors[q] = reshape_left_ungroup(&u_s, chi_l, d, new_chi);
+        // U or U_S: (chi_l * d, new_chi) -> reshape to the left site.
+        self.tensors[q] = reshape_left_ungroup(&left, chi_l, d, new_chi);
 
-        // Vt: (new_chi, d * chi_r) -- already in site tensor format
-        self.tensors[q + 1] = vt;
+        // Vt or S_Vt is already in right-site tensor format.
+        self.tensors[q + 1] = right;
 
         // Update bond dimension
         self.bond_dims[q + 1] = new_chi;
@@ -456,29 +568,98 @@ impl Mps {
         // Contract from left to right, building the transfer matrix product.
         // E[alpha, beta] = sum_{sigma} A*[alpha, sigma] A[beta, sigma]
         // Start with E = 1x1 identity.
-        let d = self.phys_dim;
         let mut transfer = DMatrix::from_element(1, 1, Complex64::new(1.0, 0.0));
 
         for q in 0..self.num_sites {
-            let chi_r = self.bond_dims[q + 1];
-            let t = &self.tensors[q];
-
-            // new_transfer[alpha_r, beta_r] = sum_{alpha_l, beta_l, sigma}
-            //   transfer[alpha_l, beta_l] * conj(A[alpha_l, sigma, alpha_r]) * A[beta_l, sigma, beta_r]
-            let mut new_transfer = DMatrix::zeros(chi_r, chi_r);
-            for sigma in 0..d {
-                // block_sigma: (chi_l, chi_r)
-                let block = phys_block(t, sigma, chi_r);
-                // conj(block)^T * transfer * block
-                let conj_block_t = block.conjugate().transpose();
-                let tmp = &conj_block_t * &transfer * &block;
-                new_transfer += tmp;
-            }
-            transfer = new_transfer;
+            transfer = advance_left_identity_environment(
+                &transfer,
+                &self.tensors[q],
+                self.phys_dim,
+                self.bond_dims[q + 1],
+            );
         }
 
         // Final transfer is 1x1
         transfer[(0, 0)].re
+    }
+
+    /// Cache the left and right identity environments bordering `sites`.
+    ///
+    /// This is intended for a pass that evaluates several local observables
+    /// against one immutable tensor state. The returned cache borrows `self`,
+    /// so tensor mutation cannot occur until the cache is dropped. Construction
+    /// contracts the suffix through the leftmost candidate and the prefix
+    /// through the rightmost candidate, retaining environments only at the
+    /// requested sites.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `sites` is empty or contains an out-of-range site.
+    #[must_use]
+    pub fn environment_cache(&self, sites: &[usize]) -> MpsEnvironmentCache<'_> {
+        assert!(!sites.is_empty(), "environment cache requires a site");
+        let mut sites = sites.to_vec();
+        sites.sort_unstable();
+        sites.dedup();
+        assert!(
+            sites[sites.len() - 1] < self.num_sites,
+            "MPS site out of range"
+        );
+
+        let first_site = sites[0];
+        let last_site = sites[sites.len() - 1];
+        let boundary = DMatrix::from_element(1, 1, Complex64::new(1.0, 0.0));
+
+        let mut right_reversed = Vec::with_capacity(sites.len());
+        let mut right_environment = boundary.clone();
+        let mut candidate = sites.len();
+        for site in (first_site..self.num_sites).rev() {
+            if site == sites[candidate - 1] {
+                right_reversed.push(right_environment.clone());
+                candidate -= 1;
+            }
+            right_environment = advance_right_identity_environment(
+                &right_environment,
+                &self.tensors[site],
+                self.phys_dim,
+                self.bond_dims[site + 1],
+            );
+        }
+        right_reversed.reverse();
+
+        let mut left = Vec::with_capacity(sites.len());
+        let mut left_environment = boundary;
+        let mut candidate = 0;
+        let mut norm_squared = 0.0;
+        for site in 0..=last_site {
+            if site == sites[candidate] {
+                if candidate == 0 {
+                    let norm: Complex64 = left_environment
+                        .component_mul(&right_environment)
+                        .iter()
+                        .sum();
+                    norm_squared = norm.re;
+                }
+                left.push(left_environment.clone());
+                candidate += 1;
+            }
+            if site < last_site {
+                left_environment = advance_left_identity_environment(
+                    &left_environment,
+                    &self.tensors[site],
+                    self.phys_dim,
+                    self.bond_dims[site + 1],
+                );
+            }
+        }
+
+        MpsEnvironmentCache {
+            mps: self,
+            sites,
+            left,
+            right: right_reversed,
+            norm_squared,
+        }
     }
 
     /// Compute `<mps| O |mps>` where O is a product of per-site 2x2 operators.
@@ -702,6 +883,33 @@ impl Mps {
         canon::right_canonicalize_all(&mut self.tensors, &mut self.bond_dims, self.phys_dim);
     }
 
+    /// Put the environments bordering `(q, q + 1)` in canonical form.
+    ///
+    /// After this operation, sites strictly left of `q` are left-canonical
+    /// and sites strictly right of `q + 1` are right-canonical. Consequently,
+    /// singular values obtained by splitting the two-site center have their
+    /// physical Schmidt weights even when the input MPS had an arbitrary
+    /// gauge.
+    pub(crate) fn canonicalize_around_bond(&mut self, q: usize) {
+        assert!(q + 1 < self.num_sites, "bond must join two valid sites");
+        for site in 0..q {
+            canon::left_canonicalize_site(
+                &mut self.tensors,
+                &mut self.bond_dims,
+                site,
+                self.phys_dim,
+            );
+        }
+        for site in (q + 2..self.num_sites).rev() {
+            canon::right_canonicalize_site(
+                &mut self.tensors,
+                &mut self.bond_dims,
+                site,
+                self.phys_dim,
+            );
+        }
+    }
+
     /// Compress the MPS by SVD truncation at each bond.
     ///
     /// Left-canonicalizes first, then sweeps right-to-left performing SVD
@@ -778,6 +986,12 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
 
+    fn one_site_basis_marginal_reference(mps: &Mps, site: usize, physical_index: usize) -> f64 {
+        let mut projector = DMatrix::zeros(mps.phys_dim(), mps.phys_dim());
+        projector[(physical_index, physical_index)] = Complex64::new(1.0, 0.0);
+        mps.expectation_product(&[(site, projector)]).re / mps.norm_squared()
+    }
+
     #[test]
     fn test_default_config_values() {
         let config = MpsConfig::default();
@@ -840,6 +1054,49 @@ mod tests {
     fn test_norm_of_initial_state() {
         let mps = Mps::new(4, MpsConfig::default());
         assert_relative_eq!(mps.norm_squared(), 1.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_cached_basis_marginals_match_full_contractions_on_random_bond_two_states() {
+        fn next(state: &mut u64) -> u64 {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            *state
+        }
+
+        for seed in 0..16_u64 {
+            // Direct-sum construction establishes chi=2; replacing every
+            // entry with seeded random complex values gives a deliberately
+            // non-canonical random MPS, exercising gauge-independent caches.
+            let product = Mps::new(6, MpsConfig::default());
+            let mut mps = product.add(&product);
+            let mut random = 0xeca5_0000_0000_0001_u64 ^ seed;
+            for tensor in mps.tensors_mut() {
+                for value in tensor.iter_mut() {
+                    let real = (next(&mut random) as f64 / u64::MAX as f64) - 0.5;
+                    let imag = (next(&mut random) as f64 / u64::MAX as f64) - 0.5;
+                    *value = Complex64::new(real, imag);
+                }
+            }
+            assert!(mps.max_bond_dim() > 1);
+
+            let norm_squared = mps.norm_squared();
+            assert!(norm_squared > 1e-20);
+            for sites in [&[0, 1, 2, 3, 4, 5][..], &[4, 1, 5, 2][..], &[3, 0][..]] {
+                let environments = mps.environment_cache(sites);
+                assert_relative_eq!(environments.norm_squared(), norm_squared, epsilon = 1e-12);
+                for &site in sites {
+                    let reference = one_site_basis_marginal_reference(&mps, site, 1);
+                    let batched = environments.one_site_basis_marginal(site, 1);
+                    assert!(
+                        (batched - reference).abs() <= 1e-12,
+                        "seed={seed}, site={site}, bonds={:?}, batched={batched:.16e}, reference={reference:.16e}",
+                        mps.bond_dims(),
+                    );
+                }
+            }
+        }
     }
 
     #[test]

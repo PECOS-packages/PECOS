@@ -283,7 +283,7 @@ fn pre_reduce_for_measurement(
         modified_sites.push(replaced_idx);
         for other_id in anticom {
             crate::stab_mps::tableau_compose::right_compose_cx(tableau, replaced_idx, other_id);
-            apply_cnot_to_mps(mps, replaced_idx, other_id);
+            apply_cnot_to_mps_exact(mps, replaced_idx, other_id);
             modified_sites.push(other_id);
         }
         modified_sites.sort_unstable();
@@ -316,14 +316,14 @@ fn pre_reduce_for_measurement(
     }
 }
 
-fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) {
+fn apply_cnot_to_mps_exact(mps: &mut Mps, control: usize, target: usize) {
     // Optimization: if the control site has no |1⟩_virt amplitude, CNOT is
-    // identity on this MPS — skip to avoid bond-dim blowup from SWAP chains.
+    // identity on this MPS — skip the unnecessary SWAP/SVD work.
     // Mirror: if control has no |0⟩_virt amp, CNOT reduces to X on target.
-    if mps_site_block_is_zero(mps, control, 1) {
+    if mps_site_block_is_structurally_zero(mps, control, 1) {
         return;
     }
-    if mps_site_block_is_zero(mps, control, 0) {
+    if mps_site_block_is_structurally_zero(mps, control, 0) {
         // Control is |1⟩ → CNOT unconditionally flips target = X on target.
         let x_gate = DMatrix::from_row_slice(
             2,
@@ -340,29 +340,93 @@ fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) {
         return;
     }
 
-    // General case: apply full CNOT.
-    let o = Complex64::new(0.0, 0.0);
-    let one = Complex64::new(1.0, 0.0);
-    let cnot_c_lo = DMatrix::from_row_slice(
-        4,
-        4,
-        &[one, o, o, o, o, one, o, o, o, o, o, one, o, o, one, o],
-    );
-    let cnot_c_hi = DMatrix::from_row_slice(
-        4,
-        4,
-        &[one, o, o, o, o, o, o, one, o, o, one, o, o, one, o, o],
-    );
-    let (q0, q1, gate) = if control < target {
-        (control, target, cnot_c_lo)
-    } else {
-        (target, control, cnot_c_hi)
-    };
-    if q1 == q0 + 1 {
-        mps.apply_two_site_gate(q0, &gate)
+    // A forced projection can leave an arbitrary MPS gauge. Keep the
+    // orthogonality center with the qubit moving through the SWAP chain so each
+    // SVD sees physical Schmidt weights rather than gauge-dependent local
+    // singular values.
+    apply_cnot_to_mps_via_swaps(mps, control, target, true);
+}
+
+/// Apply a compensation CNOT through the established SWAP route used by the
+/// deferred live-measurement path. Exact forced projection uses
+/// [`apply_cnot_to_mps_exact`] because its input gauge is not constrained.
+fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) {
+    if mps_site_block_is_numerically_zero(mps, control, 1) {
+        return;
+    }
+    if mps_site_block_is_numerically_zero(mps, control, 0) {
+        let zero = Complex64::new(0.0, 0.0);
+        let one = Complex64::new(1.0, 0.0);
+        let x_gate = DMatrix::from_row_slice(2, 2, &[zero, one, one, zero]);
+        mps.apply_one_site_gate(target, &x_gate)
             .expect("MPS op on valid site");
+        return;
+    }
+
+    apply_cnot_to_mps_via_swaps(mps, control, target, false);
+}
+
+fn apply_cnot_to_mps_via_swaps(
+    mps: &mut Mps,
+    control: usize,
+    target: usize,
+    canonicalize_bonds: bool,
+) {
+    let zero = Complex64::new(0.0, 0.0);
+    let one = Complex64::new(1.0, 0.0);
+    let cnot_control_low = DMatrix::from_row_slice(
+        4,
+        4,
+        &[
+            one, zero, zero, zero, zero, one, zero, zero, zero, zero, zero, one, zero, zero, one,
+            zero,
+        ],
+    );
+    let cnot_control_high = DMatrix::from_row_slice(
+        4,
+        4,
+        &[
+            one, zero, zero, zero, zero, zero, zero, one, zero, zero, one, zero, zero, one, zero,
+            zero,
+        ],
+    );
+    let (first, second, gate) = if control < target {
+        (control, target, cnot_control_low)
     } else {
-        mps.apply_long_range_two_site_gate(q0, q1, &gate)
+        (target, control, cnot_control_high)
+    };
+    if second == first + 1 {
+        if canonicalize_bonds {
+            mps.canonicalize_around_bond(first);
+        }
+        mps.apply_two_site_gate(first, &gate)
+            .expect("MPS op on valid site");
+    } else if canonicalize_bonds {
+        let swap = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                one, zero, zero, zero, zero, zero, one, zero, zero, one, zero, zero, zero, zero,
+                zero, one,
+            ],
+        );
+        // Establish a mixed-canonical form only once. Left-absorbing the
+        // inward SWAPs walks the center down to `first + 1`.
+        mps.canonicalize_around_bond(second - 1);
+        for site in (first + 1..second).rev() {
+            mps.apply_two_site_gate(site, &swap)
+                .expect("MPS op on valid site");
+        }
+        // Right absorption moves the center back outward through the return
+        // SWAPs, preserving canonical environments throughout the chain.
+        mps.apply_two_site_gate_right_absorb(first, &gate)
+            .expect("MPS op on valid site");
+        for site in first + 1..second {
+            mps.apply_two_site_gate_right_absorb(site, &swap)
+                .expect("MPS op on valid site");
+        }
+    } else {
+        mps.apply_long_range_two_site_gate(first, second, &gate)
             .expect("MPS op on valid site");
     }
 }
@@ -626,20 +690,30 @@ pub fn flush_deferred(mps: &mut Mps, cnots: &mut Vec<(usize, usize)>) {
     cnots.clear();
 }
 
-/// Returns true if `mps` tensor at `site` has the σ=`block`'s elements all
-/// below tolerance (i.e., site has no amplitude at that physical dim value).
-fn mps_site_block_is_zero(mps: &Mps, site: usize, block: usize) -> bool {
+/// Returns true if the MPS tensor at `site` has a structurally zero
+/// σ=`block`. An approximate local-zero test is not gauge invariant.
+fn mps_site_block_is_structurally_zero(mps: &Mps, site: usize, block: usize) -> bool {
     let chi_r = mps.bond_dim(site + 1);
     let t = &mps.tensors()[site];
     let start_col = block * chi_r;
     for i in 0..t.nrows() {
         for j in 0..chi_r {
-            if t[(i, start_col + j)].norm_sqr() > 1e-20 {
+            if t[(i, start_col + j)] != Complex64::new(0.0, 0.0) {
                 return false;
             }
         }
     }
     true
+}
+
+/// Pragmatic local-zero check retained for the deferred live-measurement path.
+fn mps_site_block_is_numerically_zero(mps: &Mps, site: usize, block: usize) -> bool {
+    let chi_r = mps.bond_dim(site + 1);
+    let tensor = &mps.tensors()[site];
+    let start_column = block * chi_r;
+    (0..tensor.nrows()).all(|row| {
+        (0..chi_r).all(|column| tensor[(row, start_column + column)].norm_sqr() <= 1e-20)
+    })
 }
 
 /// Project qubit `q_idx` onto `outcome` without renormalizing. Returns

@@ -2408,38 +2408,81 @@ fn test_sampled_bitstring_round_trips_through_probability_and_amplitude() {
     }
 }
 
-#[test]
-fn test_prob_bitstring_honest_clifford_t_family_matches_dense_state_vector() {
+fn assert_honest_clifford_t_readouts_match_dense(
+    qubit_counts: std::ops::RangeInclusive<usize>,
+    seed_families: &[u64],
+    label: &str,
+) {
     // This family deliberately puts H, S, and CX between non-Clifford gates,
     // plus a target H after roughly half of them. That exposes sequential
     // forced-projection frame errors hidden by diagonal-only circuit tails.
     const TOLERANCE: f64 = 1e-12;
-    for num_qubits in 3..=6 {
+    let mut circuits = 0;
+    let mut worst_probability_delta = 0.0_f64;
+    let mut worst_iterative_delta = 0.0_f64;
+    for num_qubits in qubit_counts {
         for t_count in 3..=6 {
-            let circuit_seed = 10_000 + (num_qubits * 100 + t_count) as u64;
-            let gates = seeded_clifford_t_circuit(num_qubits, t_count, circuit_seed);
-            let mut stn = StabMps::builder(num_qubits)
-                .seed(circuit_seed)
-                .merge_rz(false)
-                .max_truncation_error(0.0)
-                .build();
-            apply_seeded_clifford_t_to_stn(&mut stn, &gates);
-            stn.flush();
+            for &seed_family in seed_families {
+                let circuit_seed = seed_family * 1_000 + (num_qubits * 100 + t_count) as u64;
+                let gates = seeded_clifford_t_circuit(num_qubits, t_count, circuit_seed);
+                let mut stn = StabMps::builder(num_qubits)
+                    .seed(circuit_seed)
+                    .merge_rz(false)
+                    .max_truncation_error(0.0)
+                    .build();
+                apply_seeded_clifford_t_to_stn(&mut stn, &gates);
+                stn.flush();
 
-            let dense_probabilities = dense_state_vector_probabilities(&stn);
-            for (outcome, &expected) in dense_probabilities.iter().enumerate() {
-                let bits = (0..num_qubits)
-                    .map(|q| ((outcome >> q) & 1) != 0)
-                    .collect::<Vec<_>>();
-                let actual = stn.prob_bitstring(&bits);
-                assert!(
-                    (actual - expected).abs() <= TOLERANCE,
-                    "n={num_qubits} t={t_count} seed={circuit_seed} outcome={outcome}: \
-                     prob_bitstring={actual:.16}, dense={expected:.16}, gates={gates:?}"
-                );
+                let dense_probabilities = dense_state_vector_probabilities(&stn);
+                for (outcome, &expected) in dense_probabilities.iter().enumerate() {
+                    let bits = (0..num_qubits)
+                        .map(|q| ((outcome >> q) & 1) != 0)
+                        .collect::<Vec<_>>();
+                    let actual = stn.prob_bitstring(&bits);
+                    let probability_delta = (actual - expected).abs();
+                    worst_probability_delta = worst_probability_delta.max(probability_delta);
+                    assert!(
+                        probability_delta <= TOLERANCE,
+                        "{label}: n={num_qubits} t={t_count} seed={circuit_seed} \
+                         outcome={outcome}: prob_bitstring={actual:.16}, \
+                         dense={expected:.16}, delta={probability_delta:.3e}, gates={gates:?}"
+                    );
+
+                    // The unnormalized sibling projector must preserve the
+                    // same probability weight. Complex-phase behavior has
+                    // separate unit coverage; this assertion isolates the
+                    // sequential projection machinery shared with the issue.
+                    let iterative_probability = stn.amplitude_iterative(&bits).norm_sqr();
+                    let iterative_delta = (iterative_probability - expected).abs();
+                    worst_iterative_delta = worst_iterative_delta.max(iterative_delta);
+                    assert!(
+                        iterative_delta <= TOLERANCE,
+                        "{label}: n={num_qubits} t={t_count} seed={circuit_seed} \
+                         outcome={outcome}: |amplitude_iterative|^2={iterative_probability:.16}, \
+                         dense={expected:.16}, delta={iterative_delta:.3e}, gates={gates:?}"
+                    );
+                }
+                circuits += 1;
             }
         }
     }
+    eprintln!(
+        "{label}: circuits={circuits}, worst prob_bitstring delta={worst_probability_delta:.3e}, worst |amplitude_iterative|^2 delta={worst_iterative_delta:.3e}"
+    );
+}
+
+#[test]
+fn test_prob_bitstring_honest_clifford_t_family_matches_dense_state_vector() {
+    // Keep a known formerly failing small-n family (n=4, t=6, seed=21406)
+    // in the default lane while bounding debug-suite runtime.
+    assert_honest_clifford_t_readouts_match_dense(3..=4, &[10, 21], "fast issue #557 sweep");
+}
+
+#[test]
+#[ignore = "wide issue #557 sweep; run in release mode"]
+fn test_prob_bitstring_honest_clifford_t_wide_seed_sweep_matches_dense_state_vector() {
+    let seed_families = (10..50_u64).collect::<Vec<_>>();
+    assert_honest_clifford_t_readouts_match_dense(3..=6, &seed_families, "wide issue #557 sweep");
 }
 
 #[test]
@@ -4070,9 +4113,13 @@ fn test_large_scale_100_qubits() {
     let num_t = 40;
     let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 128, 123);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    // Exact-route data measurement saturates the configured cap at scale, so
-    // accuracy is truncation-limited here rather than merely bounded by it.
-    assert_eq!(mast_bond, 128, "MAST did not saturate its default bond cap");
+    // Canonical exact-route compensation keeps the physical Schmidt ranks
+    // below the configured cap instead of saturating it from gauge-dependent
+    // local singular values.
+    assert!(
+        mast_bond < 128,
+        "MAST unexpectedly saturated its default bond cap"
+    );
 }
 
 #[test]
@@ -4082,9 +4129,13 @@ fn test_large_scale_200_qubits() {
     let num_t = 50;
     let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 5, 128, 456);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    // Exact-route data measurement saturates the configured cap at scale, so
-    // accuracy is truncation-limited here rather than merely bounded by it.
-    assert_eq!(mast_bond, 128, "MAST did not saturate its default bond cap");
+    // Canonical exact-route compensation keeps the physical Schmidt ranks
+    // below the configured cap instead of saturating it from gauge-dependent
+    // local singular values.
+    assert!(
+        mast_bond < 128,
+        "MAST unexpectedly saturated its default bond cap"
+    );
 }
 
 #[test]

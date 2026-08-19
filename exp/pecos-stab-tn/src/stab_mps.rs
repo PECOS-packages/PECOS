@@ -102,6 +102,7 @@ pub enum SiteEigenstate {
 /// This is the representation-independent invariant behind a `Z(false)`
 /// disentangling proof.  In particular, it remains valid when either adjacent
 /// MPS bond is larger than one.
+#[cfg(test)]
 fn stored_mps_one_weight(mps: &Mps, site: usize) -> f64 {
     let one_projector = DMatrix::from_row_slice(
         2,
@@ -152,27 +153,41 @@ fn cheap_product_zero_site_test(mps: &Mps, site: usize) -> Option<bool> {
     None
 }
 
-fn is_numerical_product_zero_site_with_norm(
-    mps: &Mps,
-    site: usize,
-    norm_squared: &mut Option<f64>,
-) -> bool {
+fn are_numerical_product_zero_sites(mps: &Mps, sites: &[usize]) -> Vec<bool> {
     const TOLERANCE: f64 = 1e-12;
-    if let Some(result) = cheap_product_zero_site_test(mps, site) {
-        return result;
+    let mut results = vec![false; sites.len()];
+    let mut fallback_indices = Vec::new();
+
+    for (index, &site) in sites.iter().enumerate() {
+        if let Some(result) = cheap_product_zero_site_test(mps, site) {
+            results[index] = result;
+        } else {
+            fallback_indices.push(index);
+        }
     }
 
-    let norm_squared = *norm_squared.get_or_insert_with(|| {
-        let norm_squared = mps.norm_squared();
-        assert!(norm_squared > 1e-20, "stored MPS must have nonzero norm");
-        norm_squared
-    });
-    (stored_mps_one_weight(mps, site) / norm_squared).abs() <= TOLERANCE
+    if !fallback_indices.is_empty() {
+        // The cache owns both chain environments for this verification pass.
+        // Its immutable MPS borrow prevents tensor mutation until every
+        // fallback candidate has been evaluated and the cache is dropped.
+        let fallback_sites: Vec<usize> =
+            fallback_indices.iter().map(|&index| sites[index]).collect();
+        let environments = mps.environment_cache(&fallback_sites);
+        assert!(
+            environments.norm_squared() > 1e-20,
+            "stored MPS must have nonzero norm"
+        );
+        for index in fallback_indices {
+            results[index] =
+                environments.one_site_basis_marginal(sites[index], 1).abs() <= TOLERANCE;
+        }
+    }
+
+    results
 }
 
 fn is_numerical_product_zero_site(mps: &Mps, site: usize) -> bool {
-    let mut norm_squared = None;
-    is_numerical_product_zero_site_with_norm(mps, site, &mut norm_squared)
+    are_numerical_product_zero_sites(mps, &[site])[0]
 }
 
 fn refresh_disent_flag(mps: &Mps, disent_flags: &mut [Option<SiteEigenstate>], site: usize) {
@@ -185,17 +200,15 @@ fn repair_disent_flags(
     disent_flags: &mut [Option<SiteEigenstate>],
     update: &measure::ProjectionUpdate,
 ) {
-    let mut norm_squared = None;
-    for &site in &update.modified_sites {
-        disent_flags[site] = is_numerical_product_zero_site_with_norm(mps, site, &mut norm_squared)
-            .then_some(SiteEigenstate::Z(false));
-    }
-    if let Some(site) = update
-        .collapsed_site
-        .filter(|site| !update.modified_sites.contains(site))
+    let mut sites = update.modified_sites.clone();
+    if let Some(site) = update.collapsed_site
+        && !sites.contains(&site)
     {
-        disent_flags[site] = is_numerical_product_zero_site_with_norm(mps, site, &mut norm_squared)
-            .then_some(SiteEigenstate::Z(false));
+        sites.push(site);
+    }
+    let verified = are_numerical_product_zero_sites(mps, &sites);
+    for (&site, is_zero) in sites.iter().zip(verified) {
+        disent_flags[site] = is_zero.then_some(SiteEigenstate::Z(false));
     }
 }
 
@@ -7151,12 +7164,24 @@ mod tests {
                 .any(|row| (chi_r..2 * chi_r).any(|column| tensor[(row, column)] != zero)),
             "test must exercise the marginal contraction, not structural-zero shortcut"
         );
+        assert_eq!(cheap_product_zero_site_test(&mps, 1), None);
         assert_relative_eq!(stored_mps_one_marginal(&mps, 1), 0.0, epsilon = 1e-14);
-        assert!(is_numerical_product_zero_site(&mps, 1));
+        let batched = are_numerical_product_zero_sites(&mps, &[0, 1, 2]);
+        assert!(batched[1]);
+        let update = measure::ProjectionUpdate {
+            collapsed_site: Some(1),
+            modified_sites: vec![0, 1, 2],
+        };
+        let mut flags = vec![None; 3];
+        repair_disent_flags(&mps, &mut flags, &update);
+        assert_eq!(flags[1], Some(SiteEigenstate::Z(false)));
+        assert_disent_flags_match_stored_mps(&mps, &flags, "batched fallback fixture");
 
         let x = DMatrix::from_row_slice(2, 2, &[zero, one, one, zero]);
         mps.apply_one_site_gate(1, &x).unwrap();
-        assert!(!is_numerical_product_zero_site(&mps, 1));
+        assert!(!are_numerical_product_zero_sites(&mps, &[0, 1, 2])[1]);
+        repair_disent_flags(&mps, &mut flags, &update);
+        assert_eq!(flags[1], None);
     }
 
     #[test]

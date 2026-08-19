@@ -4,11 +4,15 @@
 //! resets during the circuit.  The MAST leg records only RZ routing performed
 //! after an initial `project_all`, so projection-installed proofs are exercised.
 
+use nalgebra::DMatrix;
+use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
+use pecos_stab_tn::mps::{Mps, MpsConfig};
 use pecos_stab_tn::stab_mps::StabMps;
 use pecos_stab_tn::stab_mps::StabMpsStats;
 use pecos_stab_tn::stab_mps::mast::Mast;
+use std::hint::black_box;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Default)]
@@ -220,6 +224,68 @@ fn run_mast_post_projection(repeats: usize) -> (Counts, u64, f64) {
     (counts, post_rotations, elapsed)
 }
 
+fn run_fallback_microbenchmark() -> (usize, usize, f64, f64) {
+    const NUM_SITES: usize = 12;
+    const ITERATIONS: usize = 2_000;
+
+    // Build a seeded, non-canonical random MPS with chi=6 at every internal
+    // bond. Every site is measured directly here, so this isolates the exact
+    // fallback tier rather than its cheap eligibility checks.
+    let product = Mps::new(NUM_SITES, MpsConfig::default());
+    let bond_two = product.add(&product);
+    let bond_four = bond_two.add(&bond_two);
+    let mut mps = bond_four.add(&bond_two);
+    let mut random = 0xfabb_ac1e_2026_0818_u64;
+    for tensor in mps.tensors_mut() {
+        for value in tensor.iter_mut() {
+            let real = (next(&mut random) as f64 / u64::MAX as f64) - 0.5;
+            let imag = (next(&mut random) as f64 / u64::MAX as f64) - 0.5;
+            *value = Complex64::new(real, imag);
+        }
+    }
+    let projector_one = DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0, 0.0),
+        ],
+    );
+
+    let reference_start = Instant::now();
+    for _ in 0..ITERATIONS {
+        let norm_squared = black_box(&mps).norm_squared();
+        for site in 0..NUM_SITES {
+            let weight = black_box(&mps)
+                .expectation_product(&[(site, projector_one.clone())])
+                .re;
+            black_box(weight / norm_squared);
+        }
+    }
+    let reference_ns_per_candidate =
+        reference_start.elapsed().as_secs_f64() * 1e9 / (ITERATIONS * NUM_SITES) as f64;
+
+    let batched_start = Instant::now();
+    let sites: Vec<usize> = (0..NUM_SITES).collect();
+    for _ in 0..ITERATIONS {
+        let environments = black_box(&mps).environment_cache(&sites);
+        for site in 0..NUM_SITES {
+            black_box(environments.one_site_basis_marginal(site, 1));
+        }
+    }
+    let batched_ns_per_candidate =
+        batched_start.elapsed().as_secs_f64() * 1e9 / (ITERATIONS * NUM_SITES) as f64;
+
+    (
+        NUM_SITES,
+        mps.max_bond_dim(),
+        reference_ns_per_candidate,
+        batched_ns_per_candidate,
+    )
+}
+
 fn main() {
     let repeats = std::env::var("PROBE_REPEATS")
         .ok()
@@ -227,7 +293,7 @@ fn main() {
         .unwrap_or(1);
     let mode = std::env::var("PROBE_MODE").unwrap_or_else(|_| "all".to_owned());
 
-    if mode != "mast" {
+    if mode == "all" || mode == "stn" {
         let (stn, rotations, trajectory_hash, stn_seconds) = run_stn(repeats);
         println!(
             "STN repeats={repeats} configs=16 rotations={rotations} multi_disent={} multi_std={} single_site={} fast_rate={:.3}% trajectory_hash={trajectory_hash:016x} wall_s={stn_seconds:.6}",
@@ -238,7 +304,7 @@ fn main() {
         );
     }
 
-    if mode != "stn" {
+    if mode == "all" || mode == "mast" {
         let (mast, post_rotations, mast_seconds) = run_mast_post_projection(repeats);
         println!(
             "MAST_POST repeats={repeats} rotations={post_rotations} multi_disent={} multi_std={} single_site={} fast_rate={:.3}% wall_s={mast_seconds:.6}",
@@ -246,6 +312,13 @@ fn main() {
             mast.multi_std,
             mast.single_site,
             mast.fast_rate(),
+        );
+    }
+
+    if mode == "all" || mode == "micro" {
+        let (sites, bond, reference_ns, batched_ns) = run_fallback_microbenchmark();
+        println!(
+            "FALLBACK_MICRO sites={sites} bond={bond} candidates={sites} reference_ns_per_candidate={reference_ns:.3} batched_ns_per_candidate={batched_ns:.3}"
         );
     }
 }

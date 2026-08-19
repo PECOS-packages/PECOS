@@ -174,6 +174,17 @@ pub fn z_expectation_value(tableau: &SparseStabY, mps: &Mps, q: usize) -> Comple
 }
 
 fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
+    // Pauli expectations are bounded by one. Contractions of an exact
+    // eigenstate can land a few ulps inside that endpoint; treating the
+    // resulting cancellation residue as a real outcome and normalizing it
+    // amplifies roundoff into a spurious state. This guard only snaps values
+    // already indistinguishable from +/-1 at contraction accuracy.
+    const EXPECTATION_ENDPOINT_TOLERANCE: f64 = 1e-14;
+    let expectation = if 1.0 - expectation.abs() <= EXPECTATION_ENDPOINT_TOLERANCE {
+        expectation.signum()
+    } else {
+        expectation
+    };
     let probability_zero = f64::midpoint(1.0, expectation).clamp(0.0, 1.0);
     if outcome {
         1.0 - probability_zero
@@ -283,7 +294,7 @@ fn pre_reduce_for_measurement(
         modified_sites.push(replaced_idx);
         for other_id in anticom {
             crate::stab_mps::tableau_compose::right_compose_cx(tableau, replaced_idx, other_id);
-            apply_cnot_to_mps_exact(mps, replaced_idx, other_id);
+            apply_cnot_to_mps(mps, replaced_idx, other_id);
             modified_sites.push(other_id);
         }
         modified_sites.sort_unstable();
@@ -316,7 +327,7 @@ fn pre_reduce_for_measurement(
     }
 }
 
-fn apply_cnot_to_mps_exact(mps: &mut Mps, control: usize, target: usize) {
+fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) {
     // Optimization: if the control site has no |1⟩_virt amplitude, CNOT is
     // identity on this MPS — skip the unnecessary SWAP/SVD work.
     // Mirror: if control has no |0⟩_virt amp, CNOT reduces to X on target.
@@ -340,38 +351,6 @@ fn apply_cnot_to_mps_exact(mps: &mut Mps, control: usize, target: usize) {
         return;
     }
 
-    // A forced projection can leave an arbitrary MPS gauge. Keep the
-    // orthogonality center with the qubit moving through the SWAP chain so each
-    // SVD sees physical Schmidt weights rather than gauge-dependent local
-    // singular values.
-    apply_cnot_to_mps_via_swaps(mps, control, target, true);
-}
-
-/// Apply a compensation CNOT through the established SWAP route used by the
-/// deferred live-measurement path. Exact forced projection uses
-/// [`apply_cnot_to_mps_exact`] because its input gauge is not constrained.
-fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) {
-    if mps_site_block_is_numerically_zero(mps, control, 1) {
-        return;
-    }
-    if mps_site_block_is_numerically_zero(mps, control, 0) {
-        let zero = Complex64::new(0.0, 0.0);
-        let one = Complex64::new(1.0, 0.0);
-        let x_gate = DMatrix::from_row_slice(2, 2, &[zero, one, one, zero]);
-        mps.apply_one_site_gate(target, &x_gate)
-            .expect("MPS op on valid site");
-        return;
-    }
-
-    apply_cnot_to_mps_via_swaps(mps, control, target, false);
-}
-
-fn apply_cnot_to_mps_via_swaps(
-    mps: &mut Mps,
-    control: usize,
-    target: usize,
-    canonicalize_bonds: bool,
-) {
     let zero = Complex64::new(0.0, 0.0);
     let one = Complex64::new(1.0, 0.0);
     let cnot_control_low = DMatrix::from_row_slice(
@@ -395,40 +374,8 @@ fn apply_cnot_to_mps_via_swaps(
     } else {
         (target, control, cnot_control_high)
     };
-    if second == first + 1 {
-        if canonicalize_bonds {
-            mps.canonicalize_around_bond(first);
-        }
-        mps.apply_two_site_gate(first, &gate)
-            .expect("MPS op on valid site");
-    } else if canonicalize_bonds {
-        let swap = DMatrix::from_row_slice(
-            4,
-            4,
-            &[
-                one, zero, zero, zero, zero, zero, one, zero, zero, one, zero, zero, zero, zero,
-                zero, one,
-            ],
-        );
-        // Establish a mixed-canonical form only once. Left-absorbing the
-        // inward SWAPs walks the center down to `first + 1`.
-        mps.canonicalize_around_bond(second - 1);
-        for site in (first + 1..second).rev() {
-            mps.apply_two_site_gate(site, &swap)
-                .expect("MPS op on valid site");
-        }
-        // Right absorption moves the center back outward through the return
-        // SWAPs, preserving canonical environments throughout the chain.
-        mps.apply_two_site_gate_right_absorb(first, &gate)
-            .expect("MPS op on valid site");
-        for site in first + 1..second {
-            mps.apply_two_site_gate_right_absorb(site, &swap)
-                .expect("MPS op on valid site");
-        }
-    } else {
-        mps.apply_long_range_two_site_gate(first, second, &gate)
-            .expect("MPS op on valid site");
-    }
+    mps.apply_long_range_two_site_gate(first, second, &gate)
+        .expect("MPS op on valid site");
 }
 
 /// A deferred Clifford primitive in the virtual-frame queue.
@@ -706,24 +653,12 @@ fn mps_site_block_is_structurally_zero(mps: &Mps, site: usize, block: usize) -> 
     true
 }
 
-/// Pragmatic local-zero check retained for the deferred live-measurement path.
-fn mps_site_block_is_numerically_zero(mps: &Mps, site: usize, block: usize) -> bool {
-    let chi_r = mps.bond_dim(site + 1);
-    let tensor = &mps.tensors()[site];
-    let start_column = block * chi_r;
-    (0..tensor.nrows()).all(|row| {
-        (0..chi_r).all(|column| tensor[(row, start_column + column)].norm_sqr() <= 1e-20)
-    })
-}
-
 /// Project qubit `q_idx` onto `outcome` without renormalizing. Returns
 /// `false` if the projection is to a zero-probability outcome.
 ///
 /// Unlike `project_forced_z`, the MPS is left UNNORMALIZED: its norm drops
 /// by `sqrt(conditional_prob)` after this call. This is what lets the caller
 /// recover the complex amplitude from the selected virtual-basis coefficient.
-///
-/// Used by `StabMps::amplitude_iterative` (Liu-Clark VI.B).
 ///
 /// # Panics
 ///
@@ -738,6 +673,8 @@ pub fn project_forced_z_unnormalized(
     if carried_norm < 1e-30 {
         return false;
     }
+    // Keep the projector's absolute SVD cutoff independent of the accumulated
+    // prefix amplitude. The norm is restored after the normalized projection.
     mps.scale(Complex64::new(carried_norm.recip(), 0.0));
     let probability = project_forced_z(tableau, mps, q_idx, outcome);
     if probability < 1e-20 {
@@ -948,13 +885,6 @@ fn compensate_measurement_pauli_gauge(
 
 /// Convert a normalized single-flip Pauli eigenstate into the coefficient
 /// basis selected by the corresponding tableau measurement.
-///
-/// For every real or imaginary signed phase handled by `W`, the projected
-/// eigenvalue equation relates the flip site's two blocks so that
-/// `W^-1 |psi_projected> = sqrt(2) P_0 |psi_projected>`. Selecting the zero
-/// block is both exact and local; it avoids materializing W's potentially
-/// long-range CZ chain on an MPS that is already known to lie in this
-/// eigenspace.
 fn collapse_projected_flip_site(mps: &mut Mps, id: usize) {
     let chi_r = mps.bond_dim(id + 1);
     let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[id], 0, chi_r)
@@ -1035,6 +965,7 @@ pub(super) fn project_forced_z_with_update(
         };
         if probability > 0.0 {
             tableau.mz_forced(q_idx, outcome);
+            mps.normalize();
         }
         return ForcedProjectionResult {
             probability,
@@ -1045,12 +976,15 @@ pub(super) fn project_forced_z_with_update(
         };
     }
 
-    // Reduce to one virtual X site while compensating every generator-basis
-    // CNOT on the MPS. This preserves C·MPS exactly.
-    let mut modified_sites = pre_reduce_for_measurement(tableau, mps, q_idx, true);
+    // Evaluate the Born probability in the incoming representation before
+    // generator pre-reduction changes the tableau/MPS factorization.
     let norm_squared = mps.norm_squared();
     assert!(norm_squared > 1e-20, "cannot project a zero-norm MPS");
     let expectation = (z_expectation_value(tableau, mps, q_idx).re / norm_squared).clamp(-1.0, 1.0);
+
+    // Reduce to one virtual X site while compensating every generator-basis
+    // CNOT on the MPS. This preserves C·MPS exactly.
+    let mut modified_sites = pre_reduce_for_measurement(tableau, mps, q_idx, true);
     let decomposition = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
 
     match decomposition {
@@ -1122,8 +1056,8 @@ pub(super) fn project_forced_z_with_update(
                 );
             } else {
                 apply_pauli_projection(mps, &flip_sites, &sign_sites, phase, sign_f, probability);
-                // On the projected Pauli eigenspace, W^-1 is exactly sqrt(2)
-                // times selection of the flip site's zero block.
+            }
+            if !is_local_projection {
                 collapse_projected_flip_site(mps, flip_sites[0]);
             }
 

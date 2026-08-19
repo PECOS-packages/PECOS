@@ -20,6 +20,7 @@ struct Counts {
     single_site: u64,
     multi_disent: u64,
     multi_std: u64,
+    numerical_redetect: u64,
 }
 
 impl Counts {
@@ -27,12 +28,14 @@ impl Counts {
         self.single_site += stats.single_site;
         self.multi_disent += stats.multi_disent;
         self.multi_std += stats.multi_std;
+        self.numerical_redetect += stats.numerical_redetect;
     }
 
     fn add_delta(&mut self, after: StabMpsStats, before: StabMpsStats) {
         self.single_site += after.single_site - before.single_site;
         self.multi_disent += after.multi_disent - before.multi_disent;
         self.multi_std += after.multi_std - before.multi_std;
+        self.numerical_redetect += after.numerical_redetect - before.numerical_redetect;
     }
 
     fn fast_rate(self) -> f64 {
@@ -296,10 +299,11 @@ fn main() {
     if mode == "all" || mode == "stn" {
         let (stn, rotations, trajectory_hash, stn_seconds) = run_stn(repeats);
         println!(
-            "STN repeats={repeats} configs=16 rotations={rotations} multi_disent={} multi_std={} single_site={} fast_rate={:.3}% trajectory_hash={trajectory_hash:016x} wall_s={stn_seconds:.6}",
+            "STN repeats={repeats} configs=16 rotations={rotations} multi_disent={} multi_std={} single_site={} numerical_redetect={} fast_rate={:.3}% trajectory_hash={trajectory_hash:016x} wall_s={stn_seconds:.6}",
             stn.multi_disent,
             stn.multi_std,
             stn.single_site,
+            stn.numerical_redetect,
             stn.fast_rate(),
         );
     }
@@ -307,10 +311,11 @@ fn main() {
     if mode == "all" || mode == "mast" {
         let (mast, post_rotations, mast_seconds) = run_mast_post_projection(repeats);
         println!(
-            "MAST_POST repeats={repeats} rotations={post_rotations} multi_disent={} multi_std={} single_site={} fast_rate={:.3}% wall_s={mast_seconds:.6}",
+            "MAST_POST repeats={repeats} rotations={post_rotations} multi_disent={} multi_std={} single_site={} numerical_redetect={} fast_rate={:.3}% wall_s={mast_seconds:.6}",
             mast.multi_disent,
             mast.multi_std,
             mast.single_site,
+            mast.numerical_redetect,
             mast.fast_rate(),
         );
     }

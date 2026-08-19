@@ -1697,16 +1697,18 @@ where
 {
     let angle =
         |units: u32| Angle64::from_radians(f64::from(units) * 0.0001 * std::f64::consts::TAU);
-    simulator.rz(angle(4934), &[QubitId(2)]);
-    simulator.rx(angle(7513), &[QubitId(2)]);
-    simulator.cz(&[(QubitId(0), QubitId(2))]);
-    simulator.cx(&[(QubitId(2), QubitId(0))]);
-    simulator.rz(angle(3365), &[QubitId(0)]);
-    simulator.rz(angle(7635), &[QubitId(0)]);
-    simulator.h(&[QubitId(0)]);
-    simulator.x(&[QubitId(1)]);
-    simulator.sz(&[QubitId(2)]);
-    simulator.rx(angle(8337), &[QubitId(2)]);
+    simulator.rx(angle(3546), &[QubitId(0)]);
+    simulator.cz(&[(QubitId(1), QubitId(0))]);
+    simulator.rz(angle(8057), &[QubitId(1)]);
+    simulator.rx(angle(761), &[QubitId(0)]);
+    simulator.sz(&[QubitId(1)]);
+    simulator.h(&[QubitId(2)]);
+    simulator.cx(&[(QubitId(0), QubitId(2))]);
+    simulator.h(&[QubitId(2)]);
+    simulator.cz(&[(QubitId(2), QubitId(1))]);
+    simulator.rx(angle(9376), &[QubitId(0)]);
+    simulator.rx(angle(5410), &[QubitId(2)]);
+    simulator.cz(&[(QubitId(0), QubitId(1))]);
 }
 
 #[test]
@@ -2298,10 +2300,10 @@ fn dense_state_vector_probabilities(stn: &StabMps) -> Vec<f64> {
 
 fn exact_mps_config() -> MpsConfig {
     MpsConfig {
-        // The largest case using this helper has eight total MPS sites
-        // (four data plus four injection ancillas), whose exact Schmidt-rank
-        // ceiling is 2^(8/2) = 16.
-        max_bond_dim: 16,
+        // The largest release stress case using this helper has eleven total
+        // MPS sites (five data plus six injection ancillas), whose exact
+        // Schmidt-rank ceiling is 2^floor(11/2) = 32.
+        max_bond_dim: 32,
         svd_cutoff: 0.0,
         max_truncation_error: Some(0.0),
         parallel: false,
@@ -4117,8 +4119,8 @@ fn test_large_scale_100_qubits() {
     // below the configured cap instead of saturating it from gauge-dependent
     // local singular values.
     assert!(
-        mast_bond < 128,
-        "MAST unexpectedly saturated its default bond cap"
+        (2..128).contains(&mast_bond),
+        "MAST bond must remain nontrivial without saturating its default cap, got {mast_bond}"
     );
 }
 
@@ -4133,8 +4135,8 @@ fn test_large_scale_200_qubits() {
     // below the configured cap instead of saturating it from gauge-dependent
     // local singular values.
     assert!(
-        mast_bond < 128,
-        "MAST unexpectedly saturated its default bond cap"
+        (2..128).contains(&mast_bond),
+        "MAST bond must remain nontrivial without saturating its default cap, got {mast_bond}"
     );
 }
 

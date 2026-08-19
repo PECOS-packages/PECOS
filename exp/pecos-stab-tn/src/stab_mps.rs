@@ -153,8 +153,14 @@ fn cheap_product_zero_site_test(mps: &Mps, site: usize) -> Option<bool> {
     None
 }
 
+// Ten times the observed ~1e-16 contraction roundoff, with worst-case state
+// error 2*sqrt(epsilon) <= 6.33e-8 when the rejected component is dropped.
+const PRODUCT_ZERO_PROBABILITY_TOLERANCE: f64 = 1e-15;
+
+#[cfg(test)]
+const STORED_PROOF_SOUNDNESS_TOLERANCE: f64 = 5e-16;
+
 fn are_numerical_product_zero_sites(mps: &Mps, sites: &[usize]) -> Vec<bool> {
-    const TOLERANCE: f64 = 1e-12;
     let mut results = vec![false; sites.len()];
     let mut fallback_indices = Vec::new();
 
@@ -173,13 +179,12 @@ fn are_numerical_product_zero_sites(mps: &Mps, sites: &[usize]) -> Vec<bool> {
         let fallback_sites: Vec<usize> =
             fallback_indices.iter().map(|&index| sites[index]).collect();
         let environments = mps.environment_cache(&fallback_sites);
-        assert!(
-            environments.norm_squared() > 1e-20,
-            "stored MPS must have nonzero norm"
-        );
+        if environments.norm_squared() <= 1e-20 {
+            return vec![false; sites.len()];
+        }
         for index in fallback_indices {
-            results[index] =
-                environments.one_site_basis_marginal(sites[index], 1).abs() <= TOLERANCE;
+            results[index] = environments.one_site_basis_marginal(sites[index], 1).abs()
+                <= PRODUCT_ZERO_PROBABILITY_TOLERANCE;
         }
     }
 
@@ -234,7 +239,7 @@ fn assert_disent_flags_match_stored_mps(
         if matches!(flag, Some(SiteEigenstate::Z(false))) {
             let marginal = stored_mps_one_marginal(mps, site);
             assert!(
-                marginal <= 1e-10,
+                marginal.abs() <= STORED_PROOF_SOUNDNESS_TOLERANCE,
                 "stored |0> proof at site {site} has P(sigma=1)={marginal:.3e}; {context}; bonds=({}, {})",
                 mps.bond_dim(site),
                 mps.bond_dim(site + 1)
@@ -1104,10 +1109,10 @@ impl StabMps {
     /// and materialize a tracked Pauli frame when it must be included.
     ///
     /// Scales beyond `amplitude`'s n ≤ 14 limit by working directly on the
-    /// MPS + tableau. After forcing all N outcomes, the tableau encodes the
-    /// physical Z constraints and the MPS (left unnormalized) contains one
-    /// selected virtual-basis coefficient. The final tableau's GF(2) sign
-    /// equations identify that coefficient without enumerating the state.
+    /// MPS + tableau. The product of conditional probabilities supplies the
+    /// amplitude magnitude. After forcing all N outcomes, the final tableau's
+    /// GF(2) sign equations identify the virtual-basis coefficient whose phase
+    /// supplies the complex amplitude phase without enumerating the state.
     ///
     /// # Correctness
     /// Exact match to `amplitude` (SV-based) at n ≤ 14 for Clifford+T
@@ -1125,13 +1130,21 @@ impl StabMps {
         );
         let mut tab = self.tableau.clone();
         let mut mps = self.mps.clone();
+        let mut projected_norm = 1.0;
         for (q, &s_q) in bitstring.iter().enumerate() {
-            if !measure::project_forced_z_unnormalized(&mut tab, &mut mps, q, s_q) {
+            let probability = measure::project_forced_z(&mut tab, &mut mps, q, s_q);
+            if probability < 1e-20 {
                 return Complex64::new(0.0, 0.0);
             }
+            projected_norm *= probability.sqrt();
         }
         let mps_index = measure::projected_mps_basis_index(&tab, bitstring);
-        self.global_phase * mps.amplitude(&mps_index)
+        let coefficient = mps.amplitude(&mps_index);
+        let coefficient_norm = coefficient.norm();
+        if coefficient_norm < 1e-30 {
+            return Complex64::new(0.0, 0.0);
+        }
+        self.global_phase * coefficient / coefficient_norm * projected_norm
     }
 
     /// Probability of measuring `bitstring` in the computational basis.
@@ -3088,6 +3101,181 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_amplitude_iterative_seed_37304_is_gauge_invariant() {
+        let t = Angle64::QUARTER_TURN / 2u64;
+        let mut stn = StabMps::builder(3)
+            .seed(37_304)
+            .merge_rz(false)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[QubitId(1)]);
+        stn.cx(&[(QubitId(1), QubitId(2))]);
+        stn.h(&[QubitId(1)]);
+        stn.cx(&[(QubitId(1), QubitId(2))]);
+        stn.rz(t, &[QubitId(1)]);
+        stn.h(&[QubitId(1)]);
+        stn.cx(&[(QubitId(2), QubitId(0))]);
+        stn.sz(&[QubitId(2)]);
+        stn.cx(&[(QubitId(1), QubitId(0))]);
+        stn.rz(t, &[QubitId(2)]);
+        stn.h(&[QubitId(2)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        stn.h(&[QubitId(1)]);
+        stn.rz(t, &[QubitId(0)]);
+        stn.h(&[QubitId(1)]);
+        stn.sz(&[QubitId(1)]);
+        stn.h(&[QubitId(2)]);
+        stn.rz(t, &[QubitId(1)]);
+        stn.h(&[QubitId(1)]);
+        stn.flush();
+
+        let expected = stn.state_vector()[0].norm_sqr();
+        let mut left = stn.clone();
+        left.mps.left_canonicalize();
+        let mut right = stn.clone();
+        right.mps.right_canonicalize();
+        for (label, candidate) in [("stored", &stn), ("left", &left), ("right", &right)] {
+            let actual = candidate.amplitude_iterative(&[false; 3]).norm_sqr();
+            assert!(
+                (actual - expected).abs() <= 1e-12,
+                "seed 37304 gauge={label} bonds={:?} expected={expected:.16e} actual={actual:.16e}",
+                candidate.mps.bond_dims(),
+            );
+        }
+    }
+
+    #[test]
+    fn test_forced_projection_probability_uses_incoming_frame() {
+        let t = Angle64::QUARTER_TURN / 2u64;
+        let mut stn = StabMps::builder(3)
+            .seed(18_306)
+            .merge_rz(false)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[QubitId(1), QubitId(2)]);
+        stn.cx(&[(QubitId(2), QubitId(0)), (QubitId(1), QubitId(0))]);
+        stn.h(&[QubitId(0)]);
+        stn.rz(t, &[QubitId(0)]);
+        stn.sz(&[QubitId(0), QubitId(0)]);
+        stn.cx(&[(QubitId(2), QubitId(1))]);
+        stn.rz(t, &[QubitId(0)]);
+        stn.cx(&[(QubitId(2), QubitId(0))]);
+        stn.sz(&[QubitId(0)]);
+        stn.cx(&[(QubitId(2), QubitId(1))]);
+        stn.rz(t, &[QubitId(2)]);
+        stn.h(&[QubitId(2)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        stn.h(&[QubitId(0), QubitId(2)]);
+        stn.rz(t, &[QubitId(1)]);
+        stn.h(&[QubitId(1)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        stn.sz(&[QubitId(2)]);
+        stn.h(&[QubitId(1)]);
+        stn.rz(t, &[QubitId(1)]);
+        stn.sz(&[QubitId(1), QubitId(1)]);
+        stn.h(&[QubitId(1)]);
+        stn.rz(t, &[QubitId(1)]);
+        stn.flush();
+
+        let outcomes = [true, false, false];
+        let state = stn.state_vector();
+        let mut expected_prefix = 1.0;
+        let mut tableau = stn.tableau.clone();
+        let mut mps = stn.mps.clone();
+        for (q, &outcome) in outcomes.iter().enumerate() {
+            let joint = state
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| {
+                    outcomes[..=q]
+                        .iter()
+                        .enumerate()
+                        .all(|(site, &bit)| ((*index >> site) & 1 != 0) == bit)
+                })
+                .map(|(_, amplitude)| amplitude.norm_sqr())
+                .sum::<f64>();
+            let expected_probability = joint / expected_prefix;
+            let actual_probability = measure::project_forced_z(&mut tableau, &mut mps, q, outcome);
+            assert!(
+                (actual_probability - expected_probability).abs() <= 1e-12,
+                "q={q}: expected={expected_probability:.16e}, actual={actual_probability:.16e}"
+            );
+
+            let mut represented = stn.clone();
+            represented.tableau = tableau.clone();
+            represented.mps = mps.clone();
+            let actual_state = represented.state_vector();
+            let inverse_norm = joint.sqrt().recip();
+            let expected_state = state
+                .iter()
+                .enumerate()
+                .map(|(index, &amplitude)| {
+                    if outcomes[..=q]
+                        .iter()
+                        .enumerate()
+                        .all(|(site, &bit)| ((index >> site) & 1 != 0) == bit)
+                    {
+                        amplitude * inverse_norm
+                    } else {
+                        Complex64::new(0.0, 0.0)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let overlap = actual_state
+                .iter()
+                .zip(&expected_state)
+                .map(|(actual, expected)| actual.conj() * expected)
+                .sum::<Complex64>()
+                .norm_sqr();
+            assert!(
+                overlap >= 1.0 - 1e-12,
+                "q={q}: projected-state fidelity={overlap:.16e}"
+            );
+            expected_prefix = joint;
+        }
+    }
+
+    #[test]
+    fn test_forced_projection_seed_33404_regression() {
+        let t = Angle64::QUARTER_TURN / 2u64;
+        let mut stn = StabMps::builder(4)
+            .seed(33_404)
+            .merge_rz(false)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
+        stn.sz(&[QubitId(0)]);
+        stn.cx(&[(QubitId(0), QubitId(3)), (QubitId(2), QubitId(0))]);
+        stn.rz(t, &[QubitId(3)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        stn.h(&[QubitId(1)]);
+        stn.cx(&[(QubitId(2), QubitId(3))]);
+        stn.rz(t, &[QubitId(2)]);
+        stn.h(&[QubitId(2), QubitId(1), QubitId(2)]);
+        stn.cx(&[(QubitId(1), QubitId(2))]);
+        stn.rz(t, &[QubitId(0)]);
+        stn.h(&[QubitId(0)]);
+        stn.cx(&[(QubitId(3), QubitId(2)), (QubitId(1), QubitId(3))]);
+        stn.sz(&[QubitId(1)]);
+        stn.rz(t, &[QubitId(0)]);
+        stn.flush();
+
+        let expected = stn.state_vector()[0].norm_sqr();
+        let bitstring = [false; 4];
+        let probability = stn.prob_bitstring(&bitstring);
+        let iterative_probability = stn.amplitude_iterative(&bitstring).norm_sqr();
+        assert!(
+            (probability - expected).abs() <= 1e-12,
+            "probability={probability:.16e}, expected={expected:.16e}"
+        );
+        assert!(
+            (iterative_probability - expected).abs() <= 1e-12,
+            "iterative={iterative_probability:.16e}, expected={expected:.16e}"
+        );
     }
 
     /// n=2 no-entangle H+T: amp(00) = (e^{-iπ/8}/√2)/√2 = e^{-iπ/8}/2.
@@ -7185,6 +7373,22 @@ mod tests {
     }
 
     #[test]
+    fn test_numerical_zero_site_fallback_rejects_zero_norm_mps() {
+        let product = Mps::new(3, MpsConfig::default());
+        let mut mps = product.add(&product);
+        for tensor in mps.tensors_mut() {
+            tensor.fill(Complex64::new(1.0, 0.0));
+        }
+        mps.scale(Complex64::new(0.0, 0.0));
+
+        assert!(mps.norm_squared() <= 1e-30);
+        assert_eq!(
+            are_numerical_product_zero_sites(&mps, &[0, 1, 2]),
+            vec![false; 3]
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "max_truncation_error must be finite and non-negative")]
     fn test_builder_rejects_negative_max_truncation_error() {
         let _ = StabMps::builder(1).max_truncation_error(-1.0);
@@ -7274,86 +7478,96 @@ mod tests {
         const NUM_QUBITS: usize = 5;
         const NUM_CIRCUITS: u64 = 50;
         const NUM_MEASUREMENTS: usize = 3;
-        let mut flagged_sites = 0_usize;
+        let mut flagged_sites = [0_usize; 2];
         let mut false_proofs = Vec::new();
 
-        for lazy_measure in [false, true] {
-            for numerical_flag_redetection in [false, true] {
-                for circuit_seed in 0..NUM_CIRCUITS {
-                    let mut random = circuit_seed + 1;
-                    let mut stn = StabMps::builder(NUM_QUBITS)
-                        .seed(0x6000_0000 + circuit_seed)
-                        .max_bond_dim(64)
-                        .svd_cutoff(0.0)
-                        .max_truncation_error(0.0)
-                        .merge_rz(false)
-                        .lazy_measure(lazy_measure)
-                        .numerical_flag_redetection(numerical_flag_redetection)
-                        .build();
+        for (config_index, truncating) in [false, true].into_iter().enumerate() {
+            for lazy_measure in [false, true] {
+                for numerical_flag_redetection in [false, true] {
+                    for circuit_seed in 0..NUM_CIRCUITS {
+                        let mut random = circuit_seed + 1;
+                        let (max_bond_dim, svd_cutoff, max_truncation_error) = if truncating {
+                            (4, 1e-12, 1e-8)
+                        } else {
+                            (64, 0.0, 0.0)
+                        };
+                        let mut stn = StabMps::builder(NUM_QUBITS)
+                            .seed(0x6000_0000 + circuit_seed)
+                            .max_bond_dim(max_bond_dim)
+                            .svd_cutoff(svd_cutoff)
+                            .max_truncation_error(max_truncation_error)
+                            .merge_rz(false)
+                            .lazy_measure(lazy_measure)
+                            .numerical_flag_redetection(numerical_flag_redetection)
+                            .build();
 
-                    for step in 0..18 {
-                        let choice = next(&mut random) % 8;
-                        let q = (next(&mut random) % NUM_QUBITS as u64) as usize;
-                        match choice {
-                            0 | 1 => {
-                                stn.h(&[QubitId(q)]);
-                            }
-                            2 => {
-                                stn.sz(&[QubitId(q)]);
-                            }
-                            3 | 4 => {
-                                let (control, target) =
-                                    random_distinct_pair(&mut random, NUM_QUBITS);
-                                stn.cx(&[(QubitId(control), QubitId(target))]);
-                            }
-                            5 => {
-                                let (first, second) = random_distinct_pair(&mut random, NUM_QUBITS);
-                                stn.cz(&[(QubitId(first), QubitId(second))]);
-                            }
-                            _ => {
-                                let radians = if step & 1 == 0 { 0.37 } else { -0.61 };
-                                stn.rz(Angle64::from_radians(radians), &[QubitId(q)]);
-                            }
-                        }
-                    }
-
-                    for measurement in 0..NUM_MEASUREMENTS {
-                        let measured_qubit = (next(&mut random) % NUM_QUBITS as u64) as usize;
-                        let _ = stn.mz(&[QubitId(measured_qubit)]);
-                        for (site, flag) in stn.disent_flags.iter().enumerate() {
-                            if matches!(flag, Some(SiteEigenstate::Z(false))) {
-                                flagged_sites += 1;
-                                let marginal = stored_mps_one_marginal(&stn.mps, site);
-                                if marginal > 1e-10 {
-                                    false_proofs.push((
-                                        lazy_measure,
-                                        numerical_flag_redetection,
-                                        circuit_seed,
-                                        measurement,
-                                        "measurement",
-                                        site,
-                                        marginal,
-                                    ));
+                        for step in 0..18 {
+                            let choice = next(&mut random) % 8;
+                            let q = (next(&mut random) % NUM_QUBITS as u64) as usize;
+                            match choice {
+                                0 | 1 => {
+                                    stn.h(&[QubitId(q)]);
+                                }
+                                2 => {
+                                    stn.sz(&[QubitId(q)]);
+                                }
+                                3 | 4 => {
+                                    let (control, target) =
+                                        random_distinct_pair(&mut random, NUM_QUBITS);
+                                    stn.cx(&[(QubitId(control), QubitId(target))]);
+                                }
+                                5 => {
+                                    let (first, second) =
+                                        random_distinct_pair(&mut random, NUM_QUBITS);
+                                    stn.cz(&[(QubitId(first), QubitId(second))]);
+                                }
+                                _ => {
+                                    let radians = if step & 1 == 0 { 0.37 } else { -0.61 };
+                                    stn.rz(Angle64::from_radians(radians), &[QubitId(q)]);
                                 }
                             }
                         }
 
-                        let reset_qubit = (next(&mut random) % NUM_QUBITS as u64) as usize;
-                        stn.reset_qubit(QubitId(reset_qubit));
-                        for (site, flag) in stn.disent_flags.iter().enumerate() {
-                            if matches!(flag, Some(SiteEigenstate::Z(false))) {
-                                flagged_sites += 1;
-                                let marginal = stored_mps_one_marginal(&stn.mps, site);
-                                if marginal > 1e-10 {
-                                    false_proofs.push((
-                                        lazy_measure,
-                                        numerical_flag_redetection,
-                                        circuit_seed,
-                                        measurement,
-                                        "reset",
-                                        site,
-                                        marginal,
-                                    ));
+                        for measurement in 0..NUM_MEASUREMENTS {
+                            let measured_qubit = (next(&mut random) % NUM_QUBITS as u64) as usize;
+                            let _ = stn.mz(&[QubitId(measured_qubit)]);
+                            for (site, flag) in stn.disent_flags.iter().enumerate() {
+                                if matches!(flag, Some(SiteEigenstate::Z(false))) {
+                                    flagged_sites[config_index] += 1;
+                                    let marginal = stored_mps_one_marginal(&stn.mps, site);
+                                    if marginal.abs() > STORED_PROOF_SOUNDNESS_TOLERANCE {
+                                        false_proofs.push((
+                                            truncating,
+                                            lazy_measure,
+                                            numerical_flag_redetection,
+                                            circuit_seed,
+                                            measurement,
+                                            "measurement",
+                                            site,
+                                            marginal,
+                                        ));
+                                    }
+                                }
+                            }
+
+                            let reset_qubit = (next(&mut random) % NUM_QUBITS as u64) as usize;
+                            stn.reset_qubit(QubitId(reset_qubit));
+                            for (site, flag) in stn.disent_flags.iter().enumerate() {
+                                if matches!(flag, Some(SiteEigenstate::Z(false))) {
+                                    flagged_sites[config_index] += 1;
+                                    let marginal = stored_mps_one_marginal(&stn.mps, site);
+                                    if marginal.abs() > STORED_PROOF_SOUNDNESS_TOLERANCE {
+                                        false_proofs.push((
+                                            truncating,
+                                            lazy_measure,
+                                            numerical_flag_redetection,
+                                            circuit_seed,
+                                            measurement,
+                                            "reset",
+                                            site,
+                                            marginal,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -7363,12 +7577,14 @@ mod tests {
         }
 
         eprintln!(
-            "stored-frame flag census: modes=4 circuits_per_mode={NUM_CIRCUITS} measurements_and_resets_per_circuit={NUM_MEASUREMENTS} flagged_sites={flagged_sites} false_proofs={}",
+            "stored-frame flag census: configs=2 modes_per_config=4 circuits_per_mode={NUM_CIRCUITS} measurements_and_resets_per_circuit={NUM_MEASUREMENTS} exact_flagged_sites={} truncating_flagged_sites={} false_proofs={}",
+            flagged_sites[0],
+            flagged_sites[1],
             false_proofs.len()
         );
         assert!(
             false_proofs.is_empty(),
-            "every stored-frame Z(false) proof must have P(sigma=1) <= 1e-10; found {} false proofs, first={:?}",
+            "every stored-frame Z(false) proof must have |P(sigma=1)| <= {STORED_PROOF_SOUNDNESS_TOLERANCE:.1e}; found {} false proofs, first={:?}",
             false_proofs.len(),
             false_proofs.first()
         );
@@ -7467,14 +7683,6 @@ mod tests {
         for lazy_measure in [false, true] {
             for numerical_flag_redetection in [false, true] {
                 for circuit_seed in 0..16 {
-                    // Lazy seed 5 exposes the pre-existing lazy-frame RZ
-                    // defect, which is outside this disentangling-flag fix.
-                    // Exclude only that lazy leg; the eager seed remains in
-                    // the sweep and the lazy flag invariant has a separate
-                    // 200-circuit marginal census above.
-                    if lazy_measure && circuit_seed == 5 {
-                        continue;
-                    }
                     let continuation_seed = circuit_seed;
                     let mut random = circuit_seed + 1;
                     let mut stn = StabMps::builder(N)

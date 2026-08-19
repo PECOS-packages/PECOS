@@ -18,8 +18,143 @@
 //! O(mn * min(m,n)) for the full SVD.
 
 use crate::errors::MpsError;
-use nalgebra::{DMatrix, DVector, SVD};
+use nalgebra::{DMatrix, DVector, SVD, SymmetricEigen};
 use num_complex::Complex64;
+
+// Nalgebra's default is five machine epsilons. On nearly rank-deficient
+// complex matrices that can stop the bidiagonal iteration early enough for
+// U*S*Vt to have milliscale reconstruction error even though the reported
+// trailing singular values are at roundoff. A stricter tolerance plus
+// reconstruction-validated orientation selection below restores accuracy
+// without changing the caller's physical truncation policy.
+const SVD_CONVERGENCE_EPSILON: f64 = 1e-18;
+
+type SvdFactors = (DMatrix<Complex64>, DVector<f64>, DMatrix<Complex64>);
+
+fn direct_svd_factors(matrix: &DMatrix<Complex64>) -> Result<SvdFactors, MpsError> {
+    let svd = SVD::try_new(matrix.clone(), true, true, SVD_CONVERGENCE_EPSILON, 0)
+        .ok_or(MpsError::SvdFailed)?;
+    Ok((
+        svd.u.ok_or(MpsError::SvdFailed)?,
+        svd.singular_values,
+        svd.v_t.ok_or(MpsError::SvdFailed)?,
+    ))
+}
+
+fn adjoint_svd_factors(matrix: &DMatrix<Complex64>) -> Result<SvdFactors, MpsError> {
+    let svd = SVD::try_new(matrix.adjoint(), true, true, SVD_CONVERGENCE_EPSILON, 0)
+        .ok_or(MpsError::SvdFailed)?;
+    Ok((
+        svd.v_t.ok_or(MpsError::SvdFailed)?.adjoint().into_owned(),
+        svd.singular_values,
+        svd.u.ok_or(MpsError::SvdFailed)?.adjoint().into_owned(),
+    ))
+}
+
+fn reconstruction_error(
+    matrix: &DMatrix<Complex64>,
+    u: &DMatrix<Complex64>,
+    singular_values: &DVector<f64>,
+    vt: &DMatrix<Complex64>,
+) -> f64 {
+    let mut us = u.clone();
+    for (column, &singular_value) in singular_values.iter().enumerate() {
+        for row in 0..us.nrows() {
+            us[(row, column)] *= singular_value;
+        }
+    }
+    let reconstructed = us * vt;
+    matrix
+        .iter()
+        .zip(reconstructed.iter())
+        .map(|(expected, actual)| (*expected - *actual).norm())
+        .fold(0.0_f64, f64::max)
+}
+
+/// Recover an SVD-like factorization from the Hermitian Gram matrix.
+///
+/// This is a fallback for a nalgebra complex-SVD failure mode on nearly
+/// rank-deficient rectangular matrices. The eigenvectors on the smaller side
+/// form the canonical factor exactly; deriving the other factor by multiplying
+/// with the input also avoids dividing by a squared condition number when
+/// reconstructing the retained components.
+fn gram_svd_factors(matrix: &DMatrix<Complex64>) -> Result<SvdFactors, MpsError> {
+    let (rows, cols) = matrix.shape();
+    let rank = rows.min(cols);
+    let mut components = Vec::with_capacity(rank);
+
+    if rows >= cols {
+        let gram = matrix.adjoint() * matrix;
+        let eigen = SymmetricEigen::try_new(gram, f64::EPSILON, 0).ok_or(MpsError::SvdFailed)?;
+        for column in 0..rank {
+            let v = eigen.eigenvectors.column(column).into_owned();
+            let av = matrix * &v;
+            let singular_value = av.norm();
+            let u = if singular_value > 0.0 {
+                av / Complex64::new(singular_value, 0.0)
+            } else {
+                DVector::zeros(rows)
+            };
+            components.push((singular_value, u, v));
+        }
+    } else {
+        let gram = matrix * matrix.adjoint();
+        let eigen = SymmetricEigen::try_new(gram, f64::EPSILON, 0).ok_or(MpsError::SvdFailed)?;
+        for column in 0..rank {
+            let u = eigen.eigenvectors.column(column).into_owned();
+            let u_adjoint_a = u.adjoint() * matrix;
+            let singular_value = u_adjoint_a.norm();
+            let v = if singular_value > 0.0 {
+                u_adjoint_a.adjoint().into_owned() / Complex64::new(singular_value, 0.0)
+            } else {
+                DVector::zeros(cols)
+            };
+            components.push((singular_value, u, v));
+        }
+    }
+
+    components.sort_by(|left, right| right.0.total_cmp(&left.0));
+    let mut u = DMatrix::zeros(rows, rank);
+    let mut singular_values = DVector::zeros(rank);
+    let mut vt = DMatrix::zeros(rank, cols);
+    for (column, (singular_value, left, right)) in components.into_iter().enumerate() {
+        singular_values[column] = singular_value;
+        u.set_column(column, &left);
+        for row in 0..cols {
+            vt[(column, row)] = right[row].conj();
+        }
+    }
+    Ok((u, singular_values, vt))
+}
+
+fn stable_svd_factors(matrix: &DMatrix<Complex64>) -> Result<SvdFactors, MpsError> {
+    let adjoint = adjoint_svd_factors(matrix)?;
+    let adjoint_error = reconstruction_error(matrix, &adjoint.0, &adjoint.1, &adjoint.2);
+    let matrix_scale = matrix
+        .iter()
+        .map(|value| value.norm())
+        .fold(0.0_f64, f64::max);
+    let reconstruction_tolerance = matrix_scale * (256.0 * f64::EPSILON);
+    if adjoint_error <= reconstruction_tolerance {
+        return Ok(adjoint);
+    }
+
+    let direct = direct_svd_factors(matrix)?;
+    let direct_error = reconstruction_error(matrix, &direct.0, &direct.1, &direct.2);
+    if direct_error <= reconstruction_tolerance {
+        return Ok(direct);
+    }
+
+    let gram = gram_svd_factors(matrix)?;
+    let gram_error = reconstruction_error(matrix, &gram.0, &gram.1, &gram.2);
+    if gram_error < direct_error.min(adjoint_error) {
+        Ok(gram)
+    } else if direct_error < adjoint_error {
+        Ok(direct)
+    } else {
+        Ok(adjoint)
+    }
+}
 
 /// Result of a truncated SVD.
 pub struct TruncatedSvd {
@@ -67,13 +202,9 @@ pub fn truncated_svd_with_error(
     cutoff: f64,
     max_trunc_error: Option<f64>,
 ) -> Result<TruncatedSvd, MpsError> {
-    let svd = SVD::new(matrix.clone(), true, true);
+    let (u_full, svals, vt_full) = stable_svd_factors(matrix)?;
 
-    let u_full = svd.u.ok_or(MpsError::SvdFailed)?;
-    let vt_full = svd.v_t.ok_or(MpsError::SvdFailed)?;
-    let svals: &DVector<f64> = &svd.singular_values;
-
-    let rank = compute_rank(svals, max_rank, cutoff, max_trunc_error);
+    let rank = compute_rank(&svals, max_rank, cutoff, max_trunc_error);
 
     let u_trunc = u_full.columns(0, rank).clone_owned();
     let vt_trunc = vt_full.rows(0, rank).clone_owned();
@@ -239,13 +370,10 @@ fn randomized_truncated_svd_with_error(
     let b = q_thin.adjoint() * matrix;
 
     // Step 5: Full SVD of the small matrix B
-    let svd_b = SVD::new(b, true, true);
-    let u_b = svd_b.u.ok_or(MpsError::SvdFailed)?;
-    let vt_b = svd_b.v_t.ok_or(MpsError::SvdFailed)?;
-    let svals: &DVector<f64> = &svd_b.singular_values;
+    let (u_b, svals, vt_b) = stable_svd_factors(&b)?;
 
     // Determine rank using same criteria as full SVD
-    let rank = compute_rank(svals, max_rank, cutoff, max_trunc_error);
+    let rank = compute_rank(&svals, max_rank, cutoff, max_trunc_error);
 
     // Step 6: U = Q × Ũ_truncated
     let u_b_trunc = u_b.columns(0, rank).clone_owned();
@@ -428,6 +556,71 @@ mod tests {
                 assert_relative_eq!(reconstructed[(i, j)].re, m[(i, j)].re, epsilon = 1e-10);
             }
         }
+    }
+
+    #[test]
+    fn test_nearly_rank_deficient_complex_svd_reconstructs() {
+        let c = Complex64::new;
+        let matrix = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                c(0.924_751_335_947_476_8, 1.149_464_534_439_411_6e-18),
+                c(0.005_588_521_570_544_361, 0.001_862_840_523_514_787_4),
+                c(1.113_638_002_453_152e-17, -1.001_691_566_199_797_2e-17),
+                c(-9.900_226_694_310_336e-18, 2.045_446_567_427_834e-17),
+                c(4.174_238_067_903_684e-32, -2.107_447_139_670_980_2e-32),
+                c(-4.561_859_616_215_51e-32, 3.030_573_543_716_516_5e-32),
+                c(7.649_815_290_319_717e-16, 2.976_525_575_056_578e-16),
+                c(-1.782_373_947_207_878e-16, -1.251_720_721_791_526e-16),
+                c(-0.010_225_154_846_847_47, 0.010_033_920_008_989_889),
+                c(0.341_701_797_119_702_33, -0.166_837_985_536_791_08),
+                c(3.884_325_578_198_641e-19, 5.748_278_930_752_762e-17),
+                c(4.512_116_547_715_041e-19, -6.004_905_012_027_449e-17),
+                c(5.033_965_804_543_656e-32, -1.227_951_147_885_866_2e-32),
+                c(-5.445_650_955_783_522e-32, 1.741_442_486_895_124e-32),
+                c(4.515_259_889_376_597e-16, 2.417_433_227_383_755e-16),
+                c(-1.809_225_712_298_247e-16, -2.213_247_773_922_222_7e-16),
+            ],
+        );
+        let (us, vt) = truncated_svd_left_absorb(&matrix, 4, 0.0, None).unwrap();
+        let reconstructed = us * vt;
+        let max_error = matrix
+            .iter()
+            .zip(reconstructed.iter())
+            .map(|(expected, actual)| (*expected - *actual).norm())
+            .fold(0.0_f64, f64::max);
+        assert!(max_error <= 1e-14, "reconstruction error={max_error:.3e}");
+    }
+
+    #[test]
+    fn test_complex_svd_gram_fallback_reconstructs() {
+        // Captured from a rank-reducing return SWAP in the issue #557 sweep.
+        // Both orientations of nalgebra's complex SVD report a near-zero tail
+        // but reconstruct this rank-one matrix with O(1e-1) element error.
+        let c = Complex64::new;
+        let matrix = DMatrix::from_column_slice(
+            4,
+            2,
+            &[
+                c(0.736_532_729_158_897_1, -0.135_156_274_059_290_76),
+                c(0.135_156_274_059_290_98, -0.466_220_181_040_314_65),
+                c(0.130_066_723_459_075_8, 0.000_104_181_257_041_555_5),
+                c(-0.089_876_514_560_921_97, 0.179_393_656_944_288_47),
+                c(0.055_983_561_755_173_154, 0.305_081_845_549_284_8),
+                c(0.193_114_722_038_938_23, 0.055_983_561_755_173_245),
+                c(-0.000_043_153_289_611_682_14, 0.053_875_400_870_180_04),
+                c(-0.074_307_285_710_030_7, -0.037_228_071_269_956_88),
+            ],
+        );
+        let (us, vt) = truncated_svd_left_absorb(&matrix, 2, 0.0, None).unwrap();
+        let reconstructed = us * vt;
+        let max_error = matrix
+            .iter()
+            .zip(reconstructed.iter())
+            .map(|(expected, actual)| (*expected - *actual).norm())
+            .fold(0.0_f64, f64::max);
+        assert!(max_error <= 1e-14, "reconstruction error={max_error:.3e}");
     }
 
     #[test]

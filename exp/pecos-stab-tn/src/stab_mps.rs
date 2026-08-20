@@ -29,6 +29,7 @@
 //! Quantum Simulator on a Basis of Stabilizer States." PRL 133, 230601 (2024).
 //! arXiv:2403.08724.
 
+mod canonical_ket;
 pub mod compile;
 pub mod disentangle;
 pub mod mast;
@@ -1155,9 +1156,16 @@ impl StabMps {
         let mut tab = self.tableau.clone();
         let mut mps = self.mps.clone();
         let mut projected_norm = 1.0;
+        let mut projection_phase = Complex64::new(1.0, 0.0);
         for (q, &s_q) in bitstring.iter().enumerate() {
             let probability = expect_mps_operation(
-                measure::project_forced_z(&mut tab, &mut mps, q, s_q),
+                measure::project_forced_z_with_phase(
+                    &mut tab,
+                    &mut mps,
+                    q,
+                    s_q,
+                    &mut projection_phase,
+                ),
                 "StabMps::amplitude_iterative forced projection",
             );
             if probability < 1e-20 {
@@ -1183,7 +1191,11 @@ impl StabMps {
             );
             return Complex64::new(0.0, 0.0);
         }
-        self.global_phase * coefficient / coefficient_norm * projected_norm
+        let terminal_tableau_phase =
+            canonical_ket::terminal_tableau_basis_phase(&tab, &mps_index, bitstring);
+        self.global_phase * projection_phase * terminal_tableau_phase * coefficient
+            / coefficient_norm
+            * projected_norm
     }
 
     /// Probability of measuring `bitstring` in the computational basis.
@@ -3124,44 +3136,116 @@ mod tests {
     }
 
     #[test]
-    fn test_amplitude_iterative_h_after_rotation_randomized() {
-        for n in 3..=5 {
-            for circuit_seed in 0..4_u64 {
-                let mut stn = StabMps::builder(n)
-                    .seed(circuit_seed)
-                    .merge_rz(false)
-                    .max_truncation_error(0.0)
-                    .build();
-                let mut rng_state = 0x9e37_79b9_7f4a_7c15_u64 ^ circuit_seed ^ n as u64;
-                let random = |state: &mut u64| {
-                    *state ^= *state << 13;
-                    *state ^= *state >> 7;
-                    *state ^= *state << 17;
-                    *state
-                };
+    fn test_amplitude_iterative_h_t_sz_phase_regression() {
+        let mut stn = StabMps::builder(1)
+            .merge_rz(false)
+            .svd_cutoff(0.0)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
+        stn.sz(&[QubitId(0)]);
+        stn.flush();
 
-                for rotation_qubit in 0..n {
-                    let theta = 0.17 + (random(&mut rng_state) % 101) as f64 * 0.011;
-                    stn.h(&[QubitId(rotation_qubit)]);
-                    stn.rz(Angle64::from_radians(theta), &[QubitId(rotation_qubit)]);
-                    stn.h(&[QubitId(rotation_qubit)]);
+        let expected = stn.state_vector()[1];
+        let actual = stn.amplitude_iterative(&[true]);
+        assert!(
+            (actual - expected).norm() <= 1e-12,
+            "H-T-SZ |1>: iterative={actual:?}, dense={expected:?}"
+        );
+    }
 
-                    if rotation_qubit + 1 < n {
-                        let pair = if random(&mut rng_state) & 1 == 0 {
-                            (rotation_qubit, rotation_qubit + 1)
-                        } else {
-                            (rotation_qubit + 1, rotation_qubit)
-                        };
-                        stn.cx(&[(QubitId(pair.0), QubitId(pair.1))]);
-                    }
+    #[test]
+    fn test_amplitude_iterative_h_t_cx_h_phase_regression() {
+        let mut stn = StabMps::builder(2)
+            .merge_rz(false)
+            .svd_cutoff(0.0)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        stn.h(&[QubitId(0)]);
+        stn.flush();
+
+        let expected = stn.state_vector()[3];
+        let actual = stn.amplitude_iterative(&[true, true]);
+        assert!(
+            (actual - expected).norm() <= 1e-12,
+            "H-T-CX-H |11>: iterative={actual:?}, dense={expected:?}"
+        );
+    }
+
+    fn amplitude_phase_randomized_circuit(n: usize, circuit_seed: u64) -> StabMps {
+        let mut stn = StabMps::builder(n)
+            .seed(circuit_seed)
+            .merge_rz(false)
+            .max_truncation_error(0.0)
+            .build();
+        let mut rng_state = 0x9e37_79b9_7f4a_7c15_u64 ^ circuit_seed ^ n as u64;
+        let random = |state: &mut u64| {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            *state
+        };
+
+        for rotation_qubit in 0..n {
+            let theta = 0.17 + (random(&mut rng_state) % 101) as f64 * 0.011;
+            stn.h(&[QubitId(rotation_qubit)]);
+            stn.rz(Angle64::from_radians(theta), &[QubitId(rotation_qubit)]);
+            let neighbour = (rotation_qubit + 1) % n;
+            match rotation_qubit % 3 {
+                0 => {
+                    stn.sz(&[QubitId(rotation_qubit)]);
                 }
+                1 => {
+                    stn.x(&[QubitId(neighbour)]);
+                }
+                _ => {
+                    stn.cz(&[(QubitId(rotation_qubit), QubitId(neighbour))]);
+                }
+            }
+            stn.h(&[QubitId(rotation_qubit)]);
+
+            if rotation_qubit + 1 < n {
+                let pair = if random(&mut rng_state) & 1 == 0 {
+                    (rotation_qubit, rotation_qubit + 1)
+                } else {
+                    (rotation_qubit + 1, rotation_qubit)
+                };
+                stn.cx(&[(QubitId(pair.0), QubitId(pair.1))]);
+            }
+        }
+        stn
+    }
+
+    /// This case has phase-exact forced-projection steps but a terminal
+    /// destabilizer-basis factor of +i. It binds the terminal scalar in the
+    /// amplitude return independently of the two right-H regressions above.
+    #[test]
+    fn test_amplitude_iterative_terminal_tableau_phase_regression() {
+        let stn = amplitude_phase_randomized_circuit(4, 0);
+        let expected = stn.state_vector()[0];
+        let actual = stn.amplitude_iterative(&[false; 4]);
+        assert!(
+            (actual - expected).norm() <= 1e-12,
+            "n=4 seed=0 index=0 terminal phase: iterative={actual}, state-vector={expected}"
+        );
+    }
+
+    #[test]
+    fn test_amplitude_iterative_h_after_rotation_randomized() {
+        for n in 3..=6 {
+            for circuit_seed in 0..4_u64 {
+                let stn = amplitude_phase_randomized_circuit(n, circuit_seed);
 
                 let state_vector = stn.state_vector();
                 for (index, &expected) in state_vector.iter().enumerate() {
                     let bitstring: Vec<bool> = (0..n).map(|q| (index >> q) & 1 == 1).collect();
                     let actual = stn.amplitude_iterative(&bitstring);
                     assert!(
-                        (actual - expected).norm() < 1e-10,
+                        (actual - expected).norm() <= 1e-12,
                         "n={n} seed={circuit_seed} index={index}: iterative={actual}, state-vector={expected}"
                     );
                 }
@@ -3348,7 +3432,9 @@ mod tests {
 
     /// Reproduce the full-random generator used by
     /// `examples/disent_firing_rate.rs` and the stability census.
-    fn stability_census_random_circuit(seed: u64) -> StabMps {
+    // Test-only visibility lets the #562 phase harness reuse the exact census
+    // generator instead of maintaining a subtly different copy.
+    pub(super) fn stability_census_random_circuit(seed: u64) -> StabMps {
         let mut stn = StabMps::with_seed(8, seed);
         let mut rng_state = seed.wrapping_add(1);
         let next_rng = |state: &mut u64| {

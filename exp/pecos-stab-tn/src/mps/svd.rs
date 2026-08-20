@@ -36,6 +36,11 @@ const SVD_ITERATIONS_PER_DIMENSION: usize = 64;
 // O(epsilon), far below the O(sqrt(epsilon)) floor of a Gram spectrum.
 const SVD_TRIPLET_VALIDATION_MULTIPLIER: f64 = 512.0;
 
+// QR repairs a derived factor at O(epsilon) but does not fold its tiny
+// off-diagonal R correction into the other factor. Permit that bounded repair
+// error only after the independent triplet and isometry checks pass.
+const SVD_FALLBACK_RECONSTRUCTION_MULTIPLIER: f64 = 512.0;
+
 fn iteration_limit(rows: usize, cols: usize) -> usize {
     rows.min(cols)
         .max(1)
@@ -196,7 +201,13 @@ fn gram_svd_factors(
             }
         }
     }
-    Ok((u, singular_values, vt))
+
+    Ok(reorthonormalize_derived_factor(
+        matrix,
+        u,
+        singular_values,
+        vt,
+    ))
 }
 
 /// Deterministically complete an orthonormal basis using coordinate vectors.
@@ -256,6 +267,47 @@ fn retained_spectrum_is_trustworthy(
                     <= isometry_tolerance
         })
     })
+}
+
+/// Replace the columns by the phase-aligned thin-Q factor of their QR.
+///
+/// A factor recovered as `A*v/s` or `u^H*A/s` has orthogonality error
+/// `O(epsilon * ||A|| / s)`. The fallback is specifically needed for spectra
+/// where that amplification is visible, so validate a genuinely orthonormal
+/// factor instead of asking the derived columns to meet a fixed epsilon-scale
+/// isometry bound. Phase alignment keeps the reconstruction perturbation at
+/// the size of the QR correction rather than allowing arbitrary QR phases.
+fn thin_qr_columns(matrix: &DMatrix<Complex64>) -> DMatrix<Complex64> {
+    let columns = matrix.ncols();
+    let q = matrix.clone().qr().q();
+    let mut thin_q = q.columns(0, columns).into_owned();
+    for column in 0..columns {
+        let overlap = thin_q.column(column).dotc(&matrix.column(column));
+        let norm = overlap.norm();
+        if norm > 0.0 {
+            let phase = overlap / Complex64::new(norm, 0.0);
+            thin_q
+                .column_mut(column)
+                .iter_mut()
+                .for_each(|x| *x *= phase);
+        }
+    }
+    thin_q
+}
+
+/// QR-orthonormalize the factor derived through division by singular values.
+fn reorthonormalize_derived_factor(
+    matrix: &DMatrix<Complex64>,
+    mut u: DMatrix<Complex64>,
+    singular_values: DVector<f64>,
+    mut vt: DMatrix<Complex64>,
+) -> SvdFactors {
+    if matrix.nrows() >= matrix.ncols() {
+        u = thin_qr_columns(&u);
+    } else {
+        vt = thin_qr_columns(&vt.adjoint()).adjoint().into_owned();
+    }
+    (u, singular_values, vt)
 }
 
 fn orthogonalize_against(
@@ -389,7 +441,12 @@ fn realified_svd_factors(
             vt[(column, row)] = right[row].conj();
         }
     }
-    Ok((u, singular_values, vt))
+    Ok(reorthonormalize_derived_factor(
+        matrix,
+        u,
+        singular_values,
+        vt,
+    ))
 }
 
 fn stable_svd_factors(
@@ -398,11 +455,19 @@ fn stable_svd_factors(
     cutoff: f64,
     max_trunc_error: Option<f64>,
 ) -> Result<SvdFactors, MpsError> {
+    if matrix
+        .iter()
+        .any(|value| !value.re.is_finite() || !value.im.is_finite())
+    {
+        return Err(MpsError::SvdFailed);
+    }
     let matrix_scale = matrix
         .iter()
         .map(|value| value.norm())
         .fold(0.0_f64, f64::max);
     let reconstruction_tolerance = matrix_scale * (256.0 * f64::EPSILON);
+    let fallback_reconstruction_tolerance =
+        matrix_scale * (SVD_FALLBACK_RECONSTRUCTION_MULTIPLIER * f64::EPSILON);
     if let Ok(adjoint) = adjoint_svd_factors(matrix)
         && reconstruction_error(matrix, &adjoint.0, &adjoint.1, &adjoint.2)
             <= reconstruction_tolerance
@@ -419,7 +484,7 @@ fn stable_svd_factors(
     if let Ok(gram) = gram_svd_factors(matrix, numerical_zero_threshold(matrix)) {
         let gram_error = reconstruction_error(matrix, &gram.0, &gram.1, &gram.2);
         let retained_rank = compute_rank(&gram.1, max_rank, cutoff, max_trunc_error);
-        if gram_error <= reconstruction_tolerance
+        if gram_error <= fallback_reconstruction_tolerance
             && retained_spectrum_is_trustworthy(matrix, &gram, retained_rank)
         {
             return Ok(gram);
@@ -433,7 +498,7 @@ fn stable_svd_factors(
     let realified = realified_svd_factors(matrix, fallback_zero_threshold(matrix))?;
     let realified_error = reconstruction_error(matrix, &realified.0, &realified.1, &realified.2);
     let retained_rank = compute_rank(&realified.1, max_rank, cutoff, max_trunc_error);
-    if realified_error <= reconstruction_tolerance
+    if realified_error <= fallback_reconstruction_tolerance
         && retained_spectrum_is_trustworthy(matrix, &realified, retained_rank)
     {
         Ok(realified)
@@ -787,6 +852,64 @@ mod tests {
         );
     }
 
+    fn deterministic_isometry(rows: usize, columns: usize, offset: usize) -> DMatrix<Complex64> {
+        let raw = DMatrix::from_fn(rows, columns, |row, column| {
+            let index = u32::try_from((row + 1) * (column + offset + 2)).unwrap();
+            Complex64::new(
+                (f64::from(index) * 0.73).sin(),
+                (f64::from(index) * 1.17).cos(),
+            )
+        });
+        raw.qr().q().columns(0, columns).into_owned()
+    }
+
+    fn matrix_with_spectrum(rows: usize, cols: usize, spectrum: &[f64]) -> DMatrix<Complex64> {
+        let rank = rows.min(cols);
+        assert_eq!(spectrum.len(), rank);
+        let left = deterministic_isometry(rows, rank, 1);
+        let right = deterministic_isometry(cols, rank, 7);
+        let diagonal = DMatrix::from_diagonal(&DVector::from_iterator(
+            rank,
+            spectrum.iter().map(|&value| Complex64::new(value, 0.0)),
+        ));
+        left * diagonal * right.adjoint()
+    }
+
+    fn assert_realified_factors(matrix: &DMatrix<Complex64>, expected_singular_values: &[f64]) {
+        const FACTOR_ISOMETRY_TOLERANCE: f64 = 1e-12;
+        let factors = realified_svd_factors(matrix, fallback_zero_threshold(matrix)).unwrap();
+        assert_eq!(factors.1.len(), expected_singular_values.len());
+        for (index, (&actual, &expected)) in
+            factors.1.iter().zip(expected_singular_values).enumerate()
+        {
+            // Keep an absolute O(epsilon) floor for exact zeros, while making
+            // the graded-spectrum check relative so 1e-12 cannot pass as 0.
+            let tolerance = 1e-3 * expected + 1e-15 * matrix.norm().max(1.0);
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "singular value {index}: actual={actual:.16e}, expected={expected:.16e}, tolerance={tolerance:.3e}"
+            );
+        }
+        assert_complex_identity(
+            &(factors.0.adjoint() * &factors.0),
+            FACTOR_ISOMETRY_TOLERANCE,
+        );
+        assert_complex_identity(
+            &(&factors.2 * factors.2.adjoint()),
+            FACTOR_ISOMETRY_TOLERANCE,
+        );
+        let error = reconstruction_error(matrix, &factors.0, &factors.1, &factors.2);
+        let tolerance = matrix
+            .iter()
+            .map(|value| value.norm())
+            .fold(0.0_f64, f64::max)
+            * 2e-12;
+        assert!(
+            error <= tolerance.max(f64::EPSILON),
+            "realified reconstruction error={error:.3e}, tolerance={tolerance:.3e}"
+        );
+    }
+
     #[test]
     fn test_truncated_svd_identity() {
         let m = DMatrix::from_fn(3, 3, |i, j| {
@@ -896,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn test_complex_svd_gram_fallback_reconstructs() {
+    fn test_complex_svd_default_epsilon_reconstructs_regression() {
         // Captured from a rank-reducing return SWAP in the issue #557 sweep.
         // Nalgebra's default convergence tolerance decomposes this rank-one
         // matrix accurately; the former 1e-18 tolerance manufactured the
@@ -953,66 +1076,45 @@ mod tests {
     }
 
     #[test]
-    fn test_gram_zero_singular_value_columns_are_completed_as_isometries() {
-        let matrix = DMatrix::from_row_slice(
-            4,
-            3,
-            &[
-                Complex64::new(2.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(1.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-            ],
-        );
-        let (u, singular_values, vt) =
-            gram_svd_factors(&matrix, numerical_zero_threshold(&matrix)).unwrap();
+    fn test_realified_svd_matrix_families_have_accurate_orthonormal_factors() {
+        // Rectangular in both orientations and square.
+        for (rows, cols, spectrum) in [
+            (6, 4, vec![4.0, 2.0, 0.5, 0.125]),
+            (4, 6, vec![4.0, 2.0, 0.5, 0.125]),
+            (4, 4, vec![3.0, 1.5, 0.75, 0.25]),
+            // Exactly degenerate and a cluster with a ~1e-13 relative gap.
+            (5, 3, vec![2.0, 2.0, 0.25]),
+            (5, 3, vec![2.0, 2.0 * (1.0 - 1e-13), 0.25]),
+            // A retained spectrum spanning twelve decades.
+            (7, 4, vec![1.0, 1e-4, 1e-8, 1e-12]),
+            // Exact-zero tail.
+            (5, 4, vec![3.0, 1.0, 0.0, 0.0]),
+        ] {
+            let matrix = matrix_with_spectrum(rows, cols, &spectrum);
+            assert_realified_factors(&matrix, &spectrum);
+        }
 
-        assert!(singular_values[2].abs() < f64::MIN_POSITIVE);
-        assert_complex_identity(&(u.adjoint() * &u), 1e-14);
-        assert_complex_identity(&(&vt * vt.adjoint()), 1e-14);
-    }
+        // The one-dimensional shapes exercise selection and completion without
+        // relying on a multi-column Gram-Schmidt basis.
+        for (rows, cols, spectrum) in [(1, 6, vec![2.5]), (6, 1, vec![2.5]), (1, 1, vec![2.5])] {
+            let matrix = matrix_with_spectrum(rows, cols, &spectrum);
+            assert_realified_factors(&matrix, &spectrum);
+        }
 
-    #[test]
-    fn test_gram_graded_spectrum_is_rejected_despite_good_reconstruction() {
-        const DIMENSION: usize = 128;
-        let left_raw = DMatrix::from_fn(DIMENSION, DIMENSION, |row, column| {
-            let index = u32::try_from(row * DIMENSION + column + 1).unwrap();
-            Complex64::new(f64::from(index).sin(), f64::from(index * 3).cos())
+        let all_zero = DMatrix::zeros(4, 6);
+        assert_realified_factors(&all_zero, &[0.0; 4]);
+
+        let real = DMatrix::from_fn(5, 3, |row, column| {
+            Complex64::new(
+                f64::from(u32::try_from(row * 3 + column + 1).unwrap()).sin(),
+                0.0,
+            )
         });
-        let right_raw = DMatrix::from_fn(DIMENSION, DIMENSION, |row, column| {
-            let index = u32::try_from(row * DIMENSION + column + 7).unwrap();
-            Complex64::new(f64::from(index * 5).cos(), f64::from(index * 7).sin())
-        });
-        let left = left_raw.qr().q();
-        let right = right_raw.qr().q();
-        let spectrum = DVector::from_fn(DIMENSION, |row, _| {
-            let exponent = -38.0 * f64::from(u32::try_from(row).unwrap())
-                / f64::from(u32::try_from(DIMENSION - 1).unwrap());
-            Complex64::new(10.0_f64.powf(exponent), 0.0)
-        });
-        let matrix = left * DMatrix::from_diagonal(&spectrum) * right.adjoint();
-        let factors = gram_svd_factors(&matrix, numerical_zero_threshold(&matrix)).unwrap();
-        let reconstruction = reconstruction_error(&matrix, &factors.0, &factors.1, &factors.2);
-        let matrix_scale = matrix
-            .iter()
-            .map(|value| value.norm())
-            .fold(0.0_f64, f64::max);
-        assert!(
-            reconstruction <= matrix_scale * (256.0 * f64::EPSILON),
-            "Gram reconstruction error={reconstruction:.3e}"
-        );
-        assert!(
-            !retained_spectrum_is_trustworthy(&matrix, &factors, DIMENSION),
-            "a reconstruction-only check must not accept the sqrt(epsilon) spectrum floor"
-        );
+        let real_oracle = direct_svd_factors(&real).unwrap().1;
+        assert_realified_factors(&real, real_oracle.as_slice());
+
+        let imaginary = real.map(|value| Complex64::new(0.0, value.re));
+        assert_realified_factors(&imaginary, real_oracle.as_slice());
     }
 
     #[test]

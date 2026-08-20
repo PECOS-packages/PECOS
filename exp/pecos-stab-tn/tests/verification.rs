@@ -1476,9 +1476,18 @@ fn test_fuzz_7qubit() {
 }
 
 #[test]
-#[ignore = "slow fuzz (~80s debug): run with `cargo test --test verification -- --include-ignored`"]
 fn test_fuzz_8qubit() {
-    for seed in 810..820 {
+    // Keep an 8-qubit lane in the default suite so failures that require the
+    // wider MPS shapes cannot hide behind the 6-qubit ceiling.
+    for seed in 810..812 {
+        fuzz_circuit(8, 10, seed);
+    }
+}
+
+#[test]
+#[ignore = "slow fuzz (~65s debug): run in the ignored release lane"]
+fn test_fuzz_8qubit_extended() {
+    for seed in 812..820 {
         fuzz_circuit(8, 10, seed);
     }
 }
@@ -3687,7 +3696,7 @@ fn test_compress_preserves_state() {
     let bond_before = sum.max_bond_dim();
 
     let mut compressed = sum;
-    compressed.compress();
+    compressed.compress().unwrap();
     let sv_after = compressed.state_vector();
     let bond_after = compressed.max_bond_dim();
 

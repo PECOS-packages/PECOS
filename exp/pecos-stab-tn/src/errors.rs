@@ -13,7 +13,7 @@
 use thiserror::Error;
 
 /// Failures reported by checked matrix-product-state operations.
-#[derive(Error, Debug)]
+#[derive(Clone, Error, Debug, PartialEq, Eq)]
 pub enum MpsError {
     /// A requested site does not exist in the MPS chain.
     #[error("site index {index} out of bounds (num_sites = {num_sites})")]

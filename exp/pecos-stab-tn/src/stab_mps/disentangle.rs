@@ -25,6 +25,7 @@
 //! - Masot-Llima, Sierant, Stornati, Garcia-Saez. arXiv:2602.15942
 //!   (limits of Clifford disentangling).
 
+use crate::errors::MpsError;
 use crate::mps::Mps;
 use nalgebra::DMatrix;
 use num_complex::Complex64;
@@ -230,14 +231,14 @@ fn apply_disentangler(
     disent_flags: &mut [Option<super::SiteEigenstate>],
     q: usize,
     gate: &DisentanglerGate,
-) {
-    mps.apply_two_site_gate(q, &gate.matrix)
-        .expect("gate should succeed");
+) -> Result<(), MpsError> {
+    mps.apply_two_site_gate(q, &gate.matrix)?;
     super::tableau_compose::right_compose_cx(tableau, q, q + 1);
     right_compose_single_qubit_inverse(tableau, q, gate.first_dressing);
     right_compose_single_qubit_inverse(tableau, q + 1, gate.second_dressing);
     disent_flags[q] = None;
     disent_flags[q + 1] = None;
+    Ok(())
 }
 
 /// Run one sweep of heuristic disentangling on the MPS.
@@ -252,10 +253,10 @@ pub(crate) fn disentangle_sweep(
     mps: &mut Mps,
     tableau: &mut SparseStabY,
     disent_flags: &mut [Option<super::SiteEigenstate>],
-) -> usize {
+) -> Result<usize, MpsError> {
     let n = mps.num_sites();
     if n < 2 {
-        return 0;
+        return Ok(0);
     }
 
     let gates = build_disentangler_set();
@@ -276,20 +277,19 @@ pub(crate) fn disentangle_sweep(
 
         for (gate_idx, gate) in gates.iter().enumerate() {
             let mut trial_mps = mps.clone();
-            if trial_mps.apply_two_site_gate(q, &gate.matrix).is_ok() {
-                let trial_max_bond = trial_mps.max_bond_dim();
-                let trial_entropy = bond_entropy(&trial_mps, bond);
-                // Accept gate only if it doesn't increase max bond dim
-                // AND reduces local entropy
-                if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
-                    best_entropy = trial_entropy;
-                    best_gate_idx = Some(gate_idx);
-                }
+            trial_mps.apply_two_site_gate(q, &gate.matrix)?;
+            let trial_max_bond = trial_mps.max_bond_dim();
+            let trial_entropy = bond_entropy(&trial_mps, bond);
+            // Accept gate only if it doesn't increase max bond dim
+            // AND reduces local entropy
+            if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
+                best_entropy = trial_entropy;
+                best_gate_idx = Some(gate_idx);
             }
         }
 
         if let Some(idx) = best_gate_idx {
-            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx]);
+            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx])?;
             num_applied += 1;
         }
     }
@@ -309,23 +309,22 @@ pub(crate) fn disentangle_sweep(
 
         for (gate_idx, gate) in gates.iter().enumerate() {
             let mut trial_mps = mps.clone();
-            if trial_mps.apply_two_site_gate(q, &gate.matrix).is_ok() {
-                let trial_max_bond = trial_mps.max_bond_dim();
-                let trial_entropy = bond_entropy(&trial_mps, bond);
-                if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
-                    best_entropy = trial_entropy;
-                    best_gate_idx = Some(gate_idx);
-                }
+            trial_mps.apply_two_site_gate(q, &gate.matrix)?;
+            let trial_max_bond = trial_mps.max_bond_dim();
+            let trial_entropy = bond_entropy(&trial_mps, bond);
+            if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
+                best_entropy = trial_entropy;
+                best_gate_idx = Some(gate_idx);
             }
         }
 
         if let Some(idx) = best_gate_idx {
-            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx]);
+            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx])?;
             num_applied += 1;
         }
     }
 
-    num_applied
+    Ok(num_applied)
 }
 
 /// Run multiple sweeps of disentangling until convergence or `max_sweeps` reached.
@@ -334,16 +333,16 @@ pub(crate) fn disentangle(
     tableau: &mut SparseStabY,
     disent_flags: &mut [Option<super::SiteEigenstate>],
     max_sweeps: usize,
-) -> usize {
+) -> Result<usize, MpsError> {
     let mut total_applied = 0;
     for _ in 0..max_sweeps {
-        let applied = disentangle_sweep(mps, tableau, disent_flags);
+        let applied = disentangle_sweep(mps, tableau, disent_flags)?;
         total_applied += applied;
         if applied == 0 {
             break;
         }
     }
-    total_applied
+    Ok(total_applied)
 }
 
 #[cfg(test)]
@@ -399,7 +398,8 @@ mod tests {
                 &mut sim.disent_flags,
                 0,
                 gate,
-            );
+            )
+            .unwrap();
             let actual = sim.state_vector();
             let overlap: Complex64 = expected
                 .iter()

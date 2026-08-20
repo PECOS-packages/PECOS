@@ -943,9 +943,15 @@ impl Mps {
     /// `svd_cutoff` is relative to the centre tensor's Frobenius norm, which
     /// equals the global state norm in this mixed-canonical sweep. Therefore a
     /// global scalar does not change retained ranks or truncation telemetry.
-    pub fn compress(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MpsError::SvdFailed`] if a bond factorization fails. The
+    /// failing bond and every bond later in the sweep are left unmodified;
+    /// callers must not treat a partial sweep as successful compression.
+    pub fn compress(&mut self) -> Result<(), MpsError> {
         if self.num_sites <= 1 {
-            return;
+            return Ok(());
         }
 
         // Left-canonicalize
@@ -964,34 +970,33 @@ impl Mps {
             // Reshape to (chi_l, d * chi_r) and do SVD to split as (chi_l, new_chi) * (new_chi, d * chi_r).
             let matrix = &self.tensors[q];
             let scaled_cutoff = self.config.svd_cutoff * matrix.norm();
-            if let Ok((us, vt, disc, hit)) = svd::truncated_svd_left_absorb_with_error(
+            let (us, vt, disc, hit) = svd::truncated_svd_left_absorb_with_error(
                 matrix,
                 self.config.max_bond_dim,
                 scaled_cutoff,
                 self.config.max_truncation_error,
-            ) {
-                self.record_truncation(disc, hit);
-                let new_chi = us.ncols();
+            )?;
+            self.record_truncation(disc, hit);
+            let new_chi = us.ncols();
 
-                // Vt is right-canonical even when the retained rank is
-                // unchanged, so always install the factorization.
-                self.tensors[q] = vt;
-                self.bond_dims[q] = new_chi;
+            // Vt is right-canonical even when the retained rank is
+            // unchanged, so always install the factorization.
+            self.tensors[q] = vt;
+            self.bond_dims[q] = new_chi;
 
-                // Absorb U*S into tensors[q-1].
-                let chi_l_prev = self.bond_dims[q - 1];
-                let mut new_prev = DMatrix::zeros(chi_l_prev, d * new_chi);
-                for sigma in 0..d {
-                    let prev_block = tensor::phys_block(&self.tensors[q - 1], sigma, chi_l);
-                    let absorbed = &prev_block * &us;
-                    for i in 0..chi_l_prev {
-                        for j in 0..new_chi {
-                            new_prev[(i, sigma * new_chi + j)] = absorbed[(i, j)];
-                        }
+            // Absorb U*S into tensors[q-1].
+            let chi_l_prev = self.bond_dims[q - 1];
+            let mut new_prev = DMatrix::zeros(chi_l_prev, d * new_chi);
+            for sigma in 0..d {
+                let prev_block = tensor::phys_block(&self.tensors[q - 1], sigma, chi_l);
+                let absorbed = &prev_block * &us;
+                for i in 0..chi_l_prev {
+                    for j in 0..new_chi {
+                        new_prev[(i, sigma * new_chi + j)] = absorbed[(i, j)];
                     }
                 }
-                self.tensors[q - 1] = new_prev;
             }
+            self.tensors[q - 1] = new_prev;
         }
 
         // Preserve the established post-compression left-canonical contract
@@ -999,6 +1004,7 @@ impl Mps {
         // after every truncation has been evaluated in the right-to-left
         // mixed-canonical gauge above.
         self.left_canonicalize();
+        Ok(())
     }
 }
 
@@ -1066,29 +1072,29 @@ mod tests {
         let d = mps.phys_dim;
         for q in (1..mps.num_sites).rev() {
             let chi_l = mps.bond_dims[q];
-            if let Ok((u, svt, _, _)) = svd::truncated_svd_right_absorb_with_error(
+            let (u, svt, _, _) = svd::truncated_svd_right_absorb_with_error(
                 &mps.tensors[q],
                 mps.config.max_bond_dim,
                 mps.config.svd_cutoff,
                 mps.config.max_truncation_error,
-            ) {
-                let new_chi = u.ncols();
-                if new_chi < chi_l {
-                    mps.tensors[q] = svt;
-                    mps.bond_dims[q] = new_chi;
-                    let chi_l_prev = mps.bond_dims[q - 1];
-                    let mut new_prev = DMatrix::zeros(chi_l_prev, d * new_chi);
-                    for sigma in 0..d {
-                        let prev_block = tensor::phys_block(&mps.tensors[q - 1], sigma, chi_l);
-                        let absorbed = &prev_block * &u;
-                        for i in 0..chi_l_prev {
-                            for j in 0..new_chi {
-                                new_prev[(i, sigma * new_chi + j)] = absorbed[(i, j)];
-                            }
+            )
+            .unwrap();
+            let new_chi = u.ncols();
+            if new_chi < chi_l {
+                mps.tensors[q] = svt;
+                mps.bond_dims[q] = new_chi;
+                let chi_l_prev = mps.bond_dims[q - 1];
+                let mut new_prev = DMatrix::zeros(chi_l_prev, d * new_chi);
+                for sigma in 0..d {
+                    let prev_block = tensor::phys_block(&mps.tensors[q - 1], sigma, chi_l);
+                    let absorbed = &prev_block * &u;
+                    for i in 0..chi_l_prev {
+                        for j in 0..new_chi {
+                            new_prev[(i, sigma * new_chi + j)] = absorbed[(i, j)];
                         }
                     }
-                    mps.tensors[q - 1] = new_prev;
                 }
+                mps.tensors[q - 1] = new_prev;
             }
         }
     }
@@ -1162,6 +1168,14 @@ mod tests {
     }
 
     #[test]
+    fn test_compress_surfaces_svd_failure() {
+        let mut mps = Mps::new(2, MpsConfig::default());
+        mps.tensors[1][(0, 0)] = Complex64::new(f64::NAN, 0.0);
+
+        assert_eq!(mps.compress(), Err(MpsError::SvdFailed));
+    }
+
+    #[test]
     fn test_compress_sweeps_the_orthogonality_center_with_truncation() {
         let config = MpsConfig {
             max_bond_dim: 3,
@@ -1178,7 +1192,7 @@ mod tests {
             let exact = original.state_vector();
             let mut fixed = original.clone();
             let mut legacy = original;
-            fixed.compress();
+            fixed.compress().unwrap();
             legacy_off_center_compress(&mut legacy);
             let fixed_fidelity = normalized_fidelity(&exact, &fixed.state_vector());
             let legacy_fidelity = normalized_fidelity(&exact, &legacy.state_vector());
@@ -1325,10 +1339,10 @@ mod tests {
         let mut cap_limited = zero.clone();
         cap_limited.config.max_bond_dim = 1;
 
-        zero.compress();
-        adaptive.compress();
-        cutoff_limited.compress();
-        cap_limited.compress();
+        zero.compress().unwrap();
+        adaptive.compress().unwrap();
+        cutoff_limited.compress().unwrap();
+        cap_limited.compress().unwrap();
 
         assert_eq!(zero.bond_dim(1), 2, "zero must retain positive weight");
         assert_eq!(adaptive.bond_dim(1), 1, "positive budget may discard it");
@@ -1365,8 +1379,8 @@ mod tests {
         let mut reference = state.clone();
         let mut scaled_down = state.clone();
         scaled_down.scale(Complex64::new(1e-13, 0.0));
-        reference.compress();
-        scaled_down.compress();
+        reference.compress().unwrap();
+        scaled_down.compress().unwrap();
 
         assert_eq!(reference.bond_dims(), scaled_down.bond_dims());
         assert_eq!(reference.bond_dims(), &[1, 2, 2, 2, 2, 2, 1]);

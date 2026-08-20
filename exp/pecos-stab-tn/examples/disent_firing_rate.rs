@@ -19,6 +19,9 @@
 //!
 //! The remaining fraction hits the std multi-site path which applies CNOTs
 //! on the MPS -- the case OFD would replace.
+//!
+//! `--stability-census` runs the default 1,200-circuit numerical regression
+//! lane. `--stability-census-wide` extends the 8-qubit lane through seed 1,999.
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
@@ -258,13 +261,17 @@ fn exercise_stability_circuit(num_qubits: usize, num_gates: usize, seed: u64, mi
     let _measurements = stn.mz(&qubits);
 }
 
-fn run_stability_census() {
+fn run_stability_census(eight_qubit_seed_count: u64) {
     let started = std::time::Instant::now();
     let mut circuits = 0_u64;
     let mut panics = 0_u64;
-    for (num_qubits, num_gates) in [(4, 40), (6, 60), (8, 80)] {
+    for (num_qubits, num_gates, seed_count) in [
+        (4, 40, 200_u64),
+        (6, 60, 200_u64),
+        (8, 80, eight_qubit_seed_count),
+    ] {
         for mix in [GateMix::CliffT, GateMix::Random] {
-            for seed in 0..200_u64 {
+            for seed in 0..seed_count {
                 circuits += 1;
                 if catch_unwind(AssertUnwindSafe(|| {
                     exercise_stability_circuit(num_qubits, num_gates, seed, mix);
@@ -284,7 +291,7 @@ fn run_stability_census() {
         }
     }
     println!(
-        "stability census: circuits={circuits} panics={panics} surfaced_errors=0 elapsed={:.3}s",
+        "stability census: circuits={circuits} panics={panics} 8q_seed_range=0..{eight_qubit_seed_count} elapsed={:.3}s",
         started.elapsed().as_secs_f64()
     );
     assert_eq!(panics, 0, "stability census observed panics");
@@ -294,9 +301,16 @@ fn main() {
     let arguments = std::env::args().collect::<Vec<_>>();
     if arguments
         .iter()
+        .any(|argument| argument == "--stability-census-wide")
+    {
+        run_stability_census(2_000);
+        return;
+    }
+    if arguments
+        .iter()
         .any(|argument| argument == "--stability-census")
     {
-        run_stability_census();
+        run_stability_census(200);
         return;
     }
     if let Some(index) = arguments

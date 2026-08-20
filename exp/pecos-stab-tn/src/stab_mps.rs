@@ -84,15 +84,18 @@ fn reset_tableau_and_rng(
 
 /// Unwrap an internal MPS operation at an infallible simulator boundary.
 ///
-/// The 1,200-circuit stability census has observed zero failures here, so this
-/// is a guard against an unrecoverable numerical state, not an expected
-/// outcome. If a fallible simulator API is wanted, that framework-wide trait
-/// change should be tracked as its own issue.
+/// The stability census exercises this boundary as a regression guard. A
+/// failure here means the numerical state is unrecoverable, not that the
+/// simulator produced a usable partial result. If a fallible simulator API is
+/// wanted, that framework-wide trait change should be tracked as its own issue.
 #[track_caller]
 pub(super) fn expect_mps_operation<T>(result: Result<T, MpsError>, operation: &str) -> T {
-    result.unwrap_or_else(|error| {
-        panic!("{operation} failed: {error}; the coefficient MPS state is unrecoverable")
-    })
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            panic!("{operation} failed: {error}; the coefficient MPS state is unrecoverable")
+        }
+    }
 }
 
 /// Known Pauli eigenstate at an MPS site, used for exact disentangling.
@@ -3411,9 +3414,9 @@ mod tests {
         expect_mps_operation(mps.compress(), "test non-finite compression");
     }
 
-    #[test]
-    fn test_stability_census_seed_97_completes_without_svd_failure() {
-        let mut stn = stability_census_random_circuit(97);
+    fn assert_stability_census_seed_completes_with_consistent_readouts(seed: u64) {
+        const TOLERANCE: f64 = 1e-12;
+        let mut stn = stability_census_random_circuit(seed);
         stn.flush();
 
         let state = stn.state_vector();
@@ -3427,10 +3430,44 @@ mod tests {
             .map(|qubit| (max_index >> qubit) & 1 != 0)
             .collect::<Vec<_>>();
         for bits in [&max_bits[..], &[false; 8]] {
-            let _ = stn.prob_bitstring(bits);
-            let _ = stn.amplitude_iterative(bits);
+            let probability = stn.prob_bitstring(bits);
+            let iterative_probability = stn.amplitude_iterative(bits).norm_sqr();
+            assert!(
+                (probability - iterative_probability).abs() <= TOLERANCE,
+                "seed={seed} bits={bits:?}: prob_bitstring={probability:.16e}, |amplitude_iterative|^2={iterative_probability:.16e}"
+            );
         }
-        let _measurements = stn.mz(&(0..8).map(QubitId).collect::<Vec<_>>());
+
+        let pre_measurement = stn.clone();
+        let measurements = stn.mz(&(0..8).map(QubitId).collect::<Vec<_>>());
+        let measured_bits = measurements
+            .iter()
+            .map(|measurement| measurement.outcome)
+            .collect::<Vec<_>>();
+        let measured_probability = pre_measurement.prob_bitstring(&measured_bits);
+        let measured_iterative_probability = pre_measurement
+            .amplitude_iterative(&measured_bits)
+            .norm_sqr();
+        assert!(
+            measured_probability > 0.0
+                && (measured_probability - measured_iterative_probability).abs() <= TOLERANCE,
+            "seed={seed} mz={measured_bits:?}: prob_bitstring={measured_probability:.16e}, |amplitude_iterative|^2={measured_iterative_probability:.16e}"
+        );
+    }
+
+    #[test]
+    fn test_stability_census_seed_97_completes_without_svd_failure() {
+        assert_stability_census_seed_completes_with_consistent_readouts(97);
+    }
+
+    #[test]
+    fn test_stability_census_seed_766_completes_without_svd_failure() {
+        assert_stability_census_seed_completes_with_consistent_readouts(766);
+    }
+
+    #[test]
+    fn test_stability_census_seed_1698_completes_without_svd_failure() {
+        assert_stability_census_seed_completes_with_consistent_readouts(1_698);
     }
 
     #[test]

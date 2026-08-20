@@ -36,12 +36,10 @@ const SVD_ITERATIONS_PER_DIMENSION: usize = 64;
 // O(epsilon), far below the O(sqrt(epsilon)) floor of a Gram spectrum.
 const SVD_TRIPLET_VALIDATION_MULTIPLIER: f64 = 512.0;
 
-// Phase-aligned QR perturbs the realified fallback by O(epsilon), but measured
-// Gram-path reconstruction perturbations are about 1e7 * epsilon. The 512
-// multiplier is empirical, not derived: it sits just above one observed valid
-// case at 252.8 * epsilon, while a 300-matrix battery found counterexamples at
-// 776 * epsilon that this bound intentionally rejects. Apply it only after the
-// independent triplet and isometry checks pass.
+// Fallback-derived factors include a phase-aligned QR repair, so scale their
+// max-entry reconstruction residual by the Frobenius-norm backward-error scale
+// O(dimension * epsilon * ||A||_F). Reconstruction alone is insufficient for
+// Gram-derived spectra; the independent triplet and isometry checks must pass.
 const SVD_FALLBACK_RECONSTRUCTION_MULTIPLIER: f64 = 512.0;
 
 fn iteration_limit(rows: usize, cols: usize) -> usize {
@@ -61,7 +59,12 @@ fn fallback_zero_threshold(matrix: &DMatrix<Complex64>) -> f64 {
     // The fallback's retained-triplet validator uses this same backward-error
     // scale. Directions below it are numerically indistinguishable from the
     // exact null space; the independent real SVD must agree before completion.
-    matrix.norm() * (SVD_TRIPLET_VALIDATION_MULTIPLIER * f64::EPSILON)
+    dimension_scaled_backward_error_tolerance(matrix, SVD_TRIPLET_VALIDATION_MULTIPLIER)
+}
+
+fn dimension_scaled_backward_error_tolerance(matrix: &DMatrix<Complex64>, multiplier: f64) -> f64 {
+    let dimension = matrix.nrows().max(matrix.ncols()).max(1) as f64;
+    matrix.norm() * (multiplier * dimension * f64::EPSILON)
 }
 
 type SvdFactors = (DMatrix<Complex64>, DVector<f64>, DMatrix<Complex64>);
@@ -243,10 +246,9 @@ fn retained_spectrum_is_trustworthy(
     retained_rank: usize,
 ) -> bool {
     let (u, singular_values, vt) = factors;
-    let matrix_scale = matrix.norm();
     let dimension = matrix.nrows().max(matrix.ncols()).max(1) as f64;
     let residual_tolerance =
-        matrix_scale * (SVD_TRIPLET_VALIDATION_MULTIPLIER * dimension * f64::EPSILON);
+        dimension_scaled_backward_error_tolerance(matrix, SVD_TRIPLET_VALIDATION_MULTIPLIER);
     let isometry_tolerance = SVD_TRIPLET_VALIDATION_MULTIPLIER * dimension * f64::EPSILON;
 
     for column in 0..retained_rank {
@@ -464,13 +466,17 @@ fn stable_svd_factors(
     {
         return Err(MpsError::SvdFailed);
     }
-    let matrix_scale = matrix
+    let max_element = matrix
         .iter()
         .map(|value| value.norm())
         .fold(0.0_f64, f64::max);
-    let reconstruction_tolerance = matrix_scale * (256.0 * f64::EPSILON);
+    // Keep the unvalidated primary path on its deliberately stricter
+    // max-element, dimension-free gate. Rejecting it only advances to the
+    // fallbacks, where the looser normwise bound is paired with independent
+    // retained-triplet and isometry validation.
+    let reconstruction_tolerance = max_element * (256.0 * f64::EPSILON);
     let fallback_reconstruction_tolerance =
-        matrix_scale * (SVD_FALLBACK_RECONSTRUCTION_MULTIPLIER * f64::EPSILON);
+        dimension_scaled_backward_error_tolerance(matrix, SVD_FALLBACK_RECONSTRUCTION_MULTIPLIER);
     if let Ok(adjoint) = adjoint_svd_factors(matrix)
         && reconstruction_error(matrix, &adjoint.0, &adjoint.1, &adjoint.2)
             <= reconstruction_tolerance

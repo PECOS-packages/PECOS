@@ -254,12 +254,16 @@ jobs:
             build-llvm: false
             build-quantum-pecos: false
             job-timeout: 30
+          # rustc 1.98.0 on aarch64-apple-darwin segfaults in LLVM target
+          # initialization under maturin's target probe; pinned to 1.97.1
+          # until fixed upstream. Unpin tracked in issue #566.
           - os: macOS-latest
             python-version: "3.12"
             artifact-name: python-compat-smoke-macos
             build-llvm: true
             build-quantum-pecos: false
             job-timeout: 20
+            rust-toolchain: "1.97.1"
 
     steps:
     - name: Harden the runner (egress audit)
@@ -318,8 +322,9 @@ jobs:
     - name: Set up Rust (Unix)
       if: runner.os != 'Windows'
       run: |
-        bash scripts/ci/ensure-rust.sh stable minimal
+        bash scripts/ci/ensure-rust.sh "${{ matrix.rust-toolchain || 'stable' }}" minimal
         export PATH="$HOME/.cargo/bin:$PATH"
+        rustup default "${{ matrix.rust-toolchain || 'stable' }}"
         rustup show
 
     - name: Install just

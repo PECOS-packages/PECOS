@@ -10,13 +10,15 @@
 // either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Polynomial-time amplitudes of the canonical ket represented by a stabilizer tableau.
+//! Polynomial-time relative amplitudes of the canonical ket represented by a stabilizer tableau.
 //!
 //! `StabMps::state_vector` fixes a tableau's otherwise arbitrary ket phase by
 //! normalizing the first nonzero column of `prod_k (I + S_k) / 2`. Equivalently,
 //! the numerically first computational-basis word in the support has a positive
 //! real amplitude. This module implements that same convention without building
-//! a dense projector.
+//! a dense projector. The resulting amplitudes are exact relative to that
+//! convention; the represented physical state, like every ket, still has one
+//! arbitrary global phase.
 
 use num_complex::Complex64;
 use pecos_simulators::{Gens, SparseStabY};
@@ -45,7 +47,8 @@ impl QuarterPhase {
     }
 }
 
-/// Row-reduced description of the canonical ket selected by a tableau.
+/// Row-reduced description of the canonical representative selected by a tableau.
+#[derive(Clone)]
 pub(super) struct CanonicalKet {
     num_qubits: usize,
     reduced_stabs: Gens,
@@ -130,11 +133,14 @@ impl CanonicalKet {
         }
     }
 
-    pub(super) fn first_support(&self) -> &[bool] {
+    fn first_support(&self) -> &[bool] {
         &self.first_support
     }
 
-    /// Return the phase-exact canonical amplitude of one computational word.
+    /// Return one amplitude in `state_vector`'s canonical representative.
+    ///
+    /// Relative phases within the ket are exact; the physical state remains
+    /// defined only up to a common global phase.
     pub(super) fn amplitude(&self, bitstring: &[bool]) -> Complex64 {
         assert_eq!(
             bitstring.len(),
@@ -173,7 +179,7 @@ impl CanonicalKet {
 }
 
 /// Return `<target|P|ket>` for one signed Y-convention Pauli generator row.
-pub(super) fn pauli_applied_amplitude_at(
+fn pauli_applied_amplitude_at(
     gens: &Gens,
     row: usize,
     ket: &CanonicalKet,
@@ -194,10 +200,21 @@ pub(super) fn pauli_applied_amplitude_at(
 
 /// Return `<target|D_0^x0 ... D_{n-1}^xn|phi>` in the same effective
 /// multiplication order used by `StabMps::state_vector`.
-pub(super) fn destabilizer_basis_amplitude(
+#[cfg(test)]
+fn destabilizer_basis_amplitude(
     tableau: &SparseStabY,
     coefficient_bits: &[u8],
     target: &[bool],
+) -> Complex64 {
+    let ket = CanonicalKet::new(tableau);
+    destabilizer_basis_amplitude_with_ket(tableau, coefficient_bits, target, &ket)
+}
+
+fn destabilizer_basis_amplitude_with_ket(
+    tableau: &SparseStabY,
+    coefficient_bits: &[u8],
+    target: &[bool],
+    ket: &CanonicalKet,
 ) -> Complex64 {
     let num_qubits = tableau.num_qubits();
     assert_eq!(
@@ -219,7 +236,6 @@ pub(super) fn destabilizer_basis_amplitude(
         }
     }
 
-    let ket = CanonicalKet::new(tableau);
     let source_amplitude = ket.amplitude(&source);
     if source_amplitude == Complex64::new(0.0, 0.0) {
         return source_amplitude;
@@ -242,14 +258,13 @@ pub(super) fn destabilizer_basis_amplitude(
     phase.to_complex() * source_amplitude
 }
 
-/// Unit phase of the terminal tableau basis vector selected after a complete
-/// forced-projection walk.
-pub(super) fn terminal_tableau_basis_phase(
+fn normalized_terminal_phase(
     tableau: &SparseStabY,
     coefficient_bits: &[u8],
     target: &[bool],
+    ket: &CanonicalKet,
 ) -> Complex64 {
-    let amplitude = destabilizer_basis_amplitude(tableau, coefficient_bits, target);
+    let amplitude = destabilizer_basis_amplitude_with_ket(tableau, coefficient_bits, target, ket);
     let magnitude = amplitude.norm();
     assert!(
         magnitude.is_finite() && magnitude > 0.0,
@@ -258,19 +273,16 @@ pub(super) fn terminal_tableau_basis_phase(
     amplitude / magnitude
 }
 
-/// Phase relating the concrete `C H_q |0>` ket to the canonical ket after
-/// `right_compose_h`. The numerator is `(I + D_q)|phi_old>/sqrt(2)`.
-pub(super) fn right_compose_h_scalar(
+fn right_compose_h_scalar(
     before: &SparseStabY,
-    after: &SparseStabY,
+    before_ket: &CanonicalKet,
+    after_ket: &CanonicalKet,
     q: usize,
 ) -> Complex64 {
-    let before_ket = CanonicalKet::new(before);
-    let after_ket = CanonicalKet::new(after);
     let target = after_ket.first_support();
     let denominator = after_ket.amplitude(target);
     let numerator = (before_ket.amplitude(target)
-        + pauli_applied_amplitude_at(before.destabs(), q, &before_ket, target))
+        + pauli_applied_amplitude_at(before.destabs(), q, before_ket, target))
         * std::f64::consts::FRAC_1_SQRT_2;
     normalized_scalar(
         numerator,
@@ -279,28 +291,23 @@ pub(super) fn right_compose_h_scalar(
     )
 }
 
-/// Phase relating `D_q |phi_old>` to the canonical ket after
-/// `right_compose_x`. This is needed only by the trivial-MPS canonicalizer.
-pub(super) fn right_compose_x_scalar(
+fn right_compose_x_scalar(
     before: &SparseStabY,
-    after: &SparseStabY,
+    before_ket: &CanonicalKet,
+    after_ket: &CanonicalKet,
     q: usize,
 ) -> Complex64 {
-    let before_ket = CanonicalKet::new(before);
-    let after_ket = CanonicalKet::new(after);
     let target = after_ket.first_support();
     normalized_scalar(
-        pauli_applied_amplitude_at(before.destabs(), q, &before_ket, target),
+        pauli_applied_amplitude_at(before.destabs(), q, before_ket, target),
         after_ket.amplitude(target),
         "right-composed X canonical-ket scalar",
     )
 }
 
-/// Phase lost when `mz_forced` replaces a pure stabilizer ket by the
-/// canonical ket for its normalized projected state.
-pub(super) fn forced_measurement_scalar(
-    before: &SparseStabY,
-    after: &SparseStabY,
+fn forced_measurement_scalar(
+    before_ket: &CanonicalKet,
+    after_ket: &CanonicalKet,
     q: usize,
     outcome: bool,
     probability: f64,
@@ -309,8 +316,6 @@ pub(super) fn forced_measurement_scalar(
         probability > 0.0,
         "cannot phase-track a zero-probability branch"
     );
-    let before_ket = CanonicalKet::new(before);
-    let after_ket = CanonicalKet::new(after);
     let target = after_ket.first_support();
     assert_eq!(
         target[q], outcome,
@@ -321,6 +326,84 @@ pub(super) fn forced_measurement_scalar(
         after_ket.amplitude(target),
         "forced stabilizer measurement canonical-ket scalar",
     )
+}
+
+/// Scalar accumulator for the phase-sensitive forced-projection walk.
+///
+/// The cached ket is valid across generator rebasing and right-composed
+/// CX/Z/CZ/SZ/SZ-dagger operations: those operations preserve the stabilizer
+/// group because their virtual gates fix `|0...0>`. Every operation that does
+/// change that group (the tracked X/H rotations and `mz_forced`) refreshes the
+/// cache before it can be reused. This avoids rebuilding the incoming
+/// O(n^3) canonical ket at each consecutive scalar site.
+#[derive(Clone)]
+pub(super) struct CanonicalPhaseTracker {
+    scalar: Complex64,
+    ket: Option<CanonicalKet>,
+}
+
+impl CanonicalPhaseTracker {
+    pub(super) fn new() -> Self {
+        Self {
+            scalar: Complex64::new(1.0, 0.0),
+            ket: None,
+        }
+    }
+
+    pub(super) fn scalar(&self) -> Complex64 {
+        self.scalar
+    }
+
+    fn take_before_ket(&mut self, before: &SparseStabY) -> CanonicalKet {
+        self.ket.take().unwrap_or_else(|| CanonicalKet::new(before))
+    }
+
+    /// Track the unit-modulus scalar introduced by a right-composed H.
+    pub(super) fn right_compose_h(&mut self, before: &SparseStabY, after: &SparseStabY, q: usize) {
+        let before_ket = self.take_before_ket(before);
+        let after_ket = CanonicalKet::new(after);
+        self.scalar *= right_compose_h_scalar(before, &before_ket, &after_ket, q);
+        self.ket = Some(after_ket);
+    }
+
+    /// Track the unit-modulus scalar introduced by a right-composed X.
+    pub(super) fn right_compose_x(&mut self, before: &SparseStabY, after: &SparseStabY, q: usize) {
+        let before_ket = self.take_before_ket(before);
+        let after_ket = CanonicalKet::new(after);
+        self.scalar *= right_compose_x_scalar(before, &before_ket, &after_ket, q);
+        self.ket = Some(after_ket);
+    }
+
+    /// Track the unit-modulus scalar introduced by pure-stabilizer projection.
+    pub(super) fn forced_measurement(
+        &mut self,
+        before: &SparseStabY,
+        after: &SparseStabY,
+        q: usize,
+        outcome: bool,
+        probability: f64,
+    ) {
+        let before_ket = self.take_before_ket(before);
+        let after_ket = CanonicalKet::new(after);
+        self.scalar *= forced_measurement_scalar(&before_ket, &after_ket, q, outcome, probability);
+        self.ket = Some(after_ket);
+    }
+
+    /// Unit phase of the selected terminal tableau basis vector, relative to
+    /// `state_vector`'s canonical representative.
+    pub(super) fn terminal_tableau_basis_phase(
+        &self,
+        tableau: &SparseStabY,
+        coefficient_bits: &[u8],
+        target: &[bool],
+    ) -> Complex64 {
+        if let Some(ket) = &self.ket {
+            normalized_terminal_phase(tableau, coefficient_bits, target, ket)
+        } else {
+            let ket = CanonicalKet::new(tableau);
+            normalized_terminal_phase(tableau, coefficient_bits, target, &ket)
+        }
+    }
 }
 
 fn normalized_scalar(numerator: Complex64, denominator: Complex64, context: &str) -> Complex64 {

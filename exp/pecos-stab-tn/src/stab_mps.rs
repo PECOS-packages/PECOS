@@ -1123,7 +1123,8 @@ impl StabMps {
         acc / f64::from(u32::try_from(group_size).expect("group_size fits in u32"))
     }
 
-    /// Complex amplitude ⟨s|Ψ⟩ via iterative forced projection without
+    /// Complex amplitude ⟨s|Ψ⟩ in [`Self::state_vector`]'s canonical
+    /// global-phase convention, via iterative forced projection without
     /// renormalization (Liu-Clark 2412.17209 Section VI.B).
     /// `bitstring[q]` specifies qubit `q`; see the crate-level
     /// **Bitstring convention** section.
@@ -1135,12 +1136,27 @@ impl StabMps {
     /// MPS + tableau. The product of conditional probabilities supplies the
     /// amplitude magnitude. After forcing all N outcomes, the final tableau's
     /// GF(2) sign equations identify the virtual-basis coefficient whose phase
-    /// supplies the complex amplitude phase without enumerating the state.
+    /// supplies the complex relative phase without enumerating the state. All
+    /// returned amplitudes share the physical state's one arbitrary global
+    /// phase; this method does not define an absolute ket phase.
     ///
     /// # Correctness
     /// Exact match to `amplitude` (SV-based) at n ≤ 14 for Clifford+T
-    /// circuits. Scales to arbitrary n via MPS operations. Probabilities
-    /// via `prob_bitstring` are always correct.
+    /// circuits, including relative phase in `state_vector`'s convention.
+    /// Scales to arbitrary n via MPS operations. Probabilities via
+    /// `prob_bitstring` are always correct.
+    ///
+    /// # Performance
+    ///
+    /// Relative-phase tracking performs O(n^3) canonical-ket elimination at
+    /// each stabilizer-group change, while reusing the post-change ket across
+    /// intervening generator rebases and virtual gates that preserve the
+    /// group. In a release dense-generator benchmark (H on every qubit,
+    /// triangular CX network, all-zero amplitude; three-run medians), cache
+    /// reuse reduced n=32/64/128/192 calls from 2.028/18.903/239.150/1120.132 ms
+    /// to 1.195/10.395/127.186/557.597 ms. The cached path still scaled about
+    /// n^3.4 and was 2.9x/6.0x/28.4x/35.9x slower than the phase-insensitive
+    /// dev parent on that adversarial generator basis.
     ///
     /// # Panics
     ///
@@ -1156,7 +1172,7 @@ impl StabMps {
         let mut tab = self.tableau.clone();
         let mut mps = self.mps.clone();
         let mut projected_norm = 1.0;
-        let mut projection_phase = Complex64::new(1.0, 0.0);
+        let mut phase_tracker = canonical_ket::CanonicalPhaseTracker::new();
         for (q, &s_q) in bitstring.iter().enumerate() {
             let probability = expect_mps_operation(
                 measure::project_forced_z_with_phase(
@@ -1164,7 +1180,7 @@ impl StabMps {
                     &mut mps,
                     q,
                     s_q,
-                    &mut projection_phase,
+                    &mut phase_tracker,
                 ),
                 "StabMps::amplitude_iterative forced projection",
             );
@@ -1192,8 +1208,8 @@ impl StabMps {
             return Complex64::new(0.0, 0.0);
         }
         let terminal_tableau_phase =
-            canonical_ket::terminal_tableau_basis_phase(&tab, &mps_index, bitstring);
-        self.global_phase * projection_phase * terminal_tableau_phase * coefficient
+            phase_tracker.terminal_tableau_basis_phase(&tab, &mps_index, bitstring);
+        self.global_phase * phase_tracker.scalar() * terminal_tableau_phase * coefficient
             / coefficient_norm
             * projected_norm
     }
@@ -3220,9 +3236,9 @@ mod tests {
         stn
     }
 
-    /// This case has phase-exact forced-projection steps but a terminal
-    /// destabilizer-basis factor of +i. It binds the terminal scalar in the
-    /// amplitude return independently of the two right-H regressions above.
+    /// This case matches `state_vector`'s phase convention at every forced
+    /// projection step but has a terminal destabilizer-basis factor of +i. It
+    /// binds the terminal scalar independently of the two right-H regressions.
     #[test]
     fn test_amplitude_iterative_terminal_tableau_phase_regression() {
         let stn = amplitude_phase_randomized_circuit(4, 0);
@@ -3247,6 +3263,93 @@ mod tests {
                     assert!(
                         (actual - expected).norm() <= 1e-12,
                         "n={n} seed={circuit_seed} index={index}: iterative={actual}, state-vector={expected}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn assert_all_iterative_amplitudes_match_state_vector(stn: &StabMps, label: &str) {
+        for (index, expected) in stn.state_vector().into_iter().enumerate() {
+            let bits = [(index & 1) != 0, (index & 2) != 0];
+            let actual = stn.amplitude_iterative(&bits);
+            assert!(
+                (actual - expected).norm() <= 1e-12,
+                "{label} index={index}: iterative={actual:?}, state-vector={expected:?}"
+            );
+        }
+    }
+
+    /// A live measurement can leave the trivial coefficient MPS in a nonzero
+    /// virtual basis state. The next iterative walk must retain the scalar
+    /// while `canonicalize_trivial_mps_basis` right-composes its X.
+    #[test]
+    fn test_amplitude_iterative_mid_measurement_right_compose_x_scalar() {
+        let mut stn = StabMps::builder(2)
+            .seed(28)
+            .merge_rz(false)
+            .max_truncation_error(0.0)
+            .build();
+        stn.y(&[QubitId(1), QubitId(0)]);
+        stn.rx(Angle64::from_radians(0.61), &[QubitId(0)]);
+        stn.sz(&[QubitId(0)]).szdg(&[QubitId(0)]);
+        stn.rx(Angle64::from_radians(0.61), &[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(1), QubitId(0)]);
+        let measurement = stn.mz(&[QubitId(0)]).remove(0);
+        assert!(!measurement.outcome && !measurement.is_deterministic);
+        stn.flush();
+
+        assert_all_iterative_amplitudes_match_state_vector(&stn, "right-compose-X scalar");
+    }
+
+    /// A live measurement can also select a pure-stabilizer ket whose later
+    /// forced projection is recanonicalized by `mz_forced`; that scalar must
+    /// survive in `amplitude_iterative`.
+    #[test]
+    fn test_amplitude_iterative_mid_measurement_forced_measurement_scalar() {
+        let mut stn = StabMps::builder(2)
+            .seed(9)
+            .merge_rz(false)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[QubitId(1)]);
+        stn.szdg(&[QubitId(0)]).szdg(&[QubitId(0)]);
+        stn.rx(Angle64::from_radians(0.61), &[QubitId(0)]);
+        stn.y(&[QubitId(1)]).h(&[QubitId(0)]).sz(&[QubitId(0)]);
+        stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
+        let measurement = stn.mz(&[QubitId(0)]).remove(0);
+        assert!(!measurement.outcome && !measurement.is_deterministic);
+        stn.flush();
+
+        assert_all_iterative_amplitudes_match_state_vector(&stn, "forced-measurement scalar");
+    }
+
+    #[test]
+    fn test_amplitude_iterative_bare_h_rz_cx_family() {
+        for n in 3..=4 {
+            for seed in 0..3_u64 {
+                let mut stn = StabMps::builder(n)
+                    .seed(seed)
+                    .merge_rz(false)
+                    .max_truncation_error(0.0)
+                    .build();
+                for q in 0..n {
+                    stn.h(&[QubitId(q)]);
+                    let theta = 0.19 + 0.07 * (seed * n as u64 + q as u64) as f64;
+                    stn.rz(Angle64::from_radians(theta), &[QubitId(q)]);
+                    stn.h(&[QubitId(q)]);
+                    if q + 1 < n {
+                        stn.cx(&[(QubitId(q), QubitId(q + 1))]);
+                    }
+                }
+                stn.flush();
+
+                for (index, expected) in stn.state_vector().into_iter().enumerate() {
+                    let bits = (0..n).map(|q| (index >> q) & 1 != 0).collect::<Vec<_>>();
+                    let actual = stn.amplitude_iterative(&bits);
+                    assert!(
+                        (actual - expected).norm() <= 1e-12,
+                        "bare H/RZ/CX n={n} seed={seed} index={index}: iterative={actual:?}, state-vector={expected:?}"
                     );
                 }
             }

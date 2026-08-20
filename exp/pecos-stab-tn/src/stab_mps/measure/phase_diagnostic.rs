@@ -1,9 +1,12 @@
-//! Phase-exactness diagnostics for PECOS issue #562.
+//! Archival phase-exactness investigation record for PECOS issue #562.
 //!
-//! This module deliberately calls the shipped forced-projection routine and
-//! reconstructs every intermediate `(tableau, MPS)` pair through
-//! `StabMps::state_vector`.  It is test-only: none of these dense operations or
-//! access paths are compiled into the library.
+//! Most helpers below deliberately shadow the production forced-projection
+//! branches so the original localization remains inspectable; they can drift
+//! as production evolves and are not the primary regression boundary. The
+//! durable checks are `canonical_ket_amplitude_matches_dense_projector_exhaustively`
+//! and `extended_phase_census_report`, which exercise the production primitive
+//! and step-exact walk respectively. None of these dense operations or access
+//! paths are compiled into the library.
 
 use super::*;
 use crate::stab_mps::StabMps;
@@ -48,12 +51,18 @@ fn normalized_projected_dense(
 
 #[derive(Clone, Copy, Debug)]
 struct PhaseComparison {
-    power: u8,
-    phase_error: f64,
+    /// Nearest eighth-root bucket for diagnostic reporting only.
+    octant: u8,
+    identity_error: f64,
     vector_error: f64,
 }
 
-fn compare_up_to_quarter_phase(actual: &[Complex64], expected: &[Complex64]) -> PhaseComparison {
+/// Compare vectors up to their measured unit-modulus scalar.
+///
+/// The octant does not constrain correctness: reachable right-H scalars can
+/// be eighth roots of unity, and the vector comparison uses the measured
+/// scalar itself rather than snapping it to any discrete root.
+fn compare_up_to_unit_scalar(actual: &[Complex64], expected: &[Complex64]) -> PhaseComparison {
     assert_eq!(actual.len(), expected.len());
     let pivot = expected
         .iter()
@@ -63,34 +72,39 @@ fn compare_up_to_quarter_phase(actual: &[Complex64], expected: &[Complex64]) -> 
         .unwrap();
     assert!(expected[pivot].norm() > 1e-12);
     let raw_ratio = actual[pivot] / expected[pivot];
-    let phase = raw_ratio / Complex64::new(raw_ratio.norm(), 0.0);
-    let roots = [
-        Complex64::new(1.0, 0.0),
-        Complex64::new(0.0, 1.0),
-        Complex64::new(-1.0, 0.0),
-        Complex64::new(0.0, -1.0),
-    ];
-    let (power, phase_error) = roots
-        .iter()
-        .enumerate()
-        .map(|(power, root)| (power as u8, (phase - root).norm()))
-        .min_by(|left, right| left.1.total_cmp(&right.1))
-        .unwrap();
-    let root = roots[usize::from(power)];
+    let ratio_magnitude = raw_ratio.norm();
+    assert!(ratio_magnitude > 1e-12);
+    let phase = raw_ratio / Complex64::new(ratio_magnitude, 0.0);
+    let octant = ((phase.arg() * 4.0 / std::f64::consts::PI).round() as i8).rem_euclid(8) as u8;
     let vector_error = actual
         .iter()
         .zip(expected)
-        .map(|(actual, expected)| (*actual - root * *expected).norm())
+        .map(|(actual, expected)| (*actual - phase * *expected).norm())
         .fold(0.0, f64::max);
     PhaseComparison {
-        power,
-        phase_error,
+        octant,
+        identity_error: (phase - Complex64::new(1.0, 0.0)).norm(),
         vector_error,
     }
 }
 
 fn bits_from_index(index: usize, n: usize) -> Vec<bool> {
     (0..n).map(|qubit| (index >> qubit) & 1 != 0).collect()
+}
+
+#[test]
+fn unit_scalar_comparison_accepts_eighth_root_phase() {
+    let expected = [Complex64::new(0.5, -0.25), Complex64::new(-0.125, 0.75)];
+    let eighth_root = Complex64::new(
+        std::f64::consts::FRAC_1_SQRT_2,
+        std::f64::consts::FRAC_1_SQRT_2,
+    );
+    let actual = expected.map(|amplitude| eighth_root * amplitude);
+    let comparison = compare_up_to_unit_scalar(&actual, &expected);
+
+    assert_eq!(comparison.octant, 1);
+    assert!(comparison.vector_error <= 1e-15);
+    assert!(comparison.identity_error > 0.5);
 }
 
 fn xorshift(state: &mut u64) -> u64 {
@@ -270,7 +284,7 @@ fn record_internal(
 ) {
     records.push((
         label.to_string(),
-        compare_up_to_quarter_phase(actual, expected),
+        compare_up_to_unit_scalar(actual, expected),
     ));
 }
 
@@ -552,7 +566,7 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
             before: &[Complex64],
             qubit: usize,
             projected_norm: f64,
-            accumulated_phase: Complex64,
+            phase_tracker: &crate::stab_mps::canonical_ket::CanonicalPhaseTracker,
         ) {
             let n = self.template.num_qubits;
             if qubit == n {
@@ -568,26 +582,24 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
                 let mps_index = projected_mps_basis_index(tableau, &self.bits);
                 let coefficient = mps.amplitude(&mps_index);
                 let terminal_tableau_phase =
-                    crate::stab_mps::canonical_ket::terminal_tableau_basis_phase(
-                        tableau, &mps_index, &self.bits,
-                    );
+                    phase_tracker.terminal_tableau_basis_phase(tableau, &mps_index, &self.bits);
                 let actual = self.template.global_phase
-                    * accumulated_phase
+                    * phase_tracker.scalar()
                     * terminal_tableau_phase
                     * coefficient
                     / coefficient.norm()
                     * projected_norm;
-                let comparison = compare_up_to_quarter_phase(&[actual], &[expected]);
-                assert!(comparison.phase_error <= PHASE_TOLERANCE);
+                let comparison = compare_up_to_unit_scalar(&[actual], &[expected]);
+                assert!(comparison.identity_error <= PHASE_TOLERANCE);
                 assert!(comparison.vector_error <= VECTOR_TOLERANCE);
                 self.summary.max_phase_error =
-                    self.summary.max_phase_error.max(comparison.phase_error);
+                    self.summary.max_phase_error.max(comparison.identity_error);
                 self.summary.max_vector_error =
                     self.summary.max_vector_error.max(comparison.vector_error);
                 *self
                     .summary
                     .final_phases
-                    .entry(comparison.power)
+                    .entry(comparison.octant)
                     .or_default() += 1;
                 return;
             }
@@ -599,7 +611,7 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
                 };
                 let mut next_tableau = tableau.clone();
                 let mut next_mps = mps.clone();
-                let mut next_phase = accumulated_phase;
+                let mut next_phase = phase_tracker.clone();
                 let probability = project_forced_z_with_phase(
                     &mut next_tableau,
                     &mut next_mps,
@@ -613,22 +625,22 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
                 }
                 let mut actual_after = dense_pair(self.template, &next_tableau, &next_mps);
                 for amplitude in &mut actual_after {
-                    *amplitude *= next_phase;
+                    *amplitude *= next_phase.scalar();
                 }
-                let comparison = compare_up_to_quarter_phase(&actual_after, &expected_after);
+                let comparison = compare_up_to_unit_scalar(&actual_after, &expected_after);
                 assert!(
-                    comparison.phase_error <= PHASE_TOLERANCE
+                    comparison.identity_error <= PHASE_TOLERANCE
                         && comparison.vector_error <= VECTOR_TOLERANCE,
                     "q={qubit} outcome={outcome} phase={comparison:?}"
                 );
                 self.summary.max_phase_error =
-                    self.summary.max_phase_error.max(comparison.phase_error);
+                    self.summary.max_phase_error.max(comparison.identity_error);
                 self.summary.max_vector_error =
                     self.summary.max_vector_error.max(comparison.vector_error);
                 *self
                     .summary
                     .step_phases
-                    .entry(comparison.power)
+                    .entry(comparison.octant)
                     .or_default() += 1;
                 let features = step_features(tableau, mps, qubit, outcome);
                 *self
@@ -636,10 +648,11 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
                     .step_features
                     .entry(features)
                     .or_default()
-                    .entry(comparison.power)
+                    .entry(comparison.octant)
                     .or_default() += 1;
                 self.bits.push(outcome);
-                if comparison.power != 0 && self.summary.first_leak.is_none() {
+                if comparison.identity_error > PHASE_TOLERANCE && self.summary.first_leak.is_none()
+                {
                     self.summary.first_leak =
                         Some((qubit, usize::from(outcome), self.bits.clone(), comparison));
                 }
@@ -653,7 +666,7 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
                                 .internal_phases
                                 .entry(label)
                                 .or_default()
-                                .entry(internal.power)
+                                .entry(internal.octant)
                                 .or_default() += 1;
                         } else {
                             *self.summary.internal_non_scalar.entry(label).or_default() += 1;
@@ -666,7 +679,7 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
                     &actual_after,
                     qubit + 1,
                     projected_norm * probability.sqrt(),
-                    next_phase,
+                    &next_phase,
                 );
                 self.bits.pop();
             }
@@ -681,14 +694,8 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
         collect_internal,
         bits: Vec::new(),
     };
-    walker.descend(
-        &stn.tableau,
-        &stn.mps,
-        &original,
-        0,
-        1.0,
-        Complex64::new(1.0, 0.0),
-    );
+    let phase_tracker = crate::stab_mps::canonical_ket::CanonicalPhaseTracker::new();
+    walker.descend(&stn.tableau, &stn.mps, &original, 0, 1.0, &phase_tracker);
     for (index, &expected) in original.iter().enumerate() {
         let bits = bits_from_index(index, stn.num_qubits);
         let actual = stn.amplitude_iterative(&bits);
@@ -700,11 +707,11 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
                 "zero dense amplitude had nonzero iterative result: bits={bits:?} actual={actual}"
             );
         } else {
-            let comparison = compare_up_to_quarter_phase(&[actual], &[expected]);
+            let comparison = compare_up_to_unit_scalar(&[actual], &[expected]);
             assert!(
-                comparison.phase_error <= PHASE_TOLERANCE
+                comparison.identity_error <= PHASE_TOLERANCE
                     && comparison.vector_error <= VECTOR_TOLERANCE,
-                "end-to-end amplitude was not a fourth-root phase ratio: bits={bits:?} comparison={comparison:?}"
+                "end-to-end amplitude did not match state_vector's phase convention: bits={bits:?} comparison={comparison:?}"
             );
         }
     }
@@ -716,10 +723,10 @@ fn walk_all_bitstrings(stn: &StabMps) -> WalkSummary {
 }
 
 fn print_comparison(label: &str, actual: &[Complex64], expected: &[Complex64]) {
-    let comparison = compare_up_to_quarter_phase(actual, expected);
+    let comparison = compare_up_to_unit_scalar(actual, expected);
     eprintln!(
-        "    {label:34} i^{} phase_err={:.2e} vector_err={:.2e}",
-        comparison.power, comparison.phase_error, comparison.vector_error
+        "    {label:34} exp(i*pi/4*{}) identity_err={:.2e} vector_err={:.2e}",
+        comparison.octant, comparison.identity_error, comparison.vector_error
     );
 }
 
@@ -1307,7 +1314,7 @@ fn smallest_reproducer_localizes_to_right_compose_h() {
     assert_eq!(summary.final_phases, BTreeMap::from([(0, 2)]));
     assert_eq!(
         summary.internal_phases["right_compose_h + MPS H"],
-        BTreeMap::from([(0, 1), (3, 1)])
+        BTreeMap::from([(0, 1), (6, 1)])
     );
     for (label, phases) in &summary.internal_phases {
         if label != "right_compose_h + MPS H"

@@ -2970,7 +2970,7 @@ impl PyTickCircuit {
                     | GateType::RZZ
                         if p2 > 0.0 =>
                     {
-                        channels.extend(gate.qubits.chunks_exact(2).map(|pair| {
+                        channels.extend(gate.qubits.as_chunks::<2>().0.iter().map(|pair| {
                             pecos_core::channel::Depolarizing2(p2, pair[0].index(), pair[1].index())
                         }));
                     }

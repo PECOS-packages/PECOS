@@ -135,7 +135,7 @@ impl<R: SeedableRng + Rng + Debug> BatchedOps for SparseStabGeneric<BitSet, R> {
     fn cx_batched(&mut self, qubits: &[usize]) -> &mut Self {
         // CX: IX->IX, IZ->ZZ, XI->XX, ZI->ZI
         // Process pairs
-        for pair in qubits.chunks_exact(2) {
+        for pair in qubits.as_chunks::<2>().0 {
             let ctrl = pair[0];
             let tgt = pair[1];
 
@@ -167,7 +167,7 @@ impl<R: SeedableRng + Rng + Debug> BatchedOps for SparseStabGeneric<BitSet, R> {
     #[inline]
     fn cz_batched(&mut self, qubits: &[usize]) -> &mut Self {
         // CZ: IX->ZX, IZ->IZ, XI->XZ, ZI->ZI
-        for pair in qubits.chunks_exact(2) {
+        for pair in qubits.as_chunks::<2>().0 {
             let q1 = pair[0];
             let q2 = pair[1];
 
@@ -340,7 +340,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> RawOps for SparseStabGeneric<S, 
         use pecos_core::QubitId;
 
         let pairs: smallvec::SmallVec<[(QubitId, QubitId); 8]> = qubits
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| (QubitId(pair[0]), QubitId(pair[1])))
             .collect();
         self.cx(&pairs)

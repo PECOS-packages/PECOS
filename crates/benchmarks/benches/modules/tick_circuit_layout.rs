@@ -297,7 +297,9 @@ fn execute_gate_direct<S: CliffordGateable>(sim: &mut S, gate: &Gate) -> usize {
         GateType::CX => {
             let pairs = gate
                 .qubits
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| (pair[0], pair[1]))
                 .collect::<Vec<(QubitId, QubitId)>>();
             sim.cx(&pairs);

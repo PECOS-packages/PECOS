@@ -355,7 +355,20 @@ impl CanonicalPhaseTracker {
     }
 
     fn take_before_ket(&mut self, before: &SparseStabY) -> CanonicalKet {
-        self.ket.take().unwrap_or_else(|| CanonicalKet::new(before))
+        let ket = self.ket.take().unwrap_or_else(|| CanonicalKet::new(before));
+        // Self-enforce the reuse invariant: the cache is only valid across
+        // operations that preserve the stabilizer group, so the cached ket's
+        // support must match one rebuilt from the current tableau. A mismatch
+        // means a group-changing operation was inserted between scalar sites
+        // without refreshing the cache -- the silent-phase failure class of
+        // issue #562.
+        debug_assert_eq!(
+            ket.first_support(),
+            CanonicalKet::new(before).first_support(),
+            "cached canonical ket is stale: a group-changing tableau operation \
+             ran without refreshing the phase tracker"
+        );
+        ket
     }
 
     /// Track the unit-modulus scalar introduced by a right-composed H.

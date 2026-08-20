@@ -156,17 +156,9 @@ pub struct Mast {
     /// When `true`, consecutive `rz(θ, q)` on same qubit merge before
     /// invoking magic-state injection. Big win for ion-trap RZ noise.
     merge_rz: bool,
-    /// First numerical MPS failure observed through an infallible gate trait.
-    mps_error: Option<MpsError>,
 }
 
 impl Mast {
-    fn record_mps_error(&mut self, error: MpsError) {
-        if self.mps_error.is_none() {
-            self.mps_error = Some(error);
-        }
-    }
-
     /// Create a MAST simulator with `num_qubits` data qubits and room for
     /// `max_non_clifford` non-Clifford gates.
     ///
@@ -201,7 +193,6 @@ impl Mast {
             stats: super::StabMpsStats::default(),
             pending_rz: vec![None; total],
             merge_rz: false,
-            mps_error: None,
         }
     }
 
@@ -242,7 +233,6 @@ impl Mast {
             stats: super::StabMpsStats::default(),
             pending_rz: vec![None; total],
             merge_rz: false,
-            mps_error: None,
         }
     }
 
@@ -331,7 +321,7 @@ impl Mast {
     /// Materialize all pending merged RZ rotations. Public; useful before read
     /// operations.
     pub fn flush(&mut self) {
-        if self.mps_error.is_some() || !self.merge_rz {
+        if !self.merge_rz {
             return;
         }
         for q in 0..self.total_qubits {
@@ -390,13 +380,6 @@ impl Mast {
         &self.mps
     }
 
-    /// Return the first numerical MPS failure observed through an infallible
-    /// simulator operation, if any.
-    #[must_use]
-    pub fn mps_error(&self) -> Option<&MpsError> {
-        self.mps_error.as_ref()
-    }
-
     /// Return stored diagnostics for deferred projections performed since reset.
     /// Pending operations are not materialized by this diagnostic.
     #[must_use]
@@ -453,24 +436,23 @@ impl Mast {
         let half_rad = theta.to_radians_signed() / 2.0;
         let cos_half = half_rad.cos();
         let sin_half = half_rad.sin();
-        let result = non_clifford::apply_rz_stab_mps(
-            &mut self.tableau,
-            &mut self.mps,
-            cos_half,
-            sin_half,
-            ancilla,
-            true,
-            &mut non_clifford::RzContext {
-                disent_flags: &mut self.disent_flags,
-                numerical_flag_redetection: self.numerical_flag_redetection,
-                gf2_matrix: &mut self.gf2_matrix,
-                stats: &mut self.stats,
-            },
+        super::expect_mps_operation(
+            non_clifford::apply_rz_stab_mps(
+                &mut self.tableau,
+                &mut self.mps,
+                cos_half,
+                sin_half,
+                ancilla,
+                true,
+                &mut non_clifford::RzContext {
+                    disent_flags: &mut self.disent_flags,
+                    numerical_flag_redetection: self.numerical_flag_redetection,
+                    gf2_matrix: &mut self.gf2_matrix,
+                    stats: &mut self.stats,
+                },
+            ),
+            "Mast::inject_magic_state RZ update",
         );
-        if let Err(error) = result {
-            self.record_mps_error(error);
-            return;
-        }
 
         // Step 3: CNOT(target, ancilla) -- target controls, ancilla is CX target
         // This is the key: data qubit controls, ancilla flips.
@@ -513,23 +495,23 @@ impl Mast {
         } else {
             // Non-Clifford correction: apply via the STN protocol.
             let (sin_half, cos_half) = correction_angle.half_angle_sin_cos();
-            let result = non_clifford::apply_rz_stab_mps(
-                &mut self.tableau,
-                &mut self.mps,
-                cos_half,
-                sin_half,
-                target,
-                true,
-                &mut non_clifford::RzContext {
-                    disent_flags: &mut self.disent_flags,
-                    numerical_flag_redetection: self.numerical_flag_redetection,
-                    gf2_matrix: &mut self.gf2_matrix,
-                    stats: &mut self.stats,
-                },
+            super::expect_mps_operation(
+                non_clifford::apply_rz_stab_mps(
+                    &mut self.tableau,
+                    &mut self.mps,
+                    cos_half,
+                    sin_half,
+                    target,
+                    true,
+                    &mut non_clifford::RzContext {
+                        disent_flags: &mut self.disent_flags,
+                        numerical_flag_redetection: self.numerical_flag_redetection,
+                        gf2_matrix: &mut self.gf2_matrix,
+                        stats: &mut self.stats,
+                    },
+                ),
+                "Mast::apply_injection_correction RZ update",
             );
-            if let Err(error) = result {
-                self.record_mps_error(error);
-            }
         }
     }
 
@@ -542,9 +524,6 @@ impl Mast {
     ///
     /// Calling `mz` on data qubits performs this completion step automatically.
     pub fn project_all(&mut self) {
-        if self.mps_error.is_some() {
-            return;
-        }
         let result = (|| -> Result<(), MpsError> {
             match self.projection_order {
                 ProjectionOrder::Input => {
@@ -575,9 +554,7 @@ impl Mast {
             }
             Ok(())
         })();
-        if let Err(error) = result {
-            self.record_mps_error(error);
-        }
+        super::expect_mps_operation(result, "Mast::project_all deferred projection");
     }
 
     fn projection_locality(&self, ancilla: usize) -> (usize, usize) {
@@ -687,7 +664,6 @@ impl QuantumSimulator for Mast {
         self.disent_flags = vec![Some(super::SiteEigenstate::Z(false)); self.total_qubits];
         self.gf2_matrix.reset();
         self.stats = super::StabMpsStats::default();
-        self.mps_error = None;
         for slot in &mut self.pending_rz {
             *slot = None;
         }
@@ -737,29 +713,15 @@ impl CliffordGateable for Mast {
         }
         // Project all deferred measurements first
         self.project_all();
-        if self.mps_error.is_some() {
-            return (0..qubits.len())
-                .map(|_| MeasurementResult {
-                    outcome: false,
-                    is_deterministic: false,
-                })
-                .collect();
-        }
         // Then sample and force-project each data qubit through the exact route.
         let mut measurements = Vec::with_capacity(qubits.len());
         for &q in qubits {
-            match self.measure_data_qubit_exact(q.index()) {
-                Ok(measurement) => measurements.push(measurement),
-                Err(error) => {
-                    self.record_mps_error(error);
-                    measurements.push(MeasurementResult {
-                        outcome: false,
-                        is_deterministic: false,
-                    });
-                    break;
-                }
-            }
+            measurements.push(super::expect_mps_operation(
+                self.measure_data_qubit_exact(q.index()),
+                "Mast::mz data-qubit projection",
+            ));
         }
+        debug_assert_eq!(measurements.len(), qubits.len());
         measurements
     }
 }
@@ -849,6 +811,18 @@ mod tests {
         let dm = mast.deferred.remove(position);
         mast.project_deferred(dm, support_size, mps_span).unwrap();
         assert_mast_disent_flags_sound(mast, context);
+    }
+
+    #[test]
+    fn test_mast_mz_returns_one_result_per_requested_qubit() {
+        let mut mast = Mast::with_seed(3, 0, 0x000A_11CE);
+        mast.h(&[QubitId(0)]);
+        mast.cx(&[(QubitId(0), QubitId(1))]);
+        let qubits = [QubitId(0), QubitId(1), QubitId(2)];
+
+        let measurements = mast.mz(&qubits);
+
+        assert_eq!(measurements.len(), qubits.len());
     }
 
     #[test]

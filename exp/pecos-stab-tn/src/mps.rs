@@ -1172,7 +1172,7 @@ mod tests {
         let mut mps = Mps::new(2, MpsConfig::default());
         mps.tensors[1][(0, 0)] = Complex64::new(f64::NAN, 0.0);
 
-        assert_eq!(mps.compress(), Err(MpsError::SvdFailed));
+        assert!(matches!(mps.compress(), Err(MpsError::SvdFailed)));
     }
 
     #[test]

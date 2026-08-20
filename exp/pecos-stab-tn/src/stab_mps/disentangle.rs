@@ -241,6 +241,16 @@ fn apply_disentangler(
     Ok(())
 }
 
+/// Apply one candidate to a throwaway MPS used only for scoring.
+///
+/// A factorization failure rejects the candidate without touching the live
+/// state; accepted candidates are applied separately by [`apply_disentangler`].
+fn trial_disentangler(mps: &Mps, q: usize, gate: &DMatrix<Complex64>) -> Option<Mps> {
+    let mut trial_mps = mps.clone();
+    trial_mps.apply_two_site_gate(q, gate).ok()?;
+    Some(trial_mps)
+}
+
 /// Run one sweep of heuristic disentangling on the MPS.
 ///
 /// For each internal bond, tries each candidate Clifford gate and keeps
@@ -276,8 +286,11 @@ pub(crate) fn disentangle_sweep(
         let mut best_gate_idx: Option<usize> = None;
 
         for (gate_idx, gate) in gates.iter().enumerate() {
-            let mut trial_mps = mps.clone();
-            trial_mps.apply_two_site_gate(q, &gate.matrix)?;
+            let Some(trial_mps) = trial_disentangler(mps, q, &gate.matrix) else {
+                // Candidate scoring is speculative: a failed factorization on
+                // this throwaway clone only disqualifies this candidate.
+                continue;
+            };
             let trial_max_bond = trial_mps.max_bond_dim();
             let trial_entropy = bond_entropy(&trial_mps, bond);
             // Accept gate only if it doesn't increase max bond dim
@@ -308,8 +321,11 @@ pub(crate) fn disentangle_sweep(
         let mut best_gate_idx: Option<usize> = None;
 
         for (gate_idx, gate) in gates.iter().enumerate() {
-            let mut trial_mps = mps.clone();
-            trial_mps.apply_two_site_gate(q, &gate.matrix)?;
+            let Some(trial_mps) = trial_disentangler(mps, q, &gate.matrix) else {
+                // Match the forward sweep: speculative numerical failures are
+                // rejected candidates, not failures of the live sweep.
+                continue;
+            };
             let trial_max_bond = trial_mps.max_bond_dim();
             let trial_entropy = bond_entropy(&trial_mps, bond);
             if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
@@ -372,6 +388,20 @@ mod tests {
                 "gate {i} is not unitary: ||U*Udg - I|| = {diff}"
             );
         }
+    }
+
+    #[test]
+    fn test_speculative_disentangler_factorization_failure_skips_candidate() {
+        let mps = Mps::new(2, crate::mps::MpsConfig::default());
+        let non_finite_gate = DMatrix::from_element(4, 4, Complex64::new(f64::NAN, 0.0));
+
+        assert!(trial_disentangler(&mps, 0, &non_finite_gate).is_none());
+        assert!(
+            mps.tensors()
+                .iter()
+                .flat_map(DMatrix::iter)
+                .all(|value| value.re.is_finite() && value.im.is_finite())
+        );
     }
 
     #[test]

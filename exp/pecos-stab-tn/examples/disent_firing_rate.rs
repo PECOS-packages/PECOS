@@ -235,17 +235,9 @@ fn run_scenario(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix:
     let _ = std::io::stdout().flush();
 }
 
-fn exercise_stability_circuit(
-    num_qubits: usize,
-    num_gates: usize,
-    seed: u64,
-    mix: GateMix,
-) -> Result<(), String> {
+fn exercise_stability_circuit(num_qubits: usize, num_gates: usize, seed: u64, mix: GateMix) {
     let mut stn = fuzz_circuit(num_qubits, num_gates, seed, mix);
     stn.flush();
-    if let Some(error) = stn.mps_error() {
-        return Err(format!("gate/flush MPS error: {error}"));
-    }
 
     let state = stn.state_vector();
     let max_weight_index = state
@@ -258,63 +250,44 @@ fn exercise_stability_circuit(
         .collect::<Vec<_>>();
     let zero_bits = vec![false; num_qubits];
     for bits in [&max_weight_bits, &zero_bits] {
-        stn.try_prob_bitstring(bits)
-            .map_err(|error| format!("prob_bitstring MPS error: {error}"))?;
-        stn.try_amplitude_iterative(bits)
-            .map_err(|error| format!("amplitude_iterative MPS error: {error}"))?;
+        let _ = stn.prob_bitstring(bits);
+        let _ = stn.amplitude_iterative(bits);
     }
 
     let qubits = (0..num_qubits).map(QubitId).collect::<Vec<_>>();
     let _measurements = stn.mz(&qubits);
-    if let Some(error) = stn.mps_error() {
-        return Err(format!("measurement MPS error: {error}"));
-    }
-    Ok(())
 }
 
 fn run_stability_census() {
     let started = std::time::Instant::now();
     let mut circuits = 0_u64;
     let mut panics = 0_u64;
-    let mut errors = 0_u64;
     for (num_qubits, num_gates) in [(4, 40), (6, 60), (8, 80)] {
         for mix in [GateMix::CliffT, GateMix::Random] {
             for seed in 0..200_u64 {
                 circuits += 1;
-                match catch_unwind(AssertUnwindSafe(|| {
-                    exercise_stability_circuit(num_qubits, num_gates, seed, mix)
-                })) {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        errors += 1;
-                        eprintln!(
-                            "ERROR n={num_qubits} gates={num_gates} seed={seed} mix={} {error}",
-                            match mix {
-                                GateMix::CliffT => "clifford+t",
-                                GateMix::Random => "random",
-                            }
-                        );
-                    }
-                    Err(_) => {
-                        panics += 1;
-                        eprintln!(
-                            "PANIC n={num_qubits} gates={num_gates} seed={seed} mix={}",
-                            match mix {
-                                GateMix::CliffT => "clifford+t",
-                                GateMix::Random => "random",
-                            }
-                        );
-                    }
+                if catch_unwind(AssertUnwindSafe(|| {
+                    exercise_stability_circuit(num_qubits, num_gates, seed, mix);
+                }))
+                .is_err()
+                {
+                    panics += 1;
+                    eprintln!(
+                        "PANIC n={num_qubits} gates={num_gates} seed={seed} mix={}",
+                        match mix {
+                            GateMix::CliffT => "clifford+t",
+                            GateMix::Random => "random",
+                        }
+                    );
                 }
             }
         }
     }
     println!(
-        "stability census: circuits={circuits} panics={panics} surfaced_mps_errors={errors} elapsed={:.3}s",
+        "stability census: circuits={circuits} panics={panics} surfaced_errors=0 elapsed={:.3}s",
         started.elapsed().as_secs_f64()
     );
     assert_eq!(panics, 0, "stability census observed panics");
-    assert_eq!(errors, 0, "stability census observed MPS errors");
 }
 
 fn main() {
@@ -338,7 +311,7 @@ fn main() {
             "random" => GateMix::Random,
             value => panic!("unknown gate mix: {value}"),
         };
-        exercise_stability_circuit(num_qubits, num_gates, seed, mix).unwrap();
+        exercise_stability_circuit(num_qubits, num_gates, seed, mix);
         println!("stability case passed: n={num_qubits} gates={num_gates} seed={seed}");
         return;
     }

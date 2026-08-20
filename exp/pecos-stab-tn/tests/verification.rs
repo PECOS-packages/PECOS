@@ -1477,8 +1477,9 @@ fn test_fuzz_7qubit() {
 
 #[test]
 fn test_fuzz_8qubit() {
-    // Keep an 8-qubit lane in the default suite so failures that require the
-    // wider MPS shapes cannot hide behind the 6-qubit ceiling.
+    // Exercise end-to-end state-vector agreement and 8-qubit gate routing on
+    // two shallow deterministic circuits. The targeted QR-repair regression is
+    // the 8-qubit, 80-gate stability-census seed 97 in the library tests.
     for seed in 810..812 {
         fuzz_circuit(8, 10, seed);
     }

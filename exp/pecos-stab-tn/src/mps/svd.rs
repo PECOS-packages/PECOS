@@ -36,9 +36,12 @@ const SVD_ITERATIONS_PER_DIMENSION: usize = 64;
 // O(epsilon), far below the O(sqrt(epsilon)) floor of a Gram spectrum.
 const SVD_TRIPLET_VALIDATION_MULTIPLIER: f64 = 512.0;
 
-// QR repairs a derived factor at O(epsilon) but does not fold its tiny
-// off-diagonal R correction into the other factor. Permit that bounded repair
-// error only after the independent triplet and isometry checks pass.
+// Phase-aligned QR perturbs the realified fallback by O(epsilon), but measured
+// Gram-path reconstruction perturbations are about 1e7 * epsilon. The 512
+// multiplier is empirical, not derived: it sits just above one observed valid
+// case at 252.8 * epsilon, while a 300-matrix battery found counterexamples at
+// 776 * epsilon that this bound intentionally rejects. Apply it only after the
+// independent triplet and isometry checks pass.
 const SVD_FALLBACK_RECONSTRUCTION_MULTIPLIER: f64 = 512.0;
 
 fn iteration_limit(rows: usize, cols: usize) -> usize {
@@ -1073,6 +1076,45 @@ mod tests {
         let result = truncated_svd_with_error(&matrix, 8, 0.0, Some(0.0)).unwrap();
 
         assert_eq!(result.singular_values.len(), 3);
+    }
+
+    #[test]
+    fn test_gram_zero_singular_value_columns_are_completed_as_isometries() {
+        let matrix = DMatrix::from_row_slice(
+            4,
+            3,
+            &[
+                Complex64::new(2.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        );
+        let (u, singular_values, vt) =
+            gram_svd_factors(&matrix, numerical_zero_threshold(&matrix)).unwrap();
+
+        assert!(singular_values[2].abs() < f64::MIN_POSITIVE);
+        assert_complex_identity(&(u.adjoint() * &u), 1e-14);
+        assert_complex_identity(&(&vt * vt.adjoint()), 1e-14);
+    }
+
+    #[test]
+    fn test_retained_spectrum_is_trustworthy_accepts_valid_and_rejects_bad_triplets() {
+        let matrix = matrix_with_spectrum(6, 4, &[4.0, 2.0, 0.5, 0.125]);
+        let factors = direct_svd_factors(&matrix).unwrap();
+        assert!(retained_spectrum_is_trustworthy(&matrix, &factors, 4));
+
+        let mut corrupted = factors;
+        corrupted.1[3] *= 2.0;
+        assert!(!retained_spectrum_is_trustworthy(&matrix, &corrupted, 4));
     }
 
     #[test]

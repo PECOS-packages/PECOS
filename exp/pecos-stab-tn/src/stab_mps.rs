@@ -82,6 +82,19 @@ fn reset_tableau_and_rng(
     initial_tableau_and_rng(num_qubits, None)
 }
 
+/// Unwrap an internal MPS operation at an infallible simulator boundary.
+///
+/// The 1,200-circuit stability census has observed zero failures here, so this
+/// is a guard against an unrecoverable numerical state, not an expected
+/// outcome. If a fallible simulator API is wanted, that framework-wide trait
+/// change should be tracked as its own issue.
+#[track_caller]
+pub(super) fn expect_mps_operation<T>(result: Result<T, MpsError>, operation: &str) -> T {
+    result.unwrap_or_else(|error| {
+        panic!("{operation} failed: {error}; the coefficient MPS state is unrecoverable")
+    })
+}
+
 /// Known Pauli eigenstate at an MPS site, used for exact disentangling.
 ///
 /// For every variant, `false` denotes the `+1` eigenstate and `true` the
@@ -622,7 +635,6 @@ impl StabMpsBuilder {
             auto_grow_bond_dim: self.auto_grow_bond_dim,
             auto_grow_max_bond_dim: self.auto_grow_max_bond_dim,
             last_truncation_error: 0.0,
-            mps_error: None,
             pauli_frame_x: vec![false; self.num_qubits],
             pauli_frame_z: vec![false; self.num_qubits],
             pauli_frame_phase: Complex64::new(1.0, 0.0),
@@ -711,9 +723,6 @@ pub struct StabMps {
     auto_grow_max_bond_dim: usize,
     /// Snapshot of `mps.truncation_error()` at the last auto-grow check.
     last_truncation_error: f64,
-    /// First numerical MPS failure observed through an infallible simulator
-    /// trait method. Checked APIs expose this instead of panicking.
-    mps_error: Option<MpsError>,
     /// Pauli frame X bit per qubit.
     pauli_frame_x: Vec<bool>,
     /// Pauli frame Z bit per qubit.
@@ -783,23 +792,6 @@ impl StabMps {
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
         Self::builder(num_qubits).build()
-    }
-
-    /// Return the first MPS numerical failure observed by an infallible
-    /// simulator operation, if any.
-    ///
-    /// PECOS gate traits return `&mut Self` and cannot propagate errors. STN
-    /// therefore records the first failure for explicit inspection instead of
-    /// panicking or continuing to report a successful numerical update.
-    #[must_use]
-    pub fn mps_error(&self) -> Option<&MpsError> {
-        self.mps_error.as_ref()
-    }
-
-    fn record_mps_error(&mut self, error: MpsError) {
-        if self.mps_error.is_none() {
-            self.mps_error = Some(error);
-        }
     }
 
     /// Create with a specific seed for reproducible stochastic operations.
@@ -1147,25 +1139,11 @@ impl StabMps {
     /// via `prob_bitstring` are always correct.
     ///
     /// # Panics
-    /// Panics if bitstring length doesn't match `num_qubits`.
+    ///
+    /// Panics if the bitstring length doesn't match `num_qubits`, or if forced
+    /// projection encounters an unrecoverable numerical MPS state.
     #[must_use]
     pub fn amplitude_iterative(&self, bitstring: &[bool]) -> Complex64 {
-        self.try_amplitude_iterative(bitstring)
-            .unwrap_or_else(|_| Complex64::new(f64::NAN, f64::NAN))
-    }
-
-    /// Checked form of [`Self::amplitude_iterative`] that reports an MPS
-    /// factorization failure instead of returning a non-finite sentinel.
-    ///
-    /// # Errors
-    ///
-    /// Returns an [`MpsError`] if a forced projection cannot factor or
-    /// compress its working MPS.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `bitstring.len()` differs from the number of qubits.
-    pub fn try_amplitude_iterative(&self, bitstring: &[bool]) -> Result<Complex64, MpsError> {
         assert_eq!(
             bitstring.len(),
             self.num_qubits,
@@ -1175,9 +1153,12 @@ impl StabMps {
         let mut mps = self.mps.clone();
         let mut projected_norm = 1.0;
         for (q, &s_q) in bitstring.iter().enumerate() {
-            let probability = measure::project_forced_z(&mut tab, &mut mps, q, s_q)?;
+            let probability = expect_mps_operation(
+                measure::project_forced_z(&mut tab, &mut mps, q, s_q),
+                "StabMps::amplitude_iterative forced projection",
+            );
             if probability < 1e-20 {
-                return Ok(Complex64::new(0.0, 0.0));
+                return Complex64::new(0.0, 0.0);
             }
             projected_norm *= probability.sqrt();
         }
@@ -1189,13 +1170,17 @@ impl StabMps {
             "forced projection produced a non-finite amplitude component"
         );
         if coefficient_norm == 0.0 {
-            // Each forced conditional is only rejected below its own 1e-20
-            // probability threshold. Their product can therefore retain a
-            // roundoff-scale projected norm even when the structurally selected
-            // final coefficient, and hence the exact amplitude, is zero.
-            return Ok(Complex64::new(0.0, 0.0));
+            // This invariant holds only because the expectation endpoint snap
+            // forces structurally zero branches to exact zero. If that snap is
+            // ever removed, fail loudly in debug builds instead of normalizing
+            // a retained-probability branch with a zero phase coefficient.
+            debug_assert!(
+                projected_norm == 0.0,
+                "forced projection retained probability but selected a zero phase coefficient"
+            );
+            return Complex64::new(0.0, 0.0);
         }
-        Ok(self.global_phase * coefficient / coefficient_norm * projected_norm)
+        self.global_phase * coefficient / coefficient_norm * projected_norm
     }
 
     /// Probability of measuring `bitstring` in the computational basis.
@@ -1216,24 +1201,11 @@ impl StabMps {
     /// MPS + tableau instead of the full state vector.
     ///
     /// # Panics
-    /// Panics if bitstring length doesn't match `num_qubits`.
+    ///
+    /// Panics if the bitstring length doesn't match `num_qubits`, or if forced
+    /// projection encounters an unrecoverable numerical MPS state.
     #[must_use]
     pub fn prob_bitstring(&self, bitstring: &[bool]) -> f64 {
-        self.try_prob_bitstring(bitstring).unwrap_or(f64::NAN)
-    }
-
-    /// Checked form of [`Self::prob_bitstring`] that reports an MPS
-    /// factorization failure instead of returning `NaN`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an [`MpsError`] if a forced projection cannot factor or
-    /// compress its working MPS.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `bitstring.len()` differs from the number of qubits.
-    pub fn try_prob_bitstring(&self, bitstring: &[bool]) -> Result<f64, MpsError> {
         assert_eq!(
             bitstring.len(),
             self.num_qubits,
@@ -1243,13 +1215,16 @@ impl StabMps {
         let mut mps = self.mps.clone();
         let mut total_prob: f64 = 1.0;
         for (q, &s_q) in bitstring.iter().enumerate() {
-            let pi_q = measure::project_forced_z(&mut tab, &mut mps, q, s_q)?;
+            let pi_q = expect_mps_operation(
+                measure::project_forced_z(&mut tab, &mut mps, q, s_q),
+                "StabMps::prob_bitstring forced projection",
+            );
             total_prob *= pi_q;
             if total_prob < 1e-30 {
-                return Ok(0.0);
+                return 0.0;
             }
         }
-        Ok(total_prob.clamp(0.0, 1.0))
+        total_prob.clamp(0.0, 1.0)
     }
 
     /// Second Rényi entropy `S_2` = -`ln(Tr_A(ρ_A²))` at a bipartition
@@ -1423,25 +1398,23 @@ impl StabMps {
     /// This can be expensive compared with a gate update; use it after a batch
     /// of non-Clifford gates or when observed bond growth justifies a sweep, not
     /// after every gate. `max_sweeps` bounds full-chain passes. Returns the
-    /// number of accepted Clifford gates.
+    /// number of accepted Clifford gates; zero means no candidate was applied.
+    ///
+    /// # Panics
+    ///
+    /// Panics if applying an accepted disentangler encounters an unrecoverable
+    /// numerical MPS state. Failed speculative candidates are skipped.
     pub fn disentangle(&mut self, max_sweeps: usize) -> usize {
         self.flush();
-        if self.mps_error.is_some() {
-            return 0;
-        }
-        let result = disentangle::disentangle(
-            &mut self.mps,
-            &mut self.tableau,
-            &mut self.disent_flags,
-            max_sweeps,
-        );
-        match result {
-            Ok(applied) => applied,
-            Err(error) => {
-                self.record_mps_error(error);
-                0
-            }
-        }
+        expect_mps_operation(
+            disentangle::disentangle(
+                &mut self.mps,
+                &mut self.tableau,
+                &mut self.disent_flags,
+                max_sweeps,
+            ),
+            "StabMps::disentangle accepted candidate",
+        )
     }
 
     /// Compute the full state vector for a small system.
@@ -1694,11 +1667,10 @@ impl StabMps {
         }
 
         let mut working = self.clone();
-        if let Err(error) = measure::flush_deferred_ops(&mut working.mps, &mut working.deferred_ops)
-        {
-            self.record_mps_error(error);
-            return Vec::new();
-        }
+        expect_mps_operation(
+            measure::flush_deferred_ops(&mut working.mps, &mut working.deferred_ops),
+            "StabMps::sample_bitstrings deferred-operation flush",
+        );
         working.flush_all_pending_rz();
         let frame_x = if working.flags.pauli_frame_tracking() {
             working.pauli_frame_x.clone()
@@ -1714,17 +1686,16 @@ impl StabMps {
             num_qubits: self.num_qubits,
             output: &mut shots,
         };
-        let result = Self::sample_prefix_tree(
-            &mut working.tableau,
-            &mut working.mps,
-            num_shots,
-            &mut prefix,
-            &mut context,
+        expect_mps_operation(
+            Self::sample_prefix_tree(
+                &mut working.tableau,
+                &mut working.mps,
+                num_shots,
+                &mut prefix,
+                &mut context,
+            ),
+            "StabMps::sample_bitstrings prefix projection",
         );
-        if let Err(error) = result {
-            self.record_mps_error(error);
-            return Vec::new();
-        }
         shots
     }
 
@@ -2165,8 +2136,7 @@ impl StabMps {
                 && phase_trivial);
         let no_deferred = self.deferred_ops.is_empty();
         let no_drift = self.pragmatic_drift_count == 0;
-        let no_mps_error = self.mps_error.is_none();
-        no_pending_rz && no_frame && no_deferred && no_drift && no_mps_error
+        no_pending_rz && no_frame && no_deferred && no_drift
     }
 
     /// Number of measurements that took the pragmatic-fix path (`pre_reduce`
@@ -2186,13 +2156,10 @@ impl StabMps {
     /// either feature is enabled. Measurements (`mz`) and `reset` flush the
     /// state needed for their own operation automatically.
     pub fn flush(&mut self) {
-        if self.mps_error.is_some() {
-            return;
-        }
-        if let Err(error) = measure::flush_deferred_ops(&mut self.mps, &mut self.deferred_ops) {
-            self.record_mps_error(error);
-            return;
-        }
+        expect_mps_operation(
+            measure::flush_deferred_ops(&mut self.mps, &mut self.deferred_ops),
+            "StabMps::flush deferred operations",
+        );
         self.flush_all_pending_rz();
     }
 
@@ -2341,9 +2308,6 @@ impl StabMps {
     /// handling Clifford-angle shortcuts and the non-Clifford path.
     /// Factored from `rz()` so `flush_pending_rz` can reuse it.
     fn rz_apply_direct(&mut self, theta: Angle64, q: usize) {
-        if self.mps_error.is_some() {
-            return;
-        }
         if theta == Angle64::ZERO {
             return;
         }
@@ -2369,39 +2333,33 @@ impl StabMps {
         let half_rad = theta.to_radians_signed() / 2.0;
         let cos_half = half_rad.cos();
         let sin_half = half_rad.sin();
-        let result = non_clifford::apply_rz_stab_mps(
-            &mut self.tableau,
-            &mut self.mps,
-            cos_half,
-            sin_half,
-            q,
-            self.flags.normalize_after_gate(),
-            &mut non_clifford::RzContext {
-                disent_flags: &mut self.disent_flags,
-                // Redetection reads stored tensors; with pending lazy deferred
-                // ops the effective state is V * stored MPS, so stored |0> does
-                // not imply effective |0>.
-                numerical_flag_redetection: self.flags.numerical_flag_redetection()
-                    && self.deferred_ops.is_empty(),
-                gf2_matrix: &mut self.gf2_matrix,
-                stats: &mut self.stats,
-            },
+        expect_mps_operation(
+            non_clifford::apply_rz_stab_mps(
+                &mut self.tableau,
+                &mut self.mps,
+                cos_half,
+                sin_half,
+                q,
+                self.flags.normalize_after_gate(),
+                &mut non_clifford::RzContext {
+                    disent_flags: &mut self.disent_flags,
+                    // Redetection reads stored tensors; with pending lazy deferred
+                    // ops the effective state is V * stored MPS, so stored |0> does
+                    // not imply effective |0>.
+                    numerical_flag_redetection: self.flags.numerical_flag_redetection()
+                        && self.deferred_ops.is_empty(),
+                    gf2_matrix: &mut self.gf2_matrix,
+                    stats: &mut self.stats,
+                },
+            ),
+            "StabMps::rz non-Clifford update",
         );
-        match result {
-            Ok(()) => self.maybe_grow_bond_dim(),
-            Err(error) => self.record_mps_error(error),
-        }
+        self.maybe_grow_bond_dim();
     }
 
     /// Measure qubit q in the Z basis using the shared STN measurement protocol.
     fn measure_qubit(&mut self, q: QubitId) -> MeasurementResult {
         self.flush_pending_rz(q.index());
-        if self.mps_error.is_some() {
-            return MeasurementResult {
-                outcome: false,
-                is_deterministic: false,
-            };
-        }
         let live_result = if self.flags.lazy_measure() {
             measure::measure_qubit_stab_mps_lazy_with_update(
                 &mut self.tableau,
@@ -2427,16 +2385,7 @@ impl StabMps {
                 q.index(),
             )
         };
-        let live_result = match live_result {
-            Ok(result) => result,
-            Err(error) => {
-                self.record_mps_error(error);
-                return MeasurementResult {
-                    outcome: false,
-                    is_deterministic: false,
-                };
-            }
-        };
+        let live_result = expect_mps_operation(live_result, "StabMps::mz projection");
         if self.flags.lazy_measure() && !self.deferred_ops.is_empty() {
             // Deferred virtual Cliffords mean a stored |0> is not necessarily
             // an effective |0> (issue #555).  Invalidate touched sites, but do
@@ -2483,7 +2432,6 @@ impl QuantumSimulator for StabMps {
         self.deferred_ops.clear();
         self.pragmatic_drift_count = 0;
         self.last_truncation_error = 0.0;
-        self.mps_error = None;
         for slot in &mut self.pending_rz {
             *slot = None;
         }
@@ -3454,10 +3402,19 @@ mod tests {
     }
 
     #[test]
-    fn test_stability_census_seed_97_surfaces_no_svd_failure() {
+    #[should_panic(
+        expected = "test non-finite compression failed: SVD failed to converge; the coefficient MPS state is unrecoverable"
+    )]
+    fn test_infallible_mps_boundary_panics_on_non_finite_compression() {
+        let mut mps = Mps::new(2, MpsConfig::default());
+        mps.tensors_mut()[1][(0, 0)] = Complex64::new(f64::NAN, 0.0);
+        expect_mps_operation(mps.compress(), "test non-finite compression");
+    }
+
+    #[test]
+    fn test_stability_census_seed_97_completes_without_svd_failure() {
         let mut stn = stability_census_random_circuit(97);
         stn.flush();
-        assert_eq!(stn.mps_error(), None);
 
         let state = stn.state_vector();
         let max_index = state
@@ -3470,11 +3427,10 @@ mod tests {
             .map(|qubit| (max_index >> qubit) & 1 != 0)
             .collect::<Vec<_>>();
         for bits in [&max_bits[..], &[false; 8]] {
-            stn.try_prob_bitstring(bits).unwrap();
-            stn.try_amplitude_iterative(bits).unwrap();
+            let _ = stn.prob_bitstring(bits);
+            let _ = stn.amplitude_iterative(bits);
         }
         let _measurements = stn.mz(&(0..8).map(QubitId).collect::<Vec<_>>());
-        assert_eq!(stn.mps_error(), None);
     }
 
     #[test]
@@ -4034,7 +3990,7 @@ mod tests {
         // Code's post-project state.
         let mut tab = stn.tableau.clone();
         let mut mps = stn.mps.clone();
-        let _ = measure::project_forced_z(&mut tab, &mut mps, 0, false);
+        measure::project_forced_z(&mut tab, &mut mps, 0, false).unwrap();
         let mut stn_post = StabMps::new(5);
         stn_post.tableau = tab;
         stn_post.mps = mps;
@@ -4625,7 +4581,7 @@ mod tests {
             4,
             &[c, z, z, z, z, inv, inv, z, z, inv, -inv, z, z, z, z, c],
         );
-        let _ = mps.apply_two_site_gate(0, &entangler);
+        mps.apply_two_site_gate(0, &entangler).unwrap();
         eprintln!(
             "after entangler (cap=1): err={:.3e} cap_hits={}",
             mps.truncation_error(),

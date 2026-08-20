@@ -70,7 +70,7 @@ fn dimension_scaled_backward_error_tolerance(matrix: &DMatrix<Complex64>, multip
 type SvdFactors = (DMatrix<Complex64>, DVector<f64>, DMatrix<Complex64>);
 
 fn direct_svd_factors(matrix: &DMatrix<Complex64>) -> Result<SvdFactors, MpsError> {
-    let svd = SVD::try_new(
+    let mut svd = SVD::try_new(
         matrix.clone(),
         true,
         true,
@@ -78,6 +78,7 @@ fn direct_svd_factors(matrix: &DMatrix<Complex64>) -> Result<SvdFactors, MpsErro
         iteration_limit(matrix.nrows(), matrix.ncols()),
     )
     .ok_or(MpsError::SvdFailed)?;
+    svd.sort_by_singular_values();
     Ok((
         svd.u.ok_or(MpsError::SvdFailed)?,
         svd.singular_values,
@@ -86,7 +87,7 @@ fn direct_svd_factors(matrix: &DMatrix<Complex64>) -> Result<SvdFactors, MpsErro
 }
 
 fn adjoint_svd_factors(matrix: &DMatrix<Complex64>) -> Result<SvdFactors, MpsError> {
-    let svd = SVD::try_new(
+    let mut svd = SVD::try_new(
         matrix.adjoint(),
         true,
         true,
@@ -94,6 +95,7 @@ fn adjoint_svd_factors(matrix: &DMatrix<Complex64>) -> Result<SvdFactors, MpsErr
         iteration_limit(matrix.nrows(), matrix.ncols()),
     )
     .ok_or(MpsError::SvdFailed)?;
+    svd.sort_by_singular_values();
     Ok((
         svd.v_t.ok_or(MpsError::SvdFailed)?.adjoint().into_owned(),
         svd.singular_values,
@@ -470,24 +472,37 @@ fn stable_svd_factors(
         .iter()
         .map(|value| value.norm())
         .fold(0.0_f64, f64::max);
-    // Keep the unvalidated primary path on its deliberately stricter
-    // max-element, dimension-free gate. Rejecting it only advances to the
-    // fallbacks, where the looser normwise bound is paired with independent
-    // retained-triplet and isometry validation.
+    // Keep the cheap, unvalidated primary path on its deliberately stricter
+    // max-element, dimension-free gate. If that gauge-sensitive check fails,
+    // the same normwise reconstruction, retained-triplet, and isometry checks
+    // used for the derived fallbacks can still certify the nalgebra factors.
+    // Accepting those already-computed factors trades up to roughly four
+    // orders of max-entry reconstruction residual (while remaining inside the
+    // certified backward-error bound) for skipping the more accurate fallback
+    // recomputation.
     let reconstruction_tolerance = max_element * (256.0 * f64::EPSILON);
     let fallback_reconstruction_tolerance =
         dimension_scaled_backward_error_tolerance(matrix, SVD_FALLBACK_RECONSTRUCTION_MULTIPLIER);
-    if let Ok(adjoint) = adjoint_svd_factors(matrix)
-        && reconstruction_error(matrix, &adjoint.0, &adjoint.1, &adjoint.2)
-            <= reconstruction_tolerance
-    {
-        return Ok(adjoint);
+    if let Ok(adjoint) = adjoint_svd_factors(matrix) {
+        let reconstruction_error = reconstruction_error(matrix, &adjoint.0, &adjoint.1, &adjoint.2);
+        let retained_rank = compute_rank(&adjoint.1, max_rank, cutoff, max_trunc_error);
+        if reconstruction_error <= reconstruction_tolerance
+            || (reconstruction_error <= fallback_reconstruction_tolerance
+                && retained_spectrum_is_trustworthy(matrix, &adjoint, retained_rank))
+        {
+            return Ok(adjoint);
+        }
     }
 
-    if let Ok(direct) = direct_svd_factors(matrix)
-        && reconstruction_error(matrix, &direct.0, &direct.1, &direct.2) <= reconstruction_tolerance
-    {
-        return Ok(direct);
+    if let Ok(direct) = direct_svd_factors(matrix) {
+        let reconstruction_error = reconstruction_error(matrix, &direct.0, &direct.1, &direct.2);
+        let retained_rank = compute_rank(&direct.1, max_rank, cutoff, max_trunc_error);
+        if reconstruction_error <= reconstruction_tolerance
+            || (reconstruction_error <= fallback_reconstruction_tolerance
+                && retained_spectrum_is_trustworthy(matrix, &direct, retained_rank))
+        {
+            return Ok(direct);
+        }
     }
 
     if let Ok(gram) = gram_svd_factors(matrix, numerical_zero_threshold(matrix)) {

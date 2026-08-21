@@ -13,6 +13,19 @@
 use smallvec::SmallVec;
 use std::fmt;
 
+/// Per-word quarter-phase contribution of a Pauli product, for the
+/// `u64`-word backends. `lx`/`lz` are the lhs X/Z plane words, `rx`/`rz`
+/// the rhs. Un-negated masks from both operands suppress zero-padding bits.
+#[inline]
+fn phase_terms_u64(lx: u64, lz: u64, rx: u64, rz: u64) -> u64 {
+    u64::from((lx & !lz & rx & rz).count_ones()) // X*Y = iZ   (+1)
+        + 3 * u64::from((lx & lz & rx & !rz).count_ones()) // Y*X = -iZ  (+3)
+        + 3 * u64::from((lx & !lz & !rx & rz).count_ones()) // X*Z = -iY  (+3)
+        + u64::from((!lx & lz & rx & !rz).count_ones()) // Z*X = iY   (+1)
+        + u64::from((lx & lz & !rx & rz).count_ones()) // Y*Z = iX   (+1)
+        + 3 * u64::from((!lx & lz & rx & rz).count_ones()) // Z*Y = -iX  (+3)
+}
+
 /// Trait for bitmask storage backends.
 ///
 /// Enables `PauliBitmaskGeneric<B>` to work with different widths:
@@ -25,6 +38,11 @@ pub trait BitmaskStorage: Clone + PartialEq + Eq + std::hash::Hash + Default + f
     fn xor_assign(&mut self, other: &Self);
     fn xor_bit(&mut self, bit: usize);
     fn and_count_ones_xor(&self, other_z: &Self, self_z: &Self, other_x: &Self) -> u32;
+    /// Quarter-phase exponent of the Pauli product lhs * rhs, where
+    /// lhs = (`self`, `self_z`) and rhs = (`other_x`, `other_z`) are X/Z bit planes.
+    /// Returns k in 0..4 such that the full product is i^k times the
+    /// phaseless symplectic product.
+    fn mul_phase_exponent(&self, self_z: &Self, other_x: &Self, other_z: &Self) -> u8;
     fn is_zero(&self) -> bool;
     fn or_count_ones(&self, other: &Self) -> u32;
     fn highest_set_bit(&self) -> Option<usize>;
@@ -51,6 +69,21 @@ impl BitmaskStorage for u128 {
     }
     fn and_count_ones_xor(&self, other_z: &Self, self_z: &Self, other_x: &Self) -> u32 {
         ((*self & other_z) ^ (self_z & other_x)).count_ones()
+    }
+    fn mul_phase_exponent(&self, self_z: &Self, other_x: &Self, other_z: &Self) -> u8 {
+        // Same six terms as `phase_terms_u64`, on the full u128 width.
+        let lx = *self;
+        let lz = *self_z;
+        let rx = *other_x;
+        let rz = *other_z;
+        let mut total = 0u64;
+        total += u64::from((lx & !lz & rx & rz).count_ones());
+        total += 3 * u64::from((lx & lz & rx & !rz).count_ones());
+        total += 3 * u64::from((lx & !lz & !rx & rz).count_ones());
+        total += u64::from((!lx & lz & rx & !rz).count_ones());
+        total += u64::from((lx & lz & !rx & rz).count_ones());
+        total += 3 * u64::from((!lx & lz & rx & rz).count_ones());
+        (total % 4) as u8
     }
     fn is_zero(&self) -> bool {
         *self == 0
@@ -118,6 +151,30 @@ impl BitmaskStorage for Vec<u64> {
             count += ((sx & oz) ^ (sz & ox)).count_ones();
         }
         count
+    }
+    fn mul_phase_exponent(&self, self_z: &Self, other_x: &Self, other_z: &Self) -> u8 {
+        // A word only contributes where BOTH operands have stored bits, so
+        // bound the walk by the shorter operand's plane length.
+        let lhs_len = self.len().max(self_z.len());
+        let rhs_len = other_x.len().max(other_z.len());
+        let common_len = lhs_len.min(rhs_len);
+        let mut total = 0u64;
+        for i in 0..common_len {
+            let lx = self.get(i).copied().unwrap_or(0);
+            let lz = self_z.get(i).copied().unwrap_or(0);
+            let rx = other_x.get(i).copied().unwrap_or(0);
+            let rz = other_z.get(i).copied().unwrap_or(0);
+            // Every term needs a set bit from each operand, so a word where
+            // either side is all identity contributes nothing. Sparse Paulis
+            // on a wide register are mostly such words.
+            if (lx | lz) == 0 || (rx | rz) == 0 {
+                continue;
+            }
+            // Reduce mod 4 each word so the accumulator stays small
+            // regardless of input length.
+            total = (total + phase_terms_u64(lx, lz, rx, rz)) % 4;
+        }
+        (total % 4) as u8
     }
     fn is_zero(&self) -> bool {
         self.iter().all(|&w| w == 0)
@@ -195,6 +252,30 @@ impl BitmaskStorage for SmallVec<[u64; 8]> {
             count += ((sx & oz) ^ (sz & ox)).count_ones();
         }
         count
+    }
+    fn mul_phase_exponent(&self, self_z: &Self, other_x: &Self, other_z: &Self) -> u8 {
+        // A word only contributes where BOTH operands have stored bits, so
+        // bound the walk by the shorter operand's plane length.
+        let lhs_len = self.len().max(self_z.len());
+        let rhs_len = other_x.len().max(other_z.len());
+        let common_len = lhs_len.min(rhs_len);
+        let mut total = 0u64;
+        for i in 0..common_len {
+            let lx = self.get(i).copied().unwrap_or(0);
+            let lz = self_z.get(i).copied().unwrap_or(0);
+            let rx = other_x.get(i).copied().unwrap_or(0);
+            let rz = other_z.get(i).copied().unwrap_or(0);
+            // Every term needs a set bit from each operand, so a word where
+            // either side is all identity contributes nothing. Sparse Paulis
+            // on a wide register are mostly such words.
+            if (lx | lz) == 0 || (rx | rz) == 0 {
+                continue;
+            }
+            // Reduce mod 4 each word so the accumulator stays small
+            // regardless of input length.
+            total = (total + phase_terms_u64(lx, lz, rx, rz)) % 4;
+        }
+        (total % 4) as u8
     }
     fn is_zero(&self) -> bool {
         self.iter().all(|&w| w == 0)
@@ -458,45 +539,16 @@ impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
     /// Phase exponent is in 0..4.
     #[must_use]
     pub fn multiply_with_phase(&self, other: &Self) -> (Self, u8) {
-        // Per-qubit phase from Pauli multiplication.
-        // Pauli types: I=0, X=1, Z=2, Y=3 (encoding: type = x + 2*z)
-        // Phase lookup: A*B = i^{phase[A][B]} * C
-        // I  X  Z  Y
-        // 0  0  0  0   (I * anything)
-        // 0  0  3  1   (X * I,X,Z,Y)
-        // 0  1  0  3   (Z * I,X,Z,Y)
-        // 0  3  1  0   (Y * I,X,Z,Y)
-        const PHASE_TABLE: [[u8; 4]; 4] = [
-            [0, 0, 0, 0], // I
-            [0, 0, 3, 1], // X
-            [0, 1, 0, 3], // Z
-            [0, 3, 1, 0], // Y
-        ];
-
         let product = self.multiply(other);
-        let mut total_phase = 0u32;
-        let max_q = [
-            self.x_bits.highest_set_bit(),
-            other.x_bits.highest_set_bit(),
-            self.z_bits.highest_set_bit(),
-            other.z_bits.highest_set_bit(),
-        ]
-        .into_iter()
-        .flatten()
-        .max()
-        .map_or(0, |q| q + 1);
-
-        for q in 0..max_q {
-            let xa = usize::from(self.x_bits.get_bit(q));
-            let za = usize::from(self.z_bits.get_bit(q));
-            let xb = usize::from(other.x_bits.get_bit(q));
-            let zb = usize::from(other.z_bits.get_bit(q));
-            let type_a = xa + 2 * za; // I=0, X=1, Z=2, Y=3
-            let type_b = xb + 2 * zb;
-            total_phase += u32::from(PHASE_TABLE[type_a][type_b]);
-        }
-
-        (product, (total_phase % 4) as u8)
+        let phase = self
+            .x_bits
+            .mul_phase_exponent(&self.z_bits, &other.x_bits, &other.z_bits);
+        debug_assert_eq!(
+            phase % 2,
+            u8::from(!self.commutes_with(other)),
+            "phase exponent parity must equal the symplectic product parity"
+        );
+        (product, phase)
     }
 
     /// True if the two Paulis commute (symplectic inner product = 0 mod 2).
@@ -1061,6 +1113,159 @@ pub fn conjugate_cy_in_place<B: BitmaskStorage>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::StdRng;
+    use rand::{RngExt, SeedableRng};
+
+    fn reference_phase_exponent<B: BitmaskStorage>(
+        a: &PauliBitmaskGeneric<B>,
+        b: &PauliBitmaskGeneric<B>,
+    ) -> u8 {
+        // Per-qubit phase from Pauli multiplication.
+        // Pauli types: I=0, X=1, Z=2, Y=3 (encoding: type = x + 2*z)
+        // Phase lookup: A*B = i^{phase[A][B]} * C
+        // I  X  Z  Y
+        // 0  0  0  0   (I * anything)
+        // 0  0  3  1   (X * I,X,Z,Y)
+        // 0  1  0  3   (Z * I,X,Z,Y)
+        // 0  3  1  0   (Y * I,X,Z,Y)
+        const PHASE_TABLE: [[u8; 4]; 4] = [
+            [0, 0, 0, 0], // I
+            [0, 0, 3, 1], // X
+            [0, 1, 0, 3], // Z
+            [0, 3, 1, 0], // Y
+        ];
+
+        let mut total_phase = 0u32;
+        let max_q = [
+            a.x_bits.highest_set_bit(),
+            b.x_bits.highest_set_bit(),
+            a.z_bits.highest_set_bit(),
+            b.z_bits.highest_set_bit(),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .map_or(0, |q| q + 1);
+
+        for q in 0..max_q {
+            let xa = usize::from(a.x_bits.get_bit(q));
+            let za = usize::from(a.z_bits.get_bit(q));
+            let xb = usize::from(b.x_bits.get_bit(q));
+            let zb = usize::from(b.z_bits.get_bit(q));
+            let type_a = xa + 2 * za; // I=0, X=1, Z=2, Y=3
+            let type_b = xb + 2 * zb;
+            total_phase += u32::from(PHASE_TABLE[type_a][type_b]);
+        }
+
+        (total_phase % 4) as u8
+    }
+
+    fn random_pauli<B: BitmaskStorage>(
+        rng: &mut StdRng,
+        num_qubits: usize,
+        dense: bool,
+    ) -> PauliBitmaskGeneric<B> {
+        let mut pauli = PauliBitmaskGeneric::<B>::identity();
+        let samples = if dense {
+            num_qubits
+        } else {
+            rng.random_range(0..=num_qubits.min(8))
+        };
+        for sample in 0..samples {
+            let q = if dense {
+                sample
+            } else {
+                rng.random_range(0..num_qubits)
+            };
+            let first_pauli_type = usize::from(!dense);
+            let pauli_type = rng.random_range(first_pauli_type..4);
+            if pauli_type & 1 != 0 {
+                pauli.x_bits.set_bit(q);
+            }
+            if pauli_type & 2 != 0 {
+                pauli.z_bits.set_bit(q);
+            }
+        }
+        pauli
+    }
+
+    fn assert_random_phase_matches_reference<B: BitmaskStorage>(
+        rng: &mut StdRng,
+        qubit_counts: &[usize],
+        cases_per_count: usize,
+    ) where
+        PauliBitmaskGeneric<B>: PartialEq,
+    {
+        for &num_qubits in qubit_counts {
+            for case in 0..cases_per_count {
+                let a = random_pauli(rng, num_qubits, case % 2 == 0);
+                let b = random_pauli(rng, num_qubits, case % 4 < 2);
+                let expected_product = a.multiply(&b);
+                let expected_phase = reference_phase_exponent(&a, &b);
+                let (product, phase) = a.multiply_with_phase(&b);
+                assert_eq!(
+                    product, expected_product,
+                    "product mismatch for {num_qubits} qubits in case {case}"
+                );
+                assert_eq!(
+                    phase, expected_phase,
+                    "phase mismatch for {num_qubits} qubits in case {case}"
+                );
+            }
+        }
+    }
+
+    fn pauli_from_sites<B: BitmaskStorage>(sites: &[(usize, u8)]) -> PauliBitmaskGeneric<B> {
+        let mut pauli = PauliBitmaskGeneric::<B>::identity();
+        for &(q, pauli_type) in sites {
+            if pauli_type & 1 != 0 {
+                pauli.x_bits.set_bit(q);
+            }
+            if pauli_type & 2 != 0 {
+                pauli.z_bits.set_bit(q);
+            }
+        }
+        pauli
+    }
+
+    fn assert_unequal_length_phase_matches_reference<B: BitmaskStorage>()
+    where
+        PauliBitmaskGeneric<B>: PartialEq,
+    {
+        let short = pauli_from_sites::<B>(&[(2, 1), (17, 3), (63, 2)]);
+        let long = pauli_from_sites::<B>(&[(2, 2), (17, 1), (63, 3), (129, 1), (191, 3)]);
+        // X-only vs Z-only supports give the four planes independently
+        // different stored lengths (x long / z short and vice versa).
+        let x_heavy = pauli_from_sites::<B>(&[(3, 2), (530, 1), (600, 1)]);
+        let z_heavy = pauli_from_sites::<B>(&[(3, 1), (530, 2), (600, 2)]);
+        // Four pairwise-distinct stored plane lengths (2, 5, 8, 11 words),
+        // with anticommuting overlap at qubits 70 and 300 and support past
+        // word 9 on one side only. The two overlaps contribute 3 each, so the
+        // expected phase is 2 rather than 0: a phase-zeroing defect fails here.
+        let distinct_a = pauli_from_sites::<B>(&[(70, 1), (300, 2)]);
+        let distinct_b = pauli_from_sites::<B>(&[(70, 2), (300, 3), (450, 1), (640, 2)]);
+        // The only phase-contributing overlap sits in word 10, so a word walk
+        // that stops early still has to reach it. Every other fixture here
+        // contributes solely from words 0 through 9.
+        let high_word_a = pauli_from_sites::<B>(&[(700, 1)]);
+        let high_word_b = pauli_from_sites::<B>(&[(700, 2)]);
+        for (a, b) in [
+            (&short, &long),
+            (&long, &short),
+            (&x_heavy, &z_heavy),
+            (&z_heavy, &x_heavy),
+            (&distinct_a, &distinct_b),
+            (&distinct_b, &distinct_a),
+            (&high_word_a, &high_word_b),
+            (&high_word_b, &high_word_a),
+        ] {
+            let expected_product = a.multiply(b);
+            let expected_phase = reference_phase_exponent(a, b);
+            let (product, phase) = a.multiply_with_phase(b);
+            assert_eq!(product, expected_product);
+            assert_eq!(phase, expected_phase);
+        }
+    }
 
     // --- PauliBitmask basics ---
 
@@ -1406,6 +1611,66 @@ mod tests {
             }
         ); // YY
         assert_eq!(phase, 0); // (-i)(i) = 1, phase = 3+1 = 4 mod 4 = 0
+    }
+
+    fn assert_exhaustive_single_qubit_phases<B: BitmaskStorage>()
+    where
+        PauliBitmaskGeneric<B>: PartialEq,
+    {
+        let paulis = [
+            PauliBitmaskGeneric::<B>::identity(),
+            PauliBitmaskGeneric::<B>::x(0),
+            PauliBitmaskGeneric::<B>::z(0),
+            PauliBitmaskGeneric::<B>::y(0),
+        ];
+        let expected = [[0, 0, 0, 0], [0, 0, 3, 1], [0, 1, 0, 3], [0, 3, 1, 0]];
+
+        for (a_index, a) in paulis.iter().enumerate() {
+            for (b_index, b) in paulis.iter().enumerate() {
+                let (product, phase) = a.multiply_with_phase(b);
+                assert_eq!(product, a.multiply(b));
+                assert_eq!(phase, expected[a_index][b_index]);
+            }
+        }
+    }
+
+    #[test]
+    fn multiply_with_phase_exhaustive_single_qubit() {
+        assert_exhaustive_single_qubit_phases::<u128>();
+        assert_exhaustive_single_qubit_phases::<Vec<u64>>();
+        assert_exhaustive_single_qubit_phases::<SmallVec<[u64; 8]>>();
+    }
+
+    #[test]
+    fn multiply_with_phase_matches_reference_for_random_backends() {
+        let mut rng = StdRng::seed_from_u64(0x5eed_51a5_e123_0a11);
+        assert_random_phase_matches_reference::<u128>(&mut rng, &[1, 5, 63, 64, 65, 127, 128], 40);
+        assert_random_phase_matches_reference::<Vec<u64>>(
+            &mut rng,
+            &[
+                1, 5, 63, 64, 65, 127, 128, 129, 191, 192, 193, 300, 511, 512, 520,
+            ],
+            24,
+        );
+        // 511/512/520 cross the SmallVec inline capacity (8 words = 512 bits),
+        // exercising the heap-spilled representation.
+        assert_random_phase_matches_reference::<SmallVec<[u64; 8]>>(
+            &mut rng,
+            &[
+                1, 5, 63, 64, 65, 127, 128, 129, 191, 192, 193, 300, 511, 512, 520,
+            ],
+            24,
+        );
+    }
+
+    #[test]
+    fn multiply_with_phase_handles_unequal_vec_lengths() {
+        assert_unequal_length_phase_matches_reference::<Vec<u64>>();
+    }
+
+    #[test]
+    fn multiply_with_phase_handles_unequal_smallvec_lengths() {
+        assert_unequal_length_phase_matches_reference::<SmallVec<[u64; 8]>>();
     }
 
     #[test]

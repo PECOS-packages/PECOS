@@ -327,22 +327,29 @@ jobs:
         rustup default "${{ matrix.rust-toolchain || 'stable' }}"
         rustup show
 
-    # Self-expiring pin: rerun the exact rustc invocation that segfaults on
-    # latest stable (issue #566) and announce loudly once it stops crashing,
-    # so the pin above cannot go stale silently. Never fails the job.
+    # Self-expiring pin: rerun the rustc invocation that crashes on latest
+    # stable (issue #566) so the pin above cannot go stale silently. The
+    # crash is nondeterministic (observed on some runs of the same runner
+    # image and not others), so probe repeatedly and only suggest unpinning
+    # when a run sees zero crashes -- and unpin only once that holds across
+    # several PRs. Never fails the job.
     - name: Check whether the Rust toolchain pin is still needed
       if: runner.os != 'Windows' && matrix.rust-toolchain
       run: |
         rustup toolchain install stable --profile minimal
-        if rustc +stable - --crate-name ___ --print=file-names -C debuginfo=0 \
+        crashes=0
+        for _ in 1 2 3 4 5; do
+          rustc +stable - --crate-name ___ --print=file-names -C debuginfo=0 \
             -C link-arg=-undefined -C link-arg=dynamic_lookup \
             --crate-type bin --crate-type rlib --crate-type dylib \
             --crate-type cdylib --crate-type staticlib --crate-type proc-macro \
             --print=sysroot --print=split-debuginfo --print=crate-name \
-            --print=cfg -W warnings </dev/null >/dev/null 2>&1; then
-          echo "::warning title=Rust toolchain pin is obsolete::rustc $(rustc +stable --version) no longer crashes under the maturin target probe. Remove the ${{ matrix.rust-toolchain }} pin from this workflow (issue #566)."
+            --print=cfg -W warnings </dev/null >/dev/null 2>&1 || crashes=$((crashes + 1))
+        done
+        if [ "$crashes" -eq 0 ]; then
+          echo "::warning title=Rust toolchain pin may be obsolete::rustc $(rustc +stable --version) survived 5/5 maturin target probes on this runner. The crash is nondeterministic, so remove the ${{ matrix.rust-toolchain }} pin only once this warning has appeared consistently across several PRs (issue #566)."
         else
-          echo "Latest stable ($(rustc +stable --version)) still crashes under the maturin target probe; the ${{ matrix.rust-toolchain }} pin remains required (issue #566)."
+          echo "Latest stable ($(rustc +stable --version)) crashed $crashes/5 maturin target probes; the ${{ matrix.rust-toolchain }} pin remains required (issue #566)."
         fi
 
     - name: Install just

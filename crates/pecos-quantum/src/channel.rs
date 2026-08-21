@@ -637,12 +637,26 @@ impl PauliSum {
     /// Multiplies two Pauli sums after validating that they act on the same
     /// number of qubits.
     ///
+    /// Pair contributions landing on the same Pauli are summed in full before
+    /// the default zero-dropping tolerance is applied once to each final
+    /// coefficient, so many individually tiny contributions still accumulate.
+    /// Final coefficients with norm at or below [`DEFAULT_TOLERANCE`] are
+    /// dropped from the result. The expansion visits every term pair, so the
+    /// cost and the result size are bounded by the product of the two term
+    /// counts.
+    ///
     /// # Errors
     ///
     /// Returns [`ChannelError::QubitCountMismatch`] when the two sums have
     /// different qubit counts, or [`ChannelError::InvalidCoefficient`] when a
-    /// resulting coefficient is not finite.
+    /// coefficient product is not finite.
     pub fn try_mul(&self, rhs: &Self) -> Result<Self, ChannelError> {
+        const PHASES: [Complex64; 4] = [
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+            Complex64::new(-1.0, 0.0),
+            Complex64::new(0.0, -1.0),
+        ];
         if self.num_qubits != rhs.num_qubits {
             return Err(ChannelError::QubitCountMismatch {
                 expected: self.num_qubits,
@@ -650,24 +664,23 @@ impl PauliSum {
             });
         }
 
-        let mut product = Self::new(self.num_qubits);
+        let mut terms: BTreeMap<PauliBitmaskSmall, Complex64> = BTreeMap::new();
         for (pauli_a, coefficient_a) in &self.terms {
             for (pauli_b, coefficient_b) in &rhs.terms {
                 let (product_pauli, phase_exponent) = pauli_a.multiply_with_phase(pauli_b);
-                let phase = match phase_exponent {
-                    0 => Complex64::new(1.0, 0.0),
-                    1 => Complex64::new(0.0, 1.0),
-                    2 => Complex64::new(-1.0, 0.0),
-                    3 => Complex64::new(0.0, -1.0),
-                    _ => unreachable!("Pauli product phase exponent must be in 0..4"),
-                };
-                product.add_term(product_pauli, coefficient_a * coefficient_b * phase)?;
+                let coefficient = coefficient_a * coefficient_b;
+                validate_complex(coefficient)?;
+                *terms.entry(product_pauli).or_default() +=
+                    coefficient * PHASES[usize::from(phase_exponent)];
             }
         }
-        Ok(product)
+        Self::try_new(self.num_qubits, terms)
     }
 
     /// Returns the commutator `self * rhs - rhs * self`.
+    ///
+    /// Inherits [`PauliSum::try_mul`]'s zero-dropping tolerance, so an empty
+    /// result means the sums commute up to [`DEFAULT_TOLERANCE`], not exactly.
     ///
     /// # Errors
     ///
@@ -681,6 +694,10 @@ impl PauliSum {
     }
 
     /// Returns the anticommutator `self * rhs + rhs * self`.
+    ///
+    /// Inherits [`PauliSum::try_mul`]'s zero-dropping tolerance, so an empty
+    /// result means the sums anticommute up to [`DEFAULT_TOLERANCE`], not
+    /// exactly.
     ///
     /// # Errors
     ///
@@ -3648,6 +3665,61 @@ mod tests {
     }
 
     #[test]
+    fn pauli_sum_product_sums_sub_tolerance_contributions_before_dropping() {
+        // 200 X terms of 1e-6 each, squared: every pair contribution to the
+        // identity is 1e-12 (at the drop tolerance), but their sum is 2e-10.
+        // An accumulator that tolerance-tests each contribution in isolation
+        // returns the empty sum here.
+        let coefficient = Complex64::new(1e-6, 0.0);
+        let mut sum = PauliSum::new(200);
+        for q in 0..200 {
+            sum.add_term(PauliBitmaskSmall::x(q), coefficient).unwrap();
+        }
+        let squared = sum.try_mul(&sum).unwrap();
+        let identity_coefficient = squared
+            .terms()
+            .get(&PauliBitmaskSmall::identity())
+            .copied()
+            .expect("summed identity coefficient must survive the tolerance");
+        assert_complex_close(identity_coefficient, Complex64::new(2e-10, 0.0));
+    }
+
+    #[test]
+    fn pauli_sum_product_applies_negative_phase_on_even_weight_products() {
+        // (X0 X1)(Y0 Y1) = (XY)(XY) = (iZ)(iZ) = -Z0 Z1: phase exponent 2,
+        // which no single-qubit product can produce.
+        let one = Complex64::new(1.0, 0.0);
+        let xx = pauli_sum_with_term(
+            2,
+            PauliBitmaskSmall::x(0).multiply(&PauliBitmaskSmall::x(1)),
+            one,
+        );
+        let yy = pauli_sum_with_term(
+            2,
+            PauliBitmaskSmall::y(0).multiply(&PauliBitmaskSmall::y(1)),
+            one,
+        );
+        let zz = PauliBitmaskSmall::z(0).multiply(&PauliBitmaskSmall::z(1));
+
+        let product = xx.try_mul(&yy).unwrap();
+        assert_eq!(product.terms().len(), 1);
+        assert_eq!(product.terms().get(&zz), Some(&Complex64::new(-1.0, 0.0)));
+    }
+
+    #[test]
+    fn pauli_sum_mul_operator_preserves_operand_order() {
+        // X * Y = iZ but Y * X = -iZ, so a swapped Mul implementation fails.
+        let one = Complex64::new(1.0, 0.0);
+        let x = pauli_sum_with_term(1, PauliBitmaskSmall::x(0), one);
+        let y = pauli_sum_with_term(1, PauliBitmaskSmall::y(0), one);
+        let product = x * y;
+        assert_eq!(
+            product.terms().get(&PauliBitmaskSmall::z(0)),
+            Some(&Complex64::new(0.0, 1.0))
+        );
+    }
+
+    #[test]
     fn pauli_sum_identity_is_multiplicative_identity() {
         let identity =
             pauli_sum_with_term(2, PauliBitmaskSmall::identity(), Complex64::new(1.0, 0.0));
@@ -3662,7 +3734,7 @@ mod tests {
     }
 
     #[test]
-    fn pauli_sum_product_is_associative() {
+    fn pauli_sum_product_is_associative_for_well_scaled_coefficients() {
         let identity = PauliBitmaskSmall::identity();
         let mut a = PauliSum::new(1);
         a.add_term(identity.clone(), Complex64::new(1.0, 1.0))

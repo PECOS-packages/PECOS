@@ -3262,7 +3262,9 @@ fn two_qubit_after_location_pairs(locations: &[DagSpacetimeLocation]) -> Vec<[us
         .into_values()
         .flat_map(|loc_indices| {
             loc_indices
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| [pair[0], pair[1]])
                 .collect::<Vec<_>>()
         })

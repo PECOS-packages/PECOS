@@ -1298,7 +1298,7 @@ impl GeneralNoiseModel {
         let mut removed_gates = false;
         let mut original_gate_qubits: Vec<usize> = Vec::new();
 
-        for qubits in gate.qubits.chunks_exact(2) {
+        for qubits in gate.qubits.as_chunks::<2>().0 {
             let mut add_original_gate = true;
 
             // Check if the gate is acting on a leaked qubit in a way to

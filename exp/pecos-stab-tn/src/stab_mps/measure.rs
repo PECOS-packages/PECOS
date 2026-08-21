@@ -75,7 +75,11 @@ fn is_mps_trivial(mps: &Mps) -> bool {
 /// The tableau-only measurement fast path is valid for `C|0...0>`, not for a
 /// general `C|b>`. Non-Clifford evolution and earlier exact projections can
 /// produce the latter even though every MPS bond is one.
-fn canonicalize_trivial_mps_basis(tableau: &mut SparseStabY, mps: &mut Mps) -> Vec<usize> {
+fn canonicalize_trivial_mps_basis(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
+) -> Vec<usize> {
     let norm_squared = mps.norm_squared();
     debug_assert!(
         (norm_squared - 1.0).abs() < 1e-8,
@@ -101,7 +105,13 @@ fn canonicalize_trivial_mps_basis(tableau: &mut SparseStabY, mps: &mut Mps) -> V
         // absolute zero threshold is intentional.
         if block_0_norm < 1e-12 {
             // C|...1...> = (C X_site)(X_site|...1...>).
+            let before = phase_accumulator.as_ref().map(|_| tableau.clone());
             crate::stab_mps::tableau_compose::right_compose_x(tableau, site);
+            if let (Some(accumulator), Some(before)) =
+                (phase_accumulator.as_deref_mut(), before.as_ref())
+            {
+                accumulator.right_compose_x(before, tableau, site);
+            }
             mps.apply_one_site_gate(site, &x_gate)
                 .expect("MPS op on valid site");
             modified_sites.push(site);
@@ -755,6 +765,7 @@ fn right_compose_measurement_basis_rotation(
     phase: Complex64,
     sign_sites: &[usize],
     outcome: bool,
+    phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
 ) {
     let signed_phase = Complex64::new(if outcome { -1.0 } else { 1.0 }, 0.0) * phase;
     let id_in_sign = sign_sites.contains(&id);
@@ -792,7 +803,11 @@ fn right_compose_measurement_basis_rotation(
             crate::stab_mps::tableau_compose::right_compose_szdg(tableau, id);
         }
     }
+    let before_h = phase_accumulator.as_ref().map(|_| tableau.clone());
     crate::stab_mps::tableau_compose::right_compose_h(tableau, id);
+    if let (Some(accumulator), Some(before_h)) = (phase_accumulator, before_h.as_ref()) {
+        accumulator.right_compose_h(before_h, tableau, id);
+    }
 }
 
 /// Apply the inverse of the virtual Pauli gauge between two structurally
@@ -881,8 +896,8 @@ fn collapse_projected_flip_site(mps: &mut Mps, id: usize) {
     let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[id], 0, chi_r)
         * Complex64::new(std::f64::consts::SQRT_2, 0.0);
     let zero = DMatrix::zeros(mps.tensors()[id].nrows(), chi_r);
-    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 0, chi_r, &block_0);
-    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 1, chi_r, &zero);
+    mps.set_physical_block(id, 0, &block_0);
+    mps.set_physical_block(id, 1, &zero);
 }
 
 /// Project a real single-site X branch and absorb its measurement-basis H
@@ -903,8 +918,8 @@ fn project_single_flip_without_sign(
     let denominator = Complex64::new((2.0 * probability).max(1e-20).sqrt(), 0.0);
     let projected = (block_0 + block_1 * signed_phase) / denominator;
     let zero = DMatrix::zeros(mps.tensors()[id].nrows(), chi_r);
-    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 0, chi_r, &projected);
-    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 1, chi_r, &zero);
+    mps.set_physical_block(id, 0, &projected);
+    mps.set_physical_block(id, 1, &zero);
 }
 
 /// Remove the direct-sum projector's structurally oversized virtual bonds
@@ -923,27 +938,20 @@ fn reduce_exact_projection_bonds(mps: &mut Mps) -> Result<(), MpsError> {
     Ok(())
 }
 
-/// Project qubit `q_idx` onto a forced Z-basis outcome and return its
-/// probability together with the affected virtual coefficient-MPS sites.
-///
-/// Mirrors `measure_qubit_stab_mps` but deterministic: no RNG, the outcome is
-/// supplied by the caller. Useful for bitstring-probability computation
-/// (Liu-Clark 2412.17209 Algorithm 3 / VI.A).
-///
-/// # Errors
-///
-/// Returns an [`MpsError`] if compensation or compression fails.
-pub(super) fn project_forced_z_with_update(
+/// Shared implementation for tracked and phase-insensitive forced projection.
+fn project_forced_z_with_update_impl(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
     q_idx: usize,
     outcome: bool,
+    mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
 ) -> Result<ForcedProjectionResult, MpsError> {
     if is_mps_trivial(mps) {
         // A trivial coefficient MPS represents a pure stabilizer state. First
         // absorb a possible nonzero virtual basis word into the tableau; only
         // then can its forced update supply the exact probability and state.
-        let modified_sites = canonicalize_trivial_mps_basis(tableau, mps);
+        let modified_sites =
+            canonicalize_trivial_mps_basis(tableau, mps, phase_accumulator.as_deref_mut());
         let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
         let probability = match decomp {
             ZDecomposition::Stabilizer { phase, .. } => {
@@ -956,7 +964,20 @@ pub(super) fn project_forced_z_with_update(
             ZDecomposition::DestabilizerFlip { .. } => 0.5,
         };
         if probability > 0.0 {
+            let before_measurement = phase_accumulator.as_ref().map(|_| tableau.clone());
             tableau.mz_forced(q_idx, outcome);
+            if let (Some(accumulator), Some(before_measurement)) = (
+                phase_accumulator.as_deref_mut(),
+                before_measurement.as_ref(),
+            ) {
+                accumulator.forced_measurement(
+                    before_measurement,
+                    tableau,
+                    q_idx,
+                    outcome,
+                    probability,
+                );
+            }
             mps.normalize();
         }
         return Ok(ForcedProjectionResult {
@@ -1064,11 +1085,17 @@ pub(super) fn project_forced_z_with_update(
                 phase,
                 &sign_sites,
                 outcome,
+                phase_accumulator,
             );
 
             let result = tableau.mz_forced(q_idx, outcome);
             debug_assert_eq!(result.outcome, outcome);
             let gauge_sites = compensate_measurement_pauli_gauge(mps, &predicted_tableau, tableau);
+            // `mz_forced` produces the same projected stabilizer group as the
+            // predicted basis rotation; compensation changes only the
+            // destabilizer gauge. Therefore the post-H canonical ket cached
+            // by the phase tracker remains valid for the measured tableau and
+            // can be the before-ket of the next scalar site.
             if !is_local_projection {
                 reduce_exact_projection_bonds(mps)?;
             }
@@ -1087,6 +1114,41 @@ pub(super) fn project_forced_z_with_update(
             })
         }
     }
+}
+
+/// Project qubit `q_idx` onto a forced Z-basis outcome and return its
+/// probability together with the affected virtual coefficient-MPS sites.
+///
+/// Mirrors `measure_qubit_stab_mps` but is deterministic: the caller supplies
+/// the outcome. This is the phase-insensitive Liu-Clark 2412.17209 Algorithm 3
+/// / VI.A path used by probability and measurement callers.
+///
+/// # Errors
+///
+/// Returns an [`MpsError`] if compensation or compression fails.
+pub(super) fn project_forced_z_with_update(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    q_idx: usize,
+    outcome: bool,
+) -> Result<ForcedProjectionResult, MpsError> {
+    project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, None)
+}
+
+/// Forced projection with canonical-ket scalar tracking for phase-sensitive
+/// amplitude reconstruction. Measurement and probability paths deliberately
+/// use the untracked sibling above.
+pub(super) fn project_forced_z_with_phase(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    q_idx: usize,
+    outcome: bool,
+    phase_accumulator: &mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker,
+) -> Result<f64, MpsError> {
+    Ok(
+        project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, Some(phase_accumulator))?
+            .probability,
+    )
 }
 
 /// Project qubit `q_idx` onto a forced Z-basis outcome and return the
@@ -1556,8 +1618,8 @@ pub(super) fn measure_qubit_stab_mps_with_update(
                     / Complex64::new((2.0 * prob).max(1e-20).sqrt(), 0.0);
 
                 let zero = DMatrix::zeros(mps.tensors()[k].nrows(), chi_r);
-                crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 0, chi_r, &projected);
-                crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 1, chi_r, &zero);
+                mps.set_physical_block(k, 0, &projected);
+                mps.set_physical_block(k, 1, &zero);
                 mps.normalize();
             } else {
                 // Multi-site case with sign_sites: use MPS addition then collapse flip site.
@@ -1597,7 +1659,7 @@ pub(super) fn measure_qubit_stab_mps_with_update(
                     let k = flip_sites[0];
                     let chi_r = mps.bond_dim(k + 1);
                     let zero = DMatrix::zeros(mps.tensors()[k].nrows(), chi_r);
-                    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 1, chi_r, &zero);
+                    mps.set_physical_block(k, 1, &zero);
                 }
 
                 mps.normalize();
@@ -1645,6 +1707,17 @@ mod tests {
     fn sort_dedup(v: &mut Vec<usize>) {
         v.sort_unstable();
         v.dedup();
+    }
+
+    #[test]
+    fn projection_block_replacement_invalidation_guards_canonical_routing() {
+        let product = Mps::new(4, MpsConfig::default());
+        let mut mps = product.add(&product);
+        mps.left_canonicalize();
+
+        project_single_flip_without_sign(&mut mps, 0, Complex64::new(1.0, 0.0), 0.5);
+
+        assert_eq!(mps.tracked_center_for_test(), None);
     }
 
     #[test]
@@ -1761,3 +1834,9 @@ mod tests {
         }
     }
 }
+
+// Issue #562 diagnostics intentionally live outside the shipped measurement
+// path.  The module is kept as a separate file because it reconstructs dense
+// intermediate states and is far too expensive for production use.
+#[cfg(test)]
+mod phase_diagnostic;

@@ -327,6 +327,24 @@ jobs:
         rustup default "${{ matrix.rust-toolchain || 'stable' }}"
         rustup show
 
+    # Self-expiring pin: rerun the exact rustc invocation that segfaults on
+    # latest stable (issue #566) and announce loudly once it stops crashing,
+    # so the pin above cannot go stale silently. Never fails the job.
+    - name: Check whether the Rust toolchain pin is still needed
+      if: runner.os != 'Windows' && matrix.rust-toolchain
+      run: |
+        rustup toolchain install stable --profile minimal
+        if rustc +stable - --crate-name ___ --print=file-names -C debuginfo=0 \
+            -C link-arg=-undefined -C link-arg=dynamic_lookup \
+            --crate-type bin --crate-type rlib --crate-type dylib \
+            --crate-type cdylib --crate-type staticlib --crate-type proc-macro \
+            --print=sysroot --print=split-debuginfo --print=crate-name \
+            --print=cfg -Wwarnings </dev/null >/dev/null 2>&1; then
+          echo "::warning title=Rust toolchain pin is obsolete::rustc $(rustc +stable --version) no longer crashes under the maturin target probe. Remove the ${{ matrix.rust-toolchain }} pin from this workflow (issue #566)."
+        else
+          echo "Latest stable ($(rustc +stable --version)) still crashes under the maturin target probe; the ${{ matrix.rust-toolchain }} pin remains required (issue #566)."
+        fi
+
     - name: Install just
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 

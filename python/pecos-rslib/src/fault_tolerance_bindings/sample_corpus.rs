@@ -404,14 +404,14 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
     if words_per_column != 0 {
         let padding_mask = !final_word_mask(num_shots);
         for (column_index, final_word) in payload
-            .chunks_exact(size_of::<u64>())
+            .as_chunks::<{ size_of::<u64>() }>()
+            .0
+            .iter()
             .skip(words_per_column - 1)
             .step_by(words_per_column)
             .enumerate()
         {
-            let mut word_bytes = [0_u8; size_of::<u64>()];
-            word_bytes.copy_from_slice(final_word);
-            if u64::from_le_bytes(word_bytes) & padding_mask != 0 {
+            if u64::from_le_bytes(*final_word) & padding_mask != 0 {
                 return Err(invalid(format!(
                     "corpus payload column {column_index} has nonzero padding bits above num_shots={num_shots}; unused high bits in the final word must be zero"
                 )));
@@ -420,10 +420,8 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
     }
 
     let mut words = Vec::with_capacity(payload.len() / size_of::<u64>());
-    for chunk in payload.chunks_exact(size_of::<u64>()) {
-        let mut bytes = [0_u8; size_of::<u64>()];
-        bytes.copy_from_slice(chunk);
-        words.push(u64::from_le_bytes(bytes));
+    for chunk in payload.as_chunks::<{ size_of::<u64>() }>().0 {
+        words.push(u64::from_le_bytes(*chunk));
     }
     let mut offset = 0;
     let mut read_columns = |count: usize| {

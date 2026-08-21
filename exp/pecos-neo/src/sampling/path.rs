@@ -570,53 +570,93 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
                 self.simulator.szdg(&qubits);
             }
             GateType::CX => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.cx(&pairs);
             }
             GateType::CY => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.cy(&pairs);
             }
             GateType::CZ => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.cz(&pairs);
             }
             GateType::SZZ => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.szz(&pairs);
             }
             GateType::SZZdg => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.szzdg(&pairs);
             }
             GateType::SXX => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.sxx(&pairs);
             }
             GateType::SXXdg => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.sxxdg(&pairs);
             }
             GateType::SYY => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.syy(&pairs);
             }
             GateType::SYYdg => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.syydg(&pairs);
             }
             GateType::SWAP => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.swap(&pairs);
             }
             unsupported => panic!(

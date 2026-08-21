@@ -49,7 +49,9 @@ use smallvec::SmallVec;
 /// Convert a flat qubit slice `[c0, t0, c1, t1, ...]` to a vec of pairs.
 fn flat_to_pairs(qubits: &[QubitId]) -> SmallVec<[(QubitId, QubitId); 4]> {
     qubits
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0], pair[1]))
         .collect()
 }

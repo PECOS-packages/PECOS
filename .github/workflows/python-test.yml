@@ -339,7 +339,7 @@ jobs:
             --crate-type bin --crate-type rlib --crate-type dylib \
             --crate-type cdylib --crate-type staticlib --crate-type proc-macro \
             --print=sysroot --print=split-debuginfo --print=crate-name \
-            --print=cfg -Wwarnings </dev/null >/dev/null 2>&1; then
+            --print=cfg -W warnings </dev/null >/dev/null 2>&1; then
           echo "::warning title=Rust toolchain pin is obsolete::rustc $(rustc +stable --version) no longer crashes under the maturin target probe. Remove the ${{ matrix.rust-toolchain }} pin from this workflow (issue #566)."
         else
           echo "Latest stable ($(rustc +stable --version)) still crashes under the maturin target probe; the ${{ matrix.rust-toolchain }} pin remains required (issue #566)."

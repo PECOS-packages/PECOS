@@ -24,7 +24,7 @@ test = false
 zlup = { path = "../zlup", features = ["hugr"] }
 
 # PyO3 for Python bindings
-pyo3 = { workspace = true, features = ["extension-module", "abi3-py310"] }
+pyo3 = { workspace = true, features = ["extension-module", "abi3-py312"] }
 
 # Serialization
 serde_json.workspace = true

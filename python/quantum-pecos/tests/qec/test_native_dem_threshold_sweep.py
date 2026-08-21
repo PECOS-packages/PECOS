@@ -240,7 +240,12 @@ def test_gate_trajectory_xor_matches_captured_numpy_oracle(monkeypatch: pytest.M
     }
 
 
-def test_native_dem_point_matches_captured_pre_migration_values() -> None:
+def test_native_dem_point_is_rebaselined_for_the_canonical_sampling_abi() -> None:
+    # Second deliberate re-baseline of this point. The first moved it off NumPy's
+    # RNG stream; this one moves it onto the fused sampler's canonical chunked
+    # sampling ABI, whose seed derivation differs by design. The sampled
+    # distribution is unchanged -- only which shots a given seed draws -- so the
+    # small-N realization moves (3/20 -> 4/20) while the underlying rate does not.
     sweep = _load_sweep_module()
 
     point = _private(sweep, "_run_memory_point")(
@@ -262,8 +267,8 @@ def test_native_dem_point_matches_captured_pre_migration_values() -> None:
         "backend": "native_sampler",
         "basis": "Z",
         "distance": 3,
-        "logical_error_rate": 0.15,
-        "num_logical_errors": 3,
+        "logical_error_rate": 0.2,
+        "num_logical_errors": 4,
         "num_raw_errors": None,
         "num_shots": 20,
         "physical_error_rate": 0.01,

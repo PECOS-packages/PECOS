@@ -24,6 +24,7 @@ use crate::ObservableDecoder;
 use crate::decode_budget::{DecodeStrategy, DetectorRegion};
 use crate::errors::DecoderError;
 use crate::logical_subgraph::LogicalSubgraphDecoder;
+use crate::obs_mask::ObsMask;
 
 /// Observable subgraph decoder with software commitment.
 ///
@@ -40,7 +41,7 @@ pub struct CommittedLogicalSubgraphDecoder {
     /// Per-detector commitment state. True = committed.
     committed: Vec<bool>,
     /// Accumulated observable correction from committed regions.
-    committed_obs: u64,
+    committed_obs: ObsMask,
     /// Total number of detectors.
     num_detectors: usize,
     /// Reusable masked syndrome buffer.
@@ -54,7 +55,7 @@ impl CommittedLogicalSubgraphDecoder {
         Self {
             inner,
             committed: vec![false; num_detectors],
-            committed_obs: 0,
+            committed_obs: ObsMask::new(),
             num_detectors,
             masked_syndrome: vec![0u8; num_detectors],
         }
@@ -66,6 +67,14 @@ impl CommittedLogicalSubgraphDecoder {
     /// inner logical-subgraph decoder. Returns the correction for the active (uncommitted)
     /// region.
     pub fn decode_active(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+        self.decode_active_obs(syndrome)?.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
+            )
+        })
+    }
+
+    fn decode_active_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
         // Build masked syndrome: zero out committed detectors
         let len = syndrome.len().min(self.num_detectors);
         self.masked_syndrome[..len].copy_from_slice(&syndrome[..len]);
@@ -74,8 +83,7 @@ impl CommittedLogicalSubgraphDecoder {
                 self.masked_syndrome[i] = 0;
             }
         }
-        self.inner
-            .decode_to_observables(&self.masked_syndrome[..len])
+        self.inner.decode_obs(&self.masked_syndrome[..len])
     }
 
     /// Mark detectors in [start, end) as committed.
@@ -89,7 +97,13 @@ impl CommittedLogicalSubgraphDecoder {
         region: &DetectorRegion,
     ) -> Result<u64, DecoderError> {
         // Decode with current syndrome (including uncommitted detectors)
-        let obs = self.decode_active(syndrome)?;
+        let wide_obs = self.decode_active_obs(syndrome)?;
+        let obs = wide_obs.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "commit_range supports at most 64 observables; use decode_obs() for wide decoding"
+                    .into(),
+            )
+        })?;
 
         // Mark detectors as committed
         for i in region.start..region.end.min(self.num_detectors) {
@@ -97,7 +111,7 @@ impl CommittedLogicalSubgraphDecoder {
         }
 
         // Accumulate the correction
-        self.committed_obs ^= obs;
+        self.committed_obs ^= &wide_obs;
         Ok(obs)
     }
 
@@ -105,9 +119,18 @@ impl CommittedLogicalSubgraphDecoder {
     ///
     /// Call `decode_active` first to get the active correction,
     /// then XOR with `committed_obs` for the full correction.
-    #[must_use]
-    pub fn committed_obs(&self) -> u64 {
-        self.committed_obs
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] when the accumulated
+    /// correction has an observable above bit 63.
+    pub fn committed_obs(&self) -> Result<u64, DecoderError> {
+        self.committed_obs.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "committed_obs() supports at most 64 observables; use decode_obs() for the wide mask"
+                    .into(),
+            )
+        })
     }
 
     /// Number of committed detectors.
@@ -119,17 +142,16 @@ impl CommittedLogicalSubgraphDecoder {
     /// Reset all commitment state for the next shot.
     pub fn reset(&mut self) {
         self.committed.fill(false);
-        self.committed_obs = 0;
+        self.committed_obs = ObsMask::new();
     }
 }
 
 impl ObservableDecoder for CommittedLogicalSubgraphDecoder {
-    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
         // Full decode: committed XOR active
-        let active = self.decode_active(syndrome)?;
-        Ok(crate::obs_mask::ObsMask::from_u64(
-            self.committed_obs ^ active,
-        ))
+        let mut active = self.decode_active_obs(syndrome)?;
+        active ^= &self.committed_obs;
+        Ok(active)
     }
 }
 
@@ -138,17 +160,26 @@ impl DecodeStrategy for CommittedLogicalSubgraphDecoder {
         self.decode_active(syndrome)
     }
 
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        ObservableDecoder::decode_obs(self, syndrome)
+    }
+
     fn commit(&mut self, region: &DetectorRegion) -> Result<u64, DecoderError> {
         // Commit with zeros — the actual syndrome was already decoded
         // via decode(). Just mark the region.
         for i in region.start..region.end.min(self.num_detectors) {
             self.committed[i] = true;
         }
-        Ok(self.committed_obs)
+        self.committed_obs.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "streaming commit supports at most 64 observables; use decode_obs() for wide decoding"
+                    .into(),
+            )
+        })
     }
 
-    fn committed_obs(&self) -> u64 {
-        self.committed_obs
+    fn committed_obs(&self) -> Result<u64, DecoderError> {
+        Self::committed_obs(self)
     }
 
     fn reset(&mut self) {
@@ -159,6 +190,33 @@ impl DecodeStrategy for CommittedLogicalSubgraphDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FixedSingleObservable;
+
+    impl ObservableDecoder for FixedSingleObservable {
+        fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+            Ok(if syndrome.contains(&1) {
+                ObsMask::from_u64(1)
+            } else {
+                ObsMask::new()
+            })
+        }
+    }
+
+    fn wide_decoder(num_observables: usize) -> CommittedLogicalSubgraphDecoder {
+        use std::fmt::Write as _;
+
+        let mut dem = String::from("detector(0, 0, 0) D0\n");
+        for observable in 0..num_observables {
+            writeln!(dem, "error(0.1) D0 L{observable}").unwrap();
+        }
+        let membership = vec![vec![0]; num_observables];
+        let inner = LogicalSubgraphDecoder::from_membership(&dem, &membership, |_| {
+            Ok(Box::new(FixedSingleObservable) as Box<dyn ObservableDecoder + Send + Sync>)
+        })
+        .unwrap();
+        CommittedLogicalSubgraphDecoder::new(inner, 1)
+    }
 
     #[test]
     fn test_detector_region() {
@@ -173,5 +231,28 @@ mod tests {
         // Verify the trait exists and has the right methods
         // (compile-time check via trait bound)
         fn _assert_strategy<T: DecodeStrategy>() {}
+    }
+
+    #[test]
+    fn observable_wrapper_is_correct_at_64_and_65_observables() {
+        for num_observables in [64, 65] {
+            let mut decoder = wide_decoder(num_observables);
+            let prediction = ObservableDecoder::decode_obs(&mut decoder, &[1]).unwrap();
+            assert_eq!(
+                prediction.count_ones(),
+                u32::try_from(num_observables).unwrap()
+            );
+            assert!(prediction.get(num_observables - 1));
+        }
+    }
+
+    #[test]
+    fn wide_committed_getter_returns_an_error_instead_of_panicking() {
+        let mut decoder = wide_decoder(65);
+        decoder.committed_obs.set(64);
+        assert!(matches!(
+            decoder.committed_obs(),
+            Err(DecoderError::InvalidConfiguration(_))
+        ));
     }
 }

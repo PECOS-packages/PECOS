@@ -17,7 +17,7 @@ def test_hugr_to_llvm_compilation() -> None:
         q1, q2 = qubit(), qubit()
         h(q1)
         cx(q1, q2)
-        return measure(q1), measure(q2)
+        return measure(q1).read(), measure(q2).read()
 
     # Compile to HUGR
     hugr = bell_state.compile()
@@ -48,7 +48,7 @@ def test_simple_hadamard_circuit() -> None:
     def hadamard_test() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR
     hugr = hadamard_test.compile()
@@ -81,7 +81,7 @@ def test_trace_metadata_helper_uses_public_symbol() -> None:
         q = qubit()
         q = pecos_qis_trace_metadata_qubit_hugr(q, "source_kind", "szz_host")
         h(q)
-        _ = measure(q)
+        _ = measure(q).read()
 
     llvm_ir = compile_hugr_to_qis(metadata_probe.compile().to_bytes())
 
@@ -112,7 +112,7 @@ def test_runtime_barrier_pair_helper_uses_public_symbol() -> None:
         h(q0)
         q0, q1 = pecos_qis_runtime_barrier_qubits2_hugr(q0, q1)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     llvm_ir = compile_hugr_to_qis(barrier_pair_probe.compile().to_bytes())
 

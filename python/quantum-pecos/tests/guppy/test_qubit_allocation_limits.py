@@ -19,7 +19,7 @@ class TestQubitAllocationLimits:
             q1 = qubit()
             q2 = qubit()
             q3 = qubit()
-            return measure(q1), measure(q2), measure(q3)
+            return measure(q1).read(), measure(q2).read(), measure(q3).read()
 
         # Should work fine with max_qubits=5 (3 qubits needed)
         results = sim(Guppy(static_test)).qubits(5).quantum(state_vector()).run(10).to_dict()
@@ -43,7 +43,7 @@ class TestQubitAllocationLimits:
             for _i in range(3):
                 q = qubit()
                 h(q)
-                if measure(q):
+                if measure(q).read():
                     count += 1
             return count
 
@@ -92,7 +92,7 @@ class TestQubitAllocationLimits:
             cx(q2, q3)
 
             # Measure all
-            return measure(q0), measure(q1), measure(q2), measure(q3)
+            return measure(q0).read(), measure(q1).read(), measure(q2).read(), measure(q3).read()
 
         with pytest.raises(RuntimeError, match=r"targets qubit 3.*holds 3 qubits"):
             sim(Guppy(four_qubit_program)).qubits(3).quantum(sparse_stab()).run(10)
@@ -120,7 +120,7 @@ class TestQubitAllocationLimits:
             cx(q1, q2)
             cx(q2, q3)
 
-            return measure(q0), measure(q1), measure(q2), measure(q3)
+            return measure(q0).read(), measure(q1).read(), measure(q2).read(), measure(q3).read()
 
         results = sim(Guppy(four_qubit_ghz)).qubits(3).quantum(state_vector()).seed(42).run(10).to_dict()
 
@@ -145,11 +145,11 @@ class TestQubitAllocationLimits:
                     q = qubit()
                     if i > j:
                         h(q)
-                        if measure(q):
+                        if measure(q).read():
                             count += 1
                     else:
                         # Direct measurement of |0⟩
-                        if measure(q):
+                        if measure(q).read():
                             count += 1
             return count
 
@@ -172,7 +172,7 @@ class TestQubitAllocationLimits:
             for _i in range(5):
                 q = qubit()
                 h(q)
-                if measure(q):
+                if measure(q).read():
                     count += 1
                 # After measurement, qubit is consumed and could be reused
             return count
@@ -199,7 +199,7 @@ class TestQubitAllocationLimits:
         def single_qubit_test() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Test with different max_qubits values
         for max_q in [1, 5, 10, 20]:
@@ -218,7 +218,7 @@ class TestQubitAllocationLimits:
     def test_qubit_array_allocation(self) -> None:
         """Test allocation of qubit arrays using Guppy's array type with proper ownership."""
         from guppylang.std.builtins import owned
-        from guppylang.std.quantum import measure_array
+        from guppylang.std.quantum import collect_measurements, measure_array
 
         @guppy
         def apply_h_to_array(qubits: array[qubit, 3] @ owned) -> array[qubit, 3]:
@@ -238,7 +238,7 @@ class TestQubitAllocationLimits:
             qubits = apply_h_to_array(qubits)
 
             # Measure all qubits at once using measure_array
-            return measure_array(qubits)
+            return collect_measurements(measure_array(qubits))
 
         # Need at least 3 qubits for the array
         results = sim(Guppy(array_test)).qubits(3).quantum(state_vector()).seed(42).run(50).to_dict()
@@ -275,7 +275,7 @@ class TestQubitAllocationLimits:
             h(q3)
 
             # Measure all
-            return measure(q0), measure(q1), measure(q2), measure(q3)
+            return measure(q0).read(), measure(q1).read(), measure(q2).read(), measure(q3).read()
 
         # Test with exact number of qubits needed
         # Use 500 shots for better statistics; seed 1000 produces [253, 259, 255, 258]

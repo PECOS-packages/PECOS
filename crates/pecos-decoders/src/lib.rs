@@ -14,6 +14,7 @@
 //! - `uf` - Syndrome-graph Union-Find decoder (pure Rust)
 //! - `all` - Enable all decoders
 
+pub mod batch;
 pub mod spec;
 
 pub use spec::{DecodeModel, DecoderSpec, ExecutionTraits};

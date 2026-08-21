@@ -842,16 +842,16 @@ impl PyStateVec {
         }
 
         let mut state = Vec::with_capacity(1 << num_qubits);
-        for chunk in bytes.chunks_exact(16) {
+        for chunk in bytes.as_chunks::<16>().0 {
             let re = f64::from_le_bytes(
                 chunk[..8]
                     .try_into()
-                    .expect("chunks_exact(16) guarantees 8-byte slices"),
+                    .expect("16-byte chunks contain an 8-byte prefix"),
             );
             let im = f64::from_le_bytes(
                 chunk[8..16]
                     .try_into()
-                    .expect("chunks_exact(16) guarantees 8-byte slices"),
+                    .expect("16-byte chunks contain an 8-byte suffix"),
             );
             state.push(num_complex::Complex64::new(re, im));
         }

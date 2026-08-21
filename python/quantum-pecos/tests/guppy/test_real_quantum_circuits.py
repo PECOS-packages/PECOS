@@ -24,8 +24,8 @@ def test_bell_state_preparation() -> None:
         cx(q1, q2)
 
         # Measure both qubits
-        m1 = measure(q1)
-        m2 = measure(q2)
+        m1 = measure(q1).read()
+        m2 = measure(q2).read()
 
         return (m1, m2)
 
@@ -68,8 +68,8 @@ def test_measurements_rows_are_qubit_id_ordered() -> None:
         q1 = qubit()  # qubit id 0
         q2 = qubit()  # qubit id 1
         x(q1)  # deterministically flip qubit 0 to |1>
-        m1 = measure(q1)
-        m2 = measure(q2)
+        m1 = measure(q1).read()
+        m2 = measure(q2).read()
         return (m2, m1)  # reversed relative to qubit-id order
 
     shot_vec = sim(Guppy(reversed_return)).qubits(2).quantum(state_vector()).seed(42).run(20)
@@ -97,9 +97,9 @@ def test_ghz_state() -> None:
         cx(q1, q3)
 
         # Measure all qubits
-        m1 = measure(q1)
-        m2 = measure(q2)
-        m3 = measure(q3)
+        m1 = measure(q1).read()
+        m2 = measure(q2).read()
+        m3 = measure(q3).read()
 
         return (m1, m2, m3)
 
@@ -145,10 +145,10 @@ def test_quantum_phase_kickback() -> None:
 
         # Measure in X basis for control (apply H before measure)
         h(control)
-        m1 = measure(control)
+        m1 = measure(control).read()
 
         # Measure target in Z basis
-        m2 = measure(target)
+        m2 = measure(target).read()
 
         return (m1, m2)
 
@@ -192,7 +192,7 @@ def test_quantum_interference() -> None:
         h(q)
 
         # Should measure |1⟩ due to destructive interference
-        return measure(q)
+        return measure(q).read()
 
     # Run simulation with state_vector backend
     shot_vec = sim(Guppy(quantum_interferometer)).qubits(1).quantum(state_vector()).seed(42).run(1000)
@@ -225,7 +225,7 @@ def test_rotation_gates() -> None:
         rz(q, angle(0.25))  # π/4
 
         # Measure
-        return measure(q)
+        return measure(q).read()
 
     # Run simulation with state_vector backend
     shot_vec = sim(Guppy(rotation_circuit)).qubits(1).quantum(state_vector()).seed(42).run(1000)

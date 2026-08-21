@@ -50,7 +50,9 @@ unsafe extern "C" fn real_cx(handle: *mut (), pairs: *const usize, num_pairs: us
     let sim = unsafe { &mut *holder.sim.get() };
     let flat = unsafe { std::slice::from_raw_parts(pairs, num_pairs * 2) };
     let pair_vec: Vec<(QubitId, QubitId)> = flat
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|p| (QubitId(p[0]), QubitId(p[1])))
         .collect();
     sim.cx(&pair_vec);

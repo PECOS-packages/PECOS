@@ -47,6 +47,7 @@ class DecoderResult:
     num_errors: int
     logical_error_rate: float
     decode_seconds: float
+    summed_decode_seconds: float
     shots_per_second: float
     per_shot_median: float = 0.0
     per_shot_p99: float = 0.0
@@ -172,6 +173,7 @@ def run_comparison(
     p_prep_scale: float,
 ) -> list[ComparisonPoint]:
     """Run the full comparison and return results."""
+    from pecos.decoders import DecoderSpec
     from pecos.qec.surface import NoiseParameters
 
     points: list[ComparisonPoint] = []
@@ -209,11 +211,18 @@ def run_comparison(
                 base = _decoder_base_name(decoder_name)
                 # Ensemble uses decomposed DEMs (all ensemble members are matching-graph decoders)
                 dem = dem_decomp if base in _MWPM_DECODERS or base == "ensemble" else dem_full
-
-                if base in _SLOW_DECODERS:
-                    stats = sample_batch.decode_stats_parallel(dem, decoder_name)
-                else:
-                    stats = sample_batch.decode_stats(dem, decoder_name)
+                spec = DecoderSpec.parse(decoder_name)
+                workers = None if base in _SLOW_DECODERS else 1
+                result = sample_batch.decode(
+                    dem,
+                    spec,
+                    workers=workers,
+                    timing=True,
+                )
+                timing = result.stats
+                if timing is None:
+                    msg = "timing=True returned no decode statistics"
+                    raise RuntimeError(msg)
 
                 results.append(
                     DecoderResult(
@@ -223,22 +232,23 @@ def run_comparison(
                         physical_error_rate=p,
                         num_rounds=num_rounds,
                         num_shots=shots,
-                        num_errors=stats.num_errors,
-                        logical_error_rate=stats.logical_error_rate,
-                        decode_seconds=stats.total_seconds,
-                        shots_per_second=shots / stats.total_seconds if stats.total_seconds > 0 else float("inf"),
-                        per_shot_median=stats.per_shot_median,
-                        per_shot_p99=stats.per_shot_p99,
-                        per_shot_max=stats.per_shot_max,
+                        num_errors=result.num_errors,
+                        logical_error_rate=result.logical_error_rate,
+                        decode_seconds=timing.wall_elapsed,
+                        summed_decode_seconds=timing.summed_decode_elapsed,
+                        shots_per_second=shots / timing.wall_elapsed if timing.wall_elapsed > 0 else float("inf"),
+                        per_shot_median=timing.per_shot_median,
+                        per_shot_p99=timing.per_shot_p99,
+                        per_shot_max=timing.per_shot_max,
                     ),
                 )
                 print(
-                    f"    {decoder_name:14s}: {stats.num_errors:>4d}/{shots}  "
-                    f"LER={stats.logical_error_rate:.4f}  "
-                    f"mean={stats.per_shot_mean:.1e}s  "
-                    f"median={stats.per_shot_median:.1e}s  "
-                    f"p99={stats.per_shot_p99:.1e}s  "
-                    f"max={stats.per_shot_max:.1e}s",
+                    f"    {decoder_name:14s}: {result.num_errors:>4d}/{shots}  "
+                    f"LER={result.logical_error_rate:.4f}  "
+                    f"mean={timing.per_shot_mean:.1e}s  "
+                    f"median={timing.per_shot_median:.1e}s  "
+                    f"p99={timing.per_shot_p99:.1e}s  "
+                    f"max={timing.per_shot_max:.1e}s",
                 )
 
             points.append(
@@ -405,7 +415,7 @@ def write_html(path: Path, points: list[ComparisonPoint], config: dict) -> None:
             "<th>Median</th><th>p99</th><th>Max</th><th>Throughput</th></tr>",
         )
         for res in sorted(point.results, key=lambda r: r.logical_error_rate):
-            mean_s = res.decode_seconds / res.num_shots if res.num_shots > 0 else 0
+            mean_s = res.summed_decode_seconds / res.num_shots if res.num_shots > 0 else 0
             sps = f"{res.shots_per_second:.1e}"
             ler = res.logical_error_rate
             n = res.num_shots

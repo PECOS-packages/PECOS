@@ -67,6 +67,7 @@ pub mod home;
 pub mod llvm;
 pub mod manifest;
 pub mod prompt;
+pub mod python;
 pub mod ripgrep;
 
 // Re-export main types for convenience

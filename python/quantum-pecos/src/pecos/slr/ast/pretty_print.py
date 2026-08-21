@@ -43,7 +43,7 @@ from pecos.slr.ast.nodes import (
 from pecos.slr.ast.visitor import BaseVisitor
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
+    from typing import Self
 
     from pecos.slr.ast.nodes import (
         AssignOp,

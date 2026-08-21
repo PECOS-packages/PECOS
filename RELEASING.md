@@ -6,25 +6,53 @@ sequence was last exercised for `0.10.0.dev0`.
 
 ## 1. Version bump (its own PR)
 
-The version is a literal in many coordinated places. Bump them all:
+The version is a literal in many coordinated places. One command moves them all:
 
-- `version =` in every workspace `pyproject.toml` (root meta-package,
-  `python/pecos-rslib{,-llvm,-cuda,-exp}`, `python/quantum-pecos`, and the
-  `python/selene-plugins/*` packages)
-- Exact-version internal pins: the root's `quantum-pecos[cuda12/13]==...`
-  entries and quantum-pecos's `pecos-rslib==...` / `pecos-rslib-llvm==...`
-- Regenerate all three lockfiles: `just lock` (runs the pinned uv from
-  `.github/uv.toml` at the root and in `exp/zlup/` and `exp/zluppy/`; verify
-  the diffs are version-lines-only)
+```
+just bump-python-version <new-version>
+```
 
-Verify: `git grep <old-version>` returns nothing outside this file's
-historical note; `uv lock --check` passes;
+It rewrites `[project].version` in the root meta-package and in every distribution
+(`python/pecos-rslib{,-llvm,-cuda,-exp}`, `python/quantum-pecos`, the
+`python/selene-plugins/*` packages, and `exp/zluppy`, which rides the same train from
+outside the uv workspace), rewrites the exact internal pins (the root's
+`quantum-pecos[cuda12/13]==...` and quantum-pecos's `pecos-rslib==...` /
+`pecos-rslib-llvm==...`), regenerates all three lockfiles with the pinned uv from
+`.github/uv.toml`, and then runs `just python-workspace-check`. Nothing is written unless
+every file is on the old version, so a bump cannot half-land.
+
+Verify: the lockfile diffs are version lines only; `git grep <old-version>` returns
+nothing outside this file's historical note; `uv lock --check` passes;
 `just python-ci-sync-test` then `python -c "import pecos; print(pecos.__version__)"`
 reports the new version.
 
 Versioning convention: a user-visible default-behavior change gets a minor
 bump (e.g. `0.8.x -> 0.9.0.dev0`); additive-only work increments the dev/patch
 number.
+
+### Version trains
+
+Each language ships on its own train, and each train has a guard that fails CI when
+a member drifts off it:
+
+| Train | Source of truth | Guard |
+| --- | --- | --- |
+| Python | `[project].version` in the root `pyproject.toml` | `just python-workspace-check` -- every tracked `pyproject.toml` with a `[build-system]` must match, wherever it lives |
+| Rust | `[workspace.package].version` in the root `Cargo.toml` | `just rust-workspace-check` -- every workspace member must use `version.workspace = true` |
+| Julia | `version` in `julia/PECOS.jl/Project.toml` | `just julia-version-check` -- manifest, FFI crate, and `build_tarballs.jl` must agree, as must the Julia compat bound; `just rust-workspace-check` separately holds the FFI crate to it |
+| Go | `version` in `go/pecos-go-ffi/Cargo.toml` | single declaration: `pecos_version()` derives the string from `CARGO_PKG_VERSION`, and Go modules are versioned by git tag |
+
+A Python release moves only the Python train. The Rust, Julia, and Go trains are
+bumped on their own schedules, and the guards keep them from being dragged along
+by accident. Julia has its own bump command, matching the Python one:
+
+```
+just bump-julia-version <new-version>
+```
+
+It rewrites all three Julia files, refreshes `Cargo.lock` for the FFI crate, and runs both
+guards. Rust and Go are a single literal each (`[workspace.package].version` and
+`go/pecos-go-ffi/Cargo.toml`), so they need no tool.
 
 ## 2. Merge and wait for post-merge green
 
@@ -63,7 +91,12 @@ preflight -- complete set, consistent version, only expected files -- is the
 only thing standing between that and a stray upload.
 
 The dry run must show a real `twine check ... PASSED` per file (twine must be
-installed, e.g. `uv tool install twine`). The script prints only a
+installed, e.g. `uv tool install twine`). Keep it current: build tools raise the
+core-metadata version they emit over time, and a checker older than the metadata
+rejects the artifacts even though PyPI accepts them -- `uv tool upgrade twine` if a
+check fails naming a metadata version. The script prints which twine it is using, and
+validates every package before uploading any of them, so a stale checker stops the run
+rather than surfacing after the first packages are already public. It prints only a
 `Distribution checks passed` summary and swallows `twine check` output unless it
 fails, so confirm the per-file result directly:
 `uvx twine check pecos-distribution-<version>/*/*.whl pecos-distribution-<version>/*/*.tar.gz`
@@ -75,9 +108,11 @@ and check the `PASSED` count equals the file count.
 ./scripts/publish-wheels.sh -f pecos-distribution
 ```
 
-Confirm each package at its prompt. Upload order matters and the script
-enforces it: all packages are preflighted (complete set, consistent version,
-only expected files) before anything uploads, dependencies go first
+Confirm each package at its prompt. Every confirmation is collected before the
+first upload, so declining part-way through leaves nothing published. Upload order
+matters and the script enforces it: all packages are preflighted (complete set,
+consistent version, only expected files) and `twine check`ed before anything
+uploads, dependencies go first
 (`pecos-rslib` -> `pecos-rslib-llvm` -> `quantum-pecos`, which pins both at
 exact versions), and any failure or declined prompt aborts the remaining
 uploads rather than continuing. Publishing `quantum-pecos` alone (`-p`) is

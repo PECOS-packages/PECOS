@@ -33,14 +33,14 @@ class TestDynamicCircuitExecution:
             q2 = qubit()  # |0>
 
             # Measure first qubit - should always be False (|0>)
-            result1 = measure(q1)
+            result1 = measure(q1).read()
 
             # Apply X to second qubit only if first was True
             # Since first is always False, X should NOT be applied
             if result1:
                 x(q2)
 
-            return measure(q2)  # Should always be False
+            return measure(q2).read()  # Should always be False
 
         # Run the circuit
         results = sim(Guppy(conditional_x_from_zero)).qubits(2).quantum(state_vector()).seed(42).run(100)
@@ -66,14 +66,14 @@ class TestDynamicCircuitExecution:
             x(q1)
 
             # Measure first qubit - should always be True (|1>)
-            result1 = measure(q1)
+            result1 = measure(q1).read()
 
             # Apply X to second qubit only if first was True
             # Since first is always True, X SHOULD be applied
             if result1:
                 x(q2)
 
-            return measure(q2)  # Should always be True
+            return measure(q2).read()  # Should always be True
 
         # Run the circuit
         results = sim(Guppy(conditional_x_from_one)).qubits(2).quantum(state_vector()).seed(42).run(100)
@@ -105,14 +105,14 @@ class TestDynamicCircuitExecution:
             h(q1)
 
             # Measure first qubit
-            result1 = measure(q1)
+            result1 = measure(q1).read()
 
             # Apply X to second qubit if first measured True
             # This should make q2 always match the measurement of q1
             if result1:
                 x(q2)
 
-            return result1, measure(q2)
+            return result1, measure(q2).read()
 
         # Run the circuit
         results = sim(Guppy(measurement_feedback)).qubits(2).quantum(state_vector()).seed(42).run(100)
@@ -157,8 +157,8 @@ class TestDynamicCircuitExecution:
             # Bell measurement on q0 and q1
             cx(q0, q1)
             h(q0)
-            m0 = measure(q0)
-            m1 = measure(q1)
+            m0 = measure(q0).read()
+            m1 = measure(q1).read()
 
             # Apply corrections based on measurement results
             if m1:
@@ -169,7 +169,7 @@ class TestDynamicCircuitExecution:
                 pass
 
             # Measure final state - should be |1>
-            return measure(q2)
+            return measure(q2).read()
 
         # Run the circuit
         results = sim(Guppy(teleport_one)).qubits(3).quantum(state_vector()).seed(42).run(100)

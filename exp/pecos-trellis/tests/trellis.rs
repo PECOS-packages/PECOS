@@ -681,9 +681,9 @@ fn default_batch_decode_matches_individual_shots() {
     let dem = sparse_dem(vec![(0.2, vec![0], vec![0]), (0.3, vec![1], vec![1])], 2, 2);
     let mut decoder = TrellisDecoder::from_sparse_dem(&dem, exact_config()).unwrap();
     let expected = vec![
-        decoder.decode_to_observables(&[1, 0]).unwrap(),
-        decoder.decode_to_observables(&[0, 1]).unwrap(),
-        decoder.decode_to_observables(&[1, 1]).unwrap(),
+        decoder.decode_obs(&[1, 0]).unwrap(),
+        decoder.decode_obs(&[0, 1]).unwrap(),
+        decoder.decode_obs(&[1, 1]).unwrap(),
     ];
 
     let batched = decoder

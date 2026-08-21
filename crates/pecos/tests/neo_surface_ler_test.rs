@@ -24,6 +24,7 @@
 
 use pecos::{SimStack, sim};
 use pecos_decoder_core::ObservableDecoder;
+use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_engines::shot_results::ShotVec;
 use pecos_fusion_blossom::FusionBlossomDecoder;
 use pecos_num::jeffreys_interval;
@@ -259,7 +260,7 @@ fn xor_meas_bits(bits: &[u8], meas_ids: &[usize]) -> u8 {
 fn shots_to_syndromes(
     results: &ShotVec,
     experiment: &MemoryExperiment,
-) -> (Vec<Vec<u8>>, Vec<u64>) {
+) -> (Vec<Vec<u8>>, Vec<ObsMask>) {
     let mut syndromes = Vec::with_capacity(results.shots.len());
     let mut masks = Vec::with_capacity(results.shots.len());
     for shot in &results.shots {
@@ -269,7 +270,7 @@ fn shots_to_syndromes(
             .iter()
             .map(|meas_ids| xor_meas_bits(&bits, meas_ids))
             .collect();
-        let mask = u64::from(xor_meas_bits(&bits, &experiment.observable));
+        let mask = ObsMask::from_u64(u64::from(xor_meas_bits(&bits, &experiment.observable)));
         syndromes.push(syndrome);
         masks.push(mask);
     }
@@ -356,7 +357,7 @@ fn noiseless_surface_memory_is_silent_on_both_stacks() {
             );
         }
         assert!(
-            masks.iter().all(|&m| m == 0),
+            masks.iter().all(|m| m.to_u64() == Some(0)),
             "stack {stack:?}: noiseless logical observable must be trivial"
         );
     }

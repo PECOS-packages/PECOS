@@ -17,7 +17,7 @@ class TestResetOperation:
             q = qubit()
             h(q)  # Put in superposition
             reset(q)  # Reset to |0⟩
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_reset.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -34,7 +34,7 @@ class TestResetOperation:
             q = qubit()
             x(q)  # Flip to |1⟩
             reset(q)  # Reset to |0⟩
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_reset_x.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -53,7 +53,7 @@ class TestResetOperation:
             reset(q)
             x(q)
             reset(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = test_multi_reset.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -73,7 +73,7 @@ class TestResetOperation:
             h(q2)
             reset(q1)
             reset(q2)
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         hugr = test_reset_two.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -92,7 +92,7 @@ class TestResetOperation:
         def simple_reset() -> bool:
             q = qubit()
             reset(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr = simple_reset.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
@@ -118,7 +118,7 @@ class TestResetOperation:
             cx(q1, q2)  # Entangle
             reset(q1)  # Reset control qubit
             # q2 should still be in a mixed state
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         hugr = reset_circuit.compile()
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())

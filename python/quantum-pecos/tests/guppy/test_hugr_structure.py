@@ -15,7 +15,7 @@ def test_hugr_json_structure() -> None:
     def simple_circuit() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile to HUGR (a hugr.package.Package)
     pkg = simple_circuit.compile()

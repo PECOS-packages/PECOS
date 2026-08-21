@@ -44,7 +44,7 @@ class TestStabVecBasic:
         @guppy
         def main() -> None:
             q = qubit()
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -60,7 +60,7 @@ class TestStabVecBasic:
         def main() -> None:
             q = qubit()
             h(q)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -82,8 +82,8 @@ class TestStabVecBellState:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            b0 = measure(q0)
-            b1 = measure(q1)
+            b0 = measure(q0).read()
+            b1 = measure(q1).read()
             result("q0", b0)
             result("q1", b1)
 
@@ -107,7 +107,7 @@ class TestStabVecArbitraryRotations:
             h(q)
             rz(q, pi / 4)
             h(q)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -126,7 +126,7 @@ class TestStabVecArbitraryRotations:
             h(q)
             rz(q, pi / 8)
             h(q)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -142,7 +142,7 @@ class TestStabVecArbitraryRotations:
         def main() -> None:
             q = qubit()
             rx(q, pi / 3)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -158,7 +158,7 @@ class TestStabVecArbitraryRotations:
         def main() -> None:
             q = qubit()
             ry(q, pi / 3)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -176,8 +176,8 @@ class TestStabVecArbitraryRotations:
             q1 = qubit()
             h(q0)
             crz(q0, q1, pi / 4)
-            b0 = measure(q0)
-            b1 = measure(q1)
+            b0 = measure(q0).read()
+            b1 = measure(q1).read()
             result("q0", b0)
             result("q1", b1)
 
@@ -203,7 +203,7 @@ class TestStabVecReset:
             h(q)  # Back to |0> deterministically... but let's use reset
             # Flip to |1> via H-measure-H pattern isn't clean, so test reset directly
             reset(q)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())
@@ -221,7 +221,7 @@ class TestStabVecReset:
             h(q)
             reset(q)
             h(q)
-            bit = measure(q)
+            bit = measure(q).read()
             result("outcome", bit)
 
         runner = build(main.compile())

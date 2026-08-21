@@ -162,7 +162,7 @@ def test_fuzzed_program_matches_python_reference(seed: int, tmp_path: Path) -> N
         f"{body}\n"
         f"    if acc == {expected}:\n"
         "        x(q)\n"
-        "    return measure(q)\n"
+        "    return measure(q).read()\n"
     )
     module = _load_guppy_module(tmp_path, seed, source)
 

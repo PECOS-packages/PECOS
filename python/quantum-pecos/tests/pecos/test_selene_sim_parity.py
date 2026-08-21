@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 from guppylang import guppy
-from guppylang.std.builtins import array, comptime, result
-from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
+from guppylang.std.builtins import array, comptime, output
+from guppylang.std.quantum import collect_measurements, cx, h, measure, measure_array, qubit, x
 from pecos.guppy_gen import variant_scoped
 
 
@@ -36,8 +36,8 @@ def tagged_bits_named_array() -> None:
     q2 = qubit()
     x(q0)
     x(q2)
-    final = measure_array(array(q0, q1, q2))
-    result("final", final)
+    final = collect_measurements(measure_array(array(q0, q1, q2)))
+    output("final", final)
 
 
 def make_repeated_single_bit_results(num_rounds: int) -> object:
@@ -46,8 +46,8 @@ def make_repeated_single_bit_results(num_rounds: int) -> object:
     def repeated_single_bit_results() -> None:
         for _ in range(comptime(num_rounds)):
             q = qubit()
-            bit = measure(q)
-            result("synx", array(bit))
+            bit = measure(q).read()
+            output("synx", array(bit))
 
     return guppy(variant_scoped(repeated_single_bit_results, num_rounds))
 
@@ -64,12 +64,12 @@ def make_tiny_x_syndrome_memory(num_rounds: int) -> object:
             h(anc)
             cx(anc, data)
             h(anc)
-            bit = measure(anc)
-            result("synx", array(bit))
+            bit = measure(anc).read()
+            output("synx", array(bit))
 
         h(data)
-        final = measure_array(array(data))
-        result("final", final)
+        final = collect_measurements(measure_array(array(data)))
+        output("final", final)
 
     return guppy(variant_scoped(tiny_x_syndrome_memory, num_rounds))
 
@@ -90,10 +90,10 @@ def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
             h(anc)
             cx(anc, data)
             h(anc)
-            _ = measure(anc)
+            _ = measure(anc).read()
 
         h(data)
-        _ = measure(data)
+        _ = measure(data).read()
 
     return guppy(variant_scoped(tiny_x_syndrome_memory_raw, num_rounds))
 
@@ -103,12 +103,12 @@ def alloc_reuse_probe() -> None:
     """Measure |1>, then allocate again and verify the fresh qubit is |0>."""
     q = qubit()
     x(q)
-    b1 = measure(q)
-    result("m1", array(b1))
+    b1 = measure(q).read()
+    output("m1", array(b1))
 
     q2 = qubit()
-    b2 = measure(q2)
-    result("m2", array(b2))
+    b2 = measure(q2).read()
+    output("m2", array(b2))
 
 
 def _require_selene_runtime() -> object:
@@ -177,7 +177,7 @@ def test_capture_operation_trace_returns_in_memory_batches() -> None:
 
 
 def test_capture_operation_trace_includes_named_result_provenance() -> None:
-    """Trace capture must preserve result(...) -> measurement-id provenance."""
+    """Trace capture must preserve output(...) -> measurement-id provenance."""
     import pecos
     from pecos._qis_trace_replay import named_result_traces_from_operation_trace
 
@@ -643,7 +643,7 @@ def test_divergent_classical_semantics_match_selene_reference() -> None:
     """
     import pecos
     from guppylang import guppy
-    from guppylang.std.builtins import result
+    from guppylang.std.builtins import output
 
     _require_selene_runtime()
     _configure_selene_caches()
@@ -652,10 +652,10 @@ def test_divergent_classical_semantics_match_selene_reference() -> None:
     def divergent_agrees() -> None:
         a = 7
         b = -3
-        result("div", (a // b) == 0)
-        result("mod", (a % b) == 7)
+        output("div", (a // b) == 0)
+        output("mod", (a % b) == 7)
         c = -8
-        result("shr", (c >> 1) == 9223372036854775804)
+        output("shr", (c >> 1) == 9223372036854775804)
 
     r = pecos.sim(pecos.Guppy(divergent_agrees)).qubits(1).classical(pecos.selene_engine()).seed(1).run(1).to_dict()
     assert [int(r["div"][0]), int(r["mod"][0]), int(r["shr"][0])] == [

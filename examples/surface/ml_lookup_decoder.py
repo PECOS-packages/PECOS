@@ -78,6 +78,7 @@ def main():
 
     import json
 
+    from pecos.decoders import pymatching
     from pecos.qec.surface import SurfacePatch
     from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
@@ -223,7 +224,12 @@ def main():
         circuit_source="abstract",
     )
     dem_clean = "\n".join(line for line in dem_decomp.split("\n") if not line.startswith("logical_observable"))
-    stats_pm = test_batch.decode_stats(dem_clean, "pymatching")
+    result_pm = test_batch.decode(
+        dem_clean,
+        pymatching(correlated=True),
+        workers=1,
+        timing=True,
+    )
 
     # Compare with coherent_dem_decomposed if available
     try:
@@ -233,8 +239,13 @@ def main():
         coherent_clean = "\n".join(
             line for line in coherent_decomp.split("\n") if not line.startswith("logical_observable")
         )
-        stats_coherent = test_batch.decode_stats(coherent_clean, "pymatching")
-        ler_coherent = stats_coherent.logical_error_rate
+        result_coherent = test_batch.decode(
+            coherent_clean,
+            pymatching(correlated=True),
+            workers=1,
+            timing=True,
+        )
+        ler_coherent = result_coherent.logical_error_rate
     except Exception:
         ler_coherent = None
 
@@ -242,11 +253,11 @@ def main():
     print(f"Results (d={args.distance}, p2={args.p2}, irz={args.idle_rz}):")
     print(f"{'='*60}")
     print(f"  ML Lookup:                  LER = {ler_lookup:.6f}  ({errors_lookup}/{n})")
-    print(f"  PyMatching (from_circuit):  LER = {stats_pm.logical_error_rate:.6f}  ({stats_pm.num_errors}/{n})")
+    print(f"  PyMatching (from_circuit):  LER = {result_pm.logical_error_rate:.6f}  ({result_pm.num_errors}/{n})")
     if ler_coherent is not None:
         print(f"  PyMatching (coherent):      LER = {ler_coherent:.6f}")
-    if stats_pm.logical_error_rate > 0:
-        improvement = (stats_pm.logical_error_rate - ler_lookup) / stats_pm.logical_error_rate * 100
+    if result_pm.logical_error_rate > 0:
+        improvement = (result_pm.logical_error_rate - ler_lookup) / result_pm.logical_error_rate * 100
         print(f"\n  ML Lookup vs PyMatching:    {improvement:+.1f}%")
 
 

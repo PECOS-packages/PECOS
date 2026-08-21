@@ -68,7 +68,12 @@ use std::sync::Arc;
 
 /// Convert a flat qubit slice to a vector of pairs.
 fn flat_to_pairs(qubits: &[QubitId]) -> SmallVec<[(QubitId, QubitId); 4]> {
-    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+    qubits
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| (c[0], c[1]))
+        .collect()
 }
 
 // --- Signal Handler Infrastructure ---

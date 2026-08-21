@@ -161,52 +161,52 @@ fn apply_tick_gates<S: CliffordGateable>(sim: &mut S, tick: &pecos_quantum::Tick
             GateType::F => f_qubits.extend(gate.qubits.iter()),
             GateType::Fdg => fdg_qubits.extend(gate.qubits.iter()),
             GateType::CX => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     cx_pairs.push((c[0], c[1]));
                 }
             }
             GateType::CY => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     cy_pairs.push((c[0], c[1]));
                 }
             }
             GateType::CZ => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     cz_pairs.push((c[0], c[1]));
                 }
             }
             GateType::SXX => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     sxx_pairs.push((c[0], c[1]));
                 }
             }
             GateType::SXXdg => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     sxxdg_pairs.push((c[0], c[1]));
                 }
             }
             GateType::SYY => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     syy_pairs.push((c[0], c[1]));
                 }
             }
             GateType::SYYdg => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     syydg_pairs.push((c[0], c[1]));
                 }
             }
             GateType::SZZ => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     szz_pairs.push((c[0], c[1]));
                 }
             }
             GateType::SZZdg => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     szzdg_pairs.push((c[0], c[1]));
                 }
             }
             GateType::SWAP => {
-                for c in gate.qubits.chunks_exact(2) {
+                for c in gate.qubits.as_chunks::<2>().0 {
                     swap_pairs.push((c[0], c[1]));
                 }
             }
@@ -363,8 +363,12 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
         | GateType::SZZ
         | GateType::SZZdg
         | GateType::SWAP => {
-            let pairs: Vec<(QubitId, QubitId)> =
-                qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+            let pairs: Vec<(QubitId, QubitId)> = qubits
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| (c[0], c[1]))
+                .collect();
             match gate.gate_type {
                 GateType::CX => {
                     sim.cx(&pairs);

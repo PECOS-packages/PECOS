@@ -1869,19 +1869,28 @@ mod tests {
 
     fn assert_basis_action_handles_unequal_lengths<B: BitmaskStorage>() {
         // Pauli support far past the state's stored words, and vice versa,
-        // so both zero-padding directions are exercised.
+        // so both zero-padding directions are exercised. The set state bit at
+        // qubit 640 puts a pure-Z contribution in a word past the X plane's
+        // stored length, so a walk bounded by the X plane alone misses it.
         let wide_pauli = pauli_from_sites::<B>(&[(3, 3), (70, 2), (300, 3), (640, 2)]);
         let narrow_pauli = pauli_from_sites::<B>(&[(3, 2), (5, 3)]);
         let narrow_state = basis_state_from_sites::<B>(&[3, 5]);
-        let wide_state = basis_state_from_sites::<B>(&[3, 70, 300, 700]);
+        let wide_state = basis_state_from_sites::<B>(&[3, 70, 300, 640, 700]);
         for (pauli, state) in [
             (&wide_pauli, &narrow_state),
             (&wide_pauli, &wide_state),
             (&narrow_pauli, &wide_state),
             (&narrow_pauli, &narrow_state),
         ] {
-            let (_, phase) = pauli.apply_to_basis_state(state);
+            let (image, phase) = pauli.apply_to_basis_state(state);
             assert_eq!(phase, reference_basis_state_phase(pauli, state));
+            for q in [3, 5, 70, 300, 450, 640, 700] {
+                assert_eq!(
+                    image.get_bit(q),
+                    state.get_bit(q) != pauli.x_bits.get_bit(q),
+                    "image bit {q} wrong"
+                );
+            }
         }
     }
 

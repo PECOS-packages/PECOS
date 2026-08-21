@@ -284,7 +284,7 @@ fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
 /// together with the qubit. The Z component is still absorbed at every
 /// measurement: left in the ledger it could rotate into X through later
 /// Cliffords and read back as a phantom flip.
-fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Gate) {
+pub(crate) fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Gate) {
     match gate.gate_type {
         // MPZ clears below like the reset it contains: it hands back a live
         // |0> wire, so a retained entry would spread through later gates as a

@@ -69,8 +69,9 @@ fn main() {
     // ---- 2. Long-range CX/CZ cost (sub-MPO target) ----
     // For Clifford gates, tableau handles long-range in O(n) regardless.
     // Sub-MPO would help only for NON-CLIFFORD ops applied to an entangled
-    // MPS where the pre_reduce path needs long-range compensation — but
-    // we've already switched to the pragmatic-fix path that avoids this.
+    // MPS where the pre_reduce path needs long-range compensation. The exact
+    // measurement default takes that compensating path, so this cost is live
+    // on the mainline; only the opt-in pragmatic mode avoids it.
     println!();
     println!("2. Long-range 2-qubit Clifford cost (sub-MPO target):");
     println!("   Question: does long-range CX hurt STN, given the tableau-only path?");

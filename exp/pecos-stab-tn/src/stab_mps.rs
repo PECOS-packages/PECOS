@@ -670,7 +670,12 @@ impl StabMpsBuilder {
     /// Pragmatic were 1.496812 (d3/Z), 1.488242 (d3/X), 1.457758 (d5/Z), and
     /// 1.548499 (d5/X): geometric mean 1.497474 and maximum 1.548499. Both are
     /// inside the decided Exact-everywhere limits (geometric mean at most 3
-    /// and per-workload maximum at most 5).
+    /// and per-workload maximum at most 5). The ratios are specific to this
+    /// noisy workload family: on noiseless Clifford-dominated variants of the
+    /// same circuits, where pragmatic measurements are nearly free, the
+    /// relative gap is far larger even though absolute per-shot costs stay
+    /// small. Note also that this family never triggers pragmatic's biased
+    /// drift path, so pragmatic was timed at its unbiased best case.
     ///
     /// Run the recorded recipe with
     /// `taskset -c 2 cargo run --release -p pecos-stab-tn --example measurement_mode_bench`.

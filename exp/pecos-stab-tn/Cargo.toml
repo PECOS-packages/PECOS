@@ -28,7 +28,7 @@ thiserror.workspace = true
 [dev-dependencies]
 approx.workspace = true
 paste.workspace = true
-rand_chacha = "0.9"
+rand_chacha.workspace = true
 
 [lints.clippy]
 # Inherit workspace pedantic lint policy

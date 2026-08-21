@@ -2534,12 +2534,11 @@ fn test_prob_bitstring_honest_clifford_t_wide_seed_sweep_matches_dense_state_vec
         0.0,
         "wide issue #557 exact sweep",
     );
-    assert_honest_clifford_t_readouts_match_dense(
-        3..=6,
-        &seed_families,
-        1e-8,
-        "wide issue #557 adaptive sweep",
-    );
+    // The 1e-8 adaptive budget never binds on this Clifford+T family at
+    // n <= 6 (zero recorded weight over all 640 circuits), so a second sweep
+    // arm here would duplicate the exact arm byte for byte. Nonzero-budget
+    // read coverage lives in the weak-branch fixture below, whose branch is
+    // engineered to sit under the budget.
 }
 
 fn apply_weak_branch_readout_fixture(stn: &mut StabMps) {

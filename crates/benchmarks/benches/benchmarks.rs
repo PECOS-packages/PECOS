@@ -33,16 +33,16 @@ mod modules {
     pub mod measurement_sampling;
     pub mod native_statevec_comparison;
     pub mod noise_models;
-    #[cfg(feature = "cppsparsestab")]
-    pub mod sparse_stab_vs_cpp;
-    pub mod sparse_stab_w_vs_y;
-    #[cfg(feature = "stab-tn")]
-    pub mod stab_mps_vs_stab_vec;
-    // TODO: pub mod pauli_ops;
+    pub mod pauli_ops;
     pub mod pecos_neo_comparison;
     pub mod rng;
     pub mod set_ops;
+    #[cfg(feature = "cppsparsestab")]
+    pub mod sparse_stab_vs_cpp;
+    pub mod sparse_stab_w_vs_y;
     pub mod sparse_state_vec;
+    #[cfg(feature = "stab-tn")]
+    pub mod stab_mps_vs_stab_vec;
     pub mod stabilizer_sims;
     pub mod state_vec_sims;
     pub mod surface_code;
@@ -61,8 +61,9 @@ use modules::stab_mps_vs_stab_vec;
 use modules::{
     allocation_overhead, code_distance, cpu_stabilizer_comparison, dem_builder, dem_sampler,
     dod_statevec, fault_catalog, measurement_sampling, native_statevec_comparison, noise_models,
-    pecos_neo_comparison, quizx_eval, rng, set_ops, sparse_stab_w_vs_y, sparse_state_vec, stab_vec,
-    stabilizer_sims, state_vec_sims, surface_code, tick_circuit_layout, trig,
+    pauli_ops, pecos_neo_comparison, quizx_eval, rng, set_ops, sparse_stab_w_vs_y,
+    sparse_state_vec, stab_vec, stabilizer_sims, state_vec_sims, surface_code, tick_circuit_layout,
+    trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
@@ -96,7 +97,7 @@ fn all_benchmarks(c: &mut Criterion) {
     #[cfg(feature = "stab-tn")]
     stab_mps_vs_stab_vec::benchmarks(c);
     trig::benchmarks(c);
-    // TODO: pauli_ops::benchmarks(c);
+    pauli_ops::benchmarks(c);
     // TODO: hadamard_ops::benchmarks(c);
 }
 

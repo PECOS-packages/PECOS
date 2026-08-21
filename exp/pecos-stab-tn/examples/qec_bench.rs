@@ -20,8 +20,8 @@
 //!   5. Ancilla resets (prep |0>).
 //!
 //! Compares wall time + max bond dim across builder knob combinations:
-//!   - default (eager measure, no adaptive truncation)
-//!   - `lazy_measure`
+//!   - pragmatic eager measurement (no adaptive truncation)
+//!   - lazy measurement
 //!   - `max_truncation_error`
 //!   - both
 //!
@@ -29,15 +29,15 @@
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
-use pecos_stab_tn::stab_mps::StabMps;
 use pecos_stab_tn::stab_mps::mast::Mast;
+use pecos_stab_tn::stab_mps::{MeasurementMode, StabMps};
 use std::time::Instant;
 
 struct BenchConfig {
     num_data: usize,
     num_rounds: usize,
     noise_angle: Angle64,
-    lazy: bool,
+    measurement: MeasurementMode,
     max_trunc: Option<f64>,
     merge_rz: bool,
     max_bond: usize,
@@ -49,7 +49,7 @@ fn build_and_run(cfg: &BenchConfig) -> (f64, usize, u64) {
         num_data,
         num_rounds,
         noise_angle,
-        lazy,
+        measurement,
         max_trunc,
         merge_rz,
         max_bond,
@@ -60,7 +60,7 @@ fn build_and_run(cfg: &BenchConfig) -> (f64, usize, u64) {
     let mut builder = StabMps::builder(n)
         .seed(seed)
         .max_bond_dim(max_bond)
-        .lazy_measure(lazy)
+        .measurement(measurement)
         .merge_rz(merge_rz);
     if let Some(e) = max_trunc {
         builder = builder.max_truncation_error(e);
@@ -205,27 +205,45 @@ fn main() {
     );
     println!("{:-<90}", "");
 
-    let configs: &[(&str, bool, Option<f64>, bool, usize)] = &[
-        ("legacy defaults", false, Some(0.0), false, 64),
-        ("legacy + lazy_measure", true, Some(0.0), false, 64),
-        ("max_truncation_error=1e-8", false, Some(1e-8), false, 64),
-        ("merge_rz", false, None, true, 64),
+    let configs: &[(&str, MeasurementMode, Option<f64>, bool, usize)] = &[
+        (
+            "legacy defaults",
+            MeasurementMode::Pragmatic,
+            Some(0.0),
+            false,
+            64,
+        ),
+        ("legacy + lazy", MeasurementMode::Lazy, Some(0.0), false, 64),
+        (
+            "max_truncation_error=1e-8",
+            MeasurementMode::Pragmatic,
+            Some(1e-8),
+            false,
+            64,
+        ),
+        ("merge_rz", MeasurementMode::Pragmatic, None, true, 64),
         (
             "merge_rz + max_truncation_error=1e-8",
-            false,
+            MeasurementMode::Pragmatic,
             Some(1e-8),
             true,
             64,
         ),
-        ("general defaults (cap pinned)", false, Some(1e-8), true, 64),
+        (
+            "general defaults (cap pinned)",
+            MeasurementMode::Pragmatic,
+            Some(1e-8),
+            true,
+            64,
+        ),
     ];
 
-    for &(name, lazy, trunc, merge, max_bond) in configs {
+    for &(name, measurement, trunc, merge, max_bond) in configs {
         let (t, bond, parity) = build_and_run(&BenchConfig {
             num_data,
             num_rounds,
             noise_angle: t_angle,
-            lazy,
+            measurement,
             max_trunc: trunc,
             merge_rz: merge,
             max_bond,
@@ -236,7 +254,7 @@ fn main() {
 
     println!("{:-<90}", "");
     println!(
-        "\nNote: outcome parities differ between lazy/eager because the RNG is consumed in\n      different sequences (not a correctness issue — both give the right distribution)."
+        "\nNote: outcome parities differ between lazy/pragmatic because the RNG is consumed in\n      different sequences (not a correctness issue — both give the intended distribution)."
     );
 
     // -------------------------------------------------------------------------

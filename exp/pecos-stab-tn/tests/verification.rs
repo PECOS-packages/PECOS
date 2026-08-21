@@ -17,7 +17,7 @@ use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StabVec};
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
-use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
+use pecos_stab_tn::stab_mps::{MeasurementMode, PauliKind, StabMps};
 use rayon::prelude::*;
 
 /// Check that two state vectors match up to global phase.
@@ -1791,7 +1791,7 @@ fn test_accepted_heuristic_disentangler_keeps_all_reads_in_one_frame() {
 fn test_disentangle_flushes_lazy_measurement_and_merged_rz() {
     let mut stn = StabMps::builder(2)
         .seed(19)
-        .lazy_measure(true)
+        .measurement(MeasurementMode::Lazy)
         .merge_rz(true)
         .svd_cutoff(0.0)
         .max_truncation_error(0.0)
@@ -1832,8 +1832,8 @@ fn test_disentangle_flushes_lazy_measurement_and_merged_rz() {
 
     let _ = stn.disentangle(1);
     assert!(
-        stn.is_state_exact(),
-        "disentangle should flush deferred operations and merged RZs"
+        !stn.is_state_exact(),
+        "Lazy mode remains a conservative exactness guard after flushing"
     );
     assert_states_close(
         &stn.state_vector(),
@@ -2638,7 +2638,10 @@ fn test_prefix_tree_sampler_flushes_supported_modes_on_working_clone() {
     let q0_ones = merged_shots.iter().filter(|shot| shot[0]).count();
     assert!((70..=130).contains(&q0_ones));
 
-    let mut lazy = StabMps::builder(3).seed(503).lazy_measure(true).build();
+    let mut lazy = StabMps::builder(3)
+        .seed(503)
+        .measurement(MeasurementMode::Lazy)
+        .build();
     lazy.h(&[QubitId(0), QubitId(1)]);
     lazy.cx(&[(QubitId(0), QubitId(2))]);
     let _ = lazy.mz(&[QubitId(1)]);

@@ -31,6 +31,30 @@ use pecos_core::BitSet;
 use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, MeasurementResult, SparseStabY};
 
+#[cfg(test)]
+std::thread_local! {
+    static INJECTED_PROJECTION_VANISHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn inject_projection_vanishes(count: usize) {
+    INJECTED_PROJECTION_VANISHES.with(|remaining| remaining.set(count));
+}
+
+#[cfg(test)]
+fn inject_projection_vanish_if_requested(mps: &mut Mps) {
+    INJECTED_PROJECTION_VANISHES.with(|remaining| {
+        let count = remaining.get();
+        if count > 0 {
+            remaining.set(count - 1);
+            mps.scale(Complex64::new(0.0, 0.0));
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn inject_projection_vanish_if_requested(_mps: &mut Mps) {}
+
 /// Virtual coefficient-MPS sites whose disentangling proofs must be rechecked
 /// after a physical measurement projection.
 #[derive(Debug, Default)]
@@ -43,7 +67,8 @@ pub(super) struct ProjectionUpdate {
 
 /// Probability and virtual-site metadata returned by a forced projection.
 pub(super) struct ForcedProjectionResult {
-    pub(super) probability: f64,
+    pub(super) snapped_probability: f64,
+    pub(super) survival_ratio: f64,
     pub(super) update: ProjectionUpdate,
 }
 
@@ -184,7 +209,20 @@ pub fn z_expectation_value(tableau: &SparseStabY, mps: &Mps, q: usize) -> Comple
     }
 }
 
-fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
+/// Endpoint tolerance shared by sampling and forced projection.
+///
+/// A cancellation residue this close to a Pauli endpoint would be amplified
+/// by the projector's division by `sqrt(probability)`, so it is classified as
+/// the indistinguishable exact endpoint before any RNG draw.
+pub(super) const EXPECTATION_ENDPOINT_TOLERANCE: f64 = 1e-14;
+
+/// A normalized forced projector divides by `sqrt(probability)`, so a valid
+/// post-projection state has a survival ratio near one regardless of its Born
+/// probability. `1e-12` is therefore twelve orders below a healthy branch; it
+/// is not a lower bound on the smallest admissible probability.
+pub(super) const BRANCH_VANISH_SURVIVAL_THRESHOLD: f64 = 1e-12;
+
+pub(super) fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
     // This endpoint guard is deliberately looser than the 1e-15 product-site
     // installer and its 5e-16 proof assertion. Those tolerances classify a
     // normalized physical marginal after environment contraction. Here the
@@ -194,7 +232,6 @@ fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
     // normalize() turns it into a spurious state. Values within 1e-14 of a
     // Pauli endpoint are therefore treated as the exact eigenvalue they are
     // indistinguishable from at this contraction's accuracy.
-    const EXPECTATION_ENDPOINT_TOLERANCE: f64 = 1e-14;
     let expectation = if 1.0 - expectation.abs() <= EXPECTATION_ENDPOINT_TOLERANCE {
         expectation.signum()
     } else {
@@ -206,6 +243,24 @@ fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
     } else {
         probability_zero
     }
+}
+
+fn projection_survival_ratio(mps: &Mps, pre_projection_norm_squared: f64) -> f64 {
+    let post_projection_norm_squared = mps.norm_squared();
+    assert!(
+        pre_projection_norm_squared.is_finite() && post_projection_norm_squared.is_finite(),
+        "forced Z projection produced a non-finite pre/post norm"
+    );
+    assert!(
+        pre_projection_norm_squared > 0.0,
+        "cannot project a zero-norm MPS"
+    );
+    let ratio = post_projection_norm_squared / pre_projection_norm_squared;
+    assert!(
+        ratio.is_finite(),
+        "forced Z projection produced a non-finite survival ratio"
+    );
+    ratio
 }
 
 /// Compute the inner product <`mps_a|mps_b`> by contracting from left to right.
@@ -282,7 +337,7 @@ pub fn pre_reduce_for_measurement_pub(
 ///
 /// `apply_mps_compensation` is `true` for the exact-state caller
 /// `project_forced_z`, used by `prob_bitstring` / `amplitude_iterative`. It is `false` for random
-/// measurement (`measure_qubit_stab_mps`): the state representation becomes
+/// measurement (`measure_qubit_stab_mps_pragmatic`): the state representation becomes
 /// inconsistent with the tableau after row ops, but measurement
 /// statistics stay correct and subsequent measurements remain
 /// self-consistent. Skipping compensation avoids SWAP-chain bond growth
@@ -946,6 +1001,15 @@ fn project_forced_z_with_update_impl(
     outcome: bool,
     mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
 ) -> Result<ForcedProjectionResult, MpsError> {
+    let pre_projection_norm_squared = mps.norm_squared();
+    assert!(
+        pre_projection_norm_squared.is_finite(),
+        "forced Z projection received a non-finite pre-projection norm"
+    );
+    assert!(
+        pre_projection_norm_squared > 0.0,
+        "cannot project a zero-norm MPS"
+    );
     if is_mps_trivial(mps) {
         // A trivial coefficient MPS represents a pure stabilizer state. First
         // absorb a possible nonzero virtual basis word into the tableau; only
@@ -978,10 +1042,15 @@ fn project_forced_z_with_update_impl(
                     probability,
                 );
             }
+        }
+        inject_projection_vanish_if_requested(mps);
+        let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
+        if probability > 0.0 && survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
             mps.normalize();
         }
         return Ok(ForcedProjectionResult {
-            probability,
+            snapped_probability: probability,
+            survival_ratio,
             update: ProjectionUpdate {
                 collapsed_site: None,
                 modified_sites,
@@ -991,9 +1060,8 @@ fn project_forced_z_with_update_impl(
 
     // Evaluate the Born probability in the incoming representation before
     // generator pre-reduction changes the tableau/MPS factorization.
-    let norm_squared = mps.norm_squared();
-    assert!(norm_squared > 1e-20, "cannot project a zero-norm MPS");
-    let expectation = (z_expectation_value(tableau, mps, q_idx).re / norm_squared).clamp(-1.0, 1.0);
+    let expectation = (z_expectation_value(tableau, mps, q_idx).re / pre_projection_norm_squared)
+        .clamp(-1.0, 1.0);
 
     // Reduce to one virtual X site while compensating every generator-basis
     // CNOT on the MPS. This preserves C·MPS exactly.
@@ -1003,9 +1071,11 @@ fn project_forced_z_with_update_impl(
     match decomposition {
         ZDecomposition::Stabilizer { phase, sign_sites } => {
             let probability = forced_outcome_probability(expectation, outcome);
-            if probability < 1e-20 {
+            if probability == 0.0 {
+                let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
                 return Ok(ForcedProjectionResult {
-                    probability: 0.0,
+                    snapped_probability: 0.0,
+                    survival_ratio,
                     update: ProjectionUpdate {
                         collapsed_site: None,
                         modified_sites,
@@ -1026,12 +1096,17 @@ fn project_forced_z_with_update_impl(
             if !sign_sites.is_empty() {
                 reduce_exact_projection_bonds(mps)?;
             }
-            mps.normalize();
+            inject_projection_vanish_if_requested(mps);
+            let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
+            if survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
+                mps.normalize();
+            }
             modified_sites.extend(sign_sites);
             modified_sites.sort_unstable();
             modified_sites.dedup();
             Ok(ForcedProjectionResult {
-                probability,
+                snapped_probability: probability,
+                survival_ratio,
                 update: ProjectionUpdate {
                     collapsed_site: None,
                     modified_sites,
@@ -1049,9 +1124,11 @@ fn project_forced_z_with_update_impl(
                 "forced projection must have one flip after pre-reduction"
             );
             let probability = forced_outcome_probability(expectation, outcome);
-            if probability < 1e-20 {
+            if probability == 0.0 {
+                let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
                 return Ok(ForcedProjectionResult {
-                    probability: 0.0,
+                    snapped_probability: 0.0,
+                    survival_ratio,
                     update: ProjectionUpdate {
                         collapsed_site: None,
                         modified_sites,
@@ -1099,14 +1176,19 @@ fn project_forced_z_with_update_impl(
             if !is_local_projection {
                 reduce_exact_projection_bonds(mps)?;
             }
-            mps.normalize();
+            inject_projection_vanish_if_requested(mps);
+            let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
+            if survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
+                mps.normalize();
+            }
             modified_sites.extend(flip_sites.iter().copied());
             modified_sites.extend(sign_sites);
             modified_sites.extend(gauge_sites);
             modified_sites.sort_unstable();
             modified_sites.dedup();
             Ok(ForcedProjectionResult {
-                probability,
+                snapped_probability: probability,
+                survival_ratio,
                 update: ProjectionUpdate {
                     collapsed_site: Some(flip_sites[0]),
                     modified_sites,
@@ -1119,7 +1201,7 @@ fn project_forced_z_with_update_impl(
 /// Project qubit `q_idx` onto a forced Z-basis outcome and return its
 /// probability together with the affected virtual coefficient-MPS sites.
 ///
-/// Mirrors `measure_qubit_stab_mps` but is deterministic: the caller supplies
+/// Mirrors `measure_qubit_stab_mps_pragmatic` but is deterministic: the caller supplies
 /// the outcome. This is the phase-insensitive Liu-Clark 2412.17209 Algorithm 3
 /// / VI.A path used by probability and measurement callers.
 ///
@@ -1147,7 +1229,7 @@ pub(super) fn project_forced_z_with_phase(
 ) -> Result<f64, MpsError> {
     Ok(
         project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, Some(phase_accumulator))?
-            .probability,
+            .snapped_probability,
     )
 }
 
@@ -1163,7 +1245,7 @@ pub fn project_forced_z(
     q_idx: usize,
     outcome: bool,
 ) -> Result<f64, MpsError> {
-    Ok(project_forced_z_with_update(tableau, mps, q_idx, outcome)?.probability)
+    Ok(project_forced_z_with_update(tableau, mps, q_idx, outcome)?.snapped_probability)
 }
 
 /// Measure qubit `q_idx` in the Z basis using the STN protocol.
@@ -1685,12 +1767,17 @@ pub(super) fn measure_qubit_stab_mps_with_update(
     }
 }
 
-/// Measure qubit `q_idx` in the Z basis using the eager STN protocol.
+/// Measure qubit `q_idx` with the pragmatic eager STN protocol.
+///
+/// This path deliberately skips coefficient-MPS compensation when tableau
+/// generator pre-reduction is needed. Its outcome stream remains internally
+/// useful for throughput-oriented workloads, but the stored conditional state
+/// is biased and cannot support exact continuation or amplitude reads.
 ///
 /// # Errors
 ///
 /// Returns an [`MpsError`] if an MPS operation fails.
-pub fn measure_qubit_stab_mps(
+pub fn measure_qubit_stab_mps_pragmatic(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
     rng: &mut PecosRng,
@@ -1707,6 +1794,54 @@ mod tests {
     fn sort_dedup(v: &mut Vec<usize>) {
         v.sort_unstable();
         v.dedup();
+    }
+
+    #[test]
+    fn endpoint_probability_and_survival_loss_are_distinct_classifications() {
+        let probability_one: f64 = 4.0e-15;
+        let mut mps = Mps::new(1, MpsConfig::default());
+        let preparation = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new((1.0 - probability_one).sqrt(), 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(probability_one.sqrt(), 0.0),
+                Complex64::new(1.0, 0.0),
+            ],
+        );
+        mps.apply_one_site_gate(0, &preparation).unwrap();
+        let mut tableau = SparseStabY::new(1).with_destab_sign_tracking();
+        let endpoint = project_forced_z_with_update(&mut tableau, &mut mps, 0, true).unwrap();
+        assert_eq!(endpoint.snapped_probability.to_bits(), 0.0_f64.to_bits());
+        assert!(endpoint.survival_ratio > 1.0 - 1e-12);
+
+        let mut mps = Mps::new(1, MpsConfig::default());
+        let hadamard = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(-std::f64::consts::FRAC_1_SQRT_2, 0.0),
+            ],
+        );
+        mps.apply_one_site_gate(0, &hadamard).unwrap();
+        let mut tableau = SparseStabY::new(1).with_destab_sign_tracking();
+        inject_projection_vanishes(1);
+        let vanished = project_forced_z_with_update(&mut tableau, &mut mps, 0, false).unwrap();
+        assert!((vanished.snapped_probability - 0.5).abs() < 1e-14);
+        assert!(vanished.survival_ratio < BRANCH_VANISH_SURVIVAL_THRESHOLD);
+    }
+
+    #[test]
+    fn renamed_pragmatic_low_level_entry_is_callable() {
+        let mut tableau = SparseStabY::new(1).with_destab_sign_tracking();
+        let mut mps = Mps::new(1, MpsConfig::default());
+        let mut rng = PecosRng::seed_from_u64(11);
+        let result = measure_qubit_stab_mps_pragmatic(&mut tableau, &mut mps, &mut rng, 0).unwrap();
+        assert!(!result.outcome);
     }
 
     #[test]

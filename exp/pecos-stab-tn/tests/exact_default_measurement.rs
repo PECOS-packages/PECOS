@@ -12,17 +12,17 @@
 
 //! Statistical falsifier for the default `StabMps` random-measurement route.
 //!
-//! The gate tests are intentionally ignored until the default route changes from
-//! pragmatic measurement to exact sample-then-force. The non-ignored meta-test
-//! proves that the harness can see the current bias and will fail when the default
-//! changes, forcing the gate tests to be un-ignored at that point.
+//! The default route is exact sample-then-force. Fast surfaces run normally;
+//! larger release matrices remain in the explicit ignored lane. The liveness
+//! meta-test selects `Pragmatic` explicitly and proves the known bias remains
+//! visible to the harness.
 
 use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DenseStateVec};
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::Mast;
-use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
+use pecos_stab_tn::stab_mps::{MeasurementMode, PauliKind, StabMps};
 use rayon::prelude::*;
 
 const FAST_SHOTS: usize = 2_048;
@@ -159,6 +159,17 @@ fn exact_mps_config() -> MpsConfig {
         max_truncation_error: Some(0.0),
         parallel: false,
     }
+}
+
+fn build_stn_with_mode(num_qubits: usize, seed: u64, mode: MeasurementMode) -> StabMps {
+    StabMps::builder(num_qubits)
+        .seed(seed)
+        .measurement(mode)
+        .merge_rz(false)
+        .max_bond_dim(64)
+        .svd_cutoff(0.0)
+        .max_truncation_error(0.0)
+        .build()
 }
 
 fn build_stn(num_qubits: usize, seed: u64) -> StabMps {
@@ -431,13 +442,18 @@ fn exact_probabilities(surface: Surface, num_qubits: usize) -> Vec<f64> {
     probabilities
 }
 
-fn run_stn_shot(surface: Surface, num_qubits: usize, seed: u64) -> usize {
+fn run_stn_shot_with_mode(
+    surface: Surface,
+    num_qubits: usize,
+    seed: u64,
+    mode: MeasurementMode,
+) -> usize {
     let preparation_qubits = if surface == Surface::ExtractSyndromes {
         num_qubits - 1
     } else {
         num_qubits
     };
-    let mut simulator = build_stn(num_qubits, seed);
+    let mut simulator = build_stn_with_mode(num_qubits, seed, mode);
     replay_gates(
         &mut simulator,
         &honest_family(preparation_qubits, num_qubits),
@@ -487,6 +503,10 @@ fn run_stn_shot(surface: Surface, num_qubits: usize, seed: u64) -> usize {
         surface.name()
     );
     encode_bits(&bits)
+}
+
+fn run_stn_shot(surface: Surface, num_qubits: usize, seed: u64) -> usize {
+    run_stn_shot_with_mode(surface, num_qubits, seed, MeasurementMode::Exact)
 }
 
 fn run_mast_shot(surface: Surface, num_qubits: usize, seed: u64) -> usize {
@@ -758,9 +778,147 @@ fn assert_surface_matrix(surface: Surface, qubits: &[usize], num_shots: usize) {
     );
 }
 
+fn state_fidelity(first: &[Complex64], second: &[Complex64]) -> f64 {
+    first
+        .iter()
+        .zip(second)
+        .map(|(left, right)| left.conj() * right)
+        .sum::<Complex64>()
+        .norm_sqr()
+}
+
+fn assert_default_state_matches(
+    simulator: &mut StabMps,
+    expected: &mut DenseStateVec,
+    context: &str,
+) {
+    simulator.flush();
+    let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+    assert!(
+        fidelity >= 1.0 - 1e-10,
+        "{context}: conditional-state fidelity={fidelity:.16}"
+    );
+}
+
+#[test]
+fn exact_default_conditional_state_fidelity_matrix() {
+    for num_qubits in 3..=4 {
+        let measured = num_qubits / 2;
+        let preparation = honest_family(num_qubits, 0x41 + num_qubits);
+
+        let prepare = |seed| {
+            let mut stn = build_stn(num_qubits, seed);
+            let mut dense = DenseStateVec::new(num_qubits);
+            replay_gates(&mut stn, &preparation);
+            replay_gates(&mut dense, &preparation);
+            (stn, dense)
+        };
+
+        let (mut stn, dense) = prepare(0x7100 + num_qubits as u64);
+        let outcome = stn.mz(&[QubitId(measured)])[0].outcome;
+        let (_, mut expected) = projected_dense_state(dense, measured, outcome).unwrap();
+        assert_default_state_matches(
+            &mut stn,
+            &mut expected,
+            &format!("default mz n={num_qubits}"),
+        );
+
+        let (mut stn, dense) = prepare(0x7200 + num_qubits as u64);
+        let outcome = stn.reset_qubit(QubitId(measured));
+        let (_, mut expected) = projected_dense_state(dense, measured, outcome).unwrap();
+        if outcome {
+            expected.x(&[QubitId(measured)]);
+        }
+        assert_default_state_matches(
+            &mut stn,
+            &mut expected,
+            &format!("default reset n={num_qubits}"),
+        );
+
+        for px in [false, true] {
+            let (mut stn, dense) = prepare(0x7300 + num_qubits as u64 + u64::from(px));
+            if px {
+                stn.px(QubitId(measured));
+            } else {
+                stn.pz(QubitId(measured));
+            }
+            let branch = DenseBranch {
+                state: dense,
+                probability: 1.0,
+                record: Vec::new(),
+            };
+            let mut branches = if px {
+                dense_px(vec![branch], measured)
+            } else {
+                dense_pz(vec![branch], measured)
+            };
+            stn.flush();
+            let actual = stn.state_vector();
+            let fidelity = branches
+                .iter_mut()
+                .map(|branch| state_fidelity(&actual, &branch.state.state()))
+                .fold(0.0_f64, f64::max);
+            assert!(
+                fidelity >= 1.0 - 1e-10,
+                "default {} n={num_qubits}: conditional-state fidelity={fidelity:.16}",
+                if px { "px" } else { "pz" }
+            );
+        }
+
+        let (mut stn, dense) = prepare(0x7400 + num_qubits as u64);
+        let outcome = stn.mz(&[QubitId(measured)])[0].outcome;
+        let (_, mut expected) = projected_dense_state(dense, measured, outcome).unwrap();
+        let continuation = continuation_family(num_qubits);
+        replay_gates(&mut stn, &continuation);
+        replay_gates(&mut expected, &continuation);
+        assert_default_state_matches(
+            &mut stn,
+            &mut expected,
+            &format!("default continuation n={num_qubits}"),
+        );
+
+        let data_qubits = num_qubits - 1;
+        let preparation = honest_family(data_qubits, 0x51 + num_qubits);
+        let mut stn = build_stn(num_qubits, 0x7500 + num_qubits as u64);
+        let mut dense = DenseStateVec::new(num_qubits);
+        replay_gates(&mut stn, &preparation);
+        replay_gates(&mut dense, &preparation);
+        let generator = syndrome_generator(num_qubits);
+        let syndrome =
+            stn.extract_syndromes(std::slice::from_ref(&generator), &[QubitId(data_qubits)])[0];
+        dense.h(&[QubitId(data_qubits)]);
+        for (data, kind) in generator {
+            let pair = [(QubitId(data_qubits), QubitId(data))];
+            match kind {
+                PauliKind::X => dense.cx(&pair),
+                PauliKind::Y => dense.cy(&pair),
+                PauliKind::Z => dense.cz(&pair),
+            };
+        }
+        dense.h(&[QubitId(data_qubits)]);
+        let (_, mut expected) = projected_dense_state(dense, data_qubits, syndrome).unwrap();
+        if syndrome {
+            expected.x(&[QubitId(data_qubits)]);
+        }
+        assert_default_state_matches(
+            &mut stn,
+            &mut expected,
+            &format!("default syndrome extraction n={num_qubits}"),
+        );
+    }
+}
+
 #[test]
 fn exact_default_measurement_falsifier_is_live() {
-    let comparison = compare_surface(Surface::Continuation, 3, META_SHOTS);
+    let mut comparison = compare_surface(Surface::Continuation, 3, META_SHOTS);
+    comparison.default_counts = parallel_counts(comparison.exact.len(), META_SHOTS, |shot| {
+        run_stn_shot_with_mode(
+            Surface::Continuation,
+            3,
+            0x5100_0000 + 300_000 + shot as u64,
+            MeasurementMode::Pragmatic,
+        )
+    });
     let num_binomial_checks = comparison.exact.len() * 2;
     let limit = corrected_five_sigma_limit(num_binomial_checks);
     let default = worst_deviation(
@@ -774,7 +932,7 @@ fn exact_default_measurement_falsifier_is_live() {
         comparison.num_shots,
     );
     eprintln!(
-        "exact-default-falsifier meta surface={} n={} shots={} default={:.2}sigma \
+        "exact-default-falsifier meta surface={} n={} shots={} pragmatic={:.2}sigma \
          control={:.2}sigma corrected_limit={limit:.2}sigma",
         comparison.surface.name(),
         comparison.num_qubits,
@@ -789,8 +947,8 @@ fn exact_default_measurement_falsifier_is_live() {
     );
     assert!(
         default.sigma > 5.0,
-        "default measurement no longer shows the expected bias: worst deviation={:.2}sigma; \
-         un-ignore the exact-default gate matrix and retire this meta-test",
+        "explicit pragmatic measurement no longer shows the expected bias: \
+         worst deviation={:.2}sigma",
         default.sigma
     );
 }
@@ -798,13 +956,12 @@ fn exact_default_measurement_falsifier_is_live() {
 macro_rules! surface_gate_tests {
     ($fast_name:ident, $release_name:ident, $surface:expr) => {
         #[test]
-        #[ignore = "gates the exact measurement default; pragmatic default is known-biased (see design/stab-tn/exact-default-measurement-v2.md); un-ignore when the default flips"]
         fn $fast_name() {
             assert_surface_matrix($surface, &[3, 4], FAST_SHOTS);
         }
 
         #[test]
-        #[ignore = "gates the exact measurement default; pragmatic default is known-biased (see design/stab-tn/exact-default-measurement-v2.md); un-ignore when the default flips"]
+        #[ignore = "larger exact-default statistical release lane"]
         fn $release_name() {
             assert_surface_matrix($surface, &[5, 6], RELEASE_SHOTS);
         }

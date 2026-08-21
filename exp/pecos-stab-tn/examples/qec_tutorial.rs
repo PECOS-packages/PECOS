@@ -40,14 +40,14 @@ fn main() {
     // 1. Builder + preset
     // ------------------------------------------------------------------
     //
-    // `StabMps::builder(n).build()` and the source-compatible `for_qec()` set:
+    // `for_qec()` keeps the general numerical defaults but selects pragmatic
+    // measurement during Stage A, pending the Stage B QEC measurement:
     //   - max_bond_dim = 128 (enough for syndrome rounds without truncation)
     //   - max_truncation_error = 1e-8 (very tight)
     //   - merge_rz = true (batch same-qubit RZ noise)
     //
-    // For ion-trap-memory-noise or T-heavy workloads these are the general
-    // defaults. You can layer `pauli_frame_tracking(true)` on top for
-    // fast Pauli-noise injection.
+    // The general builder instead defaults to exact measurement. You can layer
+    // `pauli_frame_tracking(true)` on top for fast Pauli-noise injection.
     //
     // 3 data + 2 ancillas = 5 qubits total.
 

@@ -101,13 +101,17 @@ struct DeferredMeasurement {
 /// RZ rotations; it does not project already deferred injections.
 ///
 /// The injection gadget's predetermined outcomes have exact probability 1/2
-/// for the untruncated state. If MPS truncation has occurred, that predetermined
-/// branch can deviate from the truncated representation's own distribution;
-/// it remains the branch required by the exact, untruncated gadget protocol.
+/// for the untruncated state. If truncation erases that deferred branch,
+/// `project_all` continues on the surviving complement. That continuation is a
+/// normalized approximate state whose injection-time correction does not match
+/// the projected outcome: it is not a valid gadget trajectory for either
+/// outcome. This additional bias is not represented by `truncation_error`;
+/// `deferred_branch_lost_count` is its only witness. An untruncated
+/// configuration never reaches this policy.
 ///
 /// Data-qubit measurements use an exact sample-then-force route: evaluate the
 /// physical Z expectation, sample that probability, then apply the normalized
-/// forced projector for the drawn outcome. This deliberately avoids the default
+/// forced projector for the drawn outcome. This deliberately avoids the
 /// `StabMps` pragmatic measurement path, whose uncompensated tableau
 /// pre-reduction is not composable with MAST's exact forced ancilla projections.
 /// Exact compensation can apply long-range CNOTs to the MPS and therefore cost
@@ -364,6 +368,30 @@ impl Mast {
         self.mps.truncation_error()
     }
 
+    /// True sum of all relative discarded SVD weights over this run.
+    #[must_use]
+    pub fn summed_discarded_weight(&self) -> f64 {
+        self.mps.summed_discarded_weight()
+    }
+
+    /// Largest coefficient-MPS bond dimension observed over this run.
+    #[must_use]
+    pub fn lifetime_peak_bond(&self) -> usize {
+        self.mps.lifetime_peak_bond()
+    }
+
+    /// Number of sampled data projections retried after branch vanish.
+    #[must_use]
+    pub fn branch_vanish_retry_count(&self) -> u64 {
+        self.mps.branch_vanish_retry_count()
+    }
+
+    /// Number of deferred gadget branches replaced by their complement.
+    #[must_use]
+    pub fn deferred_branch_lost_count(&self) -> u64 {
+        self.mps.deferred_branch_lost_count()
+    }
+
     /// Number of SVDs where `max_bond_dim` was the binding cap.
     /// Pending operations are not materialized by this diagnostic.
     #[must_use]
@@ -575,19 +603,56 @@ impl Mast {
         let bond_before = self.mps.max_bond_dim();
         self.projection_peak_bond = self.projection_peak_bond.max(bond_before);
 
-        // The branch correction was applied at injection time. Project only
-        // the ancilla, deterministically and with normalized output.
-        let projection = super::measure::project_forced_z_with_update(
-            &mut self.tableau,
-            &mut self.mps,
+        // The branch correction was applied at injection time. Try the
+        // predetermined branch transactionally so a vanished attempt cannot
+        // mutate the live tableau/MPS pair.
+        let original_tableau = self.tableau.clone();
+        let original_mps = self.mps.clone();
+        let mut candidate_tableau = original_tableau.clone();
+        let mut candidate_mps = original_mps.clone();
+        let mut projection = super::measure::project_forced_z_with_update(
+            &mut candidate_tableau,
+            &mut candidate_mps,
             dm.ancilla,
             dm.predetermined_outcome,
         )?;
-        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
-        assert!(
-            projection.probability > 1e-20,
-            "predetermined magic-state gadget branch has zero represented weight"
+        let branch_lost = projection.snapped_probability == 0.0
+            || projection.survival_ratio < super::measure::BRANCH_VANISH_SURVIVAL_THRESHOLD;
+        debug_assert!(
+            !branch_lost,
+            "Mast::project_all predetermined deferred branch was lost"
         );
+        if branch_lost {
+            candidate_tableau = original_tableau;
+            candidate_mps = original_mps;
+            let original_config = candidate_mps.config().clone();
+            let mut retry_config = original_config.clone();
+            retry_config.max_bond_dim = candidate_mps.physical_rank_ceiling();
+            retry_config.svd_cutoff = 0.0;
+            retry_config.max_truncation_error = Some(0.0);
+            candidate_mps.set_config(retry_config);
+            projection = super::measure::project_forced_z_with_update(
+                &mut candidate_tableau,
+                &mut candidate_mps,
+                dm.ancilla,
+                !dm.predetermined_outcome,
+            )?;
+            let complement_lost = projection.snapped_probability == 0.0
+                || projection.survival_ratio < super::measure::BRANCH_VANISH_SURVIVAL_THRESHOLD;
+            debug_assert!(
+                !complement_lost,
+                "Mast::project_all complement deferred branch was also lost"
+            );
+            assert!(
+                !complement_lost,
+                "Mast::project_all complement deferred branch was also lost"
+            );
+            candidate_mps.set_config(original_config);
+            candidate_mps.record_deferred_branch_lost();
+        }
+        self.tableau = candidate_tableau;
+        self.mps = candidate_mps;
+        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
 
         let bond_after = self.mps.max_bond_dim();
         self.projection_peak_bond = self.projection_peak_bond.max(bond_after);
@@ -604,40 +669,15 @@ impl Mast {
     /// Evaluate a physical data-qubit Z probability, then apply the normalized
     /// forced projector to the live state for the sampled outcome.
     fn measure_data_qubit_exact(&mut self, q_idx: usize) -> Result<MeasurementResult, MpsError> {
-        // Sample the exact physical observable before the forced projector's
-        // compensated tableau pre-reduction changes its internal basis.
-        let norm_squared = self.mps.norm_squared();
-        assert!(norm_squared > 1e-20, "cannot measure a zero-norm MPS");
-        let expectation = (super::measure::z_expectation_value(&self.tableau, &self.mps, q_idx).re
-            / norm_squared)
-            .clamp(-1.0, 1.0);
-        let probability_zero = f64::midpoint(1.0, expectation);
-        let probability_one = 1.0 - probability_zero;
-        // Match the forced projector's numerical zero threshold; unlike the
-        // pragmatic StabMps route, do not round merely near-deterministic
-        // probabilities to 0 or 1.
-        let is_deterministic = probability_zero.min(probability_one) < 1e-20;
-        let outcome = if is_deterministic {
-            probability_zero < probability_one
-        } else {
-            self.rng.random_bool(probability_one)
-        };
-
-        let projection = super::measure::project_forced_z_with_update(
+        let live = super::measure_qubit_exact_transactional(
             &mut self.tableau,
             &mut self.mps,
+            &mut self.rng,
             q_idx,
-            outcome,
+            "Mast::mz data-qubit projection",
         )?;
-        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
-        assert!(
-            projection.probability > 1e-20,
-            "sampled data-measurement branch has zero represented weight"
-        );
-        Ok(MeasurementResult {
-            outcome,
-            is_deterministic,
-        })
+        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &live.update);
+        Ok(live.measurement)
     }
 }
 
@@ -1833,5 +1873,54 @@ mod tests {
             0,
             "CZ should not flush pending_rz, merge persists"
         );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "Mast::project_all predetermined deferred branch was lost")]
+    fn mast_deferred_branch_loss_keeps_debug_assertion() {
+        let mut mast = Mast::with_seed(1, 1, 17);
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        crate::stab_mps::measure::inject_projection_vanishes(1);
+        mast.project_all();
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn mast_deferred_branch_loss_uses_untruncated_complement_in_release() {
+        let configured = MpsConfig {
+            max_bond_dim: 1,
+            svd_cutoff: 1e-7,
+            max_truncation_error: Some(1e-4),
+            parallel: false,
+        };
+        let mut mast = Mast::with_seed(1, 1, 17).with_mps_config(configured.clone());
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        crate::stab_mps::measure::inject_projection_vanishes(1);
+        mast.project_all();
+        assert_eq!(mast.deferred_branch_lost_count(), 1);
+        assert!((mast.mps.norm_squared() - 1.0).abs() < 1e-12);
+        assert_eq!(mast.mps.config().max_bond_dim, configured.max_bond_dim);
+        assert_eq!(
+            mast.mps.config().svd_cutoff.to_bits(),
+            configured.svd_cutoff.to_bits()
+        );
+        assert_eq!(
+            mast.mps.config().max_truncation_error,
+            configured.max_truncation_error
+        );
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    #[should_panic(expected = "Mast::project_all complement deferred branch was also lost")]
+    fn mast_deferred_double_loss_panics_in_release() {
+        let mut mast = Mast::with_seed(1, 1, 29);
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        crate::stab_mps::measure::inject_projection_vanishes(2);
+        mast.project_all();
     }
 }

@@ -147,8 +147,8 @@ impl StabMpsSimulator {
                 MetricValue::U64(self.simulator.max_bond_dim() as u64),
             ))),
             1 => Ok(Some((
-                "pragmatic_drift_count".to_string(),
-                MetricValue::U64(self.simulator.pragmatic_drift_count()),
+                "uncompensated_pre_reduction_count".to_string(),
+                MetricValue::U64(self.simulator.uncompensated_pre_reduction_count()),
             ))),
             _ => Ok(None),
         }
@@ -261,7 +261,8 @@ export_simulator_plugin!(crate::StabMpsSimulatorFactory);
 
 #[cfg(test)]
 mod tests {
-    use super::StabMpsSimulatorFactory;
+    use super::{StabMpsSimulator, StabMpsSimulatorFactory};
+    use pecos_stab_tn::stab_mps::{MeasurementMode, StabMps};
     use selene_core::simulator::conformance_testing::run_basic_tests;
     use std::sync::Arc;
 
@@ -270,5 +271,22 @@ mod tests {
         let interface = Arc::new(StabMpsSimulatorFactory);
         let args: Vec<String> = vec![String::new()];
         run_basic_tests(interface, args);
+    }
+
+    #[test]
+    fn selene_keeps_for_qec_measurement_policy() {
+        let mut interface = StabMpsSimulator {
+            simulator: StabMps::builder(2).for_qec().build(),
+            n_qubits: 2,
+        };
+        assert_eq!(
+            interface.simulator.measurement_mode(),
+            MeasurementMode::Pragmatic
+        );
+        interface.shot_start(0, 7).unwrap();
+        assert_eq!(
+            interface.simulator.measurement_mode(),
+            MeasurementMode::Pragmatic
+        );
     }
 }

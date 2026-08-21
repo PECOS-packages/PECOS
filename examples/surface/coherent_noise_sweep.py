@@ -102,7 +102,7 @@ def run_sweep(
             # New merge/truncation defaults change LERs; pin the legacy configuration for reproducibility.
             quantum_backend = (
                 stab_mps()
-                .lazy_measure(lazy_measure)
+                .measurement("lazy" if lazy_measure else "pragmatic")
                 .max_bond_dim(max_bond_dim)
                 .max_truncation_error(0.0)
                 .merge_rz(enabled=False)

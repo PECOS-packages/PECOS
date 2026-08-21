@@ -36,9 +36,22 @@ std::thread_local! {
     static INJECTED_PROJECTION_VANISHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(all(test, not(debug_assertions)))]
+std::thread_local! {
+    static INJECTED_ZERO_PROBABILITIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[cfg(test)]
 pub(super) fn inject_projection_vanishes(count: usize) {
     INJECTED_PROJECTION_VANISHES.with(|remaining| remaining.set(count));
+}
+
+#[cfg(all(test, not(debug_assertions)))]
+pub(super) fn inject_zero_projection_probabilities(count: usize) {
+    // Model a branch whose amplitude was erased by earlier configured
+    // truncation: projection itself leaves a healthy normalized candidate,
+    // but reports an exactly zero Born probability to the MAST owner.
+    INJECTED_ZERO_PROBABILITIES.with(|remaining| remaining.set(count));
 }
 
 #[cfg(test)]
@@ -52,8 +65,26 @@ fn inject_projection_vanish_if_requested(mps: &mut Mps) {
     });
 }
 
+#[cfg(all(test, not(debug_assertions)))]
+fn inject_zero_projection_probability_if_requested(probability: f64) -> f64 {
+    INJECTED_ZERO_PROBABILITIES.with(|remaining| {
+        let count = remaining.get();
+        if count > 0 {
+            remaining.set(count - 1);
+            0.0
+        } else {
+            probability
+        }
+    })
+}
+
 #[cfg(not(test))]
 fn inject_projection_vanish_if_requested(_mps: &mut Mps) {}
+
+#[cfg(any(not(test), debug_assertions))]
+fn inject_zero_projection_probability_if_requested(probability: f64) -> f64 {
+    probability
+}
 
 /// Virtual coefficient-MPS sites whose disentangling proofs must be rechecked
 /// after a physical measurement projection.
@@ -78,6 +109,15 @@ pub(super) struct LiveMeasurementResult {
     pub(super) update: ProjectionUpdate,
 }
 
+/// Block-norm tolerance for the coefficient-MPS computational-basis fast path.
+///
+/// A bond-one site with either physical block below this threshold is treated
+/// as a basis state. Its physical measurement probability is consequently
+/// quantized to the stabilizer values `{0, 1/2, 1}` before both sampling and
+/// projection; this tolerance is intentionally distinct from the Pauli
+/// endpoint snap below.
+pub(super) const TRIVIAL_MPS_BLOCK_NORM_TOLERANCE: f64 = 1e-12;
+
 /// Check if the MPS is trivial (all sites in a computational basis state).
 fn is_mps_trivial(mps: &Mps) -> bool {
     mps.max_bond_dim() == 1
@@ -89,7 +129,7 @@ fn is_mps_trivial(mps: &Mps) -> bool {
             let b1_norm: f64 = (0..t.nrows())
                 .flat_map(|i| (0..chi_r).map(move |j| t[(i, chi_r + j)].norm_sqr()))
                 .sum();
-            b0_norm < 1e-12 || b1_norm < 1e-12
+            b0_norm < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE || b1_norm < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE
         })
 }
 
@@ -128,7 +168,7 @@ fn canonicalize_trivial_mps_basis(
         // Every project_forced_z entry path normalizes before this helper can
         // be reached again, so the block weight has unit-state scale and this
         // absolute zero threshold is intentional.
-        if block_0_norm < 1e-12 {
+        if block_0_norm < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE {
             // C|...1...> = (C X_site)(X_site|...1...>).
             let before = phase_accumulator.as_ref().map(|_| tableau.clone());
             crate::stab_mps::tableau_compose::right_compose_x(tableau, site);
@@ -242,6 +282,44 @@ pub(super) fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64
         1.0 - probability_zero
     } else {
         probability_zero
+    }
+}
+
+fn quantize_trivial_probability(probability: f64) -> f64 {
+    [0.0_f64, 0.5, 1.0]
+        .into_iter()
+        .min_by(|left, right| {
+            (probability - *left)
+                .abs()
+                .total_cmp(&(probability - *right).abs())
+        })
+        .expect("three trivial probabilities")
+}
+
+/// Return the probability used by both exact sampling and forced projection.
+///
+/// The trivial coefficient-MPS path is a pure stabilizer state even when
+/// contraction roundoff reports a nearby non-stabilizer value, so its result
+/// is quantized to `{0, 1/2, 1}` under the same predicate used by the
+/// projector's tableau fast path.
+pub(super) fn z_outcome_probability(
+    tableau: &SparseStabY,
+    mps: &Mps,
+    q_idx: usize,
+    outcome: bool,
+    operation: &str,
+) -> f64 {
+    let norm_squared = mps.norm_squared();
+    assert!(
+        norm_squared.is_finite() && norm_squared > 0.0,
+        "{operation}: cannot measure an MPS with non-finite or zero norm"
+    );
+    let expectation = (z_expectation_value(tableau, mps, q_idx).re / norm_squared).clamp(-1.0, 1.0);
+    let probability = forced_outcome_probability(expectation, outcome);
+    if is_mps_trivial(mps) {
+        quantize_trivial_probability(probability)
+    } else {
+        probability
     }
 }
 
@@ -977,20 +1055,16 @@ fn project_single_flip_without_sign(
     mps.set_physical_block(id, 1, &zero);
 }
 
-/// Remove the direct-sum projector's structurally oversized virtual bonds
-/// without discarding any component of the state.
+/// Remove the direct-sum projector's structurally oversized virtual bonds.
 ///
 /// A right-canonical QR sweep is an exact factorization and bounds every bond
-/// by the Hilbert-space dimension to its right. This avoids applying the
-/// cutoff-based SVD compressor to the cancellation-heavy projected sum. Only
-/// a bond that still exceeds the caller's explicit approximation cap is sent
-/// through the configured compressor.
+/// by the Hilbert-space dimension to its right. The following configured SVD
+/// sweep reuses that gauge and runs unconditionally: it removes exact rank
+/// redundancy and numerical dust, while any nonzero truncation remains the
+/// caller-approved cutoff/cap behavior and is recorded by MPS telemetry.
 fn reduce_exact_projection_bonds(mps: &mut Mps) -> Result<(), MpsError> {
     mps.right_canonicalize();
-    if mps.max_bond_dim() > mps.config().max_bond_dim {
-        mps.compress()?;
-    }
-    Ok(())
+    mps.compress_from_right_canonical()
 }
 
 /// Shared implementation for tracked and phase-insensitive forced projection.
@@ -1010,6 +1084,7 @@ fn project_forced_z_with_update_impl(
         pre_projection_norm_squared > 0.0,
         "cannot project a zero-norm MPS"
     );
+    let probability = z_outcome_probability(tableau, mps, q_idx, outcome, "forced Z projection");
     if is_mps_trivial(mps) {
         // A trivial coefficient MPS represents a pure stabilizer state. First
         // absorb a possible nonzero virtual basis word into the tableau; only
@@ -1017,7 +1092,7 @@ fn project_forced_z_with_update_impl(
         let modified_sites =
             canonicalize_trivial_mps_basis(tableau, mps, phase_accumulator.as_deref_mut());
         let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
-        let probability = match decomp {
+        let tableau_probability: f64 = match decomp {
             ZDecomposition::Stabilizer { phase, .. } => {
                 if (phase.re < 0.0) == outcome {
                     1.0
@@ -1027,6 +1102,7 @@ fn project_forced_z_with_update_impl(
             }
             ZDecomposition::DestabilizerFlip { .. } => 0.5,
         };
+        debug_assert_eq!(probability.to_bits(), tableau_probability.to_bits());
         if probability > 0.0 {
             let before_measurement = phase_accumulator.as_ref().map(|_| tableau.clone());
             tableau.mz_forced(q_idx, outcome);
@@ -1049,7 +1125,7 @@ fn project_forced_z_with_update_impl(
             mps.normalize();
         }
         return Ok(ForcedProjectionResult {
-            snapped_probability: probability,
+            snapped_probability: inject_zero_projection_probability_if_requested(probability),
             survival_ratio,
             update: ProjectionUpdate {
                 collapsed_site: None,
@@ -1058,11 +1134,6 @@ fn project_forced_z_with_update_impl(
         });
     }
 
-    // Evaluate the Born probability in the incoming representation before
-    // generator pre-reduction changes the tableau/MPS factorization.
-    let expectation = (z_expectation_value(tableau, mps, q_idx).re / pre_projection_norm_squared)
-        .clamp(-1.0, 1.0);
-
     // Reduce to one virtual X site while compensating every generator-basis
     // CNOT on the MPS. This preserves C·MPS exactly.
     let mut modified_sites = pre_reduce_for_measurement(tableau, mps, q_idx, true)?;
@@ -1070,7 +1141,6 @@ fn project_forced_z_with_update_impl(
 
     match decomposition {
         ZDecomposition::Stabilizer { phase, sign_sites } => {
-            let probability = forced_outcome_probability(expectation, outcome);
             if probability == 0.0 {
                 let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
                 return Ok(ForcedProjectionResult {
@@ -1093,9 +1163,7 @@ fn project_forced_z_with_update_impl(
             // The physical observable was already in the stabilizer span, so
             // mz_forced performs no Clifford-basis change. The projected
             // stabilizer-sign superposition remains encoded in the MPS.
-            if !sign_sites.is_empty() {
-                reduce_exact_projection_bonds(mps)?;
-            }
+            reduce_exact_projection_bonds(mps)?;
             inject_projection_vanish_if_requested(mps);
             let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
             if survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
@@ -1105,7 +1173,7 @@ fn project_forced_z_with_update_impl(
             modified_sites.sort_unstable();
             modified_sites.dedup();
             Ok(ForcedProjectionResult {
-                snapped_probability: probability,
+                snapped_probability: inject_zero_projection_probability_if_requested(probability),
                 survival_ratio,
                 update: ProjectionUpdate {
                     collapsed_site: None,
@@ -1123,7 +1191,6 @@ fn project_forced_z_with_update_impl(
                 1,
                 "forced projection must have one flip after pre-reduction"
             );
-            let probability = forced_outcome_probability(expectation, outcome);
             if probability == 0.0 {
                 let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
                 return Ok(ForcedProjectionResult {
@@ -1173,9 +1240,7 @@ fn project_forced_z_with_update_impl(
             // destabilizer gauge. Therefore the post-H canonical ket cached
             // by the phase tracker remains valid for the measured tableau and
             // can be the before-ket of the next scalar site.
-            if !is_local_projection {
-                reduce_exact_projection_bonds(mps)?;
-            }
+            reduce_exact_projection_bonds(mps)?;
             inject_projection_vanish_if_requested(mps);
             let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
             if survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
@@ -1187,7 +1252,7 @@ fn project_forced_z_with_update_impl(
             modified_sites.sort_unstable();
             modified_sites.dedup();
             Ok(ForcedProjectionResult {
-                snapped_probability: probability,
+                snapped_probability: inject_zero_projection_probability_if_requested(probability),
                 survival_ratio,
                 update: ProjectionUpdate {
                     collapsed_site: Some(flip_sites[0]),
@@ -1833,6 +1898,54 @@ mod tests {
         let vanished = project_forced_z_with_update(&mut tableau, &mut mps, 0, false).unwrap();
         assert!((vanished.snapped_probability - 0.5).abs() < 1e-14);
         assert!(vanished.survival_ratio < BRANCH_VANISH_SURVIVAL_THRESHOLD);
+    }
+
+    #[test]
+    fn trivial_probability_quantization_is_shared_by_sampling_and_projection() {
+        assert_eq!(
+            quantize_trivial_probability(0.499_999_68).to_bits(),
+            0.5_f64.to_bits()
+        );
+
+        let probability_one: f64 = 1.0e-13;
+        let mut mps = Mps::new(1, MpsConfig::default());
+        let preparation = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new((1.0 - probability_one).sqrt(), 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(probability_one.sqrt(), 0.0),
+                Complex64::new(1.0, 0.0),
+            ],
+        );
+        mps.apply_one_site_gate(0, &preparation).unwrap();
+        let mut tableau = SparseStabY::new(1).with_destab_sign_tracking();
+        let sampled_probability =
+            z_outcome_probability(&tableau, &mps, 0, true, "trivial probability test");
+        let projected = project_forced_z_with_update(&mut tableau, &mut mps, 0, true).unwrap();
+        assert_eq!(sampled_probability.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(
+            projected.snapped_probability.to_bits(),
+            sampled_probability.to_bits()
+        );
+    }
+
+    #[test]
+    fn exact_projection_compresses_clean_rank_redundancy_without_discarded_weight() {
+        let product = Mps::new(4, MpsConfig::default());
+        let mut mps = product.add(&product);
+        mps.normalize();
+        mps.reset_truncation_stats();
+        assert_eq!(mps.max_bond_dim(), 2);
+        let mut tableau = SparseStabY::new(4).with_destab_sign_tracking();
+
+        let projection = project_forced_z_with_update(&mut tableau, &mut mps, 0, false).unwrap();
+
+        assert_eq!(projection.snapped_probability.to_bits(), 1.0_f64.to_bits());
+        assert_eq!(mps.max_bond_dim(), 1);
+        assert_eq!(mps.summed_discarded_weight().to_bits(), 0.0_f64.to_bits());
+        assert_eq!(mps.truncation_error().to_bits(), 0.0_f64.to_bits());
     }
 
     #[test]

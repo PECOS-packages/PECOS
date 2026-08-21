@@ -249,14 +249,7 @@ fn measure_qubit_exact_transactional(
     q_idx: usize,
     operation: &str,
 ) -> Result<measure::LiveMeasurementResult, MpsError> {
-    let norm_squared = mps.norm_squared();
-    assert!(
-        norm_squared.is_finite() && norm_squared > 0.0,
-        "{operation}: cannot measure an MPS with non-finite or zero norm"
-    );
-    let expectation =
-        (measure::z_expectation_value(tableau, mps, q_idx).re / norm_squared).clamp(-1.0, 1.0);
-    let probability_one = measure::forced_outcome_probability(expectation, true);
+    let probability_one = measure::z_outcome_probability(tableau, mps, q_idx, true, operation);
     let is_probability_zero = probability_one <= 0.0;
     let is_probability_one = probability_one >= 1.0;
     let outcome = if is_probability_zero {
@@ -267,10 +260,8 @@ fn measure_qubit_exact_transactional(
         rng.random_bool(probability_one)
     };
 
-    let original_tableau = tableau.clone();
-    let original_mps = mps.clone();
-    let mut candidate_tableau = original_tableau.clone();
-    let mut candidate_mps = original_mps.clone();
+    let mut candidate_tableau = tableau.clone();
+    let mut candidate_mps = mps.clone();
     let first = measure::project_forced_z_with_update(
         &mut candidate_tableau,
         &mut candidate_mps,
@@ -283,9 +274,9 @@ fn measure_qubit_exact_transactional(
     );
 
     let projection = if first.survival_ratio < measure::BRANCH_VANISH_SURVIVAL_THRESHOLD {
-        candidate_tableau = original_tableau;
-        candidate_mps = original_mps;
-        let original_config = candidate_mps.config().clone();
+        candidate_tableau = tableau.clone();
+        candidate_mps = mps.clone();
+        let original_config = mps.config().clone();
         let mut retry_config = original_config.clone();
         retry_config.max_bond_dim = candidate_mps.physical_rank_ceiling();
         retry_config.svd_cutoff = 0.0;
@@ -6635,7 +6626,40 @@ mod tests {
         let _ = stn.mz(&[QubitId(0)]);
 
         assert!(!stn.is_state_exact(), "lazy operations should be pending");
+        assert!(
+            !stn.deferred_ops.is_empty(),
+            "the fixture must exercise a nonempty lazy-operation queue"
+        );
+        let pre_flush_state = stn.state_vector();
+        let mut expected = stn.clone();
+        measure::flush_deferred_ops(&mut expected.mps, &mut expected.deferred_ops).unwrap();
+        let expected_state = expected.state_vector();
+        let stale_fidelity = pre_flush_state
+            .iter()
+            .zip(&expected_state)
+            .map(|(left, right)| left.conj() * right)
+            .sum::<Complex64>()
+            .norm_sqr();
+        assert!(
+            stale_fidelity < 1.0 - 1e-8,
+            "the fixture must make deferred materialization observable"
+        );
         stn.flush();
+        assert!(
+            stn.deferred_ops.is_empty(),
+            "flush must empty the lazy queue"
+        );
+        let materialized_fidelity = stn
+            .state_vector()
+            .iter()
+            .zip(&expected_state)
+            .map(|(left, right)| left.conj() * right)
+            .sum::<Complex64>()
+            .norm_sqr();
+        assert!(
+            materialized_fidelity > 1.0 - 1e-12,
+            "flush must materialize the queued state: fidelity={materialized_fidelity:.16}"
+        );
         assert!(
             !stn.is_state_exact(),
             "lazy mode itself is a conservative exactness guard"

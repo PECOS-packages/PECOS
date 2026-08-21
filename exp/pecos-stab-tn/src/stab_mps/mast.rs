@@ -606,10 +606,8 @@ impl Mast {
         // The branch correction was applied at injection time. Try the
         // predetermined branch transactionally so a vanished attempt cannot
         // mutate the live tableau/MPS pair.
-        let original_tableau = self.tableau.clone();
-        let original_mps = self.mps.clone();
-        let mut candidate_tableau = original_tableau.clone();
-        let mut candidate_mps = original_mps.clone();
+        let mut candidate_tableau = self.tableau.clone();
+        let mut candidate_mps = self.mps.clone();
         let mut projection = super::measure::project_forced_z_with_update(
             &mut candidate_tableau,
             &mut candidate_mps,
@@ -623,9 +621,9 @@ impl Mast {
             "Mast::project_all predetermined deferred branch was lost"
         );
         if branch_lost {
-            candidate_tableau = original_tableau;
-            candidate_mps = original_mps;
-            let original_config = candidate_mps.config().clone();
+            candidate_tableau = self.tableau.clone();
+            candidate_mps = self.mps.clone();
+            let original_config = self.mps.config().clone();
             let mut retry_config = original_config.clone();
             retry_config.max_bond_dim = candidate_mps.physical_rank_ceiling();
             retry_config.svd_cutoff = 0.0;
@@ -1887,6 +1885,19 @@ mod tests {
     }
 
     #[cfg(not(debug_assertions))]
+    fn assert_deferred_ancilla_outcome(mast: &Mast, ancilla: usize, outcome: bool) {
+        let norm_squared = mast.mps.norm_squared();
+        let expectation =
+            crate::stab_mps::measure::z_expectation_value(&mast.tableau, &mast.mps, ancilla).re
+                / norm_squared;
+        let expected = if outcome { -1.0 } else { 1.0 };
+        assert!(
+            (expectation - expected).abs() < 1e-10,
+            "deferred ancilla {ancilla} projected outcome mismatch: expected {outcome}, Z={expectation:.16e}"
+        );
+    }
+
+    #[cfg(not(debug_assertions))]
     #[test]
     fn mast_deferred_branch_loss_uses_untruncated_complement_in_release() {
         let configured = MpsConfig {
@@ -1898,9 +1909,11 @@ mod tests {
         let mut mast = Mast::with_seed(1, 1, 17).with_mps_config(configured.clone());
         mast.h(&[QubitId(0)]);
         mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        let deferred = mast.deferred[0];
         crate::stab_mps::measure::inject_projection_vanishes(1);
         mast.project_all();
         assert_eq!(mast.deferred_branch_lost_count(), 1);
+        assert_deferred_ancilla_outcome(&mast, deferred.ancilla, !deferred.predetermined_outcome);
         assert!((mast.mps.norm_squared() - 1.0).abs() < 1e-12);
         assert_eq!(mast.mps.config().max_bond_dim, configured.max_bond_dim);
         assert_eq!(
@@ -1911,6 +1924,27 @@ mod tests {
             mast.mps.config().max_truncation_error,
             configured.max_truncation_error
         );
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn mast_zero_probability_deferred_loss_projects_complement_in_release() {
+        let configured = MpsConfig {
+            max_bond_dim: 1,
+            svd_cutoff: 1e-7,
+            max_truncation_error: Some(1e-4),
+            parallel: false,
+        };
+        let mut mast = Mast::with_seed(1, 1, 23).with_mps_config(configured);
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        let deferred = mast.deferred[0];
+        // Preserve a healthy survival ratio while emulating the probability
+        // zero returned when prior configured truncation erased this branch.
+        crate::stab_mps::measure::inject_zero_projection_probabilities(1);
+        mast.project_all();
+        assert_eq!(mast.deferred_branch_lost_count(), 1);
+        assert_deferred_ancilla_outcome(&mast, deferred.ancilla, !deferred.predetermined_outcome);
     }
 
     #[cfg(not(debug_assertions))]

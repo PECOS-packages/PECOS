@@ -100,6 +100,7 @@ def run_sweep(
         builder = sim_neo(tc).noise(noise).shots(shots).seed(seed)
         if backend == "stabmps":
             # New merge/truncation defaults change LERs; pin the legacy configuration for reproducibility.
+            # Pragmatic preserves this script's historical sampler and is known-biased on honest families.
             quantum_backend = (
                 stab_mps()
                 .measurement("lazy" if lazy_measure else "pragmatic")

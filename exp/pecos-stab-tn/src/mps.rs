@@ -347,14 +347,16 @@ impl Mps {
     ///
     /// Forced projection can route compensating long-range gates across the
     /// whole chain, so every internal bond is affected in the general case.
-    /// The fallback stays below the arithmetic limit used by randomized-SVD
-    /// eligibility checks on platforms too narrow to represent `2^(n/2)`.
+    /// The result is clamped below the arithmetic limit used by randomized-SVD
+    /// eligibility checks. This includes representable shifts near the top of
+    /// `usize`, not only chains whose `2^(n/2)` shift itself overflows.
     #[must_use]
     pub(crate) fn physical_rank_ceiling(&self) -> usize {
         let exponent = self.num_sites / 2;
         1usize
             .checked_shl(u32::try_from(exponent).unwrap_or(u32::MAX))
             .unwrap_or(usize::MAX / 8)
+            .min(usize::MAX / 8)
     }
 
     /// Multiply the entire MPS by a scalar (absorbed into the first tensor).
@@ -1254,6 +1256,46 @@ impl Mps {
         self.record_current_peak_bond();
         Ok(())
     }
+
+    /// Compress from an established right-canonical gauge.
+    ///
+    /// The orthogonality center starts at site zero and follows this
+    /// left-to-right SVD sweep. Thus every split sees physical Schmidt
+    /// weights while avoiding the cold left-canonical sweep used by
+    /// [`Self::compress`]. The configured cutoff, cap, and adaptive error
+    /// budget are applied unchanged.
+    pub(crate) fn compress_from_right_canonical(&mut self) -> Result<(), MpsError> {
+        if self.num_sites <= 1 {
+            self.center = (self.num_sites == 1).then_some(0);
+            return Ok(());
+        }
+        debug_assert_eq!(self.center, Some(0));
+        #[cfg(debug_assertions)]
+        debug_assert!(self.claimed_center_is_valid(0));
+
+        let d = self.phys_dim;
+        for q in 0..self.num_sites - 1 {
+            let chi_l = self.bond_dims[q];
+            let chi_r = self.bond_dims[q + 1];
+            let matrix = tensor::reshape_left_group(&self.tensors[q], chi_l, d, chi_r);
+            let scaled_cutoff = self.config.svd_cutoff * matrix.norm();
+            let (u, svt, disc, hit) = svd::truncated_svd_right_absorb_with_error(
+                &matrix,
+                self.config.max_bond_dim,
+                scaled_cutoff,
+                self.config.max_truncation_error,
+            )?;
+            self.record_truncation(disc, hit);
+            let new_chi = u.ncols();
+
+            self.tensors[q] = reshape_left_ungroup(&u, chi_l, d, new_chi);
+            self.tensors[q + 1] = &svt * &self.tensors[q + 1];
+            self.bond_dims[q + 1] = new_chi;
+            self.center = Some(q + 1);
+        }
+        self.record_current_peak_bond();
+        Ok(())
+    }
 }
 
 impl Clone for Mps {
@@ -1490,6 +1532,14 @@ mod tests {
         #[cfg(debug_assertions)]
         assert!(mps.claimed_center_is_valid(2));
         assert_eq!(mps.clone().center, Some(2));
+    }
+
+    #[test]
+    fn physical_rank_ceiling_is_safe_for_randomized_svd_arithmetic() {
+        for num_sites in 124..=127 {
+            let mps = Mps::new(num_sites, MpsConfig::default());
+            assert!(mps.physical_rank_ceiling() <= usize::MAX / 8);
+        }
     }
 
     #[test]

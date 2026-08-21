@@ -12,8 +12,9 @@
 
 //! Statistical falsifier for the default `StabMps` random-measurement route.
 //!
-//! The default route is exact sample-then-force. Fast surfaces run normally;
-//! larger release matrices remain in the explicit ignored lane. The liveness
+//! The default route is exact sample-then-force. Debug builds run a tiny smoke
+//! subset; optimized builds run the full fast surface matrix, while larger
+//! matrices remain in the explicit ignored release lane. The liveness
 //! meta-test selects `Pragmatic` explicitly and proves the known bias remains
 //! visible to the harness.
 
@@ -25,8 +26,14 @@ use pecos_stab_tn::stab_mps::mast::Mast;
 use pecos_stab_tn::stab_mps::{MeasurementMode, PauliKind, StabMps};
 use rayon::prelude::*;
 
+#[cfg(debug_assertions)]
+const DEBUG_SHOTS: usize = 16;
+#[cfg(not(debug_assertions))]
 const FAST_SHOTS: usize = 2_048;
 const RELEASE_SHOTS: usize = 1_024;
+#[cfg(debug_assertions)]
+const META_SHOTS: usize = 32;
+#[cfg(not(debug_assertions))]
 const META_SHOTS: usize = 256;
 const PROBABILITY_EPSILON: f64 = 1e-14;
 
@@ -442,18 +449,12 @@ fn exact_probabilities(surface: Surface, num_qubits: usize) -> Vec<f64> {
     probabilities
 }
 
-fn run_stn_shot_with_mode(
-    surface: Surface,
-    num_qubits: usize,
-    seed: u64,
-    mode: MeasurementMode,
-) -> usize {
+fn run_built_stn_shot(surface: Surface, num_qubits: usize, mut simulator: StabMps) -> usize {
     let preparation_qubits = if surface == Surface::ExtractSyndromes {
         num_qubits - 1
     } else {
         num_qubits
     };
-    let mut simulator = build_stn_with_mode(num_qubits, seed, mode);
     replay_gates(
         &mut simulator,
         &honest_family(preparation_qubits, num_qubits),
@@ -505,8 +506,21 @@ fn run_stn_shot_with_mode(
     encode_bits(&bits)
 }
 
+fn run_stn_shot_with_mode(
+    surface: Surface,
+    num_qubits: usize,
+    seed: u64,
+    mode: MeasurementMode,
+) -> usize {
+    run_built_stn_shot(
+        surface,
+        num_qubits,
+        build_stn_with_mode(num_qubits, seed, mode),
+    )
+}
+
 fn run_stn_shot(surface: Surface, num_qubits: usize, seed: u64) -> usize {
-    run_stn_shot_with_mode(surface, num_qubits, seed, MeasurementMode::Exact)
+    run_built_stn_shot(surface, num_qubits, build_stn(num_qubits, seed))
 }
 
 fn run_mast_shot(surface: Surface, num_qubits: usize, seed: u64) -> usize {
@@ -955,6 +969,7 @@ fn exact_default_measurement_falsifier_is_live() {
 
 macro_rules! surface_gate_tests {
     ($fast_name:ident, $release_name:ident, $surface:expr) => {
+        #[cfg(not(debug_assertions))]
         #[test]
         fn $fast_name() {
             assert_surface_matrix($surface, &[3, 4], FAST_SHOTS);
@@ -966,6 +981,18 @@ macro_rules! surface_gate_tests {
             assert_surface_matrix($surface, &[5, 6], RELEASE_SHOTS);
         }
     };
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn exact_default_debug_smoke_subset() {
+    for surface in [
+        Surface::MzMid,
+        Surface::ExtractSyndromes,
+        Surface::Continuation,
+    ] {
+        assert_surface_matrix(surface, &[3], DEBUG_SHOTS);
+    }
 }
 
 surface_gate_tests!(

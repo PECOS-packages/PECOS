@@ -230,7 +230,7 @@ fn main() {
             64,
         ),
         (
-            "general defaults (cap pinned)",
+            "pragmatic defaults (cap pinned)",
             MeasurementMode::Pragmatic,
             Some(1e-8),
             true,

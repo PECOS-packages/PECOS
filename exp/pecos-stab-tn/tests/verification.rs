@@ -4113,11 +4113,12 @@ fn test_large_scale_50_qubits() {
     let (stn_bond, mast_bond) =
         large_scale_bond_dim_check(num_qubits, num_t, 3, configured_cap, 42);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    // Exact-route data measurement saturates the configured cap at scale, so
-    // accuracy is truncation-limited here rather than merely bounded by it.
-    assert_eq!(
-        mast_bond, configured_cap,
-        "MAST did not saturate its configured bond cap"
+    // Exact projection now removes direct-sum rank redundancy even when the
+    // stored bond is below the cap. This regression only requires the
+    // cross-word BitSet path to finish within the configured bound.
+    assert!(
+        mast_bond <= configured_cap,
+        "MAST exceeded its configured bond cap: {mast_bond} > {configured_cap}"
     );
 }
 

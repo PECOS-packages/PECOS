@@ -281,12 +281,12 @@ mod tests {
         };
         assert_eq!(
             interface.simulator.measurement_mode(),
-            MeasurementMode::Pragmatic
+            MeasurementMode::Exact
         );
         interface.shot_start(0, 7).unwrap();
         assert_eq!(
             interface.simulator.measurement_mode(),
-            MeasurementMode::Pragmatic
+            MeasurementMode::Exact
         );
     }
 }

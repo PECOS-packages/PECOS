@@ -380,7 +380,7 @@ impl PyStabMps {
     /// preset, while `False` and `None` are identical no-ops.
     /// `measurement` accepts `"exact"`, `"pragmatic"`, or `"lazy"`; when
     /// omitted, the normal default is exact. An explicit value is applied
-    /// after `for_qec` and therefore overrides that preset's Stage-A policy.
+    /// after `for_qec` and therefore overrides that preset's exact policy.
     /// `max_truncation_error=None` preserves the builder default of
     /// `1e-8`; a float overrides it, and `0.0` disables adaptive truncation
     /// while retaining the SVD cutoff and bond cap. Negative and non-finite

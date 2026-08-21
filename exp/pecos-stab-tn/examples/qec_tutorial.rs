@@ -40,8 +40,9 @@ fn main() {
     // 1. Builder + preset
     // ------------------------------------------------------------------
     //
-    // `for_qec()` keeps the general numerical defaults but selects pragmatic
-    // measurement during Stage A, pending the Stage B QEC measurement:
+    // `for_qec()` keeps the general numerical defaults and selects exact
+    // measurement. The frozen Stage-B repetition-code benchmark measured a
+    // 1.497x geometric-mean slowdown (1.548x maximum) versus pragmatic.
     //   - max_bond_dim = 128 (enough for syndrome rounds without truncation)
     //   - max_truncation_error = 1e-8 (very tight)
     //   - merge_rz = true (batch same-qubit RZ noise)

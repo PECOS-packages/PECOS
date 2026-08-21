@@ -2423,15 +2423,20 @@ fn test_sampled_bitstring_round_trips_through_probability_and_amplitude() {
 fn assert_honest_clifford_t_readouts_match_dense(
     qubit_counts: std::ops::RangeInclusive<usize>,
     seed_families: &[u64],
+    max_truncation_error: f64,
     label: &str,
 ) {
     // This family deliberately puts H, S, and CX between non-Clifford gates,
     // plus a target H after roughly half of them. That exposes sequential
     // forced-projection frame errors hidden by diagonal-only circuit tails.
-    const TOLERANCE: f64 = 1e-12;
+    const NUMERICAL_FLOOR: f64 = 1e-12;
+    let adaptive = max_truncation_error > 0.0;
     let mut circuits = 0;
+    let mut circuits_with_discarded_weight = 0;
     let mut worst_probability_delta = 0.0_f64;
     let mut worst_iterative_delta = 0.0_f64;
+    let mut largest_recorded_weight = 0.0_f64;
+    let mut largest_allowed_delta = NUMERICAL_FLOOR;
     for num_qubits in qubit_counts {
         for t_count in 3..=6 {
             for &seed_family in seed_families {
@@ -2440,12 +2445,37 @@ fn assert_honest_clifford_t_readouts_match_dense(
                 let mut stn = StabMps::builder(num_qubits)
                     .seed(circuit_seed)
                     .merge_rz(false)
-                    .max_truncation_error(0.0)
+                    .max_truncation_error(max_truncation_error)
                     .build();
                 apply_seeded_clifford_t_to_stn(&mut stn, &gates);
                 stn.flush();
 
-                let dense_probabilities = dense_state_vector_probabilities(&stn);
+                let recorded_weight = stn.summed_discarded_weight();
+                if recorded_weight > 0.0 {
+                    circuits_with_discarded_weight += 1;
+                }
+                largest_recorded_weight = largest_recorded_weight.max(recorded_weight);
+                // The non-commutative union bound turns summed discarded
+                // weight into at most 2*sqrt(weight) distinguishability.
+                // Keep the exact configuration's original numerical ceiling.
+                let allowed_delta = if adaptive {
+                    2.0 * recorded_weight.sqrt() + NUMERICAL_FLOOR
+                } else {
+                    NUMERICAL_FLOOR
+                };
+                largest_allowed_delta = largest_allowed_delta.max(allowed_delta);
+                let dense_probabilities = if adaptive {
+                    let mut oracle = StabMps::builder(num_qubits)
+                        .seed(circuit_seed)
+                        .merge_rz(false)
+                        .max_truncation_error(0.0)
+                        .build();
+                    apply_seeded_clifford_t_to_stn(&mut oracle, &gates);
+                    oracle.flush();
+                    dense_state_vector_probabilities(&oracle)
+                } else {
+                    dense_state_vector_probabilities(&stn)
+                };
                 for (outcome, &expected) in dense_probabilities.iter().enumerate() {
                     let bits = (0..num_qubits)
                         .map(|q| ((outcome >> q) & 1) != 0)
@@ -2454,10 +2484,12 @@ fn assert_honest_clifford_t_readouts_match_dense(
                     let probability_delta = (actual - expected).abs();
                     worst_probability_delta = worst_probability_delta.max(probability_delta);
                     assert!(
-                        probability_delta <= TOLERANCE,
+                        probability_delta <= allowed_delta,
                         "{label}: n={num_qubits} t={t_count} seed={circuit_seed} \
                          outcome={outcome}: prob_bitstring={actual:.16}, \
-                         dense={expected:.16}, delta={probability_delta:.3e}, gates={gates:?}"
+                         dense={expected:.16}, delta={probability_delta:.3e}, \
+                         recorded_weight={recorded_weight:.3e}, \
+                         allowed_delta={allowed_delta:.3e}, gates={gates:?}"
                     );
 
                     // The unnormalized sibling projector must preserve the
@@ -2468,10 +2500,12 @@ fn assert_honest_clifford_t_readouts_match_dense(
                     let iterative_delta = (iterative_probability - expected).abs();
                     worst_iterative_delta = worst_iterative_delta.max(iterative_delta);
                     assert!(
-                        iterative_delta <= TOLERANCE,
+                        iterative_delta <= allowed_delta,
                         "{label}: n={num_qubits} t={t_count} seed={circuit_seed} \
                          outcome={outcome}: |amplitude_iterative|^2={iterative_probability:.16}, \
-                         dense={expected:.16}, delta={iterative_delta:.3e}, gates={gates:?}"
+                         dense={expected:.16}, delta={iterative_delta:.3e}, \
+                         recorded_weight={recorded_weight:.3e}, \
+                         allowed_delta={allowed_delta:.3e}, gates={gates:?}"
                     );
                 }
                 circuits += 1;
@@ -2479,7 +2513,7 @@ fn assert_honest_clifford_t_readouts_match_dense(
         }
     }
     eprintln!(
-        "{label}: circuits={circuits}, worst prob_bitstring delta={worst_probability_delta:.3e}, worst |amplitude_iterative|^2 delta={worst_iterative_delta:.3e}"
+        "{label}: circuits={circuits}, circuits with discarded weight={circuits_with_discarded_weight}, largest recorded weight={largest_recorded_weight:.3e}, largest allowed delta={largest_allowed_delta:.3e}, worst prob_bitstring delta={worst_probability_delta:.3e}, worst |amplitude_iterative|^2 delta={worst_iterative_delta:.3e}"
     );
 }
 
@@ -2487,14 +2521,100 @@ fn assert_honest_clifford_t_readouts_match_dense(
 fn test_prob_bitstring_honest_clifford_t_family_matches_dense_state_vector() {
     // Keep a known formerly failing small-n family (n=4, t=6, seed=21406)
     // in the default lane while bounding debug-suite runtime.
-    assert_honest_clifford_t_readouts_match_dense(3..=4, &[10, 21], "fast issue #557 sweep");
+    assert_honest_clifford_t_readouts_match_dense(3..=4, &[10, 21], 0.0, "fast issue #557 sweep");
 }
 
 #[test]
 #[ignore = "wide issue #557 sweep; run in release mode"]
 fn test_prob_bitstring_honest_clifford_t_wide_seed_sweep_matches_dense_state_vector() {
     let seed_families = (10..50_u64).collect::<Vec<_>>();
-    assert_honest_clifford_t_readouts_match_dense(3..=6, &seed_families, "wide issue #557 sweep");
+    assert_honest_clifford_t_readouts_match_dense(
+        3..=6,
+        &seed_families,
+        0.0,
+        "wide issue #557 exact sweep",
+    );
+    assert_honest_clifford_t_readouts_match_dense(
+        3..=6,
+        &seed_families,
+        1e-8,
+        "wide issue #557 adaptive sweep",
+    );
+}
+
+fn apply_weak_branch_readout_fixture(stn: &mut StabMps) {
+    let t = Angle64::QUARTER_TURN / 2u64;
+    for q in 0..4 {
+        stn.h(&[QubitId(q)]);
+        stn.rz(t, &[QubitId(q)]);
+    }
+    stn.cx(&[(QubitId(0), QubitId(1))]);
+    stn.cx(&[(QubitId(1), QubitId(2))]);
+    stn.cx(&[(QubitId(2), QubitId(3))]);
+    // This creates a 2.5e-9-weight coefficient branch: below the configured
+    // 1e-8 adaptive budget, but above numerical zero.
+    stn.rz(Angle64::from_radians(1e-4), &[QubitId(3)]);
+    // Uncompute the entangler and rotate every affected axis so the weak
+    // branch changes computational-basis probabilities, then retain a
+    // nonlocal tableau frame for the sequential forced-projection readers.
+    stn.cx(&[(QubitId(2), QubitId(3))]);
+    stn.cx(&[(QubitId(1), QubitId(2))]);
+    stn.cx(&[(QubitId(0), QubitId(1))]);
+    for q in 0..4 {
+        stn.h(&[QubitId(q)]);
+    }
+    stn.cx(&[(QubitId(3), QubitId(1))]);
+    stn.h(&[QubitId(2)]);
+    stn.flush();
+}
+
+#[test]
+#[ignore = "adaptive issue #557 readout bound; run in release mode"]
+fn test_prob_bitstring_adaptive_truncation_respects_recorded_weight_bound() {
+    const NUM_QUBITS: usize = 4;
+    const NUMERICAL_FLOOR: f64 = 1e-12;
+    let mut oracle = StabMps::builder(NUM_QUBITS)
+        .merge_rz(false)
+        .svd_cutoff(0.0)
+        .max_truncation_error(0.0)
+        .build();
+    let mut adaptive = StabMps::builder(NUM_QUBITS)
+        .merge_rz(false)
+        .svd_cutoff(0.0)
+        .max_truncation_error(1e-8)
+        .build();
+    apply_weak_branch_readout_fixture(&mut oracle);
+    apply_weak_branch_readout_fixture(&mut adaptive);
+
+    let recorded_weight = adaptive.summed_discarded_weight();
+    assert!(
+        recorded_weight > 0.0 && recorded_weight <= 1e-8,
+        "adaptive fixture recorded weight {recorded_weight:.16e}"
+    );
+    let allowed_delta = 2.0 * recorded_weight.sqrt() + NUMERICAL_FLOOR;
+    let exact_probabilities = dense_state_vector_probabilities(&oracle);
+    let mut worst_probability_delta = 0.0_f64;
+    let mut worst_iterative_delta = 0.0_f64;
+    for (outcome, &expected) in exact_probabilities.iter().enumerate() {
+        let bits = (0..NUM_QUBITS)
+            .map(|q| ((outcome >> q) & 1) != 0)
+            .collect::<Vec<_>>();
+        let probability_delta = (adaptive.prob_bitstring(&bits) - expected).abs();
+        let iterative_delta = (adaptive.amplitude_iterative(&bits).norm_sqr() - expected).abs();
+        worst_probability_delta = worst_probability_delta.max(probability_delta);
+        worst_iterative_delta = worst_iterative_delta.max(iterative_delta);
+        assert!(
+            probability_delta <= allowed_delta,
+            "outcome={outcome}: prob_bitstring delta={probability_delta:.3e}, recorded_weight={recorded_weight:.3e}, bound={allowed_delta:.3e}"
+        );
+        assert!(
+            iterative_delta <= allowed_delta,
+            "outcome={outcome}: amplitude_iterative probability delta={iterative_delta:.3e}, recorded_weight={recorded_weight:.3e}, bound={allowed_delta:.3e}"
+        );
+    }
+    eprintln!(
+        "adaptive issue #557 fixture: recorded weight={recorded_weight:.3e}, bound={allowed_delta:.3e}, worst prob_bitstring delta={worst_probability_delta:.3e}, worst |amplitude_iterative|^2 delta={worst_iterative_delta:.3e}"
+    );
 }
 
 #[test]

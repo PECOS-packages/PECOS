@@ -53,8 +53,9 @@ def test_stab_mps_measurement_selection_precedence_and_reset_retention():
     assert exp.StabMps(1).measurement == "exact"
     assert exp.StabMps(1, measurement="pragmatic").measurement == "pragmatic"
     assert exp.StabMps(1, measurement="lazy").measurement == "lazy"
-    assert exp.StabMps(1, for_qec=True).measurement == "pragmatic"
+    assert exp.StabMps(1, for_qec=True).measurement == "exact"
     assert exp.StabMps(1, for_qec=True, measurement="exact").measurement == "exact"
+    assert exp.StabMps(1, for_qec=True, measurement="pragmatic").measurement == "pragmatic"
     lazy = exp.StabMps(1, for_qec=True, measurement="lazy")
     assert lazy.measurement == "lazy"
     assert lazy.reset().measurement == "lazy"

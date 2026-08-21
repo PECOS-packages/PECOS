@@ -659,10 +659,23 @@ impl StabMpsBuilder {
 
     /// QEC-style preset retained for source compatibility.
     ///
-    /// This keeps its existing pragmatic measurement behavior for Stage A,
-    /// pending the Stage B QEC measurement. Its other settings match the
-    /// general defaults: `max_bond_dim(128)`, `max_truncation_error(1e-8)`,
-    /// and `merge_rz(true)`.
+    /// This selects exact measurement. The frozen Stage-B recipe in
+    /// `examples/measurement_mode_bench.rs` measures manually expanded
+    /// distance-3 and distance-5 repetition-code syndrome circuits in both
+    /// check bases: eight rounds, coherent `RZ(0.1)` on every data qubit per
+    /// round, two-qubit depolarizing noise at `p=1e-3`, identical pre-generated
+    /// noise for both modes, `merge_rz(false)`, otherwise-default builders,
+    /// 2,000 shots at d3 and 500 at d5, one warmup, timed seeds 7001 through
+    /// 7007, and pinned release execution. Median Exact slowdowns relative to
+    /// Pragmatic were 1.496812 (d3/Z), 1.488242 (d3/X), 1.457758 (d5/Z), and
+    /// 1.548499 (d5/X): geometric mean 1.497474 and maximum 1.548499. Both are
+    /// inside the decided Exact-everywhere limits (geometric mean at most 3
+    /// and per-workload maximum at most 5).
+    ///
+    /// Run the recorded recipe with
+    /// `taskset -c 2 cargo run --release -p pecos-stab-tn --example measurement_mode_bench`.
+    /// The preset's other settings match the general defaults:
+    /// `max_bond_dim(128)`, `max_truncation_error(1e-8)`, and `merge_rz(true)`.
     ///
     /// Override any of these with subsequent builder calls:
     /// ```
@@ -684,7 +697,7 @@ impl StabMpsBuilder {
         self.max_truncation_error(1e-8)
             .max_bond_dim(bond_dim)
             .merge_rz(true)
-            .measurement(MeasurementMode::Pragmatic)
+            .measurement(MeasurementMode::Exact)
     }
 
     /// Build the simulator.
@@ -7985,7 +7998,7 @@ mod tests {
         // Smoke test: the preset should build a working StabMps and handle
         // a Clifford + T + measurement sequence.
         let mut stn = StabMps::builder(4).seed(99).for_qec().build();
-        assert_eq!(stn.measurement_mode(), MeasurementMode::Pragmatic);
+        assert_eq!(stn.measurement_mode(), MeasurementMode::Exact);
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);

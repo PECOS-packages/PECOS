@@ -257,7 +257,7 @@ def test_dem_events_split_observables_and_tracked_paulis() -> None:
     assert tracked_hits == set()
 
 
-def test_sample_decode_count_ignores_tracked_paulis() -> None:
+def test_fused_decode_ignores_tracked_paulis() -> None:
     """Decoder error counting uses observables, not tracked Paulis."""
     from pecos.decoders import pymatching
     from pecos_rslib import DagCircuit, PauliString

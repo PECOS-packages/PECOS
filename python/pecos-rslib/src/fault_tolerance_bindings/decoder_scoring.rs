@@ -53,21 +53,6 @@ impl std::error::Error for ShotDecodeError {
     }
 }
 
-/// Decode and score a contiguous range of shots, aborting on the first failure.
-///
-/// `access_shot` fills the reusable syndrome buffer and returns that shot's
-/// true observable mask. Shot indices are kept absolute so callers can combine
-/// independently scored worker ranges without losing error context.
-pub(super) fn count_decoder_mismatches(
-    shots: Range<usize>,
-    syndrome: &mut [u8],
-    access_shot: impl FnMut(usize, &mut [u8]) -> ObsMask,
-    decoder: &mut dyn ObservableDecoder,
-) -> Result<usize, ShotDecodeError> {
-    decode_and_score_range(shots, syndrome, access_shot, decoder, false, false)
-        .map(|result| result.mismatches)
-}
-
 /// Decode, score, and optionally retain predictions and per-shot elapsed times.
 ///
 /// The syndrome allocation belongs to the caller and is reused for every shot
@@ -108,54 +93,6 @@ pub(super) fn decode_and_score_range(
         }
     }
     Ok(result)
-}
-
-/// Observable-decoder adapter that keeps only caller-selected observables.
-pub(super) struct MaskedObservableDecoder {
-    inner: Box<dyn ObservableDecoder>,
-    mask: ObsMask,
-}
-
-impl MaskedObservableDecoder {
-    pub(super) fn new(inner: Box<dyn ObservableDecoder>, mask: ObsMask) -> Self {
-        Self { inner, mask }
-    }
-}
-
-impl ObservableDecoder for MaskedObservableDecoder {
-    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        let mut prediction = self.inner.decode_obs(syndrome)?;
-        prediction &= &self.mask;
-        Ok(prediction)
-    }
-}
-
-/// Observable-decoder adapter that records one elapsed time per decode call.
-pub(super) struct TimedObservableDecoder {
-    inner: Box<dyn ObservableDecoder>,
-    per_shot_seconds: Vec<f64>,
-}
-
-impl TimedObservableDecoder {
-    pub(super) fn new(inner: Box<dyn ObservableDecoder>, capacity: usize) -> Self {
-        Self {
-            inner,
-            per_shot_seconds: Vec::with_capacity(capacity),
-        }
-    }
-
-    pub(super) fn into_times(self) -> Vec<f64> {
-        self.per_shot_seconds
-    }
-}
-
-impl ObservableDecoder for TimedObservableDecoder {
-    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        let start = std::time::Instant::now();
-        let result = self.inner.decode_obs(syndrome);
-        self.per_shot_seconds.push(start.elapsed().as_secs_f64());
-        result
-    }
 }
 
 #[cfg(test)]
@@ -212,7 +149,7 @@ mod tests {
         let syndromes: Vec<Vec<u8>> = shots.iter().map(|(syndrome, _)| syndrome.clone()).collect();
         let mut decoder = StubDecoder::new(&syndromes, results);
         let mut syndrome = vec![0; syndromes.first().map_or(0, Vec::len)];
-        count_decoder_mismatches(
+        decode_and_score_range(
             0..shots.len(),
             &mut syndrome,
             |shot_index, buffer| {
@@ -220,7 +157,10 @@ mod tests {
                 shots[shot_index].1.clone()
             },
             &mut decoder,
+            false,
+            false,
         )
+        .map(|result| result.mismatches)
     }
 
     #[test]

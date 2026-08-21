@@ -191,13 +191,30 @@ def test_timing_counts_decode_calls_and_combines_with_predictions() -> None:
     assert result.stats.wall_elapsed >= result.stats.summed_decode_elapsed
 
 
-def test_legacy_sampling_streams_remain_frozen() -> None:
-    sampler = _sampler()
+def test_worker_count_is_clamped_to_the_number_of_sampling_chunks() -> None:
+    # A sampling chunk is the unit of parallel work, so a caller asking for more
+    # workers than there are chunks must be told what actually ran -- and must not
+    # hand an arbitrary thread count to the OS.
+    result = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=64)
 
-    # Stream-stability pins for the pre-ABI legacy paths. These rows and count
-    # guard their original continuous and geometric RNG streams, respectively.
-    assert sampler.sample_decode_count(DEM, 12, "pymatching", seed=91) == 3
-    batch = sampler.sample_batch(12, seed=91)
+    assert result.execution_path == "parallel"
+    assert result.workers_used == 2  # ceil(1500 / 1024)
+
+    single_chunk = _sampler().decode(DEM, 100, tesseract(preset="fast"), seed=7, workers=8)
+    assert single_chunk.workers_used == 1
+
+    # Clamping must not perturb the guaranteed stream.
+    reference = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=1, predictions=True)
+    clamped = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=64, predictions=True)
+    assert clamped.predictions == reference.predictions
+
+
+def test_sample_batch_stream_remains_frozen() -> None:
+    # Stream-stability pin for the surviving sample_batch path, carried over
+    # from the deleted legacy-methods test: sample_batch was NOT removed, so its
+    # geometric RNG stream stays frozen. Only the fused decode() path uses the
+    # canonical chunked ABI; a change to these rows is a breaking change.
+    batch = _sampler().sample_batch(12, seed=91)
     assert batch.detector_events() == [
         [True],
         [False],
@@ -226,21 +243,3 @@ def test_legacy_sampling_streams_remain_frozen() -> None:
         [True],
         [False],
     ]
-
-
-def test_worker_count_is_clamped_to_the_number_of_sampling_chunks() -> None:
-    # A sampling chunk is the unit of parallel work, so a caller asking for more
-    # workers than there are chunks must be told what actually ran -- and must not
-    # hand an arbitrary thread count to the OS.
-    result = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=64)
-
-    assert result.execution_path == "parallel"
-    assert result.workers_used == 2  # ceil(1500 / 1024)
-
-    single_chunk = _sampler().decode(DEM, 100, tesseract(preset="fast"), seed=7, workers=8)
-    assert single_chunk.workers_used == 1
-
-    # Clamping must not perturb the guaranteed stream.
-    reference = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=1, predictions=True)
-    clamped = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=64, predictions=True)
-    assert clamped.predictions == reference.predictions

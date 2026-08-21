@@ -896,8 +896,8 @@ fn collapse_projected_flip_site(mps: &mut Mps, id: usize) {
     let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[id], 0, chi_r)
         * Complex64::new(std::f64::consts::SQRT_2, 0.0);
     let zero = DMatrix::zeros(mps.tensors()[id].nrows(), chi_r);
-    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 0, chi_r, &block_0);
-    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 1, chi_r, &zero);
+    mps.set_physical_block(id, 0, &block_0);
+    mps.set_physical_block(id, 1, &zero);
 }
 
 /// Project a real single-site X branch and absorb its measurement-basis H
@@ -918,8 +918,8 @@ fn project_single_flip_without_sign(
     let denominator = Complex64::new((2.0 * probability).max(1e-20).sqrt(), 0.0);
     let projected = (block_0 + block_1 * signed_phase) / denominator;
     let zero = DMatrix::zeros(mps.tensors()[id].nrows(), chi_r);
-    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 0, chi_r, &projected);
-    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[id], 1, chi_r, &zero);
+    mps.set_physical_block(id, 0, &projected);
+    mps.set_physical_block(id, 1, &zero);
 }
 
 /// Remove the direct-sum projector's structurally oversized virtual bonds
@@ -1618,8 +1618,8 @@ pub(super) fn measure_qubit_stab_mps_with_update(
                     / Complex64::new((2.0 * prob).max(1e-20).sqrt(), 0.0);
 
                 let zero = DMatrix::zeros(mps.tensors()[k].nrows(), chi_r);
-                crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 0, chi_r, &projected);
-                crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 1, chi_r, &zero);
+                mps.set_physical_block(k, 0, &projected);
+                mps.set_physical_block(k, 1, &zero);
                 mps.normalize();
             } else {
                 // Multi-site case with sign_sites: use MPS addition then collapse flip site.
@@ -1659,7 +1659,7 @@ pub(super) fn measure_qubit_stab_mps_with_update(
                     let k = flip_sites[0];
                     let chi_r = mps.bond_dim(k + 1);
                     let zero = DMatrix::zeros(mps.tensors()[k].nrows(), chi_r);
-                    crate::mps::tensor::set_phys_block(&mut mps.tensors_mut()[k], 1, chi_r, &zero);
+                    mps.set_physical_block(k, 1, &zero);
                 }
 
                 mps.normalize();
@@ -1707,6 +1707,17 @@ mod tests {
     fn sort_dedup(v: &mut Vec<usize>) {
         v.sort_unstable();
         v.dedup();
+    }
+
+    #[test]
+    fn projection_block_replacement_invalidation_guards_canonical_routing() {
+        let product = Mps::new(4, MpsConfig::default());
+        let mut mps = product.add(&product);
+        mps.left_canonicalize();
+
+        project_single_flip_without_sign(&mut mps, 0, Complex64::new(1.0, 0.0), 0.5);
+
+        assert_eq!(mps.tracked_center_for_test(), None);
     }
 
     #[test]

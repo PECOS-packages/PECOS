@@ -35,6 +35,11 @@ use tensor::{
     contract_two_sites, phys_block, reshape_left_ungroup, reshape_two_site_for_svd, set_phys_block,
 };
 
+// Analytic gates are unitary to machine precision. Keep this materially below
+// the debug validator's 1e-9 budget so repeated preserved mutations cannot
+// consume that entire budget one boundary-passing gate at a time.
+const ISOMETRY_PRESERVING_UNITARY_TOLERANCE: f64 = 1e-12;
+
 /// Configuration for MPS truncation.
 #[derive(Clone, Debug)]
 pub struct MpsConfig {
@@ -78,6 +83,10 @@ pub struct Mps {
     num_sites: usize,
     phys_dim: usize,
     tensors: Vec<DMatrix<Complex64>>,
+    /// Claimed mixed-canonical orthogonality center. When this is `Some(k)`,
+    /// every site left of `k` is a left-isometry and every site right of `k`
+    /// is a right-isometry. `None` makes no canonical-form claim.
+    center: Option<usize>,
     /// Bond dimensions: length `num_sites + 1`.
     /// `bond_dims[0] = 1` (left boundary), `bond_dims[num_sites] = 1` (right boundary).
     bond_dims: Vec<usize>,
@@ -196,6 +205,7 @@ impl Mps {
             num_sites,
             phys_dim: d,
             tensors,
+            center: (num_sites > 0).then_some(0),
             bond_dims,
             config,
             truncation_error: 0.0,
@@ -278,6 +288,7 @@ impl Mps {
             return;
         }
         self.tensors[0] *= scalar;
+        self.center = None;
     }
 
     /// Apply a single-site gate (d x d unitary matrix) to site `q`.
@@ -309,6 +320,22 @@ impl Mps {
             });
         }
 
+        // The public operation historically accepts any square matrix even
+        // though its documented gate contract is unitary. Keep that behavior,
+        // but retain a canonical claim only when the supplied matrix actually
+        // preserves the physical-index inner product.
+        let preserves_isometries = self.center.is_some()
+            && (0..d).all(|row| {
+                (0..d).all(|column| {
+                    let inner = (0..d)
+                        .map(|index| gate[(index, row)].conj() * gate[(index, column)])
+                        .sum::<Complex64>();
+                    let expected = if row == column { 1.0 } else { 0.0 };
+                    (inner - Complex64::new(expected, 0.0)).norm()
+                        <= ISOMETRY_PRESERVING_UNITARY_TOLERANCE
+                })
+            });
+
         let chi_r = self.bond_dims[q + 1];
 
         // Collect old blocks
@@ -326,6 +353,9 @@ impl Mps {
                 }
             }
             set_phys_block(&mut self.tensors[q], sigma_out, chi_r, &new_block);
+        }
+        if !preserves_isometries {
+            self.center = None;
         }
         Ok(())
     }
@@ -358,6 +388,10 @@ impl Mps {
             });
         }
 
+        let preserves_isometries = self.center.is_some()
+            && coeffs.iter().all(|coefficient| {
+                (coefficient.norm() - 1.0).abs() <= ISOMETRY_PRESERVING_UNITARY_TOLERANCE
+            });
         let chi_r = self.bond_dims[q + 1];
         for (sigma, &c) in coeffs.iter().enumerate() {
             let start_col = sigma * chi_r;
@@ -366,6 +400,9 @@ impl Mps {
                     self.tensors[q][(i, start_col + j)] *= c;
                 }
             }
+        }
+        if !preserves_isometries {
+            self.center = None;
         }
         Ok(())
     }
@@ -418,6 +455,14 @@ impl Mps {
         if q + 1 >= self.num_sites {
             return Err(MpsError::NonAdjacentSites { q0: q, q1: q + 1 });
         }
+
+        // Replacing the two-site center by an SVD preserves the outer
+        // canonical environments exactly when the old center lies inside the
+        // updated pair. A two-site MPS has no outer environments to preserve.
+        let can_track_absorption = self.num_sites == 2
+            || self
+                .center
+                .is_some_and(|center| center == q || center == q + 1);
 
         let chi_l = self.bond_dims[q];
         let chi_mid = self.bond_dims[q + 1];
@@ -492,6 +537,7 @@ impl Mps {
 
         // Update bond dimension
         self.bond_dims[q + 1] = new_chi;
+        self.center = can_track_absorption.then_some(if absorb_right { q + 1 } else { q });
 
         Ok(())
     }
@@ -750,6 +796,7 @@ impl Mps {
         if norm_sq > 0.0 {
             let inv_norm = Complex64::new(1.0 / norm_sq.sqrt(), 0.0);
             self.tensors[0] *= inv_norm;
+            self.center = None;
         }
     }
 
@@ -875,6 +922,7 @@ impl Mps {
             num_sites: n,
             phys_dim: d,
             tensors: new_tensors,
+            center: None,
             bond_dims: new_bond_dims,
             config: self.config.clone(),
             truncation_error: self.truncation_error.max(other.truncation_error),
@@ -890,7 +938,34 @@ impl Mps {
 
     /// Mutable access to the internal tensors.
     pub fn tensors_mut(&mut self) -> &mut [DMatrix<Complex64>] {
+        self.center = None;
         &mut self.tensors
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tracked_center_for_test(&self) -> Option<usize> {
+        self.center
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_tracked_center_for_test(&mut self, center: Option<usize>) {
+        self.center = center;
+    }
+
+    /// Replace one physical block of a site tensor.
+    ///
+    /// This is the owner-mediated path for projection code that must mutate a
+    /// tensor without canonicalizing first. An arbitrary block replacement
+    /// invalidates any mixed-canonical claim.
+    pub(crate) fn set_physical_block(
+        &mut self,
+        site: usize,
+        physical_index: usize,
+        block: &DMatrix<Complex64>,
+    ) {
+        self.center = None;
+        let chi_r = self.bond_dims[site + 1];
+        set_phys_block(&mut self.tensors[site], physical_index, chi_r, block);
     }
 
     /// Access the bond dimensions (for testing).
@@ -902,11 +977,13 @@ impl Mps {
     /// Left-canonicalize the entire MPS.
     pub fn left_canonicalize(&mut self) {
         canon::left_canonicalize_all(&mut self.tensors, &mut self.bond_dims, self.phys_dim);
+        self.center = self.num_sites.checked_sub(1);
     }
 
     /// Right-canonicalize the entire MPS.
     pub fn right_canonicalize(&mut self) {
         canon::right_canonicalize_all(&mut self.tensors, &mut self.bond_dims, self.phys_dim);
+        self.center = (self.num_sites > 0).then_some(0);
     }
 
     /// Put the environments bordering `(q, q + 1)` in canonical form.
@@ -918,22 +995,93 @@ impl Mps {
     /// even when the input MPS had an arbitrary or rank-redundant gauge.
     pub(crate) fn canonicalize_around_bond(&mut self, q: usize) {
         assert!(q + 1 < self.num_sites, "bond must join two valid sites");
-        for site in 0..=q {
-            canon::left_canonicalize_site(
-                &mut self.tensors,
-                &mut self.bond_dims,
-                site,
-                self.phys_dim,
+        let target = q + 1;
+        if let Some(center) = self.center {
+            #[cfg(debug_assertions)]
+            debug_assert!(
+                self.claimed_center_is_valid(center),
+                "tracked MPS orthogonality center {center} is stale"
             );
+
+            if center < target {
+                for site in center..target {
+                    canon::left_canonicalize_site(
+                        &mut self.tensors,
+                        &mut self.bond_dims,
+                        site,
+                        self.phys_dim,
+                    );
+                    self.center = Some(site + 1);
+                }
+            } else {
+                for site in (target + 1..=center).rev() {
+                    canon::right_canonicalize_site(
+                        &mut self.tensors,
+                        &mut self.bond_dims,
+                        site,
+                        self.phys_dim,
+                    );
+                    self.center = Some(site - 1);
+                }
+            }
+        } else {
+            for site in 0..=q {
+                canon::left_canonicalize_site(
+                    &mut self.tensors,
+                    &mut self.bond_dims,
+                    site,
+                    self.phys_dim,
+                );
+            }
+            for site in (q + 2..self.num_sites).rev() {
+                canon::right_canonicalize_site(
+                    &mut self.tensors,
+                    &mut self.bond_dims,
+                    site,
+                    self.phys_dim,
+                );
+            }
+            self.center = Some(target);
         }
-        for site in (q + 2..self.num_sites).rev() {
-            canon::right_canonicalize_site(
-                &mut self.tensors,
-                &mut self.bond_dims,
-                site,
-                self.phys_dim,
-            );
+    }
+
+    /// Validate a tracked center to an absolute max-entry Gram tolerance of
+    /// `1e-9`. This is compiled only when debug assertions are enabled and is
+    /// called only before a canonicalization sweep trusts the claim to skip
+    /// work.
+    #[cfg(debug_assertions)]
+    fn claimed_center_is_valid(&self, center: usize) -> bool {
+        const TOLERANCE: f64 = 1e-9;
+
+        if center >= self.num_sites {
+            return false;
         }
+        for site in 0..self.num_sites {
+            if site == center {
+                continue;
+            }
+            let gram = if site < center {
+                let grouped = tensor::reshape_left_group(
+                    &self.tensors[site],
+                    self.bond_dims[site],
+                    self.phys_dim,
+                    self.bond_dims[site + 1],
+                );
+                grouped.adjoint() * grouped
+            } else {
+                &self.tensors[site] * self.tensors[site].adjoint()
+            };
+            for row in 0..gram.nrows() {
+                for column in 0..gram.ncols() {
+                    let expected = if row == column { 1.0 } else { 0.0 };
+                    let error = (gram[(row, column)] - Complex64::new(expected, 0.0)).norm();
+                    if !error.is_finite() || error > TOLERANCE {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 
     /// Compress the MPS by SVD truncation at each bond.
@@ -951,6 +1099,7 @@ impl Mps {
     /// callers must not treat a partial sweep as successful compression.
     pub fn compress(&mut self) -> Result<(), MpsError> {
         if self.num_sites <= 1 {
+            self.center = (self.num_sites == 1).then_some(0);
             return Ok(());
         }
 
@@ -997,6 +1146,7 @@ impl Mps {
                 }
             }
             self.tensors[q - 1] = new_prev;
+            self.center = Some(q - 1);
         }
 
         // Preserve the established post-compression left-canonical contract
@@ -1014,6 +1164,7 @@ impl Clone for Mps {
             num_sites: self.num_sites,
             phys_dim: self.phys_dim,
             tensors: self.tensors.clone(),
+            center: self.center,
             bond_dims: self.bond_dims.clone(),
             config: self.config.clone(),
             truncation_error: self.truncation_error,
@@ -1036,6 +1187,30 @@ mod tests {
         let first_norm = first.iter().map(Complex64::norm_sqr).sum::<f64>();
         let second_norm = second.iter().map(Complex64::norm_sqr).sum::<f64>();
         overlap.norm_sqr() / (first_norm * second_norm)
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn apply_adjacent_dense_gate(
+        state: &[Complex64],
+        num_sites: usize,
+        q: usize,
+        gate: &DMatrix<Complex64>,
+    ) -> Vec<Complex64> {
+        let left_shift = num_sites - 1 - q;
+        let right_shift = left_shift - 1;
+        let mut result = vec![Complex64::new(0.0, 0.0); state.len()];
+        for (input_index, &amplitude) in state.iter().enumerate() {
+            let input_left = input_index >> left_shift & 1;
+            let input_right = input_index >> right_shift & 1;
+            let input = 2 * input_left + input_right;
+            let cleared = input_index & !(1 << left_shift) & !(1 << right_shift);
+            for output in 0..4 {
+                let output_index =
+                    cleared | (output >> 1 & 1) << left_shift | (output & 1) << right_shift;
+                result[output_index] += gate[(output, input)] * amplitude;
+            }
+        }
+        result
     }
 
     fn seeded_random_mps(num_sites: usize, bond: usize, seed: u64, config: MpsConfig) -> Mps {
@@ -1097,6 +1272,7 @@ mod tests {
                 mps.tensors[q - 1] = new_prev;
             }
         }
+        mps.center = None;
     }
 
     fn apply_diagonal_bond_gauge(mps: &mut Mps, bond: usize, scales: &[f64]) {
@@ -1125,6 +1301,7 @@ mod tests {
         }
         mps.tensors[left_site] = gauged_left;
         mps.tensors[bond] = gauge_inverse * &mps.tensors[bond];
+        mps.center = None;
     }
 
     fn legacy_off_center_long_range_gate(
@@ -1168,9 +1345,208 @@ mod tests {
     }
 
     #[test]
+    fn test_center_tracks_canonical_moves_and_unitary_updates() {
+        let mut mps = Mps::new(5, MpsConfig::default());
+        assert_eq!(mps.center, Some(0));
+
+        let h = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(-std::f64::consts::FRAC_1_SQRT_2, 0.0),
+            ],
+        );
+        mps.apply_one_site_gate(3, &h).unwrap();
+        assert_eq!(mps.center, Some(0));
+
+        mps.canonicalize_around_bond(3);
+        assert_eq!(mps.center, Some(4));
+        #[cfg(debug_assertions)]
+        assert!(mps.claimed_center_is_valid(4));
+        mps.canonicalize_around_bond(1);
+        assert_eq!(mps.center, Some(2));
+        #[cfg(debug_assertions)]
+        assert!(mps.claimed_center_is_valid(2));
+        assert_eq!(mps.clone().center, Some(2));
+    }
+
+    #[test]
+    fn test_one_site_gate_invalidates_when_unitarity_error_exceeds_preservation_budget() {
+        let mut mps = Mps::new(4, MpsConfig::default());
+        mps.left_canonicalize();
+        let almost_unitary = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0 + 1e-10, 0.0),
+            Complex64::new(1.0, 0.0),
+        ]));
+
+        mps.apply_one_site_gate(1, &almost_unitary).unwrap();
+
+        assert_eq!(mps.tracked_center_for_test(), None);
+    }
+
+    #[test]
+    fn test_unit_modulus_diagonal_preserves_center() {
+        let mut mps = Mps::new(4, MpsConfig::default());
+        mps.left_canonicalize();
+        let center = mps.tracked_center_for_test();
+        let phases = [
+            Complex64::new(0.0, 1.0),
+            Complex64::new(
+                std::f64::consts::FRAC_1_SQRT_2,
+                -std::f64::consts::FRAC_1_SQRT_2,
+            ),
+        ];
+
+        mps.apply_diagonal_one_site(1, &phases).unwrap();
+
+        assert_eq!(mps.tracked_center_for_test(), center);
+        #[cfg(debug_assertions)]
+        assert!(mps.claimed_center_is_valid(center.unwrap()));
+    }
+
+    #[test]
+    fn test_non_unit_modulus_diagonal_invalidates_center() {
+        let mut mps = Mps::new(4, MpsConfig::default());
+        mps.left_canonicalize();
+
+        mps.apply_diagonal_one_site(1, &[Complex64::new(1.0, 0.0), Complex64::new(0.5, 0.0)])
+            .unwrap();
+
+        assert_eq!(mps.tracked_center_for_test(), None);
+    }
+
+    #[test]
+    fn test_scale_invalidates_center() {
+        let mut mps = Mps::new(4, MpsConfig::default());
+        mps.left_canonicalize();
+
+        mps.scale(Complex64::new(2.0, 0.0));
+
+        assert_eq!(mps.tracked_center_for_test(), None);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_claimed_center_validator_rejects_broken_left_isometry() {
+        let mut mps = Mps::new(4, MpsConfig::default());
+        mps.left_canonicalize();
+        let center = mps.tracked_center_for_test().unwrap();
+        mps.tensors[0] *= Complex64::new(2.0, 0.0);
+
+        assert!(!mps.claimed_center_is_valid(center));
+    }
+
+    #[test]
+    fn test_add_invalidation_guards_canonical_routing() {
+        let config = MpsConfig {
+            max_bond_dim: 64,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let mut first = seeded_random_mps(5, 4, 0xadd0_0001, config.clone());
+        let mut second = seeded_random_mps(5, 4, 0xadd0_0002, config);
+        first.left_canonicalize();
+        second.left_canonicalize();
+
+        let sum = first.add(&second);
+
+        assert_eq!(sum.tracked_center_for_test(), None);
+    }
+
+    #[test]
+    fn test_mutable_tensor_access_invalidation_guards_canonical_routing() {
+        let config = MpsConfig {
+            max_bond_dim: 64,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let mut mps = seeded_random_mps(5, 4, 0xd1ec_7001, config);
+        mps.left_canonicalize();
+        assert_eq!(mps.center, Some(4));
+
+        mps.tensors_mut()[0] *= Complex64::new(2.0, 0.0);
+
+        assert_eq!(mps.tracked_center_for_test(), None);
+    }
+
+    #[test]
+    fn test_stale_center_guard_prevents_gauge_dependent_truncation() {
+        let config = MpsConfig {
+            max_bond_dim: 2,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let mut poisoned = seeded_random_mps(6, 8, 0x57a1_e000_0000_0001, config);
+        poisoned.canonicalize_around_bond(2);
+        let exact_before = poisoned.state_vector();
+        apply_diagonal_bond_gauge(&mut poisoned, 2, &[1e-3, 1e-1, 10.0, 1e3]);
+        assert!(normalized_fidelity(&exact_before, &poisoned.state_vector()) > 1.0 - 1e-12);
+        poisoned.set_tracked_center_for_test(Some(3));
+
+        #[cfg(debug_assertions)]
+        {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                poisoned.canonicalize_around_bond(2);
+            }));
+            assert!(result.is_err(), "the consult must reject the stale claim");
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            let zero = Complex64::new(0.0, 0.0);
+            let one = Complex64::new(1.0, 0.0);
+            let cnot = DMatrix::from_row_slice(
+                4,
+                4,
+                &[
+                    one, zero, zero, zero, zero, one, zero, zero, zero, zero, zero, one, zero,
+                    zero, one, zero,
+                ],
+            );
+            let dense_oracle = apply_adjacent_dense_gate(&exact_before, 6, 2, &cnot);
+
+            let mut stale = poisoned.clone();
+            stale.canonicalize_around_bond(2);
+            stale.apply_two_site_gate(2, &cnot).unwrap();
+            assert_eq!(stale.bond_dim(3), 2, "the stale path must truncate");
+
+            let mut correctly_invalidated = poisoned;
+            correctly_invalidated.set_tracked_center_for_test(None);
+            correctly_invalidated.canonicalize_around_bond(2);
+            correctly_invalidated.apply_two_site_gate(2, &cnot).unwrap();
+            assert_eq!(
+                correctly_invalidated.bond_dim(3),
+                2,
+                "the guarded path must truncate"
+            );
+
+            let stale_fidelity = normalized_fidelity(&dense_oracle, &stale.state_vector());
+            let correct_fidelity =
+                normalized_fidelity(&dense_oracle, &correctly_invalidated.state_vector());
+            eprintln!(
+                "release stale-center blast radius: guarded fidelity={correct_fidelity:.16}, stale fidelity={stale_fidelity:.16}"
+            );
+            assert!(
+                1.0 - stale_fidelity > 1e-6,
+                "stale truncation unexpectedly matched the dense oracle: {stale_fidelity:.16}"
+            );
+            assert!(
+                correct_fidelity > stale_fidelity + 1e-4,
+                "guarded={correct_fidelity:.16}, stale={stale_fidelity:.16}"
+            );
+        }
+    }
+
+    #[test]
     fn test_compress_surfaces_svd_failure() {
         let mut mps = Mps::new(2, MpsConfig::default());
-        mps.tensors[1][(0, 0)] = Complex64::new(f64::NAN, 0.0);
+        mps.tensors_mut()[1][(0, 0)] = Complex64::new(f64::NAN, 0.0);
 
         assert!(matches!(mps.compress(), Err(MpsError::SvdFailed)));
     }

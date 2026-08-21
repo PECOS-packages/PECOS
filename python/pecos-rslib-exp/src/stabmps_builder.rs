@@ -40,7 +40,7 @@ pub struct StabMpsBuilder {
 impl Default for StabMpsBuilder {
     fn default() -> Self {
         Self {
-            measurement: MeasurementMode::Exact,
+            measurement: MeasurementMode::default(),
             max_bond_dim: 128,
             max_truncation_error: Some(1e-8),
             merge_rz: true,

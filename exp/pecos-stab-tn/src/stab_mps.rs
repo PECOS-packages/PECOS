@@ -861,7 +861,7 @@ impl StabMps {
             parallel: false,
             auto_grow_bond_dim: None,
             auto_grow_max_bond_dim: 4096,
-            measurement_mode: MeasurementMode::Exact,
+            measurement_mode: MeasurementMode::default(),
             flags: StabMpsFlags::new(),
         }
     }

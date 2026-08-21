@@ -4120,6 +4120,12 @@ fn test_large_scale_50_qubits() {
         mast_bond <= configured_cap,
         "MAST exceeded its configured bond cap: {mast_bond} > {configured_cap}"
     );
+    // A cap-only bound is near-vacuous because compression enforces the cap
+    // by construction; this seeded workload deterministically ends at bond 2.
+    assert_eq!(
+        mast_bond, 2,
+        "seeded 50-qubit MAST workload no longer compresses to its known bond"
+    );
 }
 
 #[test]

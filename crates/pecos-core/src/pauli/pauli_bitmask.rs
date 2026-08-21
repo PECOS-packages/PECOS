@@ -36,6 +36,101 @@ fn basis_state_phase_terms_u64(x: u64, z: u64, r: u64) -> u64 {
         + 2 * u64::from((!x & z & r).count_ones()) // Z|1> = -|1>   (+2)
 }
 
+/// Symplectic inner-product population count across zero-padded `u64` words.
+fn and_count_ones_xor_words(
+    self_x: &[u64],
+    other_z: &[u64],
+    self_z: &[u64],
+    other_x: &[u64],
+) -> u32 {
+    let max = self_x
+        .len()
+        .max(other_z.len())
+        .max(self_z.len())
+        .max(other_x.len());
+    let mut count = 0u32;
+    for i in 0..max {
+        let sx = self_x.get(i).copied().unwrap_or(0);
+        let oz = other_z.get(i).copied().unwrap_or(0);
+        let sz = self_z.get(i).copied().unwrap_or(0);
+        let ox = other_x.get(i).copied().unwrap_or(0);
+        count += ((sx & oz) ^ (sz & ox)).count_ones();
+    }
+    count
+}
+
+/// Quarter-phase exponent of a Pauli product across `u64` words.
+fn mul_phase_exponent_words(lx: &[u64], lz: &[u64], rx: &[u64], rz: &[u64]) -> u8 {
+    // A word only contributes where BOTH operands have stored bits, so
+    // bound the walk by the shorter operand's plane length.
+    let lhs_len = lx.len().max(lz.len());
+    let rhs_len = rx.len().max(rz.len());
+    let common_len = lhs_len.min(rhs_len);
+    let mut total = 0u64;
+    for i in 0..common_len {
+        let lx = lx.get(i).copied().unwrap_or(0);
+        let lz = lz.get(i).copied().unwrap_or(0);
+        let rx = rx.get(i).copied().unwrap_or(0);
+        let rz = rz.get(i).copied().unwrap_or(0);
+        // Every term needs a set bit from each operand, so a word where
+        // either side is all identity contributes nothing. Sparse Paulis
+        // on a wide register are mostly such words.
+        if (lx | lz) == 0 || (rx | rz) == 0 {
+            continue;
+        }
+        // Reduce mod 4 each word so the accumulator stays small
+        // regardless of input length.
+        total = (total + phase_terms_u64(lx, lz, rx, rz)) % 4;
+    }
+    (total % 4) as u8
+}
+
+/// Quarter-phase exponent of a Pauli acting on a basis state across `u64` words.
+fn basis_state_phase_exponent_words(x: &[u64], z: &[u64], state: &[u64]) -> u8 {
+    // Every term needs a Z bit, and each needs either an X bit or a set
+    // state bit, so words past those lengths cannot contribute. Padding
+    // within the bound is meaningful: an absent state word means those
+    // qubits are in state zero, and an absent X word means Z rather than Y.
+    let contributing_len = z.len().min(x.len().max(state.len()));
+    let mut total = 0u64;
+    for i in 0..contributing_len {
+        let x = x.get(i).copied().unwrap_or(0);
+        let z = z.get(i).copied().unwrap_or(0);
+        let r = state.get(i).copied().unwrap_or(0);
+        // Reduce mod 4 each word so the accumulator stays small
+        // regardless of input length.
+        total = (total + basis_state_phase_terms_u64(x, z, r)) % 4;
+    }
+    (total % 4) as u8
+}
+
+/// Whether every `u64` word is zero.
+fn is_zero_words(words: &[u64]) -> bool {
+    words.iter().all(|&w| w == 0)
+}
+
+/// Population count of the bitwise OR across zero-padded `u64` words.
+fn or_count_ones_words(a: &[u64], b: &[u64]) -> u32 {
+    let max = a.len().max(b.len());
+    let mut count = 0u32;
+    for i in 0..max {
+        let a = a.get(i).copied().unwrap_or(0);
+        let b = b.get(i).copied().unwrap_or(0);
+        count += (a | b).count_ones();
+    }
+    count
+}
+
+/// Index of the highest set bit across `u64` words.
+fn highest_set_bit_words(words: &[u64]) -> Option<usize> {
+    for (i, &w) in words.iter().enumerate().rev() {
+        if w != 0 {
+            return Some(i * 64 + 63 - w.leading_zeros() as usize);
+        }
+    }
+    None
+}
+
 /// Trait for bitmask storage backends.
 ///
 /// Enables `PauliBitmaskGeneric<B>` to work with different widths:
@@ -162,82 +257,22 @@ impl BitmaskStorage for Vec<u64> {
         self[word] ^= 1u64 << (bit % 64);
     }
     fn and_count_ones_xor(&self, other_z: &Self, self_z: &Self, other_x: &Self) -> u32 {
-        let max = self
-            .len()
-            .max(other_z.len())
-            .max(self_z.len())
-            .max(other_x.len());
-        let mut count = 0u32;
-        for i in 0..max {
-            let sx = self.get(i).copied().unwrap_or(0);
-            let oz = other_z.get(i).copied().unwrap_or(0);
-            let sz = self_z.get(i).copied().unwrap_or(0);
-            let ox = other_x.get(i).copied().unwrap_or(0);
-            count += ((sx & oz) ^ (sz & ox)).count_ones();
-        }
-        count
+        and_count_ones_xor_words(self, other_z, self_z, other_x)
     }
     fn mul_phase_exponent(&self, self_z: &Self, other_x: &Self, other_z: &Self) -> u8 {
-        // A word only contributes where BOTH operands have stored bits, so
-        // bound the walk by the shorter operand's plane length.
-        let lhs_len = self.len().max(self_z.len());
-        let rhs_len = other_x.len().max(other_z.len());
-        let common_len = lhs_len.min(rhs_len);
-        let mut total = 0u64;
-        for i in 0..common_len {
-            let lx = self.get(i).copied().unwrap_or(0);
-            let lz = self_z.get(i).copied().unwrap_or(0);
-            let rx = other_x.get(i).copied().unwrap_or(0);
-            let rz = other_z.get(i).copied().unwrap_or(0);
-            // Every term needs a set bit from each operand, so a word where
-            // either side is all identity contributes nothing. Sparse Paulis
-            // on a wide register are mostly such words.
-            if (lx | lz) == 0 || (rx | rz) == 0 {
-                continue;
-            }
-            // Reduce mod 4 each word so the accumulator stays small
-            // regardless of input length.
-            total = (total + phase_terms_u64(lx, lz, rx, rz)) % 4;
-        }
-        (total % 4) as u8
+        mul_phase_exponent_words(self, self_z, other_x, other_z)
     }
     fn basis_state_phase_exponent(&self, self_z: &Self, state: &Self) -> u8 {
-        // Every term needs a Z bit, and each needs either an X bit or a set
-        // state bit, so words past those lengths cannot contribute. Padding
-        // within the bound is meaningful: an absent state word means those
-        // qubits are in state zero, and an absent X word means Z rather than Y.
-        let contributing_len = self_z.len().min(self.len().max(state.len()));
-        let mut total = 0u64;
-        for i in 0..contributing_len {
-            let x = self.get(i).copied().unwrap_or(0);
-            let z = self_z.get(i).copied().unwrap_or(0);
-            let r = state.get(i).copied().unwrap_or(0);
-            // Reduce mod 4 each word so the accumulator stays small
-            // regardless of input length.
-            total = (total + basis_state_phase_terms_u64(x, z, r)) % 4;
-        }
-        (total % 4) as u8
+        basis_state_phase_exponent_words(self, self_z, state)
     }
     fn is_zero(&self) -> bool {
-        self.iter().all(|&w| w == 0)
+        is_zero_words(self)
     }
     fn or_count_ones(&self, other: &Self) -> u32 {
-        let max = self.len().max(other.len());
-        let mut count = 0u32;
-        for i in 0..max {
-            let a = self.get(i).copied().unwrap_or(0);
-            let b = other.get(i).copied().unwrap_or(0);
-            count += (a | b).count_ones();
-        }
-        count
+        or_count_ones_words(self, other)
     }
     fn highest_set_bit(&self) -> Option<usize> {
-        for (i, &w) in self.iter().enumerate().rev() {
-            if w != 0 {
-                return Some(i * 64 + 63 - w.leading_zeros() as usize);
-            }
-        }
-        None
+        highest_set_bit_words(self)
     }
 }
 
@@ -280,82 +315,22 @@ impl BitmaskStorage for SmallVec<[u64; 8]> {
         self[word] ^= 1u64 << (bit % 64);
     }
     fn and_count_ones_xor(&self, other_z: &Self, self_z: &Self, other_x: &Self) -> u32 {
-        let max = self
-            .len()
-            .max(other_z.len())
-            .max(self_z.len())
-            .max(other_x.len());
-        let mut count = 0u32;
-        for i in 0..max {
-            let sx = self.get(i).copied().unwrap_or(0);
-            let oz = other_z.get(i).copied().unwrap_or(0);
-            let sz = self_z.get(i).copied().unwrap_or(0);
-            let ox = other_x.get(i).copied().unwrap_or(0);
-            count += ((sx & oz) ^ (sz & ox)).count_ones();
-        }
-        count
+        and_count_ones_xor_words(self, other_z, self_z, other_x)
     }
     fn mul_phase_exponent(&self, self_z: &Self, other_x: &Self, other_z: &Self) -> u8 {
-        // A word only contributes where BOTH operands have stored bits, so
-        // bound the walk by the shorter operand's plane length.
-        let lhs_len = self.len().max(self_z.len());
-        let rhs_len = other_x.len().max(other_z.len());
-        let common_len = lhs_len.min(rhs_len);
-        let mut total = 0u64;
-        for i in 0..common_len {
-            let lx = self.get(i).copied().unwrap_or(0);
-            let lz = self_z.get(i).copied().unwrap_or(0);
-            let rx = other_x.get(i).copied().unwrap_or(0);
-            let rz = other_z.get(i).copied().unwrap_or(0);
-            // Every term needs a set bit from each operand, so a word where
-            // either side is all identity contributes nothing. Sparse Paulis
-            // on a wide register are mostly such words.
-            if (lx | lz) == 0 || (rx | rz) == 0 {
-                continue;
-            }
-            // Reduce mod 4 each word so the accumulator stays small
-            // regardless of input length.
-            total = (total + phase_terms_u64(lx, lz, rx, rz)) % 4;
-        }
-        (total % 4) as u8
+        mul_phase_exponent_words(self, self_z, other_x, other_z)
     }
     fn basis_state_phase_exponent(&self, self_z: &Self, state: &Self) -> u8 {
-        // Every term needs a Z bit, and each needs either an X bit or a set
-        // state bit, so words past those lengths cannot contribute. Padding
-        // within the bound is meaningful: an absent state word means those
-        // qubits are in state zero, and an absent X word means Z rather than Y.
-        let contributing_len = self_z.len().min(self.len().max(state.len()));
-        let mut total = 0u64;
-        for i in 0..contributing_len {
-            let x = self.get(i).copied().unwrap_or(0);
-            let z = self_z.get(i).copied().unwrap_or(0);
-            let r = state.get(i).copied().unwrap_or(0);
-            // Reduce mod 4 each word so the accumulator stays small
-            // regardless of input length.
-            total = (total + basis_state_phase_terms_u64(x, z, r)) % 4;
-        }
-        (total % 4) as u8
+        basis_state_phase_exponent_words(self, self_z, state)
     }
     fn is_zero(&self) -> bool {
-        self.iter().all(|&w| w == 0)
+        is_zero_words(self)
     }
     fn or_count_ones(&self, other: &Self) -> u32 {
-        let max = self.len().max(other.len());
-        let mut count = 0u32;
-        for i in 0..max {
-            let a = self.get(i).copied().unwrap_or(0);
-            let b = other.get(i).copied().unwrap_or(0);
-            count += (a | b).count_ones();
-        }
-        count
+        or_count_ones_words(self, other)
     }
     fn highest_set_bit(&self) -> Option<usize> {
-        for (i, &w) in self.iter().enumerate().rev() {
-            if w != 0 {
-                return Some(i * 64 + 63 - w.leading_zeros() as usize);
-            }
-        }
-        None
+        highest_set_bit_words(self)
     }
 }
 

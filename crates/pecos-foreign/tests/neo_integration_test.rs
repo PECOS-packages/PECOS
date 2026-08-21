@@ -27,7 +27,7 @@ unsafe extern "C" fn toy_h(handle: *mut (), qubits: *const usize, num_qubits: us
 unsafe extern "C" fn toy_cx(handle: *mut (), pairs: *const usize, num_pairs: usize) {
     let state = unsafe { &mut *handle.cast::<ToySimState>() };
     let flat = unsafe { std::slice::from_raw_parts(pairs, num_pairs * 2) };
-    for chunk in flat.chunks_exact(2) {
+    for chunk in flat.as_chunks::<2>().0 {
         let (control, target) = (chunk[0], chunk[1]);
         if state.bits[control] {
             state.bits[target] = !state.bits[target];

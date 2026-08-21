@@ -157,9 +157,9 @@ impl BitmaskStorage for Vec<u64> {
         // bound the walk by the shorter operand's plane length.
         let lhs_len = self.len().max(self_z.len());
         let rhs_len = other_x.len().max(other_z.len());
-        let max_len = lhs_len.min(rhs_len);
+        let common_len = lhs_len.min(rhs_len);
         let mut total = 0u64;
-        for i in 0..max_len {
+        for i in 0..common_len {
             let lx = self.get(i).copied().unwrap_or(0);
             let lz = self_z.get(i).copied().unwrap_or(0);
             let rx = other_x.get(i).copied().unwrap_or(0);
@@ -258,9 +258,9 @@ impl BitmaskStorage for SmallVec<[u64; 8]> {
         // bound the walk by the shorter operand's plane length.
         let lhs_len = self.len().max(self_z.len());
         let rhs_len = other_x.len().max(other_z.len());
-        let max_len = lhs_len.min(rhs_len);
+        let common_len = lhs_len.min(rhs_len);
         let mut total = 0u64;
-        for i in 0..max_len {
+        for i in 0..common_len {
             let lx = self.get(i).copied().unwrap_or(0);
             let lz = self_z.get(i).copied().unwrap_or(0);
             let rx = other_x.get(i).copied().unwrap_or(0);
@@ -1240,9 +1240,15 @@ mod tests {
         let z_heavy = pauli_from_sites::<B>(&[(3, 1), (530, 2), (600, 2)]);
         // Four pairwise-distinct stored plane lengths (2, 5, 8, 11 words),
         // with anticommuting overlap at qubits 70 and 300 and support past
-        // word 9 on one side only.
+        // word 9 on one side only. The two overlaps contribute 3 each, so the
+        // expected phase is 2 rather than 0: a phase-zeroing defect fails here.
         let distinct_a = pauli_from_sites::<B>(&[(70, 1), (300, 2)]);
-        let distinct_b = pauli_from_sites::<B>(&[(70, 2), (300, 1), (450, 1), (640, 2)]);
+        let distinct_b = pauli_from_sites::<B>(&[(70, 2), (300, 3), (450, 1), (640, 2)]);
+        // The only phase-contributing overlap sits in word 10, so a word walk
+        // that stops early still has to reach it. Every other fixture here
+        // contributes solely from words 0 through 9.
+        let high_word_a = pauli_from_sites::<B>(&[(700, 1)]);
+        let high_word_b = pauli_from_sites::<B>(&[(700, 2)]);
         for (a, b) in [
             (&short, &long),
             (&long, &short),
@@ -1250,6 +1256,8 @@ mod tests {
             (&z_heavy, &x_heavy),
             (&distinct_a, &distinct_b),
             (&distinct_b, &distinct_a),
+            (&high_word_a, &high_word_b),
+            (&high_word_b, &high_word_a),
         ] {
             let expected_product = a.multiply(b);
             let expected_phase = reference_phase_exponent(a, b);

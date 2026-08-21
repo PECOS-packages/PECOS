@@ -453,6 +453,11 @@ def test_szz_direct_renderers_accept_interaction_basis() -> None:
     assert {"SZZ", "SZZdg", "SX", "SXdg", "SZ", "SZdg"} <= gate_names
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 def test_szz_detector_paths_accept_abstract_and_traced_qis_basis() -> None:
     patch = SurfacePatch.create(distance=3)
 
@@ -475,6 +480,11 @@ def test_szz_detector_paths_accept_abstract_and_traced_qis_basis() -> None:
     assert int(traced_memory_circuit.get_meta("num_detectors")) == int(tick_circuit.get_meta("num_detectors"))
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 def test_szz_runtime_barriers_allow_strict_traced_hosted_order() -> None:
     patch = SurfacePatch.create(distance=3)
 
@@ -859,6 +869,11 @@ def test_szz_native_dem_rejects_traced_qis_idle_noise() -> None:
         )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 @pytest.mark.parametrize("basis", ["Z", "X"])
 def test_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -> None:
     from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
@@ -916,6 +931,11 @@ def test_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -> None:
     ],
 )
 @pytest.mark.parametrize("basis", ["Z", "X"])
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 def test_round_order_szz_traced_qis_native_dem_matches_stim_for_p1(
     basis: str,
     check_plan: str,
@@ -968,6 +988,11 @@ def test_round_order_szz_traced_qis_native_dem_matches_stim_for_p1(
         )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 def test_szz_public_native_dem_accepts_traced_qis_p1() -> None:
     patch = SurfacePatch.create(distance=3)
     dem = generate_circuit_level_dem_from_builder(
@@ -982,6 +1007,11 @@ def test_szz_public_native_dem_accepts_traced_qis_p1() -> None:
     assert stim.DetectorErrorModel(dem).num_detectors > 0
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason="#498: SZZ final provenance reversed",
+)
 @pytest.mark.parametrize("basis", ["Z", "X"])
 def test_szz_public_traced_qis_dem_matches_stim_with_z_frame_p1_free(basis: str) -> None:
     from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model

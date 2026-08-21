@@ -39,6 +39,8 @@ try:
         MeasureOp,
         PrepareOp,
         Program,
+        RegisterDecl,
+        WhileStmt,
     )
 
     HAS_HUGR_TO_AST = True
@@ -61,7 +63,7 @@ class TestBasicConversion:
         def single_h() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(single_h)
 
@@ -97,7 +99,7 @@ class TestBasicConversion:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(bell)
 
@@ -130,7 +132,7 @@ class TestBasicConversion:
             x(q)
             y(q)
             z(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(multi_gate)
 
@@ -155,7 +157,7 @@ class TestBasicConversion:
             q1 = qubit()
             cx(q0, q1)
             cz(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(two_qubit)
 
@@ -176,7 +178,7 @@ class TestProgramMetadata:
         def my_quantum_circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(my_quantum_circuit)
         assert ast.name.endswith("my_quantum_circuit")
@@ -188,7 +190,7 @@ class TestProgramMetadata:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(circuit, allocator_name="qubits")
 
@@ -212,7 +214,7 @@ class TestSlotReferences:
             q = qubit()
             h(q)
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(circuit)
 
@@ -231,7 +233,7 @@ class TestSlotReferences:
             q0 = qubit()
             q1 = qubit()
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(circuit)
 
@@ -257,7 +259,7 @@ class TestMinimalCircuits:
         @guppy
         def minimal() -> bool:
             q = qubit()
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(minimal)
 
@@ -277,7 +279,7 @@ class TestGuppyToAstWrapper:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(circuit)
 
@@ -295,7 +297,7 @@ class TestGuppyToAstWrapper:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         # Using guppy_to_ast
         ast1 = guppy_to_ast(circuit)
@@ -326,7 +328,7 @@ class TestAstValidation:
             h(q0)
             cx(q0, q1)
             t(q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(circuit)
 
@@ -348,7 +350,7 @@ class TestAstCodeGeneration:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0), measure(q1)
+            return measure(q0).read(), measure(q1).read()
 
         ast = guppy_to_ast(circuit)
         qasm = generate(ast, "qasm")
@@ -368,7 +370,7 @@ class TestAstCodeGeneration:
             q = qubit()
             h(q)
             s(q)  # Use S gate (Clifford) instead of T (non-Clifford)
-            return measure(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(circuit)
         stim = generate(ast, "stim")
@@ -389,11 +391,11 @@ class TestConditionalCircuits:
         def conditional() -> bool:
             q = qubit()
             h(q)
-            result = measure(q)
+            result = measure(q).read()
             q2 = qubit()
             if result:
                 x(q2)
-            return measure(q2)
+            return measure(q2).read()
 
         ast = guppy_to_ast(conditional)
 
@@ -409,6 +411,35 @@ class TestConditionalCircuits:
         then_gates = [s for s in if_stmt.then_body if isinstance(s, GateOp)]
         assert len(then_gates) == 1
         assert then_gates[0].gate == GateKind.X
+        assert [target.index for target in then_gates[0].targets] == [1]
+
+        # The function-level return measurement follows the CFG rather than
+        # being silently discarded. Both measurements need a declared result.
+        assert isinstance(ast.body[-1], MeasureOp)
+        assert [target.index for target in ast.body[-1].targets] == [1]
+        assert ast.body.index(if_stmt) < len(ast.body) - 1
+        assert len([decl for decl in ast.declarations if isinstance(decl, RegisterDecl)]) == 2
+
+    def test_conditional_postlude_preserves_two_qubit_targets(self) -> None:
+        """Post-CFG gates and return measurements retain each wire's slot."""
+
+        @guppy
+        def conditional_two_qubit_postlude() -> tuple[bool, bool]:
+            control = measure(qubit()).read()
+            q0 = qubit()
+            q1 = qubit()
+            if control:
+                x(q0)
+            cx(q0, q1)
+            return measure(q0).read(), measure(q1).read()
+
+        ast = guppy_to_ast(conditional_two_qubit_postlude)
+        cx_gates = [stmt for stmt in ast.body if isinstance(stmt, GateOp) and stmt.gate == GateKind.CX]
+        assert len(cx_gates) == 1
+        assert [target.index for target in cx_gates[0].targets] == [1, 2]
+
+        return_measurements = [stmt for stmt in ast.body if isinstance(stmt, MeasureOp)][-2:]
+        assert [[target.index for target in stmt.targets] for stmt in return_measurements] == [[1], [2]]
 
 
 class TestLoopCircuits:
@@ -416,7 +447,6 @@ class TestLoopCircuits:
 
     def test_simple_loop(self) -> None:
         """Test conversion of a simple loop circuit."""
-        from pecos.slr.ast.nodes import WhileStmt
 
         @guppy
         def simple_loop() -> bool:
@@ -426,7 +456,8 @@ class TestLoopCircuits:
             while count < 3:
                 x(q)
                 count = count + 1
-            return measure(q)
+            z(q)
+            return measure(q).read()
 
         ast = guppy_to_ast(simple_loop)
 
@@ -448,13 +479,37 @@ class TestLoopCircuits:
         # X gate should target qubit 0
         assert body_gates[0].targets[0].index == 0
 
+        # Operations after the loop remain after the structured WhileStmt,
+        # followed by the function-level return measurement.
+        assert isinstance(ast.body[-2], GateOp)
+        assert ast.body[-2].gate == GateKind.Z
+        assert isinstance(ast.body[-1], MeasureOp)
 
-class TestNestedConditionalCircuits:
-    """Tests for nested conditional circuit conversion."""
 
-    def test_nested_conditional_circuit(self) -> None:
-        """Test conversion of a nested conditional circuit."""
-        from pecos.slr.ast.nodes import WhileStmt
+class TestUnsupportedConditionalCircuits:
+    """Tests for CFG forms deliberately rejected until recursive lowering exists."""
+
+    def test_sequential_conditional_circuit_is_rejected(self) -> None:
+        """Sequential conditionals cannot be lowered by the flat converter."""
+
+        @guppy
+        def sequential_conditionals() -> bool:
+            q = qubit()
+            r0 = measure(qubit()).read()
+            if r0:
+                x(q)
+            z(q)
+            r1 = measure(qubit()).read()
+            if r1:
+                y(q)
+            h(q)
+            return measure(q).read()
+
+        with pytest.raises(UnsupportedHugrStructureError, match="sequential or nested conditionals"):
+            guppy_to_ast(sequential_conditionals)
+
+    def test_nested_conditional_circuit_is_rejected(self) -> None:
+        """Nested conditionals cannot be lowered safely by the flat converter."""
 
         @guppy
         def nested_conditional() -> bool:
@@ -462,8 +517,8 @@ class TestNestedConditionalCircuits:
             q1 = qubit()
             h(q0)
             h(q1)
-            r0 = measure(q0)
-            r1 = measure(q1)
+            r0 = measure(q0).read()
+            r1 = measure(q1).read()
 
             q2 = qubit()
             if r0:
@@ -472,31 +527,7 @@ class TestNestedConditionalCircuits:
                 else:
                     z(q2)
 
-            return measure(q2)
+            return measure(q2).read()
 
-        ast = guppy_to_ast(nested_conditional)
-
-        # Should have 3 qubits
-        alloc_decls = [d for d in ast.declarations if isinstance(d, AllocatorDecl)]
-        assert len(alloc_decls) == 1
-        assert alloc_decls[0].capacity == 3
-
-        # Should have an outer IfStmt
-        outer_if_stmts = [s for s in ast.body if isinstance(s, IfStmt)]
-        assert len(outer_if_stmts) == 1
-
-        # The outer then body should contain a nested IfStmt
-        outer_if = outer_if_stmts[0]
-        inner_if_stmts = [s for s in outer_if.then_body if isinstance(s, IfStmt)]
-        assert len(inner_if_stmts) == 1
-
-        # The inner IfStmt should have X in then and Z in else
-        inner_if = inner_if_stmts[0]
-        inner_then_gates = [s for s in inner_if.then_body if isinstance(s, GateOp)]
-        assert len(inner_then_gates) == 1
-        assert inner_then_gates[0].gate == GateKind.X
-
-        assert inner_if.else_body is not None
-        inner_else_gates = [s for s in inner_if.else_body if isinstance(s, GateOp)]
-        assert len(inner_else_gates) == 1
-        assert inner_else_gates[0].gate == GateKind.Z
+        with pytest.raises(UnsupportedHugrStructureError, match="sequential or nested conditionals"):
+            guppy_to_ast(nested_conditional)

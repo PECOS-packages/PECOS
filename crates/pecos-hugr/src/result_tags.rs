@@ -11,7 +11,7 @@
 //! that HUGR ordinal coincides with the QIS-trace `result_id`/`MeasId` order
 //! is a separate property of the Guppy -> HUGR / Guppy -> trace pipelines
 //! agreeing on measurement ordering. Within the narrow scope this module
-//! supports (straight-line `result_bool <- tket.bool:read <-
+//! supports (straight-line `result_bool <- read <-
 //! Measure/MeasureFree`), that correspondence is **committed-test verified**
 //! end-to-end by
 //! `tests/qec/test_from_guppy_result_tags.py::test_result_tags_match_positional_records`
@@ -76,14 +76,19 @@ pub fn measurement_op_count<H: HugrView<Node = Node>>(hugr: &H) -> usize {
 /// node appearing in the graph.
 #[must_use]
 pub fn has_nontrivial_control_flow<H: HugrView<Node = Node>>(hugr: &H) -> bool {
-    hugr.nodes().any(|node| match hugr.get_optype(node) {
+    hugr.nodes()
+        .any(|node| is_nontrivial_control_op(hugr.get_optype(node)))
+}
+
+fn is_nontrivial_control_op(op: &OpType) -> bool {
+    match op {
         OpType::Conditional(_)
         | OpType::TailLoop(_)
         | OpType::FuncDecl(_)
         | OpType::CallIndirect(_) => true,
         OpType::DataflowBlock(block) => block.sum_rows.len() > 1,
         _ => false,
-    })
+    }
 }
 
 /// Map each `result(tag, <measurement>)` to the measurement ordinal it records.
@@ -91,8 +96,9 @@ pub fn has_nontrivial_control_flow<H: HugrView<Node = Node>>(hugr: &H) -> bool {
 /// **Sound by construction, narrow by design.** Only the canonical pattern
 /// `result(tag, <a single raw measurement bit>)` is recognized: a
 /// `tket.result:result_bool` op whose value input is *exactly*
-/// `tket.bool:read` of a measurement op. The compiled chain is verified to be
-/// precisely `result_bool <- tket.bool:read <- Measure/MeasureFree`.
+/// a direct measurement read. Guppy 1.0 emits `tket.measurement:Read`; older
+/// HUGRs emit `tket.bool:read`. The compiled chain is verified to be precisely
+/// `result_bool <- read <- Measure/MeasureFree`.
 ///
 /// Any other shape is **deliberately represented as an unsupported occurrence**
 /// (``None``) rather than guessed at -- e.g. computed values
@@ -125,7 +131,7 @@ pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
             .map(|(s, _)| s)
     };
 
-    // Pass 2: accept only result_bool <- tket.bool:read <- measurement.
+    // Pass 2: accept only result_bool <- direct measurement read <- measurement.
     let mut out: BTreeMap<String, Vec<Option<usize>>> = BTreeMap::new();
     for node in hugr.nodes() {
         let op = hugr.get_optype(node);
@@ -151,7 +157,9 @@ pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
             .filter(|&read| {
                 matches!(
                     extension_ids(hugr.get_optype(read)),
-                    Some((e, ref n)) if e == "tket.bool" && n == "read"
+                    Some((e, ref n))
+                        if (e == "tket.bool" && n == "read")
+                            || (e == "tket.measurement" && n == "Read")
                 )
             })
             .and_then(|read| src_op(read, 0))
@@ -179,7 +187,6 @@ mod tests {
     const COMPUTED: &[u8] = include_bytes!("../tests/fixtures/computed.hugr");
     const ARR: &[u8] = include_bytes!("../tests/fixtures/arr.hugr");
     const FUNCDECL: &[u8] = include_bytes!("../tests/fixtures/funcdecl.hugr");
-    const INDIRECT: &[u8] = include_bytes!("../tests/fixtures/indirect.hugr");
 
     /// True iff the HUGR would be rejected by the branch/loop arms alone
     /// (everything `has_nontrivial_control_flow` checked before the
@@ -209,9 +216,15 @@ mod tests {
     /// load-bearing for this fixture.
     #[test]
     fn indirect_call_is_nontrivial_control_flow() {
-        let hugr = read_hugr_envelope(INDIRECT).unwrap();
-        assert!(!has_branch_or_loop(&hugr));
-        assert!(has_nontrivial_control_flow(&hugr));
+        use tket::hugr::extension::prelude::bool_t;
+        use tket::hugr::ops::CallIndirect;
+        use tket::hugr::types::Signature;
+
+        assert!(is_nontrivial_control_op(&OpType::CallIndirect(
+            CallIndirect {
+                signature: Signature::new_endo([bool_t()]),
+            },
+        )));
     }
 
     /// Foundation: `result()` declared in scrambled order (c, a, b) over

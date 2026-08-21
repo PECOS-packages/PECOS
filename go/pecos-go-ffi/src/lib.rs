@@ -26,8 +26,12 @@ use std::os::raw::c_char;
 /// This function will panic if the version string contains a null byte.
 #[unsafe(no_mangle)]
 pub extern "C" fn pecos_version() -> *const c_char {
-    let version = CString::new("PECOS v0.1.0 (Go bindings)")
-        .expect("Version string should not contain null bytes");
+    let version = CString::new(concat!(
+        "PECOS v",
+        env!("CARGO_PKG_VERSION"),
+        " (Go bindings)"
+    ))
+    .expect("Version string should not contain null bytes");
     version.into_raw()
 }
 

@@ -501,7 +501,7 @@ pub fn right_compose_cz<R: pecos_random::Rng + pecos_random::SeedableRng + std::
 }
 
 /// Multiply row `dst_row` by row `src_row` within the same generator set.
-fn multiply_row_within<S: IndexSet>(
+pub(super) fn multiply_row_within<S: IndexSet>(
     gens: &mut GensGeneric<S>,
     dst_row: usize,
     src_row: usize,

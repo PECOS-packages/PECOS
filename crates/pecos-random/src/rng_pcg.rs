@@ -125,13 +125,12 @@ impl PCGRandom {
     #[inline]
     pub fn fill_bytes(&mut self, dest: &mut [u8]) {
         // Process 8 bytes at a time using u64
-        let mut chunks = dest.chunks_exact_mut(8);
-        for chunk in chunks.by_ref() {
+        let (chunks, remainder) = dest.as_chunks_mut::<8>();
+        for chunk in chunks {
             let val = self.next_u64();
             chunk.copy_from_slice(&val.to_le_bytes());
         }
         // Handle remaining bytes
-        let remainder = chunks.into_remainder();
         if !remainder.is_empty() {
             let val = self.next_u64();
             let bytes = val.to_le_bytes();
@@ -220,12 +219,11 @@ impl PCG64Fast {
     /// Fill a slice with random bytes.
     #[inline]
     pub fn fill_bytes(&mut self, dest: &mut [u8]) {
-        let mut chunks = dest.chunks_exact_mut(8);
-        for chunk in chunks.by_ref() {
+        let (chunks, remainder) = dest.as_chunks_mut::<8>();
+        for chunk in chunks {
             let val = self.next_u64();
             chunk.copy_from_slice(&val.to_le_bytes());
         }
-        let remainder = chunks.into_remainder();
         if !remainder.is_empty() {
             let val = self.next_u64();
             let bytes = val.to_le_bytes();

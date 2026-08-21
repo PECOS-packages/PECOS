@@ -65,8 +65,8 @@ def test_guppy_with_explicit_qis_override() -> None:
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        result("measurement_0", measure(q0))
-        result("measurement_1", measure(q1))
+        result("measurement_0", measure(q0).read())
+        result("measurement_1", measure(q1).read())
 
     # Test 1: Default auto-detection (should use QIS engine for HUGR)
     # Use state vector to avoid stabilizer issues with decomposed gates
@@ -160,7 +160,7 @@ def test_engine_override_with_noise() -> None:
     def simple_h() -> None:
         q = qubit()
         h(q)
-        result("measurement_0", measure(q))
+        result("measurement_0", measure(q).read())
 
     # Test with explicit engine and noise
     # Use state vector to avoid stabilizer issues with decomposed gates

@@ -131,4 +131,4 @@ id = "RUSTSEC-2026-0197"
 # Chains: cgmath -> hugr-core -> hugr -> tket -> pecos-hugr, and
 #         cgmath -> tket (dev-dependency) -> pecos-hugr.
 # Upstream owners: https://github.com/CQCL/hugr and https://github.com/CQCL/tket2.
-reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECOS or in the pinned hugr-core 0.27.1/tket 0.19.0 sources, and no fixed cgmath release exists. Re-check on hugr/tket bumps."
+reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECOS or in the pinned hugr-core 0.29.3/tket 0.21.2 sources, and no fixed cgmath release exists. Re-check on hugr/tket bumps."

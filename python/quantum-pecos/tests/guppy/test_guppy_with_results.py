@@ -84,7 +84,7 @@ class TestGuppyWithResults:
             """Measure a qubit and tag the result."""
             q = qubit()
             h(q)
-            measurement = measure(q)
+            measurement = measure(q).read()
             # Tag the measurement with a name for Selene to capture
             result("measurement_outcome", measurement)
 
@@ -117,7 +117,7 @@ class TestGuppyWithResults:
             """Return measurement - this should appear in results."""
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Test compilation
         try:
@@ -152,7 +152,7 @@ class TestGuppyWithResults:
                 q0, q1 = qubit(), qubit()
                 h(q0)
                 cx(q0, q1)
-                return measure(q0), measure(q1)
+                return measure(q0).read(), measure(q1).read()
 
             test_func = bell_state_with_return
         else:
@@ -175,8 +175,8 @@ class TestGuppyWithResults:
                 cx(q0, q1)
 
                 # Measure and tag results
-                m0 = measure(q0)
-                m1 = measure(q1)
+                m0 = measure(q0).read()
+                m1 = measure(q1).read()
 
                 result("qubit_0", m0)
                 result("qubit_1", m1)
@@ -222,9 +222,9 @@ class TestGuppyWithResults:
             h(q2)
 
             # Measure all
-            m0 = measure(q0)
-            m1 = measure(q1)
-            m2 = measure(q2)
+            m0 = measure(q0).read()
+            m1 = measure(q1).read()
+            m2 = measure(q2).read()
 
             # Output individual results
             result("bit_0", m0)
@@ -269,7 +269,7 @@ class TestGuppyWithResults:
             """Simple function with result outputs."""
             q = qubit()
             h(q)
-            m = measure(q)
+            m = measure(q).read()
             result("test_output", m)
             result("constant_output", 42)
 
@@ -302,7 +302,7 @@ class TestGuppyWithResults:
             """Simple quantum function."""
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         try:
             from pecos.compilation_pipeline import compile_guppy_to_hugr

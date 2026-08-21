@@ -12,6 +12,10 @@
 
 """PECOS StateVec Selene plugin."""
 
+from importlib.metadata import version
+
 from pecos_selene_statevec.plugin import StateVecPlugin
 
-__all__ = ["StateVecPlugin"]
+__version__ = version("pecos-selene-statevec")
+
+__all__ = ["StateVecPlugin", "__version__"]

@@ -209,6 +209,28 @@ fn parse_garbage_input_errors() {
     assert!(result.is_err(), "garbage input should error");
 }
 
+#[test]
+fn parse_nested_control_flow_errors() {
+    for (name, bytes) in [
+        (
+            "conditional",
+            include_bytes!("../../../crates/pecos/tests/test_data/hugr/conditional_x.hugr")
+                as &[u8],
+        ),
+        (
+            "tail loop",
+            include_bytes!("../../../crates/pecos/tests/test_data/hugr/simple_while_loop.hugr")
+                as &[u8],
+        ),
+    ] {
+        let result = parse_hugr_bytes_to_phir(bytes);
+        assert!(
+            result.is_err(),
+            "{name} HUGR must not silently drop nested operations"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Structural tests
 // ---------------------------------------------------------------------------

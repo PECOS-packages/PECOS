@@ -206,7 +206,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.14']
+        python-version: ['3.12', '3.14']
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -362,6 +362,10 @@ jobs:
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
         uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
+        # Bounded like the other CUDA installs so a stalled download fails instead of
+        # hanging the job. More generous than those: `method: local` pulls the full
+        # installer rather than network sub-packages.
+        timeout-minutes: 30
         with:
           cuda: '12.5.1'
           method: 'local'
@@ -415,7 +419,7 @@ jobs:
           output-dir: wheelhouse
         env:
           # Build configuration
-          CIBW_BUILD: "cp310-*"
+          CIBW_BUILD: "cp312-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
@@ -564,7 +568,7 @@ jobs:
           package-dir: python/pecos-rslib-llvm
           output-dir: wheelhouse-llvm
         env:
-          CIBW_BUILD: "cp310-*"
+          CIBW_BUILD: "cp312-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
@@ -676,7 +680,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.12', '3.13', '3.14']
         platform:
           - runner: ubuntu-latest
             os: ubuntu-latest
@@ -790,12 +794,12 @@ jobs:
 
       - name: Install and import wheels on glibc 2.28
         run: |
-          /opt/python/cp310-cp310/bin/python -m pip install --no-index \
+          /opt/python/cp312-cp312/bin/python -m pip install --no-index \
             ./pecos-rslib-wheel/*.whl \
             ./pecos-rslib-llvm-wheel/*.whl
-          /opt/python/cp310-cp310/bin/python -c 'import pecos_rslib; import pecos_rslib_llvm; print({"pecos_rslib": pecos_rslib.__version__})'
-          /opt/python/cp310-cp310/bin/python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print({"llvm_bitcode_bytes": len(bitcode)})'
-          /opt/python/cp310-cp310/bin/python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
+          /opt/python/cp312-cp312/bin/python -c 'import pecos_rslib; import pecos_rslib_llvm; print({"pecos_rslib": pecos_rslib.__version__})'
+          /opt/python/cp312-cp312/bin/python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print({"llvm_bitcode_bytes": len(bitcode)})'
+          /opt/python/cp312-cp312/bin/python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
 
   build_sdist_quantum_pecos:
     needs: build_wheelspecos_rslib
@@ -817,7 +821,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
@@ -877,7 +881,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7

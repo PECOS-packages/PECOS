@@ -37,7 +37,7 @@ use num_complex::Complex64;
 use pyo3::conversion::IntoPyObjectExt;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple, PyType};
+use pyo3::types::{PyDict, PySequence, PyTuple, PyType};
 
 // Import Array and ArrayData from pecos_array module for migration from numpy.ndarray to Array
 use crate::pecos_array::{Array, ArrayData};
@@ -769,6 +769,112 @@ fn random(py: Python<'_>, size: Option<usize>) -> PyResult<Py<PyAny>> {
     }
 }
 
+fn binomial_n_array(n: &Bound<'_, PyAny>) -> PyResult<ArrayD<i64>> {
+    use crate::dtypes::DType;
+
+    let is_array_like = n.hasattr("__array_interface__")? || n.cast::<PySequence>().is_ok();
+    let array = if is_array_like {
+        Array::from_python_value(n, None)?
+    } else {
+        let singleton = PyTuple::new(n.py(), [n])?;
+        let dtype = Py::new(n.py(), DType::I64)?;
+        let converted =
+            Array::from_python_value(singleton.as_any(), Some(dtype.bind(n.py()).as_any()))?;
+        let ArrayData::I64(values) = converted.data else {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "internal error converting n to int64",
+            ));
+        };
+        return values.into_shape_with_order(IxDyn(&[])).map_err(|error| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "internal error reshaping scalar n: {error}"
+            ))
+        });
+    };
+
+    if matches!(
+        array.data,
+        ArrayData::F32(_) | ArrayData::F64(_) | ArrayData::Complex64(_) | ArrayData::Complex128(_)
+    ) {
+        let value = n.repr()?.to_string_lossy().into_owned();
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "n value {value} is not an integer"
+        )));
+    }
+
+    let converted = array.astype(DType::I64)?;
+    let ArrayData::I64(values) = converted.data else {
+        return Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "internal error converting n to int64",
+        ));
+    };
+    Ok(values)
+}
+
+fn binomial_p_array(p: &Bound<'_, PyAny>) -> PyResult<ArrayD<f64>> {
+    if let Ok(value) = p.extract::<f64>() {
+        Ok(NdArray::from_elem(IxDyn(&[]), value))
+    } else {
+        array_buffer::ensure_f64_array(p, "p")
+    }
+}
+
+fn binomial_size(size: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Vec<usize>>> {
+    let Some(size) = size else {
+        return Ok(None);
+    };
+    if let Ok(length) = size.extract::<usize>() {
+        return Ok(Some(vec![length]));
+    }
+    if let Ok(shape) = size.extract::<Vec<usize>>() {
+        return Ok(Some(shape));
+    }
+    let value = size.repr()?.to_string_lossy().into_owned();
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "size value {value} must be an integer or tuple of integers"
+    )))
+}
+
+/// Draw samples from a binomial distribution.
+///
+/// Scalar and array-like `n` and `p` inputs follow NumPy broadcasting rules.
+/// When `size` is omitted, their broadcast shape is used. An explicit `size`
+/// must be compatible with both inputs.
+#[pyfunction]
+#[pyo3(signature = (n, p, size=None))]
+fn binomial(
+    py: Python<'_>,
+    n: &Bound<'_, PyAny>,
+    p: &Bound<'_, PyAny>,
+    size: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Py<Array>> {
+    let n_array = binomial_n_array(n)?;
+    let p_array = binomial_p_array(p)?;
+    let requested_size = binomial_size(size)?;
+
+    let output_shape = if let Some(shape) = requested_size {
+        shape
+    } else {
+        broadcast_shapes(&[n_array.shape(), p_array.shape()])?
+    };
+    let n_broadcast = broadcast_to(n_array.view(), &output_shape).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "size value {output_shape:?} is incompatible with n shape {:?}",
+            n_array.shape()
+        ))
+    })?;
+    let p_broadcast = broadcast_to(p_array.view(), &output_shape).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "size value {output_shape:?} is incompatible with p shape {:?}",
+            p_array.shape()
+        ))
+    })?;
+
+    let samples = crate::prelude::random::binomial(&n_broadcast, &p_broadcast)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    Py::new(py, Array::from_array_i64(samples))
+}
+
 /// Generate random integers from a uniform distribution.
 ///
 /// This is a drop-in replacement for `numpy.random.randint(low, high, size)`.
@@ -1094,17 +1200,55 @@ fn compare_indices(py: Python<'_>, size: usize, threshold: f64) -> PyResult<Py<P
 #[pyfunction]
 #[pyo3(signature = (a, axis=None))]
 fn mean(py: Python<'_>, a: &Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>() {
+        macro_rules! mean_as_f64 {
+            ($array:expr, $convert:expr) => {{
+                if axis.is_none() {
+                    if $array.is_empty() {
+                        return f64::NAN.into_py_any(py);
+                    }
+                    #[allow(clippy::cast_precision_loss)]
+                    let denominator = $array.len() as f64;
+                    let result = $array.iter().copied().map($convert).sum::<f64>() / denominator;
+                    return result.into_py_any(py);
+                }
+                let converted = $array.mapv($convert);
+                return mean_f64_array(py, &converted, axis);
+            }};
+        }
+
+        match &array.data {
+            ArrayData::I8(array) => mean_as_f64!(array, f64::from),
+            ArrayData::I16(array) => mean_as_f64!(array, f64::from),
+            ArrayData::I32(array) => mean_as_f64!(array, f64::from),
+            ArrayData::I64(array) => mean_as_f64!(array, |value| value as f64),
+            ArrayData::U8(array) => mean_as_f64!(array, f64::from),
+            ArrayData::U16(array) => mean_as_f64!(array, f64::from),
+            ArrayData::U32(array) => mean_as_f64!(array, f64::from),
+            ArrayData::U64(array) => mean_as_f64!(array, |value| value as f64),
+            ArrayData::F32(array) => mean_as_f64!(array, f64::from),
+            ArrayData::F64(array) => return mean_f64_array(py, array, axis),
+            ArrayData::Bool(_)
+            | ArrayData::Complex64(_)
+            | ArrayData::Complex128(_)
+            | ArrayData::Pauli(_)
+            | ArrayData::PauliString(_) => {}
+        }
+    }
+
     // Use ensure_f64_array which handles PECOS Arrays, numpy arrays, and Python sequences
     let array = array_buffer::ensure_f64_array(a, "a")?;
+    mean_f64_array(py, &array, axis)
+}
 
+fn mean_f64_array(py: Python<'_>, array: &ArrayD<f64>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
     match axis {
         None => {
-            // No axis specified - compute mean of flattened array
-            let flat: Vec<f64> = array.iter().copied().collect();
-            if flat.is_empty() {
+            if array.is_empty() {
                 return Ok(f64::NAN.into_pyobject(py)?.into_any().unbind());
             }
-            let result = crate::prelude::mean(&flat);
+            #[allow(clippy::cast_precision_loss)]
+            let result = array.iter().sum::<f64>() / array.len() as f64;
             Ok(result.into_pyobject(py)?.into_any().unbind())
         }
         Some(axis_val) => {
@@ -1718,250 +1862,9 @@ fn assert_allclose(
 #[pyfunction]
 #[pyo3(signature = (a, b, equal_nan=false))]
 fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyResult<bool> {
-    use crate::pecos_array::ArrayData;
-    use crate::prelude::array_equal as rust_array_equal;
-
-    // First try PECOS Array objects
-    if let (Ok(a_arr), Ok(b_arr)) = (a.extract::<Py<Array>>(), b.extract::<Py<Array>>()) {
-        let a_ref = a_arr.bind(a.py()).borrow();
-        let b_ref = b_arr.bind(b.py()).borrow();
-
-        match (&a_ref.data, &b_ref.data) {
-            (ArrayData::Bool(a_data), ArrayData::Bool(b_data)) => {
-                // For booleans, just check shape and exact equality
-                if a_data.shape() != b_data.shape() {
-                    return Ok(false);
-                }
-                return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
-            }
-            (ArrayData::I64(a_data), ArrayData::I64(b_data)) => {
-                // For integers, just check shape and exact equality
-                if a_data.shape() != b_data.shape() {
-                    return Ok(false);
-                }
-                return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
-            }
-            (ArrayData::I32(a_data), ArrayData::I32(b_data)) => {
-                // For integers, just check shape and exact equality
-                if a_data.shape() != b_data.shape() {
-                    return Ok(false);
-                }
-                return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
-            }
-            (ArrayData::F64(a_data), ArrayData::F64(b_data)) => {
-                return Ok(rust_array_equal(a_data, b_data, equal_nan));
-            }
-            (ArrayData::Complex128(a_data), ArrayData::Complex128(b_data)) => {
-                return Ok(rust_array_equal(a_data, b_data, equal_nan));
-            }
-            (ArrayData::F64(a_data), ArrayData::Complex128(b_data)) => {
-                // Convert float to complex
-                let a_complex = a_data.mapv(|x| Complex64::new(x, 0.0));
-                return Ok(rust_array_equal(&a_complex.view(), b_data, equal_nan));
-            }
-            (ArrayData::Complex128(a_data), ArrayData::F64(b_data)) => {
-                // Convert float to complex
-                let b_complex = b_data.mapv(|x| Complex64::new(x, 0.0));
-                return Ok(rust_array_equal(a_data, &b_complex.view(), equal_nan));
-            }
-            _ => {
-                // Unsupported dtype combination, fall through to error
-            }
-        }
-    }
-
-    // Try mixed: PECOS Array and NumPy array
-    // Check if one is a PECOS Array and the other is NumPy
-    if let Ok(a_pecos) = a.extract::<Py<Array>>() {
-        let a_ref = a_pecos.bind(a.py()).borrow();
-
-        // Try to match with NumPy bool array
-        if let Ok(b_array) = array_buffer::extract_bool_array(&b)
-            && let ArrayData::Bool(a_data) = &a_ref.data
-        {
-            let b_view = b_array.view();
-            if a_data.shape() != b_view.shape() {
-                return Ok(false);
-            }
-            return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
-        }
-
-        // Try to match with NumPy int64 array
-        if let Ok(b_array) = array_buffer::extract_i64_array(&b)
-            && let ArrayData::I64(a_data) = &a_ref.data
-        {
-            let b_view = b_array.view();
-            if a_data.shape() != b_view.shape() {
-                return Ok(false);
-            }
-            return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
-        }
-
-        // Try to match with NumPy int32 array
-        if let Ok(b_array) = array_buffer::extract_i32_array(&b)
-            && let ArrayData::I32(a_data) = &a_ref.data
-        {
-            let b_view = b_array.view();
-            if a_data.shape() != b_view.shape() {
-                return Ok(false);
-            }
-            return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
-        }
-
-        // Try to match with NumPy float array
-        if let Ok(b_array) = array_buffer::extract_f64_array(&b)
-            && let ArrayData::F64(a_data) = &a_ref.data
-        {
-            return Ok(rust_array_equal(a_data, &b_array.view(), equal_nan));
-        }
-
-        // Try to match with NumPy complex array
-        if let Ok(b_array) = array_buffer::extract_complex64_array(&b)
-            && let ArrayData::Complex128(a_data) = &a_ref.data
-        {
-            return Ok(rust_array_equal(a_data, &b_array.view(), equal_nan));
-        }
-    }
-
-    // Try the reverse: NumPy array first, PECOS Array second
-    if let Ok(b_pecos) = b.extract::<Py<Array>>() {
-        let b_ref = b_pecos.bind(b.py()).borrow();
-
-        // Try to match with NumPy bool array
-        if let Ok(a_array) = array_buffer::extract_bool_array(&a)
-            && let ArrayData::Bool(b_data) = &b_ref.data
-        {
-            let a_view = a_array.view();
-            if a_view.shape() != b_data.shape() {
-                return Ok(false);
-            }
-            return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
-        }
-
-        // Try to match with NumPy int64 array
-        if let Ok(a_array) = array_buffer::extract_i64_array(&a)
-            && let ArrayData::I64(b_data) = &b_ref.data
-        {
-            let a_view = a_array.view();
-            if a_view.shape() != b_data.shape() {
-                return Ok(false);
-            }
-            return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
-        }
-
-        // Try to match with NumPy int32 array
-        if let Ok(a_array) = array_buffer::extract_i32_array(&a)
-            && let ArrayData::I32(b_data) = &b_ref.data
-        {
-            let a_view = a_array.view();
-            if a_view.shape() != b_data.shape() {
-                return Ok(false);
-            }
-            return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
-        }
-
-        // Try to match with NumPy float array
-        if let Ok(a_array) = array_buffer::extract_f64_array(&a)
-            && let ArrayData::F64(b_data) = &b_ref.data
-        {
-            return Ok(rust_array_equal(&a_array.view(), b_data, equal_nan));
-        }
-
-        // Try to match with NumPy complex array
-        if let Ok(a_array) = array_buffer::extract_complex64_array(&a)
-            && let ArrayData::Complex128(b_data) = &b_ref.data
-        {
-            return Ok(rust_array_equal(&a_array.view(), b_data, equal_nan));
-        }
-    }
-
-    // Try bool arrays (for isnan/isclose return values)
-    if let (Ok(a_array), Ok(b_array)) = (
-        array_buffer::extract_bool_array(&a),
-        array_buffer::extract_bool_array(&b),
-    ) {
-        let a_view = a_array.view();
-        let b_view = b_array.view();
-
-        // For booleans, just check shape and exact equality
-        if a_view.shape() != b_view.shape() {
-            return Ok(false);
-        }
-        // Check if all elements are equal
-        return Ok(a_view.iter().zip(b_view.iter()).all(|(a, b)| a == b));
-    }
-
-    // Try integer arrays (for randint return values)
-    if let (Ok(a_array), Ok(b_array)) = (
-        array_buffer::extract_i64_array(&a),
-        array_buffer::extract_i64_array(&b),
-    ) {
-        let a_view = a_array.view();
-        let b_view = b_array.view();
-
-        // For integers, just check shape and exact equality
-        if a_view.shape() != b_view.shape() {
-            return Ok(false);
-        }
-        // Check if all elements are equal
-        return Ok(a_view.iter().zip(b_view.iter()).all(|(a, b)| a == b));
-    }
-
-    // Try float arrays
-    if let (Ok(a_array), Ok(b_array)) = (
-        array_buffer::extract_f64_array(&a),
-        array_buffer::extract_f64_array(&b),
-    ) {
-        return Ok(rust_array_equal(
-            &a_array.view(),
-            &b_array.view(),
-            equal_nan,
-        ));
-    }
-
-    // Try complex arrays
-    if let (Ok(a_array), Ok(b_array)) = (
-        array_buffer::extract_complex64_array(&a),
-        array_buffer::extract_complex64_array(&b),
-    ) {
-        return Ok(rust_array_equal(
-            &a_array.view(),
-            &b_array.view(),
-            equal_nan,
-        ));
-    }
-
-    // Handle mixed array types: complex array vs float array
-    if let (Ok(a_array), Ok(b_array)) = (
-        array_buffer::extract_complex64_array(&a),
-        array_buffer::extract_f64_array(&b),
-    ) {
-        // Convert float array to complex
-        let b_complex = b_array.view().mapv(|x| Complex64::new(x, 0.0));
-        return Ok(rust_array_equal(
-            &a_array.view(),
-            &b_complex.view(),
-            equal_nan,
-        ));
-    }
-
-    // Handle mixed array types: float array vs complex array
-    if let (Ok(a_array), Ok(b_array)) = (
-        array_buffer::extract_f64_array(&a),
-        array_buffer::extract_complex64_array(&b),
-    ) {
-        // Convert float array to complex
-        let a_complex = a_array.view().mapv(|x| Complex64::new(x, 0.0));
-        return Ok(rust_array_equal(
-            &a_complex.view(),
-            &b_array.view(),
-            equal_nan,
-        ));
-    }
-
-    Err(PyTypeError::new_err(
-        "array_equal() arguments must be numpy arrays of bool, int, float, or complex",
-    ))
+    let left = Array::from_array_equal_value(&a)?;
+    let right = Array::from_array_equal_value(&b)?;
+    left.array_equal(&right, equal_nan)
 }
 
 /// Calculate the standard deviation of values.
@@ -3246,7 +3149,15 @@ fn array(
     }
 
     if let Some(target_dtype) = target_dtype
-        && (obj.hasattr("__array_interface__")? || obj.cast::<pyo3::types::PySequence>().is_ok())
+        && obj.cast::<pyo3::types::PySequence>().is_ok()
+    {
+        let target_dtype_object = Py::new(py, target_dtype)?;
+        let array = Array::from_python_value(&obj, Some(target_dtype_object.bind(py).as_any()))?;
+        return Py::new(py, array);
+    }
+
+    if let Some(target_dtype) = target_dtype
+        && obj.hasattr("__array_interface__")?
     {
         let array = Array::from_python_value(&obj, None)?.astype(target_dtype)?;
         return Py::new(py, array);
@@ -3755,6 +3666,178 @@ fn extract_zero_dimensional_scalar(py: Python<'_>, a: &Bound<'_, PyAny>) -> PyRe
     Array::from_python_value(a, None)?.extract_scalar(py)
 }
 
+fn ensure_nonempty_reduction_axis(axis_len: usize) -> PyResult<()> {
+    if axis_len == 0 {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "zero-size array reduction has no identity",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+macro_rules! define_integer_slice_extreme {
+    ($name:ident, $comparison:tt) => {
+        fn $name<T: Copy + Ord>(values: &[T]) -> Option<T> {
+            let (&first, remainder) = values.split_first()?;
+            let mut extremes = [first; 8];
+            let mut chunks = remainder.chunks_exact(8);
+            for chunk in &mut chunks {
+                if chunk[0] $comparison extremes[0] {
+                    extremes[0] = chunk[0];
+                }
+                if chunk[1] $comparison extremes[1] {
+                    extremes[1] = chunk[1];
+                }
+                if chunk[2] $comparison extremes[2] {
+                    extremes[2] = chunk[2];
+                }
+                if chunk[3] $comparison extremes[3] {
+                    extremes[3] = chunk[3];
+                }
+                if chunk[4] $comparison extremes[4] {
+                    extremes[4] = chunk[4];
+                }
+                if chunk[5] $comparison extremes[5] {
+                    extremes[5] = chunk[5];
+                }
+                if chunk[6] $comparison extremes[6] {
+                    extremes[6] = chunk[6];
+                }
+                if chunk[7] $comparison extremes[7] {
+                    extremes[7] = chunk[7];
+                }
+            }
+            for &value in chunks.remainder() {
+                if value $comparison extremes[0] {
+                    extremes[0] = value;
+                }
+            }
+            let mut extreme = extremes[0];
+            for value in extremes.into_iter().skip(1) {
+                if value $comparison extreme {
+                    extreme = value;
+                }
+            }
+            Some(extreme)
+        }
+    };
+}
+
+define_integer_slice_extreme!(maximum_scalar_lanes, >);
+define_integer_slice_extreme!(minimum_scalar_lanes, <);
+
+fn maximum_slice<T: Copy + Ord>(values: &[T]) -> Option<T> {
+    values.iter().copied().max()
+}
+
+fn minimum_slice<T: Copy + Ord>(values: &[T]) -> Option<T> {
+    values.iter().copied().min()
+}
+
+macro_rules! define_integer_axis0_rows_extreme {
+    ($name:ident, $comparison:tt) => {
+        fn $name<T: Copy + Ord>(values: &[T], row_len: usize) -> Array1<T> {
+            if row_len == 0 {
+                return Array1::from_vec(Vec::new());
+            }
+            let (first_row, remaining_rows) = values.split_at(row_len);
+            let mut extremes = first_row.to_vec();
+            for row in remaining_rows.chunks_exact(row_len) {
+                for (extreme, &value) in extremes.iter_mut().zip(row) {
+                    if value $comparison *extreme {
+                        *extreme = value;
+                    }
+                }
+            }
+            Array1::from_vec(extremes)
+        }
+    };
+}
+
+define_integer_axis0_rows_extreme!(maximum_axis0_rows, >);
+define_integer_axis0_rows_extreme!(minimum_axis0_rows, <);
+
+macro_rules! extreme_float_values {
+    ($values:expr, $identity:expr, $operation:ident) => {{
+        let (extreme, has_nan) = $values.fold(($identity, false), |(extreme, has_nan), value| {
+            (extreme.$operation(value), has_nan | value.is_nan())
+        });
+        if has_nan {
+            $values
+                .find(|value| value.is_nan())
+                .expect("NaN scan found a NaN")
+        } else if extreme == 0.0 {
+            // NumPy returns the last zero it visits, preserving its sign. Float
+            // max/min otherwise select a particular signed zero independent of
+            // input order, so handle this uncommon tie after the vectorizable
+            // reduction.
+            $values
+                .filter(|value| *value == 0.0)
+                .last()
+                .expect("zero extreme came from a zero value")
+        } else {
+            extreme
+        }
+    }};
+}
+
+macro_rules! define_float_slice_extreme {
+    ($name:ident, $type:ty, $identity:expr, $operation:ident) => {
+        fn $name(values: &[$type]) -> $type {
+            let mut extremes = [$identity; 8];
+            let mut any_nan = false;
+            let mut chunks = values.chunks_exact(8);
+            for chunk in &mut chunks {
+                extremes[0] = extremes[0].$operation(chunk[0]);
+                extremes[1] = extremes[1].$operation(chunk[1]);
+                extremes[2] = extremes[2].$operation(chunk[2]);
+                extremes[3] = extremes[3].$operation(chunk[3]);
+                extremes[4] = extremes[4].$operation(chunk[4]);
+                extremes[5] = extremes[5].$operation(chunk[5]);
+                extremes[6] = extremes[6].$operation(chunk[6]);
+                extremes[7] = extremes[7].$operation(chunk[7]);
+                any_nan |= chunk[0].is_nan()
+                    | chunk[1].is_nan()
+                    | chunk[2].is_nan()
+                    | chunk[3].is_nan()
+                    | chunk[4].is_nan()
+                    | chunk[5].is_nan()
+                    | chunk[6].is_nan()
+                    | chunk[7].is_nan();
+            }
+            let mut extreme = extremes
+                .into_iter()
+                .fold($identity, |extreme, value| extreme.$operation(value));
+            for &value in chunks.remainder() {
+                extreme = extreme.$operation(value);
+                any_nan |= value.is_nan();
+            }
+            if any_nan {
+                values
+                    .iter()
+                    .copied()
+                    .find(|value| value.is_nan())
+                    .expect("NaN scan found a NaN")
+            } else if extreme == 0.0 {
+                values
+                    .iter()
+                    .copied()
+                    .filter(|value| *value == 0.0)
+                    .last()
+                    .expect("zero extreme came from a zero value")
+            } else {
+                extreme
+            }
+        }
+    };
+}
+
+define_float_slice_extreme!(maximum_f32_slice, f32, f32::NEG_INFINITY, max);
+define_float_slice_extreme!(minimum_f32_slice, f32, f32::INFINITY, min);
+define_float_slice_extreme!(maximum_f64_slice, f64, f64::NEG_INFINITY, max);
+define_float_slice_extreme!(minimum_f64_slice, f64, f64::INFINITY, min);
+
 fn checked_unsigned_sum<T>(mut values: impl Iterator<Item = T>) -> PyResult<u64>
 where
     T: Into<u64>,
@@ -3807,6 +3890,108 @@ fn sum_unsigned_array(py: Python<'_>, array: &Array, axis: Option<isize>) -> PyR
     }
 }
 
+fn sum_native_array(py: Python<'_>, array: &Array, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    use num_complex::Complex64;
+
+    macro_rules! sum_as_i64 {
+        ($array:expr) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                let result =
+                    $array.map_axis(Axis(axis), |lane| lane.iter().copied().map(i64::from).sum());
+                return Ok(array_buffer::i64_array_to_py(py, &result).into());
+            }
+            return $array
+                .iter()
+                .copied()
+                .map(i64::from)
+                .sum::<i64>()
+                .into_py_any(py);
+        }};
+    }
+
+    macro_rules! sum_as_f64 {
+        ($array:expr) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                let result =
+                    $array.map_axis(Axis(axis), |lane| lane.iter().copied().map(f64::from).sum());
+                return Ok(array_buffer::f64_array_to_py(py, &result).into());
+            }
+            return $array
+                .iter()
+                .copied()
+                .map(f64::from)
+                .sum::<f64>()
+                .into_py_any(py);
+        }};
+    }
+
+    match &array.data {
+        ArrayData::Bool(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                let result = array.map_axis(Axis(axis), |lane| {
+                    lane.iter().map(|&value| i64::from(value)).sum()
+                });
+                Ok(array_buffer::i64_array_to_py(py, &result).into())
+            } else {
+                array
+                    .iter()
+                    .map(|&value| i64::from(value))
+                    .sum::<i64>()
+                    .into_py_any(py)
+            }
+        }
+        ArrayData::I8(array) => sum_as_i64!(array),
+        ArrayData::I16(array) => sum_as_i64!(array),
+        ArrayData::I32(array) => sum_as_i64!(array),
+        ArrayData::I64(array) => sum_as_i64!(array),
+        ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_) => {
+            sum_unsigned_array(py, array, axis)
+        }
+        ArrayData::F32(array) => sum_as_f64!(array),
+        ArrayData::F64(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                let result = array.sum_axis(Axis(axis));
+                Ok(array_buffer::f64_array_to_py(py, &result).into())
+            } else {
+                array.iter().sum::<f64>().into_py_any(py)
+            }
+        }
+        ArrayData::Complex64(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                let result = array.map_axis(Axis(axis), |lane| {
+                    lane.iter()
+                        .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
+                        .sum()
+                });
+                Ok(array_buffer::complex64_array_to_py(py, &result).into())
+            } else {
+                array
+                    .iter()
+                    .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
+                    .sum::<Complex64>()
+                    .into_py_any(py)
+            }
+        }
+        ArrayData::Complex128(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                let result = array.sum_axis(Axis(axis));
+                Ok(array_buffer::complex64_array_to_py(py, &result).into())
+            } else {
+                array.iter().copied().sum::<Complex64>().into_py_any(py)
+            }
+        }
+        ArrayData::Pauli(_) | ArrayData::PauliString(_) => Err(PyTypeError::new_err(
+            "sum() argument must be a list, tuple, or numpy array of numbers",
+        )),
+    }
+}
+
 fn extreme_unsigned_array(
     py: Python<'_>,
     array: &Array,
@@ -3814,22 +3999,35 @@ fn extreme_unsigned_array(
     find_maximum: bool,
 ) -> PyResult<Py<PyAny>> {
     macro_rules! extreme_unsigned {
-        ($array:expr, $variant:ident, $minimum:expr, $maximum:expr) => {{
+        ($array:expr, $variant:ident, $minimum:expr, $maximum:expr, $max_slice:ident, $min_slice:ident) => {{
             if let Some(axis) = axis {
                 let axis = normalize_reduction_axis(axis, $array.ndim())?;
-                if $array.len_of(Axis(axis)) == 0 {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        "zero-size array reduction has no identity",
-                    ));
-                }
-                let initial = if find_maximum { $minimum } else { $maximum };
-                let result = $array.fold_axis(Axis(axis), initial, |&current, &value| {
-                    if (find_maximum && value > current) || (!find_maximum && value < current) {
-                        value
-                    } else {
-                        current
-                    }
-                });
+                ensure_nonempty_reduction_axis($array.len_of(Axis(axis)))?;
+                let result = if $array.strides()[axis] == 1 {
+                    $array.map_axis(Axis(axis), |lane| {
+                        if let Some(values) = lane.as_slice() {
+                            if find_maximum {
+                                $max_slice(values)
+                            } else {
+                                $min_slice(values)
+                            }
+                        } else if find_maximum {
+                            lane.iter().copied().max()
+                        } else {
+                            lane.iter().copied().min()
+                        }
+                        .expect("reduction axis was checked as nonempty")
+                    })
+                } else {
+                    let initial = if find_maximum { $minimum } else { $maximum };
+                    $array.fold_axis(Axis(axis), initial, |&current, &value| {
+                        if (find_maximum && value > current) || (!find_maximum && value < current) {
+                            value
+                        } else {
+                            current
+                        }
+                    })
+                };
                 return Ok(Py::new(
                     py,
                     Array {
@@ -3839,26 +4037,304 @@ fn extreme_unsigned_array(
                 .into_any());
             }
 
-            let value = if find_maximum {
-                $array.iter().max()
+            let value = if let Some(values) = $array.as_slice() {
+                if find_maximum {
+                    $max_slice(values)
+                } else {
+                    $min_slice(values)
+                }
+            } else if find_maximum {
+                $array.iter().copied().max()
             } else {
-                $array.iter().min()
+                $array.iter().copied().min()
             }
             .ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "zero-size array reduction has no identity",
                 )
             })?;
-            return (*value).into_py_any(py);
+            return value.into_py_any(py);
         }};
     }
 
     match &array.data {
-        ArrayData::U8(array) => extreme_unsigned!(array, U8, u8::MIN, u8::MAX),
-        ArrayData::U16(array) => extreme_unsigned!(array, U16, u16::MIN, u16::MAX),
-        ArrayData::U32(array) => extreme_unsigned!(array, U32, u32::MIN, u32::MAX),
-        ArrayData::U64(array) => extreme_unsigned!(array, U64, u64::MIN, u64::MAX),
+        ArrayData::U8(array) => {
+            extreme_unsigned!(array, U8, u8::MIN, u8::MAX, maximum_slice, minimum_slice)
+        }
+        ArrayData::U16(array) => {
+            extreme_unsigned!(array, U16, u16::MIN, u16::MAX, maximum_slice, minimum_slice)
+        }
+        ArrayData::U32(array) => extreme_unsigned!(
+            array,
+            U32,
+            u32::MIN,
+            u32::MAX,
+            maximum_scalar_lanes,
+            minimum_scalar_lanes
+        ),
+        ArrayData::U64(array) => extreme_unsigned!(
+            array,
+            U64,
+            u64::MIN,
+            u64::MAX,
+            maximum_scalar_lanes,
+            minimum_scalar_lanes
+        ),
         _ => Err(PyTypeError::new_err("expected an unsigned integer array")),
+    }
+}
+
+fn extreme_native_array(
+    py: Python<'_>,
+    array: &Array,
+    axis: Option<isize>,
+    find_maximum: bool,
+) -> PyResult<Py<PyAny>> {
+    macro_rules! extreme_signed {
+        ($array:expr, $minimum:expr, $maximum:expr, $max_slice:ident, $min_slice:ident, $use_axis0_rows:expr) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                ensure_nonempty_reduction_axis($array.len_of(Axis(axis)))?;
+                let result = if $use_axis0_rows
+                    && $array.ndim() == 2
+                    && axis == 0
+                    && $array.as_slice().is_some()
+                {
+                    let values = $array
+                        .as_slice()
+                        .expect("standard-layout array has a contiguous slice");
+                    if find_maximum {
+                        maximum_axis0_rows(values, $array.shape()[1])
+                    } else {
+                        minimum_axis0_rows(values, $array.shape()[1])
+                    }
+                    .mapv(i64::from)
+                    .into_dyn()
+                } else if $array.strides()[axis] == 1 {
+                    $array.map_axis(Axis(axis), |lane| {
+                        let value = if let Some(values) = lane.as_slice() {
+                            if find_maximum {
+                                $max_slice(values)
+                            } else {
+                                $min_slice(values)
+                            }
+                        } else if find_maximum {
+                            lane.iter().copied().max()
+                        } else {
+                            lane.iter().copied().min()
+                        }
+                        .expect("reduction axis was checked as nonempty");
+                        i64::from(value)
+                    })
+                } else {
+                    let initial = if find_maximum { $minimum } else { $maximum };
+                    $array
+                        .fold_axis(Axis(axis), initial, |&current, &value| {
+                            if (find_maximum && value > current)
+                                || (!find_maximum && value < current)
+                            {
+                                value
+                            } else {
+                                current
+                            }
+                        })
+                        .mapv(i64::from)
+                };
+                return Ok(array_buffer::i64_array_to_py(py, &result).into());
+            }
+
+            let value = if let Some(values) = $array.as_slice() {
+                if find_maximum {
+                    $max_slice(values)
+                } else {
+                    $min_slice(values)
+                }
+            } else if find_maximum {
+                $array.iter().copied().max()
+            } else {
+                $array.iter().copied().min()
+            }
+            .ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(if find_maximum {
+                    "max() of empty sequence"
+                } else {
+                    "min() of empty sequence"
+                })
+            })?;
+            return i64::from(value).into_py_any(py);
+        }};
+    }
+
+    macro_rules! extreme_float {
+        ($array:expr, $convert:expr, $maximum_slice:ident, $minimum_slice:ident, $type:ty) => {{
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, $array.ndim())?;
+                ensure_nonempty_reduction_axis($array.len_of(Axis(axis)))?;
+                let result = if $array.strides()[axis] == 1 {
+                    $array.map_axis(Axis(axis), |lane| {
+                        let value: $type = if let Some(values) = lane.as_slice() {
+                            if find_maximum {
+                                $maximum_slice(values)
+                            } else {
+                                $minimum_slice(values)
+                            }
+                        } else if find_maximum {
+                            extreme_float_values!(lane.iter().copied(), <$type>::NEG_INFINITY, max)
+                        } else {
+                            extreme_float_values!(lane.iter().copied(), <$type>::INFINITY, min)
+                        };
+                        ($convert)(value)
+                    })
+                } else if find_maximum {
+                    $array
+                        .fold_axis(Axis(axis), <$type>::NEG_INFINITY, |&current, &value| {
+                            if current.is_nan() || (!value.is_nan() && current > value) {
+                                current
+                            } else {
+                                value
+                            }
+                        })
+                        .mapv($convert)
+                } else {
+                    $array
+                        .fold_axis(Axis(axis), <$type>::INFINITY, |&current, &value| {
+                            if current.is_nan() || (!value.is_nan() && current < value) {
+                                current
+                            } else {
+                                value
+                            }
+                        })
+                        .mapv($convert)
+                };
+                return Ok(array_buffer::f64_array_to_py(py, &result).into());
+            }
+
+            if $array.is_empty() {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    if find_maximum {
+                        "max() of empty sequence"
+                    } else {
+                        "min() of empty sequence"
+                    },
+                ));
+            }
+            let value: $type = if let Some(values) = $array.as_slice() {
+                if find_maximum {
+                    $maximum_slice(values)
+                } else {
+                    $minimum_slice(values)
+                }
+            } else if find_maximum {
+                extreme_float_values!($array.iter().copied(), <$type>::NEG_INFINITY, max)
+            } else {
+                extreme_float_values!($array.iter().copied(), <$type>::INFINITY, min)
+            };
+            return ($convert)(value).into_py_any(py);
+        }};
+    }
+
+    match &array.data {
+        ArrayData::Bool(array) => {
+            if let Some(axis) = axis {
+                let axis = normalize_reduction_axis(axis, array.ndim())?;
+                ensure_nonempty_reduction_axis(array.len_of(Axis(axis)))?;
+                let result = if array.strides()[axis] == 1 {
+                    array.map_axis(Axis(axis), |lane| {
+                        if find_maximum {
+                            lane.iter().any(|&value| value)
+                        } else {
+                            lane.iter().all(|&value| value)
+                        }
+                    })
+                } else if find_maximum {
+                    array.fold_axis(Axis(axis), false, |&current, &value| current | value)
+                } else {
+                    array.fold_axis(Axis(axis), true, |&current, &value| current & value)
+                };
+                Ok(Py::new(py, Array::from_array_bool(result.into_dyn()))?.into_any())
+            } else {
+                let value = if find_maximum {
+                    array.iter().copied().max()
+                } else {
+                    array.iter().copied().min()
+                }
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(if find_maximum {
+                        "max() of empty sequence"
+                    } else {
+                        "min() of empty sequence"
+                    })
+                })?;
+                value.into_py_any(py)
+            }
+        }
+        ArrayData::I8(array) => extreme_signed!(
+            array,
+            i8::MIN,
+            i8::MAX,
+            maximum_scalar_lanes,
+            minimum_scalar_lanes,
+            false
+        ),
+        ArrayData::I16(array) => {
+            extreme_signed!(
+                array,
+                i16::MIN,
+                i16::MAX,
+                maximum_slice,
+                minimum_slice,
+                false
+            )
+        }
+        ArrayData::I32(array) => extreme_signed!(
+            array,
+            i32::MIN,
+            i32::MAX,
+            maximum_scalar_lanes,
+            minimum_scalar_lanes,
+            false
+        ),
+        ArrayData::I64(array) => extreme_signed!(
+            array,
+            i64::MIN,
+            i64::MAX,
+            maximum_scalar_lanes,
+            minimum_scalar_lanes,
+            true
+        ),
+        ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_) => {
+            extreme_unsigned_array(py, array, axis, find_maximum)
+        }
+        ArrayData::F32(array) => {
+            extreme_float!(array, f64::from, maximum_f32_slice, minimum_f32_slice, f32)
+        }
+        ArrayData::F64(array) => {
+            extreme_float!(
+                array,
+                core::convert::identity,
+                maximum_f64_slice,
+                minimum_f64_slice,
+                f64
+            )
+        }
+        ArrayData::Complex64(_) | ArrayData::Complex128(_) => {
+            let name = if find_maximum { "max" } else { "min" };
+            if axis.is_some() {
+                Err(PyTypeError::new_err(format!(
+                    "{name}() with axis requires a numpy array of numbers"
+                )))
+            } else {
+                Err(PyTypeError::new_err(format!(
+                    "{name}() argument must be a list, tuple, or numpy array of numbers"
+                )))
+            }
+        }
+        ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
+            let name = if find_maximum { "max" } else { "min" };
+            Err(PyTypeError::new_err(format!(
+                "{name}() argument must be a list, tuple, or numpy array of numbers"
+            )))
+        }
     }
 }
 
@@ -3922,13 +4398,8 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return Ok(scalar);
     }
 
-    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
-        && matches!(
-            array.data,
-            ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_)
-        )
-    {
-        return sum_unsigned_array(py, &array, axis);
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>() {
+        return sum_native_array(py, &array, axis);
     }
     if input_has_unsigned_dtype(&a) {
         let converted = array(py, a, None)?;
@@ -4129,13 +4600,8 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return extract_zero_dimensional_scalar(py, &a);
     }
 
-    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
-        && matches!(
-            array.data,
-            ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_)
-        )
-    {
-        return extreme_unsigned_array(py, &array, axis, true);
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>() {
+        return extreme_native_array(py, &array, axis, true);
     }
     if input_has_unsigned_dtype(&a) {
         let converted = array(py, a, None)?;
@@ -4153,31 +4619,35 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
                     "b" => {
                         // Boolean array - max treats True=1, False=0
                         let arr = array_buffer::extract_bool_array(&a)?;
+                        if arr.is_empty() {
+                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "max() of empty array",
+                            ));
+                        }
                         let result = arr.iter().any(|&x| x);
                         return Ok(result.into_py_any(py)?);
                     }
                     "i" => {
                         // Integer array
                         let arr = array_buffer::extract_i64_array(&a)?;
-                        let array_view = &arr;
-                        let result = array_view.iter().max().ok_or_else(|| {
+                        let result = maximum_scalar_lanes(
+                            arr.as_slice().expect("extracted array is C-contiguous"),
+                        )
+                        .ok_or_else(|| {
                             PyErr::new::<pyo3::exceptions::PyValueError, _>("max() of empty array")
                         })?;
-                        return Ok((*result).into_py_any(py)?);
+                        return Ok(result.into_py_any(py)?);
                     }
                     "f" => {
                         // Float array
                         let arr = array_buffer::extract_f64_array(&a)?;
-                        let array_view = &arr;
-                        let result = array_view
-                            .iter()
-                            .max_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "max() of empty array",
-                                )
-                            })?;
-                        return Ok((*result).into_py_any(py)?);
+                        let values = arr.as_slice().expect("extracted array is C-contiguous");
+                        if values.is_empty() {
+                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "max() of empty array",
+                            ));
+                        }
+                        return Ok(maximum_f64_slice(values).into_py_any(py)?);
                     }
                     "c" => {
                         // Complex array - can't directly compare, need magnitude
@@ -4197,21 +4667,20 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         // Not a numpy array - try lists/tuples
         // Try integer list/tuple first
         if let Ok(values) = a.extract::<Vec<i64>>() {
-            let result = values.iter().max().ok_or_else(|| {
+            let result = maximum_scalar_lanes(&values).ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("max() of empty sequence")
             })?;
-            return Ok((*result).into_py_any(py)?);
+            return Ok(result.into_py_any(py)?);
         }
 
         // Try float list/tuple
         if let Ok(values) = a.extract::<Vec<f64>>() {
-            let result = values
-                .iter()
-                .max_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
-                .ok_or_else(|| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>("max() of empty sequence")
-                })?;
-            return Ok((*result).into_py_any(py)?);
+            if values.is_empty() {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "max() of empty sequence",
+                ));
+            }
+            return Ok(maximum_f64_slice(&values).into_py_any(py)?);
         }
 
         return Err(PyTypeError::new_err(
@@ -4240,9 +4709,14 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             )));
         }
 
-        // Use fold_axis to find max along axis
-        let result = array.fold_axis(Axis(normalized_axis), i64::MIN, |&max_val, &x| {
-            if x > max_val { x } else { max_val }
+        ensure_nonempty_reduction_axis(array.len_of(Axis(normalized_axis)))?;
+        let result = array.map_axis(Axis(normalized_axis), |lane| {
+            if let Some(values) = lane.as_slice() {
+                maximum_scalar_lanes(values)
+            } else {
+                lane.iter().copied().max()
+            }
+            .expect("reduction axis was checked as nonempty")
         });
         return Ok(array_buffer::i64_array_to_py(py, &result).into());
     }
@@ -4264,8 +4738,13 @@ fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             )));
         }
 
-        let result = array.fold_axis(Axis(normalized_axis), f64::NEG_INFINITY, |&max_val, &x| {
-            if x > max_val { x } else { max_val }
+        ensure_nonempty_reduction_axis(array.len_of(Axis(normalized_axis)))?;
+        let result = array.map_axis(Axis(normalized_axis), |lane| {
+            if let Some(values) = lane.as_slice() {
+                maximum_f64_slice(values)
+            } else {
+                extreme_float_values!(lane.iter().copied(), f64::NEG_INFINITY, max)
+            }
         });
         return Ok(array_buffer::f64_array_to_py(py, &result).into());
     }
@@ -4287,13 +4766,8 @@ fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return extract_zero_dimensional_scalar(py, &a);
     }
 
-    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
-        && matches!(
-            array.data,
-            ArrayData::U8(_) | ArrayData::U16(_) | ArrayData::U32(_) | ArrayData::U64(_)
-        )
-    {
-        return extreme_unsigned_array(py, &array, axis, false);
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>() {
+        return extreme_native_array(py, &array, axis, false);
     }
     if input_has_unsigned_dtype(&a) {
         let converted = array(py, a, None)?;
@@ -4311,31 +4785,35 @@ fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
                     "b" => {
                         // Boolean array - min treats True=1, False=0
                         let arr = array_buffer::extract_bool_array(&a)?;
-                        let result = !arr.iter().all(|&x| x);
+                        if arr.is_empty() {
+                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "min() of empty array",
+                            ));
+                        }
+                        let result = arr.iter().all(|&x| x);
                         return Ok(result.into_py_any(py)?);
                     }
                     "i" => {
                         // Integer array
                         let arr = array_buffer::extract_i64_array(&a)?;
-                        let array_view = &arr;
-                        let result = array_view.iter().min().ok_or_else(|| {
+                        let result = minimum_scalar_lanes(
+                            arr.as_slice().expect("extracted array is C-contiguous"),
+                        )
+                        .ok_or_else(|| {
                             PyErr::new::<pyo3::exceptions::PyValueError, _>("min() of empty array")
                         })?;
-                        return Ok((*result).into_py_any(py)?);
+                        return Ok(result.into_py_any(py)?);
                     }
                     "f" => {
                         // Float array
                         let arr = array_buffer::extract_f64_array(&a)?;
-                        let array_view = &arr;
-                        let result = array_view
-                            .iter()
-                            .min_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "min() of empty array",
-                                )
-                            })?;
-                        return Ok((*result).into_py_any(py)?);
+                        let values = arr.as_slice().expect("extracted array is C-contiguous");
+                        if values.is_empty() {
+                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                "min() of empty array",
+                            ));
+                        }
+                        return Ok(minimum_f64_slice(values).into_py_any(py)?);
                     }
                     "c" => {
                         // Complex array - can't directly compare, need magnitude
@@ -4355,21 +4833,20 @@ fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         // Not a numpy array - try lists/tuples
         // Try integer list/tuple first
         if let Ok(values) = a.extract::<Vec<i64>>() {
-            let result = values.iter().min().ok_or_else(|| {
+            let result = minimum_scalar_lanes(&values).ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>("min() of empty sequence")
             })?;
-            return Ok((*result).into_py_any(py)?);
+            return Ok(result.into_py_any(py)?);
         }
 
         // Try float list/tuple
         if let Ok(values) = a.extract::<Vec<f64>>() {
-            let result = values
-                .iter()
-                .min_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
-                .ok_or_else(|| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>("min() of empty sequence")
-                })?;
-            return Ok((*result).into_py_any(py)?);
+            if values.is_empty() {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "min() of empty sequence",
+                ));
+            }
+            return Ok(minimum_f64_slice(&values).into_py_any(py)?);
         }
 
         return Err(PyTypeError::new_err(
@@ -4397,8 +4874,14 @@ fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             )));
         }
 
-        let result = array.fold_axis(Axis(normalized_axis), i64::MAX, |&min_val, &x| {
-            if x < min_val { x } else { min_val }
+        ensure_nonempty_reduction_axis(array.len_of(Axis(normalized_axis)))?;
+        let result = array.map_axis(Axis(normalized_axis), |lane| {
+            if let Some(values) = lane.as_slice() {
+                minimum_scalar_lanes(values)
+            } else {
+                lane.iter().copied().min()
+            }
+            .expect("reduction axis was checked as nonempty")
         });
         return Ok(array_buffer::i64_array_to_py(py, &result).into());
     }
@@ -4420,8 +4903,13 @@ fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
             )));
         }
 
-        let result = array.fold_axis(Axis(normalized_axis), f64::INFINITY, |&min_val, &x| {
-            if x < min_val { x } else { min_val }
+        ensure_nonempty_reduction_axis(array.len_of(Axis(normalized_axis)))?;
+        let result = array.map_axis(Axis(normalized_axis), |lane| {
+            if let Some(values) = lane.as_slice() {
+                minimum_f64_slice(values)
+            } else {
+                extreme_float_values!(lane.iter().copied(), f64::INFINITY, min)
+            }
         });
         return Ok(array_buffer::f64_array_to_py(py, &result).into());
     }
@@ -4723,6 +5211,12 @@ fn all(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         return scalar.bind(py).is_truthy()?.into_py_any(py);
     }
 
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
+        && !matches!(array.data, ArrayData::Pauli(_) | ArrayData::PauliString(_))
+    {
+        return array.all(py, axis, None, None, None);
+    }
+
     if let Some(axis_val) = axis {
         // axis reduction: extract array, convert to bool, reduce with all_axis
         let bool_arr = if let Ok(arr) = array_buffer::extract_bool_array(&a) {
@@ -4812,6 +5306,12 @@ fn any(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
     if uses_zero_dimensional_reduction_axis(&a, axis)? {
         let scalar = extract_zero_dimensional_scalar(py, &a)?;
         return scalar.bind(py).is_truthy()?.into_py_any(py);
+    }
+
+    if let Ok(array) = a.extract::<PyRef<'_, Array>>()
+        && !matches!(array.data, ArrayData::Pauli(_) | ArrayData::PauliString(_))
+    {
+        return array.any(py, axis, None, None, None);
     }
 
     if let Some(axis_val) = axis {
@@ -5998,6 +6498,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Convenience functions (like numpy.random.random, numpy.random.seed, etc.)
     random_module.add_function(wrap_pyfunction!(seed, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(random, &random_module)?)?;
+    random_module.add_function(wrap_pyfunction!(binomial, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(randint, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(choice, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(compare_any, &random_module)?)?;

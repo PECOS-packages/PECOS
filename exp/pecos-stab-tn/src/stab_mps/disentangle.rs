@@ -18,23 +18,27 @@
 //!
 //! The algorithm: for each internal bond, try the 20 inequivalent entangling
 //! two-qubit Cliffords. If one reduces the entanglement entropy at the bond,
-//! apply it to the MPS and store the inverse for `state_vector` reconstruction.
+//! apply it to the MPS and absorb its inverse into the stabilizer tableau.
 //!
 //! References:
 //! - Masot-Llima, Garcia-Saez. arXiv:2403.08724 (Clifford disentangling).
 //! - Masot-Llima, Sierant, Stornati, Garcia-Saez. arXiv:2602.15942
 //!   (limits of Clifford disentangling).
 
+use crate::errors::MpsError;
 use crate::mps::Mps;
 use nalgebra::DMatrix;
 use num_complex::Complex64;
+use pecos_simulators::SparseStabY;
 
 /// A two-qubit Clifford gate for disentangling.
 struct DisentanglerGate {
     /// 4x4 unitary matrix for the MPS
     matrix: DMatrix<Complex64>,
-    /// 4x4 inverse matrix (for `state_vector` correction)
-    inverse_matrix: DMatrix<Complex64>,
+    /// Single-qubit Clifford dressing on the first site.
+    first_dressing: usize,
+    /// Single-qubit Clifford dressing on the second site.
+    second_dressing: usize,
 }
 
 /// Build a 2x2 single-qubit Clifford gate.
@@ -146,8 +150,9 @@ fn build_disentangler_set() -> Vec<DisentanglerGate> {
         if !is_dup {
             seen.push(matrix.clone());
             gates.push(DisentanglerGate {
-                inverse_matrix: matrix.adjoint(),
                 matrix,
+                first_dressing: a_idx,
+                second_dressing: b_idx,
             });
         }
     }
@@ -190,6 +195,62 @@ fn bond_entropy(mps: &Mps, bond: usize) -> f64 {
     entropy
 }
 
+/// Right-compose the inverse of a single-qubit Clifford from
+/// `single_qubit_clifford` into the tableau.
+fn right_compose_single_qubit_inverse(tableau: &mut SparseStabY, q: usize, idx: usize) {
+    match idx {
+        0 => {}
+        1 => super::tableau_compose::right_compose_h(tableau, q),
+        2 => super::tableau_compose::right_compose_szdg(tableau, q),
+        // (S H)^dagger = H S^dagger.
+        3 => {
+            super::tableau_compose::right_compose_h(tableau, q);
+            super::tableau_compose::right_compose_szdg(tableau, q);
+        }
+        // (H S)^dagger = S^dagger H.
+        4 => {
+            super::tableau_compose::right_compose_szdg(tableau, q);
+            super::tableau_compose::right_compose_h(tableau, q);
+        }
+        // (H S H)^dagger = H S^dagger H.
+        5 => {
+            super::tableau_compose::right_compose_h(tableau, q);
+            super::tableau_compose::right_compose_szdg(tableau, q);
+            super::tableau_compose::right_compose_h(tableau, q);
+        }
+        _ => unreachable!("unknown single-qubit Clifford dressing {idx}"),
+    }
+}
+
+/// Apply a candidate `U = (A tensor B) CX` to the MPS and absorb
+/// `U^-1 = CX (A^dagger tensor B^dagger)` into the tableau. This preserves
+/// the represented state `C |nu>` while changing its factorization.
+fn apply_disentangler(
+    mps: &mut Mps,
+    tableau: &mut SparseStabY,
+    disent_flags: &mut [Option<super::SiteEigenstate>],
+    q: usize,
+    gate: &DisentanglerGate,
+) -> Result<(), MpsError> {
+    mps.apply_two_site_gate(q, &gate.matrix)?;
+    super::tableau_compose::right_compose_cx(tableau, q, q + 1);
+    right_compose_single_qubit_inverse(tableau, q, gate.first_dressing);
+    right_compose_single_qubit_inverse(tableau, q + 1, gate.second_dressing);
+    disent_flags[q] = None;
+    disent_flags[q + 1] = None;
+    Ok(())
+}
+
+/// Apply one candidate to a throwaway MPS used only for scoring.
+///
+/// A factorization failure rejects the candidate without touching the live
+/// state; accepted candidates are applied separately by [`apply_disentangler`].
+fn trial_disentangler(mps: &Mps, q: usize, gate: &DMatrix<Complex64>) -> Option<Mps> {
+    let mut trial_mps = mps.clone();
+    trial_mps.apply_two_site_gate(q, gate).ok()?;
+    Some(trial_mps)
+}
+
 /// Run one sweep of heuristic disentangling on the MPS.
 ///
 /// For each internal bond, tries each candidate Clifford gate and keeps
@@ -197,16 +258,15 @@ fn bond_entropy(mps: &Mps, bond: usize) -> f64 {
 /// dim as the criterion (not local entropy) because a gate that reduces
 /// entropy at one bond can increase it at neighboring bonds.
 ///
-/// Records inverse operations in the gate log so `state_vector()` stays correct.
-///
 /// Returns the number of gates applied (0 means no improvement found).
 pub(crate) fn disentangle_sweep(
     mps: &mut Mps,
-    corrections: &mut Vec<super::MpsIndexGate>,
-) -> usize {
+    tableau: &mut SparseStabY,
+    disent_flags: &mut [Option<super::SiteEigenstate>],
+) -> Result<usize, MpsError> {
     let n = mps.num_sites();
     if n < 2 {
-        return 0;
+        return Ok(0);
     }
 
     let gates = build_disentangler_set();
@@ -226,26 +286,23 @@ pub(crate) fn disentangle_sweep(
         let mut best_gate_idx: Option<usize> = None;
 
         for (gate_idx, gate) in gates.iter().enumerate() {
-            let mut trial_mps = mps.clone();
-            if trial_mps.apply_two_site_gate(q, &gate.matrix).is_ok() {
-                let trial_max_bond = trial_mps.max_bond_dim();
-                let trial_entropy = bond_entropy(&trial_mps, bond);
-                // Accept gate only if it doesn't increase max bond dim
-                // AND reduces local entropy
-                if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
-                    best_entropy = trial_entropy;
-                    best_gate_idx = Some(gate_idx);
-                }
+            let Some(trial_mps) = trial_disentangler(mps, q, &gate.matrix) else {
+                // Candidate scoring is speculative: a failed factorization on
+                // this throwaway clone only disqualifies this candidate.
+                continue;
+            };
+            let trial_max_bond = trial_mps.max_bond_dim();
+            let trial_entropy = bond_entropy(&trial_mps, bond);
+            // Accept gate only if it doesn't increase max bond dim
+            // AND reduces local entropy
+            if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
+                best_entropy = trial_entropy;
+                best_gate_idx = Some(gate_idx);
             }
         }
 
         if let Some(idx) = best_gate_idx {
-            mps.apply_two_site_gate(q, &gates[idx].matrix)
-                .expect("gate should succeed");
-            corrections.push(super::MpsIndexGate {
-                site: q,
-                inverse_matrix: gates[idx].inverse_matrix.clone(),
-            });
+            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx])?;
             num_applied += 1;
         }
     }
@@ -264,51 +321,51 @@ pub(crate) fn disentangle_sweep(
         let mut best_gate_idx: Option<usize> = None;
 
         for (gate_idx, gate) in gates.iter().enumerate() {
-            let mut trial_mps = mps.clone();
-            if trial_mps.apply_two_site_gate(q, &gate.matrix).is_ok() {
-                let trial_max_bond = trial_mps.max_bond_dim();
-                let trial_entropy = bond_entropy(&trial_mps, bond);
-                if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
-                    best_entropy = trial_entropy;
-                    best_gate_idx = Some(gate_idx);
-                }
+            let Some(trial_mps) = trial_disentangler(mps, q, &gate.matrix) else {
+                // Match the forward sweep: speculative numerical failures are
+                // rejected candidates, not failures of the live sweep.
+                continue;
+            };
+            let trial_max_bond = trial_mps.max_bond_dim();
+            let trial_entropy = bond_entropy(&trial_mps, bond);
+            if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
+                best_entropy = trial_entropy;
+                best_gate_idx = Some(gate_idx);
             }
         }
 
         if let Some(idx) = best_gate_idx {
-            mps.apply_two_site_gate(q, &gates[idx].matrix)
-                .expect("gate should succeed");
-            corrections.push(super::MpsIndexGate {
-                site: q,
-                inverse_matrix: gates[idx].inverse_matrix.clone(),
-            });
+            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx])?;
             num_applied += 1;
         }
     }
 
-    num_applied
+    Ok(num_applied)
 }
 
 /// Run multiple sweeps of disentangling until convergence or `max_sweeps` reached.
 pub(crate) fn disentangle(
     mps: &mut Mps,
-    corrections: &mut Vec<super::MpsIndexGate>,
+    tableau: &mut SparseStabY,
+    disent_flags: &mut [Option<super::SiteEigenstate>],
     max_sweeps: usize,
-) -> usize {
+) -> Result<usize, MpsError> {
     let mut total_applied = 0;
     for _ in 0..max_sweeps {
-        let applied = disentangle_sweep(mps, corrections);
+        let applied = disentangle_sweep(mps, tableau, disent_flags)?;
         total_applied += applied;
         if applied == 0 {
             break;
         }
     }
-    total_applied
+    Ok(total_applied)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_core::{Angle64, QubitId};
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DenseStateVec};
 
     #[test]
     fn test_disentangler_gate_count() {
@@ -324,11 +381,65 @@ mod tests {
         let dim = 4;
         let id = DMatrix::<Complex64>::identity(dim, dim);
         for (i, gate) in gates.iter().enumerate() {
-            let product = &gate.matrix * &gate.inverse_matrix;
+            let product = &gate.matrix * gate.matrix.adjoint();
             let diff = (&product - &id).norm();
             assert!(
                 diff < 1e-10,
                 "gate {i} is not unitary: ||U*Udg - I|| = {diff}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_speculative_disentangler_factorization_failure_skips_candidate() {
+        let mps = Mps::new(2, crate::mps::MpsConfig::default());
+        let non_finite_gate = DMatrix::from_element(4, 4, Complex64::new(f64::NAN, 0.0));
+
+        assert!(trial_disentangler(&mps, 0, &non_finite_gate).is_none());
+        assert!(
+            mps.tensors()
+                .iter()
+                .flat_map(DMatrix::iter)
+                .all(|value| value.re.is_finite() && value.im.is_finite())
+        );
+    }
+
+    #[test]
+    fn test_every_disentangler_inverse_is_absorbed_into_tableau() {
+        let mut base = crate::stab_mps::StabMps::builder(2)
+            .merge_rz(false)
+            .svd_cutoff(0.0)
+            .max_truncation_error(0.0)
+            .build();
+        let mut oracle = DenseStateVec::new(2);
+        base.h(&[QubitId(0), QubitId(1)]);
+        oracle.h(&[QubitId(0), QubitId(1)]);
+        base.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        oracle.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        base.rz(Angle64::from_radians(0.61), &[QubitId(1)]);
+        oracle.rz(Angle64::from_radians(0.61), &[QubitId(1)]);
+        let expected = oracle.state();
+
+        for (index, gate) in build_disentangler_set().iter().enumerate() {
+            let mut sim = base.clone();
+            apply_disentangler(
+                &mut sim.mps,
+                &mut sim.tableau,
+                &mut sim.disent_flags,
+                0,
+                gate,
+            )
+            .unwrap();
+            let actual = sim.state_vector();
+            let overlap: Complex64 = expected
+                .iter()
+                .zip(&actual)
+                .map(|(a, b)| a.conj() * b)
+                .sum();
+            assert!(
+                (overlap.norm_sqr() - 1.0).abs() <= 1e-10,
+                "candidate {index} changed the represented state: fidelity={}",
+                overlap.norm_sqr()
             );
         }
     }

@@ -5,30 +5,59 @@
 
 This check is intentionally narrower than a full packaging linter. It guards
 the invariants that tend to drift in this repository: package versions,
-workspace membership, internal dependency pins, and uv workspace sources.
+workspace membership, Python-version metadata, release ABI targets, internal
+dependency pins, and uv workspace sources.
 """
 
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
-    try:
-        import tomli as tomllib  # type: ignore[no-redef]
-    except ModuleNotFoundError:
-        print("error: Python 3.11+ or the 'tomli' package is required", file=sys.stderr)
-        sys.exit(2)
-
+import yaml
+from packaging.requirements import InvalidRequirement, Requirement
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
+MINIMUM_PYTHON = "3.12"
+EXPECTED_PYTHON_CLASSIFIERS = {"3", "3.12", "3.13", "3.14"}
+RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/python-release.yml"
+
+
+def tracked_pyprojects() -> list[Path]:
+    """Every `pyproject.toml` tracked by git, so build output and stray venvs stay out."""
+    git = shutil.which("git")
+    if git is None:
+        msg = "git not found on PATH"
+        raise RuntimeError(msg)
+
+    result = subprocess.run(
+        [git, "ls-files", "*pyproject.toml"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [REPO_ROOT / line for line in result.stdout.split()]
+
+
+def is_distribution(data: dict[str, Any]) -> bool:
+    """Whether a `pyproject.toml` builds a wheel, as opposed to pinning a tooling environment.
+
+    A `[build-system]` table is what makes a project installable, and every distribution in
+    this repository ships on the same version train -- including ones outside the uv
+    workspace, like `exp/zluppy`, which keeps its own lockfile. Projects without one (the
+    root meta-package, `exp/zlup`'s mkdocs environment) only pin dependencies for a local
+    task, so they carry no train version.
+    """
+    return isinstance(data.get("build-system"), dict)
 
 
 @dataclass(frozen=True)
@@ -118,17 +147,46 @@ def iter_dependency_lists(data: dict[str, Any]) -> list[tuple[str, list[Any]]]:
     return lists
 
 
-def internal_dependencies(package: Package, workspace_names: set[str], errors: list[str]) -> set[str]:
+def internal_dependencies(
+    package: Package,
+    workspace_names: set[str],
+    errors: list[str],
+    *,
+    require_pin: bool = True,
+) -> set[str]:
+    """Internal dependency names, checking that each names the train version.
+
+    Workspace members publish to PyPI, so every internal dependency must pin the exact
+    version. A distribution outside the uv workspace may instead resolve a sibling through
+    a `[tool.uv.sources]` path, which carries no version to drift -- but if it does state
+    one, that version still has to be the train's.
+    """
     internal: set[str] = set()
     for section, deps in iter_dependency_lists(package.data):
         for dep in deps:
             if not isinstance(dep, str):
                 fail(errors, f"{rel(package.path)}: {section} contains non-string dependency {dep!r}")
                 continue
-            dep_name = dependency_name(dep)
-            if dep_name is None or dep_name not in workspace_names or dep_name == package.normalized_name:
+            try:
+                requirement = Requirement(dep)
+            except InvalidRequirement as err:
+                fail(errors, f"{rel(package.path)}: {section} dependency {dep!r} is not parsable: {err}")
+                continue
+            dep_name = normalize_name(requirement.name)
+            if dep_name not in workspace_names or dep_name == package.normalized_name:
                 continue
             internal.add(dep_name)
+            if not require_pin and not requirement.specifier:
+                # A bare internal dependency only resolves to the sibling in this repository
+                # because a [tool.uv.sources] entry points at it. Without one it would resolve
+                # from PyPI, unconstrained, and drift off the train silently.
+                if dep_name not in declared_sources(package):
+                    fail(
+                        errors,
+                        f"{rel(package.path)}: {section} dependency {dep!r} states no version and "
+                        "has no [tool.uv.sources] entry",
+                    )
+                continue
             if not has_exact_version_pin(dep, package.version):
                 fail(
                     errors,
@@ -136,6 +194,16 @@ def internal_dependencies(package: Package, workspace_names: set[str], errors: l
                     f"workspace package version =={package.version}",
                 )
     return internal
+
+
+def declared_sources(package: Package) -> set[str]:
+    """Every name with a `[tool.uv.sources]` entry, whatever kind of source it is."""
+    tool = package.data.get("tool", {})
+    uv = tool.get("uv", {}) if isinstance(tool, dict) else {}
+    sources = uv.get("sources", {}) if isinstance(uv, dict) else {}
+    if not isinstance(sources, dict):
+        return set()
+    return {normalize_name(name) for name in sources}
 
 
 def workspace_sources(package: Package, errors: list[str]) -> set[str]:
@@ -190,11 +258,117 @@ def check_cuda_extra_group(root_data: dict[str, Any], errors: list[str]) -> None
             )
 
 
+def check_python_floor(path: Path, data: dict[str, Any], errors: list[str]) -> None:
+    """Ensure Python package and wheel metadata agree on the supported floor."""
+    project = data.get("project", {})
+    if not isinstance(project, dict):
+        return
+
+    requires_python = project.get("requires-python")
+    normalized_requirement = re.sub(r"\s+", "", requires_python) if isinstance(requires_python, str) else ""
+    if normalized_requirement != f">={MINIMUM_PYTHON}":
+        fail(
+            errors,
+            f"{rel(path)}: [project].requires-python must be >={MINIMUM_PYTHON!s}",
+        )
+
+    classifiers = project.get("classifiers", [])
+    if not isinstance(classifiers, list):
+        fail(errors, f"{rel(path)}: [project].classifiers must be a list")
+        return
+    python_classifiers: set[str] = set()
+    for classifier in classifiers:
+        if not isinstance(classifier, str):
+            continue
+        version = classifier.removeprefix("Programming Language :: Python :: ")
+        if classifier.startswith("Programming Language :: Python :: ") and (
+            version == "3" or re.fullmatch(r"\d+\.\d+", version)
+        ):
+            python_classifiers.add(version)
+    if python_classifiers and python_classifiers != EXPECTED_PYTHON_CLASSIFIERS:
+        fail(
+            errors,
+            f"{rel(path)}: Python classifiers must be {sorted(EXPECTED_PYTHON_CLASSIFIERS)!r}",
+        )
+
+
+def toml_strings(value: Any) -> list[str]:
+    """Return string values recursively from parsed TOML data."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [item for entry in value for item in toml_strings(entry)]
+    if isinstance(value, dict):
+        return [item for entry in value.values() for item in toml_strings(entry)]
+    return []
+
+
+def check_release_python_abi(errors: list[str]) -> None:
+    """Keep ABI3, cibuildwheel, and the release smoke test on one floor."""
+    expected_abi3 = f"abi3-py{MINIMUM_PYTHON.replace('.', '')}"
+
+    for manifest in sorted(REPO_ROOT.rglob("Cargo.toml")):
+        if "target" in manifest.parts:
+            continue
+        data = load_toml(manifest)
+        abi3_features = {
+            feature for value in toml_strings(data) for feature in re.findall(r"(?:^|/)(abi3-py\d+)", value)
+        }
+        if not abi3_features:
+            continue
+        if abi3_features != {expected_abi3}:
+            fail(
+                errors,
+                f"{rel(manifest)}: ABI3 feature must be exactly {expected_abi3!r}, found {sorted(abi3_features)!r}",
+            )
+
+    python_abi = MINIMUM_PYTHON.replace(".", "")
+    expected_cibw_target = f"cp{python_abi}-*"
+    expected_smoke_interpreter = f"/opt/python/cp{python_abi}-cp{python_abi}/bin/python"
+    workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text())
+    jobs = workflow.get("jobs", {}) if isinstance(workflow, dict) else {}
+    if not isinstance(jobs, dict):
+        fail(errors, f"{rel(RELEASE_WORKFLOW)}: missing jobs mapping")
+        return
+
+    cibw_targets: list[str] = []
+    smoke_interpreters: list[str] = []
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        for step in job.get("steps", []):
+            if not isinstance(step, dict):
+                continue
+            env = step.get("env", {})
+            if isinstance(env, dict) and isinstance(env.get("CIBW_BUILD"), str):
+                cibw_targets.append(env["CIBW_BUILD"])
+            run = step.get("run")
+            if isinstance(run, str):
+                smoke_interpreters.extend(re.findall(r"/opt/python/cp\d+-cp\d+/bin/python", run))
+
+    if not cibw_targets:
+        fail(errors, f"{rel(RELEASE_WORKFLOW)}: no CIBW_BUILD release-wheel targets found")
+    for target in cibw_targets:
+        if target != expected_cibw_target:
+            fail(errors, f"{rel(RELEASE_WORKFLOW)}: CIBW_BUILD must be {expected_cibw_target!r}, found {target!r}")
+
+    if not smoke_interpreters:
+        fail(errors, f"{rel(RELEASE_WORKFLOW)}: no manylinux smoke interpreter found")
+    for interpreter in smoke_interpreters:
+        if interpreter != expected_smoke_interpreter:
+            fail(
+                errors,
+                f"{rel(RELEASE_WORKFLOW)}: manylinux smoke interpreter must be "
+                f"{expected_smoke_interpreter!r}, found {interpreter!r}",
+            )
+
+
 def main() -> int:
     errors: list[str] = []
 
     root = load_package(ROOT_PYPROJECT, errors)
-    package_paths = sorted((REPO_ROOT / "python").rglob("pyproject.toml"))
+    tracked = tracked_pyprojects()
+    package_paths = [path for path in tracked if path.is_relative_to(REPO_ROOT / "python")]
     packages = [pkg for path in package_paths if (pkg := load_package(path, errors)) is not None]
     if root is None:
         for error in errors:
@@ -204,7 +378,23 @@ def main() -> int:
     all_packages = [root, *packages]
     workspace_names = {pkg.normalized_name for pkg in all_packages}
 
-    for pkg in all_packages:
+    distribution_paths = []
+    for path in tracked:
+        data = load_toml(path)
+        check_python_floor(path, data, errors)
+        if is_distribution(data):
+            distribution_paths.append(path)
+    check_release_python_abi(errors)
+
+    version_tracked = list(all_packages)
+    already_loaded = {pkg.path for pkg in all_packages}
+    for path in distribution_paths:
+        if path in already_loaded:
+            continue
+        if (pkg := load_package(path, errors)) is not None:
+            version_tracked.append(pkg)
+
+    for pkg in version_tracked:
         if pkg.version != root.version:
             fail(
                 errors,
@@ -228,8 +418,12 @@ def main() -> int:
 
     check_cuda_extra_group(root.data, errors)
 
-    for pkg in all_packages:
-        internal = internal_dependencies(pkg, workspace_names, errors)
+    for pkg in version_tracked:
+        member = pkg in all_packages
+        internal = internal_dependencies(pkg, workspace_names, errors, require_pin=member)
+        if not member:
+            # Outside the uv workspace, so [tool.uv.sources] workspace entries do not apply.
+            continue
         sources = workspace_sources(pkg, errors)
         missing_sources = sorted(internal - sources)
         extra_sources = sorted((sources & workspace_names) - internal)
@@ -250,7 +444,7 @@ def main() -> int:
         return 1
 
     print(
-        f"Python workspace metadata OK: {len(packages)} packages, "
+        f"Python workspace metadata OK: {len(version_tracked)} versioned projects, "
         f"version {root.version}, {len(expected_members)} uv workspace members",
     )
     return 0

@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from pecos.decoders import pymatching
 from pecos.qec import DagFaultAnalyzer, DemSampler, DemSamplerBuilder
 from pecos_rslib import DagCircuit
 from pecos_rslib.qec import LogicalSubgraphDecoder
@@ -82,7 +83,7 @@ class TestDemSamplerRawMode:
         assert len(batch.detector_events()) == 100
         assert len(batch.get_syndrome(0)) == sampler.num_outputs
         with pytest.raises(ValueError, match=r"raw-measurement.*measurements, not detector events"):
-            batch.decode_count("error(0.01) D0")
+            batch.decode("error(0.01) D0", pymatching(correlated=True))
 
     def test_raw_sample_batch_rejected_by_decoder_objects(self) -> None:
         """Decoder objects taking a SampleBatch reject raw-measurement batches too."""

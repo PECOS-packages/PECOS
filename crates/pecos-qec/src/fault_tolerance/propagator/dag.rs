@@ -1239,6 +1239,8 @@ impl GateFaultLocation<'_> {
             | GateType::MZ
             | GateType::MeasureFree
             | GateType::MPZ => &[pecos_core::Pauli::X],
+            // X-basis prep/measurement: only Z (phase-flip) fault.
+            GateType::PX | GateType::MX => &[pecos_core::Pauli::Z],
             // Unitary gates: all single-qubit Paulis.
             _ => &[
                 pecos_core::Pauli::X,
@@ -1311,6 +1313,8 @@ impl GateFaultLocation<'_> {
             | GateType::MZ
             | GateType::MeasureFree
             | GateType::MPZ => &[Pauli::X],
+            // X-basis prep/measurement: only Z (phase-flip) fault.
+            GateType::PX | GateType::MX => &[Pauli::Z],
             // Unitary gates: all single-qubit Paulis.
             _ => &[Pauli::X, Pauli::Y, Pauli::Z],
         };
@@ -1853,7 +1857,7 @@ impl<'a> DagFaultAnalyzer<'a> {
 
                 let is_measurement = matches!(
                     gate.gate_type,
-                    GateType::MZ | GateType::MeasureFree | GateType::MPZ
+                    GateType::MZ | GateType::MX | GateType::MeasureFree | GateType::MPZ
                 );
 
                 // Convert QubitId to usize
@@ -1886,7 +1890,10 @@ impl<'a> DagFaultAnalyzer<'a> {
                     let single_qubit: SmallVec<[usize; 2]> = smallvec::smallvec![q];
                     locations.push(node, single_qubit, before, gate.gate_type, idle_duration);
                 }
-                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                if matches!(
+                    gate.gate_type,
+                    GateType::PZ | GateType::PX | GateType::QAlloc
+                ) {
                     prepared_qubits.extend(qubits.iter().copied());
                 }
             }
@@ -1972,6 +1979,7 @@ impl<'a> DagFaultAnalyzer<'a> {
             if let Some(gate) = self.propagator.gate(node) {
                 let basis = match gate.gate_type {
                     GateType::MZ | GateType::MeasureFree | GateType::MPZ => 0, // Z-basis
+                    GateType::MX => 1,                                         // X-basis
                     _ => continue,
                 };
 
@@ -2088,7 +2096,10 @@ impl<'a> DagFaultAnalyzer<'a> {
 
                 // Handle prep gates specially - they kill the Pauli and stop propagation
                 // on their qubits. Errors before a prep don't affect measurements after it.
-                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                if matches!(
+                    gate.gate_type,
+                    GateType::PZ | GateType::PX | GateType::QAlloc
+                ) {
                     for q in &gate.qubits {
                         let idx = q.index();
                         if idx <= self.max_qubit() {
@@ -2229,7 +2240,10 @@ impl<'a> DagFaultAnalyzer<'a> {
 
                 self.record_at_node_generic(node, prop, request.detector_idx, recorder, false);
 
-                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                if matches!(
+                    gate.gate_type,
+                    GateType::PZ | GateType::PX | GateType::QAlloc
+                ) {
                     let pz_topo = self.propagator.topo_position(node);
                     for q in &gate.qubits {
                         let idx = q.index();
@@ -2301,7 +2315,10 @@ impl<'a> DagFaultAnalyzer<'a> {
                 self.record_at_node_generic(node, prop, detector_idx, recorder, false);
                 visited_nodes.push(node);
 
-                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                if matches!(
+                    gate.gate_type,
+                    GateType::PZ | GateType::PX | GateType::QAlloc
+                ) {
                     for q in &gate.qubits {
                         let idx = q.index();
                         if idx <= self.max_qubit() {
@@ -2365,7 +2382,10 @@ impl<'a> DagFaultAnalyzer<'a> {
             if let Some(gate) = self.propagator.gate(node) {
                 self.record_at_node_generic(node, prop, detector_idx, recorder, false);
 
-                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                if matches!(
+                    gate.gate_type,
+                    GateType::PZ | GateType::PX | GateType::QAlloc
+                ) {
                     for q in &gate.qubits {
                         let idx = q.index();
                         if idx <= self.max_qubit() {
@@ -2887,7 +2907,7 @@ mod tests {
             dag.gate(n).is_none_or(|g| {
                 !matches!(
                     g.gate_type,
-                    GateType::MZ | GateType::MeasureFree | GateType::MPZ
+                    GateType::MZ | GateType::MX | GateType::MeasureFree | GateType::MPZ
                 )
             })
         }) {
@@ -3487,7 +3507,10 @@ mod tests {
             if !has_any_flip {
                 // Only locations after measurements or before preps might have no flips
                 assert!(
-                    matches!(loc.gate_type, GateType::PZ | GateType::QAlloc) || !loc.before,
+                    matches!(
+                        loc.gate_type,
+                        GateType::PZ | GateType::PX | GateType::QAlloc
+                    ) || !loc.before,
                     "Multi-qubit location {loc:?} has no detector flips"
                 );
             }

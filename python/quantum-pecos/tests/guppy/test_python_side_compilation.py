@@ -20,7 +20,7 @@ class TestPythonSideCompilation:
             """Simple H-gate and measurement."""
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         return simple_circuit
 
@@ -40,7 +40,7 @@ class TestPythonSideCompilation:
             q2 = qubit()
             h(q1)
             cx(q1, q2)  # Create entanglement
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         return bell_pair
 

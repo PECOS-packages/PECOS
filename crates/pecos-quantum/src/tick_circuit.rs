@@ -1530,7 +1530,7 @@ impl TickCircuit {
         let gate = batch.as_gate();
         if !matches!(
             gate.gate_type,
-            GateType::MZ | GateType::MeasureFree | GateType::MPZ
+            GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
         ) {
             return None;
         }
@@ -2362,12 +2362,13 @@ impl TickCircuit {
     }
 
     /// Validate each reference against the batch it names and derive the ids
-    /// and Z-Pauli. Validation re-runs the [`Self::meas_ref`] lookup: the
+    /// and basis-matched Pauli. Validation re-runs the [`Self::meas_ref`] lookup: the
     /// reference must round-trip to the same id.
     fn validated_ids_and_pauli(
         &self,
         measurements: &[TickMeasRef],
     ) -> Result<(Vec<MeasId>, pecos_core::PauliString), TickAnnotationRefError> {
+        let mut paulis = Vec::with_capacity(measurements.len());
         for m in measurements {
             let held = self
                 .meas_ref(m.tick, m.gate_idx, m.qubit)
@@ -2380,10 +2381,24 @@ impl TickCircuit {
                     meas_id: m.meas_id,
                 });
             }
+            let gate_type = self.ticks[m.tick].gate_batches()[m.gate_idx].gate_type;
+            paulis.push((
+                if gate_type == GateType::MX {
+                    pecos_core::Pauli::X
+                } else {
+                    pecos_core::Pauli::Z
+                },
+                m.qubit,
+            ));
         }
         let ids = measurements.iter().map(|m| m.meas_id).collect();
-        let qubits: Vec<usize> = measurements.iter().map(|m| m.qubit.index()).collect();
-        Ok((ids, pecos_core::PauliString::zs(&qubits)))
+        Ok((
+            ids,
+            pecos_core::PauliString::with_phase_and_paulis(
+                pecos_core::QuarterPhase::PlusOne,
+                paulis,
+            ),
+        ))
     }
 
     /// Place a tracked-Pauli annotation.
@@ -2550,7 +2565,7 @@ impl TickCircuit {
             return;
         }
 
-        let old_ticks: Vec<Tick> = self.ticks.drain(..).collect();
+        let old_ticks = std::mem::take(&mut self.ticks);
         let mut compacted: Vec<Tick> = Vec::new();
 
         for tick in old_ticks {
@@ -3153,6 +3168,18 @@ impl<'a> TickHandle<'a> {
         }
     }
 
+    /// Prepare qubit(s) in the |+> state.
+    pub fn px(mut self, qubits: &[impl Into<QubitId> + Copy]) -> TickPrepHandle<'a> {
+        let gate_piece = self.add_gate_get_piece(Gate::px(qubits));
+        self.last_gate_idx = None;
+        self.last_gate_piece = None;
+        TickPrepHandle {
+            circuit: self.circuit,
+            tick_idx: self.tick_idx,
+            gate_piece,
+        }
+    }
+
     /// Measure qubit(s) in the Z basis.
     ///
     /// Returns a [`TickMeasureHandle`] that allows attaching metadata via `.meta()`.
@@ -3201,6 +3228,40 @@ impl<'a> TickHandle<'a> {
             .map(|mut r| {
                 r.gate_idx = gate_idx;
                 r
+            })
+            .collect()
+    }
+
+    /// Measure qubit(s) in the X basis.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit has no measurement records left below
+    /// [`usize::MAX`].
+    pub fn mx(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<TickMeasRef> {
+        let mut gate = Gate::mx(qubits);
+        let mut refs = Vec::with_capacity(qubits.len());
+        let base = self
+            .circuit
+            .try_advance_meas_counter(qubits.len())
+            .unwrap_or_else(|err| panic!("{err}"));
+        for (offset, &q) in qubits.iter().enumerate() {
+            let mr = MeasId::from_raw(base + offset);
+            gate.meas_ids.push(mr);
+            refs.push(TickMeasRef {
+                tick: self.tick_idx,
+                gate_idx: 0,
+                qubit: q.into(),
+                meas_id: mr,
+            });
+        }
+        let gate_idx = self.add_gate_get_idx(gate);
+        self.last_gate_idx = None;
+        self.last_gate_piece = None;
+        refs.into_iter()
+            .map(|mut reference| {
+                reference.gate_idx = gate_idx;
+                reference
             })
             .collect()
     }

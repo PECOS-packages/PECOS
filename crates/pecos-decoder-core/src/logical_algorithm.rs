@@ -666,8 +666,8 @@ impl DecodeStrategy for FullCircuitStrategy {
         Ok(0)
     }
 
-    fn committed_obs(&self) -> u64 {
-        0
+    fn committed_obs(&self) -> Result<u64, DecoderError> {
+        Ok(0)
     }
 
     fn reset(&mut self) {
@@ -810,8 +810,8 @@ impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
         Ok(0)
     }
 
-    fn committed_obs(&self) -> u64 {
-        0
+    fn committed_obs(&self) -> Result<u64, DecoderError> {
+        Ok(0)
     }
 
     fn reset(&mut self) {

@@ -365,6 +365,18 @@ impl BpLsdDecoder {
                     .to_string(),
             ));
         }
+
+        // Honor the crate convention `0 = all` (see BeliefFindDecoder): LSD
+        // growth always ranks candidate bits by BP weights, and the C++ loop
+        // adds exactly `bits_per_step` bits per step — a literal zero means
+        // clusters can never grow, which corrupts the cluster state and
+        // segfaults in the on-the-fly elimination on large matrices.
+        let bits_per_step = if bits_per_step == 0 {
+            pcm.cols
+        } else {
+            bits_per_step
+        };
+
         // Prepare channel probabilities
         let channel_probs = prepare_channel_probs(pcm.cols, error_rate, error_channel)?;
 
@@ -397,7 +409,9 @@ impl BpLsdDecoder {
             ms_scaling_factor,
             lsd_method.to_ffi(),
             lsd_order,
-            i32::try_from(bits_per_step).unwrap_or(0),
+            // Saturate: a huge value means "all candidates per step", never the
+            // crash-prone literal zero.
+            i32::try_from(bits_per_step).unwrap_or(i32::MAX),
             input_vector_type.to_ffi(),
             i32::try_from(threads).unwrap_or(1),
             schedule_order,
@@ -935,7 +949,8 @@ impl UnionFindDecoder {
     /// # Arguments
     /// * `syndrome` - The syndrome to decode
     /// * `llrs` - Log-likelihood ratios (optional, use empty slice if not available)
-    /// * `bits_per_step` - Number of bits to add per growth step (0 = all)
+    /// * `bits_per_step` - Number of bits to add per growth step (0 = all;
+    ///   safe with or without `llrs`)
     ///
     /// # Errors
     ///
@@ -963,12 +978,21 @@ impl UnionFindDecoder {
             )));
         }
 
+        // Honor the crate convention `0 = all`: with LLR weights supplied, the
+        // C++ growth loop adds exactly `bits_per_step` bits per step and a
+        // literal zero prevents cluster growth entirely (crash-prone on large
+        // matrices). Without weights the C++ side already grows all candidates.
+        let bits_per_step = if bits_per_step == 0 {
+            self.bit_count()
+        } else {
+            bits_per_step
+        };
         let syndrome_vec: Vec<u8> = syndrome.to_vec();
         let result = ffi::decode_union_find(
             self.inner.pin_mut(),
             &syndrome_vec,
             llrs,
-            i32::try_from(bits_per_step).unwrap_or(0),
+            i32::try_from(bits_per_step).unwrap_or(i32::MAX),
         )
         .map_err(|e| LdpcError::Ldpc(e.what().to_string()))?;
 
@@ -993,6 +1017,43 @@ impl UnionFindDecoder {
     #[must_use]
     pub fn method(&self) -> UfMethod {
         self.uf_method
+    }
+}
+
+/// DEM-aware weighted Union-Find adapter for the shared observable interface.
+pub struct WeightedUnionFindDecoder {
+    decoder: UnionFindDecoder,
+    dem: pecos_decoder_core::DemCheckMatrix,
+    llrs: Vec<f64>,
+}
+
+impl WeightedUnionFindDecoder {
+    /// Wrap a Union-Find decoder with DEM priors and observable mappings.
+    #[must_use]
+    pub fn new(
+        decoder: UnionFindDecoder,
+        dem: pecos_decoder_core::DemCheckMatrix,
+        llrs: Vec<f64>,
+    ) -> Self {
+        Self { decoder, dem, llrs }
+    }
+}
+
+impl pecos_decoder_core::ObservableDecoder for WeightedUnionFindDecoder {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
+        let syndrome = Array1::from_vec(syndrome.to_vec());
+        // Grow one bit at a time in LLR order. Zero means all candidates per
+        // step and is translated at the Rust boundary since the segfault fix.
+        let result = self
+            .decoder
+            .decode(&syndrome.view(), &self.llrs, 1)
+            .map_err(|error| pecos_decoder_core::DecoderError::DecodingFailed(error.to_string()))?;
+        Ok(self
+            .dem
+            .observables_obsmask_from_correction(result.decoding.as_slice().unwrap_or(&[])))
     }
 }
 

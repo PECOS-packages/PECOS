@@ -1,0 +1,2980 @@
+{
+  "scenarios": [
+    {
+      "name": "upstream/degeneracy_ml_vs_mle/unpruned/syndrome=0x0",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbfdbddbda52ed09b",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbfe08f7acdac4fbc"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc007ceb433cefe42"
+        }
+      ]
+    },
+    {
+      "name": "upstream/degeneracy_ml_vs_mle/unpruned/syndrome=0x1",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbff0a91cca471450",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbff96f2568a3c294"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xbffe760065d061cd"
+        }
+      ]
+    },
+    {
+      "name": "upstream/degeneracy_ml_vs_mle/pruned/syndrome=0x0",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbfe02909226982c2",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbfe18ab3bdb1c744"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc00d5a44f38d8cbd"
+        }
+      ]
+    },
+    {
+      "name": "upstream/degeneracy_ml_vs_mle/pruned/syndrome=0x1",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xbff66802ca2c2048",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xbffef39cddd31d91"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc002432374106fc6"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x0",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbfd1bd12fa9a4cca",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbfd1be066d369f94"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0241024b479f26f"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x1",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc009be0711507b0c",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc009c5e626c1797a"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0218fead28468d6"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x2",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc014ef4bcd569879",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01676324e035d12"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01986aaeff1e079"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x3",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc00b97d0ed325490",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc00ba44da7e1f7ed"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0211aab69d38a21"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x4",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc01b0f05b25cddd9",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01b7ab2cd779bec"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc0222364e1dcd2e0"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x5",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc01b4fd7f84c508a",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01b84a61bbbbe41"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc023a3135635ad3e"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x6",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc00da35465f0ce81",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc00e069d415ba1c4"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01b05a740e53af4"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x7",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc01a754208a80774",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01aa8eb713d7221"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc02340b54d6ba8fe"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x8",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc0103e49406e4ef5",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc010ace2297dfb1a"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc0195c13b81510bc"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0x9",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc01bbe4183b49f7c",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01c28a583701223"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc02280d8445258fd"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0xa",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc019bafd6f723b04",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc019ee04ac5265e6"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc022e9bbf26f6de3"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0xb",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc01c853ca4021596",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01ced6195041aa3"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc022eeb599917f0d"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0xc",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc00835778f510cd5",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0083ada6d383a72"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc021efb803ac9029"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0xd",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc0153d36a742e35e",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc017dc91bc3fd469"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0182aebeb583bd0"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0xe",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc006d46ac8fce1ae",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc006e94afc7553a6"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01dc784518ca505"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/unpruned/syndrome=0xf",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc01528a5b6d18ae9",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0173bb82ac7fc96"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc018c7108da191d2"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x0",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbfd1be06cc1463be",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbfd1be06cc1463be"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x1",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc009c5f6df873fa4",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc009c5f6df873fa4"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x2",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc01986aaeff1e079",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01986aaeff1e079"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x3",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc00ba4685614b970",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc00ba4685614b970"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x4",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc01b7ab2cd779bec",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01b7ab2cd779bec"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x5",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc01b84a61bbbbe41",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01b84a61bbbbe41"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x6",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc00e06cdadf6a2e3",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc00e06cdadf6a2e3"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x7",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc01aa8eb713d7221",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01aa8eb713d7221"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x8",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc010ad19c3da7367",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc010ad19c3da7367"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0x9",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc01c28a583701223",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01c28a583701223"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0xa",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc01a04f95018890a",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01a04f95018890a"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0xb",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc01ced6195041aa3",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01ced6195041aa3"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0xc",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc0083ae5cbbcfba9",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0083ae5cbbcfba9"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0xd",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc017dc91bc3fd469",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc017dc91bc3fd469"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0xe",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc006d830da170089",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc006e94b08510c2b"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01e94a02e147e9d"
+        }
+      ]
+    },
+    {
+      "name": "upstream/rep_chain_hyperedge/pruned/syndrome=0xf",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc018c7108da191d2",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc018c7108da191d2"
+        }
+      ]
+    },
+    {
+      "name": "upstream/wide_observable_70/unpruned/syndrome=0x0",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000",
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbfca381a7a705aad",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbfca89525915602d"
+        },
+        {
+          "label": [
+            "0x0000000000000008",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc0192f79273859b2"
+        },
+        {
+          "label": [
+            "0x0000000000000001",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc021a6709eadc8a9"
+        },
+        {
+          "label": [
+            "0x0000000000000009",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc0250a12ab8f1e7c"
+        }
+      ]
+    },
+    {
+      "name": "upstream/wide_observable_70/unpruned/syndrome=0x1",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000",
+        "0x0000000000000040"
+      ],
+      "log_evidence": "0xc001c9e9133b45e3",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc0033c7fa03e590d"
+        },
+        {
+          "label": [
+            "0x0000000000000008",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0106583e9e1d82d"
+        },
+        {
+          "label": [
+            "0x0000000000000001",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc01a82ec00050fcd"
+        },
+        {
+          "label": [
+            "0x0000000000000009",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0296f0d4a3a5f3f"
+        }
+      ]
+    },
+    {
+      "name": "upstream/wide_observable_70/unpruned/syndrome=0x2",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001",
+        "0x0000000000000040"
+      ],
+      "log_evidence": "0xc0089a06e6a5f91e",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc00936cb2b96092f"
+        },
+        {
+          "label": [
+            "0x0000000000000000",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc01785c63a5937bc"
+        },
+        {
+          "label": [
+            "0x0000000000000008",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01e4d0a541be362"
+        },
+        {
+          "label": [
+            "0x0000000000000009",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0227b4a151d59a4"
+        }
+      ]
+    },
+    {
+      "name": "upstream/wide_observable_70/unpruned/syndrome=0x3",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000",
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc00bd6340aaa44a5",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc00d77a1fa056c6e"
+        },
+        {
+          "label": [
+            "0x0000000000000001",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc015655ad321861d"
+        },
+        {
+          "label": [
+            "0x0000000000000009",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc01c2c9eece431c3"
+        },
+        {
+          "label": [
+            "0x0000000000000008",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc0238b7fc8b93274"
+        }
+      ]
+    },
+    {
+      "name": "upstream/wide_observable_70/pruned/syndrome=0x0",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000",
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbfca381a7a705aad",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbfca89525915602d"
+        },
+        {
+          "label": [
+            "0x0000000000000008",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc0192f79273859b2"
+        },
+        {
+          "label": [
+            "0x0000000000000001",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc021a6709eadc8a9"
+        },
+        {
+          "label": [
+            "0x0000000000000009",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc0250a12ab8f1e7c"
+        }
+      ]
+    },
+    {
+      "name": "upstream/wide_observable_70/pruned/syndrome=0x1",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000",
+        "0x0000000000000040"
+      ],
+      "log_evidence": "0xc001c9e9133b45e3",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc0033c7fa03e590d"
+        },
+        {
+          "label": [
+            "0x0000000000000008",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0106583e9e1d82d"
+        },
+        {
+          "label": [
+            "0x0000000000000001",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc01a82ec00050fcd"
+        },
+        {
+          "label": [
+            "0x0000000000000009",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0296f0d4a3a5f3f"
+        }
+      ]
+    },
+    {
+      "name": "upstream/wide_observable_70/pruned/syndrome=0x2",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001",
+        "0x0000000000000040"
+      ],
+      "log_evidence": "0xc0089a06e6a5f91e",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc00936cb2b96092f"
+        },
+        {
+          "label": [
+            "0x0000000000000000",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc01785c63a5937bc"
+        },
+        {
+          "label": [
+            "0x0000000000000008",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01e4d0a541be362"
+        },
+        {
+          "label": [
+            "0x0000000000000009",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0227b4a151d59a4"
+        }
+      ]
+    },
+    {
+      "name": "upstream/wide_observable_70/pruned/syndrome=0x3",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000",
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc00bd6340aaa44a5",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc00d77a1fa056c6e"
+        },
+        {
+          "label": [
+            "0x0000000000000001",
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc015655ad321861d"
+        },
+        {
+          "label": [
+            "0x0000000000000009",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc01c2c9eece431c3"
+        },
+        {
+          "label": [
+            "0x0000000000000008",
+            "0x0000000000000040"
+          ],
+          "log_mass": "0xc0238b7fc8b93274"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x0",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbffabec4f0988108",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbffad32fe9d7fd9c"
+        },
+        {
+          "label": [
+            "0x0000000000000004"
+          ],
+          "log_mass": "0xc01c22e1e1fefe5b"
+        },
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc024210983137b2a"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc026e58db09b5ddd"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x1",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000006"
+      ],
+      "log_evidence": "0xc01123d1b8f7f878",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc011942544ceae4b"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01a635f8aa9fbbd"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc02341485768f9dc"
+        },
+        {
+          "label": [
+            "0x0000000000000004"
+          ],
+          "log_mass": "0xc02c553a55c7b54f"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x2",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc00927cc7eec44a9",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc00a08739699b050"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc015d37411282599"
+        },
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc020f9529aa80ecb"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc02a0d449906ca3d"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x3",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000005"
+      ],
+      "log_evidence": "0xc0067f396b4fecca",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc006896ee7efab15"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0205966adc06a3e"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc02668ff3fd4663c"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc0292d836d5c48ee"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x9",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000004"
+      ],
+      "log_evidence": "0xc01248540e66e3bf",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000004"
+          ],
+          "log_mass": "0xc013373e3a347252"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc018c046954437b6"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc0226fbbdcb617d9"
+        },
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc02d26c6d07a9752"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0xc",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc00b22cc9273a18d",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc00b48ed5dd6f2e5"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc01fcc5aaba8f058"
+        },
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc020a93428d8be25"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc02510d14bc664de"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x12",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000005"
+      ],
+      "log_evidence": "0xc01035fed7934d38",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc0113ebff2e0758f"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc016c7c84df03af4"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01db81f0dbc802e"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc029931a7aa2bf90"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x15",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc018953f5795ce8d",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01b1b3d2b7201b8"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc01cfb78c82ea04e"
+        },
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc0205222c340e38d"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc02934c757dbcfa0"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x18",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000004"
+      ],
+      "log_evidence": "0xc0028cb2f7a3beb1",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000004"
+          ],
+          "log_mass": "0xc00298725947b18f"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01eba4f142cd7bb"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc022d552e9fc8e7a"
+        },
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc02599d71784712d"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x1a",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000007"
+      ],
+      "log_evidence": "0xc00e3c8abf99a019",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc00f374dfaf56310"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0186ae14355fefb"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01f5b3803224436"
+        },
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc028c18dffefdd8d"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x1b",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc00bac89eaa76af7",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc00bb8494c4b5dd5"
+        },
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc021a51d46d756ef"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc0251d48a6bd798c"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc027e1ccd4455c3e"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/unpruned/syndrome=0x1e",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000006"
+      ],
+      "log_evidence": "0xc013976d1461dd9d",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc014e838bc8a678c"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01a0ea644128e31"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01db7730265b500"
+        },
+        {
+          "label": [
+            "0x0000000000000004"
+          ],
+          "log_mass": "0xc0261b452068028b"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x0",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbffad32fe9d7fd9c",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbffad32fe9d7fd9c"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x1",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000006"
+      ],
+      "log_evidence": "0xc011299221605597",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc011942544ceae4b"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01a6b52fd829fab"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x2",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc009334d4fbcfee7",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc00a08739699b050"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc015db678400c987"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x3",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000005"
+      ],
+      "log_evidence": "0xc006896ee7efab15",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc006896ee7efab15"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x9",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000004"
+      ],
+      "log_evidence": "0xc01253d34f0d73d2",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000004"
+          ],
+          "log_mass": "0xc013373e3a347252"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc018c83a081cdba4"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0xc",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc00b48ed5dd6f2e5",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc00b48ed5dd6f2e5"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x12",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000005"
+      ],
+      "log_evidence": "0xc0105b5507b9770f",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc0113ebff2e0758f"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc016cfbbc0c8dee2"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x15",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc01a37d2404b0337",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01b1b3d2b7201b8"
+        },
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc020561c7cad3584"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x18",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000004"
+      ],
+      "log_evidence": "0xc00298725947b18f",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000004"
+          ],
+          "log_mass": "0xc00298725947b18f"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x1a",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000007"
+      ],
+      "log_evidence": "0xc00e6227b418b1a8",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc00f374dfaf56310"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01872d4b62ea2e9"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x1b",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc00bb8494c4b5dd5",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc00bb8494c4b5dd5"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed11/pruned/syndrome=0x1e",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000006"
+      ],
+      "log_evidence": "0xc0147da5991c0ed8",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc014e838bc8a678c"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01dbf66753e58ee"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x6",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc0190ba20d292d2d",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01d4ff2ae688cac"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01d865982bd2830"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0200b5255f3ea50"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc02037c991c909e5"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x9",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc005f81b75729143",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc00cacff000f8225"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc010a508e436ede6"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc010b67be6ecda69"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc014ce6270a5d0f5"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0xa",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc0134d7c8a63325e",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0150a51da34959b"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01ac8f20d0bd2c0"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01c5fe92adc6aff"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01cba10e632bdc9"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0xf",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc01912156381bd65",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01e02de1d2a13c8"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01e25d3d9da80f6"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01f35325d96cab7"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01f43c2a1873584"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x15",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc00dd41fc5aadbef",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc012d2b508c6234d"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc012f7e6127ca93f"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0162f3df8934f60"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01831c797c5e716"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x18",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc0098f763bd60aed",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc010a09206af5aa0"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc010e70246a3b2f3"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc014cb43ee7f5dd7"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc015101fc1a9c50c"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x1c",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc010319623790f48",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc014a83236849878"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc014f78e7cfe513a"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc016a749e3d9a0d2"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc0174698895739aa"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x22",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc017ad6ee87633b3",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01b47aa391d9f54"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01d7ace22da2cc5"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01e09fdff955030"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01f1fe5ac878be0"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x25",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc01181cb872831e8",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01694db67529b7c"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0171830815b3125"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0173898cf34be83"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc0175b00c02d3482"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x2f",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc019d118936fa55d",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01eb548e9ae45e3"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01ee012e58bc0a9"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01ffd4c53b8d14e"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc02008ace95a5275"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x3a",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc019629776668798",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01e510dee14c438"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01e5fcf001e2eaa"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01f5cfbdbe76b0c"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01fe29eba5edbf7"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/unpruned/syndrome=0x3f",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc0192c2f62a004d4",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01e20c16101bc81"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01e31dfaee7de78"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01ed793525332e4"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01ff7252c86f6b1"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x6",
+      "outcome": "no_path"
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x9",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc007967c2ee479eb",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc00d36c2c06c9177"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc010d35054836794"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc011d61b62f03509"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0xa",
+      "outcome": "no_path"
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0xf",
+      "outcome": "no_path"
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x15",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc012799206cc419f",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01376d2028bca2b"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0188c365492a498"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x18",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc00cec71d808fed3",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc011827626a666e7"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc011f5e93dc29fef"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01711d24d1ea430"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x1c",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc017e1f2121340c8",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc018df320dd2c954"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01df4965fd9a3c2"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x22",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc01b8e82e330ee54",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01c0688e8ecd8f7"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0222e95fd8164c4"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x25",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc0171497ba18b0b4",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01a887f2ad29288"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01ab0892a383464"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01e1bdd68d384d4"
+        }
+      ]
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x2f",
+      "outcome": "no_path"
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x3a",
+      "outcome": "no_path"
+    },
+    {
+      "name": "upstream/random_seed23/pruned/syndrome=0x3f",
+      "outcome": "no_path"
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x0",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xbfd22455fb2dc151",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xbfd70e8197bdf1e0"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0071b2ab5caf037"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x1",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc00e1317dd77e132",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc00eb0a6a76ab1bb"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0197310f1d6d8c2"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x2",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc01b39897054a904",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01bd34947d9c3c8"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0218d8d7bc9c30e"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x3",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc00bb0ebebae968d",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc00c4e59bff41408"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01842c923287781"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x4",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc01405cdd87bd6fe",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01609ce1b89cacb"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc017bace1fc80e4e"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x5",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc01c4b85f5163f6e",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01d34ae76c02d46"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc021549477fccb9c"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x6",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc010b2ec00f97c45",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01101e2f8763da5"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01b1a1edc51a892"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x7",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc01cc30fb57216a6",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc01e05c2803f7204"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc020ff52810e84ae"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x8",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc0020e80ba55f697",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc00611342bd108c7"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc009809f6759664a"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0x9",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc016e1efd118a780",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc018ee8d2ca66505"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01a89edccea98c5"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0xa",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc01b312db4f9dffe",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01bc9771a7b05c6"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc0218de93e9baac8"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0xb",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc015b67d6ec56778",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc017be0fb54d6bff"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0196610c2b199ed"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0xc",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc0084791cd08f31b",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc008e4e86b31770b"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0168ead5f0d2c31"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0xd",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc019cfd7dd1c40df",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01a403cf0b4ec84"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0216f00f317da33"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0xe",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc0187b353be97188",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc01a96358eb9cbf6"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01c0e120279c9e8"
+        }
+      ]
+    },
+    {
+      "name": "order/chain_reorder/committee/syndrome=0xf",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc018b8f27f21fd73",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0191a87a4fe7cce"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc021284566009cb0"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0x2",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc00e2cbd21fd87a5",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc011bf736cb1b69d"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0136a86476cbb0b"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc016c22dcc59dd47"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0x9",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc002d9d5f01ab5f0",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc005753d75bb7918"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc010f95d2e5b3dd6"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc011b13031784b98"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0xa",
+      "outcome": "no_path"
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0xe",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000003"
+      ],
+      "log_evidence": "0xc00b9460c4c0c35c",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc00e2fc84a618684"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc01556a298ae448c"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0160e759bcb524d"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0xf",
+      "outcome": "no_path"
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0x10",
+      "outcome": "no_path"
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0x12",
+      "outcome": "no_path"
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0x17",
+      "outcome": "no_path"
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0x1c",
+      "outcome": "no_path"
+    },
+    {
+      "name": "order/order_random_seed7/committee/syndrome=0x1f",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc00db6c172688f43",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0122102cc0142d2"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc0130556f4fad2be"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0152f4613636a5d"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0x2",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000005"
+      ],
+      "log_evidence": "0xc00d8c83b276708f",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc011c23ea9a927e8"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc01410d2ba0279a3"
+        },
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0142c0b6bf0bfb9"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0x4",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000005"
+      ],
+      "log_evidence": "0xc0123596321e1e5a",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc014078195887996"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc0165615a5e1cb51"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc0227d562cd547fb"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0x8",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc0216b95f50a4aa1",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc022f14f01ad2e87"
+        },
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc024090884e3c9f5"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc024189909d9d765"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0xb",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000006"
+      ],
+      "log_evidence": "0xc01b88749875a891",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc01b88749875a891"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0x29",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000002"
+      ],
+      "log_evidence": "0xc012a23bc3607153",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc0147a620b97705f"
+        },
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc016c8f61bf0c21a"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc021b175b0ef630f"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0x2b",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc015e75b189e0e62",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc017afd91bfbd4ee"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc019fe6d2c5526a9"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0x2d",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000001"
+      ],
+      "log_evidence": "0xc013a2182cbebcb3",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000001"
+          ],
+          "log_mass": "0xc0156a96301c833f"
+        },
+        {
+          "label": [
+            "0x0000000000000003"
+          ],
+          "log_mass": "0xc017b92a4075d4fa"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0x2e",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc0139880cd27c75c",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc015d44342df6c74"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01822d75338be2f"
+        },
+        {
+          "label": [
+            "0x0000000000000006"
+          ],
+          "log_mass": "0xc01c8e3c210b46ab"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0x33",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000005"
+      ],
+      "log_evidence": "0xc01302e155c2897d",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000005"
+          ],
+          "log_mass": "0xc014d98c4a5ba4a2"
+        },
+        {
+          "label": [
+            "0x0000000000000007"
+          ],
+          "log_mass": "0xc01728205ab4f65d"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc0221450d26bb275"
+        }
+      ]
+    },
+    {
+      "name": "order/order_random_seed41/committee/syndrome=0x37",
+      "outcome": "ok",
+      "predicted": [
+        "0x0000000000000000"
+      ],
+      "log_evidence": "0xc00e85bd1e307055",
+      "logical_masses": [
+        {
+          "label": [
+            "0x0000000000000000"
+          ],
+          "log_mass": "0xc0110b5c9275feb6"
+        },
+        {
+          "label": [
+            "0x0000000000000002"
+          ],
+          "log_mass": "0xc01359f0a2cf5072"
+        }
+      ]
+    }
+  ]
+}

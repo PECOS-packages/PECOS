@@ -22,6 +22,7 @@ pecos-random = { path = "../../../../../crates/pecos-random" }
 pecos-qasm = { path = "../../../../../crates/pecos-qasm" }
 pecos-programs = { path = "../../../../../crates/pecos-programs" }
 pecos-neo = { path = "../../../../../exp/pecos-neo" }
+pecos-stab-tn = { path = "../../../../../exp/pecos-stab-tn" }
 # Common external crates used in documentation examples
 serde_json = "1.0"
 tempfile = "3"

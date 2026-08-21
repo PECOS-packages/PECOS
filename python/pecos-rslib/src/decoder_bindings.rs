@@ -686,7 +686,7 @@ fn fusion_blossom_config(
 /// Fusion Blossom MWPM decoder.
 ///
 /// Pure Rust implementation of minimum-weight perfect matching.
-/// Supports parallel decoding and visualization for debugging.
+/// Supports batch decoding across worker threads and visualization for debugging.
 ///
 /// # Construction
 ///
@@ -759,7 +759,7 @@ impl PyFusionBlossomDecoder {
     ///
     /// * `num_nodes` - Number of detector nodes
     /// * `num_observables` - Number of logical observables (default: 1)
-    /// * `solver` - Solver type: "serial" or "parallel" (default: "serial")
+    /// * `solver` - Solver type: "serial" or "legacy" (default: "serial")
     /// * `max_tree_size` - Maximum alternating-tree size before collapse (default: unlimited)
     #[new]
     #[pyo3(signature = (num_nodes, num_observables=1, solver="serial", *, max_tree_size=None))]
@@ -771,10 +771,16 @@ impl PyFusionBlossomDecoder {
     ) -> PyResult<Self> {
         let solver_type = match solver {
             "serial" => RustSolverType::Serial,
-            "parallel" | "legacy" => RustSolverType::Legacy,
+            "legacy" => RustSolverType::Legacy,
+            "parallel" => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "solver 'parallel' requires a partition configuration, which the Python \
+                     bindings do not expose; use 'serial' or 'legacy' (issue #464)",
+                ));
+            }
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "solver must be 'serial' or 'parallel'",
+                    "solver must be 'serial' or 'legacy'",
                 ));
             }
         };
@@ -1452,6 +1458,24 @@ fn parse_osd_method(s: &str) -> PyResult<RustOsdMethod> {
     }
 }
 
+/// Channel prior for BP-family builders: a single probability applied to every
+/// column, or one probability per column (e.g. per-mechanism DEM priors).
+#[derive(Clone, FromPyObject)]
+enum PyErrorPrior {
+    Scalar(f64),
+    Channel(Vec<f64>),
+}
+
+impl PyErrorPrior {
+    /// Split into the `(error_rate, error_channel)` pair the LDPC core expects.
+    fn as_core_args(&self) -> (Option<f64>, Option<&[f64]>) {
+        match self {
+            Self::Scalar(rate) => (Some(*rate), None),
+            Self::Channel(probs) => (None, Some(probs)),
+        }
+    }
+}
+
 /// Builder for BP+OSD decoder.
 ///
 /// Belief Propagation with Ordered Statistics Decoding post-processing.
@@ -1465,10 +1489,11 @@ fn parse_osd_method(s: &str) -> PyResult<RustOsdMethod> {
 /// decoder = BpOsdBuilder(H, error_rate=0.1).osd_method("osd_cs").osd_order(7).build()
 /// result = decoder.decode_syndrome(syndrome)
 /// ```
+
 #[pyclass(name = "BpOsdBuilder", module = "pecos_rslib.decoders")]
 pub struct PyBpOsdBuilder {
     pcm: RustSparseMatrix,
-    error_rate: f64,
+    error_rate: PyErrorPrior,
     max_iter: usize,
     bp_method: String,
     schedule: String,
@@ -1485,7 +1510,7 @@ impl PyBpOsdBuilder {
     /// * `pcm` - Parity check matrix
     /// * `error_rate` - Channel error probability
     #[new]
-    fn new(pcm: &PySparseMatrix, error_rate: f64) -> Self {
+    fn new(pcm: &PySparseMatrix, error_rate: PyErrorPrior) -> Self {
         Self {
             pcm: pcm.inner.clone(),
             error_rate,
@@ -1533,10 +1558,11 @@ impl PyBpOsdBuilder {
         let bp_schedule = parse_bp_schedule(&self.schedule)?;
         let osd = parse_osd_method(&self.osd_method)?;
 
+        let (error_rate, error_channel) = self.error_rate.as_core_args();
         RustBpOsdDecoder::new(
             &self.pcm,
-            Some(self.error_rate),
-            None,
+            error_rate,
+            error_channel,
             self.max_iter,
             bp,
             bp_schedule,
@@ -1651,11 +1677,12 @@ impl PyBpOsdDecoder {
 #[pyclass(name = "BpLsdBuilder", module = "pecos_rslib.decoders")]
 pub struct PyBpLsdBuilder {
     pcm: RustSparseMatrix,
-    error_rate: f64,
+    error_rate: PyErrorPrior,
     max_iter: usize,
     bp_method: String,
     schedule: String,
     lsd_order: usize,
+    bits_per_step: usize,
 }
 
 #[pymethods]
@@ -1667,7 +1694,7 @@ impl PyBpLsdBuilder {
     /// * `pcm` - Parity check matrix
     /// * `error_rate` - Channel error probability
     #[new]
-    fn new(pcm: &PySparseMatrix, error_rate: f64) -> Self {
+    fn new(pcm: &PySparseMatrix, error_rate: PyErrorPrior) -> Self {
         Self {
             pcm: pcm.inner.clone(),
             error_rate,
@@ -1675,6 +1702,7 @@ impl PyBpLsdBuilder {
             bp_method: "product_sum".to_string(),
             schedule: "parallel".to_string(),
             lsd_order: 0,
+            bits_per_step: 0,
         }
     }
 
@@ -1702,22 +1730,31 @@ impl PyBpLsdBuilder {
         slf
     }
 
+    /// Set bits added per cluster-growth step (default: 0 = grow all candidate
+    /// bits each step, the crate convention; measured ~50x faster than 1 on
+    /// large circuit DEMs with comparable corrections).
+    fn bits_per_step(mut slf: PyRefMut<'_, Self>, val: usize) -> PyRefMut<'_, Self> {
+        slf.bits_per_step = val;
+        slf
+    }
+
     /// Build the BP+LSD decoder.
     fn build(&self) -> PyResult<PyBpLsdDecoder> {
         let bp = parse_bp_method(&self.bp_method)?;
         let bp_schedule = parse_bp_schedule(&self.schedule)?;
 
+        let (error_rate, error_channel) = self.error_rate.as_core_args();
         RustBpLsdDecoder::new(
             &self.pcm,
-            Some(self.error_rate),
-            None,
+            error_rate,
+            error_channel,
             self.max_iter,
             bp,
             bp_schedule,
             1.0,
             RustOsdMethod::Osd0,
             self.lsd_order,
-            0,
+            self.bits_per_step,
             RustInputVectorType::Syndrome,
             None,
             None,
@@ -1888,7 +1925,8 @@ impl PyUnionFindDecoder {
     ///
     /// * `syndrome` - Syndrome vector
     /// * `llrs` - Optional log-likelihood ratios for soft information
-    /// * `bits_per_step` - Bits to grow per step (0 = all at once)
+    /// * `bits_per_step` - Bits to grow per step (0 = all at once; safe with
+    ///   or without `llrs`)
     #[pyo3(signature = (syndrome, llrs=None, bits_per_step=0))]
     fn decode_syndrome(
         &mut self,
@@ -2051,7 +2089,9 @@ impl PyTesseractDecoder {
     ///
     /// * `dem` - Detector error model in Stim format
     /// * `preset` - Configuration preset: "default", "fast", or "accurate"
-    /// * `det_beam` - Detector beam size (default: `u16::MAX` for infinite)
+    /// * `det_beam` - Detector beam size (default: 5, upstream Tesseract's
+    ///   `DEFAULT_DET_BEAM`; pass 65535 or `preset="accurate"` for an
+    ///   unbounded beam)
     /// * `beam_climbing` - Enable beam climbing heuristic
     /// * `verbose` - Enable verbose output; no accuracy/runtime tradeoff when disabled
     /// * `no_revisit_dets` - Avoid revisiting detectors, reducing runtime at possible accuracy cost
@@ -2269,8 +2309,8 @@ impl PyTesseractDecoder {
 
 use pecos_decoders::{
     MinSumBpBuilder as RustMinSumBpBuilder, MinSumBpDecoder as RustMinSumBpDecoder,
-    RelayBpBuilder as RustRelayBpBuilder, RelayBpDecoder as RustRelayBpDecoder,
-    StoppingCriterion as RustStoppingCriterion,
+    RELAY_BP_DEFAULT_GAMMA0, RelayBpBuilder as RustRelayBpBuilder,
+    RelayBpDecoder as RustRelayBpDecoder, StoppingCriterion as RustStoppingCriterion,
 };
 
 /// Parse a stopping criterion string into the Rust enum.
@@ -2373,7 +2413,10 @@ impl PyRelayBpBuilder {
             error_priors,
             max_iter: 200,
             alpha: None,
-            gamma0: None,
+            // The pre-relay leg needs uniform memory to be paper-representative
+            // (measured 99/1000 vs 1/1000 failures on a 936-detector BB144
+            // circuit DEM at p=0.003 with memory off vs 0.65).
+            gamma0: Some(RELAY_BP_DEFAULT_GAMMA0),
             pre_iter: 80,
             num_sets: 300,
             set_max_iter: 60,
@@ -2400,7 +2443,10 @@ impl PyRelayBpBuilder {
         slf
     }
 
-    /// Set initial damping factor (None = disabled).
+    /// Enable memory-BP for the entire relay ensemble (default: 0.65). The
+    /// pre-relay leg uses this directly and relay legs draw per-leg strengths
+    /// only when it is set; None disables memory entirely and makes relay
+    /// ensembling ineffective. The optimal value is graph-dependent.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -2436,7 +2482,10 @@ impl PyRelayBpBuilder {
         slf
     }
 
-    /// Set random seed for relay parameter sampling (default: 0).
+    /// Set the run-level random seed for relay parameter sampling (default: 0).
+    /// The RNG advances across decodes, so reused-decoder outcomes depend on
+    /// decode history; equal seeds reproduce the same full shot sequence, not
+    /// an individual syndrome independently.
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -2506,6 +2555,11 @@ impl PyRelayBpBuilder {
 /// result = decoder.decode([1, 0])
 /// assert result.converged
 /// ```
+///
+/// The relay memory-strength RNG is seeded once at construction and advances
+/// across decodes, so a reused decoder's per-shot outcomes depend on decode
+/// history. Equal seeds reproduce the same full shot sequence, not an
+/// individual syndrome decoded in isolation.
 #[pyclass(name = "RelayBpDecoder", module = "pecos_rslib.decoders")]
 pub struct PyRelayBpDecoder {
     inner: RustRelayBpDecoder,
@@ -2640,7 +2694,8 @@ impl PyMinSumBpBuilder {
         slf
     }
 
-    /// Set initial damping factor (None = disabled).
+    /// Set the uniform memory strength (default: None = plain min-sum without
+    /// memory).
     ///
     /// Returns:
     ///     Self for method chaining.
@@ -3180,6 +3235,8 @@ pub fn register_decoders_module(parent_module: &Bound<'_, PyModule>) -> PyResult
     decoders_module.add_class::<PyDemAwareResult>()?;
     decoders_module.add_class::<PyDemAwareDecoder>()?;
 
+    crate::decoder_spec_bindings::register_decoder_specs(&decoders_module)?;
+
     // Add submodule to parent
     parent_module.add_submodule(&decoders_module)?;
 
@@ -3711,6 +3768,23 @@ mod dem_tuning_tests {
             .err()
             .unwrap();
         assert!(solver_error.to_string().contains("solver_type"));
+
+        // The manual constructor refuses 'parallel' rather than silently
+        // substituting the Legacy solver (issue #464).
+        let ctor_error = PyFusionBlossomDecoder::new(4, 1, "parallel", None)
+            .err()
+            .unwrap();
+        let message = ctor_error.to_string();
+        assert!(message.contains("partition configuration"));
+        assert!(message.contains("'legacy'"));
+
+        let ctor_error = PyFusionBlossomDecoder::new(4, 1, "fast", None)
+            .err()
+            .unwrap();
+        assert!(ctor_error.to_string().contains("solver"));
+
+        PyFusionBlossomDecoder::new(4, 1, "legacy", None).unwrap();
+        PyFusionBlossomDecoder::new(4, 1, "serial", None).unwrap();
 
         for (error, parameter) in [
             (

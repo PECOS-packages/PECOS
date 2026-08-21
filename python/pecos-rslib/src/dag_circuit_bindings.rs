@@ -568,6 +568,14 @@ impl PyGateType {
     }
 
     #[classattr]
+    #[pyo3(name = "MeasureX")]
+    fn mx() -> Self {
+        Self {
+            inner: GateType::MX,
+        }
+    }
+
+    #[classattr]
     #[pyo3(name = "Measure")]
     fn mz() -> Self {
         Self {
@@ -580,6 +588,14 @@ impl PyGateType {
     fn mz_free() -> Self {
         Self {
             inner: GateType::MeasureFree,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "PrepX")]
+    fn px() -> Self {
+        Self {
+            inner: GateType::PX,
         }
     }
 
@@ -919,6 +935,14 @@ impl PyGate {
 
     /// Create a Measure gate.
     #[staticmethod]
+    fn mx(qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::mx(&qubits),
+        }
+    }
+
+    /// Create a Measure gate.
+    #[staticmethod]
     fn mz(qubits: Vec<usize>) -> Self {
         Self {
             inner: Gate::mz(&qubits),
@@ -946,6 +970,14 @@ impl PyGate {
     fn mz_free(qubits: Vec<usize>) -> Self {
         Self {
             inner: Gate::mz_free(&qubits),
+        }
+    }
+
+    /// Create a PZ (preparation/reset) gate.
+    #[staticmethod]
+    fn px(qubits: Vec<usize>) -> Self {
+        Self {
+            inner: Gate::px(&qubits),
         }
     }
 
@@ -2938,7 +2970,7 @@ impl PyTickCircuit {
                     | GateType::RZZ
                         if p2 > 0.0 =>
                     {
-                        channels.extend(gate.qubits.chunks_exact(2).map(|pair| {
+                        channels.extend(gate.qubits.as_chunks::<2>().0.iter().map(|pair| {
                             pecos_core::channel::Depolarizing2(p2, pair[0].index(), pair[1].index())
                         }));
                     }
@@ -3813,6 +3845,20 @@ impl PyTickHandle {
 
     // --- State preparation and measurement ---
 
+    /// Prepare qubits in the |+> state.
+    fn px(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<PyTickPrepHandle> {
+        let (circuit, tick_idx, gate_idx) = {
+            let mut handle = slf.borrow_mut(py);
+            let gate_idx = handle.add_gate_get_idx(py, Gate::px(&qubits))?;
+            (handle.circuit.clone_ref(py), handle.tick_idx, gate_idx)
+        };
+        Ok(PyTickPrepHandle {
+            circuit,
+            tick_idx,
+            gate_idx,
+        })
+    }
+
     /// Prepare qubits in the |0> state.
     ///
     /// Returns a `TickPrepHandle` that allows attaching metadata via `.meta()`.
@@ -3845,6 +3891,40 @@ impl PyTickHandle {
         // reservation until the gate is actually in: adding it can fail on a
         // qubit conflict, and a caller that catches that must not be left with
         // records consumed by a measurement the circuit never got.
+        let base = {
+            let circuit = handle.circuit.borrow(py);
+            let base = circuit.inner.num_measurements();
+            base.checked_add(qubits.len()).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "cannot reserve {} more measurement records; only {} remain below usize::MAX",
+                    qubits.len(),
+                    usize::MAX - base
+                ))
+            })?;
+            base
+        };
+        for (i, _) in qubits.iter().enumerate() {
+            gate.meas_ids.push(pecos_core::MeasId::from_raw(base + i));
+        }
+        let gate_idx = handle.add_gate_get_idx(py, gate)?;
+        handle
+            .circuit
+            .borrow_mut(py)
+            .inner
+            .try_advance_meas_counter(qubits.len())
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        let tick_idx = handle.tick_idx;
+        Ok(qubits.iter().map(|&q| (tick_idx, gate_idx, q)).collect())
+    }
+
+    /// Measure qubits in the X basis.
+    fn mx(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+    ) -> PyResult<Vec<(usize, usize, usize)>> {
+        let mut handle = slf.borrow_mut(py);
+        let mut gate = Gate::mx(&qubits);
         let base = {
             let circuit = handle.circuit.borrow(py);
             let base = circuit.inner.num_measurements();

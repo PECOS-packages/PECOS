@@ -34,6 +34,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python" / "quantum
 SLOW_DECODERS = {"tesseract", "bp_osd"}
 
 
+def _require_timing_stats(result):
+    """Return requested timing statistics or fail on an API contract violation."""
+    if result.stats is None:
+        msg = "timing=True returned no decode statistics"
+        raise RuntimeError(msg)
+    return result.stats
+
+
 def _decoder_requires_graphlike(decoder: str) -> bool:
     """Check if a decoder requires graphlike (decomposed) DEMs."""
     from pecos_rslib.qec import decoder_dem_requirement
@@ -245,7 +253,8 @@ def _sample_from_sim(tc, noise_params, shots, seed, backend="statevec"):
     if backend == "stabilizer":
         quantum_backend = stabilizer()
     elif backend == "stab_mps":
-        quantum_backend = stab_mps()
+        # New merge/truncation defaults change LERs; pin the legacy configuration for reproducibility.
+        quantum_backend = stab_mps().max_bond_dim(64).max_truncation_error(0.0).merge_rz(enabled=False)
     else:
         quantum_backend = statevec()
 
@@ -274,6 +283,8 @@ def run_comparison(
     sample_backend: str,
 ):
     """Run the full DEM method x decoder comparison."""
+    from pecos.decoders import DecoderSpec
+
     all_results = []
 
     for distance in distances:
@@ -362,11 +373,16 @@ def run_comparison(
                     dem = dem_raw_clean if dem_type == "raw" else dem_decomp_clean
 
                     try:
-                        if base in SLOW_DECODERS:
-                            stats = batch.decode_stats_parallel(dem, decoder)
-                        else:
-                            stats = batch.decode_stats(dem, decoder)
-                        ler = stats.logical_error_rate
+                        spec = DecoderSpec.parse(decoder)
+                        workers = None if base in SLOW_DECODERS else 1
+                        result = batch.decode(
+                            dem,
+                            spec,
+                            workers=workers,
+                            timing=True,
+                        )
+                        timing = _require_timing_stats(result)
+                        ler = result.logical_error_rate
                         print(f" | {ler:>16.4f}", end="")
                         all_results.append(
                             {
@@ -376,9 +392,10 @@ def run_comparison(
                                 "decoder": decoder,
                                 "dem_type": dem_type,
                                 "num_shots": shots,
-                                "num_errors": stats.num_errors,
+                                "num_errors": result.num_errors,
                                 "ler": ler,
-                                "decode_s": stats.total_seconds,
+                                "decode_s": timing.wall_elapsed,
+                                "summed_decode_s": timing.summed_decode_elapsed,
                             },
                         )
                     except Exception:

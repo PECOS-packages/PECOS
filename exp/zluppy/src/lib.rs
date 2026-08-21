@@ -598,21 +598,21 @@ impl SlrProgram {
 /// either SLR-AST or HUGR through the normal compilation pipeline.
 ///
 /// Example:
-///     ```python
-///     prog = zluppy.ZlupProgram("main")
-///     prog.add_allocator("q", 2)
-///     prog.add_gate("h", [("q", 0)])
-///     prog.add_gate("cx", [("q", 0), ("q", 1)])
+/// ```python
+/// prog = zluppy.ZlupProgram("main")
+/// prog.add_allocator("q", 2)
+/// prog.add_gate("h", [("q", 0)])
+/// prog.add_gate("cx", [("q", 0), ("q", 1)])
 ///
-///     # Compile to SLR
-///     slr_json = prog.compile_to_slr()
+/// # Compile to SLR
+/// slr_json = prog.compile_to_slr()
 ///
-///     # Or compile to HUGR
-///     hugr_bytes = prog.compile_to_hugr()
+/// # Or compile to HUGR
+/// hugr_bytes = prog.compile_to_hugr()
 ///
-///     # Or generate source code
-///     source = prog.to_source()
-///     ```
+/// # Or generate source code
+/// source = prog.to_source()
+/// ```
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 struct ZlupProgram {

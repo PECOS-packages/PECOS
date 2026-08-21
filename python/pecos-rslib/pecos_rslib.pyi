@@ -450,9 +450,13 @@ class Array(Generic[_ScalarT]):
     def conj(self) -> Array[_ScalarT]: ...
 
     # Methods
+    @overload
+    def reshape(self, shape: tuple[int, ...]) -> Array[_ScalarT]: ...
+    @overload
     def reshape(self, *shape: int) -> Array[_ScalarT]: ...
     def flatten(self) -> Array[_ScalarT]: ...
     def ravel(self) -> Array[_ScalarT]: ...
+    def fill(self, value: object) -> None: ...
     def transpose(self, *axes: int) -> Array[_ScalarT]: ...
     def sum(self, axis: int | None = None) -> Scalar | Array[_ScalarT]: ...
     def mean(self, axis: int | None = None) -> ScalarF64 | Array[ScalarF64]: ...
@@ -1075,13 +1079,149 @@ class PauliString:
     def __eq__(self, other: object) -> bool: ...
 
 def X(qubit: int) -> PauliString: ...
+def Xs(qubits: Sequence[int]) -> PauliString: ...
 def Y(qubit: int) -> PauliString: ...
+def Ys(qubits: Sequence[int]) -> PauliString: ...
 def Z(qubit: int) -> PauliString: ...
+def Zs(qubits: Sequence[int]) -> PauliString: ...
 
 class PauliStabilizerGroup:
     """A group of commuting Pauli operators with real phases."""
 
     ...
+
+class StabilizerCode:
+    """A stabilizer group with an explicit physical-qubit count."""
+
+    def __init__(self, group: PauliStabilizerGroup, num_qubits: int | None = None) -> None: ...
+    @staticmethod
+    def repetition(n: int) -> StabilizerCode: ...
+    @staticmethod
+    def steane() -> StabilizerCode: ...
+    @staticmethod
+    def five_qubit() -> StabilizerCode: ...
+    @staticmethod
+    def shor() -> StabilizerCode: ...
+    @staticmethod
+    def four_two_two() -> StabilizerCode: ...
+    @staticmethod
+    def toric(l: int) -> StabilizerCode: ...
+    def num_qubits(self) -> int: ...
+    def num_logical_qubits(self) -> int: ...
+    def code_parameters(self) -> str: ...
+    def distance(self) -> int | None: ...
+    def syndrome(self, error: PauliString) -> list[bool]: ...
+    def logical_operators(self) -> list[PauliString]: ...
+    def group(self) -> PauliStabilizerGroup: ...
+
+class DistanceResult:
+    """A code distance and one minimum-weight logical operator."""
+
+    @property
+    def distance(self) -> int: ...
+    @property
+    def min_weight_operator(self) -> PauliString: ...
+    def __repr__(self) -> str: ...
+
+class LogicalOperatorInfo:
+    """A minimum-weight logical operator and its logical equivalence."""
+
+    @property
+    def operator(self) -> PauliString: ...
+    @property
+    def weight(self) -> int: ...
+    @property
+    def equivalent_logicals(self) -> list[tuple[str, int]]: ...
+    def equivalence_string(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+class ParityCheckMatrix:
+    """A role-neutral binary parity-check matrix."""
+
+    def __init__(self, rows: Sequence[Sequence[int]]) -> None: ...
+    @classmethod
+    def from_dense(cls, rows: Sequence[Sequence[int]]) -> ParityCheckMatrix: ...
+    @classmethod
+    def zeros(cls, num_checks: int, num_qubits: int) -> ParityCheckMatrix: ...
+    def num_checks(self) -> int: ...
+    def num_qubits(self) -> int: ...
+    def rank(self) -> int: ...
+    def rows(self) -> list[list[int]]: ...
+    def to_x_stabilizers(self) -> list[PauliString]: ...
+    def to_z_stabilizers(self) -> list[PauliString]: ...
+    def __repr__(self) -> str: ...
+
+class SymplecticMatrix:
+    """A binary symplectic matrix whose rows represent Pauli operators."""
+
+    def __init__(self, rows: Sequence[Sequence[int]]) -> None: ...
+    @classmethod
+    def from_dense(cls, rows: Sequence[Sequence[int]]) -> SymplecticMatrix: ...
+    @classmethod
+    def zeros(cls, num_rows: int, num_qubits: int) -> SymplecticMatrix: ...
+    def num_rows(self) -> int: ...
+    def num_qubits(self) -> int: ...
+    def rank(self) -> int: ...
+    def rows(self) -> list[list[int]]: ...
+    def x_block(self) -> list[list[int]]: ...
+    def z_block(self) -> list[list[int]]: ...
+    def to_positive_paulis(self) -> list[PauliString]: ...
+    def __repr__(self) -> str: ...
+
+class StabilizerCodeSpecBuilder:
+    """Mutable Python wrapper around the consuming Rust specification builder."""
+
+    def check(self, op: PauliString) -> None: ...
+    def checks_from_css(self, x_stabilizers: ParityCheckMatrix, z_stabilizers: ParityCheckMatrix) -> None: ...
+    def checks_from_symplectic(self, matrix: SymplecticMatrix) -> None: ...
+    def logical_z(self, op: PauliString) -> None: ...
+    def logical_x(self, op: PauliString) -> None: ...
+    def build(self) -> StabilizerCodeSpec: ...
+    def build_verified(self) -> StabilizerCodeSpec: ...
+    def build_with_discovered_logicals(self) -> StabilizerCodeSpec: ...
+
+class StabilizerCodeSpec:
+    """A complete stabilizer-code specification with paired logical operators."""
+
+    def __init__(
+        self,
+        num_qubits: int,
+        stabilizers: list[PauliString],
+        logical_zs: list[PauliString],
+        logical_xs: list[PauliString],
+    ) -> None: ...
+    @staticmethod
+    def builder(num_qubits: int) -> StabilizerCodeSpecBuilder: ...
+    @classmethod
+    def from_stabilizer_code(cls, code: StabilizerCode) -> StabilizerCodeSpec: ...
+    @property
+    def num_qubits(self) -> int: ...
+    @property
+    def num_logical_qubits(self) -> int: ...
+    @property
+    def stabilizers(self) -> list[PauliString]: ...
+    @property
+    def destabilizers(self) -> list[PauliString]: ...
+    @property
+    def logical_zs(self) -> list[PauliString]: ...
+    @property
+    def logical_xs(self) -> list[PauliString]: ...
+    def verify(self) -> None: ...
+    def distance(
+        self, max_weight: int | None = None, css: bool = False, verbose: bool = False
+    ) -> DistanceResult | None: ...
+    def min_weight_logicals(
+        self, max_weight: int | None = None, css: bool = False, verbose: bool = False
+    ) -> list[LogicalOperatorInfo]: ...
+    def shortest_logicals(
+        self,
+        delta: int = 0,
+        max_weight: int | None = None,
+        css: bool = False,
+        verbose: bool = False,
+    ) -> list[LogicalOperatorInfo]: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
 
 class PauliSequence:
     """Ordered sequence of Pauli operators with symplectic analysis."""
@@ -1453,8 +1593,10 @@ class GateType:
     CH: GateType
     CRZ: GateType
     CCX: GateType
+    MeasureX: GateType
     Measure: GateType
     MeasureFree: GateType
+    PrepX: GateType
     Prep: GateType
     QAlloc: GateType
     QFree: GateType
@@ -1504,7 +1646,11 @@ class Gate:
     @staticmethod
     def cz(pairs: Sequence[tuple[int, int]]) -> Gate: ...
     @staticmethod
+    def mx(qubits: Sequence[int]) -> Gate: ...
+    @staticmethod
     def mz(qubits: Sequence[int]) -> Gate: ...
+    @staticmethod
+    def px(qubits: Sequence[int]) -> Gate: ...
     @staticmethod
     def pz(qubits: Sequence[int]) -> Gate: ...
 
@@ -1600,7 +1746,9 @@ class TickHandle:
         qubits: Sequence[int],
         angles: Sequence[float] | None = None,
     ) -> TickHandle: ...
+    def px(self, qubits: Sequence[int]) -> TickPrepHandle: ...
     def pz(self, qubits: Sequence[int]) -> TickPrepHandle: ...
+    def mx(self, qubits: Sequence[int]) -> list[tuple[int, int, int]]: ...
     def mz(self, qubits: Sequence[int]) -> list[tuple[int, int, int]]: ...
     def mz_with_ids(
         self,
@@ -2226,38 +2374,109 @@ class qec:
         def num_shots(self) -> int: ...
         @property
         def num_observables(self) -> int: ...
+        @property
+        def seed(self) -> int | None: ...
+        @property
+        def dem(self) -> str | None: ...
+        @property
+        def metadata_json(self) -> str | None: ...
+        @property
+        def generator(self) -> str | None: ...
+        @property
+        def format_version(self) -> int | None: ...
         def get_syndrome(self, i: int) -> list[int]: ...
         def get_observable_flips(self, i: int) -> ObservableFlips: ...
         def detector_events(self) -> list[list[bool]]: ...
         def observable_flips(self) -> list[list[bool]]: ...
-        def decode_count(self, dem: str, decoder_type: str = ...) -> int: ...
-        def decode_each(self, dem: str, decoder_type: str = ...) -> list[int]: ...
+        def save(
+            self,
+            path: str | os.PathLike[str],
+            *,
+            dem: str,
+            metadata_json: str | None = ...,
+            clear_metadata: bool = ...,
+            allow_dem_mismatch: bool = ...,
+        ) -> None: ...
+        @staticmethod
+        def load(path: str | os.PathLike[str]) -> qec.SampleBatch: ...
+        def decode(
+            self,
+            dem: str | None = ...,
+            decoder: decoders.DecoderSpec | str = ...,
+            *,
+            workers: int | None = ...,
+            predictions: bool = ...,
+            timing: bool = ...,
+            allow_dem_mismatch: bool = ...,
+        ) -> qec.DecodeResult:
+            """Decode all shots with planned native, sequential, or parallel execution.
+
+            ``decoder`` is a typed decoder spec or legacy string. ``dem=None``
+            requires a corpus-loaded batch with an embedded DEM. Explicit
+            ``workers`` requests that exact count; automatic execution respects
+            stateful and wall-clock-limited decoder contracts. Predictions are
+            wide Python integers, and timing forces per-shot dispatch.
+            """
+            ...
+
+        def decode_count(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> int: ...
+        def decode_each(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> list[int]: ...
         def decode_count_parallel(
             self,
             dem: str,
             decoder_type: str = ...,
             num_workers: int | None = ...,
+            *,
+            allow_dem_mismatch: bool = ...,
         ) -> int: ...
-        def decode_count_batch(self, dem: str) -> int: ...
-        def decode_stats(self, dem: str, decoder_type: str = ...) -> qec.DecodeStats: ...
+        def decode_count_batch(self, dem: str, *, allow_dem_mismatch: bool = ...) -> int: ...
+        def decode_stats(
+            self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...
+        ) -> qec.DecodeStats: ...
         def decode_stats_parallel(
             self,
             dem: str,
             decoder_type: str = ...,
             num_workers: int | None = ...,
+            *,
+            allow_dem_mismatch: bool = ...,
         ) -> qec.DecodeStats: ...
+        def compare_decoders(
+            self,
+            dem: str,
+            dut_decoder_type: str,
+            reference_decoder_type: str,
+            alpha: float = ...,
+            *,
+            allow_dem_mismatch: bool = ...,
+        ) -> qec.DecoderComparisonResult: ...
 
     class DecodeStats:
         num_shots: int
         num_errors: int
         logical_error_rate: float
         total_seconds: float
+        wall_elapsed: float
+        summed_decode_elapsed: float
+        num_timing_samples: int
         per_shot_mean: float
         per_shot_median: float
         per_shot_p99: float
         per_shot_min: float
         per_shot_max: float
-        quantiles: list[tuple[float, float]]
+        quantiles: list[float]
+
+    class DecodeResult:
+        num_shots: int
+        num_errors: int
+        logical_error_rate: float
+        execution_path: str
+        workers_used: int
+        reproducibility_warnings: list[str]
+        sampling_seed_used: int | None
+        predictions: list[int] | None
+        stats: qec.DecodeStats | None
+        def interval(self, alpha: float = ...) -> tuple[float, float]: ...
 
     class DemSampler:
         @staticmethod
@@ -2329,6 +2548,28 @@ class qec:
         def sample_tracked_paulis(self, seed: int | None = ...) -> list[bool]: ...
         def sample_tracked_pauli_batch(self, num_shots: int, seed: int | None = ...) -> list[list[bool]]: ...
         def sample_statistics(self, num_shots: int, seed: int | None = ...) -> dict[str, Any]: ...
+        def decode(
+            self,
+            dem: str,
+            num_shots: int,
+            decoder: decoders.DecoderSpec | str,
+            *,
+            seed: int | None = ...,
+            workers: int | None = ...,
+            predictions: bool = ...,
+            timing: bool = ...,
+        ) -> qec.DecodeResult:
+            """Sample and decode under sampling ABI v1.
+
+            A fixed seed produces the same shot stream for all worker counts and
+            execution paths. Predictions and counts match too, except when
+            ``reproducibility_warnings`` is non-empty -- a wall-clock-limited
+            decoder run in parallel can decode differently under CPU contention.
+            The resolved replay seed is returned in ``sampling_seed_used``;
+            timing is always outside the reproducibility guarantee.
+            """
+            ...
+
         def sample_decode_count(
             self,
             dem: str,
@@ -2577,6 +2818,129 @@ class decoders:
 
     ObservableFlips = ObservableFlips
 
+    class DecoderSpec:
+        """Immutable typed decoder construction specification."""
+
+        @staticmethod
+        def parse(type_string: str) -> decoders.DecoderSpec: ...
+        @property
+        def family(self) -> str: ...
+        @property
+        def history_dependent(self) -> bool: ...
+        @property
+        def wall_clock_dependent(self) -> bool: ...
+        def __repr__(self) -> str: ...
+        def __eq__(self, other: object) -> bool: ...
+
+    @staticmethod
+    def pymatching(*, correlated: bool, error_probability: float | None = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def tesseract(
+        *,
+        preset: str = ...,
+        det_beam: int | None = ...,
+        beam_climbing: bool | None = ...,
+        verbose: bool | None = ...,
+        no_revisit_dets: bool | None = ...,
+        pqlimit: int | None = ...,
+        det_penalty: float | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def bp_osd(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        bp_schedule: str = ...,
+        ms_scaling_factor: float | None = ...,
+        osd_order: int = ...,
+        random_schedule_seed: int | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def bp_lsd(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        bp_schedule: str = ...,
+        ms_scaling_factor: float | None = ...,
+        lsd_order: int = ...,
+        bits_per_step: int = ...,
+        random_schedule_seed: int | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def fusion_blossom(*, correlated: bool = ..., solver: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def relay_bp(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        alpha: float | None = ...,
+        alpha_iteration_scaling_factor: float = ...,
+        gamma0: float | None = ...,
+        pre_iter: int = ...,
+        num_sets: int = ...,
+        set_max_iter: int = ...,
+        gamma_dist_interval: tuple[float, float] = ...,
+        stopping_criterion: str | int = ...,
+        seed: int = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def min_sum_bp(
+        *, error_rate: float | None = ..., max_iter: int = ..., alpha: float | None = ...
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def pecos_uf(*, preset: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def belief_matching(*, mode: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def windowed(
+        *,
+        step: int = ...,
+        buffer: int = ...,
+        mode: str = ...,
+        seam: int = ...,
+        core_extend: int = ...,
+        commit_weight_max: float = ...,
+        inner: decoders.DecoderSpec | None = ...,
+        sandwich_phase2: decoders.DecoderSpec | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def mwpf(
+        *,
+        solver: str = ...,
+        cluster_node_limit: int = ...,
+        timeout: float | None = ...,
+        only_solve_primal_once: bool = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def perturbed(
+        *, inner: decoders.DecoderSpec | None = ..., k: int = ..., sigma: float = ..., seed: int = ...
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def beamsearch(
+        *,
+        beam_width: int = ...,
+        sigma: float = ...,
+        seed: int = ...,
+        step: int = ...,
+        buffer: int = ...,
+        commit_weight_max: float = ...,
+        phase2: decoders.DecoderSpec | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def ensemble(*members: decoders.DecoderSpec) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def k_mwpm(*, k: int = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def astar() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def astar_full() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def union_find() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def belief_find() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def perturbed_fb_corr(*, k: int = ..., sigma: float = ..., seed: int = ...) -> decoders.DecoderSpec: ...
+
     class BpResult:
         """Result from belief propagation decoders.
 
@@ -2713,7 +3077,8 @@ class decoders:
 
         Args:
             pcm: Sparse parity check matrix.
-            error_rate: Channel error probability.
+            error_rate: Channel error probability: a single float applied to every column,
+                or one probability per column.
 
         Example:
             >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
@@ -2722,7 +3087,11 @@ class decoders:
             >>> result = decoder.decode_syndrome([0, 0, 0])
         """
 
-        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def __init__(
+            self,
+            pcm: decoders.SparseMatrix,
+            error_rate: float | Sequence[float],
+        ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpOsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
@@ -2789,7 +3158,8 @@ class decoders:
 
         Args:
             pcm: Sparse parity check matrix.
-            error_rate: Channel error probability.
+            error_rate: Channel error probability: a single float applied to every column,
+                or one probability per column.
 
         Example:
             >>> from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
@@ -2798,7 +3168,11 @@ class decoders:
             >>> result = decoder.decode([0, 0, 0])
         """
 
-        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def __init__(
+            self,
+            pcm: decoders.SparseMatrix,
+            error_rate: float | Sequence[float],
+        ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpLsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
@@ -2813,6 +3187,11 @@ class decoders:
 
         def lsd_order(self, val: int) -> decoders.BpLsdBuilder:
             """Set LSD order parameter (default: 0)."""
+            ...
+
+        def bits_per_step(self, val: int) -> decoders.BpLsdBuilder:
+            """Set bits added per cluster-growth step (default: 0 = grow all
+            candidate bits each step)."""
             ...
 
         def build(self) -> decoders.BpLsdDecoder:
@@ -3007,7 +3386,12 @@ class decoders:
             ...
 
         def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Set initial damping factor (None = disabled)."""
+            """Enable memory-BP for the relay ensemble (default: 0.65).
+
+            The pre-relay leg uses this directly and relay legs draw per-leg strengths
+            only when it is set; None disables memory entirely and makes relay
+            ensembling ineffective.
+            """
             ...
 
         def pre_iter(self, val: int) -> decoders.RelayBpBuilder:
@@ -3023,7 +3407,12 @@ class decoders:
             ...
 
         def seed(self, val: int) -> decoders.RelayBpBuilder:
-            """Set random seed for relay parameter sampling (default: 0)."""
+            """Set the run-level random seed for relay strengths (default: 0).
+
+            The RNG advances across decodes, so reused-decoder outcomes depend on
+            decode history. Equal seeds reproduce only the same full shot sequence,
+            not an individual syndrome independently.
+            """
             ...
 
         def stopping(self, val: str) -> decoders.RelayBpBuilder:
@@ -3040,6 +3429,9 @@ class decoders:
         """Relay BP ensemble decoder for qLDPC codes.
 
         Created via ``RelayBpBuilder(...).build()``.
+        Its relay RNG advances across decodes, so a reused decoder's per-shot outcomes
+        depend on decode history. A seed reproduces the same full shot sequence, not
+        each syndrome independently.
         """
 
         @staticmethod

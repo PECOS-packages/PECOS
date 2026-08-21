@@ -20,6 +20,15 @@ pub enum DecoderError {
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(String),
 
+    /// Requested decoder backend was not compiled into this build
+    #[error(
+        "Decoder backend '{family}' is unavailable; enable the '{required_feature}' cargo feature"
+    )]
+    BackendUnavailable {
+        family: &'static str,
+        required_feature: &'static str,
+    },
+
     /// Internal decoder error
     #[error("Internal decoder error: {0}")]
     InternalError(String),

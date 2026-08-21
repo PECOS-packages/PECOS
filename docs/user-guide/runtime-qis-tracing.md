@@ -55,7 +55,7 @@ from pecos.quantum import TickCircuit
 def coin_flip() -> None:
     q = qubit()
     h(q)
-    _ = measure(q)
+    _ = measure(q).read()
 
 
 trace = capture_qis_operation_trace(coin_flip, num_qubits=1, seed=0)

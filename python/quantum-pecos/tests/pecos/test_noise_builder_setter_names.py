@@ -167,7 +167,7 @@ def test_auto_is_chainable_and_explicit_zeros_win_in_both_orders() -> None:
     def deterministic_x() -> bool:
         q = qubit()
         x(q)
-        return measure(q)
+        return measure(q).read()
 
     auto_then_zeros = (
         general_noise()
@@ -202,7 +202,7 @@ def test_auto_matches_explicit_legacy_preset_at_python_surface() -> None:
     def deterministic_x() -> bool:
         q = qubit()
         x(q)
-        return measure(q)
+        return measure(q).read()
 
     explicit = (
         general_noise()
@@ -299,7 +299,7 @@ def test_with_p_meas_actually_configures_measurement_noise() -> None:
     @guppy
     def prepare_and_measure() -> bool:
         q = qubit()
-        return measure(q)
+        return measure(q).read()
 
     noise = general_noise().with_p_prep(0.0).with_p1(0.0).with_p2(0.0).with_p_meas(1.0)
     results = sim(prepare_and_measure).qubits(1).quantum(state_vector()).noise(noise).seed(42).run(20).to_dict()

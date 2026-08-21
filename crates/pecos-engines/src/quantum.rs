@@ -44,14 +44,26 @@ where
     }
 
     pair_scratch.clear();
-    pair_scratch.extend(qubits.chunks_exact(2).map(|pair| (pair[0], pair[1])));
+    pair_scratch.extend(
+        qubits
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| (pair[0], pair[1])),
+    );
     f(pair_scratch)
 }
 
 /// Convert a flat qubit slice `[c0, t0, c1, t1, ...]` to a vec of pairs.
 fn flat_to_pairs(qubits: &[QubitId]) -> Vec<(QubitId, QubitId)> {
     let mut pairs = Vec::with_capacity(qubits.len() / 2);
-    pairs.extend(qubits.chunks_exact(2).map(|pair| (pair[0], pair[1])));
+    pairs.extend(
+        qubits
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| (pair[0], pair[1])),
+    );
     pairs
 }
 
@@ -201,6 +213,12 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 });
             }
 
+            GateType::MX => {
+                sim.h(&cmd.qubits);
+                for meas_id in sim.mz(&cmd.qubits) {
+                    measurements.push(usize::from(meas_id.outcome));
+                }
+            }
             // Batch consecutive MZ commands
             GateType::MZ | GateType::MeasureLeaked => {
                 mz_qubits.clear();
@@ -226,6 +244,10 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 }
             }
 
+            GateType::PX => {
+                sim.pz(&cmd.qubits);
+                sim.h(&cmd.qubits);
+            }
             GateType::PZ => {
                 sim.pz(&cmd.qubits);
             }
@@ -448,7 +470,7 @@ fn process_general_message<
 
             // Composite gates (decomposed into primitives)
             GateType::CH => {
-                for qubits in cmd.qubits.chunks_exact(2) {
+                for qubits in cmd.qubits.as_chunks::<2>().0 {
                     let target_slice = &[qubits[1]];
                     sim.ry(
                         Angle64::from_radians(std::f64::consts::FRAC_PI_4),
@@ -462,7 +484,7 @@ fn process_general_message<
                 }
             }
             GateType::CCX => {
-                for qubits in cmd.qubits.chunks_exact(3) {
+                for qubits in cmd.qubits.as_chunks::<3>().0 {
                     let c0 = qubits[0];
                     let c1 = qubits[1];
                     let target = qubits[2];
@@ -525,7 +547,7 @@ fn process_general_message<
                 if !cmd.angles.is_empty() {
                     let angle = cmd.angles[0];
                     let half_angle = angle / 2u64;
-                    for qubits in cmd.qubits.chunks_exact(2) {
+                    for qubits in cmd.qubits.as_chunks::<2>().0 {
                         sim.rz(half_angle, &[qubits[1]]);
                         sim.cx(&[(qubits[0], qubits[1])]);
                         sim.rz(-half_angle, &[qubits[1]]);
@@ -567,6 +589,12 @@ fn process_general_message<
                 }
             }
 
+            GateType::MX => {
+                sim.h(&cmd.qubits);
+                for meas_id in sim.mz(&cmd.qubits) {
+                    measurements.push(usize::from(meas_id.outcome));
+                }
+            }
             // Batch consecutive MZ commands into one simulator call
             GateType::MZ | GateType::MeasureLeaked => {
                 mz_qubits.clear();
@@ -605,6 +633,10 @@ fn process_general_message<
             }
 
             // State preparation
+            GateType::PX => {
+                sim.pz(&cmd.qubits);
+                sim.h(&cmd.qubits);
+            }
             GateType::PZ | GateType::QAlloc => {
                 sim.pz(&cmd.qubits);
             }
@@ -920,7 +952,7 @@ where
                             cmd.qubits.len()
                         )));
                     }
-                    for qubits in cmd.qubits.chunks_exact(2) {
+                    for qubits in cmd.qubits.as_chunks::<2>().0 {
                         debug!(
                             "Processing CH gate with control {:?} and target {:?}",
                             qubits[0], qubits[1]
@@ -1058,7 +1090,7 @@ where
                     let angle = cmd.angles[0];
                     let half_angle = angle / 2u64;
                     // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
-                    for qubits in cmd.qubits.chunks_exact(2) {
+                    for qubits in cmd.qubits.as_chunks::<2>().0 {
                         debug!(
                             "Processing CRZ gate on qubits {:?} and {:?} with angle {:?}",
                             qubits[0], qubits[1], angle
@@ -1076,7 +1108,7 @@ where
                             cmd.qubits.len()
                         )));
                     }
-                    for qubits in cmd.qubits.chunks_exact(3) {
+                    for qubits in cmd.qubits.as_chunks::<3>().0 {
                         debug!(
                             "Processing CCX gate with controls {:?}, {:?} and target {:?}",
                             qubits[0], qubits[1], qubits[2]
@@ -1147,6 +1179,13 @@ where
 
                 // Batch consecutive MZ commands into one simulator call.
                 // This enables joint-sampling optimizations (fewer state vector passes).
+                GateType::MX => {
+                    self.simulator.h(&cmd.qubits);
+                    let meas_ids = self.simulator.mz(&cmd.qubits);
+                    for meas_id in meas_ids {
+                        measurements.push(usize::from(meas_id.outcome));
+                    }
+                }
                 GateType::MZ | GateType::MeasureLeaked => {
                     // Collect qubits from consecutive MZ/MeasureLeaked commands
                     let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
@@ -1168,6 +1207,10 @@ where
                     for meas_id in meas_ids {
                         measurements.push(usize::from(meas_id.outcome));
                     }
+                }
+                GateType::PX => {
+                    self.simulator.pz(&cmd.qubits);
+                    self.simulator.h(&cmd.qubits);
                 }
                 GateType::PZ => {
                     debug!("Processing Prep gate on qubits {:?}", cmd.qubits);

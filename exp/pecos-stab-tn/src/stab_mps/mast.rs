@@ -17,9 +17,15 @@
 //!
 //! 1. Prepare a magic state |+_T> on a fresh ancilla
 //! 2. CNOT between ancilla and target (Clifford -- only touches tableau)
-//! 3. Defer the ancilla measurement until the end
+//! 3. Predetermine the uniformly random ancilla outcome and immediately apply
+//!    its data-qubit correction
+//! 4. Defer the ancilla projection until the end
 //!
 //! At the end of the circuit, all deferred measurements are performed.
+//! The predetermined half-probability gadget outcomes are exact for the
+//! untruncated state. Under MPS truncation they can differ from the truncated
+//! representation's own outcome distribution; the forced outcome continues to
+//! implement the exact, untruncated injection gadget.
 //! For random circuits with t <= N, most projections are non-entangling,
 //! keeping the MPS bond dimension bounded by ~3 on average.
 //!
@@ -28,6 +34,7 @@
 //! Nakhl et al., "Stabilizer Tensor Networks with Magic State Injection,"
 //! PRL 134, 190602 (2025). arXiv:2411.12482.
 
+use crate::errors::MpsError;
 use crate::mps::{Mps, MpsConfig};
 use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
@@ -38,26 +45,86 @@ use pecos_simulators::{
 
 use super::non_clifford;
 
+/// Order used to collapse deferred magic-state ancillas.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProjectionOrder {
+    /// Collapse in reverse injection order.
+    Input,
+    /// Recompute MPS-frame locality before every collapse and choose the
+    /// smallest `(span, support size, injection index)` tuple. With `k`
+    /// deferred injections, repeatedly recomputing locality costs O(k^2).
+    #[default]
+    MinSpan,
+}
+
+/// Diagnostics for one deferred magic-state ancilla projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionRecord {
+    /// Ancilla qubit index in the expanded MAST system.
+    pub ancilla: usize,
+    /// Number of MPS sites in the conjugated observable's support.
+    pub support_size: usize,
+    /// Distance between the first and last supported MPS sites.
+    pub mps_span: usize,
+    /// Maximum MPS bond dimension immediately before projection.
+    pub bond_before: usize,
+    /// Maximum MPS bond dimension after projection and any correction.
+    pub bond_after: usize,
+}
+
 /// A deferred ancilla measurement.
+#[derive(Clone, Copy)]
 struct DeferredMeasurement {
     /// The ancilla qubit index (in the expanded system).
     ancilla: usize,
-    /// The target data qubit that needs correction if ancilla outcome = 1.
-    target: usize,
-    /// The correction angle: RZ(2*theta) applied to target if ancilla = 1.
-    /// For T gates: correction = RZ(pi/2) = S (Clifford).
-    correction_angle: Angle64,
+    /// Uniform gadget outcome chosen when the magic state was injected.
+    predetermined_outcome: bool,
+    /// Zero-based position in the original injection sequence.
+    injection_index: usize,
 }
 
-/// MAST simulator: Magic state injection Augmented STN.
+/// Magic-state-injection augmented stabilizer tensor-network simulator.
 ///
-/// Wraps the STN approach with magic state injection for non-Clifford gates.
-/// Pre-allocates ancilla qubits for up to `max_non_clifford` T/RZ gates.
+/// `max_non_clifford` preallocates one fresh ancilla slot per deferred
+/// non-Clifford RZ. Exceeding that capacity panics. Replay the circuit through
+/// [`super::compile::StabMpsCompile`] and call
+/// [`super::compile::StabMpsCompile::advise`] to compute
+/// `deferred_ancillas_required`; during execution,
+/// [`Self::remaining_injections`] reports unused slots.
+///
+/// Non-Clifford ancilla projections remain deferred until completion. Their
+/// uniformly random outcomes and corresponding corrections are handled at the
+/// injection points. Call [`Self::project_all`] explicitly to project every
+/// magic-state ancilla. Alternatively, measuring data through
+/// [`CliffordGateable::mz`] calls `project_all()` first and then performs the
+/// requested Z measurements. [`Self::flush`] only materializes pending merged
+/// RZ rotations; it does not project already deferred injections.
+///
+/// The injection gadget's predetermined outcomes have exact probability 1/2
+/// for the untruncated state. If MPS truncation has occurred, that predetermined
+/// branch can deviate from the truncated representation's own distribution;
+/// it remains the branch required by the exact, untruncated gadget protocol.
+///
+/// Data-qubit measurements use an exact sample-then-force route: evaluate the
+/// physical Z expectation, sample that probability, then apply the normalized
+/// forced projector for the drawn outcome. This deliberately avoids the default
+/// `StabMps` pragmatic measurement path, whose uncompensated tableau
+/// pre-reduction is not composable with MAST's exact forced ancilla projections.
+/// Exact compensation can apply long-range CNOTs to the MPS and therefore cost
+/// more time and bond dimension. Lazy virtual-frame operations are materialized
+/// before this exact route.
+///
+/// Prefer `Mast` for T-like, Clifford-correction workloads when sufficient
+/// ancilla capacity is available and deferred projection keeps the coefficient
+/// MPS small. Prefer [`super::StabMps`] for direct arbitrary rotations, limited
+/// ancillary memory, or its amplitude, probability, and sampling read APIs.
 pub struct Mast {
     /// Number of data qubits.
     num_data_qubits: usize,
+    /// Seed supplied at construction, or `None` for entropy-backed resets.
+    construction_seed: Option<u64>,
     /// Maximum number of non-Clifford gates (= number of ancilla slots).
-    _max_non_clifford: usize,
+    max_non_clifford: usize,
     /// Total qubits = data + ancillas.
     total_qubits: usize,
     /// The underlying stabilizer tableau for all qubits.
@@ -69,19 +136,19 @@ pub struct Mast {
     next_ancilla: usize,
     /// Deferred measurements to perform at the end.
     deferred: Vec<DeferredMeasurement>,
+    /// Policy for selecting the next deferred ancilla to project.
+    projection_order: ProjectionOrder,
+    /// Per-projection locality and bond-dimension diagnostics since reset.
+    projection_records: Vec<ProjectionRecord>,
+    /// Peak bond dimension observed before or after a deferred projection.
+    projection_peak_bond: usize,
     global_phase: Complex64,
     disent_flags: Vec<Option<super::SiteEigenstate>>,
+    numerical_flag_redetection: bool,
     gf2_matrix: super::ofd::Gf2FlipMatrix,
     rng: PecosRng,
+    /// Runtime counters for non-Clifford decomposition paths.
     pub stats: super::StabMpsStats,
-    /// Deferred virtual-frame Clifford V for lazy measurement
-    /// (see `super::measure::DeferredOp`).
-    deferred_ops: Vec<super::measure::DeferredOp>,
-    /// When `true`, measurement uses the lazy virtual-frame path:
-    /// accumulates `pre_reduce` CNOTs and post-projection basis-rotation
-    /// Cliffords into a deferred queue rather than applying them eagerly
-    /// to the MPS. Set via `with_lazy_measure(true)`.
-    lazy_measure: bool,
     /// Pending non-Clifford RZ angle per qubit when `merge_rz` is on.
     /// Flushed when any other gate touches the qubit (except RZ-same-qubit
     /// merges, Z/S/Sdg/CZ commutes). Mirror of `StabMps`'s field.
@@ -94,69 +161,122 @@ pub struct Mast {
 impl Mast {
     /// Create a MAST simulator with `num_qubits` data qubits and room for
     /// `max_non_clifford` non-Clifford gates.
+    ///
+    /// # Panics
+    ///
+    /// Applying more injections than `max_non_clifford` panics. Use
+    /// [`Self::remaining_injections`] to inspect capacity; compile-only
+    /// [`super::compile::StabMpsCompile::advise`] reports the required deferred
+    /// ancilla capacity for an analyzed circuit.
     #[must_use]
     pub fn new(num_qubits: usize, max_non_clifford: usize) -> Self {
         let total = num_qubits + max_non_clifford;
+        let (tableau, rng) = super::initial_tableau_and_rng(total, None);
         Self {
             num_data_qubits: num_qubits,
-            _max_non_clifford: max_non_clifford,
+            construction_seed: None,
+            max_non_clifford,
             total_qubits: total,
-            tableau: SparseStabY::new(total).with_destab_sign_tracking(),
+            tableau,
             mps: Mps::new(total, MpsConfig::default()),
             config: MpsConfig::default(),
             next_ancilla: num_qubits,
             deferred: Vec::new(),
+            projection_order: ProjectionOrder::default(),
+            projection_records: Vec::new(),
+            projection_peak_bond: 0,
             global_phase: Complex64::new(1.0, 0.0),
             disent_flags: vec![Some(super::SiteEigenstate::Z(false)); total],
+            numerical_flag_redetection: false,
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
-            rng: PecosRng::seed_from_u64(0),
+            rng,
             stats: super::StabMpsStats::default(),
-            deferred_ops: Vec::new(),
-            lazy_measure: false,
             pending_rz: vec![None; total],
             merge_rz: false,
         }
     }
 
-    /// Create with a specific seed.
+    /// Create with a specific seed for reproducible stochastic operations.
+    ///
+    /// Seeds both the simulator's [`pecos_random::PecosRng`] and its tableau.
+    /// Identically configured fresh instances reproduce an identical sequence
+    /// of predetermined gadget outcomes and measurements. On reset, both
+    /// rebuilt RNGs are seeded from the current simulator stream, giving
+    /// deterministic continuation rather than replaying this seed.
+    ///
+    /// # Panics
+    ///
+    /// Applying more injections than `max_non_clifford` panics. See
+    /// [`Self::new`] for capacity-planning details.
     #[must_use]
     pub fn with_seed(num_qubits: usize, max_non_clifford: usize, seed: u64) -> Self {
         let total = num_qubits + max_non_clifford;
+        let (tableau, rng) = super::initial_tableau_and_rng(total, Some(seed));
         Self {
             num_data_qubits: num_qubits,
-            _max_non_clifford: max_non_clifford,
+            construction_seed: Some(seed),
+            max_non_clifford,
             total_qubits: total,
-            tableau: SparseStabY::with_seed(total, seed).with_destab_sign_tracking(),
+            tableau,
             mps: Mps::new(total, MpsConfig::default()),
             config: MpsConfig::default(),
             next_ancilla: num_qubits,
             deferred: Vec::new(),
+            projection_order: ProjectionOrder::default(),
+            projection_records: Vec::new(),
+            projection_peak_bond: 0,
             global_phase: Complex64::new(1.0, 0.0),
             disent_flags: vec![Some(super::SiteEigenstate::Z(false)); total],
+            numerical_flag_redetection: false,
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
-            rng: PecosRng::seed_from_u64(seed),
+            rng,
             stats: super::StabMpsStats::default(),
-            deferred_ops: Vec::new(),
-            lazy_measure: false,
             pending_rz: vec![None; total],
             merge_rz: false,
         }
     }
 
-    /// Enable lazy virtual-frame measurement. Fluent-style setter; returns
-    /// `self` for chaining after `new`/`with_seed`. See
-    /// `StabMpsBuilder::lazy_measure` for semantics.
+    /// Replace the coefficient-MPS configuration on a freshly constructed
+    /// simulator.
+    ///
+    /// This fluent construction option reinitializes the coefficient MPS to
+    /// `|0...0>` and is therefore intended to be called immediately after
+    /// [`Self::new`] or [`Self::with_seed`], before applying gates. It is useful
+    /// for correctness studies that disable truncation independently of the
+    /// production defaults.
     #[must_use]
-    pub fn with_lazy_measure(mut self, lazy: bool) -> Self {
-        self.lazy_measure = lazy;
+    pub fn with_mps_config(mut self, config: MpsConfig) -> Self {
+        self.mps = Mps::new(self.total_qubits, config.clone());
+        self.config = config;
         self
     }
 
-    /// Enable RZ batching on same qubit. See `StabMpsBuilder::merge_rz` for
-    /// semantics. Fluent-style setter on MAST.
+    /// Enable RZ batching on the same qubit. See `StabMpsBuilder::merge_rz`
+    /// for semantics. MAST defaults this to false so each RZ immediately makes
+    /// its injection and ancilla-capacity cost visible; `StabMps` defaults it
+    /// to true for throughput. Fluent-style setter on MAST.
     #[must_use]
     pub fn with_merge_rz(mut self, merge: bool) -> Self {
         self.merge_rz = merge;
+        self
+    }
+
+    /// Numerically recover missing exact-disentangling |0> flags at product
+    /// sites. Default: false.
+    #[must_use]
+    pub fn with_numerical_flag_redetection(mut self, enable: bool) -> Self {
+        self.numerical_flag_redetection = enable;
+        self
+    }
+
+    /// Select the ordering policy for deferred ancilla projections.
+    ///
+    /// The default is [`ProjectionOrder::MinSpan`]. Select
+    /// [`ProjectionOrder::Input`] to preserve the legacy reverse-injection
+    /// projection sequence.
+    #[must_use]
+    pub fn projection_order(mut self, projection_order: ProjectionOrder) -> Self {
+        self.projection_order = projection_order;
         self
     }
 
@@ -198,8 +318,8 @@ impl Mast {
         self.inject_magic_state(theta, q);
     }
 
-    /// Flush all pending merged RZ. Public; useful before read operations
-    /// when `merge_rz` is on.
+    /// Materialize all pending merged RZ rotations. Public; useful before read
+    /// operations.
     pub fn flush(&mut self) {
         if !self.merge_rz {
             return;
@@ -210,23 +330,70 @@ impl Mast {
     }
 
     #[must_use]
+    /// Return the number of data qubits, excluding preallocated ancillas.
     pub fn num_data_qubits(&self) -> usize {
         self.num_data_qubits
     }
 
     #[must_use]
+    /// Return the number of ancilla slots consumed by materialized injections.
+    /// Pending merged rotations are not reflected and may consume slots later.
     pub fn num_ancillas_used(&self) -> usize {
         self.next_ancilla - self.num_data_qubits
     }
 
+    /// Number of additional magic-state injections available before the
+    /// configured `max_non_clifford` capacity is exhausted. Pending merged
+    /// rotations are not reflected and may consume this capacity later.
     #[must_use]
+    pub fn remaining_injections(&self) -> usize {
+        self.max_non_clifford - self.num_ancillas_used()
+    }
+
+    #[must_use]
+    /// Return the largest bond dimension currently stored in the coefficient MPS.
+    /// Pending operations are not materialized by this diagnostic.
     pub fn max_bond_dim(&self) -> usize {
         self.mps.max_bond_dim()
     }
 
+    /// Accumulated approximate infidelity from SVD truncation.
+    /// Pending operations are not materialized by this diagnostic.
     #[must_use]
+    pub fn truncation_error(&self) -> f64 {
+        self.mps.truncation_error()
+    }
+
+    /// Number of SVDs where `max_bond_dim` was the binding cap.
+    /// Pending operations are not materialized by this diagnostic.
+    #[must_use]
+    pub fn bond_cap_hits(&self) -> u64 {
+        self.mps.bond_cap_hits()
+    }
+
+    #[must_use]
+    /// Borrow the coefficient MPS over data qubits and preallocated ancillas.
+    ///
+    /// Call [`Self::flush`] first if pending merged rotations must be included,
+    /// and [`Self::project_all`] first if deferred injections must be completed.
     pub fn mps(&self) -> &Mps {
         &self.mps
+    }
+
+    /// Return stored diagnostics for deferred projections performed since reset.
+    /// Pending operations are not materialized by this diagnostic.
+    #[must_use]
+    pub fn projection_records(&self) -> &[ProjectionRecord] {
+        &self.projection_records
+    }
+
+    /// Return the peak MPS bond dimension observed during deferred projection.
+    ///
+    /// Returns zero when no deferred projection has run since reset. Pending
+    /// operations are not materialized by this diagnostic.
+    #[must_use]
+    pub fn projection_peak_bond(&self) -> usize {
+        self.projection_peak_bond
     }
 
     /// Inject a magic state for RZ(theta) on the target qubit.
@@ -235,7 +402,9 @@ impl Mast {
     /// 1. Prepare ancilla in |+>: H on ancilla
     /// 2. Apply RZ(theta) on ancilla (local, single-site MPS gate)
     /// 3. CNOT(target, ancilla) -- **target controls, ancilla is CX target**
-    /// 4. Defer measurement of ancilla
+    /// 4. Predetermine the uniformly random ancilla outcome
+    /// 5. If it is 1, immediately apply RZ(2*theta) to the data qubit
+    /// 6. Defer projection of the ancilla onto the predetermined outcome
     ///
     /// When the ancilla is later measured:
     /// - Outcome 0: data qubit has RZ(theta) applied. Done.
@@ -246,6 +415,11 @@ impl Mast {
             self.next_ancilla < self.total_qubits,
             "exceeded max_non_clifford ancilla slots"
         );
+
+        // The injection-gadget measurement is exactly uniform and independent
+        // of the data state, so its outcome may be chosen at the injection
+        // point while the physical ancilla projection remains deferred.
+        let predetermined_outcome = self.rng.random_bool(0.5);
 
         let ancilla = self.next_ancilla;
         self.next_ancilla += 1;
@@ -262,112 +436,234 @@ impl Mast {
         let half_rad = theta.to_radians_signed() / 2.0;
         let cos_half = half_rad.cos();
         let sin_half = half_rad.sin();
-        non_clifford::apply_rz_stab_mps(
-            &mut self.tableau,
-            &mut self.mps,
-            cos_half,
-            sin_half,
-            ancilla,
-            true,
-            &mut non_clifford::RzContext {
-                disent_flags: &mut self.disent_flags,
-                gf2_matrix: &mut self.gf2_matrix,
-                stats: &mut self.stats,
-            },
+        super::expect_mps_operation(
+            non_clifford::apply_rz_stab_mps(
+                &mut self.tableau,
+                &mut self.mps,
+                cos_half,
+                sin_half,
+                ancilla,
+                true,
+                &mut non_clifford::RzContext {
+                    disent_flags: &mut self.disent_flags,
+                    numerical_flag_redetection: self.numerical_flag_redetection,
+                    gf2_matrix: &mut self.gf2_matrix,
+                    stats: &mut self.stats,
+                },
+            ),
+            "Mast::inject_magic_state RZ update",
         );
 
         // Step 3: CNOT(target, ancilla) -- target controls, ancilla is CX target
         // This is the key: data qubit controls, ancilla flips.
         self.tableau.cx(&[(tgt_qid, anc_qid)]);
 
-        // Step 4: Record deferred measurement with correction angle
+        // Step 4: Apply the branch correction at the injection point. Delaying
+        // this gate would require conjugating it through every later gate on
+        // the data qubit.
+        if predetermined_outcome {
+            self.apply_injection_correction(theta + theta, target);
+        }
+
+        // Step 5: Record only the predetermined ancilla projection.
         self.deferred.push(DeferredMeasurement {
             ancilla,
-            target,
-            correction_angle: theta + theta, // RZ(2*theta) correction if outcome=1
+            predetermined_outcome,
+            injection_index: ancilla - self.num_data_qubits,
         });
     }
 
-    /// Project all deferred ancilla measurements.
+    /// Apply a predetermined magic-state-injection correction immediately.
+    fn apply_injection_correction(&mut self, correction_angle: Angle64, target: usize) {
+        let tgt = QubitId(target);
+
+        if correction_angle == Angle64::ZERO {
+            // No correction needed.
+        } else if correction_angle == Angle64::HALF_TURN {
+            // RZ(pi) = -iZ.
+            self.global_phase *= Complex64::new(0.0, -1.0);
+            self.tableau.z(&[tgt]);
+        } else if correction_angle == Angle64::QUARTER_TURN {
+            // RZ(pi/2) = e^{-i*pi/4} S -- the T-gate correction.
+            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+            self.global_phase *= Complex64::new(inv_sqrt2, -inv_sqrt2);
+            self.tableau.sz(&[tgt]);
+        } else if correction_angle == Angle64::THREE_QUARTERS_TURN {
+            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+            self.global_phase *= Complex64::new(inv_sqrt2, inv_sqrt2);
+            self.tableau.szdg(&[tgt]);
+        } else {
+            // Non-Clifford correction: apply via the STN protocol.
+            let (sin_half, cos_half) = correction_angle.half_angle_sin_cos();
+            super::expect_mps_operation(
+                non_clifford::apply_rz_stab_mps(
+                    &mut self.tableau,
+                    &mut self.mps,
+                    cos_half,
+                    sin_half,
+                    target,
+                    true,
+                    &mut non_clifford::RzContext {
+                        disent_flags: &mut self.disent_flags,
+                        numerical_flag_redetection: self.numerical_flag_redetection,
+                        gf2_matrix: &mut self.gf2_matrix,
+                        stats: &mut self.stats,
+                    },
+                ),
+                "Mast::apply_injection_correction RZ update",
+            );
+        }
+    }
+
+    /// Project all deferred ancillas onto their predetermined outcomes.
     ///
     /// For each deferred ancilla:
-    /// 1. Measure ancilla in Z basis (using shared STN measurement protocol)
-    /// 2. If outcome = 1: apply RZ(2*theta) correction to the target data qubit
-    ///    (For T gates, this is S = RZ(pi/2), which is Clifford)
+    /// 1. Force-project the ancilla in Z using the shared normalized STN
+    ///    projection protocol
+    /// 2. Apply no correction; it was already applied at injection time
+    ///
+    /// Calling `mz` on data qubits performs this completion step automatically.
     pub fn project_all(&mut self) {
-        let deferred: Vec<DeferredMeasurement> = self.deferred.drain(..).rev().collect();
-        for dm in deferred {
-            // Measure the ancilla using the shared STN measurement protocol
-            let result = if self.lazy_measure {
-                super::measure::measure_qubit_stab_mps_lazy(
-                    &mut self.tableau,
-                    &mut self.mps,
-                    &mut self.rng,
-                    dm.ancilla,
-                    &mut self.deferred_ops,
-                )
-            } else {
-                super::measure::measure_qubit_stab_mps(
-                    &mut self.tableau,
-                    &mut self.mps,
-                    &mut self.rng,
-                    dm.ancilla,
-                )
-            };
-
-            // If outcome = 1 (true in PECOS convention): apply correction
-            if result.outcome {
-                let corr = dm.correction_angle;
-                let tgt = QubitId(dm.target);
-
-                // Check if correction is a Clifford angle
-                if corr == Angle64::ZERO {
-                    // No correction needed
-                } else if corr == Angle64::HALF_TURN {
-                    // RZ(pi) = -iZ
-                    self.global_phase *= Complex64::new(0.0, -1.0);
-                    self.tableau.z(&[tgt]);
-                } else if corr == Angle64::QUARTER_TURN {
-                    // RZ(pi/2) = e^{-i*pi/4} S -- this is the T gate correction
-                    let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-                    self.global_phase *= Complex64::new(inv_sqrt2, -inv_sqrt2);
-                    self.tableau.sz(&[tgt]);
-                } else if corr == Angle64::THREE_QUARTERS_TURN {
-                    let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-                    self.global_phase *= Complex64::new(inv_sqrt2, inv_sqrt2);
-                    self.tableau.szdg(&[tgt]);
-                } else {
-                    // Non-Clifford correction: apply via STN protocol
-                    let (sin_half, cos_half) = corr.half_angle_sin_cos();
-                    non_clifford::apply_rz_stab_mps(
-                        &mut self.tableau,
-                        &mut self.mps,
-                        cos_half,
-                        sin_half,
-                        dm.target,
-                        true,
-                        &mut non_clifford::RzContext {
-                            disent_flags: &mut self.disent_flags,
-                            gf2_matrix: &mut self.gf2_matrix,
-                            stats: &mut self.stats,
-                        },
-                    );
+        let result = (|| -> Result<(), MpsError> {
+            match self.projection_order {
+                ProjectionOrder::Input => {
+                    // Preserve the original drain and reverse-iteration path.
+                    let deferred: Vec<DeferredMeasurement> =
+                        self.deferred.drain(..).rev().collect();
+                    for dm in deferred {
+                        let (support_size, mps_span) = self.projection_locality(dm.ancilla);
+                        self.project_deferred(dm, support_size, mps_span)?;
+                    }
+                }
+                ProjectionOrder::MinSpan => {
+                    while !self.deferred.is_empty() {
+                        let mut selected = (0, usize::MAX, usize::MAX, usize::MAX);
+                        for (position, dm) in self.deferred.iter().enumerate() {
+                            let (support_size, mps_span) = self.projection_locality(dm.ancilla);
+                            let candidate = (position, mps_span, support_size, dm.injection_index);
+                            if (candidate.1, candidate.2, candidate.3)
+                                < (selected.1, selected.2, selected.3)
+                            {
+                                selected = candidate;
+                            }
+                        }
+                        let dm = self.deferred.remove(selected.0);
+                        self.project_deferred(dm, selected.2, selected.1)?;
+                    }
                 }
             }
-        }
+            Ok(())
+        })();
+        super::expect_mps_operation(result, "Mast::project_all deferred projection");
+    }
+
+    fn projection_locality(&self, ancilla: usize) -> (usize, usize) {
+        let support = super::measure::conjugated_z_support(&self.tableau, ancilla, &[]);
+        let span = support
+            .first()
+            .zip(support.last())
+            .map_or(0, |(first, last)| last - first);
+        (support.len(), span)
+    }
+
+    fn project_deferred(
+        &mut self,
+        dm: DeferredMeasurement,
+        support_size: usize,
+        mps_span: usize,
+    ) -> Result<(), MpsError> {
+        let bond_before = self.mps.max_bond_dim();
+        self.projection_peak_bond = self.projection_peak_bond.max(bond_before);
+
+        // The branch correction was applied at injection time. Project only
+        // the ancilla, deterministically and with normalized output.
+        let projection = super::measure::project_forced_z_with_update(
+            &mut self.tableau,
+            &mut self.mps,
+            dm.ancilla,
+            dm.predetermined_outcome,
+        )?;
+        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
+        assert!(
+            projection.probability > 1e-20,
+            "predetermined magic-state gadget branch has zero represented weight"
+        );
+
+        let bond_after = self.mps.max_bond_dim();
+        self.projection_peak_bond = self.projection_peak_bond.max(bond_after);
+        self.projection_records.push(ProjectionRecord {
+            ancilla: dm.ancilla,
+            support_size,
+            mps_span,
+            bond_before,
+            bond_after,
+        });
+        Ok(())
+    }
+
+    /// Evaluate a physical data-qubit Z probability, then apply the normalized
+    /// forced projector to the live state for the sampled outcome.
+    fn measure_data_qubit_exact(&mut self, q_idx: usize) -> Result<MeasurementResult, MpsError> {
+        // Sample the exact physical observable before the forced projector's
+        // compensated tableau pre-reduction changes its internal basis.
+        let norm_squared = self.mps.norm_squared();
+        assert!(norm_squared > 1e-20, "cannot measure a zero-norm MPS");
+        let expectation = (super::measure::z_expectation_value(&self.tableau, &self.mps, q_idx).re
+            / norm_squared)
+            .clamp(-1.0, 1.0);
+        let probability_zero = f64::midpoint(1.0, expectation);
+        let probability_one = 1.0 - probability_zero;
+        // Match the forced projector's numerical zero threshold; unlike the
+        // pragmatic StabMps route, do not round merely near-deterministic
+        // probabilities to 0 or 1.
+        let is_deterministic = probability_zero.min(probability_one) < 1e-20;
+        let outcome = if is_deterministic {
+            probability_zero < probability_one
+        } else {
+            self.rng.random_bool(probability_one)
+        };
+
+        let projection = super::measure::project_forced_z_with_update(
+            &mut self.tableau,
+            &mut self.mps,
+            q_idx,
+            outcome,
+        )?;
+        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
+        assert!(
+            projection.probability > 1e-20,
+            "sampled data-measurement branch has zero represented weight"
+        );
+        Ok(MeasurementResult {
+            outcome,
+            is_deterministic,
+        })
     }
 }
 
 impl QuantumSimulator for Mast {
+    /// Reset data, ancillas, capacity use, and diagnostics as if newly
+    /// constructed with the retained configuration.
+    ///
+    /// For a seeded simulator, the rebuilt tableau seed and continuing
+    /// simulator-RNG seed are drawn from the current simulator stream. This is
+    /// deterministic continuation, not replay of the construction stream. An
+    /// unseeded simulator obtains fresh entropy.
     fn reset(&mut self) -> &mut Self {
-        self.tableau = SparseStabY::new(self.total_qubits).with_destab_sign_tracking();
+        (self.tableau, self.rng) = super::reset_tableau_and_rng(
+            self.total_qubits,
+            self.construction_seed.is_some(),
+            &mut self.rng,
+        );
         self.mps = Mps::new(self.total_qubits, self.config.clone());
         self.next_ancilla = self.num_data_qubits;
         self.deferred.clear();
+        self.projection_records.clear();
+        self.projection_peak_bond = 0;
         self.global_phase = Complex64::new(1.0, 0.0);
         self.disent_flags = vec![Some(super::SiteEigenstate::Z(false)); self.total_qubits];
         self.gf2_matrix.reset();
-        self.deferred_ops.clear();
+        self.stats = super::StabMpsStats::default();
         for slot in &mut self.pending_rz {
             *slot = None;
         }
@@ -417,28 +713,16 @@ impl CliffordGateable for Mast {
         }
         // Project all deferred measurements first
         self.project_all();
-        // Then measure data qubits using the full STN measurement protocol
-        qubits
-            .iter()
-            .map(|&q| {
-                if self.lazy_measure {
-                    super::measure::measure_qubit_stab_mps_lazy(
-                        &mut self.tableau,
-                        &mut self.mps,
-                        &mut self.rng,
-                        q.index(),
-                        &mut self.deferred_ops,
-                    )
-                } else {
-                    super::measure::measure_qubit_stab_mps(
-                        &mut self.tableau,
-                        &mut self.mps,
-                        &mut self.rng,
-                        q.index(),
-                    )
-                }
-            })
-            .collect()
+        // Then sample and force-project each data qubit through the exact route.
+        let mut measurements = Vec::with_capacity(qubits.len());
+        for &q in qubits {
+            measurements.push(super::expect_mps_operation(
+                self.measure_data_qubit_exact(q.index()),
+                "Mast::mz data-qubit projection",
+            ));
+        }
+        debug_assert_eq!(measurements.len(), qubits.len());
+        measurements
     }
 }
 
@@ -498,6 +782,322 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
 
+    fn assert_mast_disent_flags_sound(mast: &Mast, context: &str) {
+        super::super::assert_disent_flags_match_stored_mps(&mast.mps, &mast.disent_flags, context);
+    }
+
+    fn project_next_and_assert(mast: &mut Mast, context: &str) {
+        let (position, support_size, mps_span) = match mast.projection_order {
+            ProjectionOrder::Input => {
+                let position = mast.deferred.len() - 1;
+                let (support_size, mps_span) =
+                    mast.projection_locality(mast.deferred[position].ancilla);
+                (position, support_size, mps_span)
+            }
+            ProjectionOrder::MinSpan => {
+                let mut selected = (0, usize::MAX, usize::MAX, usize::MAX);
+                for (position, dm) in mast.deferred.iter().enumerate() {
+                    let (support_size, mps_span) = mast.projection_locality(dm.ancilla);
+                    let candidate = (position, mps_span, support_size, dm.injection_index);
+                    if (candidate.1, candidate.2, candidate.3)
+                        < (selected.1, selected.2, selected.3)
+                    {
+                        selected = candidate;
+                    }
+                }
+                (selected.0, selected.2, selected.1)
+            }
+        };
+        let dm = mast.deferred.remove(position);
+        mast.project_deferred(dm, support_size, mps_span).unwrap();
+        assert_mast_disent_flags_sound(mast, context);
+    }
+
+    #[test]
+    fn test_mast_mz_returns_one_result_per_requested_qubit() {
+        let mut mast = Mast::with_seed(3, 0, 0x000A_11CE);
+        mast.h(&[QubitId(0)]);
+        mast.cx(&[(QubitId(0), QubitId(1))]);
+        let qubits = [QubitId(0), QubitId(1), QubitId(2)];
+
+        let measurements = mast.mz(&qubits);
+
+        assert_eq!(measurements.len(), qubits.len());
+    }
+
+    #[test]
+    fn test_mast_projection_and_measurement_disent_flags_match_marginals() {
+        let t = Angle64::QUARTER_TURN / 2u64;
+        for projection_order in [ProjectionOrder::Input, ProjectionOrder::MinSpan] {
+            for numerical_flag_redetection in [false, true] {
+                let mut mast = Mast::with_seed(4, 4, 0x7000_0000)
+                    .with_merge_rz(false)
+                    .with_numerical_flag_redetection(numerical_flag_redetection)
+                    .projection_order(projection_order);
+                mast.h(&[QubitId(0), QubitId(2)]);
+                mast.cx(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+                mast.rz(t, &[QubitId(0)]);
+                mast.cz(&[(QubitId(1), QubitId(2))]);
+                mast.rz(t, &[QubitId(2)]);
+                mast.h(&[QubitId(1)]);
+                mast.rz(t, &[QubitId(1)]);
+
+                let mut projection = 0;
+                while !mast.deferred.is_empty() {
+                    project_next_and_assert(
+                        &mut mast,
+                        &format!(
+                            "MAST deferred projection {projection}; order={projection_order:?} redetect={numerical_flag_redetection}"
+                        ),
+                    );
+                    projection += 1;
+                }
+
+                let _ = mast.mz(&[QubitId(3)]);
+                assert_mast_disent_flags_sound(
+                    &mast,
+                    &format!(
+                        "MAST data measurement; order={projection_order:?} redetect={numerical_flag_redetection}"
+                    ),
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "dense 8-site MAST reconstruction regression; run explicitly with --release"]
+    fn test_mast_disent_flag_projection_continuation_matches_dense() {
+        use crate::stab_mps::StabMps;
+        use pecos_simulators::DenseStateVec;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Op {
+            H(usize),
+            Sz(usize),
+            Cx(usize, usize),
+            Cz(usize, usize),
+            Rz(usize, f64),
+        }
+
+        fn next(state: &mut u64) -> u64 {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            *state
+        }
+
+        fn random_distinct_pair(state: &mut u64, n: usize) -> (usize, usize) {
+            let first = (next(state) % n as u64) as usize;
+            let mut second = (next(state) % (n - 1) as u64) as usize;
+            if second >= first {
+                second += 1;
+            }
+            (first, second)
+        }
+
+        fn apply(op: Op, mast: &mut Mast, dense: &mut DenseStateVec) {
+            match op {
+                Op::H(q) => {
+                    mast.h(&[QubitId(q)]);
+                    dense.h(&[QubitId(q)]);
+                }
+                Op::Sz(q) => {
+                    mast.sz(&[QubitId(q)]);
+                    dense.sz(&[QubitId(q)]);
+                }
+                Op::Cx(control, target) => {
+                    let pair = [(QubitId(control), QubitId(target))];
+                    mast.cx(&pair);
+                    dense.cx(&pair);
+                }
+                Op::Cz(first, second) => {
+                    let pair = [(QubitId(first), QubitId(second))];
+                    mast.cz(&pair);
+                    dense.cz(&pair);
+                }
+                Op::Rz(q, radians) => {
+                    let angle = Angle64::from_radians(radians);
+                    mast.rz(angle, &[QubitId(q)]);
+                    dense.rz(angle, &[QubitId(q)]);
+                }
+            }
+        }
+
+        fn fidelity(first: &[Complex64], second: &[Complex64]) -> f64 {
+            first
+                .iter()
+                .zip(second)
+                .map(|(a, b)| a.conj() * b)
+                .sum::<Complex64>()
+                .norm_sqr()
+        }
+
+        fn project_z(state: &[Complex64], qubit: usize, outcome: bool) -> Vec<Complex64> {
+            let probability = state
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| ((*index >> qubit) & 1 != 0) == outcome)
+                .map(|(_, amplitude)| amplitude.norm_sqr())
+                .sum::<f64>();
+            assert!(probability > 1e-14);
+            let scale = probability.sqrt().recip();
+            state
+                .iter()
+                .enumerate()
+                .map(|(index, &amplitude)| {
+                    if ((index >> qubit) & 1 != 0) == outcome {
+                        amplitude * scale
+                    } else {
+                        Complex64::new(0.0, 0.0)
+                    }
+                })
+                .collect()
+        }
+
+        fn mast_data_state_vector(mast: &Mast) -> Vec<Complex64> {
+            let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+            view.tableau = mast.tableau.clone();
+            view.mps = mast.mps.clone();
+            view.global_phase = mast.global_phase;
+            let full = view.state_vector();
+            let data_dimension = 1_usize << mast.num_data_qubits;
+            let mut best = Vec::new();
+            let mut best_norm = 0.0;
+            let mut total_norm = 0.0;
+            for block in full.chunks_exact(data_dimension) {
+                let norm = block
+                    .iter()
+                    .map(num_complex::Complex::norm_sqr)
+                    .sum::<f64>();
+                total_norm += norm;
+                if norm > best_norm {
+                    best_norm = norm;
+                    best = block.to_vec();
+                }
+            }
+            // The dense tableau projector used only by this test becomes
+            // mildly ill-conditioned on the exact-mz continuation circuit.
+            assert!(best_norm > 0.99, "ancillas did not factor: {best_norm}");
+            assert!((total_norm - 1.0).abs() < 1e-8);
+            let scale = best_norm.sqrt().recip();
+            for amplitude in &mut best {
+                *amplitude *= scale;
+            }
+            best
+        }
+
+        fn exact_config() -> MpsConfig {
+            MpsConfig {
+                max_bond_dim: 64,
+                svd_cutoff: 0.0,
+                max_truncation_error: Some(0.0),
+                parallel: false,
+            }
+        }
+
+        const N: usize = 4;
+        for exact_data_measurement in [false, true] {
+            for numerical_flag_redetection in [false, true] {
+                let (circuit_seed, measured_qubit, continuation_seed) = if exact_data_measurement {
+                    (9_u64, 3_usize, 5_u64)
+                } else {
+                    (11, 0, 4)
+                };
+                let mut random = circuit_seed + 1;
+                let mut mast = Mast::with_seed(N, 4, 0x6000_0000 + circuit_seed)
+                    .with_mps_config(exact_config())
+                    .with_merge_rz(false)
+                    .with_numerical_flag_redetection(numerical_flag_redetection);
+                let mut dense = DenseStateVec::new(N);
+                let mut injections = 0;
+                for step in 0..18 {
+                    let choice = next(&mut random) % 8;
+                    let q = (next(&mut random) % N as u64) as usize;
+                    let op = match choice {
+                        0 | 1 => Op::H(q),
+                        2 => Op::Sz(q),
+                        3 | 4 => {
+                            let (control, target) = random_distinct_pair(&mut random, N);
+                            Op::Cx(control, target)
+                        }
+                        5 => {
+                            let (first, second) = random_distinct_pair(&mut random, N);
+                            Op::Cz(first, second)
+                        }
+                        _ if injections < 3 => {
+                            injections += 1;
+                            Op::Rz(q, if step & 1 == 0 { 0.37 } else { -0.61 })
+                        }
+                        _ => Op::H(q),
+                    };
+                    apply(op, &mut mast, &mut dense);
+                }
+                assert_eq!(injections, 3);
+                let dense_before_projection = dense.state();
+
+                let expected = if exact_data_measurement {
+                    let result = mast
+                        .mz(&[QubitId(measured_qubit)])
+                        .into_iter()
+                        .next()
+                        .expect("one measurement result");
+                    project_z(&dense_before_projection, measured_qubit, result.outcome)
+                } else {
+                    mast.project_all();
+                    dense_before_projection
+                };
+                let post_projection_fidelity = fidelity(&mast_data_state_vector(&mast), &expected);
+                assert!(post_projection_fidelity > 1.0 - 1e-9);
+
+                let mut oracle = DenseStateVec::from_state(
+                    &expected,
+                    PecosRng::seed_from_u64(continuation_seed),
+                );
+                let mut continuation_random = continuation_seed + 1;
+                for _ in 0..4 {
+                    let choice = next(&mut continuation_random) % 3;
+                    let q = (next(&mut continuation_random) % N as u64) as usize;
+                    let op = match choice {
+                        0 => Op::H(q),
+                        1 => Op::Sz(q),
+                        _ => {
+                            let (control, target) =
+                                random_distinct_pair(&mut continuation_random, N);
+                            Op::Cx(control, target)
+                        }
+                    };
+                    apply(op, &mut mast, &mut oracle);
+                }
+                let target = (next(&mut continuation_random) % N as u64) as usize;
+                apply(Op::Rz(target, 0.37), &mut mast, &mut oracle);
+                mast.project_all();
+
+                let actual = mast_data_state_vector(&mast);
+                let expected_continued = oracle.state();
+                let continued_fidelity = fidelity(&actual, &expected_continued);
+                let max_probability_error = actual
+                    .iter()
+                    .zip(&expected_continued)
+                    .map(|(a, b)| (a.norm_sqr() - b.norm_sqr()).abs())
+                    .fold(0.0_f64, f64::max);
+                eprintln!(
+                    "MAST continuation: exact_mz={exact_data_measurement} \
+                     redetect={numerical_flag_redetection} seed={circuit_seed} \
+                     fidelity={continued_fidelity:.16} \
+                     max_probability_error={max_probability_error:.3e} stats={:?}",
+                    mast.stats
+                );
+                let (minimum_fidelity, maximum_probability_error) = if exact_data_measurement {
+                    (1.0 - 1e-9, 1e-9)
+                } else {
+                    (1.0 - 1e-9, 1e-6)
+                };
+                assert!(continued_fidelity > minimum_fidelity);
+                assert!(max_probability_error < maximum_probability_error);
+            }
+        }
+    }
+
     #[test]
     fn test_mast_pure_clifford() {
         // Pure Clifford circuit should work like STN
@@ -512,15 +1112,19 @@ mod tests {
     fn test_mast_single_t_gate() {
         // T gate uses magic state injection
         let mut mast = Mast::new(1, 4);
+        assert_eq!(mast.remaining_injections(), 4);
         mast.h(&[QubitId(0)]);
         mast.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         assert_eq!(mast.num_ancillas_used(), 1);
+        assert_eq!(mast.remaining_injections(), 3);
         // Bond dim should be low -- the RZ on the ancilla is a single-site gate
         assert!(
             mast.max_bond_dim() <= 2,
             "bond dim should be low, got {}",
             mast.max_bond_dim()
         );
+        mast.reset();
+        assert_eq!(mast.remaining_injections(), 4);
     }
 
     #[test]
@@ -532,6 +1136,187 @@ mod tests {
         mast.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(1)]);
 
         assert_relative_eq!(mast.mps().norm_squared(), 1.0, epsilon = 1e-8);
+    }
+
+    fn apply_seeded_projection_regression_circuit(mast: &mut Mast) {
+        let t = Angle64::QUARTER_TURN / 2u64;
+        mast.h(&[QubitId(0), QubitId(2)]);
+        mast.cx(&[(QubitId(0), QubitId(1))]);
+        mast.rz(t, &[QubitId(0)]);
+        mast.h(&[QubitId(1)]);
+        mast.rz(t, &[QubitId(2)]);
+        mast.cx(&[(QubitId(2), QubitId(0))]);
+        mast.rz(t, &[QubitId(1)]);
+        mast.rz(t, &[QubitId(0)]);
+    }
+
+    fn project_all_legacy(mast: &mut Mast) {
+        let deferred: Vec<DeferredMeasurement> = mast.deferred.drain(..).rev().collect();
+        for dm in deferred {
+            let (support_size, mps_span) = mast.projection_locality(dm.ancilla);
+            mast.project_deferred(dm, support_size, mps_span).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_mast_default_is_min_span_and_input_preserves_legacy_path() {
+        let mut default_path = Mast::with_seed(3, 4, 0x51_7a);
+        assert_eq!(default_path.projection_order, ProjectionOrder::MinSpan);
+        assert_eq!(default_path.mps().config().max_bond_dim, 128);
+        assert_eq!(default_path.mps().config().max_truncation_error, Some(1e-8));
+        let mut explicit_min_span =
+            Mast::with_seed(3, 4, 0x51_7a).projection_order(ProjectionOrder::MinSpan);
+        let mut explicit_input =
+            Mast::with_seed(3, 4, 0x51_7a).projection_order(ProjectionOrder::Input);
+        let mut legacy_path = Mast::with_seed(3, 4, 0x51_7a);
+        apply_seeded_projection_regression_circuit(&mut default_path);
+        apply_seeded_projection_regression_circuit(&mut explicit_min_span);
+        apply_seeded_projection_regression_circuit(&mut explicit_input);
+        apply_seeded_projection_regression_circuit(&mut legacy_path);
+
+        default_path.project_all();
+        explicit_min_span.project_all();
+        explicit_input.project_all();
+        project_all_legacy(&mut legacy_path);
+
+        assert_eq!(
+            explicit_input
+                .projection_records()
+                .iter()
+                .map(|record| record.ancilla)
+                .collect::<Vec<_>>(),
+            vec![6, 5, 4, 3]
+        );
+        assert_eq!(
+            default_path.mps().state_vector(),
+            explicit_min_span.mps().state_vector()
+        );
+        assert_eq!(
+            explicit_input.projection_records(),
+            legacy_path.projection_records()
+        );
+        assert_eq!(
+            explicit_input.mps().state_vector(),
+            legacy_path.mps().state_vector()
+        );
+
+        let default_outcomes: Vec<bool> = default_path
+            .mz(&[QubitId(0), QubitId(1), QubitId(2)])
+            .into_iter()
+            .map(|result| result.outcome)
+            .collect();
+        let min_span_outcomes: Vec<bool> = explicit_min_span
+            .mz(&[QubitId(0), QubitId(1), QubitId(2)])
+            .into_iter()
+            .map(|result| result.outcome)
+            .collect();
+        let input_outcomes: Vec<bool> = explicit_input
+            .mz(&[QubitId(0), QubitId(1), QubitId(2)])
+            .into_iter()
+            .map(|result| result.outcome)
+            .collect();
+        let legacy_outcomes: Vec<bool> = legacy_path
+            .mz(&[QubitId(0), QubitId(1), QubitId(2)])
+            .into_iter()
+            .map(|result| result.outcome)
+            .collect();
+        assert_eq!(default_outcomes, min_span_outcomes);
+        assert_eq!(input_outcomes, legacy_outcomes);
+    }
+
+    #[test]
+    fn test_mast_mps_config_and_truncation_telemetry() {
+        let config = MpsConfig {
+            max_bond_dim: 7,
+            max_truncation_error: Some(0.0),
+            ..MpsConfig::default()
+        };
+        let mut mast = Mast::new(2, 1).with_mps_config(config);
+
+        assert_eq!(mast.mps().config().max_bond_dim, 7);
+        assert_eq!(mast.mps().config().max_truncation_error, Some(0.0));
+        assert_relative_eq!(mast.truncation_error(), 0.0, epsilon = f64::EPSILON);
+        assert_eq!(mast.bond_cap_hits(), 0);
+
+        mast.mps.record_truncation(0.25, true);
+        assert_relative_eq!(mast.truncation_error(), 0.25, epsilon = f64::EPSILON);
+        assert_eq!(mast.bond_cap_hits(), 1);
+
+        mast.reset();
+        assert_eq!(mast.mps().config().max_bond_dim, 7);
+        assert_eq!(mast.mps().config().max_truncation_error, Some(0.0));
+        assert_relative_eq!(mast.truncation_error(), 0.0, epsilon = f64::EPSILON);
+        assert_eq!(mast.bond_cap_hits(), 0);
+    }
+
+    #[test]
+    fn test_mast_projection_diagnostics_populated_and_reset() {
+        for order in [ProjectionOrder::Input, ProjectionOrder::MinSpan] {
+            let mut mast = Mast::with_seed(3, 4, 91).projection_order(order);
+            apply_seeded_projection_regression_circuit(&mut mast);
+            mast.project_all();
+
+            assert_eq!(mast.projection_records().len(), 4);
+            assert!(
+                mast.projection_records()
+                    .iter()
+                    .all(|record| record.bond_before > 0 && record.bond_after > 0)
+            );
+            let recorded_peak = mast
+                .projection_records()
+                .iter()
+                .map(|record| record.bond_before.max(record.bond_after))
+                .max()
+                .expect("four projection records");
+            assert_eq!(mast.projection_peak_bond(), recorded_peak);
+
+            mast.reset();
+            assert!(mast.projection_records().is_empty());
+            assert_eq!(mast.projection_peak_bond(), 0);
+        }
+    }
+
+    #[test]
+    fn test_mast_seeded_reset_continues_measurements_and_clears_diagnostics() {
+        let run = |mast: &mut Mast| {
+            mast.h(&[QubitId(0)]);
+            mast.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
+            mast.mz(&[QubitId(0)])[0].outcome
+        };
+
+        let collect = || {
+            let mut mast = Mast::with_seed(1, 2, 0x5eed);
+            let mut outcomes = Vec::with_capacity(200);
+            for _ in 0..200 {
+                mast.reset();
+                assert!(mast.projection_records().is_empty());
+                assert_eq!(mast.projection_peak_bond(), 0);
+                assert_eq!(mast.stats.total_nonclifford, 0);
+                outcomes.push(run(&mut mast));
+                assert_eq!(mast.projection_records().len(), 1);
+            }
+            outcomes
+        };
+
+        let first = collect();
+        let second = collect();
+        assert_eq!(first, second, "seeded reset continuation must reproduce");
+        let ones = first.iter().filter(|&&outcome| outcome).count();
+        eprintln!("Mast seeded reset loop: zeros={}, ones={ones}", 200 - ones);
+        assert!(
+            ones > 0 && ones < 200,
+            "reset loop must produce both outcomes"
+        );
+    }
+
+    #[test]
+    fn test_mast_unseeded_reset_smoke() {
+        let mut mast = Mast::new(1, 1);
+        mast.h(&[QubitId(0)]);
+        let _ = mast.mz(&[QubitId(0)]);
+        mast.reset();
+        mast.h(&[QubitId(0)]);
+        let _ = mast.mz(&[QubitId(0)]);
     }
 
     #[test]
@@ -1048,19 +1833,5 @@ mod tests {
             0,
             "CZ should not flush pending_rz, merge persists"
         );
-    }
-
-    #[test]
-    fn test_mast_with_lazy_measure_bell_correlation() {
-        // Fluent setter on MAST: measurements via lazy path.
-        for trial in 0..10 {
-            let mut m = Mast::with_seed(2, 4, 5000 + trial).with_lazy_measure(true);
-            m.h(&[QubitId(0)]);
-            m.cx(&[(QubitId(0), QubitId(1))]);
-            m.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
-            let r0 = m.mz(&[QubitId(0)])[0].outcome;
-            let r1 = m.mz(&[QubitId(1)])[0].outcome;
-            assert_eq!(r0, r1, "lazy MAST Bell+T trial {trial}");
-        }
     }
 }

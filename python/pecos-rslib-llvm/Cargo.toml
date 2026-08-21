@@ -20,7 +20,7 @@ doctest = false
 # See pecos-rslib's Cargo.toml for why this bundle is opt-in.
 extension-module = [
     "pyo3/extension-module",
-    "pyo3/abi3-py310",
+    "pyo3/abi3-py312",
     "pyo3/generate-import-lib",
 ]
 
@@ -32,6 +32,10 @@ pyo3.workspace = true
 regex.workspace = true
 tempfile.workspace = true
 log.workspace = true
+
+[build-dependencies]
+# Reads the wheel version out of pyproject.toml for the module's `__version__`.
+pecos-build = { workspace = true }
 
 [lints]
 workspace = true

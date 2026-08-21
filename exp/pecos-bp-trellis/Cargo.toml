@@ -1,0 +1,23 @@
+[package]
+name = "pecos-bp-trellis"
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "BP-guided trellis (approximate logical maximum-likelihood) decoder for PECOS"
+publish = false
+
+[dependencies]
+pecos-decoder-core.workspace = true
+pecos-trellis.workspace = true
+
+[lib]
+name = "pecos_bp_trellis"
+
+[lints]
+workspace = true

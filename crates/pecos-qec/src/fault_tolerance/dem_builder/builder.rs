@@ -1257,6 +1257,11 @@ impl<'a> DemBuilder<'a> {
         };
 
         match gate_type {
+            GateType::MX => {
+                require(1)?;
+                sim.h(qubits);
+                sim.mz(qubits);
+            }
             GateType::MZ | GateType::MeasureFree => {
                 require(1)?;
                 sim.mz(qubits);
@@ -1266,6 +1271,13 @@ impl<'a> DemBuilder<'a> {
                 sim.mz(qubits);
                 for &qubit in qubits {
                     sim.pz(qubit);
+                }
+            }
+            GateType::PX => {
+                require(1)?;
+                for &qubit in qubits {
+                    sim.pz(qubit);
+                    sim.h(&[qubit]);
                 }
             }
             GateType::PZ | GateType::QAlloc => {
@@ -1455,7 +1467,7 @@ impl<'a> DemBuilder<'a> {
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::PZ | GateType::QAlloc
+                GateType::PX | GateType::PZ | GateType::QAlloc
                     if !loc.before && self.init_rate_for_loc(loc) > 0.0 =>
                 {
                     self.process_prep_fault_source_tracked(
@@ -1468,7 +1480,7 @@ impl<'a> DemBuilder<'a> {
                 // MPZ takes its measurement-half fault here; the prepare-half
                 // needs an after-location the location model does not yet give
                 // measurements (tracked on the MP* issue).
-                GateType::MZ | GateType::MeasureFree | GateType::MPZ
+                GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
                     if loc.before && self.measurement_rate_for_loc(loc) > 0.0 =>
                 {
                     self.process_meas_fault_source_tracked(
@@ -1610,14 +1622,19 @@ impl<'a> DemBuilder<'a> {
     ) {
         let loc = &self.influence_map.locations[loc_idx];
         let p = self.init_rate_for_loc(loc);
-        // For Z-basis prep, X error matters - this is a direct source
+        // A preparation fault anticommutes with the prepared basis.
+        let pauli = if loc.gate_type == GateType::PX {
+            Pauli::Z
+        } else {
+            Pauli::X
+        };
         let mechanism =
-            self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
+            self.compute_mechanism(loc_idx, pauli, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
             dem.add_direct_contribution_with_source(
                 mechanism,
                 p,
-                SourceMetadata::new(&[loc_idx], &[Pauli::X], &[loc.gate_type], &[loc.before]),
+                SourceMetadata::new(&[loc_idx], &[pauli], &[loc.gate_type], &[loc.before]),
             );
         }
     }
@@ -1738,14 +1755,19 @@ impl<'a> DemBuilder<'a> {
     ) {
         let loc = &self.influence_map.locations[loc_idx];
         let p = self.measurement_rate_for_loc(loc);
-        // Measurement error is a bit flip (X error) - this is a direct source
+        // A measurement fault anticommutes with the measured basis.
+        let pauli = if loc.gate_type == GateType::MX {
+            Pauli::Z
+        } else {
+            Pauli::X
+        };
         let mechanism =
-            self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
+            self.compute_mechanism(loc_idx, pauli, meas_to_detectors, meas_to_observables);
         if !mechanism.is_empty() {
             dem.add_direct_contribution_with_source(
                 mechanism,
                 p,
-                SourceMetadata::new(&[loc_idx], &[Pauli::X], &[loc.gate_type], &[loc.before]),
+                SourceMetadata::new(&[loc_idx], &[pauli], &[loc.gate_type], &[loc.before]),
             );
         }
     }
@@ -3240,7 +3262,9 @@ fn two_qubit_after_location_pairs(locations: &[DagSpacetimeLocation]) -> Vec<[us
         .into_values()
         .flat_map(|loc_indices| {
             loc_indices
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| [pair[0], pair[1]])
                 .collect::<Vec<_>>()
         })
@@ -3794,6 +3818,31 @@ impl std::error::Error for DemBuilderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn z_error_before_mx_produces_a_detector_mechanism() {
+        use pecos_num::graph::Attribute;
+
+        let mut circuit = pecos_quantum::TickCircuit::new();
+        circuit.tick().px(&[0]);
+        let measurement = circuit.tick().mx(&[0]);
+        circuit
+            .detector(&measurement)
+            .expect("the MX reference belongs to the circuit");
+        circuit.set_meta("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_meta(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"meas_ids":[0]}]"#.to_string()),
+        );
+        circuit.set_meta("observables", Attribute::String("[]".to_string()));
+
+        let dem = DemBuilder::try_from_tick_circuit(&circuit, 0.0, 0.0, 1.0, 0.0)
+            .expect("a native MX circuit is supported by DEM construction");
+        let (mechanisms, _) = dem.to_mechanisms();
+        assert_eq!(mechanisms.len(), 1);
+        assert_eq!(mechanisms[0].1, vec![0]);
+        assert!(mechanisms[0].2.is_empty());
+    }
 
     #[test]
     fn test_szz_source_frame_components_pull_post_error_to_pre_generators() {

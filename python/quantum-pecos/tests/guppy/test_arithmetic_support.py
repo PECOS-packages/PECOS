@@ -20,7 +20,7 @@ def test_integer_arithmetic() -> None:
         if result > 3:  # 5 > 3, so H gate applied
             h(q)
 
-        return measure(q)
+        return measure(q).read()
 
     results = sim(Guppy(quantum_add)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
@@ -41,8 +41,8 @@ def test_boolean_operations() -> None:
         q1 = qubit()
         q2 = qubit()
         h(q1)
-        m1 = measure(q1)
-        m2 = measure(q2)
+        m1 = measure(q1).read()
+        m2 = measure(q2).read()
         return m1 and not m2
 
     results = sim(Guppy(quantum_bool_logic)).qubits(2).quantum(state_vector()).seed(42).run(10).to_dict()
@@ -64,7 +64,7 @@ def test_integer_comparisons() -> None:
         if value > threshold:
             h(q)
 
-        return measure(q)
+        return measure(q).read()
 
     results = sim(Guppy(quantum_compare)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
@@ -89,7 +89,7 @@ def test_arithmetic_in_loop() -> None:
                 h(q)
             count = count + 1
 
-        return measure(q)
+        return measure(q).read()
 
     results = sim(Guppy(quantum_loop)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
@@ -113,7 +113,7 @@ def test_chained_comparisons() -> None:
         if a < c and c < b:  # 10 < 15 < 20 is True
             h(q)
 
-        return measure(q)
+        return measure(q).read()
 
     results = sim(Guppy(quantum_chain)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
@@ -137,15 +137,15 @@ def test_arithmetic_with_measurements() -> None:
         h(q1)
         h(q2)
 
-        m1 = measure(q1)
-        m2 = measure(q2)
+        m1 = measure(q1).read()
+        m2 = measure(q2).read()
 
         # Use measurements in arithmetic (bools as ints)
         q3 = qubit()
         if m1 or m2:  # At least one is True
             h(q3)
 
-        return measure(q3)
+        return measure(q3).read()
 
     results = sim(Guppy(quantum_measure_math)).qubits(3).quantum(state_vector()).seed(42).run(20).to_dict()
 
@@ -170,7 +170,7 @@ def test_euclidean_division_semantics() -> None:
         a = -3
         if a % 2 == 1:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     @guppy
     def euclid_div() -> bool:
@@ -178,7 +178,7 @@ def test_euclidean_division_semantics() -> None:
         a = -3
         if a // 2 == -2:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     for prog in (euclid_mod, euclid_div):
         results = sim(Guppy(prog)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
@@ -197,7 +197,7 @@ def test_shift_semantics() -> None:
         b = 16
         if (a << 3) == 8 and (b >> 2) == 4:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     results = sim(Guppy(shifts)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
     raw_measurements = results["measurements"]
@@ -216,7 +216,7 @@ def test_zero_iteration_loop() -> None:
             count = count + 1
         if count == 0:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     results = sim(Guppy(zero_iters)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
     raw_measurements = results["measurements"]
@@ -234,7 +234,7 @@ def test_division_by_zero_panics() -> None:
         b = 0
         if a // b == 0:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     with pytest.raises(RuntimeError, match="division by zero"):
         sim(Guppy(div_zero)).qubits(1).quantum(state_vector()).seed(1).run(1).to_dict()
@@ -255,7 +255,7 @@ def test_recursion_rejected_loudly() -> None:
         q = qubit()
         if recurse(3) == 0:
             x(q)
-        return measure(q)
+        return measure(q).read()
 
     with pytest.raises(RuntimeError, match="recursion is not supported"):
         sim(Guppy(recursive_main)).qubits(1).quantum(state_vector()).seed(1).run(1).to_dict()

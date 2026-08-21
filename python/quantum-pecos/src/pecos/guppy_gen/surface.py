@@ -67,10 +67,7 @@ def _normalize_szz_runtime_barrier_policy(value: bool | str) -> str:
     if normalized in {"0", "false", "f", "no", "n", "off"}:
         return _SZZ_RUNTIME_BARRIER_POLICY_NONE
     if normalized not in _SZZ_RUNTIME_BARRIER_POLICIES:
-        msg = (
-            "szz_runtime_barriers must be a boolean or one of "
-            f"{sorted(_SZZ_RUNTIME_BARRIER_POLICIES)}, got {value!r}"
-        )
+        msg = f"szz_runtime_barriers must be a boolean or one of {sorted(_SZZ_RUNTIME_BARRIER_POLICIES)}, got {value!r}"
         raise ValueError(msg)
     return normalized
 
@@ -160,7 +157,7 @@ def _render_inline_pcg32() -> list[str]:
         "    for i in range(32):",
         "        entropy_q = qubit()",
         "        h(entropy_q)",
-        "        if measure(entropy_q):",
+        "        if measure(entropy_q).read():",
         "            entropy = entropy | (nat(1) << nat(i))",
         "    return seeded_pcg32_from_sequence(seed, entropy)",
         "",
@@ -187,7 +184,7 @@ def generate_guppy_source(
     ``interaction_basis="cx"`` emits the CNOT template; ``"szz"`` emits the
     signed SZZ/SZZdg template. SZZ helpers forward-flow single-qubit data
     frames within each helper and then explicitly flush the frame before
-    returning, preserving the reusable Guppy result-tag structure.
+    returning, preserving the reusable Guppy output-tag structure.
 
     ``ancilla_budget=None`` (default) emits the unconstrained shape:
     one ancilla per stabilizer, all measured in parallel at the end of
@@ -202,8 +199,8 @@ def generate_guppy_source(
     4-round CX schedule restricted to that batch's stabilizers,
     measure, then move to the next batch (which allocates fresh
     qubits whose physical slots are reused by Selene's lowering).
-    Per-stabilizer counted-round ``result("...:meas:N", …)`` calls
-    and prep-boundary ``result("...:init:meas:N", …)`` calls fire
+    Per-stabilizer counted-round ``output("...:meas:N", …)`` calls
+    and prep-boundary ``output("...:init:meas:N", …)`` calls fire
     in the abstract's batched measurement order, keeping
     detector record offsets transferable between abstract and traced
     paths.
@@ -218,7 +215,7 @@ def generate_guppy_source(
             Pauli to each data qubit at runtime. Both ``twirl`` and
             ``rng`` must be supplied together. The encoding is
             ``"bool_array_v1"``: one
-            ``result("pauli_mask:round:R", array(lo_q0, hi_q0, ...))``
+            ``output("pauli_mask:round:R", array(lo_q0, hi_q0, ...))``
             call per twirl site, with the per-round body Python-time
             unrolled at source-generation time so each tag fires exactly
             once per shot. ``twirl.frame_output="canonical"`` additionally
@@ -334,9 +331,10 @@ def generate_guppy_source(
             "from typing import no_type_check",
             "",
             "from guppylang import guppy",
-            "from guppylang.std.builtins import array, owned, result",
+            "from guppylang.std.builtins import array, owned, output",
             "from guppylang.std.num import nat",
-            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x, y, z",
+            "from guppylang.std.quantum import cx, discard, h, qubit, x, y, z",
+            "from guppylang.std.quantum import collect_measurements, measure, measure_array",
         ]
     elif interaction_basis == "szz":
         imports = [
@@ -344,17 +342,19 @@ def generate_guppy_source(
             "",
             "from guppylang import guppy",
             "from guppylang.std.angles import angle",
-            "from guppylang.std.builtins import array, owned, result",
+            "from guppylang.std.builtins import array, owned, output",
             "from guppylang.std.qsystem.functional import phased_x, rz, zz_phase",
-            "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x, y, z",
+            "from guppylang.std.quantum import discard, h, qubit, s, sdg, v, vdg, x, y, z",
+            "from guppylang.std.quantum import collect_measurements, measure, measure_array",
         ]
     else:
         imports = [
             "from __future__ import annotations",
             "",
             "from guppylang import guppy",
-            "from guppylang.std.builtins import array, owned, result",
-            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x, z",
+            "from guppylang.std.builtins import array, owned, output",
+            "from guppylang.std.quantum import cx, discard, h, qubit, x, z",
+            "from guppylang.std.quantum import collect_measurements, measure, measure_array",
         ]
 
     lines = [
@@ -384,11 +384,7 @@ def generate_guppy_source(
             helper_declarations.extend(
                 [
                     "@guppy.declare",
-                    (
-                        "def pecos_qis_trace_metadata_qubit_hugr("
-                        "q: qubit @ owned, key: str, value: str"
-                        ") -> qubit: ..."
-                    ),
+                    ("def pecos_qis_trace_metadata_qubit_hugr(q: qubit @ owned, key: str, value: str) -> qubit: ..."),
                     "",
                 ],
             )
@@ -992,26 +988,26 @@ def generate_guppy_source(
                 raw_var = f"sx{stab.index}_raw"
                 flip_var = f"sx{stab.index}_flip"
                 flip_expr = _xor_expr(f"frame_z[{q}]" for q in stab.data_qubits)
-                lines.append(f"    {raw_var} = measure(ax{stab.index})")
+                lines.append(f"    {raw_var} = measure(ax{stab.index}).read()")
                 lines.append(f"    {flip_var} = {flip_expr}")
                 lines.append(f"    sx{stab.index} = {raw_var} != {flip_var}")
-                lines.append(f'    result("raw:sx{stab.index}:bit:{idx}", {raw_var})')
+                lines.append(f'    output("raw:sx{stab.index}:bit:{idx}", {raw_var})')
             else:
-                lines.append(f"    sx{stab.index} = measure(ax{stab.index})")
-            lines.append(f'    result("sx{stab.index}:meas:{idx}", sx{stab.index})')
+                lines.append(f"    sx{stab.index} = measure(ax{stab.index}).read()")
+            lines.append(f'    output("sx{stab.index}:meas:{idx}", sx{stab.index})')
             idx += 1
         for stab in geom.z_stabilizers:
             if canonical_frame_output:
                 raw_var = f"sz{stab.index}_raw"
                 flip_var = f"sz{stab.index}_flip"
                 flip_expr = _xor_expr(f"frame_x[{q}]" for q in stab.data_qubits)
-                lines.append(f"    {raw_var} = measure(az{stab.index})")
+                lines.append(f"    {raw_var} = measure(az{stab.index}).read()")
                 lines.append(f"    {flip_var} = {flip_expr}")
                 lines.append(f"    sz{stab.index} = {raw_var} != {flip_var}")
-                lines.append(f'    result("raw:sz{stab.index}:bit:{idx}", {raw_var})')
+                lines.append(f'    output("raw:sz{stab.index}:bit:{idx}", {raw_var})')
             else:
-                lines.append(f"    sz{stab.index} = measure(az{stab.index})")
-            lines.append(f'    result("sz{stab.index}:meas:{idx}", sz{stab.index})')
+                lines.append(f"    sz{stab.index} = measure(az{stab.index}).read()")
+            lines.append(f'    output("sz{stab.index}:meas:{idx}", sz{stab.index})')
             idx += 1
     else:
         # Constrained: stabilizer-batched. The batch sequence is the
@@ -1108,8 +1104,8 @@ def generate_guppy_source(
                 anc = batch_anc_var[(stab_type, stab_idx)]
                 syn_var = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
                 tag_prefix = syn_var
-                lines.append(f"    {syn_var} = measure({anc})")
-                lines.append(f'    result("{tag_prefix}:meas:{idx}", {syn_var})')
+                lines.append(f"    {syn_var} = measure({anc}).read()")
+                lines.append(f'    output("{tag_prefix}:meas:{idx}", {syn_var})')
                 idx += 1
 
     x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
@@ -1222,11 +1218,11 @@ def generate_guppy_source(
             lines.append("    # Measure init ancillas")
             for idx, stab in enumerate(stabs):
                 if stab_type == "X":
-                    lines.append(f"    sx{stab.index} = measure(ax{stab.index})")
-                    lines.append(f'    result("sx{stab.index}:init:meas:{idx}", sx{stab.index})')
+                    lines.append(f"    sx{stab.index} = measure(ax{stab.index}).read()")
+                    lines.append(f'    output("sx{stab.index}:init:meas:{idx}", sx{stab.index})')
                 else:
-                    lines.append(f"    sz{stab.index} = measure(az{stab.index})")
-                    lines.append(f'    result("sz{stab.index}:init:meas:{idx}", sz{stab.index})')
+                    lines.append(f"    sz{stab.index} = measure(az{stab.index}).read()")
+                    lines.append(f'    output("sz{stab.index}:init:meas:{idx}", sz{stab.index})')
         else:
             batches = batched_stabilizers(
                 patch,
@@ -1306,8 +1302,8 @@ def generate_guppy_source(
                 for selected_type, stab_idx in init_batch:
                     anc = batch_anc_var[(selected_type, stab_idx)]
                     syn_var = f"sx{stab_idx}" if selected_type == "X" else f"sz{stab_idx}"
-                    lines.append(f"    {syn_var} = measure({anc})")
-                    lines.append(f'    result("{syn_var}:init:meas:{idx}", {syn_var})')
+                    lines.append(f"    {syn_var} = measure({anc}).read()")
+                    lines.append(f'    output("{syn_var}:init:meas:{idx}", {syn_var})')
                     idx += 1
 
         lines.append("")
@@ -1343,10 +1339,10 @@ def generate_guppy_source(
                 _szz_physical_axis_for_memory_data("Z", i),
                 f"d{i}",
             )
-        z_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
+        z_meas = ", ".join(f"measure(d{i}).read()" for i in range(num_data))
         lines.append(f"    return array({z_meas})")
     else:
-        lines.append("    return measure_array(surf.data)")
+        lines.append("    return collect_measurements(measure_array(surf.data))")
     lines.extend(
         [
             "",
@@ -1365,12 +1361,12 @@ def generate_guppy_source(
                 _szz_physical_axis_for_memory_data("X", i),
                 f"d{i}",
             )
-        x_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
+        x_meas = ", ".join(f"measure(d{i}).read()" for i in range(num_data))
         lines.append(f"    return array({x_meas})")
     else:
         lines.append(f"    for i in range({num_data}):")
         lines.append("        h(surf.data[i])")
-        lines.append("    return measure_array(surf.data)")
+        lines.append("    return collect_measurements(measure_array(surf.data))")
     lines.extend(["", ""])
 
     # Generate logical operators
@@ -1462,12 +1458,12 @@ def generate_guppy_source(
             target.append(f"{indent}# Measure ancillas")
             idx = 0
             for stab in geom.x_stabilizers:
-                target.append(f"{indent}sx{stab.index} = measure(ax{stab.index})")
-                target.append(f'{indent}result("sx{stab.index}:meas:{idx}", sx{stab.index})')
+                target.append(f"{indent}sx{stab.index} = measure(ax{stab.index}).read()")
+                target.append(f'{indent}output("sx{stab.index}:meas:{idx}", sx{stab.index})')
                 idx += 1
             for stab in geom.z_stabilizers:
-                target.append(f"{indent}sz{stab.index} = measure(az{stab.index})")
-                target.append(f'{indent}result("sz{stab.index}:meas:{idx}", sz{stab.index})')
+                target.append(f"{indent}sz{stab.index} = measure(az{stab.index}).read()")
+                target.append(f'{indent}output("sz{stab.index}:meas:{idx}", sz{stab.index})')
                 idx += 1
         else:
             batches = batched_stabilizers(
@@ -1521,8 +1517,8 @@ def generate_guppy_source(
                 for stab_type, stab_idx in batch:
                     anc = batch_anc_var[(stab_type, stab_idx)]
                     syn_var = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
-                    target.append(f"{indent}{syn_var} = measure({anc})")
-                    target.append(f'{indent}result("{syn_var}:meas:{idx}", {syn_var})')
+                    target.append(f"{indent}{syn_var} = measure({anc}).read()")
+                    target.append(f'{indent}output("{syn_var}:meas:{idx}", {syn_var})')
                     idx += 1
 
         x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
@@ -1571,21 +1567,21 @@ def generate_guppy_source(
             ),
             f"        surf = prep_{basis}_basis()",
             f"        surf, init_syn = {init_func}(surf)",
-            f'        result("{init_tag}", init_syn)',
+            f'        output("{init_tag}", init_syn)',
             "",
         ]
         for round_idx in range(rendered_num_rounds):
             body.append(f"        # === Counted syndrome round {round_idx} ===")
             body.append(f"        surf, syn = syndrome_extraction_memory_r{round_idx}(surf)")
-            body.append('        result("synx", syn.synx)')
-            body.append('        result("synz", syn.synz)')
+            body.append('        output("synx", syn.synx)')
+            body.append('        output("synz", syn.synz)')
             body.append("")
 
         body.extend(
             [
                 f"        final = measure_{basis}_basis(surf)",
-                '        result("final", final)',
-                *(f'        result("final:meas:{q}", final[{q}])' for q in range(num_data)),
+                '        output("final", final)',
+                *(f'        output("final:meas:{q}", final[{q}])' for q in range(num_data)),
             ],
         )
         return [
@@ -1718,17 +1714,17 @@ def _render_plain_memory_block(
         f'        """{basis_upper}-basis memory experiment for dx={dx}, dz={dz}."""',
         f"        surf = prep_{basis}_basis()",
         init_line,
-        f'        result("{init_tag}", init_syn)',
+        f'        output("{init_tag}", init_syn)',
         "",
         "        for _t in range(comptime(num_rounds)):",
         syndrome_line,
-        '            result("synx", syn.synx)',
-        '            result("synz", syn.synz)',
+        '            output("synx", syn.synx)',
+        '            output("synz", syn.synz)',
         "",
         f"        final = measure_{basis}_basis(surf)",
-        '        result("final", final)',
+        '        output("final", final)',
     ]
-    lines.extend(f'        result("final:meas:{q}", final[{q}])' for q in range(num_data))
+    lines.extend(f'        output("final:meas:{q}", final[{q}])' for q in range(num_data))
     lines.extend(
         [
             "",
@@ -1804,9 +1800,9 @@ def _render_twirled_memory_block(
         "        # RNG seed is structural -- changing it does not invalidate the",
         "        # abstract DEM / topology cache, only the per-shot mask buffer.",
         f"        rng_state, rng_inc = seeded_pcg32_with_quantum_entropy({seed})",
-        f'        result("frame_mode:{twirl.frame_output}", True)',
+        f'        output("frame_mode:{twirl.frame_output}", True)',
         f"        init_syn = {init_func}(surf)",
-        f'        result("{init_tag}", init_syn)',
+        f'        output("{init_tag}", init_syn)',
         "",
     ]
     if canonical_frame_output:
@@ -1827,8 +1823,8 @@ def _render_twirled_memory_block(
             )
         else:
             body.append("        syn = syndrome_extraction(surf)")
-        body.append('        result("synx", syn.synx)')
-        body.append('        result("synz", syn.synz)')
+        body.append('        output("synx", syn.synx)')
+        body.append('        output("synz", syn.synz)')
         body.append("        # Pauli twirl site between this round and the next.")
         for q in range(num_data):
             _append_pauli_draw(
@@ -1853,11 +1849,11 @@ def _render_twirled_memory_block(
                 body.append(f"        fz_{q} = fz_{q} != twz_{r}_{q}")
         elements = ", ".join(f"lo_{r}_{q}, hi_{r}_{q}" for q in range(num_data))
         tag = pauli_mask_round_tag(r)
-        body.append(f'        result("{tag}", array({elements}))')
+        body.append(f'        output("{tag}", array({elements}))')
         if emit_activation_tags:
             active_elements = ", ".join(f"active_{r}_{q}" for q in range(num_data))
             active_tag = pauli_active_round_tag(r)
-            body.append(f'        result("{active_tag}", array({active_elements}))')
+            body.append(f'        output("{active_tag}", array({active_elements}))')
         body.append("")
 
     if num_rounds > 0:
@@ -1870,23 +1866,23 @@ def _render_twirled_memory_block(
             )
         else:
             body.append("        syn = syndrome_extraction(surf)")
-        body.append('        result("synx", syn.synx)')
-        body.append('        result("synz", syn.synz)')
+        body.append('        output("synx", syn.synx)')
+        body.append('        output("synz", syn.synz)')
         body.append("")
 
     if canonical_frame_output:
         body.append(f"        final_raw = measure_{basis}_basis(surf)")
-        body.append('        result("raw:final", final_raw)')
+        body.append('        output("raw:final", final_raw)')
         for q in range(num_data):
             flip_var = f"fx_{q}" if basis == "z" else f"fz_{q}"
             body.append(f"        final_{q} = final_raw[{q}] != {flip_var}")
         final_elements = ", ".join(f"final_{q}" for q in range(num_data))
-        body.append(f'        result("final", array({final_elements}))')
-        body.extend(f'        result("final:meas:{q}", final_{q})' for q in range(num_data))
+        body.append(f'        output("final", array({final_elements}))')
+        body.extend(f'        output("final:meas:{q}", final_{q})' for q in range(num_data))
     else:
         body.append(f"        final = measure_{basis}_basis(surf)")
-        body.append('        result("final", final)')
-        body.extend(f'        result("final:meas:{q}", final[{q}])' for q in range(num_data))
+        body.append('        output("final", final)')
+        body.extend(f'        output("final:meas:{q}", final[{q}])' for q in range(num_data))
 
     return [
         f"def make_memory_{basis}(num_rounds: int):",
@@ -1988,10 +1984,10 @@ def _append_gate_local_layer(
             threshold=threshold,
         )
         tag = pauli_mask_gate_tag(site_idx)
-        lines.append(f'{indent}result("{tag}", array({lo0}, {hi0}, {lo1}, {hi1}))')
+        lines.append(f'{indent}output("{tag}", array({lo0}, {hi0}, {lo1}, {hi1}))')
         if emit_activation_tags:
             active_tag = pauli_active_gate_tag(site_idx)
-            lines.append(f'{indent}result("{active_tag}", array({active0}, {active1}))')
+            lines.append(f'{indent}output("{active_tag}", array({active0}, {active1}))')
         site_idx += 1
 
     for control_expr, target_expr, control_frame, target_frame in cx_ops:
@@ -2015,14 +2011,14 @@ def _append_gate_local_measure(
     frame_vars: tuple[str, str] | None,
 ) -> None:
     if frame_vars is None:
-        lines.append(f"{indent}{bit_var} = measure({qubit_expr})")
+        lines.append(f"{indent}{bit_var} = measure({qubit_expr}).read()")
     else:
         raw_var = f"{bit_var}_raw"
         frame_x, _frame_z = frame_vars
-        lines.append(f"{indent}{raw_var} = measure({qubit_expr})")
+        lines.append(f"{indent}{raw_var} = measure({qubit_expr}).read()")
         lines.append(f"{indent}{bit_var} = {raw_var} != {frame_x}")
-        lines.append(f'{indent}result("{raw_tag}", {raw_var})')
-    lines.append(f'{indent}result("{result_tag}", {bit_var})')
+        lines.append(f'{indent}output("{raw_tag}", {raw_var})')
+    lines.append(f'{indent}output("{result_tag}", {bit_var})')
 
 
 def _render_gate_local_twirled_memory_block(
@@ -2092,7 +2088,7 @@ def _render_gate_local_twirled_memory_block(
         "        # RNG seed is structural -- changing it does not invalidate the",
         "        # abstract DEM / topology cache, only the per-shot mask buffer.",
         f"        rng_state, rng_inc = seeded_pcg32_with_quantum_entropy({seed})",
-        f'        result("frame_mode:{twirl.frame_output}", True)',
+        f'        output("frame_mode:{twirl.frame_output}", True)',
     ]
     if canonical_frame_output:
         for q in range(num_data):
@@ -2155,7 +2151,7 @@ def _render_gate_local_twirled_memory_block(
             raw_tag=f"raw:s{init_stab_type.lower()}{stab.index}:init:bit:{idx}",
             frame_vars=anc_frame(init_stab_type, stab.index),
         )
-    body.append(f'{indent}result("{init_tag}", array({", ".join(init_bits)}))')
+    body.append(f'{indent}output("{init_tag}", array({", ".join(init_bits)}))')
     body.append("")
 
     for round_idx in range(num_rounds):
@@ -2226,8 +2222,8 @@ def _render_gate_local_twirled_memory_block(
                 frame_vars=anc_frame("Z", stab.index),
             )
             meas_idx += 1
-        body.append(f'{indent}result("synx", array({", ".join(sx_bits)}))')
-        body.append(f'{indent}result("synz", array({", ".join(sz_bits)}))')
+        body.append(f'{indent}output("synx", array({", ".join(sx_bits)}))')
+        body.append(f'{indent}output("synz", array({", ".join(sz_bits)}))')
         body.append("")
 
     if canonical_frame_output:
@@ -2236,17 +2232,17 @@ def _render_gate_local_twirled_memory_block(
                 body.append(f"{indent}h(surf.data[{q}])")
                 frame_x, frame_z = data_frames[q]
                 _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_final_d{q}")
-        body.append(f"{indent}final_raw = measure_array(surf.data)")
-        body.append(f'{indent}result("raw:final", final_raw)')
+        body.append(f"{indent}final_raw = collect_measurements(measure_array(surf.data))")
+        body.append(f'{indent}output("raw:final", final_raw)')
         for q in range(num_data):
             frame_x, _frame_z = data_frames[q]
             body.append(f"{indent}final_{q} = final_raw[{q}] != {frame_x}")
-        body.append(f'{indent}result("final", array({", ".join(f"final_{q}" for q in range(num_data))}))')
-        body.extend(f'{indent}result("final:meas:{q}", final_{q})' for q in range(num_data))
+        body.append(f'{indent}output("final", array({", ".join(f"final_{q}" for q in range(num_data))}))')
+        body.extend(f'{indent}output("final:meas:{q}", final_{q})' for q in range(num_data))
     else:
         body.append(f"{indent}final = measure_{basis}_basis(surf)")
-        body.append(f'{indent}result("final", final)')
-        body.extend(f'{indent}result("final:meas:{q}", final[{q}])' for q in range(num_data))
+        body.append(f'{indent}output("final", final)')
+        body.extend(f'{indent}output("final:meas:{q}", final[{q}])' for q in range(num_data))
 
     return [
         f"def make_memory_{basis}(num_rounds: int):",
@@ -2534,7 +2530,7 @@ def get_num_qubits(
     - ``d`` (odd >= 3): the default symmetric rotated patch, with
       ``d^2`` data and ``d^2 - 1`` ancilla qubits.
     - ``patch``: any geometry (asymmetric / non-rotated included); counts
-      are derived from ``patch.geometry`` so the result is faithful to the
+      are derived from ``patch.geometry`` so the output is faithful to the
       patch actually being traced -- not a scalar-distance approximation.
 
     Unconstrained (``ancilla_budget=None``): peak count is

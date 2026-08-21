@@ -18,7 +18,6 @@ ndarray-016.workspace = true
 thiserror.workspace = true
 relay-bp.workspace = true
 sprs.workspace = true
-rayon.workspace = true
 
 [lib]
 name = "pecos_relay_bp"

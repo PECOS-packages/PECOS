@@ -51,12 +51,14 @@ nav:
 - User Guide:
   - Getting Started: user-guide/getting-started.md
   - PECOS Concepts: user-guide/pecos-concepts.md
+  - NumPy Interoperability: user-guide/numpy-interop.md
   - Command Line Interface: user-guide/cli.md
   - QASM Simulation: user-guide/qasm-simulation.md
   - WASM Foreign Objects: user-guide/wasm-foreign-objects.md
   - HUGR & Guppy Simulation: user-guide/hugr-simulation.md
   - Runtime QIS Tracing: user-guide/runtime-qis-tracing.md
   - Simulators: user-guide/simulators.md
+  - Stabilizer Tensor Networks: user-guide/stabilizer-tensor-networks.md
   - Engine Selection: user-guide/engine-selection.md
   - Gate Reference: user-guide/gates.md
   - Gate Naming Conventions: user-guide/gate-naming-conventions.md
@@ -67,6 +69,8 @@ nav:
   - Quantum Information Primitives: user-guide/quantum-info.md
   - Stabilizer Codes: user-guide/stabilizer-codes.md
   - Pauli Algebra and QEC in Python: user-guide/python-pauli-qec.md
+  - Stabilizer-Code Verification: user-guide/stabilizer-code-verification.md
+  - Fault-Tolerance Analysis and Distance Certification: user-guide/fault-tolerance-analysis.md
   - Fault Tolerance Analysis: user-guide/fault-tolerance.md
   - Fault Catalog Tutorial: user-guide/fault-catalog.md
   - QEC Geometry: user-guide/qec-geometry.md

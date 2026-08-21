@@ -23,6 +23,7 @@
 //! - Reference code: stabilizer-TN `update_xvec` and `apply_xvec_rot`.
 
 use super::pauli_decomp::{ZDecomposition, decompose_z};
+use crate::errors::MpsError;
 use crate::mps::Mps;
 use nalgebra::DMatrix;
 use num_complex::Complex64;
@@ -104,6 +105,8 @@ enum PauliType {
 pub struct RzContext<'a> {
     /// Per-site disentangling eigenstate flags.
     pub disent_flags: &'a mut [Option<super::SiteEigenstate>],
+    /// Whether missing |0> flags may be recovered from product-site tensors.
+    pub numerical_flag_redetection: bool,
     /// GF(2) flip matrix for OFD diagnostics.
     pub gf2_matrix: &'a mut super::ofd::Gf2FlipMatrix,
     /// Running statistics for the STN simulator.
@@ -116,9 +119,14 @@ pub struct RzContext<'a> {
 /// Takes &mut tableau because the disentangle path composes compensating
 /// Cliffords via right-composition.
 ///
+/// # Errors
+///
+/// Returns an [`MpsError`] if an MPS gate or compression fails.
+///
 /// # Panics
 ///
-/// Panics if any MPS gate application fails on a valid site.
+/// Panics only if the internally constructed Pauli map omits its selected
+/// rotation site, which would violate the decomposition invariant.
 pub fn apply_rz_stab_mps(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
@@ -127,9 +135,10 @@ pub fn apply_rz_stab_mps(
     q: usize,
     normalize: bool,
     ctx: &mut RzContext<'_>,
-) {
+) -> Result<(), MpsError> {
     let RzContext {
         disent_flags,
+        numerical_flag_redetection,
         gf2_matrix,
         stats,
     } = ctx;
@@ -167,23 +176,20 @@ pub fn apply_rz_stab_mps(
                 let k = sign_sites[0];
                 let c0 = Complex64::new(cos_half, 0.0) - Complex64::new(0.0, sin_half) * phase;
                 let c1 = Complex64::new(cos_half, 0.0) + Complex64::new(0.0, sin_half) * phase;
-                mps.apply_diagonal_one_site(k, &[c0, c1])
-                    .expect("sign_site should be valid");
+                mps.apply_diagonal_one_site(k, &[c0, c1])?;
                 disent_flags[k] = None;
             } else {
                 // Multi-site Z diagonal via MPS addition (exact, no SVD until compress).
                 let mut mps_z = mps.clone();
                 let zd = z_diag();
                 for &j in sign_sites {
-                    mps_z
-                        .apply_diagonal_one_site(j, &zd)
-                        .expect("MPS op on valid site");
+                    mps_z.apply_diagonal_one_site(j, &zd)?;
                 }
                 let scale2 = Complex64::new(0.0, -sin_half) * phase;
                 mps_z.scale(scale2);
                 mps.scale(Complex64::new(cos_half, 0.0));
                 *mps = mps.add(&mps_z);
-                mps.compress();
+                mps.compress()?;
                 for &j in sign_sites {
                     disent_flags[j] = None;
                 }
@@ -213,7 +219,7 @@ pub fn apply_rz_stab_mps(
             affected_sites.sort_unstable(); // Chain cascade requires sorted order
 
             if affected_sites.is_empty() {
-                return;
+                return Ok(());
             }
 
             // OFD disentangle check (Liu-Clark 2412.17209 Algorithm 1 Theorem 1):
@@ -230,6 +236,33 @@ pub fn apply_rz_stab_mps(
                     {
                         disent_site = Some(site);
                         break;
+                    }
+                }
+                if disent_site.is_none() && *numerical_flag_redetection {
+                    let candidates: Vec<usize> = pauli_map
+                        .iter()
+                        .filter_map(|&(site, pt)| {
+                            matches!(pt, PauliType::X | PauliType::Y).then_some(site)
+                        })
+                        .collect();
+                    // A cheap success ends the old ordered search. Keep only
+                    // that prefix: unresolved sites before it still need the
+                    // batched fallback, while later sites cannot be selected.
+                    let candidate_count = candidates
+                        .iter()
+                        .position(|&site| {
+                            super::cheap_product_zero_site_test(mps, site) == Some(true)
+                        })
+                        .map_or(candidates.len(), |index| index + 1);
+                    let candidates = &candidates[..candidate_count];
+                    let verified = super::are_numerical_product_zero_sites(mps, candidates);
+                    for (&site, is_zero) in candidates.iter().zip(verified) {
+                        if is_zero {
+                            disent_flags[site] = Some(super::SiteEigenstate::Z(false));
+                            stats.numerical_redetect += 1;
+                            disent_site = Some(site);
+                            break;
+                        }
                     }
                 }
             }
@@ -287,11 +320,9 @@ pub fn apply_rz_stab_mps(
                     .expect("rot_site must be in pauli_map")
                     .1;
                 if matches!(rot_pt, PauliType::Y) {
-                    mps.apply_one_site_gate(rot_site, &s_gate())
-                        .expect("MPS op on valid site");
+                    mps.apply_one_site_gate(rot_site, &s_gate())?;
                 }
-                mps.apply_one_site_gate(rot_site, &rx_gate(rx_angle))
-                    .expect("MPS op on valid site");
+                mps.apply_one_site_gate(rot_site, &rx_gate(rx_angle))?;
                 for &(site, pt) in &pauli_map {
                     match pt {
                         PauliType::Y => super::tableau_compose::right_compose_szdg(tableau, site),
@@ -370,8 +401,7 @@ pub fn apply_rz_stab_mps(
                         &sdg_gate() * &(&rx_gate(rx_angle) * &s_gate())
                     }
                 };
-                mps.apply_one_site_gate(site, &gate)
-                    .expect("MPS op on valid site");
+                mps.apply_one_site_gate(site, &gate)?;
                 // Clear flag for the affected site
                 disent_flags[site] = None;
             } else if sign_sites.is_empty() {
@@ -396,15 +426,13 @@ pub fn apply_rz_stab_mps(
                 );
                 let mut mps_x = mps.clone();
                 for &j in flip_sites {
-                    mps_x
-                        .apply_one_site_gate(j, &x_gate)
-                        .expect("MPS op on valid site");
+                    mps_x.apply_one_site_gate(j, &x_gate)?;
                 }
                 let s = Complex64::new(0.0, -sin_half) * phase;
                 mps_x.scale(s);
                 mps.scale(Complex64::new(cos_half, 0.0));
                 *mps = mps.add(&mps_x);
-                mps.compress();
+                mps.compress()?;
                 for &j in flip_sites {
                     disent_flags[j] = None;
                 }
@@ -447,12 +475,10 @@ pub fn apply_rz_stab_mps(
                 for &(site, pt) in &pauli_map {
                     match pt {
                         PauliType::Z => {
-                            mps.apply_one_site_gate(site, &h_gate())
-                                .expect("MPS op on valid site");
+                            mps.apply_one_site_gate(site, &h_gate())?;
                         }
                         PauliType::Y => {
-                            mps.apply_one_site_gate(site, &s_gate())
-                                .expect("MPS op on valid site");
+                            mps.apply_one_site_gate(site, &s_gate())?;
                         }
                         PauliType::X => {}
                     }
@@ -472,14 +498,13 @@ pub fn apply_rz_stab_mps(
                     // cnot_lo = lower qubit controls; cnot_hi = higher qubit controls
                     let gate = if ctrl < tgt { &cnot_lo } else { &cnot_hi };
                     mps.apply_long_range_two_site_gate(lo, hi, gate)
-                        .expect("CNOT should succeed");
                 };
 
                 // Left chain: [0] <- [1] <- ... <- [rot_idx]
                 // Each step: control=current, target=previous
                 let mut prev = affected_sites[0];
                 for &site in &affected_sites[1..=rot_idx] {
-                    apply_cnot(mps, site, prev);
+                    apply_cnot(mps, site, prev)?;
                     prev = site;
                 }
 
@@ -492,21 +517,20 @@ pub fn apply_rz_stab_mps(
                         .iter()
                         .rev()
                     {
-                        apply_cnot(mps, site, prev);
+                        apply_cnot(mps, site, prev)?;
                         prev = site;
                     }
                 }
 
                 // Apply RX on rotation site (parity accumulated here)
-                mps.apply_one_site_gate(rot_site, &rx_gate(rx_angle))
-                    .expect("MPS op on valid site");
+                mps.apply_one_site_gate(rot_site, &rx_gate(rx_angle))?;
 
                 // Reverse CNOT cascade (undo in opposite order)
                 // Right chain reverse: [rot_idx] -> [rot_idx+1] -> ... -> [last]
                 if rot_idx + 1 < affected_sites.len() {
                     prev = affected_sites[rot_idx];
                     for &site in &affected_sites[rot_idx + 1..] {
-                        apply_cnot(mps, prev, site);
+                        apply_cnot(mps, prev, site)?;
                         prev = site;
                     }
                 }
@@ -514,7 +538,7 @@ pub fn apply_rz_stab_mps(
                 // Left chain reverse: [rot_idx] -> [rot_idx-1] -> ... -> [0]
                 prev = affected_sites[rot_idx];
                 for &site in affected_sites[..rot_idx].iter().rev() {
-                    apply_cnot(mps, prev, site);
+                    apply_cnot(mps, prev, site)?;
                     prev = site;
                 }
 
@@ -522,12 +546,10 @@ pub fn apply_rz_stab_mps(
                 for &(site, pt) in &pauli_map {
                     match pt {
                         PauliType::Z => {
-                            mps.apply_one_site_gate(site, &h_gate())
-                                .expect("MPS op on valid site");
+                            mps.apply_one_site_gate(site, &h_gate())?;
                         }
                         PauliType::Y => {
-                            mps.apply_one_site_gate(site, &sdg_gate())
-                                .expect("MPS op on valid site");
+                            mps.apply_one_site_gate(site, &sdg_gate())?;
                         }
                         PauliType::X => {}
                     }
@@ -546,4 +568,5 @@ pub fn apply_rz_stab_mps(
     if normalize {
         mps.normalize();
     }
+    Ok(())
 }

@@ -53,7 +53,9 @@ fn consecutive_pairs(
     qubits: &[pecos_core::QubitId],
 ) -> SmallVec<[(pecos_core::QubitId, pecos_core::QubitId); 1]> {
     qubits
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0], pair[1]))
         .collect()
 }
@@ -195,6 +197,18 @@ pub fn cross_measurement<P: PauliComponents>(
                 }
             }
         },
+        GateType::MX => match direction {
+            Direction::Forward => {
+                if prop.contains_x(qubit) {
+                    prop.toggle_x(qubit);
+                }
+            }
+            Direction::Backward => {
+                if prop.contains_z(qubit) {
+                    prop.toggle_z(qubit);
+                }
+            }
+        },
         // `MeasureFree` discards the qubit; `MPZ` resets it. Either way the
         // record flip is taken by the walker before the crossing and nothing
         // propagates across.
@@ -211,7 +225,11 @@ fn apply_named_gate(
     direction: Direction,
 ) -> bool {
     match gate_type {
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ => {
+        GateType::MX
+        | GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureLeaked
+        | GateType::MPZ => {
             for qid in qubits {
                 cross_measurement(prop, qid.index(), gate_type, direction);
             }

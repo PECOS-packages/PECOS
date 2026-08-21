@@ -24,6 +24,7 @@
 
 pub mod adaptive;
 pub mod advanced;
+pub mod bp;
 pub mod bp_matching;
 pub mod config;
 pub mod correlated_decoder;
@@ -168,6 +169,15 @@ pub trait BatchDecoder: Decoder {
 /// orchestrator needs -- it doesn't care about decoder internals, weights,
 /// convergence, or matched edges.
 pub trait ObservableDecoder {
+    /// Detector-syndrome width expected by this decoder, when known.
+    ///
+    /// Specification builders attach this metadata uniformly so execution
+    /// layers can reject a mismatched batch before the first decode call.
+    #[must_use]
+    fn num_detectors(&self) -> Option<usize> {
+        None
+    }
+
     /// Decode a dense syndrome and return predicted observable flips as a wide
     /// [`ObsMask`](crate::obs_mask::ObsMask).
     ///
@@ -199,20 +209,20 @@ pub trait ObservableDecoder {
     }
 
     /// Batch decode: flat buffer of `num_shots × num_detectors` bytes.
-    /// Returns one `u64` observable mask per shot.
+    /// Returns one wide observable mask per shot.
     ///
-    /// Default: loops over shots calling `decode_to_observables`.
+    /// Default: loops over shots calling [`Self::decode_obs`].
     /// Override for decoders with native batch support (e.g. `PyMatching`).
     fn decode_batch_to_observables(
         &mut self,
         shots: &[u8],
         num_shots: usize,
         num_detectors: usize,
-    ) -> Result<Vec<u64>, DecoderError> {
+    ) -> Result<Vec<crate::obs_mask::ObsMask>, DecoderError> {
         let mut results = Vec::with_capacity(num_shots);
         for i in 0..num_shots {
             let syn = &shots[i * num_detectors..(i + 1) * num_detectors];
-            results.push(self.decode_to_observables(syn)?);
+            results.push(self.decode_obs(syn)?);
         }
         Ok(results)
     }

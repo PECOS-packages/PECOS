@@ -320,7 +320,7 @@ impl HugrEngine {
                 debug!("borrow_arr.clone at {node:?}: duplicated");
                 HandlerOutcome::Processed
             }
-            "to_array" | "from_array" => {
+            "to_array" | "from_array" | "borrow_array" => {
                 // borrow_array <-> array conversions: identity on the
                 // engine's shared Array representation.
                 let Some(value @ ClassicalValue::Array(_)) = self.get_input_value(hugr, node, 0)

@@ -19,6 +19,9 @@
 //!
 //! The remaining fraction hits the std multi-site path which applies CNOTs
 //! on the MPS -- the case OFD would replace.
+//!
+//! `--stability-census` runs the default 1,200-circuit numerical regression
+//! lane. `--stability-census-wide` extends the 8-qubit lane through seed 1,999.
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
@@ -26,6 +29,7 @@ use pecos_stab_tn::stab_mps::StabMps;
 use pecos_stab_tn::stab_mps::compile::StabMpsCompile;
 use pecos_stab_tn::stab_mps::mast::Mast;
 use std::f64::consts::TAU;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Same xorshift generator as fuzz tests.
 fn next_rng(state: &mut u64) -> u64 {
@@ -234,7 +238,97 @@ fn run_scenario(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix:
     let _ = std::io::stdout().flush();
 }
 
+fn exercise_stability_circuit(num_qubits: usize, num_gates: usize, seed: u64, mix: GateMix) {
+    let mut stn = fuzz_circuit(num_qubits, num_gates, seed, mix);
+    stn.flush();
+
+    let state = stn.state_vector();
+    let max_weight_index = state
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| left.norm_sqr().total_cmp(&right.norm_sqr()))
+        .map_or(0, |(index, _)| index);
+    let max_weight_bits = (0..num_qubits)
+        .map(|q| (max_weight_index >> q) & 1 != 0)
+        .collect::<Vec<_>>();
+    let zero_bits = vec![false; num_qubits];
+    for bits in [&max_weight_bits, &zero_bits] {
+        let _ = stn.prob_bitstring(bits);
+        let _ = stn.amplitude_iterative(bits);
+    }
+
+    let qubits = (0..num_qubits).map(QubitId).collect::<Vec<_>>();
+    let _measurements = stn.mz(&qubits);
+}
+
+fn run_stability_census(eight_qubit_seed_count: u64) {
+    let started = std::time::Instant::now();
+    let mut circuits = 0_u64;
+    let mut panics = 0_u64;
+    for (num_qubits, num_gates, seed_count) in [
+        (4, 40, 200_u64),
+        (6, 60, 200_u64),
+        (8, 80, eight_qubit_seed_count),
+    ] {
+        for mix in [GateMix::CliffT, GateMix::Random] {
+            for seed in 0..seed_count {
+                circuits += 1;
+                if catch_unwind(AssertUnwindSafe(|| {
+                    exercise_stability_circuit(num_qubits, num_gates, seed, mix);
+                }))
+                .is_err()
+                {
+                    panics += 1;
+                    eprintln!(
+                        "PANIC n={num_qubits} gates={num_gates} seed={seed} mix={}",
+                        match mix {
+                            GateMix::CliffT => "clifford+t",
+                            GateMix::Random => "random",
+                        }
+                    );
+                }
+            }
+        }
+    }
+    println!(
+        "stability census: circuits={circuits} panics={panics} 8q_seed_range=0..{eight_qubit_seed_count} elapsed={:.3}s",
+        started.elapsed().as_secs_f64()
+    );
+    assert_eq!(panics, 0, "stability census observed panics");
+}
+
 fn main() {
+    let arguments = std::env::args().collect::<Vec<_>>();
+    if arguments
+        .iter()
+        .any(|argument| argument == "--stability-census-wide")
+    {
+        run_stability_census(2_000);
+        return;
+    }
+    if arguments
+        .iter()
+        .any(|argument| argument == "--stability-census")
+    {
+        run_stability_census(200);
+        return;
+    }
+    if let Some(index) = arguments
+        .iter()
+        .position(|argument| argument == "--stability-case")
+    {
+        let num_qubits = arguments[index + 1].parse().unwrap();
+        let num_gates = arguments[index + 2].parse().unwrap();
+        let seed = arguments[index + 3].parse().unwrap();
+        let mix = match arguments[index + 4].as_str() {
+            "clifford+t" => GateMix::CliffT,
+            "random" => GateMix::Random,
+            value => panic!("unknown gate mix: {value}"),
+        };
+        exercise_stability_circuit(num_qubits, num_gates, seed, mix);
+        println!("stability case passed: n={num_qubits} gates={num_gates} seed={seed}");
+        return;
+    }
     println!("Disent firing rate benchmark. Runs random fuzz circuits and reports");
     println!("what fraction of non-Clifford RZs take each code path.");
     println!();

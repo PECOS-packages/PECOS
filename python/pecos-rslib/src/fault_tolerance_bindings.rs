@@ -3215,7 +3215,13 @@ impl PyDecodeStats {
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
     )]
-    fn from_times(num_shots: usize, num_errors: usize, mut times: Vec<f64>) -> Self {
+    fn from_times_with_elapsed(
+        num_shots: usize,
+        num_errors: usize,
+        mut times: Vec<f64>,
+        wall_elapsed: f64,
+        summed_decode_elapsed: f64,
+    ) -> Self {
         let num_timing_samples = times.len();
         let total_seconds: f64 = times.iter().sum();
         let per_shot_mean = if num_shots > 0 {
@@ -3246,8 +3252,8 @@ impl PyDecodeStats {
                 0.0
             },
             total_seconds,
-            wall_elapsed: 0.0,
-            summed_decode_elapsed: 0.0,
+            wall_elapsed,
+            summed_decode_elapsed,
             num_timing_samples,
             per_shot_mean,
             per_shot_median: percentile(50.0),
@@ -3256,19 +3262,6 @@ impl PyDecodeStats {
             per_shot_max: times.last().copied().unwrap_or(0.0),
             quantiles,
         }
-    }
-
-    fn from_times_with_elapsed(
-        num_shots: usize,
-        num_errors: usize,
-        times: Vec<f64>,
-        wall_elapsed: f64,
-        summed_decode_elapsed: f64,
-    ) -> Self {
-        let mut stats = Self::from_times(num_shots, num_errors, times);
-        stats.wall_elapsed = wall_elapsed;
-        stats.summed_decode_elapsed = summed_decode_elapsed;
-        stats
     }
 }
 

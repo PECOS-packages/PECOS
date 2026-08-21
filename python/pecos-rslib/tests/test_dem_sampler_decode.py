@@ -207,3 +207,39 @@ def test_worker_count_is_clamped_to_the_number_of_sampling_chunks() -> None:
     reference = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=1, predictions=True)
     clamped = _sampler().decode(DEM, 1500, tesseract(preset="fast"), seed=7, workers=64, predictions=True)
     assert clamped.predictions == reference.predictions
+
+
+def test_sample_batch_stream_remains_frozen() -> None:
+    # Stream-stability pin for the surviving sample_batch path, carried over
+    # from the deleted legacy-methods test: sample_batch was NOT removed, so its
+    # geometric RNG stream stays frozen. Only the fused decode() path uses the
+    # canonical chunked ABI; a change to these rows is a breaking change.
+    batch = _sampler().sample_batch(12, seed=91)
+    assert batch.detector_events() == [
+        [True],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [True],
+        [True],
+    ]
+    assert batch.observable_flips() == [
+        [True],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [False],
+        [True],
+        [False],
+    ]

@@ -25,6 +25,7 @@
 //! - Masot-Llima, Sierant, Stornati, Garcia-Saez. arXiv:2602.15942
 //!   (limits of Clifford disentangling).
 
+use crate::errors::MpsError;
 use crate::mps::Mps;
 use nalgebra::DMatrix;
 use num_complex::Complex64;
@@ -230,14 +231,24 @@ fn apply_disentangler(
     disent_flags: &mut [Option<super::SiteEigenstate>],
     q: usize,
     gate: &DisentanglerGate,
-) {
-    mps.apply_two_site_gate(q, &gate.matrix)
-        .expect("gate should succeed");
+) -> Result<(), MpsError> {
+    mps.apply_two_site_gate(q, &gate.matrix)?;
     super::tableau_compose::right_compose_cx(tableau, q, q + 1);
     right_compose_single_qubit_inverse(tableau, q, gate.first_dressing);
     right_compose_single_qubit_inverse(tableau, q + 1, gate.second_dressing);
     disent_flags[q] = None;
     disent_flags[q + 1] = None;
+    Ok(())
+}
+
+/// Apply one candidate to a throwaway MPS used only for scoring.
+///
+/// A factorization failure rejects the candidate without touching the live
+/// state; accepted candidates are applied separately by [`apply_disentangler`].
+fn trial_disentangler(mps: &Mps, q: usize, gate: &DMatrix<Complex64>) -> Option<Mps> {
+    let mut trial_mps = mps.clone();
+    trial_mps.apply_two_site_gate(q, gate).ok()?;
+    Some(trial_mps)
 }
 
 /// Run one sweep of heuristic disentangling on the MPS.
@@ -252,10 +263,10 @@ pub(crate) fn disentangle_sweep(
     mps: &mut Mps,
     tableau: &mut SparseStabY,
     disent_flags: &mut [Option<super::SiteEigenstate>],
-) -> usize {
+) -> Result<usize, MpsError> {
     let n = mps.num_sites();
     if n < 2 {
-        return 0;
+        return Ok(0);
     }
 
     let gates = build_disentangler_set();
@@ -275,21 +286,23 @@ pub(crate) fn disentangle_sweep(
         let mut best_gate_idx: Option<usize> = None;
 
         for (gate_idx, gate) in gates.iter().enumerate() {
-            let mut trial_mps = mps.clone();
-            if trial_mps.apply_two_site_gate(q, &gate.matrix).is_ok() {
-                let trial_max_bond = trial_mps.max_bond_dim();
-                let trial_entropy = bond_entropy(&trial_mps, bond);
-                // Accept gate only if it doesn't increase max bond dim
-                // AND reduces local entropy
-                if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
-                    best_entropy = trial_entropy;
-                    best_gate_idx = Some(gate_idx);
-                }
+            let Some(trial_mps) = trial_disentangler(mps, q, &gate.matrix) else {
+                // Candidate scoring is speculative: a failed factorization on
+                // this throwaway clone only disqualifies this candidate.
+                continue;
+            };
+            let trial_max_bond = trial_mps.max_bond_dim();
+            let trial_entropy = bond_entropy(&trial_mps, bond);
+            // Accept gate only if it doesn't increase max bond dim
+            // AND reduces local entropy
+            if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
+                best_entropy = trial_entropy;
+                best_gate_idx = Some(gate_idx);
             }
         }
 
         if let Some(idx) = best_gate_idx {
-            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx]);
+            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx])?;
             num_applied += 1;
         }
     }
@@ -308,24 +321,26 @@ pub(crate) fn disentangle_sweep(
         let mut best_gate_idx: Option<usize> = None;
 
         for (gate_idx, gate) in gates.iter().enumerate() {
-            let mut trial_mps = mps.clone();
-            if trial_mps.apply_two_site_gate(q, &gate.matrix).is_ok() {
-                let trial_max_bond = trial_mps.max_bond_dim();
-                let trial_entropy = bond_entropy(&trial_mps, bond);
-                if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
-                    best_entropy = trial_entropy;
-                    best_gate_idx = Some(gate_idx);
-                }
+            let Some(trial_mps) = trial_disentangler(mps, q, &gate.matrix) else {
+                // Match the forward sweep: speculative numerical failures are
+                // rejected candidates, not failures of the live sweep.
+                continue;
+            };
+            let trial_max_bond = trial_mps.max_bond_dim();
+            let trial_entropy = bond_entropy(&trial_mps, bond);
+            if trial_max_bond <= current_max_bond && trial_entropy < best_entropy - 1e-2 {
+                best_entropy = trial_entropy;
+                best_gate_idx = Some(gate_idx);
             }
         }
 
         if let Some(idx) = best_gate_idx {
-            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx]);
+            apply_disentangler(mps, tableau, disent_flags, q, &gates[idx])?;
             num_applied += 1;
         }
     }
 
-    num_applied
+    Ok(num_applied)
 }
 
 /// Run multiple sweeps of disentangling until convergence or `max_sweeps` reached.
@@ -334,16 +349,16 @@ pub(crate) fn disentangle(
     tableau: &mut SparseStabY,
     disent_flags: &mut [Option<super::SiteEigenstate>],
     max_sweeps: usize,
-) -> usize {
+) -> Result<usize, MpsError> {
     let mut total_applied = 0;
     for _ in 0..max_sweeps {
-        let applied = disentangle_sweep(mps, tableau, disent_flags);
+        let applied = disentangle_sweep(mps, tableau, disent_flags)?;
         total_applied += applied;
         if applied == 0 {
             break;
         }
     }
-    total_applied
+    Ok(total_applied)
 }
 
 #[cfg(test)]
@@ -376,6 +391,20 @@ mod tests {
     }
 
     #[test]
+    fn test_speculative_disentangler_factorization_failure_skips_candidate() {
+        let mps = Mps::new(2, crate::mps::MpsConfig::default());
+        let non_finite_gate = DMatrix::from_element(4, 4, Complex64::new(f64::NAN, 0.0));
+
+        assert!(trial_disentangler(&mps, 0, &non_finite_gate).is_none());
+        assert!(
+            mps.tensors()
+                .iter()
+                .flat_map(DMatrix::iter)
+                .all(|value| value.re.is_finite() && value.im.is_finite())
+        );
+    }
+
+    #[test]
     fn test_every_disentangler_inverse_is_absorbed_into_tableau() {
         let mut base = crate::stab_mps::StabMps::builder(2)
             .merge_rz(false)
@@ -399,7 +428,8 @@ mod tests {
                 &mut sim.disent_flags,
                 0,
                 gate,
-            );
+            )
+            .unwrap();
             let actual = sim.state_vector();
             let overlap: Complex64 = expected
                 .iter()

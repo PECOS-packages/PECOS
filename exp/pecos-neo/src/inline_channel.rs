@@ -171,7 +171,9 @@ fn qubit_pairs(
         });
     }
     Ok(qubits
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0], pair[1]))
         .collect())
 }

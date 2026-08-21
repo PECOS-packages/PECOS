@@ -1476,9 +1476,19 @@ fn test_fuzz_7qubit() {
 }
 
 #[test]
-#[ignore = "slow fuzz (~80s debug): run with `cargo test --test verification -- --include-ignored`"]
 fn test_fuzz_8qubit() {
-    for seed in 810..820 {
+    // Exercise end-to-end state-vector agreement and 8-qubit gate routing on
+    // two shallow deterministic circuits. The targeted QR-repair regression is
+    // the 8-qubit, 80-gate stability-census seed 97 in the library tests.
+    for seed in 810..812 {
+        fuzz_circuit(8, 10, seed);
+    }
+}
+
+#[test]
+#[ignore = "slow fuzz (~65s debug): run in the ignored release lane"]
+fn test_fuzz_8qubit_extended() {
+    for seed in 812..820 {
         fuzz_circuit(8, 10, seed);
     }
 }
@@ -1697,16 +1707,18 @@ where
 {
     let angle =
         |units: u32| Angle64::from_radians(f64::from(units) * 0.0001 * std::f64::consts::TAU);
-    simulator.rz(angle(4934), &[QubitId(2)]);
-    simulator.rx(angle(7513), &[QubitId(2)]);
-    simulator.cz(&[(QubitId(0), QubitId(2))]);
-    simulator.cx(&[(QubitId(2), QubitId(0))]);
-    simulator.rz(angle(3365), &[QubitId(0)]);
-    simulator.rz(angle(7635), &[QubitId(0)]);
-    simulator.h(&[QubitId(0)]);
-    simulator.x(&[QubitId(1)]);
-    simulator.sz(&[QubitId(2)]);
-    simulator.rx(angle(8337), &[QubitId(2)]);
+    simulator.rx(angle(3546), &[QubitId(0)]);
+    simulator.cz(&[(QubitId(1), QubitId(0))]);
+    simulator.rz(angle(8057), &[QubitId(1)]);
+    simulator.rx(angle(761), &[QubitId(0)]);
+    simulator.sz(&[QubitId(1)]);
+    simulator.h(&[QubitId(2)]);
+    simulator.cx(&[(QubitId(0), QubitId(2))]);
+    simulator.h(&[QubitId(2)]);
+    simulator.cz(&[(QubitId(2), QubitId(1))]);
+    simulator.rx(angle(9376), &[QubitId(0)]);
+    simulator.rx(angle(5410), &[QubitId(2)]);
+    simulator.cz(&[(QubitId(0), QubitId(1))]);
 }
 
 #[test]
@@ -2298,10 +2310,10 @@ fn dense_state_vector_probabilities(stn: &StabMps) -> Vec<f64> {
 
 fn exact_mps_config() -> MpsConfig {
     MpsConfig {
-        // The largest case using this helper has eight total MPS sites
-        // (four data plus four injection ancillas), whose exact Schmidt-rank
-        // ceiling is 2^(8/2) = 16.
-        max_bond_dim: 16,
+        // The largest release stress case using this helper has eleven total
+        // MPS sites (five data plus six injection ancillas), whose exact
+        // Schmidt-rank ceiling is 2^floor(11/2) = 32.
+        max_bond_dim: 32,
         svd_cutoff: 0.0,
         max_truncation_error: Some(0.0),
         parallel: false,
@@ -2408,44 +2420,81 @@ fn test_sampled_bitstring_round_trips_through_probability_and_amplitude() {
     }
 }
 
-#[test]
-// Quarantined by #557: `prob_bitstring` disagrees with the simulator's own state by up to
-// 6e-3 on this family. The defect is real and reproduces on every platform -- these 16
-// circuits happen to pass on Linux and fail on macOS and Windows, which is why only the
-// post-merge lanes were red. Remove this attribute as part of the fix, and widen the seed
-// coverage so a lucky seed cannot mask it again.
-#[ignore = "known defect, tracked in #557: prob_bitstring vs dense state vector mismatch"]
-fn test_prob_bitstring_honest_clifford_t_family_matches_dense_state_vector() {
+fn assert_honest_clifford_t_readouts_match_dense(
+    qubit_counts: std::ops::RangeInclusive<usize>,
+    seed_families: &[u64],
+    label: &str,
+) {
     // This family deliberately puts H, S, and CX between non-Clifford gates,
     // plus a target H after roughly half of them. That exposes sequential
     // forced-projection frame errors hidden by diagonal-only circuit tails.
     const TOLERANCE: f64 = 1e-12;
-    for num_qubits in 3..=6 {
+    let mut circuits = 0;
+    let mut worst_probability_delta = 0.0_f64;
+    let mut worst_iterative_delta = 0.0_f64;
+    for num_qubits in qubit_counts {
         for t_count in 3..=6 {
-            let circuit_seed = 10_000 + (num_qubits * 100 + t_count) as u64;
-            let gates = seeded_clifford_t_circuit(num_qubits, t_count, circuit_seed);
-            let mut stn = StabMps::builder(num_qubits)
-                .seed(circuit_seed)
-                .merge_rz(false)
-                .max_truncation_error(0.0)
-                .build();
-            apply_seeded_clifford_t_to_stn(&mut stn, &gates);
-            stn.flush();
+            for &seed_family in seed_families {
+                let circuit_seed = seed_family * 1_000 + (num_qubits * 100 + t_count) as u64;
+                let gates = seeded_clifford_t_circuit(num_qubits, t_count, circuit_seed);
+                let mut stn = StabMps::builder(num_qubits)
+                    .seed(circuit_seed)
+                    .merge_rz(false)
+                    .max_truncation_error(0.0)
+                    .build();
+                apply_seeded_clifford_t_to_stn(&mut stn, &gates);
+                stn.flush();
 
-            let dense_probabilities = dense_state_vector_probabilities(&stn);
-            for (outcome, &expected) in dense_probabilities.iter().enumerate() {
-                let bits = (0..num_qubits)
-                    .map(|q| ((outcome >> q) & 1) != 0)
-                    .collect::<Vec<_>>();
-                let actual = stn.prob_bitstring(&bits);
-                assert!(
-                    (actual - expected).abs() <= TOLERANCE,
-                    "n={num_qubits} t={t_count} seed={circuit_seed} outcome={outcome}: \
-                     prob_bitstring={actual:.16}, dense={expected:.16}, gates={gates:?}"
-                );
+                let dense_probabilities = dense_state_vector_probabilities(&stn);
+                for (outcome, &expected) in dense_probabilities.iter().enumerate() {
+                    let bits = (0..num_qubits)
+                        .map(|q| ((outcome >> q) & 1) != 0)
+                        .collect::<Vec<_>>();
+                    let actual = stn.prob_bitstring(&bits);
+                    let probability_delta = (actual - expected).abs();
+                    worst_probability_delta = worst_probability_delta.max(probability_delta);
+                    assert!(
+                        probability_delta <= TOLERANCE,
+                        "{label}: n={num_qubits} t={t_count} seed={circuit_seed} \
+                         outcome={outcome}: prob_bitstring={actual:.16}, \
+                         dense={expected:.16}, delta={probability_delta:.3e}, gates={gates:?}"
+                    );
+
+                    // The unnormalized sibling projector must preserve the
+                    // same probability weight. Complex-phase behavior has
+                    // separate unit coverage; this assertion isolates the
+                    // sequential projection machinery shared with the issue.
+                    let iterative_probability = stn.amplitude_iterative(&bits).norm_sqr();
+                    let iterative_delta = (iterative_probability - expected).abs();
+                    worst_iterative_delta = worst_iterative_delta.max(iterative_delta);
+                    assert!(
+                        iterative_delta <= TOLERANCE,
+                        "{label}: n={num_qubits} t={t_count} seed={circuit_seed} \
+                         outcome={outcome}: |amplitude_iterative|^2={iterative_probability:.16}, \
+                         dense={expected:.16}, delta={iterative_delta:.3e}, gates={gates:?}"
+                    );
+                }
+                circuits += 1;
             }
         }
     }
+    eprintln!(
+        "{label}: circuits={circuits}, worst prob_bitstring delta={worst_probability_delta:.3e}, worst |amplitude_iterative|^2 delta={worst_iterative_delta:.3e}"
+    );
+}
+
+#[test]
+fn test_prob_bitstring_honest_clifford_t_family_matches_dense_state_vector() {
+    // Keep a known formerly failing small-n family (n=4, t=6, seed=21406)
+    // in the default lane while bounding debug-suite runtime.
+    assert_honest_clifford_t_readouts_match_dense(3..=4, &[10, 21], "fast issue #557 sweep");
+}
+
+#[test]
+#[ignore = "wide issue #557 sweep; run in release mode"]
+fn test_prob_bitstring_honest_clifford_t_wide_seed_sweep_matches_dense_state_vector() {
+    let seed_families = (10..50_u64).collect::<Vec<_>>();
+    assert_honest_clifford_t_readouts_match_dense(3..=6, &seed_families, "wide issue #557 sweep");
 }
 
 #[test]
@@ -3648,7 +3697,7 @@ fn test_compress_preserves_state() {
     let bond_before = sum.max_bond_dim();
 
     let mut compressed = sum;
-    compressed.compress();
+    compressed.compress().unwrap();
     let sv_after = compressed.state_vector();
     let bond_after = compressed.max_bond_dim();
 
@@ -4076,9 +4125,13 @@ fn test_large_scale_100_qubits() {
     let num_t = 40;
     let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 4, 128, 123);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    // Exact-route data measurement saturates the configured cap at scale, so
-    // accuracy is truncation-limited here rather than merely bounded by it.
-    assert_eq!(mast_bond, 128, "MAST did not saturate its default bond cap");
+    // Canonical exact-route compensation keeps the physical Schmidt ranks
+    // below the configured cap instead of saturating it from gauge-dependent
+    // local singular values.
+    assert!(
+        (2..128).contains(&mast_bond),
+        "MAST bond must remain nontrivial without saturating its default cap, got {mast_bond}"
+    );
 }
 
 #[test]
@@ -4088,9 +4141,13 @@ fn test_large_scale_200_qubits() {
     let num_t = 50;
     let (stn_bond, mast_bond) = large_scale_bond_dim_check(num_qubits, num_t, 5, 128, 456);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    // Exact-route data measurement saturates the configured cap at scale, so
-    // accuracy is truncation-limited here rather than merely bounded by it.
-    assert_eq!(mast_bond, 128, "MAST did not saturate its default bond cap");
+    // Canonical exact-route compensation keeps the physical Schmidt ranks
+    // below the configured cap instead of saturating it from gauge-dependent
+    // local singular values.
+    assert!(
+        (2..128).contains(&mast_bond),
+        "MAST bond must remain nontrivial without saturating its default cap, got {mast_bond}"
+    );
 }
 
 #[test]

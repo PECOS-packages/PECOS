@@ -26,6 +26,16 @@ fn phase_terms_u64(lx: u64, lz: u64, rx: u64, rz: u64) -> u64 {
         + 3 * u64::from((!lx & lz & rx & rz).count_ones()) // Z*Y = -iX  (+3)
 }
 
+/// Per-word quarter-phase contribution of a Pauli acting on a computational
+/// basis state, for the `u64`-word backends. `x`/`z` are the Pauli X/Z plane
+/// words, `r` the basis-state word (set bit = that qubit is in state one).
+#[inline]
+fn basis_state_phase_terms_u64(x: u64, z: u64, r: u64) -> u64 {
+    u64::from((x & z & !r).count_ones()) // Y|0> = i|1>   (+1)
+        + 3 * u64::from((x & z & r).count_ones()) // Y|1> = -i|0>  (+3)
+        + 2 * u64::from((!x & z & r).count_ones()) // Z|1> = -|1>   (+2)
+}
+
 /// Trait for bitmask storage backends.
 ///
 /// Enables `PauliBitmaskGeneric<B>` to work with different widths:
@@ -43,6 +53,10 @@ pub trait BitmaskStorage: Clone + PartialEq + Eq + std::hash::Hash + Default + f
     /// Returns k in 0..4 such that the full product is i^k times the
     /// phaseless symplectic product.
     fn mul_phase_exponent(&self, self_z: &Self, other_x: &Self, other_z: &Self) -> u8;
+    /// Quarter-phase exponent of the Pauli (`self`, `self_z`) acting on the
+    /// computational basis state `state`, whose set bits mark qubits in state
+    /// one. Returns k in 0..4 such that `P|state> = i^k |state XOR x_bits>`.
+    fn basis_state_phase_exponent(&self, self_z: &Self, state: &Self) -> u8;
     fn is_zero(&self) -> bool;
     fn or_count_ones(&self, other: &Self) -> u32;
     fn highest_set_bit(&self) -> Option<usize>;
@@ -83,6 +97,17 @@ impl BitmaskStorage for u128 {
         total += u64::from((!lx & lz & rx & !rz).count_ones());
         total += u64::from((lx & lz & !rx & rz).count_ones());
         total += 3 * u64::from((!lx & lz & rx & rz).count_ones());
+        (total % 4) as u8
+    }
+    fn basis_state_phase_exponent(&self, self_z: &Self, state: &Self) -> u8 {
+        // Same three terms as `basis_state_phase_terms_u64`, on the full u128 width.
+        let x = *self;
+        let z = *self_z;
+        let r = *state;
+        let mut total = 0u64;
+        total += u64::from((x & z & !r).count_ones());
+        total += 3 * u64::from((x & z & r).count_ones());
+        total += 2 * u64::from((!x & z & r).count_ones());
         (total % 4) as u8
     }
     fn is_zero(&self) -> bool {
@@ -173,6 +198,23 @@ impl BitmaskStorage for Vec<u64> {
             // Reduce mod 4 each word so the accumulator stays small
             // regardless of input length.
             total = (total + phase_terms_u64(lx, lz, rx, rz)) % 4;
+        }
+        (total % 4) as u8
+    }
+    fn basis_state_phase_exponent(&self, self_z: &Self, state: &Self) -> u8 {
+        // Every term needs a Z bit, and each needs either an X bit or a set
+        // state bit, so words past those lengths cannot contribute. Padding
+        // within the bound is meaningful: an absent state word means those
+        // qubits are in state zero, and an absent X word means Z rather than Y.
+        let contributing_len = self_z.len().min(self.len().max(state.len()));
+        let mut total = 0u64;
+        for i in 0..contributing_len {
+            let x = self.get(i).copied().unwrap_or(0);
+            let z = self_z.get(i).copied().unwrap_or(0);
+            let r = state.get(i).copied().unwrap_or(0);
+            // Reduce mod 4 each word so the accumulator stays small
+            // regardless of input length.
+            total = (total + basis_state_phase_terms_u64(x, z, r)) % 4;
         }
         (total % 4) as u8
     }
@@ -274,6 +316,23 @@ impl BitmaskStorage for SmallVec<[u64; 8]> {
             // Reduce mod 4 each word so the accumulator stays small
             // regardless of input length.
             total = (total + phase_terms_u64(lx, lz, rx, rz)) % 4;
+        }
+        (total % 4) as u8
+    }
+    fn basis_state_phase_exponent(&self, self_z: &Self, state: &Self) -> u8 {
+        // Every term needs a Z bit, and each needs either an X bit or a set
+        // state bit, so words past those lengths cannot contribute. Padding
+        // within the bound is meaningful: an absent state word means those
+        // qubits are in state zero, and an absent X word means Z rather than Y.
+        let contributing_len = self_z.len().min(self.len().max(state.len()));
+        let mut total = 0u64;
+        for i in 0..contributing_len {
+            let x = self.get(i).copied().unwrap_or(0);
+            let z = self_z.get(i).copied().unwrap_or(0);
+            let r = state.get(i).copied().unwrap_or(0);
+            // Reduce mod 4 each word so the accumulator stays small
+            // regardless of input length.
+            total = (total + basis_state_phase_terms_u64(x, z, r)) % 4;
         }
         (total % 4) as u8
     }
@@ -549,6 +608,22 @@ impl<B: BitmaskStorage> PauliBitmaskGeneric<B> {
             "phase exponent parity must equal the symplectic product parity"
         );
         (product, phase)
+    }
+
+    /// Action of this Pauli on a computational basis state.
+    ///
+    /// `state` marks with a set bit each qubit in state one. Returns
+    /// `(image, phase_exponent)` where `P|state> = i^phase · |image>`.
+    /// Phase exponent is in 0..4.
+    ///
+    /// A Pauli maps a basis state to a single basis state, so the image is
+    /// exact: `X` and `Y` flip their qubits, `Z` and `Y` contribute phase.
+    #[must_use]
+    pub fn apply_to_basis_state(&self, state: &B) -> (B, u8) {
+        let mut image = state.clone();
+        image.xor_assign(&self.x_bits);
+        let phase = self.x_bits.basis_state_phase_exponent(&self.z_bits, state);
+        (image, phase)
     }
 
     /// True if the two Paulis commute (symplectic inner product = 0 mod 2).
@@ -1228,6 +1303,46 @@ mod tests {
         pauli
     }
 
+    /// Per-qubit oracle for `apply_to_basis_state`, independent of the
+    /// word-level formula: I and X carry no phase, Z contributes -1 on a
+    /// qubit in state one, Y contributes i on state zero and -i on state one.
+    fn reference_basis_state_phase<B: BitmaskStorage>(
+        pauli: &PauliBitmaskGeneric<B>,
+        state: &B,
+    ) -> u8 {
+        let max_q = [
+            pauli.x_bits.highest_set_bit(),
+            pauli.z_bits.highest_set_bit(),
+            state.highest_set_bit(),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .map_or(0, |q| q + 1);
+
+        let mut total = 0u32;
+        for q in 0..max_q {
+            let x = pauli.x_bits.get_bit(q);
+            let z = pauli.z_bits.get_bit(q);
+            let one = state.get_bit(q);
+            total += match (x, z, one) {
+                (true, true, false) => 1, // Y|0> = i|1>
+                (true, true, true) => 3,  // Y|1> = -i|0>
+                (false, true, true) => 2, // Z|1> = -|1>
+                _ => 0,                   // I, X, and Z|0>
+            };
+        }
+        (total % 4) as u8
+    }
+
+    fn basis_state_from_sites<B: BitmaskStorage>(sites: &[usize]) -> B {
+        let mut state = B::zero();
+        for &q in sites {
+            state.set_bit(q);
+        }
+        state
+    }
+
     fn assert_unequal_length_phase_matches_reference<B: BitmaskStorage>()
     where
         PauliBitmaskGeneric<B>: PartialEq,
@@ -1671,6 +1786,156 @@ mod tests {
     #[test]
     fn multiply_with_phase_handles_unequal_smallvec_lengths() {
         assert_unequal_length_phase_matches_reference::<SmallVec<[u64; 8]>>();
+    }
+
+    fn assert_exhaustive_single_qubit_basis_action<B: BitmaskStorage>() {
+        // (pauli, qubit is one) -> (qubit flips, phase exponent)
+        let cases = [
+            (PauliBitmaskGeneric::<B>::identity(), false, false, 0),
+            (PauliBitmaskGeneric::<B>::identity(), true, false, 0),
+            (PauliBitmaskGeneric::<B>::x(0), false, true, 0),
+            (PauliBitmaskGeneric::<B>::x(0), true, true, 0),
+            (PauliBitmaskGeneric::<B>::z(0), false, false, 0),
+            (PauliBitmaskGeneric::<B>::z(0), true, false, 2),
+            (PauliBitmaskGeneric::<B>::y(0), false, true, 1),
+            (PauliBitmaskGeneric::<B>::y(0), true, true, 3),
+        ];
+
+        for (pauli, one, flips, expected_phase) in cases {
+            let state = basis_state_from_sites::<B>(if one { &[0] } else { &[] });
+            let (image, phase) = pauli.apply_to_basis_state(&state);
+            assert_eq!(phase, expected_phase);
+            assert_eq!(image.get_bit(0), one != flips);
+        }
+    }
+
+    #[test]
+    fn apply_to_basis_state_exhaustive_single_qubit() {
+        assert_exhaustive_single_qubit_basis_action::<u128>();
+        assert_exhaustive_single_qubit_basis_action::<Vec<u64>>();
+        assert_exhaustive_single_qubit_basis_action::<SmallVec<[u64; 8]>>();
+    }
+
+    fn assert_basis_action_matches_reference<B: BitmaskStorage>(
+        rng: &mut StdRng,
+        qubit_counts: &[usize],
+        cases_per_count: usize,
+    ) {
+        for &num_qubits in qubit_counts {
+            for case in 0..cases_per_count {
+                let pauli = random_pauli::<B>(rng, num_qubits, case % 2 == 0);
+                let mut state = B::zero();
+                for q in 0..num_qubits {
+                    if rng.random_bool(if case % 4 < 2 { 0.5 } else { 0.1 }) {
+                        state.set_bit(q);
+                    }
+                }
+                let (image, phase) = pauli.apply_to_basis_state(&state);
+                assert_eq!(
+                    phase,
+                    reference_basis_state_phase(&pauli, &state),
+                    "phase mismatch for {num_qubits} qubits in case {case}"
+                );
+                for q in 0..num_qubits {
+                    assert_eq!(
+                        image.get_bit(q),
+                        state.get_bit(q) != pauli.x_bits.get_bit(q),
+                        "image bit {q} wrong for {num_qubits} qubits in case {case}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn apply_to_basis_state_matches_reference_for_random_backends() {
+        let mut rng = StdRng::seed_from_u64(0x0006_a515_7a7e_0bad);
+        assert_basis_action_matches_reference::<u128>(&mut rng, &[1, 5, 63, 64, 65, 127, 128], 40);
+        assert_basis_action_matches_reference::<Vec<u64>>(
+            &mut rng,
+            &[
+                1, 5, 63, 64, 65, 127, 128, 129, 191, 192, 193, 300, 511, 512, 520,
+            ],
+            24,
+        );
+        assert_basis_action_matches_reference::<SmallVec<[u64; 8]>>(
+            &mut rng,
+            &[
+                1, 5, 63, 64, 65, 127, 128, 129, 191, 192, 193, 300, 511, 512, 520,
+            ],
+            24,
+        );
+    }
+
+    fn assert_basis_action_handles_unequal_lengths<B: BitmaskStorage>() {
+        // Pauli support far past the state's stored words, and vice versa,
+        // so both zero-padding directions are exercised. The set state bit at
+        // qubit 640 puts a pure-Z contribution in a word past the X plane's
+        // stored length, so a walk bounded by the X plane alone misses it.
+        let wide_pauli = pauli_from_sites::<B>(&[(3, 3), (70, 2), (300, 3), (640, 2)]);
+        let narrow_pauli = pauli_from_sites::<B>(&[(3, 2), (5, 3)]);
+        let narrow_state = basis_state_from_sites::<B>(&[3, 5]);
+        let wide_state = basis_state_from_sites::<B>(&[3, 70, 300, 640, 700]);
+        for (pauli, state) in [
+            (&wide_pauli, &narrow_state),
+            (&wide_pauli, &wide_state),
+            (&narrow_pauli, &wide_state),
+            (&narrow_pauli, &narrow_state),
+        ] {
+            let (image, phase) = pauli.apply_to_basis_state(state);
+            assert_eq!(phase, reference_basis_state_phase(pauli, state));
+            for q in [3, 5, 70, 300, 450, 640, 700] {
+                assert_eq!(
+                    image.get_bit(q),
+                    state.get_bit(q) != pauli.x_bits.get_bit(q),
+                    "image bit {q} wrong"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn apply_to_basis_state_handles_unequal_vec_lengths() {
+        assert_basis_action_handles_unequal_lengths::<Vec<u64>>();
+    }
+
+    #[test]
+    fn apply_to_basis_state_handles_unequal_smallvec_lengths() {
+        assert_basis_action_handles_unequal_lengths::<SmallVec<[u64; 8]>>();
+    }
+
+    #[test]
+    fn apply_to_basis_state_composes_with_multiply_with_phase() {
+        // Applying p then q must agree with applying the product q*p, tying
+        // the basis-state phase convention to the operator-product one
+        // without sharing an oracle between them.
+        let mut rng = StdRng::seed_from_u64(0xc0d9_05e1_2345_6789);
+        for case in 0..200 {
+            let num_qubits = 130;
+            let p = random_pauli::<SmallVec<[u64; 8]>>(&mut rng, num_qubits, case % 2 == 0);
+            let q = random_pauli::<SmallVec<[u64; 8]>>(&mut rng, num_qubits, case % 3 == 0);
+            let mut state = SmallVec::<[u64; 8]>::zero();
+            for site in 0..num_qubits {
+                if rng.random_bool(0.5) {
+                    state.set_bit(site);
+                }
+            }
+
+            let (after_p, phase_p) = p.apply_to_basis_state(&state);
+            let (after_q, phase_q) = q.apply_to_basis_state(&after_p);
+
+            let (product, product_phase) = q.multiply_with_phase(&p);
+            let (direct, phase_direct) = product.apply_to_basis_state(&state);
+
+            for site in 0..num_qubits {
+                assert_eq!(after_q.get_bit(site), direct.get_bit(site), "case {case}");
+            }
+            assert_eq!(
+                (phase_p + phase_q) % 4,
+                (product_phase + phase_direct) % 4,
+                "sequential and product phases disagree in case {case}"
+            );
+        }
     }
 
     #[test]

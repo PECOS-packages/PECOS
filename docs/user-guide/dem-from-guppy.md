@@ -390,11 +390,16 @@ Two different things are easy to confuse here, so state them side by side:
 | Sine-squared | `sin((rate * m_axis) * t) ** 2` | `p_idle_sin_squared`, the structured family above |
 | Coefficient quadratic | `(rate * m_axis) * t**2` | `p_idle_quadratic` and the axis-specific `p_idle_{x,y,z}_quadratic_rate` DEM fields |
 
-They agree only in the small-angle limit, where `sin(x)**2` approaches `x**2`.
-The sine law is bounded and oscillates, so it saturates and then falls as the
-duration grows; the coefficient law is an unbounded polynomial that only ever
-increases. Their rates also carry different units: the sine rate is radians per
-time, the coefficient rate is inverse time squared.
+Both scale as `t**2` for small angles, but equal numeric rates are never
+interchangeable: the sine law's small-angle limit is `(rate * m_axis)**2 * t**2`
+-- the rate enters squared -- while the coefficient law is
+`(rate * m_axis) * t**2` with the rate entering linearly. They produce the same
+small-angle probabilities only if the coefficient rate is set to the square of
+the sine rate (per axis, `r_quad * m_quad = (r_sin * m_sin)**2`). The sine law
+is also bounded and oscillates, so it saturates and then falls as the duration
+grows; the coefficient law is an unbounded polynomial that only ever increases.
+Their rates carry different units: the sine rate is radians per time, the
+coefficient rate is inverse time squared.
 
 Prefer the sine-squared family. It is the one the structured builders expose,
 and it is the exact Pauli twirl of a coherent `RZ` rotation, which the

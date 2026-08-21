@@ -346,7 +346,7 @@ It checks the measurement count, but it cannot detect a permutation.
 | `observable_tags` | `("obs",)` | Logical result tags, in DEM observable order. |
 | `probe_shots` | derived | Coin-toss rows used to infer and validate affine parities. Defaults to one row per raw measurement plus the affine constant, the validation rows, and a rank margin. |
 | `provenance_shots` | `32` | Rows used to correlate array elements with QIS IDs. |
-| `validation_rows` | `32` | Probe rows reserved for parity validation. |
+| `validation_rows` | `32` | Extra probe rows required beyond the square system, as additional consistency constraints on the fit. |
 | `seed` | `0` | Reproducible trace and probe seed. |
 | `runtime` | `None` | Selene runtime selection forwarded to PECOS. |
 | `require_raw_provenance` | `True` | Require a complete identity-preserving raw-measurement binding. |
@@ -372,9 +372,12 @@ bigger number; pass an explicit count only to override that.
 **More probe shots do not make a better DEM.** Inference solves an affine
 system over GF(2): once the probe matrix reaches full rank the solution is exact
 and unique, and further rows can only re-validate it. The derived default adds a
-margin because probes are random -- exactly the minimum number of random rows is
-full rank only about 29% of the time, and each extra row halves the shortfall
-probability. Raise `probe_shots` to buy validation confidence against a
+margin because probes are random -- a square system of exactly one row per
+unknown is full rank only about 29% of the time, and each row beyond it halves
+the shortfall probability, so with the validation rows and margin included a
+rank failure is vanishingly unlikely. Elimination uses every probe row;
+validation rows are additional consistency constraints on the same fit, not a
+held-out set. Raise `probe_shots` to buy validation confidence against a
 mis-inferred parity, not resolution.
 
 ## Failure guide

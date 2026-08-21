@@ -333,18 +333,19 @@ match decoder.decode(&syndrome.view()) {
 
 ## Hyperedge models and matching decoders
 
-Matching-style decoders (Fusion Blossom, PECOS UF, K-MWPM, belief matching)
-represent a model as a graph whose edges touch at most two detectors. Given a
-model containing mechanisms that touch three or more, they reject it rather than
-silently ignoring those mechanisms:
+Matching-style decoders (PyMatching, Fusion Blossom, PECOS UF, K-MWPM, belief
+matching, A*) represent a model as a graph whose edges touch at most two
+detectors. Given a model containing mechanisms that touch three or more, they
+reject it rather than silently ignoring those mechanisms:
 
 ```
-fusion_blossom needs a graphlike model, but this DEM has 113 mechanism(s)
-touching three or more detectors.
+Invalid configuration: fusion_blossom needs a graphlike model, but this DEM has
+113 mechanism(s) touching three or more detectors.
 ```
 
 Decode such a model with a decoder that represents hyperedges directly --
-`bp_osd()` or `tesseract()` -- or supply a decomposed projection. See
+`bp_osd()` or `tesseract()` -- or supply a decomposed projection (a model
+written with `^` separators passes: each component is graphlike). See
 [Experimental Decoders](../experimental/decoders.md) for the Frontier and
 BP-Trellis decoders, which additionally report a per-shot complementary gap, and
 for provenance-based decomposition of a hyperedge model into a graphlike one.

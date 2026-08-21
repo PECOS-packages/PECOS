@@ -42,16 +42,41 @@ fn ensure_graphlike_model(spec: &DecoderSpec, dem: &str) -> Result<(), DecoderEr
     if !spec.requires_graphlike_model() {
         return Ok(());
     }
-    let graph = pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)?;
-    if graph.skipped_hyperedges > 0 {
+    let skipped = count_skipped_hyperedges(dem)?;
+    if skipped > 0 {
         return Err(DecoderError::InvalidConfiguration(format!(
-            "{} needs a graphlike model, but this DEM has {} mechanism(s) touching three or \
-             more detectors. Decoding it here would silently ignore them. Pass a decomposed \
-             model (DetectorErrorModel.to_string_terminal_graphlike_decomposed() or \
-             to_string_source_graphlike_decomposed()), or use a decoder that accepts \
-             hyperedges such as bp_osd or tesseract.",
+            "{} needs a graphlike model, but this DEM has {skipped} mechanism(s) touching \
+             three or more detectors. Decoding it here would silently ignore them. \
+             {GRAPHLIKE_REMEDY}",
             family_name(spec),
-            graph.skipped_hyperedges,
+        )));
+    }
+    Ok(())
+}
+
+/// The remedy sentence shared by every graphlike-guard error message.
+const GRAPHLIKE_REMEDY: &str = "Pass a decomposed model \
+    (DetectorErrorModel.to_string_terminal_graphlike_decomposed() or \
+    to_string_source_graphlike_decomposed()), or use a decoder that accepts \
+    hyperedges such as bp_osd or tesseract.";
+
+fn count_skipped_hyperedges(dem: &str) -> Result<usize, DecoderError> {
+    Ok(pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)?.skipped_hyperedges)
+}
+
+/// Guard for the hard-coded phase-1 `UfDecoder` inside windowed/beam-search
+/// builds. Those closures do not go through [`build`], so the top-level guard
+/// never sees them, and the top-level model is the wrong thing to check
+/// anyway: windowing can slice a hyperedge into graphlike pieces per window.
+/// Check the exact sub-model the parser is about to truncate.
+#[cfg(feature = "uf")]
+fn ensure_graphlike_submodel(context: &str, sub_dem: &str) -> Result<(), DecoderError> {
+    let skipped = count_skipped_hyperedges(sub_dem)?;
+    if skipped > 0 {
+        return Err(DecoderError::InvalidConfiguration(format!(
+            "{context} builds its phase-1 window decoder from a matching graph, but a window \
+             sub-model has {skipped} mechanism(s) touching three or more detectors. Decoding \
+             it here would silently ignore them. {GRAPHLIKE_REMEDY}",
         )));
     }
     Ok(())
@@ -1158,7 +1183,10 @@ fn build_windowed(
             let decoder = crate::SandwichWindowedDecoder::from_dem(
                 dem,
                 window,
-                |sub_dem| crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed()),
+                |sub_dem| {
+                    ensure_graphlike_submodel("windowed", sub_dem)?;
+                    crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed())
+                },
                 |sub_dem| phase2.build(&DecodeModel::SingleDem(sub_dem.to_string())),
             )?;
             Ok(Box::new(decoder))
@@ -1166,7 +1194,10 @@ fn build_windowed(
         ResolvedWindowedMode::Overlap => Ok(Box::new(crate::OverlappingWindowedDecoder::from_dem(
             dem,
             window,
-            |sub_dem| crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed()),
+            |sub_dem| {
+                ensure_graphlike_submodel("windowed", sub_dem)?;
+                crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed())
+            },
         )?)),
         ResolvedWindowedMode::NonOverlapping => {
             let inner = config.inner.clone();
@@ -1257,7 +1288,10 @@ fn build_beamsearch(
     let decoder = crate::BeamSearchWindowedDecoder::from_dem(
         dem,
         engine_config,
-        |sub_dem| crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed()),
+        |sub_dem| {
+            ensure_graphlike_submodel("beamsearch", sub_dem)?;
+            crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed())
+        },
         Some(|sub_dem: &str| phase2.build(&DecodeModel::SingleDem(sub_dem.to_string()))),
     )?;
     Ok(Box::new(decoder))
@@ -1305,6 +1339,15 @@ mod tests {
             DecoderSpec::FusionBlossom(FusionBlossomConfig::default()),
             DecoderSpec::PecosUf(PecosUfPreset::Fast),
             DecoderSpec::KMwpm(KMwpmConfig::default()),
+            DecoderSpec::AStar,
+            DecoderSpec::PyMatching(PyMatchingConfig::default()),
+            DecoderSpec::PyMatching(PyMatchingConfig {
+                correlated: false,
+                ..PyMatchingConfig::default()
+            }),
+            // Composite: not classified at the top level, but the member build
+            // runs the guard against the member's own (cardinality-preserving)
+            // model, so the rejection still surfaces.
             DecoderSpec::Perturbed(PerturbedConfig {
                 inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
                 ..PerturbedConfig::default()
@@ -1327,11 +1370,34 @@ mod tests {
         for spec in [
             DecoderSpec::BpOsd(BpOsdConfig::default()),
             DecoderSpec::Tesseract(TesseractConfig::default()),
-            DecoderSpec::PyMatching(PyMatchingConfig::default()),
+            DecoderSpec::AStarFull,
         ] {
             assert!(
                 !spec.requires_graphlike_model(),
                 "{spec:?} must not be treated as graphlike-only",
+            );
+        }
+    }
+
+    #[test]
+    fn composite_specs_are_not_classified_at_the_top_level() {
+        // Windowing slices mechanisms per time window, so a top-level
+        // hyperedge can become graphlike in every sub-model; classification
+        // is leaf-only and the guard runs where the parser actually runs.
+        for spec in [
+            DecoderSpec::Windowed(WindowedConfig::default()),
+            DecoderSpec::BeamSearch(BeamSearchConfig::default()),
+            DecoderSpec::Perturbed(PerturbedConfig {
+                inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
+                ..PerturbedConfig::default()
+            }),
+            DecoderSpec::Ensemble(EnsembleConfig {
+                members: vec![DecoderSpec::PecosUf(PecosUfPreset::Fast)],
+            }),
+        ] {
+            assert!(
+                !spec.requires_graphlike_model(),
+                "{spec:?} must defer graphlike classification to member builds",
             );
         }
     }

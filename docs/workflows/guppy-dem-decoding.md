@@ -380,20 +380,26 @@ the raw model rather than a graph-like projection.
 Every decoder in stage 5 answers "which observables flipped?". Neither reports
 how close the call was. The experimental Frontier and BP-Trellis decoders add a
 **complementary gap**: the log-probability margin between the winning logical
-class and the runner-up. A large gap is a confident shot; a gap near zero means
-the evidence barely favoured the answer, which is the natural signal for
-post-selection or for feeding a soft-output pipeline.
+class and the runner-up. When the result's `status` is `"exact"` (nothing was
+pruned), a large gap is a confident shot and a gap near zero means the evidence
+barely favoured the answer -- the natural signal for post-selection or for
+feeding a soft-output pipeline. On a pruned result the gap describes only what
+the search retained, so treat it as a diagnostic rather than a confidence; the
+gap is also `None` when pruning left no runner-up at all.
 
 <!--continuation-->
 ```python
 from pecos_rslib_exp import FrontierDecoder
 
 frontier = FrontierDecoder.from_dem(raw_text)
-gaps = [frontier.decode_syndrome(batch.get_syndrome(shot)).runner_up_gap for shot in range(200)]
+results = [frontier.decode_syndrome(batch.get_syndrome(shot)) for shot in range(200)]
+
+assert all(result.status == "exact" for result in results)
+gaps = [result.runner_up_gap for result in results if result.runner_up_gap is not None]
 
 least_confident = min(gaps)
 assert least_confident >= 0.0
-print(f"least confident of 200 shots: gap={least_confident:.3f}")
+print(f"least confident of {len(gaps)} shots: gap={least_confident:.3f}")
 ```
 
 Because the gap is a per-shot quantity, a threshold on it partitions the run

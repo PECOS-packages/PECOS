@@ -126,24 +126,29 @@ impl DecoderSpec {
     /// Matching-style decoders build a graph whose edges carry at most two
     /// detectors. Their DEM parser drops mechanisms with more detectors, so a
     /// hyperedge model would silently decode against a truncated version of
-    /// itself; [`build`](Self::build) rejects that instead.
+    /// itself; [`build`](Self::build) rejects that instead. `AStar` builds
+    /// from the same matching graph (`AStarFull` uses the full check matrix
+    /// and stays exempt), and both `PyMatching` modes feed the graph converter,
+    /// which keeps only one- and two-detector mechanisms. Decomposed models
+    /// (`^` separators) pass: each component is graphlike.
+    ///
+    /// Deliberately leaf-only. Composite specs are not classified here: each
+    /// member build runs this guard against the exact model that member
+    /// receives, and windowing can legitimately slice a top-level hyperedge
+    /// into graphlike pieces per window, so a top-level answer for a
+    /// composite would be wrong in both directions.
     #[must_use]
-    pub fn requires_graphlike_model(&self) -> bool {
-        match self {
+    pub const fn requires_graphlike_model(&self) -> bool {
+        matches!(
+            self,
             Self::FusionBlossom(_)
-            | Self::PerturbedFusionBlossomCorrelated(_)
-            | Self::KMwpm(_)
-            | Self::PecosUf(_)
-            | Self::BeliefMatching(_) => true,
-            Self::Windowed(config) => {
-                config.inner.requires_graphlike_model()
-                    || config.sandwich_phase2.requires_graphlike_model()
-            }
-            Self::Perturbed(config) => config.inner.requires_graphlike_model(),
-            Self::BeamSearch(config) => config.phase2.requires_graphlike_model(),
-            Self::Ensemble(config) => config.members.iter().any(Self::requires_graphlike_model),
-            _ => false,
-        }
+                | Self::PerturbedFusionBlossomCorrelated(_)
+                | Self::KMwpm(_)
+                | Self::PecosUf(_)
+                | Self::BeliefMatching(_)
+                | Self::AStar
+                | Self::PyMatching(_)
+        )
     }
 
     /// Return the full DEM embedded by the legacy hybrid grammar, if present.

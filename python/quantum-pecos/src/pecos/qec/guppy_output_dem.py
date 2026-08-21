@@ -251,11 +251,13 @@ _PROBE_RANK_MARGIN = 32
 def _auto_probe_shots(raw_width: int, validation_rows: int) -> int:
     """Rows needed to infer every parity, plus margin for random-probe rank.
 
-    Affine inference needs one row per raw measurement, one for the affine
-    constant, and the requested validation rows. Probes are random GF(2)
-    vectors, though, and exactly that many rows are full rank only about 29% of
-    the time; each extra row halves the shortfall probability, so the margin
-    makes a rank failure vanishingly unlikely rather than routine.
+    Affine inference needs one row per raw measurement plus one for the affine
+    constant; the square system of exactly that many random GF(2) rows is full
+    rank only about 29% of the time, and each row beyond it halves the
+    shortfall probability. The requested validation rows and the fixed margin
+    are both such extra rows (elimination uses every row; validation rows are
+    additional consistency constraints, not a held-out set), so the shortfall
+    probability at this floor is about 2**-(validation_rows + margin).
 
     Extra rows beyond full rank do not change the inferred DEM -- the affine
     solution is exact and unique once the system has rank -- so this derives a

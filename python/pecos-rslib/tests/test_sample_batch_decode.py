@@ -31,6 +31,16 @@ def _batch(num_shots: int = 8) -> SampleBatch:
     return SampleBatch(rows, truth_masks)
 
 
+def _aperiodic_batch(num_shots: int) -> SampleBatch:
+    # Order-restoration tests need predictions whose pattern shares no period
+    # with the chunk size: with period-2 rows every chunk's prediction slice
+    # is identical and permuting chunks is invisible. Period 97 is coprime to
+    # every plausible chunk size.
+    rows = [[1 if shot % 97 == 0 else 0] for shot in range(num_shots)]
+    truth_masks = [int(shot % 3 == 0) for shot in range(num_shots)]
+    return SampleBatch(rows, truth_masks)
+
+
 @pytest.mark.parametrize(
     ("legacy", "factory"),
     [
@@ -97,7 +107,7 @@ def test_prediction_and_timing_requests_can_be_combined() -> None:
 
 
 def test_parallel_predictions_and_timing_preserve_every_shot() -> None:
-    batch = _batch(1024)
+    batch = _aperiodic_batch(1024)
     spec = tesseract(preset="fast")
     sequential = batch.decode(
         DEM,
@@ -289,3 +299,19 @@ def test_gil_is_released_during_decode() -> None:
         stop.set()
         thread.join()
     assert progress[0] - before > 100
+
+
+def test_parallel_chunk_scheduling_preserves_order_and_counts() -> None:
+    # Workers pull dynamic chunks rather than one fixed slice each, so shot
+    # order has to be restored from the chunk index. Oversubscribing workers
+    # makes any completion-order leak show up; the aperiodic fixture makes a
+    # chunk permutation change the prediction list instead of hiding.
+    batch = _aperiodic_batch(4096)
+    spec = tesseract(preset="fast")
+    sequential = batch.decode(DEM, spec, workers=1, predictions=True, timing=True)
+
+    for workers in (2, 7, 64):
+        parallel = batch.decode(DEM, spec, workers=workers, predictions=True, timing=True)
+        assert parallel.num_errors == sequential.num_errors
+        assert parallel.predictions == sequential.predictions
+        assert parallel.stats.num_timing_samples == batch.num_shots

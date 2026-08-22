@@ -33,7 +33,7 @@ group-fill structure that makes each subgraph cleanly matchable.
 from __future__ import annotations
 
 import pytest
-from pecos.decoders import pecos_uf
+from pecos.decoders import bp_osd, pecos_uf
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos_rslib.qec import (
     LogicalSubgraphDecoder,
@@ -401,9 +401,11 @@ def test_python_scored_predictions_match_the_rust_error_count():
     dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
     n = 3000
     batch = ParsedDem.from_string(dem).to_dem_sampler().sample_batch(n, seed=5)
+    # bp_osd, not a matching decoder: this DEM carries hyperedges, which a
+    # graphlike decoder cannot represent.
     result = batch.decode(
         dem,
-        pecos_uf(preset="bp"),
+        bp_osd(),
         predictions=True,
     )
     preds = result.predictions

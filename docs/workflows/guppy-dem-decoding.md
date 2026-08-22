@@ -367,6 +367,59 @@ each other on this code; the gaps between decoders widen with code distance and
 with genuinely hyperedge-like noise, which is where BP+OSD and Tesseract consume
 the raw model rather than a graph-like projection.
 
+## 6. Optional: per-shot confidence with an experimental decoder
+
+!!! warning "Experimental API"
+
+    The decoders below live in `exp/` and are reached through
+    `pecos_rslib_exp`. They are under active development, are not part of the
+    `pecos.decoders` surface, and may change without notice. They also do not
+    participate in the unified execution planning used above — call them
+    directly rather than through `batch.decode(...)`.
+
+Every decoder in stage 5 answers "which observables flipped?". None of them
+reports how close the call was. The experimental Frontier and BP-Trellis
+decoders add a **complementary gap**: the log-probability margin between the
+winning logical class and the runner-up. When the result's `status` is
+`"exact"` (nothing was pruned), a large gap is a confident shot and a gap near
+zero means the evidence barely favoured the answer -- the natural signal for
+post-selection or for feeding a soft-output pipeline. On a pruned result the
+gap describes only what the search retained, so treat it as a diagnostic
+rather than a confidence; the gap is `None` whenever fewer than two logical
+classes survive to the end, which can happen on a fully exact decode too, so a
+missing gap is not a pruning signal.
+
+<!--continuation-->
+```python
+from pecos_rslib_exp import FrontierDecoder
+
+frontier = FrontierDecoder.from_dem(raw_text)
+results = [frontier.decode_syndrome(batch.get_syndrome(shot)) for shot in range(200)]
+
+assert all(result.status == "exact" for result in results)
+gaps = [result.runner_up_gap for result in results if result.runner_up_gap is not None]
+
+least_confident = min(gaps)
+assert least_confident >= 0.0
+print(f"least confident of {len(gaps)} shots: gap={least_confident:.3f}")
+```
+
+Because the gap is a per-shot quantity, a threshold on it partitions the run
+into a confident majority and a tail worth treating differently:
+
+<!--continuation-->
+```python
+confident = [gap for gap in gaps if gap >= 1.0]
+
+print(f"{len(confident)}/{len(gaps)} shots decoded with gap >= 1.0")
+```
+
+Frontier consumes the raw model directly, so unlike the matching decoders it
+needs no graph-like projection — `raw_text` rather than
+`terminal_graphlike_text`. See [Experimental Decoders](../experimental/decoders.md)
+for the full result surface, including what `status` and `dropped_log_mass` say
+about whether pruning affected the answer.
+
 ## Where to go next
 
 - [Detector Error Models from Guppy](../user-guide/dem-from-guppy.md) explains

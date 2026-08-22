@@ -188,6 +188,22 @@ fn test_from_dem_rejects_negative_weight_priors() {
     );
 }
 
+/// The matching-graph parser drops 3+-detector mechanisms, so the CSS
+/// constructor must reject a hyperedge DEM instead of silently decoding a
+/// truncated model.
+#[test]
+fn test_css_from_dems_rejects_hyperedge_models() {
+    let graphlike = "error(0.05) D0 D1 L0\nerror(0.01) D0\n";
+    let hyperedge = "error(0.1) D0 D1 D2 L0\nerror(0.05) D0\n";
+    for (x_dem, z_dem) in [(hyperedge, graphlike), (graphlike, hyperedge)] {
+        let error =
+            pecos_uf_decoder::CssUfDecoder::from_dems(x_dem, z_dem, UfDecoderConfig::balanced())
+                .err()
+                .expect("hyperedge DEM must be rejected");
+        assert!(error.to_string().contains("graphlike"), "{error}");
+    }
+}
+
 /// The graph-level constructor asserts the same premise loudly for callers
 /// that build graphs directly (contract violation, not user input).
 #[test]

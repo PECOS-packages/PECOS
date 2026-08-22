@@ -2419,28 +2419,6 @@ class qec:
             """
             ...
 
-        def decode_count(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> int: ...
-        def decode_each(self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...) -> list[int]: ...
-        def decode_count_parallel(
-            self,
-            dem: str,
-            decoder_type: str = ...,
-            num_workers: int | None = ...,
-            *,
-            allow_dem_mismatch: bool = ...,
-        ) -> int: ...
-        def decode_count_batch(self, dem: str, *, allow_dem_mismatch: bool = ...) -> int: ...
-        def decode_stats(
-            self, dem: str, decoder_type: str = ..., *, allow_dem_mismatch: bool = ...
-        ) -> qec.DecodeStats: ...
-        def decode_stats_parallel(
-            self,
-            dem: str,
-            decoder_type: str = ...,
-            num_workers: int | None = ...,
-            *,
-            allow_dem_mismatch: bool = ...,
-        ) -> qec.DecodeStats: ...
         def compare_decoders(
             self,
             dem: str,
@@ -2570,21 +2548,6 @@ class qec:
             """
             ...
 
-        def sample_decode_count(
-            self,
-            dem: str,
-            num_shots: int,
-            decoder_type: str = ...,
-            seed: int | None = ...,
-        ) -> int: ...
-        def sample_decode_count_parallel(
-            self,
-            dem: str,
-            num_shots: int,
-            decoder_type: str = ...,
-            seed: int | None = ...,
-            num_workers: int | None = ...,
-        ) -> int: ...
         def labels(self) -> dict[str, Any]: ...
 
     class DemSamplerBuilder:

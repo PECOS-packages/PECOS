@@ -577,7 +577,8 @@ fn toggle(v: &mut Vec<usize>, x: usize) {
 /// Conjugate a Pauli `P = X_flip · Z_sign` by `V†` where
 /// `V = ops[last] · ops[last-1] · ... · ops[0]`. Updates `flip_sites` and
 /// `sign_sites` in place to represent `V† · P · V`. The scalar phase is
-/// unchanged (CNOT/H/CZ conjugation preserves phase of the product).
+/// updated whenever the X-block-before-Z-block representation picks up a
+/// sign or a factor of i.
 ///
 /// Heisenberg rules:
 /// - CNOT(c, t): `X_c -> X_c · X_t`; `Z_t -> Z_c · Z_t`.
@@ -625,6 +626,11 @@ pub fn conjugate_pauli_by_deferred_ops(
             DeferredOp::Cz(a, b) => {
                 let has_x_a = flip_sites.contains(&a);
                 let has_x_b = flip_sites.contains(&b);
+                // CZ·(X_a X_b)·CZ = Y_a Y_b = -(XZ)_a (XZ)_b in the
+                // X-block-before-Z-block convention.
+                if has_x_a && has_x_b {
+                    *phase = -*phase;
+                }
                 if has_x_a {
                     toggle(sign_sites, b);
                 }
@@ -1859,6 +1865,191 @@ mod tests {
     fn sort_dedup(v: &mut Vec<usize>) {
         v.sort_unstable();
         v.dedup();
+    }
+
+    fn dense_pauli(flip_mask: usize, sign_mask: usize, phase: Complex64) -> DMatrix<Complex64> {
+        let identity = DMatrix::identity(2, 2);
+        let x = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        );
+        let z = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+        ]));
+        let factors: Vec<_> = (0..2)
+            .map(
+                |q| match (flip_mask & (1 << q) != 0, sign_mask & (1 << q) != 0) {
+                    (false, false) => identity.clone(),
+                    (true, false) => x.clone(),
+                    (false, true) => z.clone(),
+                    (true, true) => &x * &z,
+                },
+            )
+            .collect();
+        factors[0].kronecker(&factors[1]).map(|entry| phase * entry)
+    }
+
+    fn dense_single_qubit_gate(gate: &DMatrix<Complex64>, q: usize) -> DMatrix<Complex64> {
+        let identity = DMatrix::identity(2, 2);
+        if q == 0 {
+            gate.kronecker(&identity)
+        } else {
+            identity.kronecker(gate)
+        }
+    }
+
+    fn identify_dense_pauli(matrix: &DMatrix<Complex64>) -> (usize, usize, Complex64) {
+        let phases = [
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+            Complex64::new(0.0, -1.0),
+        ];
+        let mut matches = Vec::new();
+        for flip_mask in 0..4 {
+            for sign_mask in 0..4 {
+                for phase in phases {
+                    if (dense_pauli(flip_mask, sign_mask, phase) - matrix).norm() < 1e-12 {
+                        matches.push((flip_mask, sign_mask, phase));
+                    }
+                }
+            }
+        }
+        assert_eq!(matches.len(), 1, "dense oracle must identify one Pauli");
+        matches[0]
+    }
+
+    #[test]
+    fn conjugate_pauli_by_deferred_ops_matches_dense_oracle_for_every_op_kind() {
+        let r = std::f64::consts::FRAC_1_SQRT_2;
+        let h = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(r, 0.0),
+                Complex64::new(r, 0.0),
+                Complex64::new(r, 0.0),
+                Complex64::new(-r, 0.0),
+            ],
+        );
+        let z = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+        ]));
+        let s = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+        ]));
+        let sdg = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, -1.0),
+        ]));
+        let cnot_01 = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                1.0, 0.0, 0.0, 0.0, // |00> -> |00>
+                0.0, 1.0, 0.0, 0.0, // |01> -> |01>
+                0.0, 0.0, 0.0, 1.0, // |11> -> |10>
+                0.0, 0.0, 1.0, 0.0, // |10> -> |11>
+            ],
+        )
+        .map(|entry| Complex64::new(entry, 0.0));
+        let cnot_10 = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                1.0, 0.0, 0.0, 0.0, // |00> -> |00>
+                0.0, 0.0, 0.0, 1.0, // |11> -> |01>
+                0.0, 0.0, 1.0, 0.0, // |10> -> |10>
+                0.0, 1.0, 0.0, 0.0, // |01> -> |11>
+            ],
+        )
+        .map(|entry| Complex64::new(entry, 0.0));
+        let cz = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+        ]));
+        let cases = vec![
+            ("Cnot(0,1)", DeferredOp::Cnot(0, 1), cnot_01),
+            ("Cnot(1,0)", DeferredOp::Cnot(1, 0), cnot_10),
+            ("H(0)", DeferredOp::H(0), dense_single_qubit_gate(&h, 0)),
+            ("H(1)", DeferredOp::H(1), dense_single_qubit_gate(&h, 1)),
+            ("Z(0)", DeferredOp::Z(0), dense_single_qubit_gate(&z, 0)),
+            ("Z(1)", DeferredOp::Z(1), dense_single_qubit_gate(&z, 1)),
+            (
+                "SZdg(0)",
+                DeferredOp::SZdg(0),
+                dense_single_qubit_gate(&sdg, 0),
+            ),
+            (
+                "SZdg(1)",
+                DeferredOp::SZdg(1),
+                dense_single_qubit_gate(&sdg, 1),
+            ),
+            ("SZ(0)", DeferredOp::SZ(0), dense_single_qubit_gate(&s, 0)),
+            ("SZ(1)", DeferredOp::SZ(1), dense_single_qubit_gate(&s, 1)),
+            ("Cz(0,1)", DeferredOp::Cz(0, 1), cz),
+        ];
+        let input_phases = [
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+            Complex64::new(0.0, -1.0),
+        ];
+
+        for (name, op, gate) in cases {
+            let mut mismatches = Vec::new();
+            for input_flip_mask in 0..4 {
+                for input_sign_mask in 0..4 {
+                    for input_phase in input_phases {
+                        let input = dense_pauli(input_flip_mask, input_sign_mask, input_phase);
+                        let oracle = gate.adjoint() * input * &gate;
+                        let expected = identify_dense_pauli(&oracle);
+                        let mut flip_sites = (0..2)
+                            .filter(|q| input_flip_mask & (1 << q) != 0)
+                            .collect::<Vec<_>>();
+                        let mut sign_sites = (0..2)
+                            .filter(|q| input_sign_mask & (1 << q) != 0)
+                            .collect::<Vec<_>>();
+                        let mut actual_phase = input_phase;
+                        conjugate_pauli_by_deferred_ops(
+                            &mut flip_sites,
+                            &mut sign_sites,
+                            &mut actual_phase,
+                            std::slice::from_ref(&op),
+                        );
+                        sort_dedup(&mut flip_sites);
+                        sort_dedup(&mut sign_sites);
+                        let actual = (
+                            flip_sites.iter().fold(0, |mask, q| mask | (1 << q)),
+                            sign_sites.iter().fold(0, |mask, q| mask | (1 << q)),
+                            actual_phase,
+                        );
+                        if actual != expected {
+                            mismatches.push(format!(
+                                "input=(X={input_flip_mask:02b}, Z={input_sign_mask:02b}, phase={input_phase}); expected={expected:?}, actual={actual:?}"
+                            ));
+                        }
+                    }
+                }
+            }
+            assert!(
+                mismatches.is_empty(),
+                "{name} had {} dense-oracle mismatches; first: {}",
+                mismatches.len(),
+                mismatches.first().map_or("none", String::as_str)
+            );
+        }
     }
 
     #[test]

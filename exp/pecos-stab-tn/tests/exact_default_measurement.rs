@@ -846,7 +846,7 @@ fn lazy_measure_clifford_rz_conditional_state_fidelity() {
             Gate::H(2),
             Gate::Cx(1, 2),
         ];
-        let cliffords = lazy_frame_clifford_family(0, NUM_QUBITS);
+        let cliffords = lazy_frame_clifford_family(seed, NUM_QUBITS);
         let measured = 0;
         let rotated = 1;
         let angle = Angle64::from_radians(0.65 + 0.01 * seed as f64);
@@ -893,13 +893,14 @@ fn lazy_measure_clifford_rz_conditional_state_fidelity() {
 
 #[test]
 fn lazy_frame_rz_does_not_consume_stored_disentangling_proof() {
+    const FRAME_SEED: u64 = 4;
     let preparation = vec![
         Gate::H(1),
         Gate::Rz(1, Angle64::QUARTER_TURN / 2_u64),
         Gate::H(0),
         Gate::Cx(0, 1),
     ];
-    let cliffords = lazy_frame_clifford_family(0, 4);
+    let cliffords = lazy_frame_clifford_family(FRAME_SEED, 4);
     let angle = Angle64::from_radians(0.71);
     let mut simulator = build_stn_with_mode(4, 0x5555, MeasurementMode::Lazy);
     let mut dense = DenseStateVec::new(4);

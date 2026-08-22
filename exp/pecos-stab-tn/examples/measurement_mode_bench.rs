@@ -125,6 +125,8 @@ struct RunMetrics {
     cap_hit_count: u64,
     branch_vanish_retry_count: u64,
     uncompensated_pre_reduction_count: u64,
+    full_canonical_sweep_count: u64,
+    center_reuse_count: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -136,6 +138,8 @@ struct MedianMetrics {
     cap_hit_count: u64,
     branch_vanish_retry_count: u64,
     uncompensated_pre_reduction_count: u64,
+    full_canonical_sweep_count: u64,
+    center_reuse_count: u64,
 }
 
 fn depolarizing_error(rng: &mut ChaCha12Rng) -> TwoQubitNoise {
@@ -297,6 +301,8 @@ fn run_once(
         metrics.cap_hit_count += stn.bond_cap_hits();
         metrics.branch_vanish_retry_count += stn.branch_vanish_retry_count();
         metrics.uncompensated_pre_reduction_count += stn.uncompensated_pre_reduction_count();
+        metrics.full_canonical_sweep_count += stn.full_canonical_sweep_count();
+        metrics.center_reuse_count += stn.center_reuse_count();
     }
     metrics.shots_per_second = workload.shots as f64 / start.elapsed().as_secs_f64();
     black_box(checksum);
@@ -332,6 +338,8 @@ fn medians(runs: &[RunMetrics]) -> MedianMetrics {
         uncompensated_pre_reduction_count: median_u64(
             runs.iter().map(|r| r.uncompensated_pre_reduction_count),
         ),
+        full_canonical_sweep_count: median_u64(runs.iter().map(|r| r.full_canonical_sweep_count)),
+        center_reuse_count: median_u64(runs.iter().map(|r| r.center_reuse_count)),
     }
 }
 
@@ -345,7 +353,7 @@ fn mode_label(mode: MeasurementMode) -> &'static str {
 
 fn print_metrics(workload: Workload, mode: MeasurementMode, metrics: MedianMetrics) {
     println!(
-        "MEASUREMENT_MODE_BENCH workload={} mode={} shots={} runs=7 shots_per_s={:.6} lifetime_peak_bond={} final_bond={} summed_discarded_weight={:.16e} cap_hit_count={} branch_vanish_retry_count={} uncompensated_pre_reduction_count={}",
+        "MEASUREMENT_MODE_BENCH workload={} mode={} shots={} runs=7 shots_per_s={:.6} lifetime_peak_bond={} final_bond={} summed_discarded_weight={:.16e} cap_hit_count={} branch_vanish_retry_count={} uncompensated_pre_reduction_count={} full_canonical_sweep_count={} center_reuse_count={}",
         workload.label(),
         mode_label(mode),
         workload.shots,
@@ -356,6 +364,8 @@ fn print_metrics(workload: Workload, mode: MeasurementMode, metrics: MedianMetri
         metrics.cap_hit_count,
         metrics.branch_vanish_retry_count,
         metrics.uncompensated_pre_reduction_count,
+        metrics.full_canonical_sweep_count,
+        metrics.center_reuse_count,
     );
 }
 

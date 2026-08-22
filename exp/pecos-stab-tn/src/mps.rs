@@ -107,6 +107,12 @@ pub struct Mps {
     branch_vanish_retry_count: u64,
     /// Number of deferred MAST branches replaced by their surviving complement.
     deferred_branch_lost_count: u64,
+    /// Number of cold full-chain canonicalization routes taken because no
+    /// orthogonality center was available at the canonicalization consult.
+    full_canonical_sweep_count: u64,
+    /// Number of canonicalization routes that reused a tracked orthogonality
+    /// center instead of starting from a cold full-chain sweep.
+    center_reuse_count: u64,
 }
 
 /// Pass-scoped left and right identity environments for selected MPS sites.
@@ -222,6 +228,8 @@ impl Mps {
             lifetime_peak_bond: 1,
             branch_vanish_retry_count: 0,
             deferred_branch_lost_count: 0,
+            full_canonical_sweep_count: 0,
+            center_reuse_count: 0,
         }
     }
 
@@ -267,13 +275,27 @@ impl Mps {
         self.deferred_branch_lost_count
     }
 
-    /// Reset truncation diagnostics (keep state).
+    /// Number of canonicalization consults that required a cold full-chain sweep.
+    #[must_use]
+    pub fn full_canonical_sweep_count(&self) -> u64 {
+        self.full_canonical_sweep_count
+    }
+
+    /// Number of canonicalization consults that reused a tracked center.
+    #[must_use]
+    pub fn center_reuse_count(&self) -> u64 {
+        self.center_reuse_count
+    }
+
+    /// Reset truncation and canonical-routing diagnostics (keep state).
     pub fn reset_truncation_stats(&mut self) {
         self.truncation_error = 0.0;
         self.bond_cap_hits = 0;
         self.summed_discarded_weight = 0.0;
         self.branch_vanish_retry_count = 0;
         self.deferred_branch_lost_count = 0;
+        self.full_canonical_sweep_count = 0;
+        self.center_reuse_count = 0;
         self.lifetime_peak_bond = self.max_bond_dim();
     }
 
@@ -359,13 +381,26 @@ impl Mps {
             .min(usize::MAX / 8)
     }
 
-    /// Multiply the entire MPS by a scalar (absorbed into the first tensor).
+    /// Multiply the entire MPS by a scalar absorbed into site zero.
+    ///
+    /// The mixed-canonical claim is retained only when site zero is the
+    /// orthogonality center. [`Self::normalize`] may instead choose a tracked
+    /// nonzero center to avoid invalidating an established canonical gauge.
     pub fn scale(&mut self, scalar: Complex64) {
         if self.tensors.is_empty() {
             return;
         }
-        self.tensors[0] *= scalar;
-        self.center = None;
+        self.scale_tensor(0, scalar);
+    }
+
+    /// Scale one tensor and retain the mixed-canonical claim exactly when that
+    /// tensor is the orthogonality center. Scaling any other tensor changes an
+    /// isometry's Gram matrix and therefore invalidates the claim.
+    fn scale_tensor(&mut self, site: usize, scalar: Complex64) {
+        self.tensors[site] *= scalar;
+        if self.center != Some(site) {
+            self.center = None;
+        }
     }
 
     /// Apply a single-site gate (d x d unitary matrix) to site `q`.
@@ -870,15 +905,22 @@ impl Mps {
         if self.tensors.is_empty() {
             return;
         }
-        let norm_sq = self.norm_squared();
+        // In a mixed-canonical gauge every environment contraction outside
+        // the center is the identity, so the center tensor's Frobenius norm
+        // is the global state norm. Besides avoiding a redundant contraction,
+        // this keeps normalization at the invariant-owning site.
+        let norm_sq = self.center.map_or_else(
+            || self.norm_squared(),
+            |center| self.tensors[center].iter().map(Complex64::norm_sqr).sum(),
+        );
         debug_assert!(
             norm_sq > 0.0,
             "cannot normalize a zero-norm MPS after projection"
         );
         if norm_sq > 0.0 {
             let inv_norm = Complex64::new(1.0 / norm_sq.sqrt(), 0.0);
-            self.tensors[0] *= inv_norm;
-            self.center = None;
+            let site = self.center.unwrap_or(0);
+            self.scale_tensor(site, inv_norm);
         }
     }
 
@@ -1023,6 +1065,10 @@ impl Mps {
             deferred_branch_lost_count: self
                 .deferred_branch_lost_count
                 .max(other.deferred_branch_lost_count),
+            full_canonical_sweep_count: self
+                .full_canonical_sweep_count
+                .max(other.full_canonical_sweep_count),
+            center_reuse_count: self.center_reuse_count.max(other.center_reuse_count),
         }
     }
 
@@ -1051,17 +1097,20 @@ impl Mps {
     /// Replace one physical block of a site tensor.
     ///
     /// This is the owner-mediated path for projection code that must mutate a
-    /// tensor without canonicalizing first. An arbitrary block replacement
-    /// invalidates any mixed-canonical claim.
+    /// tensor without canonicalizing first. Any replacement at the center
+    /// preserves the outer left and right isometries; a replacement away from
+    /// the center changes an isometry and invalidates the claim.
     pub(crate) fn set_physical_block(
         &mut self,
         site: usize,
         physical_index: usize,
         block: &DMatrix<Complex64>,
     ) {
-        self.center = None;
         let chi_r = self.bond_dims[site + 1];
         set_phys_block(&mut self.tensors[site], physical_index, chi_r, block);
+        if self.center != Some(site) {
+            self.center = None;
+        }
     }
 
     /// Access the bond dimensions (for testing).
@@ -1079,9 +1128,9 @@ impl Mps {
 
     /// Right-canonicalize the entire MPS.
     pub fn right_canonicalize(&mut self) {
-        canon::right_canonicalize_all(&mut self.tensors, &mut self.bond_dims, self.phys_dim);
-        self.center = (self.num_sites > 0).then_some(0);
-        self.record_current_peak_bond();
+        if self.num_sites > 0 {
+            self.canonicalize_at(0);
+        }
     }
 
     /// Put the environments bordering `(q, q + 1)` in canonical form.
@@ -1093,8 +1142,15 @@ impl Mps {
     /// even when the input MPS had an arbitrary or rank-redundant gauge.
     pub(crate) fn canonicalize_around_bond(&mut self, q: usize) {
         assert!(q + 1 < self.num_sites, "bond must join two valid sites");
-        let target = q + 1;
+        self.canonicalize_at(q + 1);
+    }
+
+    /// Move an established center with exact one-site QR factorizations, or
+    /// establish one from a cold gauge by canonicalizing both environments.
+    fn canonicalize_at(&mut self, target: usize) {
+        assert!(target < self.num_sites, "center must be a valid site");
         if let Some(center) = self.center {
+            self.center_reuse_count += 1;
             #[cfg(debug_assertions)]
             debug_assert!(
                 self.claimed_center_is_valid(center),
@@ -1123,7 +1179,8 @@ impl Mps {
                 }
             }
         } else {
-            for site in 0..=q {
+            self.full_canonical_sweep_count += 1;
+            for site in 0..target {
                 canon::left_canonicalize_site(
                     &mut self.tensors,
                     &mut self.bond_dims,
@@ -1131,7 +1188,7 @@ impl Mps {
                     self.phys_dim,
                 );
             }
-            for site in (q + 2..self.num_sites).rev() {
+            for site in (target + 1..self.num_sites).rev() {
                 canon::right_canonicalize_site(
                     &mut self.tensors,
                     &mut self.bond_dims,
@@ -1313,6 +1370,8 @@ impl Clone for Mps {
             lifetime_peak_bond: self.lifetime_peak_bond,
             branch_vanish_retry_count: self.branch_vanish_retry_count,
             deferred_branch_lost_count: self.deferred_branch_lost_count,
+            full_canonical_sweep_count: self.full_canonical_sweep_count,
+            center_reuse_count: self.center_reuse_count,
         }
     }
 }
@@ -1588,13 +1647,54 @@ mod tests {
     }
 
     #[test]
-    fn test_scale_invalidates_center() {
+    fn test_scale_preserves_only_when_site_zero_is_the_center() {
+        let mut mps = Mps::new(4, MpsConfig::default());
+        assert_eq!(mps.tracked_center_for_test(), Some(0));
+
+        mps.scale(Complex64::new(2.0, 0.0));
+        assert_eq!(mps.tracked_center_for_test(), Some(0));
+        mps.canonicalize_around_bond(1);
+        assert_eq!(mps.tracked_center_for_test(), Some(2));
+        assert_eq!(mps.full_canonical_sweep_count(), 0);
+        assert_eq!(mps.center_reuse_count(), 1);
+    }
+
+    #[test]
+    fn test_normalize_preserves_a_nonzero_center() {
+        let config = MpsConfig {
+            max_bond_dim: 64,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let mut mps = seeded_random_mps(5, 4, 0x5ca1_e000_0000_0001, config);
+        mps.canonicalize_around_bond(2);
+        assert_eq!(mps.tracked_center_for_test(), Some(3));
+
+        mps.normalize();
+        assert_eq!(mps.tracked_center_for_test(), Some(3));
+        assert_relative_eq!(mps.norm_squared(), 1.0, epsilon = 1e-12);
+
+        // This is the production consult point: in debug builds it runs the
+        // claimed-center validator before trusting the preserved center.
+        mps.canonicalize_around_bond(1);
+        assert_eq!(mps.tracked_center_for_test(), Some(2));
+        assert_eq!(mps.full_canonical_sweep_count(), 1);
+        assert_eq!(mps.center_reuse_count(), 1);
+    }
+
+    #[test]
+    fn test_off_center_scaling_invalidates_before_canonical_routing() {
         let mut mps = Mps::new(4, MpsConfig::default());
         mps.left_canonicalize();
+        assert_eq!(mps.tracked_center_for_test(), Some(3));
 
         mps.scale(Complex64::new(2.0, 0.0));
 
-        assert_eq!(mps.tracked_center_for_test(), None);
+        mps.canonicalize_around_bond(1);
+        assert_eq!(mps.tracked_center_for_test(), Some(2));
+        assert_eq!(mps.full_canonical_sweep_count(), 1);
+        assert_eq!(mps.center_reuse_count(), 0);
     }
 
     #[cfg(debug_assertions)]

@@ -276,6 +276,12 @@ impl Mps {
     }
 
     /// Number of canonicalization consults that required a cold full-chain sweep.
+    ///
+    /// Counts only the shared `canonicalize_at` route; the sweeps inside
+    /// `compress` and `left_canonicalize` are not routed through it, so this
+    /// undercounts total sweep work. The reuse counter likewise counts route
+    /// selection, not factorizations saved (a warm walk across the whole
+    /// chain does as many local factorizations as a cold sweep).
     #[must_use]
     pub fn full_canonical_sweep_count(&self) -> u64 {
         self.full_canonical_sweep_count
@@ -911,7 +917,17 @@ impl Mps {
         // this keeps normalization at the invariant-owning site.
         let norm_sq = self.center.map_or_else(
             || self.norm_squared(),
-            |center| self.tensors[center].iter().map(Complex64::norm_sqr).sum(),
+            |center| {
+                // This consult consumes the center claim for a VALUE, not
+                // just to skip work: a stale claim would silently
+                // mis-normalize. Guard it like every other trusting consult.
+                #[cfg(debug_assertions)]
+                debug_assert!(
+                    self.claimed_center_is_valid(center),
+                    "tracked MPS orthogonality center {center} is stale"
+                );
+                self.tensors[center].iter().map(Complex64::norm_sqr).sum()
+            },
         );
         debug_assert!(
             norm_sq > 0.0,
@@ -1126,7 +1142,11 @@ impl Mps {
         self.record_current_peak_bond();
     }
 
-    /// Right-canonicalize the entire MPS.
+    /// Right-canonicalize the MPS by moving the orthogonality center to
+    /// site 0. With a tracked center this is a local walk, and a no-op when
+    /// the center is already at site 0 — safe because the sites a valid
+    /// center claim skips are exact isometries, so the omitted factorizations
+    /// are pure unitary gauge moves that cannot change any bond dimension.
     pub fn right_canonicalize(&mut self) {
         if self.num_sites > 0 {
             self.canonicalize_at(0);

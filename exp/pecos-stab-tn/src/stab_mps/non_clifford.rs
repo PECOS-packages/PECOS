@@ -22,6 +22,7 @@
 //! - Masot-Llima, Garcia-Saez. arXiv:2403.08724 (STN protocol).
 //! - Reference code: stabilizer-TN `update_xvec` and `apply_xvec_rot`.
 
+use super::measure::{DeferredOp, conjugate_pauli_by_deferred_ops};
 use super::pauli_decomp::{ZDecomposition, decompose_z};
 use crate::errors::MpsError;
 use crate::mps::Mps;
@@ -105,6 +106,8 @@ enum PauliType {
 pub struct RzContext<'a> {
     /// Per-site disentangling eigenstate flags.
     pub disent_flags: &'a mut [Option<super::SiteEigenstate>],
+    /// Pending Lazy frame separating the tableau from the stored MPS.
+    pub deferred_ops: &'a [DeferredOp],
     /// Whether missing |0> flags may be recovered from product-site tensors.
     pub numerical_flag_redetection: bool,
     /// GF(2) flip matrix for OFD diagnostics.
@@ -138,12 +141,39 @@ pub fn apply_rz_stab_mps(
 ) -> Result<(), MpsError> {
     let RzContext {
         disent_flags,
+        deferred_ops,
         numerical_flag_redetection,
         gf2_matrix,
         stats,
     } = ctx;
     stats.total_nonclifford += 1;
-    let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q);
+    let tableau_decomp = decompose_z(tableau.stabs(), tableau.destabs(), q);
+    // The Lazy representation is C V |stored>, while `decompose_z` returns
+    // P = C† Z_q C in the tableau frame. Apply V† P V to the stored MPS.
+    // Measurement owns and tests the deferred-frame Heisenberg rules, so the
+    // non-Clifford path deliberately reuses that implementation.
+    let decomp = if deferred_ops.is_empty() {
+        tableau_decomp
+    } else {
+        let (mut flip_sites, mut sign_sites, mut phase) = match tableau_decomp {
+            ZDecomposition::Stabilizer { phase, sign_sites } => (Vec::new(), sign_sites, phase),
+            ZDecomposition::DestabilizerFlip {
+                flip_sites,
+                phase,
+                sign_sites,
+            } => (flip_sites, sign_sites, phase),
+        };
+        conjugate_pauli_by_deferred_ops(&mut flip_sites, &mut sign_sites, &mut phase, deferred_ops);
+        if flip_sites.is_empty() {
+            ZDecomposition::Stabilizer { phase, sign_sites }
+        } else {
+            ZDecomposition::DestabilizerFlip {
+                flip_sites,
+                phase,
+                sign_sites,
+            }
+        }
+    };
 
     // OFD diagnostic: check whether this gate's flip pattern is in the span
     // of previously-recorded patterns. OFD says such gates can be implemented
@@ -229,7 +259,7 @@ pub fn apply_rz_stab_mps(
             // Z(false) or None after this session's semantic cleanup -- hence
             // the simple check below.
             let mut disent_site = None;
-            if affected_sites.len() > 1 {
+            if affected_sites.len() > 1 && deferred_ops.is_empty() {
                 for &(site, pt) in &pauli_map {
                     if matches!(pt, PauliType::X | PauliType::Y)
                         && matches!(disent_flags[site], Some(super::SiteEigenstate::Z(false)))
@@ -265,6 +295,18 @@ pub fn apply_rz_stab_mps(
                         }
                     }
                 }
+            } else if affected_sites.len() > 1
+                && pauli_map.iter().any(|&(site, pt)| {
+                    matches!(pt, PauliType::X | PauliType::Y)
+                        && matches!(disent_flags[site], Some(super::SiteEigenstate::Z(false)))
+                })
+            {
+                // A stored-frame |0> proof is sound for V† P V, but the fast
+                // path also right-composes its absorbing Clifford into C. With
+                // a pending V that would produce C B V instead of the required
+                // C V B. Fall through to the general stored-MPS path and make
+                // that narrowly avoided optimization cost observable.
+                stats.deferred_disent_bypass += 1;
             }
 
             if let Some(rot_site) = disent_site {

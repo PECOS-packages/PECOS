@@ -801,6 +801,138 @@ fn state_fidelity(first: &[Complex64], second: &[Complex64]) -> f64 {
         .norm_sqr()
 }
 
+fn lazy_frame_clifford_family(seed: u64, num_qubits: usize) -> Vec<Gate> {
+    let mut word = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut next = || {
+        word ^= word << 13;
+        word ^= word >> 7;
+        word ^= word << 17;
+        word
+    };
+    let mut gates = Vec::new();
+    for layer in 0..2 {
+        let target = next() as usize % num_qubits;
+        let mut neighbor = next() as usize % num_qubits;
+        if neighbor == target {
+            neighbor = (neighbor + 1) % num_qubits;
+        }
+        // Every layer changes basis before spreading it, so this is an
+        // honest Clifford family rather than a diagonal tail.
+        gates.push(Gate::H(target));
+        if layer % 2 == 0 {
+            gates.push(Gate::Sz(neighbor));
+            gates.push(Gate::Cx(target, neighbor));
+        } else {
+            gates.push(Gate::Cz(target, neighbor));
+            gates.push(Gate::Cx(neighbor, target));
+        }
+    }
+    gates
+}
+
+#[test]
+fn lazy_measure_clifford_rz_conditional_state_fidelity() {
+    const NUM_SEEDS: u64 = 24;
+    const NUM_QUBITS: usize = 3;
+    let mut fidelities = Vec::with_capacity(NUM_SEEDS as usize);
+
+    for seed in 0..NUM_SEEDS {
+        let preparation = vec![
+            Gate::H(1),
+            Gate::Rz(1, Angle64::QUARTER_TURN / 2_u64),
+            Gate::Sz(0),
+            Gate::H(0),
+            Gate::Cx(0, 1),
+            Gate::H(2),
+            Gate::Cx(1, 2),
+        ];
+        let cliffords = lazy_frame_clifford_family(seed, NUM_QUBITS);
+        let measured = 0;
+        let rotated = 1;
+        let angle = Angle64::from_radians(0.65 + 0.01 * seed as f64);
+
+        let mut simulator =
+            build_stn_with_mode(NUM_QUBITS, 0x5550_0000 + seed, MeasurementMode::Lazy);
+        let mut dense = DenseStateVec::new(NUM_QUBITS);
+        replay_gates(&mut simulator, &preparation);
+        replay_gates(&mut dense, &preparation);
+
+        let outcome = simulator.mz(&[QubitId(measured)])[0].outcome;
+        let (_, mut expected) = projected_dense_state(dense, measured, outcome)
+            .expect("the sampled Lazy branch must be present in the dense oracle");
+        replay_gates(&mut simulator, &cliffords);
+        replay_gates(&mut expected, &cliffords);
+        let mut before_rotation = simulator.clone();
+        before_rotation.flush();
+        let before_fidelity = state_fidelity(&before_rotation.state_vector(), &expected.state());
+        assert!(
+            before_fidelity >= 1.0 - 1e-10,
+            "seed={seed}: the Lazy conditional state must be correct before RZ; fidelity={before_fidelity:.16}"
+        );
+        simulator.rz(angle, &[QubitId(rotated)]);
+        expected.rz(angle, &[QubitId(rotated)]);
+
+        simulator.flush();
+        let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+        eprintln!(
+            "lazy-frame-rz-fidelity seed={seed} measured={measured} rotated={rotated} before={before_fidelity:.16} fidelity={fidelity:.16}"
+        );
+        fidelities.push(fidelity);
+    }
+
+    let worst = fidelities.iter().copied().fold(1.0_f64, f64::min);
+    let failed = fidelities
+        .iter()
+        .filter(|&&fidelity| fidelity < 1.0 - 1e-10)
+        .count();
+    assert_eq!(
+        failed, 0,
+        "issue #555: {failed}/{NUM_SEEDS} Lazy mz -> Clifford -> RZ conditional states failed; worst fidelity={worst:.16}"
+    );
+}
+
+#[test]
+fn lazy_frame_rz_does_not_consume_stored_disentangling_proof() {
+    const FRAME_SEED: u64 = 4;
+    let preparation = vec![
+        Gate::H(1),
+        Gate::Rz(1, Angle64::QUARTER_TURN / 2_u64),
+        Gate::H(0),
+        Gate::Cx(0, 1),
+    ];
+    let cliffords = lazy_frame_clifford_family(FRAME_SEED, 4);
+    let angle = Angle64::from_radians(0.71);
+    let mut simulator = build_stn_with_mode(4, 0x5555, MeasurementMode::Lazy);
+    let mut dense = DenseStateVec::new(4);
+    replay_gates(&mut simulator, &preparation);
+    replay_gates(&mut dense, &preparation);
+    let outcome = simulator.mz(&[QubitId(0)])[0].outcome;
+    let (_, mut expected) = projected_dense_state(dense, 0, outcome).unwrap();
+    replay_gates(&mut simulator, &cliffords);
+    replay_gates(&mut expected, &cliffords);
+
+    let bypass_before = simulator.stats.deferred_disent_bypass;
+    let disent_before = simulator.stats.multi_disent;
+    simulator.rz(angle, &[QubitId(2)]);
+    expected.rz(angle, &[QubitId(2)]);
+    assert_eq!(
+        simulator.stats.deferred_disent_bypass,
+        bypass_before + 1,
+        "the fixture must expose a stored |0> proof that must not be absorbed across V"
+    );
+    assert_eq!(
+        simulator.stats.multi_disent, disent_before,
+        "a pending Lazy frame must prevent tableau-right-composing exact disentangling"
+    );
+
+    simulator.flush();
+    let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+    assert!(
+        fidelity >= 1.0 - 1e-10,
+        "bypassed stored-proof path must remain state-correct; fidelity={fidelity:.16}"
+    );
+}
+
 fn assert_default_state_matches(
     simulator: &mut StabMps,
     expected: &mut DenseStateVec,

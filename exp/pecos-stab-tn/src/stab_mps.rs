@@ -837,6 +837,9 @@ pub struct StabMpsStats {
     pub single_site: u64,
     /// Non-Cliffords that fired multi-site disent (tableau right-compose).
     pub multi_disent: u64,
+    /// Multi-site rotations that could use a stored |0> proof but bypassed
+    /// tableau-right-composing disentangling because a Lazy frame was pending.
+    pub deferred_disent_bypass: u64,
     /// Missing |0> flags recovered numerically at product sites.
     pub numerical_redetect: u64,
     /// Non-Cliffords that fell through to the std multi-site CNOT cascade path.
@@ -2502,9 +2505,11 @@ impl StabMps {
                 self.flags.normalize_after_gate(),
                 &mut non_clifford::RzContext {
                     disent_flags: &mut self.disent_flags,
-                    // Redetection reads stored tensors; with pending lazy deferred
-                    // ops the effective state is V * stored MPS, so stored |0> does
-                    // not imply effective |0>.
+                    deferred_ops: &self.deferred_ops,
+                    // Redetection only feeds exact disentangling. That fast path
+                    // is disabled while V is pending because its tableau
+                    // right-composition cannot be moved across V, so avoid the
+                    // otherwise unused stored-tensor contractions too.
                     numerical_flag_redetection: self.flags.numerical_flag_redetection()
                         && self.deferred_ops.is_empty(),
                     gf2_matrix: &mut self.gf2_matrix,
@@ -6681,6 +6686,116 @@ mod tests {
         assert!(
             !stn.is_state_exact(),
             "lazy mode itself is a conservative exactness guard"
+        );
+    }
+
+    #[test]
+    fn lazy_multi_measurement_cnot_cz_frame_rz_matches_dense() {
+        use pecos_simulators::DenseStateVec;
+
+        fn project_z(state: &[Complex64], qubit: usize, outcome: bool) -> Vec<Complex64> {
+            let probability = state
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| ((*index >> qubit) & 1 != 0) == outcome)
+                .map(|(_, amplitude)| amplitude.norm_sqr())
+                .sum::<f64>();
+            assert!(probability > 1e-14, "sampled branch must have support");
+            let scale = probability.sqrt().recip();
+            state
+                .iter()
+                .enumerate()
+                .map(|(index, &amplitude)| {
+                    if ((index >> qubit) & 1 != 0) == outcome {
+                        amplitude * scale
+                    } else {
+                        Complex64::new(0.0, 0.0)
+                    }
+                })
+                .collect()
+        }
+
+        let mut stn = StabMps::builder(4)
+            .seed(0x5550)
+            .measurement(MeasurementMode::Lazy)
+            .merge_rz(false)
+            .build();
+        let mut dense = DenseStateVec::new(4);
+        for q in 0..4 {
+            let angle = Angle64::from_radians(0.23 + 0.07 * q as f64);
+            stn.h(&[QubitId(q)]);
+            dense.h(&[QubitId(q)]);
+            stn.rz(angle, &[QubitId(q)]);
+            dense.rz(angle, &[QubitId(q)]);
+        }
+        for &(control, target) in &[(0, 1), (2, 3)] {
+            stn.cx(&[(QubitId(control), QubitId(target))]);
+            dense.cx(&[(QubitId(control), QubitId(target))]);
+        }
+        for &(first, second) in &[(1, 2), (3, 0)] {
+            stn.cz(&[(QubitId(first), QubitId(second))]);
+            dense.cz(&[(QubitId(first), QubitId(second))]);
+        }
+
+        for (measurement, measured) in [0, 3, 1].into_iter().enumerate() {
+            let outcome = stn.mz(&[QubitId(measured)])[0].outcome;
+            let projected = project_z(&dense.state(), measured, outcome);
+            dense = DenseStateVec::from_state(
+                &projected,
+                PecosRng::seed_from_u64(0x5550 + measurement as u64 + 1),
+            );
+        }
+        assert!(
+            stn.deferred_ops
+                .iter()
+                .any(|op| matches!(op, measure::DeferredOp::Cnot(_, _))),
+            "fixture must retain a lazy pre-reduction CNOT: {:?}",
+            stn.deferred_ops
+        );
+        assert!(
+            stn.deferred_ops
+                .iter()
+                .any(|op| matches!(op, measure::DeferredOp::Cz(_, _))),
+            "fixture must retain a lazy basis-rotation CZ: {:?}",
+            stn.deferred_ops
+        );
+        assert!(
+            stn.deferred_ops.len() > 2,
+            "fixture must exercise a nontrivial deferred queue: {:?}",
+            stn.deferred_ops
+        );
+
+        for q in [0, 0, 3] {
+            stn.sz(&[QubitId(q)]);
+            dense.sz(&[QubitId(q)]);
+        }
+        for &(control, target) in &[(3, 1), (3, 0)] {
+            stn.cx(&[(QubitId(control), QubitId(target))]);
+            dense.cx(&[(QubitId(control), QubitId(target))]);
+        }
+        stn.sz(&[QubitId(3)]);
+        dense.sz(&[QubitId(3)]);
+        stn.h(&[QubitId(0)]);
+        dense.h(&[QubitId(0)]);
+        stn.cx(&[(QubitId(1), QubitId(0))]);
+        dense.cx(&[(QubitId(1), QubitId(0))]);
+        let angle = Angle64::from_radians(0.67);
+        stn.rz(angle, &[QubitId(0)]);
+        dense.rz(angle, &[QubitId(0)]);
+
+        stn.flush();
+        let actual = stn.state_vector();
+        let expected = dense.state();
+        let fidelity = actual
+            .iter()
+            .zip(expected)
+            .map(|(left, right)| left.conj() * right)
+            .sum::<Complex64>()
+            .norm_sqr();
+        eprintln!("lazy-multi-measurement-frame-rz fidelity={fidelity:.16}");
+        assert!(
+            fidelity >= 1.0 - 1e-10,
+            "issue #555 multi-measurement lazy frame must match dense; fidelity={fidelity:.16}"
         );
     }
 

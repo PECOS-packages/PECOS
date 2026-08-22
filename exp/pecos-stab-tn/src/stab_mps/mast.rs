@@ -474,6 +474,7 @@ impl Mast {
                 true,
                 &mut non_clifford::RzContext {
                     disent_flags: &mut self.disent_flags,
+                    deferred_ops: &[],
                     numerical_flag_redetection: self.numerical_flag_redetection,
                     gf2_matrix: &mut self.gf2_matrix,
                     stats: &mut self.stats,
@@ -533,6 +534,7 @@ impl Mast {
                     true,
                     &mut non_clifford::RzContext {
                         disent_flags: &mut self.disent_flags,
+                        deferred_ops: &[],
                         numerical_flag_redetection: self.numerical_flag_redetection,
                         gf2_matrix: &mut self.gf2_matrix,
                         stats: &mut self.stats,

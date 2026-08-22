@@ -570,7 +570,7 @@ impl StabMpsBuilder {
         self
     }
 
-    /// Select the singular-measurement policy. The default is
+    /// Select the single-qubit measurement policy. The default is
     /// [`MeasurementMode::Exact`]. See [`MeasurementMode`] for the affected
     /// operation family and the exact behavior of plural sampling.
     #[must_use]
@@ -829,7 +829,7 @@ pub struct StabMps {
     pauli_frame_z: Vec<bool>,
     /// Global scalar of the Pauli frame.
     pauli_frame_phase: Complex64,
-    /// Policy for singular measurement and the operations built on it.
+    /// Policy for single-qubit measurement and the operations built on it.
     measurement_mode: MeasurementMode,
     /// Runtime feature flags.
     flags: StabMpsFlags,
@@ -1520,7 +1520,7 @@ impl StabMps {
         self.mps.deferred_branch_lost_count()
     }
 
-    /// Return the configured singular-measurement policy.
+    /// Return the configured single-qubit measurement policy.
     #[must_use]
     pub fn measurement_mode(&self) -> MeasurementMode {
         self.measurement_mode
@@ -2586,7 +2586,13 @@ impl QuantumSimulator for StabMps {
 impl pecos_random::RngManageable for StabMps {
     type Rng = PecosRng;
 
-    fn set_rng(&mut self, rng: Self::Rng) {
+    fn set_rng(&mut self, mut rng: Self::Rng) {
+        // StabMps has two independent random streams. Derive the tableau
+        // stream from one draw of the supplied RNG, then retain the advanced
+        // RNG as the main stream. Thus `set_seed(seed)` deterministically
+        // leaves the main stream at a documented one-draw offset.
+        let tableau_seed = rng.next_u64();
+        self.tableau.set_rng(PecosRng::seed_from_u64(tableau_seed));
         self.rng = rng;
     }
 
@@ -8058,6 +8064,43 @@ mod tests {
             .measurement(MeasurementMode::Lazy)
             .build();
         assert_eq!(lazy.clone().measurement_mode(), MeasurementMode::Lazy);
+    }
+
+    fn assert_clone_set_seed_reseeds_trivial_tableau_measurements(mode: MeasurementMode) {
+        const NUM_SHOTS: usize = 400;
+
+        let mut prepared = StabMps::builder(2).seed(0x5EED).measurement(mode).build();
+        prepared.h(&[QubitId(0)]);
+        prepared.cx(&[(QubitId(0), QubitId(1))]);
+        assert_eq!(prepared.stats.total_nonclifford, 0);
+        assert_eq!(prepared.max_bond_dim(), 1);
+
+        let distinct = (0..NUM_SHOTS)
+            .map(|shot| {
+                let mut simulator = prepared.clone();
+                simulator.set_seed(0xC10E_0000_u64.wrapping_add(shot as u64));
+                simulator
+                    .mz(&[QubitId(0), QubitId(1)])
+                    .into_iter()
+                    .map(|result| result.outcome)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<std::collections::HashSet<_>>();
+
+        assert!(
+            distinct.len() > 1,
+            "{mode:?} clone+set_seed shots collapsed to one tableau-RNG outcome: {distinct:?}"
+        );
+    }
+
+    #[test]
+    fn clone_set_seed_reseeds_trivial_tableau_measurements_in_lazy_mode() {
+        assert_clone_set_seed_reseeds_trivial_tableau_measurements(MeasurementMode::Lazy);
+    }
+
+    #[test]
+    fn clone_set_seed_reseeds_trivial_tableau_measurements_in_pragmatic_mode() {
+        assert_clone_set_seed_reseeds_trivial_tableau_measurements(MeasurementMode::Pragmatic);
     }
 
     #[test]

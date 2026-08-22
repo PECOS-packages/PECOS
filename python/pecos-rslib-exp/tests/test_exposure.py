@@ -124,6 +124,7 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     q0_one = exp.StabMps(2, seed=13)
     q0_one.run_1q_gate("X", 0)
     assert not hasattr(q0_one, "sample_bit" + "string")
+    assert hasattr(q0_one, "sample_bit" + "strings")
     assert q0_one.sample_bitstrings(4) == [[True, False]] * 4
     assert q0_one.state_vector() == [
         (0.0, 0.0),

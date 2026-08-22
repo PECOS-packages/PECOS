@@ -439,7 +439,7 @@ impl PyStabMpsBuilder {
         }
     }
 
-    /// Select "exact", "pragmatic", or "lazy" singular measurement.
+    /// Select "exact", "pragmatic", or "lazy" single-qubit measurement.
     ///
     /// Lazy preserves exact conditional states after issues #555 and #572,
     /// subject to configured MPS truncation. It consumes a distinct RNG stream

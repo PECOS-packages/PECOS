@@ -26,7 +26,7 @@ use pecos_stab_tn::stab_mps::{MeasurementMode, StabMps};
 /// Implements `SimulatorFactory` so it can be used with `custom_backend()`.
 #[derive(Debug, Clone)]
 pub struct StabMpsBuilder {
-    /// Singular-measurement policy.
+    /// Single-qubit measurement policy.
     pub measurement: MeasurementMode,
     /// Maximum MPS bond dimension.
     pub max_bond_dim: usize,
@@ -55,7 +55,7 @@ impl StabMpsBuilder {
         Self::default()
     }
 
-    /// Select the singular-measurement policy.
+    /// Select the single-qubit measurement policy.
     #[must_use]
     pub fn with_measurement(mut self, measurement: MeasurementMode) -> Self {
         self.measurement = measurement;

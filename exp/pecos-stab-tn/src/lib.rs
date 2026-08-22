@@ -28,8 +28,7 @@
 //! and numerical flag redetection remain opt-in. `sample_bitstrings` is the
 //! bitstring sampler and is always exact by construction; per-shot sampling
 //! through the selected measurement mode is an explicit `mz` loop on fresh
-//! simulators. To
-//! recover the former behavior explicitly, use `max_bond_dim(64)`,
+//! simulators. To recover the former behavior explicitly, use `max_bond_dim(64)`,
 //! `max_truncation_error(0.0)`, and `merge_rz(false)` on the builder.
 //! `Mast` instead defaults `merge_rz` to false so every RZ immediately exposes
 //! its injection and ancilla-capacity cost; enable it explicitly when batching

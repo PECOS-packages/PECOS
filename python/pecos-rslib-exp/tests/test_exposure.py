@@ -14,6 +14,7 @@ STATS_KEYS = {
     "total_nonclifford",
     "single_site",
     "multi_disent",
+    "deferred_disent_bypass",
     "numerical_redetect",
     "multi_std",
     "stabilizer",

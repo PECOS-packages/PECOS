@@ -51,6 +51,7 @@ pub(crate) fn stab_mps_stats_to_dict(py: Python<'_>, stats: &StabMpsStats) -> Py
     result.set_item("total_nonclifford", stats.total_nonclifford)?;
     result.set_item("single_site", stats.single_site)?;
     result.set_item("multi_disent", stats.multi_disent)?;
+    result.set_item("deferred_disent_bypass", stats.deferred_disent_bypass)?;
     result.set_item("numerical_redetect", stats.numerical_redetect)?;
     result.set_item("multi_std", stats.multi_std)?;
     result.set_item("stabilizer", stats.stabilizer)?;

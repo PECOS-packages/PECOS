@@ -837,6 +837,9 @@ pub struct StabMpsStats {
     pub single_site: u64,
     /// Non-Cliffords that fired multi-site disent (tableau right-compose).
     pub multi_disent: u64,
+    /// Multi-site rotations that could use a stored |0> proof but bypassed
+    /// tableau-right-composing disentangling because a Lazy frame was pending.
+    pub deferred_disent_bypass: u64,
     /// Missing |0> flags recovered numerically at product sites.
     pub numerical_redetect: u64,
     /// Non-Cliffords that fell through to the std multi-site CNOT cascade path.
@@ -2502,9 +2505,11 @@ impl StabMps {
                 self.flags.normalize_after_gate(),
                 &mut non_clifford::RzContext {
                     disent_flags: &mut self.disent_flags,
-                    // Redetection reads stored tensors; with pending lazy deferred
-                    // ops the effective state is V * stored MPS, so stored |0> does
-                    // not imply effective |0>.
+                    deferred_ops: &self.deferred_ops,
+                    // Redetection only feeds exact disentangling. That fast path
+                    // is disabled while V is pending because its tableau
+                    // right-composition cannot be moved across V, so avoid the
+                    // otherwise unused stored-tensor contractions too.
                     numerical_flag_redetection: self.flags.numerical_flag_redetection()
                         && self.deferred_ops.is_empty(),
                     gf2_matrix: &mut self.gf2_matrix,

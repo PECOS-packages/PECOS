@@ -4,7 +4,7 @@ use super::decoder_scoring::{DecodeRangeResult, ShotDecodeError, decode_and_scor
 use super::{PyDecodeStats, PySampleBatch, decoder_build_error_to_py};
 use pecos_decoder_core::DecoderError;
 use pecos_decoder_core::obs_mask::ObsMask;
-use pecos_decoders::batch::{ExecutionPath, ExecutionPlan, native_sub_batches};
+use pecos_decoders::batch::{ExecutionPath, ExecutionPlan, IndexedChunk, native_sub_batches};
 use pecos_decoders::{DecodeModel, DecoderSpec};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -119,43 +119,66 @@ fn parallel(
         .num_threads(workers)
         .build()
         .map_err(|error| BatchExecutionError::Runtime(error.to_string()))?;
-    let worker_results: Vec<Result<DecodeRangeResult, BatchExecutionError>> = pool.install(|| {
-        (0..workers)
-            .into_par_iter()
-            .map(|worker| {
-                // Build even for an empty range: an explicit worker count means
-                // exactly that many decoder instances and pool threads.
-                let mut decoder = spec.build(model).map_err(BatchExecutionError::Build)?;
-                preflight_dimensions(batch, decoder.as_ref())?;
-                let range =
-                    pecos_decoders::batch::parallel_worker_range(batch.num_shots, workers, worker);
-                let mut syndrome = vec![0u8; batch.num_detectors];
-                decode_and_score_range(
-                    range,
-                    &mut syndrome,
-                    |shot, buffer| {
-                        batch.extract_syndrome(shot, buffer);
-                        batch.extract_obs_mask_wide(shot)
-                    },
-                    decoder.as_mut(),
-                    predictions,
-                    timing,
-                )
-                .map_err(BatchExecutionError::Decode)
-            })
-            .collect()
-    });
+    // Workers pull small chunks from a shared cursor instead of taking one fixed
+    // contiguous slice each. Per-shot decode cost varies by orders of magnitude
+    // for search-based decoders, so a static split leaves workers idle behind a
+    // straggler; dynamic chunks let them steal the remaining work. Each worker
+    // still builds exactly one decoder, and results carry their chunk index so
+    // shot order is restored independently of completion order.
+    let next_chunk = std::sync::atomic::AtomicUsize::new(0);
+    let chunk_shots = pecos_decoders::batch::parallel_chunk_shots(batch.num_shots, workers);
+    let num_chunks = batch.num_shots.div_ceil(chunk_shots);
+    let worker_results: Vec<Result<Vec<IndexedChunk<DecodeRangeResult>>, BatchExecutionError>> =
+        pool.install(|| {
+            (0..workers)
+                .into_par_iter()
+                .map(|_| {
+                    // Build even when this worker wins no chunk: an explicit
+                    // worker count means exactly that many decoder instances.
+                    let mut decoder = spec.build(model).map_err(BatchExecutionError::Build)?;
+                    preflight_dimensions(batch, decoder.as_ref())?;
+                    let mut syndrome = vec![0u8; batch.num_detectors];
+                    let mut mine = Vec::new();
+                    loop {
+                        let chunk_index =
+                            next_chunk.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if chunk_index >= num_chunks {
+                            break;
+                        }
+                        let start = chunk_index * chunk_shots;
+                        let end = (start + chunk_shots).min(batch.num_shots);
+                        let scored = decode_and_score_range(
+                            start..end,
+                            &mut syndrome,
+                            |shot, buffer| {
+                                batch.extract_syndrome(shot, buffer);
+                                batch.extract_obs_mask_wide(shot)
+                            },
+                            decoder.as_mut(),
+                            predictions,
+                            timing,
+                        )
+                        .map_err(BatchExecutionError::Decode)?;
+                        mine.push(IndexedChunk {
+                            chunk_index,
+                            value: scored,
+                        });
+                    }
+                    Ok(mine)
+                })
+                .collect()
+        });
 
     // Indexed parallel collection preserves worker order. Inspect every result
     // and choose the lowest failing shot explicitly so scheduler timing cannot
     // affect the reported error.
-    let mut successes = Vec::with_capacity(workers);
+    let mut chunks = Vec::new();
     let mut decode_errors = Vec::new();
     let mut build_error = None;
     let mut runtime_error = None;
     for result in worker_results {
         match result {
-            Ok(result) => successes.push(result),
+            Ok(mut worker_chunks) => chunks.append(&mut worker_chunks),
             Err(BatchExecutionError::Decode(error)) => decode_errors.push(error),
             Err(BatchExecutionError::Build(error)) if build_error.is_none() => {
                 build_error = Some(error);
@@ -214,7 +237,11 @@ fn parallel(
             Vec::new()
         },
     };
-    for mut result in successes {
+    // Restore shot order from the canonical chunk index: workers finish in
+    // whatever order the scheduler chose, but the caller sees shot order.
+    let ordered = pecos_decoders::batch::assemble_indexed_chunks(chunks, num_chunks)
+        .map_err(|error| BatchExecutionError::Runtime(error.to_string()))?;
+    for mut result in ordered {
         combined.mismatches += result.mismatches;
         combined.predictions.append(&mut result.predictions);
         combined

@@ -42,6 +42,28 @@ pub const SMALL_BATCH_SEQUENTIAL_THRESHOLD: usize = 1000;
 /// Auto-planning gives each generic decoder worker at least this many shots.
 pub const MIN_SHOTS_PER_WORKER: usize = 256;
 
+/// Shots a generic parallel worker claims per trip to the shared cursor.
+///
+/// Search-based decoders vary by orders of magnitude from shot to shot, so
+/// workers pull small chunks dynamically rather than splitting the batch into
+/// one fixed slice each. Small enough to balance a heavy tail, large enough
+/// that the atomic fetch is not the bottleneck.
+pub const PARALLEL_CHUNK_SHOTS: usize = 64;
+
+/// Effective chunk size for one parallel run.
+///
+/// Caps [`PARALLEL_CHUNK_SHOTS`] so a batch smaller than
+/// `workers * PARALLEL_CHUNK_SHOTS` still spreads across every worker an
+/// explicit worker count asked for, instead of leaving the late workers with
+/// no chunk to claim. Always at least 1 so `div_ceil` is safe on empty
+/// batches.
+#[must_use]
+pub fn parallel_chunk_shots(num_shots: usize, workers: usize) -> usize {
+    PARALLEL_CHUNK_SHOTS
+        .min(num_shots.div_ceil(workers.max(1)))
+        .max(1)
+}
+
 /// Native decoders receive at most this many transposed shots at once.
 pub const NATIVE_SUB_BATCH_SHOTS: usize = 1024;
 
@@ -246,26 +268,6 @@ impl Iterator for NativeSubBatches {
 #[must_use]
 pub const fn native_sub_batches(num_shots: usize) -> NativeSubBatches {
     NativeSubBatches { next: 0, num_shots }
-}
-
-/// Return the contiguous shot range assigned to one parallel worker.
-///
-/// Invalid worker indices and a zero worker count produce an empty range at
-/// the end of the batch; execution planning rejects zero workers before this
-/// helper is reached.
-#[must_use]
-pub fn parallel_worker_range(
-    num_shots: usize,
-    workers: usize,
-    worker_index: usize,
-) -> Range<usize> {
-    if workers == 0 || worker_index >= workers {
-        return num_shots..num_shots;
-    }
-    let chunk_size = num_shots.div_ceil(workers);
-    let start = worker_index.saturating_mul(chunk_size).min(num_shots);
-    let end = start.saturating_add(chunk_size).min(num_shots);
-    start..end
 }
 
 /// Number of bytes required by the reusable native transpose scratch buffer.
@@ -633,16 +635,15 @@ mod tests {
     }
 
     #[test]
-    fn parallel_worker_ranges_cover_empty_and_oversubscribed_batches() {
-        let oversubscribed = (0..4)
-            .map(|worker| parallel_worker_range(2, 4, worker))
-            .collect::<Vec<_>>();
-        assert_eq!(oversubscribed, vec![0..1, 1..2, 2..2, 2..2]);
-
-        let empty = (0..4)
-            .map(|worker| parallel_worker_range(0, 4, worker))
-            .collect::<Vec<_>>();
-        assert_eq!(empty, vec![0..0, 0..0, 0..0, 0..0]);
+    fn parallel_chunk_shots_spreads_small_batches_across_all_workers() {
+        // Big batch: the fixed chunk size stands.
+        assert_eq!(parallel_chunk_shots(100_000, 8), PARALLEL_CHUNK_SHOTS);
+        // Small batch with many workers: shrink chunks so every worker can
+        // claim at least one (500 shots / 32 workers -> 16-shot chunks).
+        assert_eq!(parallel_chunk_shots(500, 32), 16);
+        // Degenerate inputs stay safe for div_ceil.
+        assert_eq!(parallel_chunk_shots(0, 4), 1);
+        assert_eq!(parallel_chunk_shots(5, 0), 5);
     }
 
     #[test]
@@ -666,7 +667,7 @@ mod tests {
                 .map(|worker| {
                     scope.spawn(move || {
                         let mut decoder = FakeDecoder;
-                        parallel_worker_range(16, 4, worker).find_map(|shot_index| {
+                        (worker * 4..(worker + 1) * 4).find_map(|shot_index| {
                             let syndrome = [u8::try_from(shot_index).unwrap()];
                             decoder
                                 .decode_obs(&syndrome)

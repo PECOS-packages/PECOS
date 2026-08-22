@@ -126,9 +126,8 @@ fn parallel(
     // still builds exactly one decoder, and results carry their chunk index so
     // shot order is restored independently of completion order.
     let next_chunk = std::sync::atomic::AtomicUsize::new(0);
-    let num_chunks = batch
-        .num_shots
-        .div_ceil(pecos_decoders::batch::PARALLEL_CHUNK_SHOTS);
+    let chunk_shots = pecos_decoders::batch::parallel_chunk_shots(batch.num_shots, workers);
+    let num_chunks = batch.num_shots.div_ceil(chunk_shots);
     let worker_results: Vec<Result<Vec<IndexedChunk<DecodeRangeResult>>, BatchExecutionError>> =
         pool.install(|| {
             (0..workers)
@@ -146,9 +145,8 @@ fn parallel(
                         if chunk_index >= num_chunks {
                             break;
                         }
-                        let start = chunk_index * pecos_decoders::batch::PARALLEL_CHUNK_SHOTS;
-                        let end = (start + pecos_decoders::batch::PARALLEL_CHUNK_SHOTS)
-                            .min(batch.num_shots);
+                        let start = chunk_index * chunk_shots;
+                        let end = (start + chunk_shots).min(batch.num_shots);
                         let scored = decode_and_score_range(
                             start..end,
                             &mut syndrome,
@@ -241,10 +239,7 @@ fn parallel(
     };
     // Restore shot order from the canonical chunk index: workers finish in
     // whatever order the scheduler chose, but the caller sees shot order.
-    let expected_chunks = batch
-        .num_shots
-        .div_ceil(pecos_decoders::batch::PARALLEL_CHUNK_SHOTS);
-    let ordered = pecos_decoders::batch::assemble_indexed_chunks(chunks, expected_chunks)
+    let ordered = pecos_decoders::batch::assemble_indexed_chunks(chunks, num_chunks)
         .map_err(|error| BatchExecutionError::Runtime(error.to_string()))?;
     for mut result in ordered {
         combined.mismatches += result.mismatches;

@@ -378,7 +378,10 @@ the shortfall probability, so with the validation rows and margin included a
 rank failure is vanishingly unlikely. Elimination uses every probe row;
 validation rows are additional consistency constraints on the same fit, not a
 held-out set. Raise `probe_shots` to buy validation confidence against a
-mis-inferred parity, not resolution.
+mis-inferred parity, not resolution. Note that the derived floor grows with
+the raw measurement count and the GF(2) elimination is quadratic in it, so a
+program with many thousands of raw measurements pays a noticeable inference
+cost where it previously failed fast asking for more shots.
 
 ## Failure guide
 

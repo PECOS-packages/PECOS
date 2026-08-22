@@ -128,8 +128,10 @@ impl DecoderSpec {
     /// hyperedge model would silently decode against a truncated version of
     /// itself; [`build`](Self::build) rejects that instead. `AStar` builds
     /// from the same matching graph (`AStarFull` uses the full check matrix
-    /// and stays exempt), and both `PyMatching` modes feed the graph converter,
-    /// which keeps only one- and two-detector mechanisms. Decomposed models
+    /// and stays exempt). Uncorrelated `PyMatching` silently keeps only one-
+    /// and two-detector mechanisms; correlated `PyMatching` errors upstream
+    /// on an undecomposed hyperedge, so guarding it here only makes the
+    /// rejection earlier and the message actionable. Decomposed models
     /// (`^` separators) pass: each component is graphlike.
     ///
     /// Deliberately leaf-only. Composite specs are not classified here: each

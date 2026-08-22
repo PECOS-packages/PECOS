@@ -704,7 +704,9 @@ pub struct MatchingEdge {
 /// Parses a DEM into edges suitable for MWPM decoders (`PyMatching`, Fusion
 /// Blossom). Each graphlike error mechanism (1-2 detectors) becomes one edge.
 /// Decomposed mechanisms (`D0 ^ D1`) are split into their components.
-/// Hyperedges (3+ detectors after resolution) are skipped with a warning.
+/// Hyperedges (3+ detectors after resolution) are silently skipped and only
+/// counted in `skipped_hyperedges`; callers that cannot represent them must
+/// check that count and reject the model.
 ///
 /// # Example
 ///

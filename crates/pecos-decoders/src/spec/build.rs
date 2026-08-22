@@ -86,10 +86,9 @@ pub(super) fn build(
     spec: &DecoderSpec,
     model: &DecodeModel,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    match model {
-        DecodeModel::SingleDem(dem) => ensure_graphlike_model(spec, dem)?,
-        DecodeModel::HybridDem { decomposed, .. } => ensure_graphlike_model(spec, decomposed)?,
-    }
+    // The graphlike guard runs inside the two building arms, after the
+    // spec/model-kind mismatch arms: a caller who passed the wrong model kind
+    // should hear that, not a remedy for a model the spec would never parse.
     let decoder = match (spec, model) {
         (
             DecoderSpec::BeliefMatching(BeliefMatchingConfig {
@@ -97,7 +96,10 @@ pub(super) fn build(
                 ..
             }),
             DecodeModel::HybridDem { full, decomposed },
-        ) => build_belief_matching_hybrid(full, decomposed),
+        ) => {
+            ensure_graphlike_model(spec, decomposed)?;
+            build_belief_matching_hybrid(full, decomposed)
+        }
         (
             DecoderSpec::BeliefMatching(BeliefMatchingConfig {
                 mode: BeliefMatchingMode::Hybrid,
@@ -107,7 +109,10 @@ pub(super) fn build(
         ) => Err(DecoderError::InvalidConfiguration(
             "belief_matching_hybrid requires DecodeModel::HybridDem".to_string(),
         )),
-        (_, DecodeModel::SingleDem(dem)) => build_single(spec, dem),
+        (_, DecodeModel::SingleDem(dem)) => {
+            ensure_graphlike_model(spec, dem)?;
+            build_single(spec, dem)
+        }
         (_, DecodeModel::HybridDem { .. }) => Err(DecoderError::InvalidConfiguration(format!(
             "{} requires DecodeModel::SingleDem",
             family_name(spec)
@@ -1342,7 +1347,7 @@ mod tests {
             DecoderSpec::AStar,
             DecoderSpec::PyMatching(PyMatchingConfig::default()),
             DecoderSpec::PyMatching(PyMatchingConfig {
-                correlated: false,
+                correlated: true,
                 ..PyMatchingConfig::default()
             }),
             // Composite: not classified at the top level, but the member build
@@ -1366,7 +1371,7 @@ mod tests {
     }
 
     #[test]
-    fn hyperedge_capable_decoders_still_accept_a_hyperedge_model() {
+    fn hyperedge_capable_decoders_are_not_classified_graphlike_only() {
         for spec in [
             DecoderSpec::BpOsd(BpOsdConfig::default()),
             DecoderSpec::Tesseract(TesseractConfig::default()),
@@ -1400,6 +1405,29 @@ mod tests {
                 "{spec:?} must defer graphlike classification to member builds",
             );
         }
+    }
+
+    #[cfg(feature = "uf")]
+    #[test]
+    fn windowed_phase1_rejects_a_hyperedge_window_submodel() {
+        // The hard-coded UF phase-1 closures bypass the top-level guard, so
+        // the per-window guard is the only thing standing between a retained
+        // hyperedge and silent truncation. Without detector time coordinates
+        // every detector lands in one window, so the sub-model keeps the
+        // hyperedge intact and the closure guard must fire.
+        let spec = DecoderSpec::Windowed(WindowedConfig {
+            mode: WindowedMode::Overlap,
+            ..WindowedConfig::default()
+        });
+        let Err(error) = spec.build(&DecodeModel::SingleDem(HYPEREDGE_DEM.to_string())) else {
+            panic!("windowed phase-1 must reject a hyperedge window sub-model");
+        };
+        let message = error.to_string();
+        assert!(message.contains("phase-1 window decoder"), "{message}");
+        assert!(
+            message.contains("to_string_terminal_graphlike_decomposed"),
+            "{message}"
+        );
     }
 
     const DEM: &str = "error(0.1) D0 D1 L0\nerror(0.05) D1\n";

@@ -14,7 +14,7 @@ Two capabilities live here that the production decoders do not offer:
 
 ## Frontier and BP-Trellis
 
-Both take a Stim-format DEM string and return the same result type.
+Both take a Stim-format DEM string and expose the same result surface.
 `FrontierDecoder` and `BpTrellisDecoder` are each a single trellis decoder over
 the same machinery (BP-Trellis adds BP-informed pruning scores); the separate
 `FrontierCommitteeDecoder` runs a two-leg forward/backward committee over them.
@@ -59,7 +59,10 @@ assert trellis.status == "exact"
 
 `logical_masses` holds `(observable_mask, log_mass)` pairs ordered by decreasing
 mass, and `runner_up_gap` is the log-mass difference between the first two --
-`None` when pruning left no runner-up, so handle that case before comparing.
+`None` whenever fewer than two logical classes survive to the end, which
+includes a fully exact decode with a single reachable class, so treat a
+missing gap as "no runner-up existed", not as a pruning signal, and handle it
+before comparing.
 When `status` is `"exact"` (nothing was pruned), the masses are the true
 unnormalized posteriors: a large gap means one logical class really was
 overwhelmingly more likely, and a gap near zero means the shot was nearly a
@@ -94,7 +97,10 @@ represent:
 ```
 Invalid configuration: fusion_blossom needs a graphlike model, but this DEM has
 113 mechanism(s) touching three or more detectors. Decoding it here would
-silently ignore them.
+silently ignore them. Pass a decomposed model
+(DetectorErrorModel.to_string_terminal_graphlike_decomposed() or
+to_string_source_graphlike_decomposed()), or use a decoder that accepts
+hyperedges such as bp_osd or tesseract.
 ```
 
 There are two ways forward. The production option is a decoder that represents

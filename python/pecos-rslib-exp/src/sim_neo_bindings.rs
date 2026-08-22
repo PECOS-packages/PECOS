@@ -440,6 +440,10 @@ impl PyStabMpsBuilder {
     }
 
     /// Select "exact", "pragmatic", or "lazy" singular measurement.
+    ///
+    /// Lazy preserves exact conditional states after issues #555 and #572,
+    /// subject to configured MPS truncation. It consumes a distinct RNG stream
+    /// from exact, so equal seeds are not shot-for-shot comparable across modes.
     fn measurement<'py>(mut slf: PyRefMut<'py, Self>, mode: &str) -> PyResult<PyRefMut<'py, Self>> {
         slf.inner.measurement = crate::parse_measurement_mode(mode)?;
         Ok(slf)

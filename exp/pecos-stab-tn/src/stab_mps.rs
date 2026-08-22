@@ -373,7 +373,13 @@ pub enum MeasurementMode {
     /// Preserve the legacy uncompensated eager pre-reduction path. This is
     /// faster for some workloads but can bias the stored conditional state.
     Pragmatic,
-    /// Keep exact measurement-basis Cliffords in a deferred virtual frame.
+    /// Keep measurement-basis Cliffords in a deferred virtual frame.
+    ///
+    /// Conditional states are exact after the issue #555 and #572 frame and
+    /// projection fixes, subject to the configured MPS truncation. Call
+    /// [`StabMps::flush`] before Rust state reads. This path consumes a distinct
+    /// RNG stream from [`Self::Exact`], so equal seeds are not shot-for-shot
+    /// comparable across the two modes.
     Lazy,
 }
 

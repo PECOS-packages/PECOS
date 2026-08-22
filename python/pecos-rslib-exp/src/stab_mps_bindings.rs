@@ -381,6 +381,10 @@ impl PyStabMps {
     /// `measurement` accepts `"exact"`, `"pragmatic"`, or `"lazy"`; when
     /// omitted, the normal default is exact. An explicit value is applied
     /// after `for_qec` and therefore overrides that preset's exact policy.
+    /// Lazy has exact conditional states after issues #555 and #572, subject
+    /// to configured MPS truncation, and Python state reads auto-flush its
+    /// virtual frame. Lazy and exact consume distinct RNG streams, so equal
+    /// seeds are not shot-for-shot comparable between those modes.
     /// `max_truncation_error=None` preserves the builder default of
     /// `1e-8`; a float overrides it, and `0.0` disables adaptive truncation
     /// while retaining the SVD cutoff and bond cap. Negative and non-finite

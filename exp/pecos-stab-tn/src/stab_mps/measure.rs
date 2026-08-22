@@ -949,17 +949,14 @@ fn right_compose_measurement_basis_rotation(
     }
 }
 
-/// Apply the inverse of the virtual Pauli gauge between two structurally
-/// identical Clifford tableaux.
+/// Return the virtual Z gauge between two structurally identical tableaux.
 ///
-/// The forced measurement outcome fixes the stabilizer-row signs, leaving only
-/// destabilizer-row sign differences. Each such difference is a right-composed
-/// Z on that virtual site, so applying Z to the MPS realizes the inverse gauge.
-fn compensate_measurement_pauli_gauge(
-    mps: &mut Mps,
-    predicted: &SparseStabY,
-    measured: &SparseStabY,
-) -> Vec<usize> {
+/// `SparseStabY::nondeterministic_meas` structurally XORs destabilizer rows
+/// without propagating their phases. The forced outcome fixes stabilizer-row
+/// signs, so the only possible difference from a phase-complete predicted
+/// tableau is a right-composed Z on each returned virtual site:
+/// `measured * Z_gauge = predicted`.
+fn measurement_pauli_gauge_sites(predicted: &SparseStabY, measured: &SparseStabY) -> Vec<usize> {
     assert_eq!(predicted.num_qubits(), measured.num_qubits());
     let rows_match = |predicted_rows: &[BitSet], measured_rows: &[BitSet]| {
         predicted_rows
@@ -1001,8 +998,6 @@ fn compensate_measurement_pauli_gauge(
             .eq(measured.destabs().signs_i.iter())
     );
 
-    let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
-
     // `SparseStabY::apply_outcome`, called by the nondeterministic
     // `mz_forced` path, forces the replacement stabilizer row's sign to the
     // requested outcome. The predicted basis rotation encodes that same sign,
@@ -1015,17 +1010,102 @@ fn compensate_measurement_pauli_gauge(
             .eq(measured.stabs().signs_minus.iter()),
         "apply_outcome must leave no stabilizer-sign (X-gauge) difference"
     );
-    let mut modified_sites = Vec::new();
-    for site in 0..predicted.num_qubits() {
-        let differs = predicted.destabs().signs_minus.contains(site)
-            != measured.destabs().signs_minus.contains(site);
-        if differs {
-            mps.apply_diagonal_one_site(site, &z_diag)
-                .expect("MPS op on valid site");
-            modified_sites.push(site);
+    (0..predicted.num_qubits())
+        .filter(|&site| {
+            predicted.destabs().signs_minus.contains(site)
+                != measured.destabs().signs_minus.contains(site)
+        })
+        .collect()
+}
+
+/// Apply the inverse of the virtual Pauli gauge between two structurally
+/// identical Clifford tableaux.
+fn compensate_measurement_pauli_gauge(
+    mps: &mut Mps,
+    predicted: &SparseStabY,
+    measured: &SparseStabY,
+) -> Vec<usize> {
+    let gauge_sites = measurement_pauli_gauge_sites(predicted, measured);
+    let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
+    for &site in &gauge_sites {
+        mps.apply_diagonal_one_site(site, &z_diag)
+            .expect("MPS op on valid site");
+    }
+    gauge_sites
+}
+
+/// Apply the forced tableau update and enqueue its phase-complete inverse.
+///
+/// If the phase-complete basis rotation predicts `C_predicted = C_before * W`,
+/// the structural forced-measurement implementation can return a tableau with
+/// a virtual Pauli gauge, `C_measured * G = C_predicted`. The deferred frame
+/// must therefore be left-multiplied by both factors: `G * W^-1`.
+fn enqueue_lazy_measurement_basis_update(
+    tableau: &mut SparseStabY,
+    deferred: &mut Vec<DeferredOp>,
+    q_idx: usize,
+    id: usize,
+    phase: Complex64,
+    sign_sites: &[usize],
+    outcome: bool,
+) -> Vec<usize> {
+    assert!(
+        tableau.tracks_destab_signs(),
+        "lazy measurement requires destabilizer-sign tracking"
+    );
+    let mut predicted_tableau = tableau.clone();
+    right_compose_measurement_basis_rotation(
+        &mut predicted_tableau,
+        id,
+        phase,
+        sign_sites,
+        outcome,
+        None,
+    );
+
+    let signed_phase = Complex64::new(if outcome { -1.0 } else { 1.0 }, 0.0) * phase;
+    let id_in_sign = sign_sites.contains(&id);
+    if signed_phase.im.abs() < 1e-9 {
+        debug_assert!(
+            !id_in_sign,
+            "lazy measure: real signed phase={signed_phase:?} but id in sign"
+        );
+        if signed_phase.re < 0.0 {
+            deferred.push(DeferredOp::Z(id));
+        }
+        for &site in sign_sites {
+            if site != id {
+                deferred.push(DeferredOp::Cz(id, site));
+            }
+        }
+    } else {
+        debug_assert!(
+            id_in_sign,
+            "lazy measure: imaginary signed phase={signed_phase:?} but id not in sign"
+        );
+        debug_assert!(
+            signed_phase.re.abs() < 1e-9,
+            "lazy measure: signed phase={signed_phase:?} not pure imaginary"
+        );
+        for &site in sign_sites {
+            if site != id {
+                deferred.push(DeferredOp::Cz(id, site));
+            }
+        }
+        // W contains SZ for +i and SZdg for -i, so W^-1 contains the adjoint.
+        if signed_phase.im > 0.0 {
+            deferred.push(DeferredOp::SZdg(id));
+        } else {
+            deferred.push(DeferredOp::SZ(id));
         }
     }
-    modified_sites
+    deferred.push(DeferredOp::H(id));
+
+    let result = tableau.mz_forced(q_idx, outcome);
+    debug_assert_eq!(result.outcome, outcome);
+    let gauge_sites = measurement_pauli_gauge_sites(&predicted_tableau, tableau);
+    deferred.extend(gauge_sites.iter().copied().map(DeferredOp::Z));
+    gauge_sites
 }
 
 /// Convert a normalized single-flip Pauli eigenstate into the coefficient
@@ -1497,76 +1577,23 @@ pub(super) fn measure_qubit_stab_mps_lazy_with_update(
             // Project stored MPS via conjugated Pauli.
             apply_pauli_projection(mps, &flip_conj, &sign_conj, phase_conj, sign_f, prob);
             mps.compress()?;
-            // Absorb W⁻¹ into V. W satisfies:
-            //   W · Z_id · W† = sp · X_flip · Z_sign  (MPS-frame post-measurement Pauli)
-            // where `sp = sign_f · phase_conj` (sign_f = -1 if outcome else +1).
-            // sp is one of {+1, -1, +i, -i}. Hermiticity of Z_id forces a
-            // dichotomy on `X_flip · Z_sign` (single flip = {id}):
-            //   - id ∉ sign: X_id · Z_sign is Hermitian, sp must be real.
-            //   - id ∈ sign: X_id · Z_id · Z_rest = -i·Y_id·Z_rest is
-            //     anti-Hermitian, sp must be imaginary.
-            //
-            // Basis-rotation constructions (each giving W·Z_id·W† = target):
-            //   Real sp, id ∉ sign:
-            //     sp = +1: W = [CZ(id, s) for s∈sign] · H_id
-            //     sp = -1: W = Z_id · [CZ(id, s) for s∈sign] · H_id
-            //   Imaginary sp, id ∈ sign:
-            //     sp = +i: W = [CZ(id, s) for s∈sign\id] · SZ_id · H_id
-            //     sp = -i: W = [CZ(id, s) for s∈sign\id] · SZdg_id · H_id
-            //
-            // W⁻¹ reverses the product and adjoints each primitive. Deferred
-            // queue push order is application order (first-pushed applied
-            // first), which corresponds to rightmost-in-product. So push
-            // W⁻¹'s primitives right-to-left:
-            //
-            // W is determined by mz_forced's action on the CURRENT tableau
-            // (post-pre_reduce). Use the original decomposition `phase`, not
-            // the V-conjugated `phase_conj` — V-conjugation is for MPS
-            // operations only; the tableau sees the original decomposition.
-            let sp = Complex64::new(sign_f, 0.0) * phase;
-            let id_in_sign = sign_sites.contains(&id);
-            if sp.im.abs() < 1e-9 {
-                // Real sp branch. id must not be in sign.
-                debug_assert!(
-                    !id_in_sign,
-                    "lazy measure: real sp={sp:?} but id in sign (expected imaginary)"
-                );
-                if sp.re < 0.0 {
-                    deferred.push(DeferredOp::Z(id));
-                }
-                for &s in &sign_sites {
-                    if s != id {
-                        deferred.push(DeferredOp::Cz(id, s));
-                    }
-                }
-            } else {
-                // Imaginary sp branch. id must be in sign.
-                debug_assert!(
-                    id_in_sign,
-                    "lazy measure: imaginary sp={sp:?} but id not in sign (expected real)"
-                );
-                debug_assert!(
-                    sp.re.abs() < 1e-9,
-                    "lazy measure: sp={sp:?} not pure imaginary"
-                );
-                for &s in &sign_sites {
-                    if s != id {
-                        deferred.push(DeferredOp::Cz(id, s));
-                    }
-                }
-                // W inner rotation: SZ for sp=+i, SZdg for sp=-i.
-                // W⁻¹'s corresponding primitive: SZdg for sp=+i, SZ for sp=-i.
-                if sp.im > 0.0 {
-                    deferred.push(DeferredOp::SZdg(id));
-                } else {
-                    deferred.push(DeferredOp::SZ(id));
-                }
-            }
-            deferred.push(DeferredOp::H(id));
-
-            tableau.mz_forced(q_idx, outcome);
+            // Use the original decomposition phase here: deferred conjugation
+            // changes the stored-MPS projector, but the tableau update acts in
+            // the current post-pre-reduction generator basis. The helper also
+            // queues the virtual Z gauge omitted by `mz_forced`'s structural
+            // destabilizer-row XORs.
+            let gauge_sites = enqueue_lazy_measurement_basis_update(
+                tableau,
+                deferred,
+                q_idx,
+                id,
+                phase,
+                &sign_sites,
+                outcome,
+            );
             modified_sites.extend(flip_conj);
             modified_sites.extend(sign_conj);
+            modified_sites.extend(gauge_sites);
             modified_sites.push(id);
             modified_sites.sort_unstable();
             modified_sites.dedup();
@@ -2050,6 +2077,168 @@ mod tests {
                 mismatches.first().map_or("none", String::as_str)
             );
         }
+    }
+
+    #[test]
+    fn lazy_measurement_basis_update_matches_dense_oracle_for_all_two_qubit_cliffords() {
+        use crate::stab_mps::StabMps;
+        use pecos_core::QubitId;
+        use std::collections::{HashSet, VecDeque};
+
+        fn tableau_key(tableau: &SparseStabY) -> Vec<u8> {
+            let mut key = Vec::new();
+            for generators in [tableau.stabs(), tableau.destabs()] {
+                for row in 0..tableau.num_qubits() {
+                    for qubit in 0..tableau.num_qubits() {
+                        key.push(u8::from(generators.row_x[row].contains(qubit)));
+                        key.push(u8::from(generators.row_z[row].contains(qubit)));
+                    }
+                    key.push(u8::from(generators.signs_minus.contains(row)));
+                    key.push(u8::from(generators.signs_i.contains(row)));
+                }
+            }
+            key
+        }
+
+        fn phase_bucket(phase: Complex64) -> usize {
+            if phase.re > 0.5 {
+                0
+            } else if phase.im > 0.5 {
+                1
+            } else if phase.re < -0.5 {
+                2
+            } else if phase.im < -0.5 {
+                3
+            } else {
+                panic!("phase is not a fourth root of unity: {phase}");
+            }
+        }
+
+        fn generic_coefficient_mps() -> Mps {
+            let mut mps = Mps::new(2, MpsConfig::default());
+            for (qubit, probability_one, argument) in [(0, 0.37_f64, 0.29_f64), (1, 0.61, -0.47)] {
+                let zero = (1.0 - probability_one).sqrt();
+                let one = Complex64::from_polar(probability_one.sqrt(), argument);
+                let gate = DMatrix::from_row_slice(
+                    2,
+                    2,
+                    &[
+                        Complex64::new(zero, 0.0),
+                        -one.conj(),
+                        one,
+                        Complex64::new(zero, 0.0),
+                    ],
+                );
+                mps.apply_one_site_gate(qubit, &gate).unwrap();
+            }
+            mps
+        }
+
+        fn represented_state(
+            template: &StabMps,
+            tableau: &SparseStabY,
+            mps: &Mps,
+        ) -> Vec<Complex64> {
+            let mut snapshot = template.clone();
+            snapshot.tableau = tableau.clone();
+            snapshot.mps = mps.clone();
+            snapshot.deferred_ops.clear();
+            snapshot.state_vector()
+        }
+
+        let coefficient_mps = generic_coefficient_mps();
+        let template = StabMps::new(2);
+        let initial = SparseStabY::with_seed(2, 0).with_destab_sign_tracking();
+        let mut seen = HashSet::from([tableau_key(&initial)]);
+        let mut pending = VecDeque::from([initial]);
+        let mut cliffords = 0_usize;
+        let mut cases = 0_usize;
+        let mut signed_phase_counts = [0_usize; 4];
+
+        while let Some(tableau) = pending.pop_front() {
+            cliffords += 1;
+            let before = represented_state(&template, &tableau, &coefficient_mps);
+            for measured_qubit in 0..2 {
+                // This is exactly the input domain of the post-pre-reduction
+                // lazy basis update: one virtual X site remains.
+                if tableau.stabs().col_x[measured_qubit].len() != 1 {
+                    continue;
+                }
+                let ZDecomposition::DestabilizerFlip {
+                    flip_sites,
+                    phase,
+                    sign_sites,
+                } = decompose_z(tableau.stabs(), tableau.destabs(), measured_qubit)
+                else {
+                    continue;
+                };
+                if flip_sites.len() != 1 {
+                    continue;
+                }
+
+                for outcome in [false, true] {
+                    signed_phase_counts[phase_bucket(
+                        Complex64::new(if outcome { -1.0 } else { 1.0 }, 0.0) * phase,
+                    )] += 1;
+                    let mut measured = tableau.clone();
+                    let mut deferred = Vec::new();
+                    enqueue_lazy_measurement_basis_update(
+                        &mut measured,
+                        &mut deferred,
+                        measured_qubit,
+                        flip_sites[0],
+                        phase,
+                        &sign_sites,
+                        outcome,
+                    );
+                    let queued = deferred.clone();
+                    let mut transformed_mps = coefficient_mps.clone();
+                    flush_deferred_ops(&mut transformed_mps, &mut deferred).unwrap();
+                    let after = represented_state(&template, &measured, &transformed_mps);
+                    let overlap = before
+                        .iter()
+                        .zip(&after)
+                        .map(|(left, right)| left.conj() * right)
+                        .sum::<Complex64>();
+                    let fidelity = overlap.norm_sqr();
+                    assert!(
+                        fidelity >= 1.0 - 2e-12,
+                        "dense lazy-basis oracle failed: measured={measured_qubit} outcome={outcome} \
+                         flip={flip_sites:?} sign={sign_sites:?} phase={phase} \
+                         queue={queued:?} fidelity={fidelity:.16}"
+                    );
+                    cases += 1;
+                }
+            }
+
+            for gate in 0..6 {
+                let mut next = tableau.clone();
+                match gate {
+                    0 => next.h(&[QubitId(0)]),
+                    1 => next.h(&[QubitId(1)]),
+                    2 => next.sz(&[QubitId(0)]),
+                    3 => next.sz(&[QubitId(1)]),
+                    4 => next.cx(&[(QubitId(0), QubitId(1))]),
+                    _ => next.cx(&[(QubitId(1), QubitId(0))]),
+                };
+                if seen.insert(tableau_key(&next)) {
+                    pending.push_back(next);
+                }
+            }
+        }
+
+        assert_eq!(
+            cliffords, 11_520,
+            "must enumerate the full two-qubit Clifford group"
+        );
+        assert!(cases > 0);
+        assert!(
+            signed_phase_counts.iter().all(|&count| count > 0),
+            "the exhaustive oracle must cover signed phases +1,+i,-1,-i: {signed_phase_counts:?}"
+        );
+        eprintln!(
+            "lazy measurement basis dense oracle: cliffords={cliffords} cases={cases} signed_phase_counts={signed_phase_counts:?}"
+        );
     }
 
     #[test]

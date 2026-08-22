@@ -62,7 +62,7 @@ Python state reads automatically flush lazy operations and merged rotations. Whe
 
 `StabMps` defaults `merge_rz` to true for throughput. `Mast` defaults it to false so each RZ immediately exposes its injection and ancilla-capacity cost. Numerical flag redetection is opt-in. In `StabMps` it self-disables while lazy deferred operations are pending, because the stored tensors then differ from the effective MPS-frame state.
 
-`StabMps` measurement defaults to `"exact"`. Select `"pragmatic"` for the legacy uncompensated eager path or `"lazy"` for the deferred virtual-frame path. The policy covers MZ, reset, PZ/PX, syndrome extraction, and singular `sample_bitstring`; plural `sample_bitstrings` remains exact.
+`StabMps` measurement defaults to `"exact"`. Select `"pragmatic"` for the legacy uncompensated eager path or `"lazy"` for the deferred virtual-frame path. After the issue #555 and #572 frame and projection fixes, Lazy preserves exact conditional states subject to configured MPS truncation; Rust reads still require `flush()`, while Python reads auto-flush. Lazy and Exact consume distinct RNG streams, so equal seeds are not shot-for-shot comparable across those modes. The policy covers MZ, reset, PZ/PX, syndrome extraction, and singular `sample_bitstring`; plural `sample_bitstrings` remains exact.
 
 ## `Mast` quickstart
 

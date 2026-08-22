@@ -169,10 +169,19 @@ fn exact_mps_config() -> MpsConfig {
 }
 
 fn build_stn_with_mode(num_qubits: usize, seed: u64, mode: MeasurementMode) -> StabMps {
+    build_stn_with_mode_and_merge(num_qubits, seed, mode, false)
+}
+
+fn build_stn_with_mode_and_merge(
+    num_qubits: usize,
+    seed: u64,
+    mode: MeasurementMode,
+    merge_rz: bool,
+) -> StabMps {
     StabMps::builder(num_qubits)
         .seed(seed)
         .measurement(mode)
-        .merge_rz(false)
+        .merge_rz(merge_rz)
         .max_bond_dim(64)
         .svd_cutoff(0.0)
         .max_truncation_error(0.0)
@@ -512,15 +521,21 @@ fn run_stn_shot_with_mode(
     seed: u64,
     mode: MeasurementMode,
 ) -> usize {
+    run_stn_shot_with_mode_and_merge(surface, num_qubits, seed, mode, false)
+}
+
+fn run_stn_shot_with_mode_and_merge(
+    surface: Surface,
+    num_qubits: usize,
+    seed: u64,
+    mode: MeasurementMode,
+    merge_rz: bool,
+) -> usize {
     run_built_stn_shot(
         surface,
         num_qubits,
-        build_stn_with_mode(num_qubits, seed, mode),
+        build_stn_with_mode_and_merge(num_qubits, seed, mode, merge_rz),
     )
-}
-
-fn run_stn_shot(surface: Surface, num_qubits: usize, seed: u64) -> usize {
-    run_built_stn_shot(surface, num_qubits, build_stn(num_qubits, seed))
 }
 
 fn run_mast_shot(surface: Surface, num_qubits: usize, seed: u64) -> usize {
@@ -607,13 +622,24 @@ fn parallel_counts(
         )
 }
 
-fn sampled_stn_counts(surface: Surface, num_qubits: usize, num_shots: usize) -> Vec<usize> {
+fn sampled_stn_counts_with_mode(
+    surface: Surface,
+    num_qubits: usize,
+    num_shots: usize,
+    mode: MeasurementMode,
+    merge_rz: bool,
+) -> Vec<usize> {
     let num_outcomes = 1 << surface.record_width(num_qubits);
     if matches!(
         surface,
         Surface::SampleBitstring | Surface::SampleBitstrings
     ) {
-        let mut simulator = build_stn(num_qubits, 0x5A00_0000 + num_qubits as u64);
+        let mut simulator = build_stn_with_mode_and_merge(
+            num_qubits,
+            0x5A00_0000 + num_qubits as u64,
+            mode,
+            merge_rz,
+        );
         replay_gates(&mut simulator, &honest_family(num_qubits, num_qubits));
         let samples = if surface == Surface::SampleBitstring {
             simulator.sample_bitstring(num_shots)
@@ -628,10 +654,12 @@ fn sampled_stn_counts(surface: Surface, num_qubits: usize, num_shots: usize) -> 
         counts
     } else {
         parallel_counts(num_outcomes, num_shots, |shot| {
-            run_stn_shot(
+            run_stn_shot_with_mode_and_merge(
                 surface,
                 num_qubits,
                 0x5100_0000 + (num_qubits as u64) * 100_000 + shot as u64,
+                mode,
+                merge_rz,
             )
         })
     }
@@ -705,11 +733,35 @@ fn corrected_five_sigma_limit(num_comparisons: usize) -> f64 {
 }
 
 fn compare_surface(surface: Surface, num_qubits: usize, num_shots: usize) -> Comparison {
+    compare_surface_with_mode(
+        surface,
+        num_qubits,
+        num_shots,
+        MeasurementMode::Exact,
+        false,
+    )
+}
+
+fn compare_surface_with_mode(
+    surface: Surface,
+    num_qubits: usize,
+    num_shots: usize,
+    mode: MeasurementMode,
+    merge_rz: bool,
+) -> Comparison {
     let exact = exact_probabilities(surface, num_qubits);
-    let default_counts = sampled_stn_counts(surface, num_qubits, num_shots);
+    let default_counts =
+        sampled_stn_counts_with_mode(surface, num_qubits, num_shots, mode, merge_rz);
     let control_counts = sampled_mast_counts(surface, num_qubits, num_shots);
     assert_eq!(default_counts.iter().sum::<usize>(), num_shots);
     assert_eq!(control_counts.iter().sum::<usize>(), num_shots);
+    for (outcome, (&count, &probability)) in default_counts.iter().zip(&exact).enumerate() {
+        assert!(
+            count == 0 || probability > PROBABILITY_EPSILON,
+            "surface={} n={num_qubits} mode={mode:?} merge_rz={merge_rz}: reported impossible dense-oracle record {outcome:#b} {count} times; probability={probability:.16e}",
+            surface.name(),
+        );
+    }
     Comparison {
         surface,
         num_qubits,
@@ -721,9 +773,29 @@ fn compare_surface(surface: Surface, num_qubits: usize, num_shots: usize) -> Com
 }
 
 fn assert_surface_matrix(surface: Surface, qubits: &[usize], num_shots: usize) {
+    assert_surface_matrix_with_mode(
+        "exact-default",
+        MeasurementMode::Exact,
+        false,
+        surface,
+        qubits,
+        num_shots,
+    );
+}
+
+fn assert_surface_matrix_with_mode(
+    lane: &str,
+    mode: MeasurementMode,
+    merge_rz: bool,
+    surface: Surface,
+    qubits: &[usize],
+    num_shots: usize,
+) {
     let comparisons = qubits
         .iter()
-        .map(|&num_qubits| compare_surface(surface, num_qubits, num_shots))
+        .map(|&num_qubits| {
+            compare_surface_with_mode(surface, num_qubits, num_shots, mode, merge_rz)
+        })
         .collect::<Vec<_>>();
     let num_binomial_checks = comparisons
         .iter()
@@ -745,7 +817,7 @@ fn assert_surface_matrix(surface: Surface, qubits: &[usize], num_shots: usize) {
             comparison.num_shots,
         );
         eprintln!(
-            "exact-default-falsifier surface={} n={} shots={} default={:.2}sigma \
+            "{lane}-falsifier surface={} n={} shots={} sampled={:.2}sigma \
              (outcome={}, exact={:.6}, sampled={:.6}) control={:.2}sigma \
              (outcome={}, exact={:.6}, sampled={:.6}) corrected_limit={limit:.2}sigma",
             comparison.surface.name(),
@@ -782,7 +854,7 @@ fn assert_surface_matrix(surface: Surface, qubits: &[usize], num_shots: usize) {
     let (default, default_n) = worst_default.expect("nonempty surface matrix");
     assert!(
         default.sigma <= limit,
-        "default StabMps measurement is biased: surface={} n={default_n} outcome={} \
+        "{lane} StabMps measurement is biased: surface={} n={default_n} outcome={} \
          exact={:.8} sampled={:.8}, deviation={:.2}sigma > corrected {limit:.2}sigma",
         surface.name(),
         default.outcome,
@@ -799,6 +871,99 @@ fn state_fidelity(first: &[Complex64], second: &[Complex64]) -> f64 {
         .map(|(left, right)| left.conj() * right)
         .sum::<Complex64>()
         .norm_sqr()
+}
+
+fn assert_trivial_product_repeat_outcome_is_valid(mode: MeasurementMode) {
+    let preparation = [
+        Gate::H(0),
+        Gate::Rz(0, Angle64::from_radians(0.9)),
+        Gate::H(0),
+    ];
+    let mut simulator = build_stn_with_mode_and_merge(1, 0, mode, false);
+    let mut dense = DenseStateVec::new(1);
+    replay_gates(&mut simulator, &preparation);
+    replay_gates(&mut dense, &preparation);
+
+    let first = simulator.mz(&[QubitId(0)]).into_iter().next().unwrap();
+    assert!(first.outcome, "mode={mode:?}: seed 0 must select |1>");
+    let (first_probability, expected) = projected_dense_state(dense, 0, first.outcome)
+        .expect("the first reported outcome must have nonzero dense probability");
+    assert!(first_probability > PROBABILITY_EPSILON);
+
+    let second = simulator.mz(&[QubitId(0)]).into_iter().next().unwrap();
+    let (second_probability, mut expected) = projected_dense_state(expected, 0, second.outcome)
+        .expect("the repeated reported outcome must have nonzero dense probability");
+    assert_eq!(second.outcome, first.outcome, "mode={mode:?}");
+    assert!(second.is_deterministic, "mode={mode:?}");
+    assert_eq!(second_probability.to_bits(), 1.0_f64.to_bits());
+
+    simulator.flush();
+    let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+    assert!(
+        fidelity >= 1.0 - 1e-12,
+        "mode={mode:?}: repeated trivial-product measurement fidelity={fidelity:.16}"
+    );
+}
+
+#[test]
+fn lazy_trivial_product_measurement_never_reports_an_impossible_repeat_outcome() {
+    assert_trivial_product_repeat_outcome_is_valid(MeasurementMode::Lazy);
+}
+
+#[test]
+fn pragmatic_trivial_product_measurement_never_reports_an_impossible_repeat_outcome() {
+    assert_trivial_product_repeat_outcome_is_valid(MeasurementMode::Pragmatic);
+}
+
+#[test]
+fn lazy_trivial_stored_mps_materializes_pending_frame_before_tableau_read() {
+    fn measure_and_check(
+        simulator: &mut StabMps,
+        dense: &mut DenseStateVec,
+        expected_outcome: bool,
+        measurement_index: usize,
+    ) {
+        let outcome = simulator.mz(&[QubitId(1)])[0].outcome;
+        assert_eq!(outcome, expected_outcome, "measurement {measurement_index}");
+        let (probability, projected) = projected_dense_state(dense.clone(), 1, outcome)
+            .expect("the reported Lazy outcome must have nonzero dense probability");
+        assert!(probability > PROBABILITY_EPSILON);
+        *dense = projected;
+
+        let mut snapshot = simulator.clone();
+        snapshot.flush();
+        let fidelity = state_fidelity(&snapshot.state_vector(), &dense.state());
+        assert!(
+            fidelity >= 1.0 - 1e-12,
+            "measurement {measurement_index}: conditional-state fidelity={fidelity:.16}"
+        );
+    }
+
+    let mut simulator = build_stn_with_mode_and_merge(3, 0x572A_75E5, MeasurementMode::Lazy, true);
+    let mut dense = DenseStateVec::new(3);
+
+    let preparation = [
+        Gate::H(1),
+        Gate::Rz(1, Angle64::from_radians(0.808)),
+        Gate::Rz(1, Angle64::from_radians(1.033)),
+    ];
+    replay_gates(&mut simulator, &preparation);
+    replay_gates(&mut dense, &preparation);
+    measure_and_check(&mut simulator, &mut dense, true, 0);
+
+    let first_continuation = [
+        Gate::Rz(1, Angle64::from_radians(0.430)),
+        Gate::H(1),
+        Gate::X(1),
+    ];
+    replay_gates(&mut simulator, &first_continuation);
+    replay_gates(&mut dense, &first_continuation);
+    measure_and_check(&mut simulator, &mut dense, false, 1);
+
+    let second_continuation = [Gate::Rz(1, Angle64::from_radians(0.837)), Gate::Sz(1)];
+    replay_gates(&mut simulator, &second_continuation);
+    replay_gates(&mut dense, &second_continuation);
+    measure_and_check(&mut simulator, &mut dense, false, 2);
 }
 
 fn lazy_frame_clifford_family(seed: u64, num_qubits: usize) -> Vec<Gate> {
@@ -889,6 +1054,240 @@ fn lazy_measure_clifford_rz_conditional_state_fidelity() {
         failed, 0,
         "issue #555: {failed}/{NUM_SEEDS} Lazy mz -> Clifford -> RZ conditional states failed; worst fidelity={worst:.16}"
     );
+}
+
+#[test]
+fn lazy_single_measurement_preserves_pre_measurement_rz_branch_phase() {
+    let preparation = [
+        Gate::H(0),
+        Gate::Rz(0, Angle64::from_radians(0.41)),
+        Gate::Cx(3, 2),
+        Gate::X(3),
+        Gate::Cx(2, 0),
+        Gate::H(2),
+    ];
+    let mut simulator = build_stn_with_mode(4, 2, MeasurementMode::Lazy);
+    let mut dense = DenseStateVec::new(4);
+    replay_gates(&mut simulator, &preparation);
+    replay_gates(&mut dense, &preparation);
+
+    let outcome = simulator.mz(&[QubitId(2)])[0].outcome;
+    assert!(
+        outcome,
+        "seed 2 must select the issue #572 outcome-one branch"
+    );
+    let (_, mut expected) = projected_dense_state(dense, 2, outcome).unwrap();
+    simulator.flush();
+    let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+    assert!(
+        fidelity >= 1.0 - 1e-12,
+        "issue #572 lazy projection changed the pre-measurement RZ branch phase: \
+         fidelity={fidelity:.16}, legacy_signature={:.16}",
+        0.41_f64.cos().powi(2)
+    );
+}
+
+#[test]
+#[ignore = "issue #572 4000-circuit conditional-state hunt; run in release mode"]
+fn lazy_randomized_4000_conditional_state_hunt() {
+    const NUM_CIRCUITS: u64 = 4_000;
+    const NUM_QUBITS: usize = 4;
+    let mut mismatches = 0_usize;
+    let mut worst_fidelity = 1.0_f64;
+
+    for seed in 0..NUM_CIRCUITS {
+        let mut word = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut next = || {
+            word ^= word << 13;
+            word ^= word >> 7;
+            word ^= word << 17;
+            word
+        };
+        let rotated = next() as usize % NUM_QUBITS;
+        let mut gates = vec![
+            Gate::H(rotated),
+            Gate::Rz(
+                rotated,
+                Angle64::from_radians(0.11 + (next() % 700) as f64 / 1_000.0),
+            ),
+        ];
+        for _ in 0..12 {
+            let first = next() as usize % NUM_QUBITS;
+            let mut second = next() as usize % NUM_QUBITS;
+            if second == first {
+                second = (second + 1) % NUM_QUBITS;
+            }
+            gates.push(match next() % 5 {
+                0 => Gate::H(first),
+                1 => Gate::Sz(first),
+                2 => Gate::X(first),
+                3 => Gate::Cx(first, second),
+                _ => Gate::Cz(first, second),
+            });
+        }
+        let measured = next() as usize % NUM_QUBITS;
+        let mut simulator =
+            build_stn_with_mode(NUM_QUBITS, 0x5720_0000 + seed, MeasurementMode::Lazy);
+        let mut dense = DenseStateVec::new(NUM_QUBITS);
+        replay_gates(&mut simulator, &gates);
+        replay_gates(&mut dense, &gates);
+        let outcome = simulator.mz(&[QubitId(measured)])[0].outcome;
+        let (_, mut expected) = projected_dense_state(dense, measured, outcome).unwrap();
+        simulator.flush();
+        let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+        worst_fidelity = worst_fidelity.min(fidelity);
+        mismatches += usize::from(fidelity < 1.0 - 1e-10);
+    }
+
+    eprintln!(
+        "issue #572 randomized hunt: mismatches={mismatches}/{NUM_CIRCUITS} worst_fidelity={worst_fidelity:.16}"
+    );
+    assert_eq!(
+        mismatches, 0,
+        "issue #572 randomized Lazy conditional-state hunt found {mismatches}/{NUM_CIRCUITS} mismatches; worst_fidelity={worst_fidelity:.16}"
+    );
+}
+
+#[test]
+#[ignore = "reviewer-style interleaved Lazy adversarial family; run in release mode"]
+fn lazy_interleaved_multi_measurement_adversarial_family() {
+    const SEEDS_PER_CONFIGURATION: u64 = 500;
+    const MEASUREMENTS_PER_CIRCUIT: usize = 3;
+
+    fn next(word: &mut u64) -> u64 {
+        *word ^= *word << 13;
+        *word ^= *word >> 7;
+        *word ^= *word << 17;
+        *word
+    }
+
+    fn distinct_pair(word: &mut u64, num_qubits: usize) -> (usize, usize) {
+        let first = next(word) as usize % num_qubits;
+        let mut second = next(word) as usize % (num_qubits - 1);
+        if second >= first {
+            second += 1;
+        }
+        (first, second)
+    }
+
+    fn random_clifford(word: &mut u64, num_qubits: usize) -> Gate {
+        let first = next(word) as usize % num_qubits;
+        match next(word) % 5 {
+            0 => Gate::H(first),
+            1 => Gate::Sz(first),
+            2 => Gate::X(first),
+            3 => {
+                let (control, target) = distinct_pair(word, num_qubits);
+                Gate::Cx(control, target)
+            }
+            _ => {
+                let (left, right) = distinct_pair(word, num_qubits);
+                Gate::Cz(left, right)
+            }
+        }
+    }
+
+    let mut circuits = 0_usize;
+    let mut measurements = 0_usize;
+    let mut invalid_outcomes = Vec::new();
+    let mut fidelity_mismatches = 0_usize;
+    let mut worst_fidelity = 1.0_f64;
+    let mut minimum_reported_probability = 1.0_f64;
+
+    for num_qubits in 3..=5 {
+        for merge_rz in [false, true] {
+            for seed in 0..SEEDS_PER_CONFIGURATION {
+                circuits += 1;
+                let mut word = seed
+                    ^ (num_qubits as u64).wrapping_mul(0x9E37_79B9)
+                    ^ u64::from(merge_rz).wrapping_mul(0xD1B5_4A32_D192_ED03);
+                let mut simulator = build_stn_with_mode_and_merge(
+                    num_qubits,
+                    0x572A_0000 + seed + 10_000 * num_qubits as u64,
+                    MeasurementMode::Lazy,
+                    merge_rz,
+                );
+                let mut dense = DenseStateVec::new(num_qubits);
+
+                for _ in 0..10 {
+                    let gate = if next(&mut word).is_multiple_of(4) {
+                        let qubit = next(&mut word) as usize % num_qubits;
+                        Gate::Rz(
+                            qubit,
+                            Angle64::from_radians(
+                                0.09 + (next(&mut word) % 1_100) as f64 / 1_000.0,
+                            ),
+                        )
+                    } else {
+                        random_clifford(&mut word, num_qubits)
+                    };
+                    replay_gates(&mut simulator, &[gate]);
+                    replay_gates(&mut dense, &[gate]);
+                }
+
+                for measurement_index in 0..MEASUREMENTS_PER_CIRCUIT {
+                    let measured = next(&mut word) as usize % num_qubits;
+                    let outcome = simulator.mz(&[QubitId(measured)])[0].outcome;
+                    measurements += 1;
+                    let dense_state = dense.state();
+                    let reported_probability = dense_state
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| ((*index >> measured) & 1 != 0) == outcome)
+                        .map(|(_, amplitude)| amplitude.norm_sqr())
+                        .sum::<f64>();
+                    let Some((probability, projected)) =
+                        projected_dense_state(dense.clone(), measured, outcome)
+                    else {
+                        invalid_outcomes.push((
+                            num_qubits,
+                            merge_rz,
+                            seed,
+                            measurement_index,
+                            measured,
+                            outcome,
+                            reported_probability,
+                        ));
+                        break;
+                    };
+                    minimum_reported_probability = minimum_reported_probability.min(probability);
+                    dense = projected;
+
+                    let mut snapshot = simulator.clone();
+                    snapshot.flush();
+                    let fidelity = state_fidelity(&snapshot.state_vector(), &dense.state());
+                    worst_fidelity = worst_fidelity.min(fidelity);
+                    fidelity_mismatches += usize::from(fidelity < 1.0 - 1e-10);
+
+                    if measurement_index + 1 < MEASUREMENTS_PER_CIRCUIT {
+                        let rotated = next(&mut word) as usize % num_qubits;
+                        let rotation = Gate::Rz(
+                            rotated,
+                            Angle64::from_radians(
+                                -0.83 + (next(&mut word) % 1_700) as f64 / 1_000.0,
+                            ),
+                        );
+                        replay_gates(&mut simulator, &[rotation]);
+                        replay_gates(&mut dense, &[rotation]);
+                        for _ in 0..4 {
+                            let gate = random_clifford(&mut word, num_qubits);
+                            replay_gates(&mut simulator, &[gate]);
+                            replay_gates(&mut dense, &[gate]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "reviewer-style Lazy adversarial family: circuits={circuits} measurements={measurements} invalid_outcomes={} fidelity_mismatches={fidelity_mismatches} worst_fidelity={worst_fidelity:.16} minimum_reported_probability={minimum_reported_probability:.3e} invalid_examples={:?}",
+        invalid_outcomes.len(),
+        invalid_outcomes.iter().take(8).collect::<Vec<_>>(),
+    );
+    assert!(invalid_outcomes.is_empty());
+    assert_eq!(measurements, circuits * MEASUREMENTS_PER_CIRCUIT);
+    assert_eq!(fidelity_mismatches, 0);
 }
 
 #[test]
@@ -1162,5 +1561,71 @@ surface_gate_tests!(
 surface_gate_tests!(
     exact_default_sample_bitstrings_fast,
     exact_default_sample_bitstrings_release,
+    Surface::SampleBitstrings
+);
+
+macro_rules! lazy_surface_gate_tests {
+    ($fast_name:ident, $release_name:ident, $surface:expr) => {
+        #[cfg(not(debug_assertions))]
+        #[test]
+        fn $fast_name() {
+            for merge_rz in [false, true] {
+                let lane = format!("lazy-merge-rz-{merge_rz}");
+                assert_surface_matrix_with_mode(
+                    &lane,
+                    MeasurementMode::Lazy,
+                    merge_rz,
+                    $surface,
+                    &[3, 4],
+                    FAST_SHOTS,
+                );
+            }
+        }
+
+        #[test]
+        #[ignore = "larger Lazy statistical release lane"]
+        fn $release_name() {
+            for merge_rz in [false, true] {
+                let lane = format!("lazy-merge-rz-{merge_rz}");
+                assert_surface_matrix_with_mode(
+                    &lane,
+                    MeasurementMode::Lazy,
+                    merge_rz,
+                    $surface,
+                    &[5, 6],
+                    RELEASE_SHOTS,
+                );
+            }
+        }
+    };
+}
+
+lazy_surface_gate_tests!(lazy_mz_mid_fast, lazy_mz_mid_release, Surface::MzMid);
+lazy_surface_gate_tests!(lazy_mz_end_fast, lazy_mz_end_release, Surface::MzEnd);
+lazy_surface_gate_tests!(
+    lazy_reset_qubit_fast,
+    lazy_reset_qubit_release,
+    Surface::Reset
+);
+lazy_surface_gate_tests!(lazy_pz_fast, lazy_pz_release, Surface::Pz);
+lazy_surface_gate_tests!(lazy_px_fast, lazy_px_release, Surface::Px);
+lazy_surface_gate_tests!(
+    lazy_extract_syndromes_fast,
+    lazy_extract_syndromes_release,
+    Surface::ExtractSyndromes
+);
+lazy_surface_gate_tests!(
+    lazy_continuation_fast,
+    lazy_continuation_release,
+    Surface::Continuation
+);
+lazy_surface_gate_tests!(
+    lazy_sample_bitstring_fast,
+    lazy_sample_bitstring_release,
+    Surface::SampleBitstring
+);
+lazy_surface_gate_tests!(
+    lazy_sample_bitstrings_fast,
+    lazy_sample_bitstrings_release,
     Surface::SampleBitstrings
 );

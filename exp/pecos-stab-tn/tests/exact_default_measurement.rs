@@ -918,7 +918,7 @@ fn lazy_frame_rz_does_not_consume_stored_disentangling_proof() {
     assert_eq!(
         simulator.stats.deferred_disent_bypass,
         bypass_before + 1,
-        "the fixture must expose a stored |0> proof that is unsafe to absorb across V"
+        "the fixture must expose a stored |0> proof that must not be absorbed across V"
     );
     assert_eq!(
         simulator.stats.multi_disent, disent_before,

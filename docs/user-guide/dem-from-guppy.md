@@ -381,6 +381,35 @@ non-negative multipliers have no sum constraint.
   no effect. The `RX`, `RY`, and `RZ` model keys are validation-only on this DEM
   route; `L` and `U` are not valid coherent-model keys.
 
+### Sine-squared is not the coefficient-quadratic law
+
+Two different things are easy to confuse here, so state them side by side:
+
+| Law | Probability | Where it lives |
+| --- | --- | --- |
+| Sine-squared | `sin((rate * m_axis) * t) ** 2` | `p_idle_sin_squared`, the structured family above |
+| Coefficient quadratic | `(rate * m_axis) * t**2` | `p_idle_quadratic_rate` and the axis-specific `p_idle_{x,y,z}_quadratic_rate` DEM fields |
+
+Both scale as `t**2` for small angles, but equal numeric rates are never
+interchangeable: the sine law's small-angle limit is `(rate * m_axis)**2 * t**2`
+-- the rate enters squared -- while the coefficient law is
+`(rate * m_axis) * t**2` with the rate entering linearly. They produce the same
+small-angle probabilities only if the coefficient rate is set to the square of
+the sine rate (per axis, `r_quad * m_quad = (r_sin * m_sin)**2`). The sine law
+is also bounded and oscillates, so it saturates and then falls as the duration
+grows; the coefficient law is an unbounded polynomial that only ever increases.
+Their rates carry different units: the sine rate is radians per time, the
+coefficient rate is inverse time squared.
+
+Prefer the sine-squared family. It is the one the structured builders expose,
+and it is the exact Pauli twirl of a coherent `RZ` rotation, which the
+coefficient law is not. The coefficient fields remain on the low-level DEM
+surface for models expressed that way already.
+
+The engine-level spelling `with_p_idle_quadratic_rate(r)` has been removed. Its
+input was in cycles per time, so it maps to the sine family with a factor of
+pi -- see the conversion table below, which is easy to get wrong by omission.
+
 The engines simulators can consume leakage models, such as an engines-bound
 linear model `{"X": 0.8, "L": 0.2}`. DEM fault propagation is Pauli-only:
 these DEM entry points accept `L` in linear and sine-squared models for model

@@ -15,7 +15,7 @@
 //! Mirrors the Rust-side API:
 //! ```python
 //! results = (sim_neo(tc)
-//!     .quantum(stab_mps().lazy_measure().max_bond_dim(128))
+//!     .quantum(stab_mps().measurement("lazy").max_bond_dim(128))
 //!     .noise(depolarizing().p1(0.003).p2(0.003).p_meas(0.003).p_prep(0.003).idle_rz(0.05))
 //!     .sampling(monte_carlo(5000))
 //!     .seed(42)
@@ -419,7 +419,7 @@ pub fn stabilizer() -> PyStabilizerBuilder {
 /// Builder for StabMps backend configuration.
 ///
 /// Example:
-///     stab_mps().lazy_measure().max_bond_dim(128)
+///     stab_mps().measurement("lazy").max_bond_dim(128)
 #[pyclass(
     name = "StabMpsBuilder",
     skip_from_py_object,
@@ -439,14 +439,10 @@ impl PyStabMpsBuilder {
         }
     }
 
-    /// Set whether measurements are deferred for non-Clifford states.
-    ///
-    /// Calling without an argument enables lazy measurement; an explicit bool
-    /// sets the option exactly.
-    #[pyo3(signature = (enabled=true))]
-    fn lazy_measure(mut slf: PyRefMut<'_, Self>, enabled: bool) -> PyRefMut<'_, Self> {
-        slf.inner.lazy_measure = enabled;
-        slf
+    /// Select "exact", "pragmatic", or "lazy" singular measurement.
+    fn measurement<'py>(mut slf: PyRefMut<'py, Self>, mode: &str) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner.measurement = crate::parse_measurement_mode(mode)?;
+        Ok(slf)
     }
 
     fn max_bond_dim(mut slf: PyRefMut<'_, Self>, bd: usize) -> PyRefMut<'_, Self> {
@@ -806,7 +802,7 @@ impl PySimNeoBuilder {
     /// Example:
     ///     sim_neo(tc).quantum(state_vec()).noise(...).run()
     ///     sim_neo(tc).quantum(stabilizer()).noise(...).run()
-    ///     sim_neo(tc).quantum(stab_mps().lazy_measure()).noise(...).run()
+    ///     sim_neo(tc).quantum(stab_mps().measurement("lazy")).noise(...).run()
     fn quantum(&self, builder: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut c = self.clone();
         if builder.is_instance_of::<PyMeasSamplingBuilder>() {
@@ -1514,7 +1510,7 @@ fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_c
 ///
 /// Example:
 ///     results = (sim_neo(tc)
-///         .quantum(stab_mps().lazy_measure().max_bond_dim(128))
+///         .quantum(stab_mps().measurement("lazy").max_bond_dim(128))
 ///         .noise(depolarizing().p1(0.003).p2(0.003).p_meas(0.003).idle_rz(0.05))
 ///         .sampling(monte_carlo(5000))
 ///         .seed(42)

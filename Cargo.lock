@@ -4871,6 +4871,7 @@ dependencies = [
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
+ "rand_chacha 0.9.0",
  "rayon",
  "thiserror 2.0.18",
 ]

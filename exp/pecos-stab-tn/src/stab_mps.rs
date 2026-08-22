@@ -2289,6 +2289,8 @@ impl StabMps {
     /// measurement mode, zero summed discarded weight, and no deferred MAST
     /// branch loss. A branch-vanish retry is not a guard because its first
     /// attempt was rolled back and its committed retry was untruncated.
+    /// Lazy conditional states are exact after issues #555 and #572, but this
+    /// conservative diagnostic deliberately remains gated to exact mode.
     #[must_use]
     pub fn is_state_exact(&self) -> bool {
         let no_pending_rz = self.pending_rz.iter().all(std::option::Option::is_none);

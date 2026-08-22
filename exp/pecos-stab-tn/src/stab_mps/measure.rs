@@ -185,6 +185,31 @@ fn canonicalize_trivial_mps_basis(
     modified_sites
 }
 
+/// Measure a computational-basis product coefficient state through the tableau.
+///
+/// The tableau-only read is valid only after the coefficient basis word has
+/// been absorbed into the tableau, leaving the stored MPS in `|0...0>`.
+fn measure_trivial_mps_with_update(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    q_idx: usize,
+) -> LiveMeasurementResult {
+    debug_assert!(is_mps_trivial(mps));
+    let modified_sites = canonicalize_trivial_mps_basis(tableau, mps, None);
+    let measurement = tableau
+        .mz(&[pecos_core::QubitId(q_idx)])
+        .into_iter()
+        .next()
+        .expect("MPS op on valid site");
+    LiveMeasurementResult {
+        measurement,
+        update: ProjectionUpdate {
+            collapsed_site: None,
+            modified_sites,
+        },
+    }
+}
+
 /// Compute `<mps| phase · X_flip · Z_sign |mps>` via clone + inner product.
 ///
 /// Returns the expectation value of the Pauli string. Z applied first, then
@@ -1002,7 +1027,7 @@ fn measurement_pauli_gauge_sites(predicted: &SparseStabY, measured: &SparseStabY
     // `mz_forced` path, forces the replacement stabilizer row's sign to the
     // requested outcome. The predicted basis rotation encodes that same sign,
     // so an X-gauge difference is structurally unreachable here.
-    debug_assert!(
+    assert!(
         predicted
             .stabs()
             .signs_minus
@@ -1431,15 +1456,16 @@ pub(super) fn measure_qubit_stab_mps_lazy_with_update(
     deferred: &mut Vec<DeferredOp>,
 ) -> Result<LiveMeasurementResult, MpsError> {
     if is_mps_trivial(mps) {
-        let measurement = tableau
-            .mz(&[pecos_core::QubitId(q_idx)])
-            .into_iter()
-            .next()
-            .expect("MPS op on valid site");
-        return Ok(LiveMeasurementResult {
-            measurement,
-            update: ProjectionUpdate::default(),
-        });
+        // A tableau-only read requires both a zero coefficient-basis word and
+        // an identity virtual frame. Materialize a pending frame first: it can
+        // turn a computational product MPS into a nontrivial coefficient
+        // state, in which case the general Lazy projection must handle it.
+        if !deferred.is_empty() {
+            flush_deferred_ops(mps, deferred)?;
+        }
+        if is_mps_trivial(mps) {
+            return Ok(measure_trivial_mps_with_update(tableau, mps, q_idx));
+        }
     }
 
     // Push pre_reduce CNOTs to deferred instead of applying eagerly.
@@ -1687,17 +1713,8 @@ pub(super) fn measure_qubit_stab_mps_with_update(
     rng: &mut PecosRng,
     q_idx: usize,
 ) -> Result<LiveMeasurementResult, MpsError> {
-    // Trivial MPS: delegate to tableau
     if is_mps_trivial(mps) {
-        let measurement = tableau
-            .mz(&[pecos_core::QubitId(q_idx)])
-            .into_iter()
-            .next()
-            .expect("MPS op on valid site");
-        return Ok(LiveMeasurementResult {
-            measurement,
-            update: ProjectionUpdate::default(),
-        });
+        return Ok(measure_trivial_mps_with_update(tableau, mps, q_idx));
     }
 
     // Pre-reduce the tableau so that Z_q has at most one anticommuting stabilizer.

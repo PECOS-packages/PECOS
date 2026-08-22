@@ -254,12 +254,16 @@ jobs:
             build-llvm: false
             build-quantum-pecos: false
             job-timeout: 30
+          # rustc 1.98.0 on aarch64-apple-darwin segfaults in LLVM target
+          # initialization under maturin's target probe; pinned to 1.97.1
+          # until fixed upstream. Unpin tracked in issue #566.
           - os: macOS-latest
             python-version: "3.12"
             artifact-name: python-compat-smoke-macos
             build-llvm: true
             build-quantum-pecos: false
             job-timeout: 20
+            rust-toolchain: "1.97.1"
 
     steps:
     - name: Harden the runner (egress audit)
@@ -318,9 +322,35 @@ jobs:
     - name: Set up Rust (Unix)
       if: runner.os != 'Windows'
       run: |
-        bash scripts/ci/ensure-rust.sh stable minimal
+        bash scripts/ci/ensure-rust.sh "${{ matrix.rust-toolchain || 'stable' }}" minimal
         export PATH="$HOME/.cargo/bin:$PATH"
+        rustup default "${{ matrix.rust-toolchain || 'stable' }}"
         rustup show
+
+    # Self-expiring pin: rerun the rustc invocation that crashes on latest
+    # stable (issue #566) so the pin above cannot go stale silently. The
+    # crash is nondeterministic (observed on some runs of the same runner
+    # image and not others), so probe repeatedly and only suggest unpinning
+    # when a run sees zero crashes -- and unpin only once that holds across
+    # several PRs. Never fails the job.
+    - name: Check whether the Rust toolchain pin is still needed
+      if: runner.os != 'Windows' && matrix.rust-toolchain
+      run: |
+        rustup toolchain install stable --profile minimal
+        crashes=0
+        for _ in 1 2 3 4 5; do
+          rustc +stable - --crate-name ___ --print=file-names -C debuginfo=0 \
+            -C link-arg=-undefined -C link-arg=dynamic_lookup \
+            --crate-type bin --crate-type rlib --crate-type dylib \
+            --crate-type cdylib --crate-type staticlib --crate-type proc-macro \
+            --print=sysroot --print=split-debuginfo --print=crate-name \
+            --print=cfg -W warnings </dev/null >/dev/null 2>&1 || crashes=$((crashes + 1))
+        done
+        if [ "$crashes" -eq 0 ]; then
+          echo "::warning title=Rust toolchain pin may be obsolete::rustc $(rustc +stable --version) survived 5/5 maturin target probes on this runner. The crash is nondeterministic, so remove the ${{ matrix.rust-toolchain }} pin only once this warning has appeared consistently across several PRs (issue #566)."
+        else
+          echo "Latest stable ($(rustc +stable --version)) crashed $crashes/5 maturin target probes; the ${{ matrix.rust-toolchain }} pin remains required (issue #566)."
+        fi
 
     - name: Install just
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4

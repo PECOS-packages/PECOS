@@ -72,12 +72,69 @@ macro_rules! bench_multiply {
     }};
 }
 
+macro_rules! bench_apply_to_basis_state {
+    ($group:expr, $id:expr, $pauli:expr, $state:expr) => {{
+        let pauli = $pauli;
+        let state = $state;
+        $group.bench_function($id, move |b| {
+            b.iter(|| black_box(black_box(&pauli).apply_to_basis_state(black_box(&state))));
+        });
+    }};
+}
+
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     let mut group = c.benchmark_group("Pauli Operations");
     bench_u128(&mut group);
     bench_vec(&mut group);
     bench_small(&mut group);
+    bench_basis_state(&mut group);
     group.finish();
+}
+
+/// A Pauli whose Z plane holds exactly the given sites (built through the
+/// public constructors).
+fn z_only_small(sites: &[usize]) -> PauliBitmaskSmall {
+    let mut pauli = PauliBitmaskSmall::identity();
+    for &q in sites {
+        pauli = pauli.multiply(&PauliBitmaskSmall::z(q));
+    }
+    pauli
+}
+
+fn bench_basis_state<M: Measurement>(group: &mut BenchmarkGroup<M>) {
+    // States are the public X plane of a deterministically built Pauli:
+    // dense_small marks roughly two thirds of the register's qubits.
+    // Dense Pauli acting on a dense wide state: the full-walk shape.
+    bench_apply_to_basis_state!(
+        group,
+        "apply_to_basis_state/dense/smallvec_u64/1024q",
+        dense_small(1024, 0),
+        dense_small(1024, 1).x_bits
+    );
+    // A few Z sites at high indices on a dense state: the Z plane is stored
+    // out to word 15 but almost every word in the walk is all-identity. This
+    // is the shape an interior all-zero-Z skip would target.
+    bench_apply_to_basis_state!(
+        group,
+        "apply_to_basis_state/sparse_z_high/smallvec_u64/1024q",
+        z_only_small(&[1000, 1007, 1016, 1023]),
+        dense_small(1024, 1).x_bits
+    );
+    // A few low Z sites on a dense wide state: the walk bound is already
+    // small, so a skip has nothing to save.
+    bench_apply_to_basis_state!(
+        group,
+        "apply_to_basis_state/sparse_z_low/smallvec_u64/1024q",
+        z_only_small(&[0, 3, 9, 17]),
+        dense_small(1024, 1).x_bits
+    );
+    // Dense Pauli on the empty state: exercises padded state reads.
+    bench_apply_to_basis_state!(
+        group,
+        "apply_to_basis_state/dense_on_empty/smallvec_u64/1024q",
+        dense_small(1024, 0),
+        PauliBitmaskSmall::identity().x_bits
+    );
 }
 
 fn bench_u128<M: Measurement>(group: &mut BenchmarkGroup<M>) {

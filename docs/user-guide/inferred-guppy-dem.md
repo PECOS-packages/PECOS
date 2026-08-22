@@ -94,6 +94,26 @@ assert dem.num_observables == 1
 print(dem.to_string())
 ```
 
+An inferred DEM is an ordinary `DetectorErrorModel`, so it samples and decodes
+exactly like one built from explicit detectors:
+
+<!--continuation-->
+```python
+from pecos.decoders import bp_osd
+
+batch = dem.to_sampler().sample_batch(500, seed=3)
+result = batch.decode(dem.to_string(), bp_osd())
+
+assert result.num_shots == 500
+print(f"logical errors: {result.num_errors} ({result.execution_path})")
+```
+
+`bp_osd()` consumes the raw model directly. Matching-style decoders need a
+graph-like projection instead — see
+[Decoders](decoders.md#hyperedge-models-and-matching-decoders) — and the
+experimental Frontier and BP-Trellis decoders additionally report a per-shot
+confidence gap; see [Experimental Decoders](../experimental/decoders.md).
+
 The two accepted `raw_binding` values are both identity-preserving. A compiler
 may retain a directly tagged measurement ID, or it may erase the ID while
 duplicating the value into raw and computed outputs; strict probe correlation
@@ -324,9 +344,9 @@ It checks the measurement count, but it cannot detect a permutation.
 | `raw_tag` | `"raw measurements"` | Tag containing every physical measurement exactly once. |
 | `detector_tag` | `"DETECTOR"` | Tag containing all computed detection-event bits. |
 | `observable_tags` | `("obs",)` | Logical result tags, in DEM observable order. |
-| `probe_shots` | `256` | Coin-toss rows used to infer and validate affine parities. |
+| `probe_shots` | derived | Coin-toss rows used to infer and validate affine parities. Defaults to one row per raw measurement plus the affine constant, the validation rows, and a rank margin. |
 | `provenance_shots` | `32` | Rows used to correlate array elements with QIS IDs. |
-| `validation_rows` | `32` | Probe rows reserved for parity validation. |
+| `validation_rows` | `32` | Extra probe rows required beyond the square system, as additional consistency constraints on the fit. |
 | `seed` | `0` | Reproducible trace and probe seed. |
 | `runtime` | `None` | Selene runtime selection forwarded to PECOS. |
 | `require_raw_provenance` | `True` | Require a complete identity-preserving raw-measurement binding. |
@@ -345,8 +365,23 @@ The result is an `InferredGuppyDemAnnotations` with:
 | `build_dem(**noise)` | Build a PECOS `DetectorErrorModel` from the annotated circuit. |
 
 `probe_shots` must provide at least one row per raw measurement, one affine
-constant column, and the requested validation rows. For larger experiments,
-increase it if PECOS reports insufficient GF(2) rank.
+constant column, and the requested validation rows. Left unset it is derived
+from the traced circuit, so a larger experiment no longer fails for want of a
+bigger number; pass an explicit count only to override that.
+
+**More probe shots do not make a better DEM.** Inference solves an affine
+system over GF(2): once the probe matrix reaches full rank the solution is exact
+and unique, and further rows can only re-validate it. The derived default adds a
+margin because probes are random -- a square system of exactly one row per
+unknown is full rank only about 29% of the time, and each row beyond it halves
+the shortfall probability, so with the validation rows and margin included a
+rank failure is vanishingly unlikely. Elimination uses every probe row;
+validation rows are additional consistency constraints on the same fit, not a
+held-out set. Raise `probe_shots` to buy validation confidence against a
+mis-inferred parity, not resolution. Note that the derived floor grows with
+the raw measurement count and the GF(2) elimination is quadratic in it, so a
+program with many thousands of raw measurements pays a noticeable inference
+cost where it previously failed fast asking for more shots.
 
 ## Failure guide
 

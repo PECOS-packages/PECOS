@@ -113,6 +113,21 @@ impl CssUfDecoder {
     ) -> Result<Self, DecoderError> {
         let x_graph = DemMatchingGraph::from_dem_str(x_dem)?;
         let z_graph = DemMatchingGraph::from_dem_str(z_dem)?;
+        // The matching-graph parser drops 3+-detector mechanisms; decoding
+        // against that truncated model would silently score the wrong DEM.
+        for (basis, graph) in [("X", &x_graph), ("Z", &z_graph)] {
+            if graph.skipped_hyperedges > 0 {
+                return Err(DecoderError::InvalidConfiguration(format!(
+                    "css_uf needs graphlike models, but the {basis}-basis DEM has {} \
+                     mechanism(s) touching three or more detectors. Decoding it here would \
+                     silently ignore them. Pass a decomposed model \
+                     (DetectorErrorModel.to_string_terminal_graphlike_decomposed() or \
+                     to_string_source_graphlike_decomposed()), or use a decoder that accepts \
+                     hyperedges such as bp_osd or tesseract.",
+                    graph.skipped_hyperedges,
+                )));
+            }
+        }
         x_graph.ensure_observables_fit_u64()?;
         z_graph.ensure_observables_fit_u64()?;
         UfDecoder::check_non_negative_weights(&x_graph)?;

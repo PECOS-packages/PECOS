@@ -363,8 +363,9 @@ pub enum PauliKind {
 /// This controls [`CliffordGateable::mz`], reset, `pz`/`px`, syndrome
 /// extraction. [`StabMps::sample_bitstrings`] is always exact by construction
 /// and does not dispatch through this policy. Per-shot sampling through the
-/// selected policy is expressed by cloning a prepared simulator for each shot
-/// and explicitly measuring its qubits with [`CliffordGateable::mz`].
+/// selected policy is expressed by cloning a prepared simulator for each
+/// shot, reseeding it with a distinct per-shot seed, and explicitly
+/// measuring its qubits with [`CliffordGateable::mz`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MeasurementMode {
     /// Sample the normalized Born probability and transactionally force the
@@ -1755,8 +1756,8 @@ impl StabMps {
     /// This is the `StabMps` bitstring sampler. It is always exact by
     /// construction and does not use the configured [`MeasurementMode`].
     /// To sample each shot through that mode instead, clone a prepared
-    /// simulator per shot and explicitly measure all qubits with
-    /// [`CliffordGateable::mz`].
+    /// simulator per shot, reseed it with a distinct per-shot seed, and
+    /// explicitly measure all qubits with [`CliffordGateable::mz`].
     ///
     /// The original simulator state is preserved; only its RNG advances.
     /// A working clone first materializes any lazy-measurement frame and then
@@ -2586,11 +2587,12 @@ impl QuantumSimulator for StabMps {
 impl pecos_random::RngManageable for StabMps {
     type Rng = PecosRng;
 
+    /// Reseed BOTH of the simulator's independent random streams: the
+    /// tableau stream is derived from one draw of the supplied RNG, and the
+    /// advanced RNG becomes the main stream. Consequently `set_seed(seed)`
+    /// leaves the main stream one draw past `seed_from_u64(seed)` — a
+    /// deterministic, documented offset, not the raw seeded stream.
     fn set_rng(&mut self, mut rng: Self::Rng) {
-        // StabMps has two independent random streams. Derive the tableau
-        // stream from one draw of the supplied RNG, then retain the advanced
-        // RNG as the main stream. Thus `set_seed(seed)` deterministically
-        // leaves the main stream at a documented one-draw offset.
         let tableau_seed = rng.next_u64();
         self.tableau.set_rng(PecosRng::seed_from_u64(tableau_seed));
         self.rng = rng;

@@ -99,6 +99,14 @@ pub struct Mps {
     /// Number of SVDs that were capped by `max_bond_dim` (rank-limited rather
     /// than cutoff-limited). If > 0 the caller may want to raise `max_bond_dim`.
     bond_cap_hits: u64,
+    /// True sum of every relative singular-value weight discarded by an SVD.
+    summed_discarded_weight: f64,
+    /// Largest bond dimension held by this MPS during its lifetime.
+    lifetime_peak_bond: usize,
+    /// Number of rolled-back sampled projections retried without truncation.
+    branch_vanish_retry_count: u64,
+    /// Number of deferred MAST branches replaced by their surviving complement.
+    deferred_branch_lost_count: u64,
 }
 
 /// Pass-scoped left and right identity environments for selected MPS sites.
@@ -210,6 +218,10 @@ impl Mps {
             config,
             truncation_error: 0.0,
             bond_cap_hits: 0,
+            summed_discarded_weight: 0.0,
+            lifetime_peak_bond: 1,
+            branch_vanish_retry_count: 0,
+            deferred_branch_lost_count: 0,
         }
     }
 
@@ -228,20 +240,64 @@ impl Mps {
         self.bond_cap_hits
     }
 
+    /// Sum of the relative discarded weights reported by every SVD.
+    ///
+    /// Unlike [`Self::truncation_error`], this is a true sum rather than the
+    /// product-form estimate `1 - product(1 - weight)`.
+    #[must_use]
+    pub fn summed_discarded_weight(&self) -> f64 {
+        self.summed_discarded_weight
+    }
+
+    /// Largest bond dimension held by this MPS since construction or reset.
+    #[must_use]
+    pub fn lifetime_peak_bond(&self) -> usize {
+        self.lifetime_peak_bond
+    }
+
+    /// Number of sampled branches whose first, rolled-back projection vanished.
+    #[must_use]
+    pub fn branch_vanish_retry_count(&self) -> u64 {
+        self.branch_vanish_retry_count
+    }
+
+    /// Number of lost deferred MAST branches continued on their complement.
+    #[must_use]
+    pub fn deferred_branch_lost_count(&self) -> u64 {
+        self.deferred_branch_lost_count
+    }
+
     /// Reset truncation diagnostics (keep state).
     pub fn reset_truncation_stats(&mut self) {
         self.truncation_error = 0.0;
         self.bond_cap_hits = 0;
+        self.summed_discarded_weight = 0.0;
+        self.branch_vanish_retry_count = 0;
+        self.deferred_branch_lost_count = 0;
+        self.lifetime_peak_bond = self.max_bond_dim();
     }
 
     /// Record the outcome of one truncated SVD for telemetry.
     pub(crate) fn record_truncation(&mut self, discarded_weight: f64, hit_cap: bool) {
         if discarded_weight > 0.0 {
             self.truncation_error += (1.0 - self.truncation_error) * discarded_weight;
+            self.summed_discarded_weight += discarded_weight;
         }
         if hit_cap {
             self.bond_cap_hits += 1;
         }
+    }
+
+    pub(crate) fn record_branch_vanish_retry(&mut self) {
+        self.branch_vanish_retry_count += 1;
+    }
+
+    pub(crate) fn record_deferred_branch_lost(&mut self) {
+        self.deferred_branch_lost_count += 1;
+    }
+
+    fn record_current_peak_bond(&mut self) {
+        self.lifetime_peak_bond = self.lifetime_peak_bond.max(self.max_bond_dim());
     }
 
     #[must_use]
@@ -280,6 +336,27 @@ impl Mps {
     /// subsequent SVD truncations.
     pub fn set_max_bond_dim(&mut self, new_cap: usize) {
         self.config.max_bond_dim = new_cap;
+    }
+
+    /// Replace the truncation configuration while preserving state telemetry.
+    pub(crate) fn set_config(&mut self, config: MpsConfig) {
+        self.config = config;
+    }
+
+    /// Exact Schmidt-rank ceiling over the physical bonds this operation may touch.
+    ///
+    /// Forced projection can route compensating long-range gates across the
+    /// whole chain, so every internal bond is affected in the general case.
+    /// The result is clamped below the arithmetic limit used by randomized-SVD
+    /// eligibility checks. This includes representable shifts near the top of
+    /// `usize`, not only chains whose `2^(n/2)` shift itself overflows.
+    #[must_use]
+    pub(crate) fn physical_rank_ceiling(&self) -> usize {
+        let exponent = self.num_sites / 2;
+        1usize
+            .checked_shl(u32::try_from(exponent).unwrap_or(u32::MAX))
+            .unwrap_or(usize::MAX / 8)
+            .min(usize::MAX / 8)
     }
 
     /// Multiply the entire MPS by a scalar (absorbed into the first tensor).
@@ -538,6 +615,7 @@ impl Mps {
         // Update bond dimension
         self.bond_dims[q + 1] = new_chi;
         self.center = can_track_absorption.then_some(if absorb_right { q + 1 } else { q });
+        self.record_current_peak_bond();
 
         Ok(())
     }
@@ -793,6 +871,10 @@ impl Mps {
             return;
         }
         let norm_sq = self.norm_squared();
+        debug_assert!(
+            norm_sq > 0.0,
+            "cannot normalize a zero-norm MPS after projection"
+        );
         if norm_sq > 0.0 {
             let inv_norm = Complex64::new(1.0 / norm_sq.sqrt(), 0.0);
             self.tensors[0] *= inv_norm;
@@ -918,6 +1000,7 @@ impl Mps {
             new_tensors.push(t);
         }
 
+        let current_peak = new_bond_dims.iter().copied().max().unwrap_or(1);
         Self {
             num_sites: n,
             phys_dim: d,
@@ -927,6 +1010,19 @@ impl Mps {
             config: self.config.clone(),
             truncation_error: self.truncation_error.max(other.truncation_error),
             bond_cap_hits: self.bond_cap_hits + other.bond_cap_hits,
+            summed_discarded_weight: self
+                .summed_discarded_weight
+                .max(other.summed_discarded_weight),
+            lifetime_peak_bond: self
+                .lifetime_peak_bond
+                .max(other.lifetime_peak_bond)
+                .max(current_peak),
+            branch_vanish_retry_count: self
+                .branch_vanish_retry_count
+                .max(other.branch_vanish_retry_count),
+            deferred_branch_lost_count: self
+                .deferred_branch_lost_count
+                .max(other.deferred_branch_lost_count),
         }
     }
 
@@ -978,12 +1074,14 @@ impl Mps {
     pub fn left_canonicalize(&mut self) {
         canon::left_canonicalize_all(&mut self.tensors, &mut self.bond_dims, self.phys_dim);
         self.center = self.num_sites.checked_sub(1);
+        self.record_current_peak_bond();
     }
 
     /// Right-canonicalize the entire MPS.
     pub fn right_canonicalize(&mut self) {
         canon::right_canonicalize_all(&mut self.tensors, &mut self.bond_dims, self.phys_dim);
         self.center = (self.num_sites > 0).then_some(0);
+        self.record_current_peak_bond();
     }
 
     /// Put the environments bordering `(q, q + 1)` in canonical form.
@@ -1043,6 +1141,7 @@ impl Mps {
             }
             self.center = Some(target);
         }
+        self.record_current_peak_bond();
     }
 
     /// Validate a tracked center to an absolute max-entry Gram tolerance of
@@ -1154,6 +1253,47 @@ impl Mps {
         // after every truncation has been evaluated in the right-to-left
         // mixed-canonical gauge above.
         self.left_canonicalize();
+        self.record_current_peak_bond();
+        Ok(())
+    }
+
+    /// Compress from an established right-canonical gauge.
+    ///
+    /// The orthogonality center starts at site zero and follows this
+    /// left-to-right SVD sweep. Thus every split sees physical Schmidt
+    /// weights while avoiding the cold left-canonical sweep used by
+    /// [`Self::compress`]. The configured cutoff, cap, and adaptive error
+    /// budget are applied unchanged.
+    pub(crate) fn compress_from_right_canonical(&mut self) -> Result<(), MpsError> {
+        if self.num_sites <= 1 {
+            self.center = (self.num_sites == 1).then_some(0);
+            return Ok(());
+        }
+        debug_assert_eq!(self.center, Some(0));
+        #[cfg(debug_assertions)]
+        debug_assert!(self.claimed_center_is_valid(0));
+
+        let d = self.phys_dim;
+        for q in 0..self.num_sites - 1 {
+            let chi_l = self.bond_dims[q];
+            let chi_r = self.bond_dims[q + 1];
+            let matrix = tensor::reshape_left_group(&self.tensors[q], chi_l, d, chi_r);
+            let scaled_cutoff = self.config.svd_cutoff * matrix.norm();
+            let (u, svt, disc, hit) = svd::truncated_svd_right_absorb_with_error(
+                &matrix,
+                self.config.max_bond_dim,
+                scaled_cutoff,
+                self.config.max_truncation_error,
+            )?;
+            self.record_truncation(disc, hit);
+            let new_chi = u.ncols();
+
+            self.tensors[q] = reshape_left_ungroup(&u, chi_l, d, new_chi);
+            self.tensors[q + 1] = &svt * &self.tensors[q + 1];
+            self.bond_dims[q + 1] = new_chi;
+            self.center = Some(q + 1);
+        }
+        self.record_current_peak_bond();
         Ok(())
     }
 }
@@ -1169,6 +1309,10 @@ impl Clone for Mps {
             config: self.config.clone(),
             truncation_error: self.truncation_error,
             bond_cap_hits: self.bond_cap_hits,
+            summed_discarded_weight: self.summed_discarded_weight,
+            lifetime_peak_bond: self.lifetime_peak_bond,
+            branch_vanish_retry_count: self.branch_vanish_retry_count,
+            deferred_branch_lost_count: self.deferred_branch_lost_count,
         }
     }
 }
@@ -1187,6 +1331,23 @@ mod tests {
         let first_norm = first.iter().map(Complex64::norm_sqr).sum::<f64>();
         let second_norm = second.iter().map(Complex64::norm_sqr).sum::<f64>();
         overlap.norm_sqr() / (first_norm * second_norm)
+    }
+
+    #[test]
+    fn truncation_telemetry_separates_product_error_sum_and_lifetime_peak() {
+        let mut mps = Mps::new(3, MpsConfig::default());
+        mps.record_truncation(0.1, false);
+        mps.record_truncation(0.2, true);
+        assert!((mps.truncation_error() - 0.28).abs() < 1e-15);
+        assert!((mps.summed_discarded_weight() - 0.3).abs() < 1e-15);
+        assert_eq!(mps.bond_cap_hits(), 1);
+
+        let doubled = mps.add(&mps);
+        assert_eq!(doubled.max_bond_dim(), 2);
+        assert_eq!(doubled.lifetime_peak_bond(), 2);
+        let mut reduced = doubled;
+        reduced.compress().unwrap();
+        assert_eq!(reduced.lifetime_peak_bond(), 2);
     }
 
     #[cfg(not(debug_assertions))]
@@ -1371,6 +1532,14 @@ mod tests {
         #[cfg(debug_assertions)]
         assert!(mps.claimed_center_is_valid(2));
         assert_eq!(mps.clone().center, Some(2));
+    }
+
+    #[test]
+    fn physical_rank_ceiling_is_safe_for_randomized_svd_arithmetic() {
+        for num_sites in 124..=127 {
+            let mps = Mps::new(num_sites, MpsConfig::default());
+            assert!(mps.physical_rank_ceiling() <= usize::MAX / 8);
+        }
     }
 
     #[test]

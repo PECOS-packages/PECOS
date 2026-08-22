@@ -238,6 +238,83 @@ fn repair_disent_flags(
     }
 }
 
+/// Sample and transactionally force one exact Z-measurement branch.
+///
+/// `StabMps` exact measurement and MAST data measurement share this owning
+/// layer so neither can expose a partially mutated tableau/MPS pair.
+fn measure_qubit_exact_transactional(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    rng: &mut PecosRng,
+    q_idx: usize,
+    operation: &str,
+) -> Result<measure::LiveMeasurementResult, MpsError> {
+    let probability_one = measure::z_outcome_probability(tableau, mps, q_idx, true, operation);
+    let is_probability_zero = probability_one <= 0.0;
+    let is_probability_one = probability_one >= 1.0;
+    let outcome = if is_probability_zero {
+        false
+    } else if is_probability_one {
+        true
+    } else {
+        rng.random_bool(probability_one)
+    };
+
+    let mut candidate_tableau = tableau.clone();
+    let mut candidate_mps = mps.clone();
+    let first = measure::project_forced_z_with_update(
+        &mut candidate_tableau,
+        &mut candidate_mps,
+        q_idx,
+        outcome,
+    )?;
+    assert!(
+        first.snapped_probability > 0.0,
+        "{operation}: sampled a projector-impossible outcome"
+    );
+
+    let projection = if first.survival_ratio < measure::BRANCH_VANISH_SURVIVAL_THRESHOLD {
+        candidate_tableau = tableau.clone();
+        candidate_mps = mps.clone();
+        let original_config = mps.config().clone();
+        let mut retry_config = original_config.clone();
+        retry_config.max_bond_dim = candidate_mps.physical_rank_ceiling();
+        retry_config.svd_cutoff = 0.0;
+        retry_config.max_truncation_error = Some(0.0);
+        candidate_mps.set_config(retry_config);
+        let retry = measure::project_forced_z_with_update(
+            &mut candidate_tableau,
+            &mut candidate_mps,
+            q_idx,
+            outcome,
+        )?;
+        let retry_vanished = retry.survival_ratio < measure::BRANCH_VANISH_SURVIVAL_THRESHOLD;
+        debug_assert!(
+            !retry_vanished,
+            "{operation}: sampled branch vanished on the untruncated retry"
+        );
+        assert!(
+            !retry_vanished,
+            "{operation}: sampled branch vanished on the untruncated retry"
+        );
+        candidate_mps.set_config(original_config);
+        candidate_mps.record_branch_vanish_retry();
+        retry
+    } else {
+        first
+    };
+
+    *tableau = candidate_tableau;
+    *mps = candidate_mps;
+    Ok(measure::LiveMeasurementResult {
+        measurement: MeasurementResult {
+            outcome,
+            is_deterministic: is_probability_zero || is_probability_one,
+        },
+        update: projection.update,
+    })
+}
+
 fn invalidate_disent_flags(
     disent_flags: &mut [Option<SiteEigenstate>],
     update: &measure::ProjectionUpdate,
@@ -281,6 +358,25 @@ pub enum PauliKind {
     Z,
 }
 
+/// Policy for the family of operations implemented through singular Z measurement.
+///
+/// This controls [`CliffordGateable::mz`], reset, `pz`/`px`, syndrome
+/// extraction, and singular [`StabMps::sample_bitstring`].
+/// [`StabMps::sample_bitstrings`] (plural) is always exact by construction and
+/// does not dispatch through this policy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MeasurementMode {
+    /// Sample the normalized Born probability and transactionally force the
+    /// sampled branch, retrying without truncation if that branch vanishes.
+    #[default]
+    Exact,
+    /// Preserve the legacy uncompensated eager pre-reduction path. This is
+    /// faster for some workloads but can bias the stored conditional state.
+    Pragmatic,
+    /// Keep exact measurement-basis Cliffords in a deferred virtual frame.
+    Lazy,
+}
+
 /// Single-qubit Clifford kind used internally for Pauli frame propagation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SingleQubitCliffordKind {
@@ -301,10 +397,9 @@ pub struct StabMpsFlags(u8);
 
 impl StabMpsFlags {
     const NORMALIZE_AFTER_GATE: u8 = 1 << 0;
-    const LAZY_MEASURE: u8 = 1 << 1;
-    const MERGE_RZ: u8 = 1 << 2;
-    const PAULI_FRAME_TRACKING: u8 = 1 << 3;
-    const NUMERICAL_FLAG_REDETECTION: u8 = 1 << 4;
+    const MERGE_RZ: u8 = 1 << 1;
+    const PAULI_FRAME_TRACKING: u8 = 1 << 2;
+    const NUMERICAL_FLAG_REDETECTION: u8 = 1 << 3;
 
     /// Default flags: normalization and RZ merging enabled, everything else off.
     #[must_use]
@@ -332,15 +427,6 @@ impl StabMpsFlags {
     /// Set whether non-Clifford gates are followed by MPS normalization.
     pub fn set_normalize_after_gate(&mut self, v: bool) {
         self.set(Self::NORMALIZE_AFTER_GATE, v);
-    }
-    #[must_use]
-    /// Return whether measurement uses the deferred virtual-frame path.
-    pub fn lazy_measure(self) -> bool {
-        self.get(Self::LAZY_MEASURE)
-    }
-    /// Set whether measurement uses the deferred virtual-frame path.
-    pub fn set_lazy_measure(&mut self, v: bool) {
-        self.set(Self::LAZY_MEASURE, v);
     }
     #[must_use]
     /// Return whether consecutive same-qubit RZ rotations are merged.
@@ -387,6 +473,7 @@ pub struct StabMpsBuilder {
     parallel: bool,
     auto_grow_bond_dim: Option<f64>,
     auto_grow_max_bond_dim: usize,
+    measurement_mode: MeasurementMode,
     flags: StabMpsFlags,
 }
 
@@ -476,27 +563,12 @@ impl StabMpsBuilder {
         self
     }
 
-    /// Use lazy virtual-frame measurement: accumulate `pre_reduce` CNOTs AND
-    /// post-projection basis-rotation Cliffords into a deferred `V` queue
-    /// instead of applying them eagerly to the MPS. Pauli strings from
-    /// `decompose_z` are conjugated by `V†` before application to the
-    /// stored MPS, so expectation/projection are exact.
-    ///
-    /// - Default: false (eager path)
-    /// - **Not a universal win.** Per `examples/qec_bench.rs`, eager is
-    ///   faster for both QEC-like (syndrome extraction + T noise) and
-    ///   MAST-style (T-injection + ancilla measurement) workloads. Lazy
-    ///   uses MPS addition for projection (bond grows ~2× per measurement)
-    ///   whereas eager uses an in-place single-site basis-swap trick that
-    ///   avoids bond growth. Lazy's only advantage is exact stored-MPS
-    ///   state for subsequent non-measurement operations; eager's stored
-    ///   MPS drifts slightly but measurement statistics and tableau stay
-    ///   correct. Enable only if you need exact MPS state after random
-    ///   measurements (e.g., computing `state_vector` or `amplitude` and
-    ///   requiring no drift across many measurements).
+    /// Select the singular-measurement policy. The default is
+    /// [`MeasurementMode::Exact`]. See [`MeasurementMode`] for the affected
+    /// operation family and the exact behavior of plural sampling.
     #[must_use]
-    pub fn lazy_measure(mut self, lazy: bool) -> Self {
-        self.flags.set_lazy_measure(lazy);
+    pub fn measurement(mut self, mode: MeasurementMode) -> Self {
+        self.measurement_mode = mode;
         self
     }
 
@@ -587,8 +659,28 @@ impl StabMpsBuilder {
 
     /// QEC-style preset retained for source compatibility.
     ///
-    /// This now matches the general defaults: `max_bond_dim(128)`,
-    /// `max_truncation_error(1e-8)`, `merge_rz(true)`, and eager measurement.
+    /// This selects exact measurement. The frozen Stage-B recipe in
+    /// `examples/measurement_mode_bench.rs` measures manually expanded
+    /// distance-3 and distance-5 repetition-code syndrome circuits in both
+    /// check bases: eight rounds, coherent `RZ(0.1)` on every data qubit per
+    /// round, two-qubit depolarizing noise at `p=1e-3`, identical pre-generated
+    /// noise for both modes, `merge_rz(false)`, otherwise-default builders,
+    /// 2,000 shots at d3 and 500 at d5, one warmup, timed seeds 7001 through
+    /// 7007, and pinned release execution. Median Exact slowdowns relative to
+    /// Pragmatic were 1.496812 (d3/Z), 1.488242 (d3/X), 1.457758 (d5/Z), and
+    /// 1.548499 (d5/X): geometric mean 1.497474 and maximum 1.548499. Both are
+    /// inside the decided Exact-everywhere limits (geometric mean at most 3
+    /// and per-workload maximum at most 5). The ratios are specific to this
+    /// noisy workload family: on noiseless Clifford-dominated variants of the
+    /// same circuits, where pragmatic measurements are nearly free, the
+    /// relative gap is far larger even though absolute per-shot costs stay
+    /// small. Note also that this family never triggers pragmatic's biased
+    /// drift path, so pragmatic was timed at its unbiased best case.
+    ///
+    /// Run the recorded recipe with
+    /// `taskset -c 2 cargo run --release -p pecos-stab-tn --example measurement_mode_bench`.
+    /// The preset's other settings match the general defaults:
+    /// `max_bond_dim(128)`, `max_truncation_error(1e-8)`, and `merge_rz(true)`.
     ///
     /// Override any of these with subsequent builder calls:
     /// ```
@@ -610,6 +702,7 @@ impl StabMpsBuilder {
         self.max_truncation_error(1e-8)
             .max_bond_dim(bond_dim)
             .merge_rz(true)
+            .measurement(MeasurementMode::Exact)
     }
 
     /// Build the simulator.
@@ -634,7 +727,7 @@ impl StabMpsBuilder {
             rng,
             stats: StabMpsStats::default(),
             deferred_ops: Vec::new(),
-            pragmatic_drift_count: 0,
+            uncompensated_pre_reduction_count: 0,
             pending_rz: vec![None; self.num_qubits],
             auto_grow_bond_dim: self.auto_grow_bond_dim,
             auto_grow_max_bond_dim: self.auto_grow_max_bond_dim,
@@ -642,6 +735,7 @@ impl StabMpsBuilder {
             pauli_frame_x: vec![false; self.num_qubits],
             pauli_frame_z: vec![false; self.num_qubits],
             pauli_frame_phase: Complex64::new(1.0, 0.0),
+            measurement_mode: self.measurement_mode,
             flags: self.flags,
         }
     }
@@ -660,10 +754,7 @@ impl StabMpsBuilder {
 /// use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 /// use pecos_stab_tn::stab_mps::StabMps;
 ///
-/// let mut sim = StabMps::builder(2)
-///     .seed(7)
-///     .lazy_measure(true)
-///     .build();
+/// let mut sim = StabMps::builder(2).seed(7).build();
 /// sim.h(&[QubitId(0)]);
 /// sim.cx(&[(QubitId(0), QubitId(1))]);
 /// sim.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(1)]);
@@ -685,17 +776,15 @@ impl StabMpsBuilder {
 /// call [`Self::flush_pauli_frame_to_state`] as well before reads that must include
 /// the physical Pauli frame. The Python bindings automatically perform
 /// `flush()` for state and MPS-diagnostic reads, but not for the pure
-/// `is_state_exact()` and `pragmatic_drift_count` diagnostics, and they do not
+/// `is_state_exact()` and `uncompensated_pre_reduction_count` diagnostics, and they do not
 /// implicitly materialize a Pauli frame.
 ///
-/// Before relying on a state read, check all four diagnostics:
+/// Before relying on a state read, check the diagnostics:
 ///
-/// 1. [`Self::is_state_exact`] is `true` after the required flushes. It excludes
-///    MPS truncation from its definition of exactness.
-/// 2. [`Self::pragmatic_drift_count`] is zero. Nonzero drift from eager random
-///    measurement is irreversible; use `lazy_measure(true)` when later exact
-///    amplitudes are required.
-/// 3. [`Self::truncation_error`] is acceptable for the application.
+/// 1. [`Self::is_state_exact`] is `true` after the required flushes.
+/// 2. [`Self::uncompensated_pre_reduction_count`] is zero.
+/// 3. [`Self::truncation_error`] and [`Self::summed_discarded_weight`] are
+///    acceptable for the application.
 /// 4. [`Self::bond_cap_hits`] is zero, or the configured bond cap is known to be
 ///    adequate despite having bound an SVD.
 #[derive(Clone)]
@@ -717,8 +806,8 @@ pub struct StabMps {
     pub stats: StabMpsStats,
     /// Deferred virtual-frame Clifford V (see `measure::DeferredOp`).
     deferred_ops: Vec<measure::DeferredOp>,
-    /// Count of pragmatic-path measurement drifts.
-    pragmatic_drift_count: u64,
+    /// Count of pragmatic measurements whose pre-reduction was uncompensated.
+    uncompensated_pre_reduction_count: u64,
     /// Pending non-Clifford RZ angle per qubit when `merge_rz` is on.
     pending_rz: Vec<Option<Angle64>>,
     /// Auto-grow bond-dim threshold; `None` disables.
@@ -733,6 +822,8 @@ pub struct StabMps {
     pauli_frame_z: Vec<bool>,
     /// Global scalar of the Pauli frame.
     pauli_frame_phase: Complex64,
+    /// Policy for singular measurement and the operations built on it.
+    measurement_mode: MeasurementMode,
     /// Runtime feature flags.
     flags: StabMpsFlags,
 }
@@ -788,6 +879,7 @@ impl StabMps {
             parallel: false,
             auto_grow_bond_dim: None,
             auto_grow_max_bond_dim: 4096,
+            measurement_mode: MeasurementMode::default(),
             flags: StabMpsFlags::new(),
         }
     }
@@ -1394,6 +1486,36 @@ impl StabMps {
         self.mps.truncation_error()
     }
 
+    /// True sum of all relative discarded SVD weights over this run.
+    #[must_use]
+    pub fn summed_discarded_weight(&self) -> f64 {
+        self.mps.summed_discarded_weight()
+    }
+
+    /// Largest coefficient-MPS bond dimension observed over this run.
+    #[must_use]
+    pub fn lifetime_peak_bond(&self) -> usize {
+        self.mps.lifetime_peak_bond()
+    }
+
+    /// Number of sampled projections retried after a rolled-back branch vanish.
+    #[must_use]
+    pub fn branch_vanish_retry_count(&self) -> u64 {
+        self.mps.branch_vanish_retry_count()
+    }
+
+    /// Number of deferred MAST branches lost; always zero for `StabMps`.
+    #[must_use]
+    pub fn deferred_branch_lost_count(&self) -> u64 {
+        self.mps.deferred_branch_lost_count()
+    }
+
+    /// Return the configured singular-measurement policy.
+    #[must_use]
+    pub fn measurement_mode(&self) -> MeasurementMode {
+        self.measurement_mode
+    }
+
     /// Number of SVDs where `max_bond_dim` was the binding cap. If > 0 the
     /// state is under-resolved; consider raising `max_bond_dim` or loosening
     /// `max_truncation_error`.
@@ -1459,16 +1581,19 @@ impl StabMps {
     ///
     /// # Accuracy caveats (read if you have outstanding measurements)
     ///
-    /// - **Default (pragmatic-fix) measurement path**: `measure_qubit_stab_mps`
-    ///   skips MPS compensation for `pre_reduce` row-ops. The stored
+    /// - **Pragmatic measurement path**:
+    ///   [`measure::measure_qubit_stab_mps_pragmatic`] skips MPS compensation
+    ///   for `pre_reduce` row-ops. The stored
     ///   `(tableau, MPS)` pair may no longer represent the exact physical
     ///   state after a measurement that triggered multi-anticom
     ///   `pre_reduce`. Measurement outcome statistics stay correct, but
     ///   `state_vector`/`amplitude` reads can drift. If exact state is
-    ///   needed, use `StabMpsBuilder::lazy_measure(true)`.
+    ///   needed, keep the default [`MeasurementMode::Exact`] or select
+    ///   [`MeasurementMode::Lazy`].
     /// - **Merged-RZ pending buffer** (`merge_rz = true`): any pending
     ///   merged-RZ angle has not been applied yet.
-    /// - **Lazy-measurement deferred operations** (`lazy_measure = true`):
+    /// - **Lazy-measurement deferred operations**
+    ///   ([`MeasurementMode::Lazy`]):
     ///   queued virtual-frame operations have not been applied to the stored
     ///   MPS yet. Call `StabMps::flush()` before either kind of read.
     /// - **Pauli-frame tracking** (`pauli_frame_tracking = true`): the
@@ -1619,6 +1744,7 @@ impl StabMps {
     /// returns the bitstring. The original simulator state is unchanged
     /// (only the internal RNG advances, to ensure each shot uses a
     /// distinct RNG seed).
+    /// Each clone follows this simulator's [`MeasurementMode`].
     /// This method and [`Self::sample_bitstrings`] do not share an RNG stream,
     /// so identically seeded runs are not shot-for-shot comparable across them.
     ///
@@ -1661,6 +1787,9 @@ impl StabMps {
     /// sharing each distinct measurement-prefix projection across all shots
     /// that take that branch.
     ///
+    /// This plural sampler is always exact by construction and does not use
+    /// the configured [`MeasurementMode`].
+    ///
     /// The original simulator state is preserved; only its RNG advances.
     /// This method and [`Self::sample_bitstring`] do not share an RNG stream,
     /// so identically seeded runs are not shot-for-shot comparable across them.
@@ -1678,8 +1807,8 @@ impl StabMps {
     /// follows the same atomic projection sequence as [`Self::prob_bitstring`].
     /// The clamped `p0` is tested against `k` uniforms in branch-local shot order,
     /// with all node draws completed before visiting either child. Probabilities
-    /// below `1e-20`, the forced projector's tolerance, are zero; if either child
-    /// is zero-probability, the node consumes no RNG draws.
+    /// at the projector's shared endpoint snap become zero; if either child is
+    /// zero-probability, the node consumes no RNG draws.
     ///
     /// Children are visited depth-first, outcome 0 before outcome 1, measuring
     /// qubits `0..num_qubits`. Returned bitstrings therefore use the same
@@ -1737,8 +1866,6 @@ impl StabMps {
         prefix: &mut Vec<bool>,
         context: &mut PrefixSamplingContext<'_>,
     ) -> Result<(), MpsError> {
-        const ZERO_PROBABILITY_TOLERANCE: f64 = 1e-20;
-
         let q = prefix.len();
         if q == context.num_qubits {
             context
@@ -1758,9 +1885,9 @@ impl StabMps {
             measure::project_forced_z(&mut zero_tableau, &mut zero_mps, q, context.frame_x[q])?
                 .clamp(0.0, 1.0);
         let probability_one = 1.0 - probability_zero;
-        let num_zero = if probability_zero < ZERO_PROBABILITY_TOLERANCE {
+        let num_zero = if probability_zero == 0.0 {
             0
-        } else if probability_one < ZERO_PROBABILITY_TOLERANCE {
+        } else if probability_one == 0.0 {
             num_shots
         } else {
             (0..num_shots)
@@ -2145,18 +2272,14 @@ impl StabMps {
         }
     }
 
-    /// Returns `true` if the stored `(tableau, MPS)` pair exactly
-    /// represents the current physical state — no pending merged RZ,
-    /// no unflushed Pauli frame, no deferred CNOT queue from lazy
-    /// measurement. When `true`, `state_vector` / `amplitude` etc. return
-    /// exact results (modulo MPS truncation error reported by
-    /// `truncation_error`).
+    /// Conservative sufficient predicate for an exact stored physical state.
     ///
-    /// Also returns `false` if the pragmatic-fix path in
-    /// `measure_qubit_stab_mps` has fired at least once on this simulator
-    /// (tracked via `pragmatic_drift_count`). Use
-    /// `StabMpsBuilder::lazy_measure(true)` if you need exact state after
-    /// random measurements with multi-anticom stabilizer columns.
+    /// This is deliberately not an if-and-only-if classifier. It requires all
+    /// seven guards: no pending RZ, no unmaterialized Pauli frame, no lazy
+    /// deferred operations, no uncompensated pragmatic pre-reduction, exact
+    /// measurement mode, zero summed discarded weight, and no deferred MAST
+    /// branch loss. A branch-vanish retry is not a guard because its first
+    /// attempt was rolled back and its committed retry was untruncated.
     #[must_use]
     pub fn is_state_exact(&self) -> bool {
         let no_pending_rz = self.pending_rz.iter().all(std::option::Option::is_none);
@@ -2166,19 +2289,24 @@ impl StabMps {
                 && self.pauli_frame_z.iter().all(|&b| !b)
                 && phase_trivial);
         let no_deferred = self.deferred_ops.is_empty();
-        let no_drift = self.pragmatic_drift_count == 0;
-        no_pending_rz && no_frame && no_deferred && no_drift
+        let no_drift = self.uncompensated_pre_reduction_count == 0;
+        let exact_mode = self.measurement_mode == MeasurementMode::Exact;
+        let no_discarded_weight = self.mps.summed_discarded_weight() == 0.0;
+        let no_deferred_branch_loss = self.mps.deferred_branch_lost_count() == 0;
+        no_pending_rz
+            && no_frame
+            && no_deferred
+            && no_drift
+            && exact_mode
+            && no_discarded_weight
+            && no_deferred_branch_loss
     }
 
-    /// Number of measurements that took the pragmatic-fix path (`pre_reduce`
-    /// row-ops applied to the tableau without MPS compensation) on this
-    /// simulator. Non-zero means the stored `(tableau, MPS)` pair has
-    /// drifted from the exact physical state; read methods may return
-    /// approximate amplitudes. Enable `StabMpsBuilder::lazy_measure(true)` to
-    /// avoid drift entirely.
+    /// Number of pragmatic measurements whose generator pre-reduction changed
+    /// the tableau without matching coefficient-MPS compensation.
     #[must_use]
-    pub fn pragmatic_drift_count(&self) -> u64 {
-        self.pragmatic_drift_count
+    pub fn uncompensated_pre_reduction_count(&self) -> u64 {
+        self.uncompensated_pre_reduction_count
     }
 
     /// Materialize deferred lazy-measurement operations and any pending
@@ -2391,33 +2519,41 @@ impl StabMps {
     /// Measure qubit q in the Z basis using the shared STN measurement protocol.
     fn measure_qubit(&mut self, q: QubitId) -> MeasurementResult {
         self.flush_pending_rz(q.index());
-        let live_result = if self.flags.lazy_measure() {
-            measure::measure_qubit_stab_mps_lazy_with_update(
+        let live_result = match self.measurement_mode {
+            MeasurementMode::Lazy => measure::measure_qubit_stab_mps_lazy_with_update(
                 &mut self.tableau,
                 &mut self.mps,
                 &mut self.rng,
                 q.index(),
                 &mut self.deferred_ops,
-            )
-        } else {
-            // Detect pragmatic-fix drift: pre_reduce fires when col_x has
-            // multiple anticommuting stabilizers. It applies row-ops to the
-            // tableau (changing C) WITHOUT compensating MPS. Drift occurs
-            // regardless of whether decompose_z then takes the Stabilizer
-            // or DestabilizerFlip path — the uncompensated row-ops already
-            // changed the (C, MPS) pair.
-            if self.tableau.stabs().col_x[q.index()].len() > 1 {
-                self.pragmatic_drift_count += 1;
+            ),
+            MeasurementMode::Pragmatic => {
+                // Detect pragmatic-fix drift: pre_reduce fires when col_x has
+                // multiple anticommuting stabilizers. It applies row-ops to the
+                // tableau (changing C) WITHOUT compensating MPS. Drift occurs
+                // regardless of whether decompose_z then takes the Stabilizer
+                // or DestabilizerFlip path — the uncompensated row-ops already
+                // changed the (C, MPS) pair.
+                if self.tableau.stabs().col_x[q.index()].len() > 1 {
+                    self.uncompensated_pre_reduction_count += 1;
+                }
+                measure::measure_qubit_stab_mps_with_update(
+                    &mut self.tableau,
+                    &mut self.mps,
+                    &mut self.rng,
+                    q.index(),
+                )
             }
-            measure::measure_qubit_stab_mps_with_update(
+            MeasurementMode::Exact => measure_qubit_exact_transactional(
                 &mut self.tableau,
                 &mut self.mps,
                 &mut self.rng,
                 q.index(),
-            )
+                "StabMps::mz",
+            ),
         };
         let live_result = expect_mps_operation(live_result, "StabMps::mz projection");
-        if self.flags.lazy_measure() && !self.deferred_ops.is_empty() {
+        if self.measurement_mode == MeasurementMode::Lazy && !self.deferred_ops.is_empty() {
             // Deferred virtual Cliffords mean a stored |0> is not necessarily
             // an effective |0> (issue #555).  Invalidate touched sites, but do
             // not install any new proof until that frame has been materialized.
@@ -2461,7 +2597,7 @@ impl QuantumSimulator for StabMps {
         self.gf2_matrix.reset();
         self.stats = StabMpsStats::default();
         self.deferred_ops.clear();
-        self.pragmatic_drift_count = 0;
+        self.uncompensated_pre_reduction_count = 0;
         self.last_truncation_error = 0.0;
         for slot in &mut self.pending_rz {
             *slot = None;
@@ -6411,23 +6547,24 @@ mod tests {
     }
 
     #[test]
-    fn test_pauli_frame_with_lazy_measure() {
+    fn test_pauli_frame_with_measurement_modes() {
         // Lazy measure + Pauli frame should compose: frame applies AFTER
         // the measurement outcome, irrespective of lazy/eager internals.
         // Init |0⟩, inject X in frame, measure: expect outcome=1 regardless
-        // of lazy_measure setting.
+        // of the selected measurement mode.
         for lazy in [false, true] {
             let mut stn = StabMps::builder(1)
                 .seed(42)
-                .lazy_measure(lazy)
+                .measurement(if lazy {
+                    MeasurementMode::Lazy
+                } else {
+                    MeasurementMode::Pragmatic
+                })
                 .pauli_frame_tracking(true)
                 .build();
             stn.inject_x_in_frame(QubitId(0));
             let r = stn.mz(&[QubitId(0)])[0].outcome;
-            assert!(
-                r,
-                "lazy_measure={lazy}, frame X should give outcome=1, got {r}"
-            );
+            assert!(r, "lazy={lazy}, frame X should give outcome=1, got {r}");
         }
     }
 
@@ -6495,7 +6632,10 @@ mod tests {
 
     #[test]
     fn test_flush_materializes_lazy_deferred_operations() {
-        let mut stn = StabMps::builder(2).seed(19).lazy_measure(true).build();
+        let mut stn = StabMps::builder(2)
+            .seed(19)
+            .measurement(MeasurementMode::Lazy)
+            .build();
         stn.h(&[QubitId(1)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(1)]);
         stn.sz(&[QubitId(0)]);
@@ -6504,26 +6644,66 @@ mod tests {
         let _ = stn.mz(&[QubitId(0)]);
 
         assert!(!stn.is_state_exact(), "lazy operations should be pending");
+        assert!(
+            !stn.deferred_ops.is_empty(),
+            "the fixture must exercise a nonempty lazy-operation queue"
+        );
+        let pre_flush_state = stn.state_vector();
+        let mut expected = stn.clone();
+        measure::flush_deferred_ops(&mut expected.mps, &mut expected.deferred_ops).unwrap();
+        let expected_state = expected.state_vector();
+        let stale_fidelity = pre_flush_state
+            .iter()
+            .zip(&expected_state)
+            .map(|(left, right)| left.conj() * right)
+            .sum::<Complex64>()
+            .norm_sqr();
+        assert!(
+            stale_fidelity < 1.0 - 1e-8,
+            "the fixture must make deferred materialization observable"
+        );
         stn.flush();
         assert!(
-            stn.is_state_exact(),
-            "flush should materialize lazy operations"
+            stn.deferred_ops.is_empty(),
+            "flush must empty the lazy queue"
+        );
+        let materialized_fidelity = stn
+            .state_vector()
+            .iter()
+            .zip(&expected_state)
+            .map(|(left, right)| left.conj() * right)
+            .sum::<Complex64>()
+            .norm_sqr();
+        assert!(
+            materialized_fidelity > 1.0 - 1e-12,
+            "flush must materialize the queued state: fidelity={materialized_fidelity:.16}"
+        );
+        assert!(
+            !stn.is_state_exact(),
+            "lazy mode itself is a conservative exactness guard"
         );
     }
 
     #[test]
-    fn test_pragmatic_drift_count_tracks_non_lazy_pre_reduce() {
+    fn test_uncompensated_pre_reduction_count_tracks_pragmatic_path() {
         // Build a state where col_x for the measured qubit has multiple
         // anticommuting stabilizers so pre_reduce fires. H(0), H(1), CX(0,1)
         // gives stabs {X_0X_1, X_1}; measuring qubit 1 has col_x[1].len()=2.
-        let mut stn = StabMps::builder(2).seed(3).build();
+        let mut stn = StabMps::builder(2)
+            .seed(3)
+            .measurement(MeasurementMode::Pragmatic)
+            .build();
         stn.h(&[QubitId(0)]);
         stn.h(&[QubitId(1)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
-        assert_eq!(stn.pragmatic_drift_count(), 0, "no measurements yet");
+        assert_eq!(
+            stn.uncompensated_pre_reduction_count(),
+            0,
+            "no measurements yet"
+        );
         let _ = stn.mz(&[QubitId(1)]);
         assert_eq!(
-            stn.pragmatic_drift_count(),
+            stn.uncompensated_pre_reduction_count(),
             1,
             "non-lazy mz on multi-anticom col_x should bump drift counter"
         );
@@ -6533,26 +6713,36 @@ mod tests {
         );
 
         // Lazy path: same setup but no drift (pre_reduce CNOTs go into V).
-        let mut stn = StabMps::builder(2).seed(3).lazy_measure(true).build();
+        let mut stn = StabMps::builder(2)
+            .seed(3)
+            .measurement(MeasurementMode::Lazy)
+            .build();
         stn.h(&[QubitId(0)]);
         stn.h(&[QubitId(1)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         let _ = stn.mz(&[QubitId(1)]);
         assert_eq!(
-            stn.pragmatic_drift_count(),
+            stn.uncompensated_pre_reduction_count(),
             0,
-            "lazy_measure path must not increment drift count"
+            "lazy path must not increment the uncompensated count"
         );
 
         // Reset clears the counter.
-        let mut stn = StabMps::builder(2).seed(3).build();
+        let mut stn = StabMps::builder(2)
+            .seed(3)
+            .measurement(MeasurementMode::Pragmatic)
+            .build();
         stn.h(&[QubitId(0)]);
         stn.h(&[QubitId(1)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         let _ = stn.mz(&[QubitId(1)]);
-        assert!(stn.pragmatic_drift_count() > 0);
+        assert!(stn.uncompensated_pre_reduction_count() > 0);
         stn.reset();
-        assert_eq!(stn.pragmatic_drift_count(), 0, "reset clears drift counter");
+        assert_eq!(
+            stn.uncompensated_pre_reduction_count(),
+            0,
+            "reset clears drift counter"
+        );
     }
 
     #[test]
@@ -6570,7 +6760,10 @@ mod tests {
         let mut one_count = 0;
         let t = Angle64::QUARTER_TURN / 2u64;
         for shot in 0..num_shots {
-            let mut stn = StabMps::builder(2).seed(shot).lazy_measure(true).build();
+            let mut stn = StabMps::builder(2)
+                .seed(shot)
+                .measurement(MeasurementMode::Lazy)
+                .build();
             // Non-Clifford first to force MPS non-trivial (Cliffords alone
             // keep MPS in its initial product form via tableau routing).
             stn.h(&[QubitId(1)]);
@@ -7671,7 +7864,7 @@ mod tests {
         assert_eq!(stn.config.max_truncation_error, Some(1e-8));
         assert!(!stn.config.parallel);
         assert!(stn.flags.normalize_after_gate());
-        assert!(!stn.flags.lazy_measure());
+        assert_eq!(stn.measurement_mode, MeasurementMode::Exact);
         assert!(stn.flags.merge_rz());
         assert!(!stn.flags.pauli_frame_tracking());
         assert!(!stn.flags.numerical_flag_redetection());
@@ -7810,6 +8003,7 @@ mod tests {
         // Smoke test: the preset should build a working StabMps and handle
         // a Clifford + T + measurement sequence.
         let mut stn = StabMps::builder(4).seed(99).for_qec().build();
+        assert_eq!(stn.measurement_mode(), MeasurementMode::Exact);
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
@@ -7820,12 +8014,32 @@ mod tests {
     }
 
     #[test]
+    fn measurement_mode_override_clone_and_reset_retention() {
+        let mut exact_override = StabMps::builder(2)
+            .for_qec()
+            .measurement(MeasurementMode::Exact)
+            .build();
+        assert_eq!(exact_override.measurement_mode(), MeasurementMode::Exact);
+        assert_eq!(
+            exact_override.clone().measurement_mode(),
+            MeasurementMode::Exact
+        );
+        exact_override.reset();
+        assert_eq!(exact_override.measurement_mode(), MeasurementMode::Exact);
+
+        let lazy = StabMps::builder(2)
+            .measurement(MeasurementMode::Lazy)
+            .build();
+        assert_eq!(lazy.clone().measurement_mode(), MeasurementMode::Lazy);
+    }
+
+    #[test]
     fn test_builder_lazy_measure_bell_correlation() {
         // Lazy-measure path must give same Bell-state correlation as eager.
         for trial in 0..20 {
             let mut stn = StabMps::builder(2)
                 .seed(3000 + trial)
-                .lazy_measure(true)
+                .measurement(MeasurementMode::Lazy)
                 .build();
             stn.h(&[QubitId(0)]);
             stn.cx(&[(QubitId(0), QubitId(1))]);
@@ -7845,7 +8059,7 @@ mod tests {
         for trial in 0..num_trials {
             let mut stn = StabMps::builder(1)
                 .seed(u64::from(4000 + trial))
-                .lazy_measure(true)
+                .measurement(MeasurementMode::Lazy)
                 .build();
             stn.rx(theta, &[QubitId(0)]);
             if !stn.mz(&[QubitId(0)])[0].outcome {
@@ -7896,7 +8110,11 @@ mod tests {
                             .svd_cutoff(svd_cutoff)
                             .max_truncation_error(max_truncation_error)
                             .merge_rz(false)
-                            .lazy_measure(lazy_measure)
+                            .measurement(if lazy_measure {
+                                MeasurementMode::Lazy
+                            } else {
+                                MeasurementMode::Pragmatic
+                            })
                             .numerical_flag_redetection(numerical_flag_redetection)
                             .build();
 
@@ -8090,7 +8308,11 @@ mod tests {
                         .svd_cutoff(0.0)
                         .max_truncation_error(0.0)
                         .merge_rz(false)
-                        .lazy_measure(lazy_measure)
+                        .measurement(if lazy_measure {
+                            MeasurementMode::Lazy
+                        } else {
+                            MeasurementMode::Pragmatic
+                        })
                         .numerical_flag_redetection(numerical_flag_redetection)
                         .build();
                     let mut dense = DenseStateVec::new(N);
@@ -8126,8 +8348,8 @@ mod tests {
                     let mut post_measurement = stn.clone();
                     post_measurement.flush();
                     if lazy_measure {
-                        assert_eq!(stn.pragmatic_drift_count(), 0);
-                    } else if stn.pragmatic_drift_count() > 0 {
+                        assert_eq!(stn.uncompensated_pre_reduction_count(), 0);
+                    } else if stn.uncompensated_pre_reduction_count() > 0 {
                         eager_pragmatic_drift_exercised = true;
                     }
                     let projected =
@@ -8141,7 +8363,7 @@ mod tests {
                             "measurement; lazy={lazy_measure} redetect={numerical_flag_redetection} seed={circuit_seed}"
                         ),
                     );
-                    if !lazy_measure && stn.pragmatic_drift_count() > 0 {
+                    if !lazy_measure && stn.uncompensated_pre_reduction_count() > 0 {
                         // Eager pre-reduction deliberately records that exact
                         // amplitude comparisons are no longer valid. The stored
                         // flag marginal above remains an exact local invariant.
@@ -8193,5 +8415,138 @@ mod tests {
             eager_pragmatic_drift_exercised,
             "eager seed sweep must exercise the pragmatic-drift branch"
         );
+    }
+
+    #[test]
+    fn exact_measurement_vanish_retry_matches_clean_projection_and_restores_config() {
+        let prepare = || {
+            let mut stn = StabMps::builder(3)
+                .seed(0xabc)
+                .max_bond_dim(1)
+                .svd_cutoff(1e-7)
+                .max_truncation_error(1e-4)
+                .merge_rz(false)
+                .build();
+            stn.h(&[QubitId(0)]);
+            stn.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+            stn
+        };
+
+        let mut clean = prepare();
+        let clean_outcome = clean.mz(&[QubitId(0)])[0].outcome;
+
+        let mut retried = prepare();
+        measure::inject_projection_vanishes(1);
+        let retried_outcome = retried.mz(&[QubitId(0)])[0].outcome;
+        assert_eq!(retried_outcome, clean_outcome);
+        assert_eq!(
+            format!("{:?}", retried.tableau.stabs()),
+            format!("{:?}", clean.tableau.stabs())
+        );
+        assert_eq!(
+            format!("{:?}", retried.tableau.destabs()),
+            format!("{:?}", clean.tableau.destabs())
+        );
+        assert_eq!(retried.mps.tensors(), clean.mps.tensors());
+        assert_eq!(retried.mps.bond_dims(), clean.mps.bond_dims());
+        assert_eq!(
+            retried.mps.tracked_center_for_test(),
+            clean.mps.tracked_center_for_test()
+        );
+        assert_eq!(
+            retried.mps.truncation_error().to_bits(),
+            clean.mps.truncation_error().to_bits()
+        );
+        assert_eq!(
+            retried.mps.summed_discarded_weight().to_bits(),
+            clean.mps.summed_discarded_weight().to_bits()
+        );
+        assert_eq!(retried.mps.bond_cap_hits(), clean.mps.bond_cap_hits());
+        assert_eq!(retried.branch_vanish_retry_count(), 1);
+        assert_eq!(retried.mps.config().max_bond_dim, 1);
+        assert_eq!(
+            retried.mps.config().svd_cutoff.to_bits(),
+            1e-7_f64.to_bits()
+        );
+        assert_eq!(retried.mps.config().max_truncation_error, Some(1e-4));
+
+        let zero = Complex64::new(0.0, 0.0);
+        let one = Complex64::new(1.0, 0.0);
+        let cnot = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                one, zero, zero, zero, zero, one, zero, zero, zero, zero, zero, one, zero, zero,
+                one, zero,
+            ],
+        );
+        retried
+            .mps
+            .apply_long_range_two_site_gate(0, 2, &cnot)
+            .unwrap();
+        retried.mps.compress().unwrap();
+        assert!(retried.mps.norm_squared().is_finite());
+        assert!(retried.mps.max_bond_dim() <= 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "StabMps::mz: sampled branch vanished on the untruncated retry")]
+    fn exact_measurement_double_vanish_panics_with_operation_name() {
+        let mut stn = StabMps::builder(1).seed(9).merge_rz(false).build();
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        measure::inject_projection_vanishes(2);
+        let _ = stn.mz(&[QubitId(0)]);
+    }
+
+    #[test]
+    fn pragmatic_mode_without_pre_reduction_is_not_state_exact() {
+        let mut stn = StabMps::builder(1)
+            .measurement(MeasurementMode::Pragmatic)
+            .build();
+        stn.h(&[QubitId(0)]);
+        let _ = stn.mz(&[QubitId(0)]);
+        assert_eq!(stn.uncompensated_pre_reduction_count(), 0);
+        assert!(!stn.is_state_exact());
+    }
+
+    #[test]
+    fn state_exactness_has_all_seven_guards_but_not_retry_count() {
+        let exact = || StabMps::builder(2).merge_rz(false).build();
+        assert!(exact().is_state_exact());
+
+        let mut pending_rz = StabMps::builder(2).merge_rz(true).build();
+        pending_rz.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        assert!(!pending_rz.is_state_exact());
+
+        let mut frame = StabMps::builder(2).pauli_frame_tracking(true).build();
+        frame.inject_x_in_frame(QubitId(0));
+        assert!(!frame.is_state_exact());
+
+        let mut deferred = exact();
+        deferred.deferred_ops.push(measure::DeferredOp::H(0));
+        assert!(!deferred.is_state_exact());
+
+        let mut uncompensated = exact();
+        uncompensated.uncompensated_pre_reduction_count = 1;
+        assert!(!uncompensated.is_state_exact());
+
+        let pragmatic = StabMps::builder(2)
+            .merge_rz(false)
+            .measurement(MeasurementMode::Pragmatic)
+            .build();
+        assert!(!pragmatic.is_state_exact());
+
+        let mut truncated = exact();
+        truncated.mps.record_truncation(1e-9, false);
+        assert!(!truncated.is_state_exact());
+
+        let mut deferred_loss = exact();
+        deferred_loss.mps.record_deferred_branch_lost();
+        assert!(!deferred_loss.is_state_exact());
+
+        let mut retried = exact();
+        retried.mps.record_branch_vanish_retry();
+        assert!(retried.is_state_exact());
     }
 }

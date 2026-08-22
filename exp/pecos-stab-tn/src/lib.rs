@@ -23,8 +23,11 @@
 //!
 //! `StabMps` defaults to a maximum bond dimension of 128, a maximum relative
 //! truncation error of `1e-8`, an SVD cutoff of `1e-12`, normalization after
-//! non-Clifford gates, and merged same-qubit RZ rotations. Lazy measurement,
-//! Pauli-frame tracking, and numerical flag redetection remain opt-in. To
+//! non-Clifford gates, merged same-qubit RZ rotations, and exact singular
+//! measurement. Pragmatic and lazy measurement modes, Pauli-frame tracking,
+//! and numerical flag redetection remain opt-in. Singular `sample_bitstring`
+//! follows the selected mode; plural `sample_bitstrings` is always exact by
+//! construction. To
 //! recover the former behavior explicitly, use `max_bond_dim(64)`,
 //! `max_truncation_error(0.0)`, and `merge_rz(false)` on the builder.
 //! `Mast` instead defaults `merge_rz` to false so every RZ immediately exposes

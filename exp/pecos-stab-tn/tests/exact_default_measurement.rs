@@ -915,6 +915,57 @@ fn pragmatic_trivial_product_measurement_never_reports_an_impossible_repeat_outc
     assert_trivial_product_repeat_outcome_is_valid(MeasurementMode::Pragmatic);
 }
 
+#[test]
+fn lazy_trivial_stored_mps_materializes_pending_frame_before_tableau_read() {
+    fn measure_and_check(
+        simulator: &mut StabMps,
+        dense: &mut DenseStateVec,
+        expected_outcome: bool,
+        measurement_index: usize,
+    ) {
+        let outcome = simulator.mz(&[QubitId(1)])[0].outcome;
+        assert_eq!(outcome, expected_outcome, "measurement {measurement_index}");
+        let (probability, projected) = projected_dense_state(dense.clone(), 1, outcome)
+            .expect("the reported Lazy outcome must have nonzero dense probability");
+        assert!(probability > PROBABILITY_EPSILON);
+        *dense = projected;
+
+        let mut snapshot = simulator.clone();
+        snapshot.flush();
+        let fidelity = state_fidelity(&snapshot.state_vector(), &dense.state());
+        assert!(
+            fidelity >= 1.0 - 1e-12,
+            "measurement {measurement_index}: conditional-state fidelity={fidelity:.16}"
+        );
+    }
+
+    let mut simulator = build_stn_with_mode_and_merge(3, 0x572A_75E5, MeasurementMode::Lazy, true);
+    let mut dense = DenseStateVec::new(3);
+
+    let preparation = [
+        Gate::H(1),
+        Gate::Rz(1, Angle64::from_radians(0.808)),
+        Gate::Rz(1, Angle64::from_radians(1.033)),
+    ];
+    replay_gates(&mut simulator, &preparation);
+    replay_gates(&mut dense, &preparation);
+    measure_and_check(&mut simulator, &mut dense, true, 0);
+
+    let first_continuation = [
+        Gate::Rz(1, Angle64::from_radians(0.430)),
+        Gate::H(1),
+        Gate::X(1),
+    ];
+    replay_gates(&mut simulator, &first_continuation);
+    replay_gates(&mut dense, &first_continuation);
+    measure_and_check(&mut simulator, &mut dense, false, 1);
+
+    let second_continuation = [Gate::Rz(1, Angle64::from_radians(0.837)), Gate::Sz(1)];
+    replay_gates(&mut simulator, &second_continuation);
+    replay_gates(&mut dense, &second_continuation);
+    measure_and_check(&mut simulator, &mut dense, false, 2);
+}
+
 fn lazy_frame_clifford_family(seed: u64, num_qubits: usize) -> Vec<Gate> {
     let mut word = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut next = || {

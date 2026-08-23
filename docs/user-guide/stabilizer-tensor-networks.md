@@ -10,7 +10,7 @@ All public bitstrings use qubit-index order: `bits[q]` is the bit for qubit `q`.
 
 ## `StabMps` quickstart
 
-Use `sample_bitstrings`, plural, for shot workloads. It shares each distinct measurement-prefix projection between shots and is always exact by construction, independent of the singular-measurement policy. `sample_bitstring` clones and collapses the entire simulator once per shot and follows that policy. The two methods do not share an RNG stream, so seeded outputs should not be compared shot for shot across methods.
+`sample_bitstrings` is the `StabMps` sampler. It shares each distinct measurement-prefix projection between shots and is always exact by construction, independent of the single-measurement policy. When each shot must follow the configured measurement mode, create a fresh simulator for that shot and explicitly loop over MZ.
 
 ```python
 import math
@@ -62,7 +62,7 @@ Python state reads automatically flush lazy operations and merged rotations. Whe
 
 `StabMps` defaults `merge_rz` to true for throughput. `Mast` defaults it to false so each RZ immediately exposes its injection and ancilla-capacity cost. Numerical flag redetection is opt-in. In `StabMps` it self-disables while lazy deferred operations are pending, because the stored tensors then differ from the effective MPS-frame state.
 
-`StabMps` measurement defaults to `"exact"`. Select `"pragmatic"` for the legacy uncompensated eager path or `"lazy"` for the deferred virtual-frame path. After the issue #555 and #572 frame and projection fixes, Lazy preserves exact conditional states subject to configured MPS truncation; Rust reads still require `flush()`, while Python reads auto-flush. Lazy and Exact consume distinct RNG streams, so equal seeds are not shot-for-shot comparable across those modes. The policy covers MZ, reset, PZ/PX, syndrome extraction, and singular `sample_bitstring`; plural `sample_bitstrings` remains exact.
+`StabMps` measurement defaults to `"exact"`. Select `"pragmatic"` for the legacy uncompensated eager path or `"lazy"` for the deferred virtual-frame path. After the issue #555 and #572 frame and projection fixes, Lazy preserves exact conditional states subject to configured MPS truncation; Rust reads still require `flush()`, while Python reads auto-flush. Lazy and Exact consume distinct RNG streams, so equal seeds are not shot-for-shot comparable across those modes. The policy covers MZ, reset, PZ/PX, and syndrome extraction; `sample_bitstrings` remains exact. Per-shot mode-following sampling is an explicit MZ loop on fresh simulators.
 
 ## `Mast` quickstart
 

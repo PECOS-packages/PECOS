@@ -2653,9 +2653,7 @@ fn test_prob_bitstring_nonzero_trivial_coefficient_basis_matches_dense_state_vec
 #[test]
 fn test_prefix_tree_sampler_random_clifford_t_distributions() {
     // Compare the exact forced-projection prefix sampler with the independent
-    // dense state vector. Do not use `sample_bitstring` as an oracle: that API
-    // deliberately retains the pre-existing pragmatic measurement path and
-    // its documented drift.
+    // dense state vector.
     let num_shots = 5000usize;
     for num_qubits in 3..=5 {
         for t_count in 2..=5 {

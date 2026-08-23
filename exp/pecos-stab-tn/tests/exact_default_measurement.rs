@@ -19,7 +19,7 @@
 //! visible to the harness.
 
 use num_complex::Complex64;
-use pecos_core::{Angle64, QubitId};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DenseStateVec};
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::Mast;
@@ -56,7 +56,7 @@ enum Surface {
     Px,
     ExtractSyndromes,
     Continuation,
-    SampleBitstring,
+    PerShotMz,
     SampleBitstrings,
 }
 
@@ -70,7 +70,7 @@ impl Surface {
             Self::Px => "px",
             Self::ExtractSyndromes => "extract_syndromes",
             Self::Continuation => "continuation",
-            Self::SampleBitstring => "sample_bitstring",
+            Self::PerShotMz => "per_shot_mz_on_clone",
             Self::SampleBitstrings => "sample_bitstrings",
         }
     }
@@ -78,7 +78,7 @@ impl Surface {
     fn record_width(self, num_qubits: usize) -> usize {
         match self {
             Self::MzMid | Self::ExtractSyndromes => 1,
-            Self::MzEnd | Self::Pz | Self::Px | Self::SampleBitstring | Self::SampleBitstrings => {
+            Self::MzEnd | Self::Pz | Self::Px | Self::PerShotMz | Self::SampleBitstrings => {
                 num_qubits
             }
             Self::Reset | Self::Continuation => num_qubits + 1,
@@ -416,7 +416,7 @@ fn exact_probabilities(surface: Surface, num_qubits: usize) -> Vec<f64> {
             replay_dense_branches(&mut measured, &continuation_family(num_qubits));
             measured
         }
-        Surface::MzEnd | Surface::SampleBitstring | Surface::SampleBitstrings => {
+        Surface::MzEnd | Surface::PerShotMz | Surface::SampleBitstrings => {
             dense_measure_all(branches, num_qubits)
         }
         Surface::Reset => {
@@ -502,7 +502,7 @@ fn run_built_stn_shot(surface: Surface, num_qubits: usize, mut simulator: StabMp
             bits.extend(measure_all(&mut simulator, num_qubits));
             bits
         }
-        Surface::SampleBitstring | Surface::SampleBitstrings => {
+        Surface::PerShotMz | Surface::SampleBitstrings => {
             unreachable!("sampling surfaces use their public batch APIs")
         }
     };
@@ -556,7 +556,7 @@ fn run_mast_shot(surface: Surface, num_qubits: usize, seed: u64) -> usize {
             replay_gates(&mut simulator, &continuation);
             vec![outcome]
         }
-        Surface::MzEnd | Surface::SampleBitstring | Surface::SampleBitstrings => {
+        Surface::MzEnd | Surface::PerShotMz | Surface::SampleBitstrings => {
             measure_all(&mut simulator, num_qubits)
         }
         Surface::Reset => {
@@ -630,10 +630,7 @@ fn sampled_stn_counts_with_mode(
     merge_rz: bool,
 ) -> Vec<usize> {
     let num_outcomes = 1 << surface.record_width(num_qubits);
-    if matches!(
-        surface,
-        Surface::SampleBitstring | Surface::SampleBitstrings
-    ) {
+    if matches!(surface, Surface::PerShotMz | Surface::SampleBitstrings) {
         let mut simulator = build_stn_with_mode_and_merge(
             num_qubits,
             0x5A00_0000 + num_qubits as u64,
@@ -641,11 +638,20 @@ fn sampled_stn_counts_with_mode(
             merge_rz,
         );
         replay_gates(&mut simulator, &honest_family(num_qubits, num_qubits));
-        let samples = if surface == Surface::SampleBitstring {
-            simulator.sample_bitstring(num_shots)
-        } else {
-            simulator.sample_bitstrings(num_shots)
-        };
+        if surface == Surface::PerShotMz {
+            return parallel_counts(num_outcomes, num_shots, |shot| {
+                let mut shot_simulator = simulator.clone();
+                shot_simulator.set_seed(
+                    0x5A10_0000_u64
+                        .wrapping_add((num_qubits as u64) * 100_000)
+                        .wrapping_add(shot as u64),
+                );
+                let bits = measure_all(&mut shot_simulator, num_qubits);
+                assert_eq!(shot_simulator.bond_cap_hits(), 0);
+                encode_bits(&bits)
+            });
+        }
+        let samples = simulator.sample_bitstrings(num_shots);
         let mut counts = vec![0; num_outcomes];
         for bits in samples {
             counts[encode_bits(&bits)] += 1;
@@ -1554,9 +1560,9 @@ surface_gate_tests!(
     Surface::Continuation
 );
 surface_gate_tests!(
-    exact_default_sample_bitstring_fast,
-    exact_default_sample_bitstring_release,
-    Surface::SampleBitstring
+    exact_default_per_shot_mz_fast,
+    exact_default_per_shot_mz_release,
+    Surface::PerShotMz
 );
 surface_gate_tests!(
     exact_default_sample_bitstrings_fast,
@@ -1620,9 +1626,9 @@ lazy_surface_gate_tests!(
     Surface::Continuation
 );
 lazy_surface_gate_tests!(
-    lazy_sample_bitstring_fast,
-    lazy_sample_bitstring_release,
-    Surface::SampleBitstring
+    lazy_per_shot_mz_fast,
+    lazy_per_shot_mz_release,
+    Surface::PerShotMz
 );
 lazy_surface_gate_tests!(
     lazy_sample_bitstrings_fast,

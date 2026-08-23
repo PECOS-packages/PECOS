@@ -10,7 +10,7 @@
 // express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Frozen Stage-B benchmark for the singular-measurement policy.
+//! Frozen Stage-B benchmark for the single-qubit measurement policy.
 //!
 //! Run pinned to one CPU with:
 //! `taskset -c 2 cargo run --release -p pecos-stab-tn --example measurement_mode_bench`.

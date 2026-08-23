@@ -998,30 +998,16 @@ impl PyStabMps {
         Ok(self.inner.code_state_fidelity(&stabs))
     }
 
-    /// Sample `num_shots` computational-basis rows by cloning once per shot.
-    ///
-    /// Every returned row uses `row[q] == qubit q`; the original state is
-    /// preserved and its RNG advances. Prefer `sample_bitstrings`: this method
-    /// pays for a full clone and collapse per shot, while prefix sharing has
-    /// measured tens-to-hundreds-fold speedups on the repository's 1,000-shot
-    /// example workloads. The two sampler methods do not share an RNG stream,
-    /// so their seeded results are not shot-for-shot comparable. A negative or
-    /// oversized count raises `OverflowError`.
-    fn sample_bitstring(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
-        self.inner.sample_bitstring(num_shots)
-    }
-
     /// Sample `num_shots` computational-basis rows with shared prefixes.
     ///
     /// Every returned row uses `row[q] == qubit q`. The original state is
     /// preserved and its RNG advances. Distinct measurement-prefix projections
-    /// are shared across all shots taking that branch, avoiding the per-shot
-    /// cloning cost of `sample_bitstring`; the repository's 1,000-shot example
-    /// measures hardware-dependent tens-to-hundreds-fold speedups. Output is in
-    /// lexicographic tree order, not input shot order. Pending merged rotations
-    /// and lazy operations are handled internally. The two sampler methods do
-    /// not share an RNG stream, so their seeded results are not shot-for-shot
-    /// comparable. A negative or oversized count raises `OverflowError`.
+    /// are shared across all shots taking that branch. This is the `StabMps`
+    /// bitstring sampler and is always exact. For per-shot sampling through the
+    /// configured measurement mode, create a fresh simulator per shot and loop
+    /// over MZ explicitly. Output is in lexicographic tree order, not input shot
+    /// order. Pending merged rotations and lazy operations are handled
+    /// internally. A negative or oversized count raises `OverflowError`.
     fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         self.inner.sample_bitstrings(num_shots)
     }

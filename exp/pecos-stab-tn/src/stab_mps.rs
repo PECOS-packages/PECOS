@@ -358,12 +358,14 @@ pub enum PauliKind {
     Z,
 }
 
-/// Policy for the family of operations implemented through singular Z measurement.
+/// Policy for the family of operations implemented through single-qubit Z measurement.
 ///
 /// This controls [`CliffordGateable::mz`], reset, `pz`/`px`, syndrome
-/// extraction, and singular [`StabMps::sample_bitstring`].
-/// [`StabMps::sample_bitstrings`] (plural) is always exact by construction and
-/// does not dispatch through this policy.
+/// extraction. [`StabMps::sample_bitstrings`] is always exact by construction
+/// and does not dispatch through this policy. Per-shot sampling through the
+/// selected policy is expressed by cloning a prepared simulator for each
+/// shot, reseeding it with a distinct per-shot seed, and explicitly
+/// measuring its qubits with [`CliffordGateable::mz`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MeasurementMode {
     /// Sample the normalized Born probability and transactionally force the
@@ -569,7 +571,7 @@ impl StabMpsBuilder {
         self
     }
 
-    /// Select the singular-measurement policy. The default is
+    /// Select the single-qubit measurement policy. The default is
     /// [`MeasurementMode::Exact`]. See [`MeasurementMode`] for the affected
     /// operation family and the exact behavior of plural sampling.
     #[must_use]
@@ -828,7 +830,7 @@ pub struct StabMps {
     pauli_frame_z: Vec<bool>,
     /// Global scalar of the Pauli frame.
     pauli_frame_phase: Complex64,
-    /// Policy for singular measurement and the operations built on it.
+    /// Policy for single-qubit measurement and the operations built on it.
     measurement_mode: MeasurementMode,
     /// Runtime feature flags.
     flags: StabMpsFlags,
@@ -1531,7 +1533,7 @@ impl StabMps {
         self.mps.center_reuse_count()
     }
 
-    /// Return the configured singular-measurement policy.
+    /// Return the configured single-qubit measurement policy.
     #[must_use]
     pub fn measurement_mode(&self) -> MeasurementMode {
         self.measurement_mode
@@ -1759,66 +1761,21 @@ impl StabMps {
 }
 
 impl StabMps {
-    /// Sample `num_shots` bitstrings from the Born distribution
-    /// `|⟨x|Ψ⟩|²` of the current state. Each shot clones the simulator,
-    /// measures all qubits in the Z basis (consuming the clone), and
-    /// returns the bitstring. The original simulator state is unchanged
-    /// (only the internal RNG advances, to ensure each shot uses a
-    /// distinct RNG seed).
-    /// Each clone follows this simulator's [`MeasurementMode`].
-    /// This method and [`Self::sample_bitstrings`] do not share an RNG stream,
-    /// so identically seeded runs are not shot-for-shot comparable across them.
-    ///
-    /// `bitstring[k]` corresponds to qubit `k`'s outcome. See the crate-level
-    /// **Bitstring convention** section.
-    ///
-    /// Useful for shot-based experiments (logical error rate estimation,
-    /// outcome distribution histograms, etc.).
-    ///
-    /// Prefer [`Self::sample_bitstrings`] for multiple shots: this method pays
-    /// for a full simulator clone and all-qubit collapse per shot, whereas the
-    /// plural method shares each distinct measurement prefix. The repository's
-    /// `sampling_methods` release example measures tens-to-hundreds-fold speedups
-    /// for its 1,000-shot workloads (hardware and circuit dependent).
-    pub fn sample_bitstring(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
-        use pecos_core::RngManageable;
-        let mut shots = Vec::with_capacity(num_shots);
-        for _shot in 0..num_shots {
-            let shot_seed = self.rng.next_u64();
-            let mut clone = self.clone();
-            // Re-seed both the StabMps-level RNG (used by random measurement
-            // probability sampling) and the tableau's internal RNG (used
-            // by the trivial-MPS measurement fast path). Otherwise clones
-            // would all share the parent's RNG state and produce identical
-            // outcomes.
-            clone.rng = PecosRng::seed_from_u64(shot_seed);
-            clone
-                .tableau
-                .set_rng(PecosRng::seed_from_u64(shot_seed.wrapping_add(1)));
-            let mut bitstring = Vec::with_capacity(self.num_qubits);
-            for q in 0..self.num_qubits {
-                bitstring.push(clone.measure_qubit(QubitId(q)).outcome);
-            }
-            shots.push(bitstring);
-        }
-        shots
-    }
-
     /// Sample `num_shots` bitstrings from the current Born distribution,
     /// sharing each distinct measurement-prefix projection across all shots
     /// that take that branch.
     ///
-    /// This plural sampler is always exact by construction and does not use
-    /// the configured [`MeasurementMode`].
+    /// This is the `StabMps` bitstring sampler. It is always exact by
+    /// construction and does not use the configured [`MeasurementMode`].
+    /// To sample each shot through that mode instead, clone a prepared
+    /// simulator per shot, reseed it with a distinct per-shot seed, and
+    /// explicitly measure all qubits with [`CliffordGateable::mz`].
     ///
     /// The original simulator state is preserved; only its RNG advances.
-    /// This method and [`Self::sample_bitstring`] do not share an RNG stream,
-    /// so identically seeded runs are not shot-for-shot comparable across them.
     /// A working clone first materializes any lazy-measurement frame and then
     /// all pending merged RZ rotations. Tracked Pauli X bits remain classical:
-    /// as in [`Self::sample_bitstring`], they swap reported Z outcomes without
-    /// changing the stored-state collapse. Pauli Z bits and frame phase do not
-    /// affect computational-basis probabilities.
+    /// they swap reported Z outcomes without changing the stored-state collapse.
+    /// Pauli Z bits and frame phase do not affect computational-basis probabilities.
     ///
     /// At each prefix containing `k` shots, a candidate zero child is cloned and
     /// passed once through [`measure::project_forced_z`]. Its returned probability
@@ -1833,15 +1790,12 @@ impl StabMps {
     ///
     /// Children are visited depth-first, outcome 0 before outcome 1, measuring
     /// qubits `0..num_qubits`. Returned bitstrings therefore use the same
-    /// `bitstring[q] == qubit q` convention as [`Self::sample_bitstring`] and
-    /// are in lexicographic tree order, with copies of each leaf adjacent.
-    /// See the crate-level **Bitstring convention** section.
+    /// `bitstring[q] == qubit q` convention as the other bitstring APIs and are
+    /// in lexicographic tree order, with copies of each leaf adjacent. See the
+    /// crate-level **Bitstring convention** section.
     ///
-    /// Prefer this method over [`Self::sample_bitstring`] for multiple shots:
-    /// it shares projections for common prefixes instead of cloning and
-    /// collapsing the whole simulator once per shot. The repository's
-    /// `sampling_methods` release example measures tens-to-hundreds-fold speedups
-    /// for its 1,000-shot workloads (hardware and circuit dependent).
+    /// It shares projections for common prefixes instead of cloning and
+    /// collapsing the whole simulator once per shot.
     pub fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         if num_shots == 0 {
             return Vec::new();
@@ -2645,7 +2599,14 @@ impl QuantumSimulator for StabMps {
 impl pecos_random::RngManageable for StabMps {
     type Rng = PecosRng;
 
-    fn set_rng(&mut self, rng: Self::Rng) {
+    /// Reseed BOTH of the simulator's independent random streams: the
+    /// tableau stream is derived from one draw of the supplied RNG, and the
+    /// advanced RNG becomes the main stream. Consequently `set_seed(seed)`
+    /// leaves the main stream one draw past `seed_from_u64(seed)` — a
+    /// deterministic, documented offset, not the raw seeded stream.
+    fn set_rng(&mut self, mut rng: Self::Rng) {
+        let tableau_seed = rng.next_u64();
+        self.tableau.set_rng(PecosRng::seed_from_u64(tableau_seed));
         self.rng = rng;
     }
 
@@ -6433,55 +6394,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sample_bitstring_plus_state() {
-        // |+⟩ on q0, |0⟩ on q1: shots should be 50/50 for q0, always 0 for q1.
-        let mut stn = StabMps::with_seed(2, 99);
-        stn.h(&[QubitId(0)]);
-        let shots = stn.sample_bitstring(200);
-        let q0_one_count = shots.iter().filter(|bs| bs[0]).count();
-        let q1_one_count = shots.iter().filter(|bs| bs[1]).count();
-        assert_eq!(q1_one_count, 0, "q1 must always measure 0");
-        assert!(
-            q0_one_count > 70 && q0_one_count < 130,
-            "q0 should be ~50/50, got {q0_one_count}/200"
-        );
-    }
-
-    #[test]
-    fn test_sample_bitstring_bell_correlation() {
-        // Bell state: each shot is either (0,0) or (1,1). Sample 200
-        // shots, verify all are correlated.
-        let mut stn = StabMps::with_seed(2, 99);
-        stn.h(&[QubitId(0)]);
-        stn.cx(&[(QubitId(0), QubitId(1))]);
-        let shots = stn.sample_bitstring(200);
-        for (i, bs) in shots.iter().enumerate() {
-            assert_eq!(bs[0], bs[1], "shot {i} not Bell-correlated: {bs:?}");
-        }
-        let zero_count = shots.iter().filter(|bs| !bs[0]).count();
-        assert!(
-            zero_count > 60 && zero_count < 140,
-            "zero_count {zero_count}/200 outside 60..140"
-        );
-    }
-
-    #[test]
-    fn test_sample_bitstring_does_not_mutate_state() {
-        // Verify the simulator state is unchanged after sampling.
-        let mut stn = StabMps::with_seed(3, 42);
-        stn.h(&[QubitId(0)]);
-        stn.cx(&[(QubitId(0), QubitId(1))]);
-        let bond_before = stn.max_bond_dim();
-        let _ = stn.sample_bitstring(10);
-        let bond_after = stn.max_bond_dim();
-        // Self-state untouched.
-        assert_eq!(
-            bond_before, bond_after,
-            "sample_bitstring mutated simulator state"
-        );
-    }
-
-    #[test]
     fn test_auto_grow_bond_dim_starts_low_grows_when_capped() {
         // Build a small-cap STN and exercise it with a deep, adversarial
         // T circuit (small angle that defeats disent flag) so the cap
@@ -8166,6 +8078,43 @@ mod tests {
             .measurement(MeasurementMode::Lazy)
             .build();
         assert_eq!(lazy.clone().measurement_mode(), MeasurementMode::Lazy);
+    }
+
+    fn assert_clone_set_seed_reseeds_trivial_tableau_measurements(mode: MeasurementMode) {
+        const NUM_SHOTS: usize = 400;
+
+        let mut prepared = StabMps::builder(2).seed(0x5EED).measurement(mode).build();
+        prepared.h(&[QubitId(0)]);
+        prepared.cx(&[(QubitId(0), QubitId(1))]);
+        assert_eq!(prepared.stats.total_nonclifford, 0);
+        assert_eq!(prepared.max_bond_dim(), 1);
+
+        let distinct = (0..NUM_SHOTS)
+            .map(|shot| {
+                let mut simulator = prepared.clone();
+                simulator.set_seed(0xC10E_0000_u64.wrapping_add(shot as u64));
+                simulator
+                    .mz(&[QubitId(0), QubitId(1)])
+                    .into_iter()
+                    .map(|result| result.outcome)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<std::collections::HashSet<_>>();
+
+        assert!(
+            distinct.len() > 1,
+            "{mode:?} clone+set_seed shots collapsed to one tableau-RNG outcome: {distinct:?}"
+        );
+    }
+
+    #[test]
+    fn clone_set_seed_reseeds_trivial_tableau_measurements_in_lazy_mode() {
+        assert_clone_set_seed_reseeds_trivial_tableau_measurements(MeasurementMode::Lazy);
+    }
+
+    #[test]
+    fn clone_set_seed_reseeds_trivial_tableau_measurements_in_pragmatic_mode() {
+        assert_clone_set_seed_reseeds_trivial_tableau_measurements(MeasurementMode::Pragmatic);
     }
 
     #[test]

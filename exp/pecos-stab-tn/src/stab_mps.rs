@@ -1521,6 +1521,18 @@ impl StabMps {
         self.mps.deferred_branch_lost_count()
     }
 
+    /// Number of MPS bond-canonicalization consults that required a cold full sweep.
+    #[must_use]
+    pub fn full_canonical_sweep_count(&self) -> u64 {
+        self.mps.full_canonical_sweep_count()
+    }
+
+    /// Number of MPS bond-canonicalization consults that reused a tracked center.
+    #[must_use]
+    pub fn center_reuse_count(&self) -> u64 {
+        self.mps.center_reuse_count()
+    }
+
     /// Return the configured single-qubit measurement policy.
     #[must_use]
     pub fn measurement_mode(&self) -> MeasurementMode {

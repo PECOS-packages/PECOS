@@ -131,7 +131,9 @@ fn factorization_discarded_weight(singular_values: &DVector<f64>, retained_rank:
             .skip(retained_rank)
             .map(|value| value * value)
             .sum();
-        (discarded_weight / total_weight).clamp(0.0, 1.0)
+        // The empty-tail sum yields -0.0; add +0.0 so a public weight is
+        // never negative zero (bitwise-determinism convention).
+        (discarded_weight / total_weight).clamp(0.0, 1.0) + 0.0
     } else {
         0.0
     }
@@ -155,11 +157,15 @@ fn retained_block_reconstruction_tolerance(
 ) -> f64 {
     // The rank-r residual is the genuinely discarded tail plus factor error on
     // the retained block. The factorization's own claimed discarded weight w
-    // bounds the tail in Frobenius norm by sqrt(w) * ||A||_F. The retained
-    // factor error keeps the pre-#580 O(max(m,n) * epsilon * ||A||_F) bound;
-    // its constant already absorbs the sqrt(min(m,n)) composition from
-    // normwise triplet residuals to entrywise reconstruction. A factorization
-    // that silently hides tail mass cannot charge it to w and is rejected.
+    // bounds the tail in Frobenius norm by sqrt(w) * ||A||_F; the gated
+    // quantity is a MAX-ENTRY residual, which is <= the Frobenius residual,
+    // so comparing it against this Frobenius-scaled allowance is conservative
+    // (measured slack on tail-dominated acceptances: exactly 1.0 — localized
+    // tails realize the bound). The retained factor error keeps the pre-#580
+    // O(max(m,n) * epsilon * ||A||_F) bound; its constant already absorbs the
+    // sqrt(min(m,n)) composition from normwise triplet residuals to entrywise
+    // reconstruction. A factorization that silently hides tail mass cannot
+    // charge it to w and is rejected.
     let claimed_discarded_weight = factorization_discarded_weight(&factors.1, retained_rank);
     claimed_discarded_weight.sqrt() * matrix.norm()
         + dimension_scaled_backward_error_tolerance(matrix, SVD_FALLBACK_RECONSTRUCTION_MULTIPLIER)
@@ -1323,6 +1329,25 @@ mod tests {
             "mutation guard: widening the reconstruction allowance 100x must accept this corruption"
         );
         assert!(!svd_factors_are_certified(&matrix, &factors, retained_rank));
+
+        // A second construction sitting a few multiples above the allowance
+        // sharpens the mutation guard: even a small widening of the
+        // reconstruction allowance must accept this case and fail the test.
+        let mut near_matrix = DMatrix::zeros(1024, 2);
+        near_matrix[(0, 0)] = Complex64::new(1.0, 0.0);
+        near_matrix[(1, 1)] = Complex64::new(5e-10, 0.0);
+        let near_error = retained_block_reconstruction_error(&near_matrix, &factors, retained_rank);
+        let near_allowance =
+            retained_block_reconstruction_tolerance(&near_matrix, &factors, retained_rank);
+        assert!(
+            near_error > near_allowance && near_error <= 5.0 * near_allowance,
+            "near-line guard drifted: error {near_error:e} vs allowance {near_allowance:e}"
+        );
+        assert!(!svd_factors_are_certified(
+            &near_matrix,
+            &factors,
+            retained_rank
+        ));
     }
 
     #[test]

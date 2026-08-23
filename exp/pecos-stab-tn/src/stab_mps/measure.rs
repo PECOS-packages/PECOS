@@ -2362,7 +2362,28 @@ mod tests {
 
         project_single_flip_without_sign(&mut mps, 0, Complex64::new(1.0, 0.0), 0.5);
 
-        assert_eq!(mps.tracked_center_for_test(), None);
+        mps.right_canonicalize();
+        assert_eq!(mps.tracked_center_for_test(), Some(0));
+        assert_eq!(mps.full_canonical_sweep_count(), 1);
+        assert_eq!(mps.center_reuse_count(), 0);
+    }
+
+    #[test]
+    fn projection_block_replacement_at_center_reuses_canonical_routing() {
+        let product = Mps::new(4, MpsConfig::default());
+        let mut mps = product.add(&product);
+        mps.left_canonicalize();
+        assert_eq!(mps.tracked_center_for_test(), Some(3));
+
+        project_single_flip_without_sign(&mut mps, 3, Complex64::new(1.0, 0.0), 0.5);
+
+        assert_eq!(mps.tracked_center_for_test(), Some(3));
+        // The production exact-projection compression route invokes the debug
+        // center validator here before reusing the preserved center.
+        mps.right_canonicalize();
+        assert_eq!(mps.tracked_center_for_test(), Some(0));
+        assert_eq!(mps.full_canonical_sweep_count(), 0);
+        assert_eq!(mps.center_reuse_count(), 1);
     }
 
     #[test]

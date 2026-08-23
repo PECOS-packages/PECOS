@@ -23,7 +23,7 @@ use pyo3::types::{PyBool, PyDict, PyList, PySet, PyTuple};
 ///
 /// Read methods materialize pending lazy-measurement operations and merged RZ
 /// rotations before returning, except the pure diagnostics `is_state_exact()`
-/// and `pragmatic_drift_count`. Bitstrings use qubit-index order: `bits[q]` is
+/// and `uncompensated_pre_reduction_count`. Bitstrings use qubit-index order: `bits[q]` is
 /// the bit for qubit `q`, and input items must be actual Python `bool` values.
 /// A tracked Pauli frame remains separate until
 /// `flush_pauli_frame_to_state()` is called. The `for_qec` constructor keyword is an enable-only
@@ -378,6 +378,13 @@ impl PyStabMps {
     /// the Rust builder default, while `True` or `False` explicitly enables or
     /// disables the option. `for_qec` is enable-only: `True` applies the
     /// preset, while `False` and `None` are identical no-ops.
+    /// `measurement` accepts `"exact"`, `"pragmatic"`, or `"lazy"`; when
+    /// omitted, the normal default is exact. An explicit value is applied
+    /// after `for_qec` and therefore overrides that preset's exact policy.
+    /// Lazy has exact conditional states after issues #555 and #572, subject
+    /// to configured MPS truncation, and Python state reads auto-flush its
+    /// virtual frame. Lazy and exact consume distinct RNG streams, so equal
+    /// seeds are not shot-for-shot comparable between those modes.
     /// `max_truncation_error=None` preserves the builder default of
     /// `1e-8`; a float overrides it, and `0.0` disables adaptive truncation
     /// while retaining the SVD cutoff and bond cap. Negative and non-finite
@@ -398,7 +405,7 @@ impl PyStabMps {
         max_bond_dim=None,
         merge_rz=None,
         pauli_frame_tracking=None,
-        lazy_measure=None,
+        measurement=None,
         for_qec=None,
         auto_grow_bond_dim=None,
         auto_grow_max_bond_dim=None,
@@ -413,7 +420,7 @@ impl PyStabMps {
         max_bond_dim: Option<usize>,
         merge_rz: Option<bool>,
         pauli_frame_tracking: Option<bool>,
-        lazy_measure: Option<bool>,
+        measurement: Option<&str>,
         for_qec: Option<bool>,
         auto_grow_bond_dim: Option<f64>,
         auto_grow_max_bond_dim: Option<usize>,
@@ -442,8 +449,8 @@ impl PyStabMps {
         if let Some(v) = pauli_frame_tracking {
             b = b.pauli_frame_tracking(v);
         }
-        if let Some(v) = lazy_measure {
-            b = b.lazy_measure(v);
+        if let Some(value) = measurement {
+            b = b.measurement(crate::parse_measurement_mode(value)?);
         }
         if let Some(t) = auto_grow_bond_dim {
             b = b.auto_grow_bond_dim(t);
@@ -501,19 +508,45 @@ impl PyStabMps {
     }
 
     #[getter]
-    /// Number of eager measurements that introduced pragmatic stored-state drift.
-    ///
-    /// A nonzero value means amplitude-like reads can be approximate even after
-    /// flushing. Use `lazy_measure=True` when later exact state reads are needed.
-    fn pragmatic_drift_count(&self) -> u64 {
-        self.inner.pragmatic_drift_count()
+    /// Number of pragmatic measurements with uncompensated pre-reduction.
+    fn uncompensated_pre_reduction_count(&self) -> u64 {
+        self.inner.uncompensated_pre_reduction_count()
+    }
+
+    #[getter]
+    fn summed_discarded_weight(&self) -> f64 {
+        self.inner.summed_discarded_weight()
+    }
+
+    #[getter]
+    fn lifetime_peak_bond(&self) -> usize {
+        self.inner.lifetime_peak_bond()
+    }
+
+    #[getter]
+    fn branch_vanish_retry_count(&self) -> u64 {
+        self.inner.branch_vanish_retry_count()
+    }
+
+    #[getter]
+    fn deferred_branch_lost_count(&self) -> u64 {
+        self.inner.deferred_branch_lost_count()
+    }
+
+    #[getter]
+    fn measurement(&self) -> &'static str {
+        match self.inner.measurement_mode() {
+            pecos_stab_tn::stab_mps::MeasurementMode::Exact => "exact",
+            pecos_stab_tn::stab_mps::MeasurementMode::Pragmatic => "pragmatic",
+            pecos_stab_tn::stab_mps::MeasurementMode::Lazy => "lazy",
+        }
     }
 
     /// Whether the stored tableau/MPS exactly represents the physical state.
     ///
-    /// This is false for pending merged rotations, lazy operations, an
-    /// unmaterialized Pauli frame, or pragmatic measurement drift. MPS
-    /// truncation is reported separately by `truncation_error`.
+    /// This conservative sufficient predicate covers all pending-state,
+    /// policy, uncompensated-reduction, truncation-weight, and deferred-loss
+    /// guards.
     fn is_state_exact(&self) -> bool {
         self.inner.is_state_exact()
     }
@@ -965,30 +998,16 @@ impl PyStabMps {
         Ok(self.inner.code_state_fidelity(&stabs))
     }
 
-    /// Sample `num_shots` computational-basis rows by cloning once per shot.
-    ///
-    /// Every returned row uses `row[q] == qubit q`; the original state is
-    /// preserved and its RNG advances. Prefer `sample_bitstrings`: this method
-    /// pays for a full clone and collapse per shot, while prefix sharing has
-    /// measured tens-to-hundreds-fold speedups on the repository's 1,000-shot
-    /// example workloads. The two sampler methods do not share an RNG stream,
-    /// so their seeded results are not shot-for-shot comparable. A negative or
-    /// oversized count raises `OverflowError`.
-    fn sample_bitstring(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
-        self.inner.sample_bitstring(num_shots)
-    }
-
     /// Sample `num_shots` computational-basis rows with shared prefixes.
     ///
     /// Every returned row uses `row[q] == qubit q`. The original state is
     /// preserved and its RNG advances. Distinct measurement-prefix projections
-    /// are shared across all shots taking that branch, avoiding the per-shot
-    /// cloning cost of `sample_bitstring`; the repository's 1,000-shot example
-    /// measures hardware-dependent tens-to-hundreds-fold speedups. Output is in
-    /// lexicographic tree order, not input shot order. Pending merged rotations
-    /// and lazy operations are handled internally. The two sampler methods do
-    /// not share an RNG stream, so their seeded results are not shot-for-shot
-    /// comparable. A negative or oversized count raises `OverflowError`.
+    /// are shared across all shots taking that branch. This is the `StabMps`
+    /// bitstring sampler and is always exact. For per-shot sampling through the
+    /// configured measurement mode, create a fresh simulator per shot and loop
+    /// over MZ explicitly. Output is in lexicographic tree order, not input shot
+    /// order. Pending merged rotations and lazy operations are handled
+    /// internally. A negative or oversized count raises `OverflowError`.
     fn sample_bitstrings(&mut self, num_shots: usize) -> Vec<Vec<bool>> {
         self.inner.sample_bitstrings(num_shots)
     }

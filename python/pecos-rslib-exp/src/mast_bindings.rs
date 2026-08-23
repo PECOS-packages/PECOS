@@ -222,6 +222,26 @@ impl PyMast {
     }
 
     #[getter]
+    fn summed_discarded_weight(&self) -> f64 {
+        self.inner.summed_discarded_weight()
+    }
+
+    #[getter]
+    fn lifetime_peak_bond(&self) -> usize {
+        self.inner.lifetime_peak_bond()
+    }
+
+    #[getter]
+    fn branch_vanish_retry_count(&self) -> u64 {
+        self.inner.branch_vanish_retry_count()
+    }
+
+    #[getter]
+    fn deferred_branch_lost_count(&self) -> u64 {
+        self.inner.deferred_branch_lost_count()
+    }
+
+    #[getter]
     /// Number of SVDs where `max_bond_dim` was the binding cap.
     ///
     /// This is a pure stored-state diagnostic: pending merged rotations are not

@@ -10,14 +10,14 @@ All public bitstrings use qubit-index order: `bits[q]` is the bit for qubit `q`.
 
 ## `StabMps` quickstart
 
-Use `sample_bitstrings`, plural, for shot workloads. It shares each distinct measurement-prefix projection between shots; `sample_bitstring` clones and collapses the entire simulator once per shot. The two methods do not share an RNG stream, so seeded outputs should not be compared shot for shot across methods.
+`sample_bitstrings` is the `StabMps` sampler. It shares each distinct measurement-prefix projection between shots and is always exact by construction, independent of the single-measurement policy. When each shot must follow the configured measurement mode, create a fresh simulator for that shot and explicitly loop over MZ.
 
 ```python
 import math
 
 import pecos_rslib_exp as exp
 
-sim = exp.StabMps(2, seed=7, lazy_measure=True)
+sim = exp.StabMps(2, seed=7)
 sim.run_gate("H", {0})
 sim.run_gate("CX", {(0, 1)})
 sim.run_gate("RZ", {1}, angle=math.pi / 4)
@@ -36,13 +36,15 @@ assert math.isclose(p11, 0.5, abs_tol=1e-12)
 # Python reads auto-flush lazy operations and merged RZ rotations.
 accuracy = {
     "state_exact": sim.is_state_exact(),
-    "pragmatic_drift_count": sim.pragmatic_drift_count,
+    "uncompensated_pre_reduction_count": sim.uncompensated_pre_reduction_count,
+    "summed_discarded_weight": sim.summed_discarded_weight,
     "truncation_error": sim.truncation_error,
     "bond_cap_hits": sim.bond_cap_hits,
 }
 assert accuracy == {
     "state_exact": True,
-    "pragmatic_drift_count": 0,
+    "uncompensated_pre_reduction_count": 0,
+    "summed_discarded_weight": 0.0,
     "truncation_error": 0.0,
     "bond_cap_hits": 0,
 }
@@ -50,14 +52,17 @@ assert accuracy == {
 
 The accuracy fields answer different questions:
 
-- `is_state_exact()` detects pending work, an unmaterialized Pauli frame, and stored-state drift from eager measurement. It does not include MPS truncation in its definition.
-- `pragmatic_drift_count` should remain zero when exact amplitudes are required after random measurements. Construct with `lazy_measure=True` to avoid that eager-measurement drift.
+- `is_state_exact()` is a conservative sufficient predicate covering pending work, an unmaterialized Pauli frame, measurement mode, pragmatic drift, discarded weight, and deferred MAST branch loss.
+- `uncompensated_pre_reduction_count` records pragmatic measurements whose tableau reduction was not applied to the coefficient MPS.
 - `truncation_error` estimates accumulated discarded singular-value weight.
+- `summed_discarded_weight` is the true sum of those per-SVD weights.
 - `bond_cap_hits` counts SVDs at which `max_bond_dim` was binding.
 
 Python state reads automatically flush lazy operations and merged rotations. When Pauli-frame tracking is enabled, call `flush_pauli_frame_to_state()` before a read that must include the physical frame.
 
 `StabMps` defaults `merge_rz` to true for throughput. `Mast` defaults it to false so each RZ immediately exposes its injection and ancilla-capacity cost. Numerical flag redetection is opt-in. In `StabMps` it self-disables while lazy deferred operations are pending, because the stored tensors then differ from the effective MPS-frame state.
+
+`StabMps` measurement defaults to `"exact"`. Select `"pragmatic"` for the legacy uncompensated eager path or `"lazy"` for the deferred virtual-frame path. After the issue #555 and #572 frame and projection fixes, Lazy preserves exact conditional states subject to configured MPS truncation; Rust reads still require `flush()`, while Python reads auto-flush. Lazy and Exact consume distinct RNG streams, so equal seeds are not shot-for-shot comparable across those modes. The policy covers MZ, reset, PZ/PX, and syndrome extraction; `sample_bitstrings` remains exact. Per-shot mode-following sampling is an explicit MZ loop on fresh simulators.
 
 ## `Mast` quickstart
 
@@ -87,7 +92,7 @@ assert outcome in (0, 1)
 
 `flush()` is not the MAST completion operation: it materializes pending merged rotations, but leaves already deferred injections alone. Finish with `project_all()` or measure a data qubit with MZ.
 
-MAST predetermines each injection-gadget outcome from its exact half-probability distribution. That choice is exact for the untruncated state. If the coefficient MPS has been truncated, the predetermined branch can differ from the truncated representation's own outcome distribution; it still represents the exact, untruncated gadget protocol.
+MAST predetermines each injection-gadget outcome from its exact half-probability distribution. If truncation erases that deferred branch, MAST continues on the surviving complement. The normalized continuation is not a valid gadget trajectory for either outcome because its injection-time correction does not match the projected complement. This additional bias is absent from `truncation_error`; `deferred_branch_lost_count` is its only witness. Untruncated configurations never take this path.
 
 ## Analyze first with `StabMpsCompile`
 
@@ -136,10 +141,7 @@ use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_stab_tn::stab_mps::StabMps;
 
 fn main() {
-    let mut sim = StabMps::builder(2)
-        .seed(7)
-        .lazy_measure(true)
-        .build();
+    let mut sim = StabMps::builder(2).seed(7).build();
     sim.h(&[QubitId(0)]);
     sim.cx(&[(QubitId(0), QubitId(1))]);
     sim.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(1)]);

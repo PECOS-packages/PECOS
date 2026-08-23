@@ -31,6 +31,61 @@ use pecos_core::BitSet;
 use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, MeasurementResult, SparseStabY};
 
+#[cfg(test)]
+std::thread_local! {
+    static INJECTED_PROJECTION_VANISHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(all(test, not(debug_assertions)))]
+std::thread_local! {
+    static INJECTED_ZERO_PROBABILITIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn inject_projection_vanishes(count: usize) {
+    INJECTED_PROJECTION_VANISHES.with(|remaining| remaining.set(count));
+}
+
+#[cfg(all(test, not(debug_assertions)))]
+pub(super) fn inject_zero_projection_probabilities(count: usize) {
+    // Model a branch whose amplitude was erased by earlier configured
+    // truncation: projection itself leaves a healthy normalized candidate,
+    // but reports an exactly zero Born probability to the MAST owner.
+    INJECTED_ZERO_PROBABILITIES.with(|remaining| remaining.set(count));
+}
+
+#[cfg(test)]
+fn inject_projection_vanish_if_requested(mps: &mut Mps) {
+    INJECTED_PROJECTION_VANISHES.with(|remaining| {
+        let count = remaining.get();
+        if count > 0 {
+            remaining.set(count - 1);
+            mps.scale(Complex64::new(0.0, 0.0));
+        }
+    });
+}
+
+#[cfg(all(test, not(debug_assertions)))]
+fn inject_zero_projection_probability_if_requested(probability: f64) -> f64 {
+    INJECTED_ZERO_PROBABILITIES.with(|remaining| {
+        let count = remaining.get();
+        if count > 0 {
+            remaining.set(count - 1);
+            0.0
+        } else {
+            probability
+        }
+    })
+}
+
+#[cfg(not(test))]
+fn inject_projection_vanish_if_requested(_mps: &mut Mps) {}
+
+#[cfg(any(not(test), debug_assertions))]
+fn inject_zero_projection_probability_if_requested(probability: f64) -> f64 {
+    probability
+}
+
 /// Virtual coefficient-MPS sites whose disentangling proofs must be rechecked
 /// after a physical measurement projection.
 #[derive(Debug, Default)]
@@ -43,7 +98,8 @@ pub(super) struct ProjectionUpdate {
 
 /// Probability and virtual-site metadata returned by a forced projection.
 pub(super) struct ForcedProjectionResult {
-    pub(super) probability: f64,
+    pub(super) snapped_probability: f64,
+    pub(super) survival_ratio: f64,
     pub(super) update: ProjectionUpdate,
 }
 
@@ -52,6 +108,15 @@ pub(super) struct LiveMeasurementResult {
     pub(super) measurement: MeasurementResult,
     pub(super) update: ProjectionUpdate,
 }
+
+/// Block-norm tolerance for the coefficient-MPS computational-basis fast path.
+///
+/// A bond-one site with either physical block below this threshold is treated
+/// as a basis state. Its physical measurement probability is consequently
+/// quantized to the stabilizer values `{0, 1/2, 1}` before both sampling and
+/// projection; this tolerance is intentionally distinct from the Pauli
+/// endpoint snap below.
+pub(super) const TRIVIAL_MPS_BLOCK_NORM_TOLERANCE: f64 = 1e-12;
 
 /// Check if the MPS is trivial (all sites in a computational basis state).
 fn is_mps_trivial(mps: &Mps) -> bool {
@@ -64,7 +129,7 @@ fn is_mps_trivial(mps: &Mps) -> bool {
             let b1_norm: f64 = (0..t.nrows())
                 .flat_map(|i| (0..chi_r).map(move |j| t[(i, chi_r + j)].norm_sqr()))
                 .sum();
-            b0_norm < 1e-12 || b1_norm < 1e-12
+            b0_norm < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE || b1_norm < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE
         })
 }
 
@@ -103,7 +168,7 @@ fn canonicalize_trivial_mps_basis(
         // Every project_forced_z entry path normalizes before this helper can
         // be reached again, so the block weight has unit-state scale and this
         // absolute zero threshold is intentional.
-        if block_0_norm < 1e-12 {
+        if block_0_norm < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE {
             // C|...1...> = (C X_site)(X_site|...1...>).
             let before = phase_accumulator.as_ref().map(|_| tableau.clone());
             crate::stab_mps::tableau_compose::right_compose_x(tableau, site);
@@ -118,6 +183,31 @@ fn canonicalize_trivial_mps_basis(
         }
     }
     modified_sites
+}
+
+/// Measure a computational-basis product coefficient state through the tableau.
+///
+/// The tableau-only read is valid only after the coefficient basis word has
+/// been absorbed into the tableau, leaving the stored MPS in `|0...0>`.
+fn measure_trivial_mps_with_update(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    q_idx: usize,
+) -> LiveMeasurementResult {
+    debug_assert!(is_mps_trivial(mps));
+    let modified_sites = canonicalize_trivial_mps_basis(tableau, mps, None);
+    let measurement = tableau
+        .mz(&[pecos_core::QubitId(q_idx)])
+        .into_iter()
+        .next()
+        .expect("MPS op on valid site");
+    LiveMeasurementResult {
+        measurement,
+        update: ProjectionUpdate {
+            collapsed_site: None,
+            modified_sites,
+        },
+    }
 }
 
 /// Compute `<mps| phase · X_flip · Z_sign |mps>` via clone + inner product.
@@ -184,7 +274,20 @@ pub fn z_expectation_value(tableau: &SparseStabY, mps: &Mps, q: usize) -> Comple
     }
 }
 
-fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
+/// Endpoint tolerance shared by sampling and forced projection.
+///
+/// A cancellation residue this close to a Pauli endpoint would be amplified
+/// by the projector's division by `sqrt(probability)`, so it is classified as
+/// the indistinguishable exact endpoint before any RNG draw.
+pub(super) const EXPECTATION_ENDPOINT_TOLERANCE: f64 = 1e-14;
+
+/// A normalized forced projector divides by `sqrt(probability)`, so a valid
+/// post-projection state has a survival ratio near one regardless of its Born
+/// probability. `1e-12` is therefore twelve orders below a healthy branch; it
+/// is not a lower bound on the smallest admissible probability.
+pub(super) const BRANCH_VANISH_SURVIVAL_THRESHOLD: f64 = 1e-12;
+
+pub(super) fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
     // This endpoint guard is deliberately looser than the 1e-15 product-site
     // installer and its 5e-16 proof assertion. Those tolerances classify a
     // normalized physical marginal after environment contraction. Here the
@@ -194,7 +297,6 @@ fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
     // normalize() turns it into a spurious state. Values within 1e-14 of a
     // Pauli endpoint are therefore treated as the exact eigenvalue they are
     // indistinguishable from at this contraction's accuracy.
-    const EXPECTATION_ENDPOINT_TOLERANCE: f64 = 1e-14;
     let expectation = if 1.0 - expectation.abs() <= EXPECTATION_ENDPOINT_TOLERANCE {
         expectation.signum()
     } else {
@@ -206,6 +308,62 @@ fn forced_outcome_probability(expectation: f64, outcome: bool) -> f64 {
     } else {
         probability_zero
     }
+}
+
+fn quantize_trivial_probability(probability: f64) -> f64 {
+    [0.0_f64, 0.5, 1.0]
+        .into_iter()
+        .min_by(|left, right| {
+            (probability - *left)
+                .abs()
+                .total_cmp(&(probability - *right).abs())
+        })
+        .expect("three trivial probabilities")
+}
+
+/// Return the probability used by both exact sampling and forced projection.
+///
+/// The trivial coefficient-MPS path is a pure stabilizer state even when
+/// contraction roundoff reports a nearby non-stabilizer value, so its result
+/// is quantized to `{0, 1/2, 1}` under the same predicate used by the
+/// projector's tableau fast path.
+pub(super) fn z_outcome_probability(
+    tableau: &SparseStabY,
+    mps: &Mps,
+    q_idx: usize,
+    outcome: bool,
+    operation: &str,
+) -> f64 {
+    let norm_squared = mps.norm_squared();
+    assert!(
+        norm_squared.is_finite() && norm_squared > 0.0,
+        "{operation}: cannot measure an MPS with non-finite or zero norm"
+    );
+    let expectation = (z_expectation_value(tableau, mps, q_idx).re / norm_squared).clamp(-1.0, 1.0);
+    let probability = forced_outcome_probability(expectation, outcome);
+    if is_mps_trivial(mps) {
+        quantize_trivial_probability(probability)
+    } else {
+        probability
+    }
+}
+
+fn projection_survival_ratio(mps: &Mps, pre_projection_norm_squared: f64) -> f64 {
+    let post_projection_norm_squared = mps.norm_squared();
+    assert!(
+        pre_projection_norm_squared.is_finite() && post_projection_norm_squared.is_finite(),
+        "forced Z projection produced a non-finite pre/post norm"
+    );
+    assert!(
+        pre_projection_norm_squared > 0.0,
+        "cannot project a zero-norm MPS"
+    );
+    let ratio = post_projection_norm_squared / pre_projection_norm_squared;
+    assert!(
+        ratio.is_finite(),
+        "forced Z projection produced a non-finite survival ratio"
+    );
+    ratio
 }
 
 /// Compute the inner product <`mps_a|mps_b`> by contracting from left to right.
@@ -282,7 +440,7 @@ pub fn pre_reduce_for_measurement_pub(
 ///
 /// `apply_mps_compensation` is `true` for the exact-state caller
 /// `project_forced_z`, used by `prob_bitstring` / `amplitude_iterative`. It is `false` for random
-/// measurement (`measure_qubit_stab_mps`): the state representation becomes
+/// measurement (`measure_qubit_stab_mps_pragmatic`): the state representation becomes
 /// inconsistent with the tableau after row ops, but measurement
 /// statistics stay correct and subsequent measurements remain
 /// self-consistent. Skipping compensation avoids SWAP-chain bond growth
@@ -444,7 +602,8 @@ fn toggle(v: &mut Vec<usize>, x: usize) {
 /// Conjugate a Pauli `P = X_flip · Z_sign` by `V†` where
 /// `V = ops[last] · ops[last-1] · ... · ops[0]`. Updates `flip_sites` and
 /// `sign_sites` in place to represent `V† · P · V`. The scalar phase is
-/// unchanged (CNOT/H/CZ conjugation preserves phase of the product).
+/// updated whenever the X-block-before-Z-block representation picks up a
+/// sign or a factor of i.
 ///
 /// Heisenberg rules:
 /// - CNOT(c, t): `X_c -> X_c · X_t`; `Z_t -> Z_c · Z_t`.
@@ -492,6 +651,11 @@ pub fn conjugate_pauli_by_deferred_ops(
             DeferredOp::Cz(a, b) => {
                 let has_x_a = flip_sites.contains(&a);
                 let has_x_b = flip_sites.contains(&b);
+                // CZ·(X_a X_b)·CZ = Y_a Y_b = -(XZ)_a (XZ)_b in the
+                // X-block-before-Z-block convention.
+                if has_x_a && has_x_b {
+                    *phase = -*phase;
+                }
                 if has_x_a {
                     toggle(sign_sites, b);
                 }
@@ -810,17 +974,14 @@ fn right_compose_measurement_basis_rotation(
     }
 }
 
-/// Apply the inverse of the virtual Pauli gauge between two structurally
-/// identical Clifford tableaux.
+/// Return the virtual Z gauge between two structurally identical tableaux.
 ///
-/// The forced measurement outcome fixes the stabilizer-row signs, leaving only
-/// destabilizer-row sign differences. Each such difference is a right-composed
-/// Z on that virtual site, so applying Z to the MPS realizes the inverse gauge.
-fn compensate_measurement_pauli_gauge(
-    mps: &mut Mps,
-    predicted: &SparseStabY,
-    measured: &SparseStabY,
-) -> Vec<usize> {
+/// `SparseStabY::nondeterministic_meas` structurally XORs destabilizer rows
+/// without propagating their phases. The forced outcome fixes stabilizer-row
+/// signs, so the only possible difference from a phase-complete predicted
+/// tableau is a right-composed Z on each returned virtual site:
+/// `measured * Z_gauge = predicted`.
+fn measurement_pauli_gauge_sites(predicted: &SparseStabY, measured: &SparseStabY) -> Vec<usize> {
     assert_eq!(predicted.num_qubits(), measured.num_qubits());
     let rows_match = |predicted_rows: &[BitSet], measured_rows: &[BitSet]| {
         predicted_rows
@@ -862,13 +1023,11 @@ fn compensate_measurement_pauli_gauge(
             .eq(measured.destabs().signs_i.iter())
     );
 
-    let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
-
     // `SparseStabY::apply_outcome`, called by the nondeterministic
     // `mz_forced` path, forces the replacement stabilizer row's sign to the
     // requested outcome. The predicted basis rotation encodes that same sign,
     // so an X-gauge difference is structurally unreachable here.
-    debug_assert!(
+    assert!(
         predicted
             .stabs()
             .signs_minus
@@ -876,17 +1035,102 @@ fn compensate_measurement_pauli_gauge(
             .eq(measured.stabs().signs_minus.iter()),
         "apply_outcome must leave no stabilizer-sign (X-gauge) difference"
     );
-    let mut modified_sites = Vec::new();
-    for site in 0..predicted.num_qubits() {
-        let differs = predicted.destabs().signs_minus.contains(site)
-            != measured.destabs().signs_minus.contains(site);
-        if differs {
-            mps.apply_diagonal_one_site(site, &z_diag)
-                .expect("MPS op on valid site");
-            modified_sites.push(site);
+    (0..predicted.num_qubits())
+        .filter(|&site| {
+            predicted.destabs().signs_minus.contains(site)
+                != measured.destabs().signs_minus.contains(site)
+        })
+        .collect()
+}
+
+/// Apply the inverse of the virtual Pauli gauge between two structurally
+/// identical Clifford tableaux.
+fn compensate_measurement_pauli_gauge(
+    mps: &mut Mps,
+    predicted: &SparseStabY,
+    measured: &SparseStabY,
+) -> Vec<usize> {
+    let gauge_sites = measurement_pauli_gauge_sites(predicted, measured);
+    let z_diag = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
+    for &site in &gauge_sites {
+        mps.apply_diagonal_one_site(site, &z_diag)
+            .expect("MPS op on valid site");
+    }
+    gauge_sites
+}
+
+/// Apply the forced tableau update and enqueue its phase-complete inverse.
+///
+/// If the phase-complete basis rotation predicts `C_predicted = C_before * W`,
+/// the structural forced-measurement implementation can return a tableau with
+/// a virtual Pauli gauge, `C_measured * G = C_predicted`. The deferred frame
+/// must therefore be left-multiplied by both factors: `G * W^-1`.
+fn enqueue_lazy_measurement_basis_update(
+    tableau: &mut SparseStabY,
+    deferred: &mut Vec<DeferredOp>,
+    q_idx: usize,
+    id: usize,
+    phase: Complex64,
+    sign_sites: &[usize],
+    outcome: bool,
+) -> Vec<usize> {
+    assert!(
+        tableau.tracks_destab_signs(),
+        "lazy measurement requires destabilizer-sign tracking"
+    );
+    let mut predicted_tableau = tableau.clone();
+    right_compose_measurement_basis_rotation(
+        &mut predicted_tableau,
+        id,
+        phase,
+        sign_sites,
+        outcome,
+        None,
+    );
+
+    let signed_phase = Complex64::new(if outcome { -1.0 } else { 1.0 }, 0.0) * phase;
+    let id_in_sign = sign_sites.contains(&id);
+    if signed_phase.im.abs() < 1e-9 {
+        debug_assert!(
+            !id_in_sign,
+            "lazy measure: real signed phase={signed_phase:?} but id in sign"
+        );
+        if signed_phase.re < 0.0 {
+            deferred.push(DeferredOp::Z(id));
+        }
+        for &site in sign_sites {
+            if site != id {
+                deferred.push(DeferredOp::Cz(id, site));
+            }
+        }
+    } else {
+        debug_assert!(
+            id_in_sign,
+            "lazy measure: imaginary signed phase={signed_phase:?} but id not in sign"
+        );
+        debug_assert!(
+            signed_phase.re.abs() < 1e-9,
+            "lazy measure: signed phase={signed_phase:?} not pure imaginary"
+        );
+        for &site in sign_sites {
+            if site != id {
+                deferred.push(DeferredOp::Cz(id, site));
+            }
+        }
+        // W contains SZ for +i and SZdg for -i, so W^-1 contains the adjoint.
+        if signed_phase.im > 0.0 {
+            deferred.push(DeferredOp::SZdg(id));
+        } else {
+            deferred.push(DeferredOp::SZ(id));
         }
     }
-    modified_sites
+    deferred.push(DeferredOp::H(id));
+
+    let result = tableau.mz_forced(q_idx, outcome);
+    debug_assert_eq!(result.outcome, outcome);
+    let gauge_sites = measurement_pauli_gauge_sites(&predicted_tableau, tableau);
+    deferred.extend(gauge_sites.iter().copied().map(DeferredOp::Z));
+    gauge_sites
 }
 
 /// Convert a normalized single-flip Pauli eigenstate into the coefficient
@@ -922,20 +1166,16 @@ fn project_single_flip_without_sign(
     mps.set_physical_block(id, 1, &zero);
 }
 
-/// Remove the direct-sum projector's structurally oversized virtual bonds
-/// without discarding any component of the state.
+/// Remove the direct-sum projector's structurally oversized virtual bonds.
 ///
 /// A right-canonical QR sweep is an exact factorization and bounds every bond
-/// by the Hilbert-space dimension to its right. This avoids applying the
-/// cutoff-based SVD compressor to the cancellation-heavy projected sum. Only
-/// a bond that still exceeds the caller's explicit approximation cap is sent
-/// through the configured compressor.
+/// by the Hilbert-space dimension to its right. The following configured SVD
+/// sweep reuses that gauge and runs unconditionally: it removes exact rank
+/// redundancy and numerical dust, while any nonzero truncation remains the
+/// caller-approved cutoff/cap behavior and is recorded by MPS telemetry.
 fn reduce_exact_projection_bonds(mps: &mut Mps) -> Result<(), MpsError> {
     mps.right_canonicalize();
-    if mps.max_bond_dim() > mps.config().max_bond_dim {
-        mps.compress()?;
-    }
-    Ok(())
+    mps.compress_from_right_canonical()
 }
 
 /// Shared implementation for tracked and phase-insensitive forced projection.
@@ -946,6 +1186,16 @@ fn project_forced_z_with_update_impl(
     outcome: bool,
     mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
 ) -> Result<ForcedProjectionResult, MpsError> {
+    let pre_projection_norm_squared = mps.norm_squared();
+    assert!(
+        pre_projection_norm_squared.is_finite(),
+        "forced Z projection received a non-finite pre-projection norm"
+    );
+    assert!(
+        pre_projection_norm_squared > 0.0,
+        "cannot project a zero-norm MPS"
+    );
+    let probability = z_outcome_probability(tableau, mps, q_idx, outcome, "forced Z projection");
     if is_mps_trivial(mps) {
         // A trivial coefficient MPS represents a pure stabilizer state. First
         // absorb a possible nonzero virtual basis word into the tableau; only
@@ -953,7 +1203,7 @@ fn project_forced_z_with_update_impl(
         let modified_sites =
             canonicalize_trivial_mps_basis(tableau, mps, phase_accumulator.as_deref_mut());
         let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
-        let probability = match decomp {
+        let tableau_probability: f64 = match decomp {
             ZDecomposition::Stabilizer { phase, .. } => {
                 if (phase.re < 0.0) == outcome {
                     1.0
@@ -963,6 +1213,7 @@ fn project_forced_z_with_update_impl(
             }
             ZDecomposition::DestabilizerFlip { .. } => 0.5,
         };
+        debug_assert_eq!(probability.to_bits(), tableau_probability.to_bits());
         if probability > 0.0 {
             let before_measurement = phase_accumulator.as_ref().map(|_| tableau.clone());
             tableau.mz_forced(q_idx, outcome);
@@ -978,22 +1229,21 @@ fn project_forced_z_with_update_impl(
                     probability,
                 );
             }
+        }
+        inject_projection_vanish_if_requested(mps);
+        let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
+        if probability > 0.0 && survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
             mps.normalize();
         }
         return Ok(ForcedProjectionResult {
-            probability,
+            snapped_probability: inject_zero_projection_probability_if_requested(probability),
+            survival_ratio,
             update: ProjectionUpdate {
                 collapsed_site: None,
                 modified_sites,
             },
         });
     }
-
-    // Evaluate the Born probability in the incoming representation before
-    // generator pre-reduction changes the tableau/MPS factorization.
-    let norm_squared = mps.norm_squared();
-    assert!(norm_squared > 1e-20, "cannot project a zero-norm MPS");
-    let expectation = (z_expectation_value(tableau, mps, q_idx).re / norm_squared).clamp(-1.0, 1.0);
 
     // Reduce to one virtual X site while compensating every generator-basis
     // CNOT on the MPS. This preserves C·MPS exactly.
@@ -1002,10 +1252,11 @@ fn project_forced_z_with_update_impl(
 
     match decomposition {
         ZDecomposition::Stabilizer { phase, sign_sites } => {
-            let probability = forced_outcome_probability(expectation, outcome);
-            if probability < 1e-20 {
+            if probability == 0.0 {
+                let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
                 return Ok(ForcedProjectionResult {
-                    probability: 0.0,
+                    snapped_probability: 0.0,
+                    survival_ratio,
                     update: ProjectionUpdate {
                         collapsed_site: None,
                         modified_sites,
@@ -1023,15 +1274,18 @@ fn project_forced_z_with_update_impl(
             // The physical observable was already in the stabilizer span, so
             // mz_forced performs no Clifford-basis change. The projected
             // stabilizer-sign superposition remains encoded in the MPS.
-            if !sign_sites.is_empty() {
-                reduce_exact_projection_bonds(mps)?;
+            reduce_exact_projection_bonds(mps)?;
+            inject_projection_vanish_if_requested(mps);
+            let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
+            if survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
+                mps.normalize();
             }
-            mps.normalize();
             modified_sites.extend(sign_sites);
             modified_sites.sort_unstable();
             modified_sites.dedup();
             Ok(ForcedProjectionResult {
-                probability,
+                snapped_probability: inject_zero_projection_probability_if_requested(probability),
+                survival_ratio,
                 update: ProjectionUpdate {
                     collapsed_site: None,
                     modified_sites,
@@ -1048,10 +1302,11 @@ fn project_forced_z_with_update_impl(
                 1,
                 "forced projection must have one flip after pre-reduction"
             );
-            let probability = forced_outcome_probability(expectation, outcome);
-            if probability < 1e-20 {
+            if probability == 0.0 {
+                let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
                 return Ok(ForcedProjectionResult {
-                    probability: 0.0,
+                    snapped_probability: 0.0,
+                    survival_ratio,
                     update: ProjectionUpdate {
                         collapsed_site: None,
                         modified_sites,
@@ -1096,17 +1351,20 @@ fn project_forced_z_with_update_impl(
             // destabilizer gauge. Therefore the post-H canonical ket cached
             // by the phase tracker remains valid for the measured tableau and
             // can be the before-ket of the next scalar site.
-            if !is_local_projection {
-                reduce_exact_projection_bonds(mps)?;
+            reduce_exact_projection_bonds(mps)?;
+            inject_projection_vanish_if_requested(mps);
+            let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
+            if survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
+                mps.normalize();
             }
-            mps.normalize();
             modified_sites.extend(flip_sites.iter().copied());
             modified_sites.extend(sign_sites);
             modified_sites.extend(gauge_sites);
             modified_sites.sort_unstable();
             modified_sites.dedup();
             Ok(ForcedProjectionResult {
-                probability,
+                snapped_probability: inject_zero_projection_probability_if_requested(probability),
+                survival_ratio,
                 update: ProjectionUpdate {
                     collapsed_site: Some(flip_sites[0]),
                     modified_sites,
@@ -1119,7 +1377,7 @@ fn project_forced_z_with_update_impl(
 /// Project qubit `q_idx` onto a forced Z-basis outcome and return its
 /// probability together with the affected virtual coefficient-MPS sites.
 ///
-/// Mirrors `measure_qubit_stab_mps` but is deterministic: the caller supplies
+/// Mirrors `measure_qubit_stab_mps_pragmatic` but is deterministic: the caller supplies
 /// the outcome. This is the phase-insensitive Liu-Clark 2412.17209 Algorithm 3
 /// / VI.A path used by probability and measurement callers.
 ///
@@ -1147,7 +1405,7 @@ pub(super) fn project_forced_z_with_phase(
 ) -> Result<f64, MpsError> {
     Ok(
         project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, Some(phase_accumulator))?
-            .probability,
+            .snapped_probability,
     )
 }
 
@@ -1163,7 +1421,7 @@ pub fn project_forced_z(
     q_idx: usize,
     outcome: bool,
 ) -> Result<f64, MpsError> {
-    Ok(project_forced_z_with_update(tableau, mps, q_idx, outcome)?.probability)
+    Ok(project_forced_z_with_update(tableau, mps, q_idx, outcome)?.snapped_probability)
 }
 
 /// Measure qubit `q_idx` in the Z basis using the STN protocol.
@@ -1198,15 +1456,16 @@ pub(super) fn measure_qubit_stab_mps_lazy_with_update(
     deferred: &mut Vec<DeferredOp>,
 ) -> Result<LiveMeasurementResult, MpsError> {
     if is_mps_trivial(mps) {
-        let measurement = tableau
-            .mz(&[pecos_core::QubitId(q_idx)])
-            .into_iter()
-            .next()
-            .expect("MPS op on valid site");
-        return Ok(LiveMeasurementResult {
-            measurement,
-            update: ProjectionUpdate::default(),
-        });
+        // A tableau-only read requires both a zero coefficient-basis word and
+        // an identity virtual frame. Materialize a pending frame first: it can
+        // turn a computational product MPS into a nontrivial coefficient
+        // state, in which case the general Lazy projection must handle it.
+        if !deferred.is_empty() {
+            flush_deferred_ops(mps, deferred)?;
+        }
+        if is_mps_trivial(mps) {
+            return Ok(measure_trivial_mps_with_update(tableau, mps, q_idx));
+        }
     }
 
     // Push pre_reduce CNOTs to deferred instead of applying eagerly.
@@ -1344,76 +1603,23 @@ pub(super) fn measure_qubit_stab_mps_lazy_with_update(
             // Project stored MPS via conjugated Pauli.
             apply_pauli_projection(mps, &flip_conj, &sign_conj, phase_conj, sign_f, prob);
             mps.compress()?;
-            // Absorb W⁻¹ into V. W satisfies:
-            //   W · Z_id · W† = sp · X_flip · Z_sign  (MPS-frame post-measurement Pauli)
-            // where `sp = sign_f · phase_conj` (sign_f = -1 if outcome else +1).
-            // sp is one of {+1, -1, +i, -i}. Hermiticity of Z_id forces a
-            // dichotomy on `X_flip · Z_sign` (single flip = {id}):
-            //   - id ∉ sign: X_id · Z_sign is Hermitian, sp must be real.
-            //   - id ∈ sign: X_id · Z_id · Z_rest = -i·Y_id·Z_rest is
-            //     anti-Hermitian, sp must be imaginary.
-            //
-            // Basis-rotation constructions (each giving W·Z_id·W† = target):
-            //   Real sp, id ∉ sign:
-            //     sp = +1: W = [CZ(id, s) for s∈sign] · H_id
-            //     sp = -1: W = Z_id · [CZ(id, s) for s∈sign] · H_id
-            //   Imaginary sp, id ∈ sign:
-            //     sp = +i: W = [CZ(id, s) for s∈sign\id] · SZ_id · H_id
-            //     sp = -i: W = [CZ(id, s) for s∈sign\id] · SZdg_id · H_id
-            //
-            // W⁻¹ reverses the product and adjoints each primitive. Deferred
-            // queue push order is application order (first-pushed applied
-            // first), which corresponds to rightmost-in-product. So push
-            // W⁻¹'s primitives right-to-left:
-            //
-            // W is determined by mz_forced's action on the CURRENT tableau
-            // (post-pre_reduce). Use the original decomposition `phase`, not
-            // the V-conjugated `phase_conj` — V-conjugation is for MPS
-            // operations only; the tableau sees the original decomposition.
-            let sp = Complex64::new(sign_f, 0.0) * phase;
-            let id_in_sign = sign_sites.contains(&id);
-            if sp.im.abs() < 1e-9 {
-                // Real sp branch. id must not be in sign.
-                debug_assert!(
-                    !id_in_sign,
-                    "lazy measure: real sp={sp:?} but id in sign (expected imaginary)"
-                );
-                if sp.re < 0.0 {
-                    deferred.push(DeferredOp::Z(id));
-                }
-                for &s in &sign_sites {
-                    if s != id {
-                        deferred.push(DeferredOp::Cz(id, s));
-                    }
-                }
-            } else {
-                // Imaginary sp branch. id must be in sign.
-                debug_assert!(
-                    id_in_sign,
-                    "lazy measure: imaginary sp={sp:?} but id not in sign (expected real)"
-                );
-                debug_assert!(
-                    sp.re.abs() < 1e-9,
-                    "lazy measure: sp={sp:?} not pure imaginary"
-                );
-                for &s in &sign_sites {
-                    if s != id {
-                        deferred.push(DeferredOp::Cz(id, s));
-                    }
-                }
-                // W inner rotation: SZ for sp=+i, SZdg for sp=-i.
-                // W⁻¹'s corresponding primitive: SZdg for sp=+i, SZ for sp=-i.
-                if sp.im > 0.0 {
-                    deferred.push(DeferredOp::SZdg(id));
-                } else {
-                    deferred.push(DeferredOp::SZ(id));
-                }
-            }
-            deferred.push(DeferredOp::H(id));
-
-            tableau.mz_forced(q_idx, outcome);
+            // Use the original decomposition phase here: deferred conjugation
+            // changes the stored-MPS projector, but the tableau update acts in
+            // the current post-pre-reduction generator basis. The helper also
+            // queues the virtual Z gauge omitted by `mz_forced`'s structural
+            // destabilizer-row XORs.
+            let gauge_sites = enqueue_lazy_measurement_basis_update(
+                tableau,
+                deferred,
+                q_idx,
+                id,
+                phase,
+                &sign_sites,
+                outcome,
+            );
             modified_sites.extend(flip_conj);
             modified_sites.extend(sign_conj);
+            modified_sites.extend(gauge_sites);
             modified_sites.push(id);
             modified_sites.sort_unstable();
             modified_sites.dedup();
@@ -1507,17 +1713,8 @@ pub(super) fn measure_qubit_stab_mps_with_update(
     rng: &mut PecosRng,
     q_idx: usize,
 ) -> Result<LiveMeasurementResult, MpsError> {
-    // Trivial MPS: delegate to tableau
     if is_mps_trivial(mps) {
-        let measurement = tableau
-            .mz(&[pecos_core::QubitId(q_idx)])
-            .into_iter()
-            .next()
-            .expect("MPS op on valid site");
-        return Ok(LiveMeasurementResult {
-            measurement,
-            update: ProjectionUpdate::default(),
-        });
+        return Ok(measure_trivial_mps_with_update(tableau, mps, q_idx));
     }
 
     // Pre-reduce the tableau so that Z_q has at most one anticommuting stabilizer.
@@ -1685,12 +1882,17 @@ pub(super) fn measure_qubit_stab_mps_with_update(
     }
 }
 
-/// Measure qubit `q_idx` in the Z basis using the eager STN protocol.
+/// Measure qubit `q_idx` with the pragmatic eager STN protocol.
+///
+/// This path deliberately skips coefficient-MPS compensation when tableau
+/// generator pre-reduction is needed. Its outcome stream remains internally
+/// useful for throughput-oriented workloads, but the stored conditional state
+/// is biased and cannot support exact continuation or amplitude reads.
 ///
 /// # Errors
 ///
 /// Returns an [`MpsError`] if an MPS operation fails.
-pub fn measure_qubit_stab_mps(
+pub fn measure_qubit_stab_mps_pragmatic(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
     rng: &mut PecosRng,
@@ -1709,6 +1911,449 @@ mod tests {
         v.dedup();
     }
 
+    fn dense_pauli(flip_mask: usize, sign_mask: usize, phase: Complex64) -> DMatrix<Complex64> {
+        let identity = DMatrix::identity(2, 2);
+        let x = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        );
+        let z = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+        ]));
+        let factors: Vec<_> = (0..2)
+            .map(
+                |q| match (flip_mask & (1 << q) != 0, sign_mask & (1 << q) != 0) {
+                    (false, false) => identity.clone(),
+                    (true, false) => x.clone(),
+                    (false, true) => z.clone(),
+                    (true, true) => &x * &z,
+                },
+            )
+            .collect();
+        factors[0].kronecker(&factors[1]).map(|entry| phase * entry)
+    }
+
+    fn dense_single_qubit_gate(gate: &DMatrix<Complex64>, q: usize) -> DMatrix<Complex64> {
+        let identity = DMatrix::identity(2, 2);
+        if q == 0 {
+            gate.kronecker(&identity)
+        } else {
+            identity.kronecker(gate)
+        }
+    }
+
+    fn identify_dense_pauli(matrix: &DMatrix<Complex64>) -> (usize, usize, Complex64) {
+        let phases = [
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+            Complex64::new(0.0, -1.0),
+        ];
+        let mut matches = Vec::new();
+        for flip_mask in 0..4 {
+            for sign_mask in 0..4 {
+                for phase in phases {
+                    if (dense_pauli(flip_mask, sign_mask, phase) - matrix).norm() < 1e-12 {
+                        matches.push((flip_mask, sign_mask, phase));
+                    }
+                }
+            }
+        }
+        assert_eq!(matches.len(), 1, "dense oracle must identify one Pauli");
+        matches[0]
+    }
+
+    #[test]
+    fn conjugate_pauli_by_deferred_ops_matches_dense_oracle_for_every_op_kind() {
+        let r = std::f64::consts::FRAC_1_SQRT_2;
+        let h = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(r, 0.0),
+                Complex64::new(r, 0.0),
+                Complex64::new(r, 0.0),
+                Complex64::new(-r, 0.0),
+            ],
+        );
+        let z = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+        ]));
+        let s = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+        ]));
+        let sdg = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, -1.0),
+        ]));
+        let cnot_01 = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                1.0, 0.0, 0.0, 0.0, // |00> -> |00>
+                0.0, 1.0, 0.0, 0.0, // |01> -> |01>
+                0.0, 0.0, 0.0, 1.0, // |11> -> |10>
+                0.0, 0.0, 1.0, 0.0, // |10> -> |11>
+            ],
+        )
+        .map(|entry| Complex64::new(entry, 0.0));
+        let cnot_10 = DMatrix::from_row_slice(
+            4,
+            4,
+            &[
+                1.0, 0.0, 0.0, 0.0, // |00> -> |00>
+                0.0, 0.0, 0.0, 1.0, // |11> -> |01>
+                0.0, 0.0, 1.0, 0.0, // |10> -> |10>
+                0.0, 1.0, 0.0, 0.0, // |01> -> |11>
+            ],
+        )
+        .map(|entry| Complex64::new(entry, 0.0));
+        let cz = DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+        ]));
+        let cases = vec![
+            ("Cnot(0,1)", DeferredOp::Cnot(0, 1), cnot_01),
+            ("Cnot(1,0)", DeferredOp::Cnot(1, 0), cnot_10),
+            ("H(0)", DeferredOp::H(0), dense_single_qubit_gate(&h, 0)),
+            ("H(1)", DeferredOp::H(1), dense_single_qubit_gate(&h, 1)),
+            ("Z(0)", DeferredOp::Z(0), dense_single_qubit_gate(&z, 0)),
+            ("Z(1)", DeferredOp::Z(1), dense_single_qubit_gate(&z, 1)),
+            (
+                "SZdg(0)",
+                DeferredOp::SZdg(0),
+                dense_single_qubit_gate(&sdg, 0),
+            ),
+            (
+                "SZdg(1)",
+                DeferredOp::SZdg(1),
+                dense_single_qubit_gate(&sdg, 1),
+            ),
+            ("SZ(0)", DeferredOp::SZ(0), dense_single_qubit_gate(&s, 0)),
+            ("SZ(1)", DeferredOp::SZ(1), dense_single_qubit_gate(&s, 1)),
+            ("Cz(0,1)", DeferredOp::Cz(0, 1), cz),
+        ];
+        let input_phases = [
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+            Complex64::new(0.0, -1.0),
+        ];
+
+        for (name, op, gate) in cases {
+            let mut mismatches = Vec::new();
+            for input_flip_mask in 0..4 {
+                for input_sign_mask in 0..4 {
+                    for input_phase in input_phases {
+                        let input = dense_pauli(input_flip_mask, input_sign_mask, input_phase);
+                        let oracle = gate.adjoint() * input * &gate;
+                        let expected = identify_dense_pauli(&oracle);
+                        let mut flip_sites = (0..2)
+                            .filter(|q| input_flip_mask & (1 << q) != 0)
+                            .collect::<Vec<_>>();
+                        let mut sign_sites = (0..2)
+                            .filter(|q| input_sign_mask & (1 << q) != 0)
+                            .collect::<Vec<_>>();
+                        let mut actual_phase = input_phase;
+                        conjugate_pauli_by_deferred_ops(
+                            &mut flip_sites,
+                            &mut sign_sites,
+                            &mut actual_phase,
+                            std::slice::from_ref(&op),
+                        );
+                        sort_dedup(&mut flip_sites);
+                        sort_dedup(&mut sign_sites);
+                        let actual = (
+                            flip_sites.iter().fold(0, |mask, q| mask | (1 << q)),
+                            sign_sites.iter().fold(0, |mask, q| mask | (1 << q)),
+                            actual_phase,
+                        );
+                        if actual != expected {
+                            mismatches.push(format!(
+                                "input=(X={input_flip_mask:02b}, Z={input_sign_mask:02b}, phase={input_phase}); expected={expected:?}, actual={actual:?}"
+                            ));
+                        }
+                    }
+                }
+            }
+            assert!(
+                mismatches.is_empty(),
+                "{name} had {} dense-oracle mismatches; first: {}",
+                mismatches.len(),
+                mismatches.first().map_or("none", String::as_str)
+            );
+        }
+    }
+
+    #[test]
+    fn lazy_measurement_basis_update_matches_dense_oracle_for_all_two_qubit_cliffords() {
+        use crate::stab_mps::StabMps;
+        use pecos_core::QubitId;
+        use std::collections::{HashSet, VecDeque};
+
+        fn tableau_key(tableau: &SparseStabY) -> Vec<u8> {
+            let mut key = Vec::new();
+            for generators in [tableau.stabs(), tableau.destabs()] {
+                for row in 0..tableau.num_qubits() {
+                    for qubit in 0..tableau.num_qubits() {
+                        key.push(u8::from(generators.row_x[row].contains(qubit)));
+                        key.push(u8::from(generators.row_z[row].contains(qubit)));
+                    }
+                    key.push(u8::from(generators.signs_minus.contains(row)));
+                    key.push(u8::from(generators.signs_i.contains(row)));
+                }
+            }
+            key
+        }
+
+        fn phase_bucket(phase: Complex64) -> usize {
+            if phase.re > 0.5 {
+                0
+            } else if phase.im > 0.5 {
+                1
+            } else if phase.re < -0.5 {
+                2
+            } else if phase.im < -0.5 {
+                3
+            } else {
+                panic!("phase is not a fourth root of unity: {phase}");
+            }
+        }
+
+        fn generic_coefficient_mps() -> Mps {
+            let mut mps = Mps::new(2, MpsConfig::default());
+            for (qubit, probability_one, argument) in [(0, 0.37_f64, 0.29_f64), (1, 0.61, -0.47)] {
+                let zero = (1.0 - probability_one).sqrt();
+                let one = Complex64::from_polar(probability_one.sqrt(), argument);
+                let gate = DMatrix::from_row_slice(
+                    2,
+                    2,
+                    &[
+                        Complex64::new(zero, 0.0),
+                        -one.conj(),
+                        one,
+                        Complex64::new(zero, 0.0),
+                    ],
+                );
+                mps.apply_one_site_gate(qubit, &gate).unwrap();
+            }
+            mps
+        }
+
+        fn represented_state(
+            template: &StabMps,
+            tableau: &SparseStabY,
+            mps: &Mps,
+        ) -> Vec<Complex64> {
+            let mut snapshot = template.clone();
+            snapshot.tableau = tableau.clone();
+            snapshot.mps = mps.clone();
+            snapshot.deferred_ops.clear();
+            snapshot.state_vector()
+        }
+
+        let coefficient_mps = generic_coefficient_mps();
+        let template = StabMps::new(2);
+        let initial = SparseStabY::with_seed(2, 0).with_destab_sign_tracking();
+        let mut seen = HashSet::from([tableau_key(&initial)]);
+        let mut pending = VecDeque::from([initial]);
+        let mut cliffords = 0_usize;
+        let mut cases = 0_usize;
+        let mut signed_phase_counts = [0_usize; 4];
+
+        while let Some(tableau) = pending.pop_front() {
+            cliffords += 1;
+            let before = represented_state(&template, &tableau, &coefficient_mps);
+            for measured_qubit in 0..2 {
+                // This is exactly the input domain of the post-pre-reduction
+                // lazy basis update: one virtual X site remains.
+                if tableau.stabs().col_x[measured_qubit].len() != 1 {
+                    continue;
+                }
+                let ZDecomposition::DestabilizerFlip {
+                    flip_sites,
+                    phase,
+                    sign_sites,
+                } = decompose_z(tableau.stabs(), tableau.destabs(), measured_qubit)
+                else {
+                    continue;
+                };
+                if flip_sites.len() != 1 {
+                    continue;
+                }
+
+                for outcome in [false, true] {
+                    signed_phase_counts[phase_bucket(
+                        Complex64::new(if outcome { -1.0 } else { 1.0 }, 0.0) * phase,
+                    )] += 1;
+                    let mut measured = tableau.clone();
+                    let mut deferred = Vec::new();
+                    enqueue_lazy_measurement_basis_update(
+                        &mut measured,
+                        &mut deferred,
+                        measured_qubit,
+                        flip_sites[0],
+                        phase,
+                        &sign_sites,
+                        outcome,
+                    );
+                    let queued = deferred.clone();
+                    let mut transformed_mps = coefficient_mps.clone();
+                    flush_deferred_ops(&mut transformed_mps, &mut deferred).unwrap();
+                    let after = represented_state(&template, &measured, &transformed_mps);
+                    let overlap = before
+                        .iter()
+                        .zip(&after)
+                        .map(|(left, right)| left.conj() * right)
+                        .sum::<Complex64>();
+                    let fidelity = overlap.norm_sqr();
+                    assert!(
+                        fidelity >= 1.0 - 2e-12,
+                        "dense lazy-basis oracle failed: measured={measured_qubit} outcome={outcome} \
+                         flip={flip_sites:?} sign={sign_sites:?} phase={phase} \
+                         queue={queued:?} fidelity={fidelity:.16}"
+                    );
+                    cases += 1;
+                }
+            }
+
+            for gate in 0..6 {
+                let mut next = tableau.clone();
+                match gate {
+                    0 => next.h(&[QubitId(0)]),
+                    1 => next.h(&[QubitId(1)]),
+                    2 => next.sz(&[QubitId(0)]),
+                    3 => next.sz(&[QubitId(1)]),
+                    4 => next.cx(&[(QubitId(0), QubitId(1))]),
+                    _ => next.cx(&[(QubitId(1), QubitId(0))]),
+                };
+                if seen.insert(tableau_key(&next)) {
+                    pending.push_back(next);
+                }
+            }
+        }
+
+        assert_eq!(
+            cliffords, 11_520,
+            "must enumerate the full two-qubit Clifford group"
+        );
+        assert!(cases > 0);
+        assert!(
+            signed_phase_counts.iter().all(|&count| count > 0),
+            "the exhaustive oracle must cover signed phases +1,+i,-1,-i: {signed_phase_counts:?}"
+        );
+        eprintln!(
+            "lazy measurement basis dense oracle: cliffords={cliffords} cases={cases} signed_phase_counts={signed_phase_counts:?}"
+        );
+    }
+
+    #[test]
+    fn endpoint_probability_and_survival_loss_are_distinct_classifications() {
+        let probability_one: f64 = 4.0e-15;
+        let mut mps = Mps::new(1, MpsConfig::default());
+        let preparation = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new((1.0 - probability_one).sqrt(), 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(probability_one.sqrt(), 0.0),
+                Complex64::new(1.0, 0.0),
+            ],
+        );
+        mps.apply_one_site_gate(0, &preparation).unwrap();
+        let mut tableau = SparseStabY::new(1).with_destab_sign_tracking();
+        let endpoint = project_forced_z_with_update(&mut tableau, &mut mps, 0, true).unwrap();
+        assert_eq!(endpoint.snapped_probability.to_bits(), 0.0_f64.to_bits());
+        assert!(endpoint.survival_ratio > 1.0 - 1e-12);
+
+        let mut mps = Mps::new(1, MpsConfig::default());
+        let hadamard = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(-std::f64::consts::FRAC_1_SQRT_2, 0.0),
+            ],
+        );
+        mps.apply_one_site_gate(0, &hadamard).unwrap();
+        let mut tableau = SparseStabY::new(1).with_destab_sign_tracking();
+        inject_projection_vanishes(1);
+        let vanished = project_forced_z_with_update(&mut tableau, &mut mps, 0, false).unwrap();
+        assert!((vanished.snapped_probability - 0.5).abs() < 1e-14);
+        assert!(vanished.survival_ratio < BRANCH_VANISH_SURVIVAL_THRESHOLD);
+    }
+
+    #[test]
+    fn trivial_probability_quantization_is_shared_by_sampling_and_projection() {
+        assert_eq!(
+            quantize_trivial_probability(0.499_999_68).to_bits(),
+            0.5_f64.to_bits()
+        );
+
+        let probability_one: f64 = 1.0e-13;
+        let mut mps = Mps::new(1, MpsConfig::default());
+        let preparation = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new((1.0 - probability_one).sqrt(), 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(probability_one.sqrt(), 0.0),
+                Complex64::new(1.0, 0.0),
+            ],
+        );
+        mps.apply_one_site_gate(0, &preparation).unwrap();
+        let mut tableau = SparseStabY::new(1).with_destab_sign_tracking();
+        let sampled_probability =
+            z_outcome_probability(&tableau, &mps, 0, true, "trivial probability test");
+        let projected = project_forced_z_with_update(&mut tableau, &mut mps, 0, true).unwrap();
+        assert_eq!(sampled_probability.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(
+            projected.snapped_probability.to_bits(),
+            sampled_probability.to_bits()
+        );
+    }
+
+    #[test]
+    fn exact_projection_compresses_clean_rank_redundancy_without_discarded_weight() {
+        let product = Mps::new(4, MpsConfig::default());
+        let mut mps = product.add(&product);
+        mps.normalize();
+        mps.reset_truncation_stats();
+        assert_eq!(mps.max_bond_dim(), 2);
+        let mut tableau = SparseStabY::new(4).with_destab_sign_tracking();
+
+        let projection = project_forced_z_with_update(&mut tableau, &mut mps, 0, false).unwrap();
+
+        assert_eq!(projection.snapped_probability.to_bits(), 1.0_f64.to_bits());
+        assert_eq!(mps.max_bond_dim(), 1);
+        assert_eq!(mps.summed_discarded_weight().to_bits(), 0.0_f64.to_bits());
+        assert_eq!(mps.truncation_error().to_bits(), 0.0_f64.to_bits());
+    }
+
+    #[test]
+    fn renamed_pragmatic_low_level_entry_is_callable() {
+        let mut tableau = SparseStabY::new(1).with_destab_sign_tracking();
+        let mut mps = Mps::new(1, MpsConfig::default());
+        let mut rng = PecosRng::seed_from_u64(11);
+        let result = measure_qubit_stab_mps_pragmatic(&mut tableau, &mut mps, &mut rng, 0).unwrap();
+        assert!(!result.outcome);
+    }
+
     #[test]
     fn projection_block_replacement_invalidation_guards_canonical_routing() {
         let product = Mps::new(4, MpsConfig::default());
@@ -1717,7 +2362,28 @@ mod tests {
 
         project_single_flip_without_sign(&mut mps, 0, Complex64::new(1.0, 0.0), 0.5);
 
-        assert_eq!(mps.tracked_center_for_test(), None);
+        mps.right_canonicalize();
+        assert_eq!(mps.tracked_center_for_test(), Some(0));
+        assert_eq!(mps.full_canonical_sweep_count(), 1);
+        assert_eq!(mps.center_reuse_count(), 0);
+    }
+
+    #[test]
+    fn projection_block_replacement_at_center_reuses_canonical_routing() {
+        let product = Mps::new(4, MpsConfig::default());
+        let mut mps = product.add(&product);
+        mps.left_canonicalize();
+        assert_eq!(mps.tracked_center_for_test(), Some(3));
+
+        project_single_flip_without_sign(&mut mps, 3, Complex64::new(1.0, 0.0), 0.5);
+
+        assert_eq!(mps.tracked_center_for_test(), Some(3));
+        // The production exact-projection compression route invokes the debug
+        // center validator here before reusing the preserved center.
+        mps.right_canonicalize();
+        assert_eq!(mps.tracked_center_for_test(), Some(0));
+        assert_eq!(mps.full_canonical_sweep_count(), 0);
+        assert_eq!(mps.center_reuse_count(), 1);
     }
 
     #[test]

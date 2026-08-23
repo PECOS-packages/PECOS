@@ -14,6 +14,7 @@ STATS_KEYS = {
     "total_nonclifford",
     "single_site",
     "multi_disent",
+    "deferred_disent_bypass",
     "numerical_redetect",
     "multi_std",
     "stabilizer",
@@ -31,19 +32,37 @@ def assert_complex_tuple(value):
     assert all(isinstance(component, float) for component in value)
 
 
-def test_sim_neo_stab_mps_boolean_builder_options():
+def test_sim_neo_stab_mps_measurement_and_boolean_builder_options():
     circuit = TickCircuit()
     circuit.tick().x([0])
     circuit.tick().mz([0])
 
     backends = [
-        exp.stab_mps().lazy_measure().merge_rz(),
-        exp.stab_mps().lazy_measure(True).merge_rz(True),
-        exp.stab_mps().lazy_measure(False).merge_rz(False),
+        exp.stab_mps().measurement("exact").merge_rz(),
+        exp.stab_mps().measurement("lazy").merge_rz(True),
+        exp.stab_mps().measurement("pragmatic").merge_rz(False),
     ]
     for backend in backends:
         result = exp.sim_neo(circuit).quantum(backend).sampling(exp.monte_carlo(1)).seed(7).run()
         assert [list(row) for row in result] == [[1]]
+
+    with pytest.raises(ValueError, match="measurement must be one of"):
+        exp.stab_mps().measurement("eager")
+
+
+def test_stab_mps_measurement_selection_precedence_and_reset_retention():
+    assert exp.StabMps(1).measurement == "exact"
+    assert exp.StabMps(1, measurement="pragmatic").measurement == "pragmatic"
+    assert exp.StabMps(1, measurement="lazy").measurement == "lazy"
+    assert exp.StabMps(1, for_qec=True).measurement == "exact"
+    assert exp.StabMps(1, for_qec=True, measurement="exact").measurement == "exact"
+    assert exp.StabMps(1, for_qec=True, measurement="pragmatic").measurement == "pragmatic"
+    lazy = exp.StabMps(1, for_qec=True, measurement="lazy")
+    assert lazy.measurement == "lazy"
+    assert lazy.reset().measurement == "lazy"
+
+    with pytest.raises(ValueError, match="measurement must be one of"):
+        exp.StabMps(1, measurement="eager")
 
 
 def test_stab_mps_analysis_and_noise_exposure():
@@ -104,6 +123,8 @@ def test_stab_mps_analysis_and_noise_exposure():
 def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     q0_one = exp.StabMps(2, seed=13)
     q0_one.run_1q_gate("X", 0)
+    assert not hasattr(q0_one, "sample_bit" + "string")
+    assert hasattr(q0_one, "sample_bit" + "strings")
     assert q0_one.sample_bitstrings(4) == [[True, False]] * 4
     assert q0_one.state_vector() == [
         (0.0, 0.0),
@@ -123,7 +144,7 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     assert_complex_tuple(merged_amplitude)
     assert merged.is_state_exact() is True
 
-    lazy = exp.StabMps(2, seed=19, lazy_measure=True)
+    lazy = exp.StabMps(2, seed=19, measurement="lazy")
     lazy.run_1q_gate("H", 1)
     lazy.run_1q_gate("T", 1)
     lazy.run_1q_gate("S", 0)
@@ -132,7 +153,12 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     lazy.run_1q_gate("MZ", 0)
     assert lazy.is_state_exact() is False
     assert len(lazy.state_vector()) == 4
-    assert lazy.is_state_exact() is True
+    assert lazy.is_state_exact() is False
+    assert lazy.uncompensated_pre_reduction_count == 0
+    assert lazy.summed_discarded_weight == 0.0
+    assert lazy.branch_vanish_retry_count == 0
+    assert lazy.deferred_branch_lost_count == 0
+    assert isinstance(lazy.lifetime_peak_bond, int)
 
     with pytest.raises(ValueError, match="bitstring length 1, expected 2"):
         q0_one.amplitude([True])

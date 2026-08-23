@@ -3,7 +3,6 @@
 mod simulator;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsStr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -16,7 +15,7 @@ use selene_core::error_model::BatchResult;
 use selene_core::error_model::interface::{ErrorModelInterface, ErrorModelInterfaceFactory};
 use selene_core::export_error_model_plugin;
 use selene_core::runtime::{BatchOperation, Operation};
-use selene_core::simulator::Simulator;
+use selene_core::simulator::SimulatorInterface;
 use selene_core::utils::MetricValue;
 use serde::Deserialize;
 
@@ -300,19 +299,14 @@ struct MeasurementResult {
 }
 
 struct GeneralNoiseErrorModel {
-    system: QuantumSystem,
+    model: Box<dyn NoiseModel>,
     builder: ByteMessageBuilder,
     last_operation_end: Vec<u64>,
     local_groups: Vec<BTreeSet<usize>>,
 }
 
 impl GeneralNoiseErrorModel {
-    fn new(
-        model: Box<dyn NoiseModel>,
-        simulator: Simulator,
-        n_qubits: usize,
-        config: &Config,
-    ) -> Result<Self> {
+    fn new(model: Box<dyn NoiseModel>, n_qubits: usize, config: &Config) -> Result<Self> {
         for group in &config.measurement.local_groups {
             if let Some(qubit) = group.iter().find(|qubit| **qubit >= n_qubits) {
                 bail!(
@@ -321,7 +315,7 @@ impl GeneralNoiseErrorModel {
             }
         }
         Ok(Self {
-            system: QuantumSystem::new(model, Box::new(SeleneSimulator::new(simulator))),
+            model,
             builder: ByteMessage::quantum_operations_builder(),
             last_operation_end: vec![0; n_qubits],
             local_groups: config
@@ -370,12 +364,28 @@ impl GeneralNoiseErrorModel {
             .collect()
     }
 
-    fn simulator_mut(&mut self) -> Result<&mut SeleneSimulator> {
-        self.system
-            .quantum_engine_mut()
-            .as_any_mut()
-            .downcast_mut::<SeleneSimulator>()
-            .ok_or_else(|| anyhow!("internal Selene simulator adapter has the wrong type"))
+    fn process_message(
+        &mut self,
+        message: ByteMessage,
+        simulator: &mut dyn SimulatorInterface,
+    ) -> Result<ByteMessage> {
+        let mut stage = self
+            .model
+            .start(message)
+            .map_err(|error| anyhow!(error.to_string()))?;
+        loop {
+            match stage {
+                EngineStage::NeedsProcessing(operations) => {
+                    let output = SeleneSimulator::process(simulator, &operations)
+                        .map_err(|error| anyhow!(error.to_string()))?;
+                    stage = self
+                        .model
+                        .continue_processing(output)
+                        .map_err(|error| anyhow!(error.to_string()))?;
+                }
+                EngineStage::Complete(output) => return Ok(output),
+            }
+        }
     }
 }
 
@@ -384,11 +394,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
         Ok(())
     }
 
-    fn shot_start(&mut self, shot_id: u64, error_seed: u64, simulator_seed: u64) -> Result<()> {
-        self.system.noise_model_mut().set_seed(error_seed);
-        self.simulator_mut()?
-            .shot_start(shot_id, simulator_seed)
-            .map_err(|error| anyhow!(error.to_string()))?;
+    fn shot_start(&mut self, _shot_id: u64, error_seed: u64) -> Result<()> {
+        self.model.set_seed(error_seed);
         self.last_operation_end.fill(0);
         self.builder.reset();
         let _ = self.builder.for_quantum_operations();
@@ -396,21 +403,21 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
     }
 
     fn shot_end(&mut self) -> Result<()> {
-        self.system
+        self.model
             .reset()
-            .map_err(|error| anyhow!(error.to_string()))?;
-        self.simulator_mut()?
-            .shot_end()
             .map_err(|error| anyhow!(error.to_string()))
     }
 
-    fn dump_simulator_state(&mut self, file: &std::path::Path, qubits: &[u64]) -> Result<()> {
-        self.simulator_mut()?.dump_state(file, qubits)
-    }
-
-    fn handle_operations(&mut self, operations: BatchOperation) -> Result<BatchResult> {
-        let start: u64 = operations.start().into();
-        let end: u64 = operations.end().into();
+    fn handle_operations(
+        &mut self,
+        operations: BatchOperation,
+        simulator: &mut dyn SimulatorInterface,
+    ) -> Result<BatchResult> {
+        let timing = operations
+            .runtime_source()
+            .ok_or_else(|| anyhow!("PECOS general noise expects a runtime operation batch"))?;
+        let start: u64 = timing.start().into();
+        let end: u64 = timing.end().into();
         let measured = operations
             .iter_ops()
             .filter_map(|operation| match operation {
@@ -495,14 +502,21 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                 }
                 Operation::Reset { qubit_id } => {
                     let qubit = self.qubit(qubit_id)?;
+                    self.add_idle_before(qubit, start)?;
                     self.builder.pz(&[qubit]);
                     self.last_operation_end[qubit] = end;
+                }
+                Operation::RPPGate { .. } => {
+                    bail!(
+                        "RPP operations do not yet have a PECOS general-noise gate representation"
+                    );
                 }
                 Operation::Custom { custom_tag, .. } => {
                     bail!(
                         "custom Selene runtime operation {custom_tag} has no device-neutral PECOS meaning"
                     );
                 }
+                _ => bail!("unsupported Selene runtime operation"),
             }
         }
 
@@ -512,10 +526,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
         let message = self.builder.build();
         self.builder.reset();
         let _ = self.builder.for_quantum_operations();
-        let output = self
-            .system
-            .process(message)
-            .map_err(|error| anyhow!(error.to_string()))?;
+        let output = self.process_message(message, simulator)?;
         let outcomes = output
             .outcomes()
             .map_err(|error| anyhow!(error.to_string()))?;
@@ -547,10 +558,6 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
     fn get_metric(&mut self, _nth_metric: u8) -> Result<Option<(String, MetricValue)>> {
         Ok(None)
     }
-
-    fn get_simulator_metric(&mut self, nth_metric: u8) -> Result<Option<(String, MetricValue)>> {
-        self.simulator_mut()?.metric(nth_metric)
-    }
 }
 
 #[derive(Default)]
@@ -563,8 +570,6 @@ impl ErrorModelInterfaceFactory for GeneralNoiseFactory {
         self: Arc<Self>,
         n_qubits: u64,
         error_model_args: &[impl AsRef<str>],
-        simulator_path: &impl AsRef<OsStr>,
-        simulator_args: &[impl AsRef<str>],
     ) -> Result<Box<Self::Interface>> {
         if error_model_args.len() != 2 {
             bail!(
@@ -575,10 +580,8 @@ impl ErrorModelInterfaceFactory for GeneralNoiseFactory {
         let config: Config = serde_json::from_str(error_model_args[1].as_ref())
             .context("could not parse PECOS general-noise JSON configuration")?;
         let model = config.build_model()?;
-        let simulator = Simulator::load_from_file(simulator_path, n_qubits, simulator_args)?;
         Ok(Box::new(GeneralNoiseErrorModel::new(
             model,
-            simulator,
             usize::try_from(n_qubits).context("qubit count does not fit usize")?,
             &config,
         )?))

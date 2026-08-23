@@ -136,7 +136,7 @@ def test_plugin_executes_in_selene() -> None:
     @guppy
     def main() -> None:
         q = qubit()
-        outcome = measure(q)
+        outcome = measure(q).read()
         result("outcome", outcome)
 
     runner = build(main.compile())
@@ -154,7 +154,7 @@ def test_default_parameters_are_noiseless_in_selene() -> None:
     @guppy
     def main() -> None:
         q = qubit()
-        outcome = measure(q)
+        outcome = measure(q).read()
         result("outcome", outcome)
 
     runner = build(main.compile())
@@ -170,7 +170,7 @@ def test_plugin_executes_with_pecos_statevec() -> None:
     @guppy
     def main() -> None:
         q = qubit()
-        outcome = measure(q)
+        outcome = measure(q).read()
         result("outcome", outcome)
 
     runner = build(main.compile())
@@ -189,7 +189,7 @@ def test_asymmetric_measurement_noise_executes_in_selene() -> None:
     @guppy
     def main() -> None:
         q = qubit()
-        outcome = measure(q)
+        outcome = measure(q).read()
         result("outcome", outcome)
 
     runner = build(main.compile())
@@ -208,7 +208,7 @@ def test_custom_single_qubit_pauli_channel_executes_in_selene() -> None:
     def main() -> None:
         q = qubit()
         rz(q, pi / 2)
-        outcome = measure(q)
+        outcome = measure(q).read()
         result("outcome", outcome)
 
     runner = build(main.compile())

@@ -52,7 +52,7 @@ groups rather than a hard-coded device layout.
 From the PECOS repository root:
 
 ```bash
-uv run --package pecos-selene-general-noise pytest \
+uv run --package pecos-selene-general-noise --extra test pytest \
   python/selene-plugins/pecos-selene-general-noise/tests
 cargo test -p pecos-selene-general-noise
 ```

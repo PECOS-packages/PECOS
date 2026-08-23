@@ -2424,7 +2424,7 @@ test = [{ name = "pytest", specifier = ">=9.0" }]
 
 [[package]]
 name = "pecos-selene-general-noise"
-version = "0.10.0.dev0"
+version = "0.11.0.dev0"
 source = { editable = "python/selene-plugins/pecos-selene-general-noise" }
 dependencies = [
     { name = "selene-core" },
@@ -2439,10 +2439,10 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "guppylang", marker = "extra == 'test'", specifier = ">=0.14,<1.0" },
+    { name = "guppylang", marker = "extra == 'test'", specifier = "~=1.0.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
-    { name = "selene-core", specifier = ">=0.2" },
-    { name = "selene-sim", marker = "extra == 'test'", specifier = ">=0.2,<0.3" },
+    { name = "selene-core", specifier = "~=0.3.0" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = "~=0.3.0" },
 ]
 provides-extras = ["test"]
 

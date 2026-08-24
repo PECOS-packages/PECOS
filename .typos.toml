@@ -51,3 +51,8 @@ Unparseable = "Unparseable"
 Pn = "Pn"
 PN = "PN"
 pn = "pn"
+
+[files]
+# Base64-encoded binary test fixtures inevitably contain typo-lookalike
+# substrings; their bytes are sha256-pinned and must not be "corrected".
+extend-exclude = ["*.b64"]

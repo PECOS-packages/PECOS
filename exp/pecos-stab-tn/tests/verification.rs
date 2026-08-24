@@ -2476,17 +2476,26 @@ fn assert_honest_clifford_t_readouts_match_dense(
                 } else {
                     dense_state_vector_probabilities(&stn)
                 };
-                for (outcome, &expected) in dense_probabilities.iter().enumerate() {
-                    let bits = (0..num_qubits)
-                        .map(|q| ((outcome >> q) & 1) != 0)
-                        .collect::<Vec<_>>();
-                    let actual = stn.prob_bitstring(&bits);
+                let bitstrings = (0..dense_probabilities.len())
+                    .map(|outcome| {
+                        (0..num_qubits)
+                            .map(|q| ((outcome >> q) & 1) != 0)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                let batched_probabilities = stn.prob_bitstrings(&bitstrings);
+                for (outcome, ((bits, &actual), &expected)) in bitstrings
+                    .iter()
+                    .zip(&batched_probabilities)
+                    .zip(&dense_probabilities)
+                    .enumerate()
+                {
                     let probability_delta = (actual - expected).abs();
                     worst_probability_delta = worst_probability_delta.max(probability_delta);
                     assert!(
                         probability_delta <= allowed_delta,
                         "{label}: n={num_qubits} t={t_count} seed={circuit_seed} \
-                         outcome={outcome}: prob_bitstring={actual:.16}, \
+                         outcome={outcome}: prob_bitstrings={actual:.16}, \
                          dense={expected:.16}, delta={probability_delta:.3e}, \
                          recorded_weight={recorded_weight:.3e}, \
                          allowed_delta={allowed_delta:.3e}, gates={gates:?}"
@@ -2496,7 +2505,7 @@ fn assert_honest_clifford_t_readouts_match_dense(
                     // same probability weight. Complex-phase behavior has
                     // separate unit coverage; this assertion isolates the
                     // sequential projection machinery shared with the issue.
-                    let iterative_probability = stn.amplitude_iterative(&bits).norm_sqr();
+                    let iterative_probability = stn.amplitude_iterative(bits).norm_sqr();
                     let iterative_delta = (iterative_probability - expected).abs();
                     worst_iterative_delta = worst_iterative_delta.max(iterative_delta);
                     assert!(
@@ -2513,7 +2522,7 @@ fn assert_honest_clifford_t_readouts_match_dense(
         }
     }
     eprintln!(
-        "{label}: circuits={circuits}, circuits with discarded weight={circuits_with_discarded_weight}, largest recorded weight={largest_recorded_weight:.3e}, largest allowed delta={largest_allowed_delta:.3e}, worst prob_bitstring delta={worst_probability_delta:.3e}, worst |amplitude_iterative|^2 delta={worst_iterative_delta:.3e}"
+        "{label}: circuits={circuits}, circuits with discarded weight={circuits_with_discarded_weight}, largest recorded weight={largest_recorded_weight:.3e}, largest allowed delta={largest_allowed_delta:.3e}, worst prob_bitstrings delta={worst_probability_delta:.3e}, worst |amplitude_iterative|^2 delta={worst_iterative_delta:.3e}"
     );
 }
 
@@ -2539,6 +2548,123 @@ fn test_prob_bitstring_honest_clifford_t_wide_seed_sweep_matches_dense_state_vec
     // arm here would duplicate the exact arm byte for byte. Nonzero-budget
     // read coverage lives in the weak-branch fixture below, whose branch is
     // engineered to sit under the budget.
+}
+
+#[test]
+fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
+    fn query_set(num_qubits: usize, seed: u64) -> Vec<Vec<bool>> {
+        let mut random = seed;
+        let mut queries = vec![vec![false; num_qubits], vec![true; num_qubits]];
+
+        // Four queries share a deliberately long prefix; the following four
+        // are independently generated and normally split near the root.
+        for suffix_index in 0..4 {
+            let mut bits = vec![false; num_qubits];
+            let shared_depth = num_qubits.saturating_sub(2);
+            for (q, bit) in bits.iter_mut().enumerate().skip(shared_depth) {
+                *bit = (suffix_index >> (q - shared_depth)) & 1 != 0;
+            }
+            queries.push(bits);
+        }
+        for _ in 0..4 {
+            queries.push(
+                (0..num_qubits)
+                    .map(|_| next_seeded_gate_choice(&mut random) & 1 != 0)
+                    .collect(),
+            );
+        }
+
+        // Preserve duplicate positions rather than deduplicating trie leaves.
+        queries.push(queries[0].clone());
+        queries.push(queries[3].clone());
+        queries
+    }
+
+    let mut truncating_circuits_with_discarded_weight = 0;
+    for truncating in [false, true] {
+        for num_qubits in 3..=6 {
+            for seed_family in 0..4_u64 {
+                let circuit_seed = 0xBA7C_0000
+                    + u64::from(truncating) * 0x10_0000
+                    + num_qubits as u64 * 100
+                    + seed_family;
+                let gates = seeded_clifford_t_circuit(num_qubits, num_qubits + 2, circuit_seed);
+                let (max_bond_dim, svd_cutoff, max_truncation_error) = if truncating {
+                    (2, 1e-10, 1e-6)
+                } else {
+                    (64, 0.0, 0.0)
+                };
+                let mut stn = StabMps::builder(num_qubits)
+                    .seed(circuit_seed)
+                    .max_bond_dim(max_bond_dim)
+                    .svd_cutoff(svd_cutoff)
+                    .max_truncation_error(max_truncation_error)
+                    .merge_rz(false)
+                    .build();
+                apply_seeded_clifford_t_to_stn(&mut stn, &gates);
+                stn.flush();
+                if truncating && stn.summed_discarded_weight() > 0.0 {
+                    truncating_circuits_with_discarded_weight += 1;
+                }
+
+                let queries = query_set(num_qubits, circuit_seed ^ 0x5151_5151);
+                let singular = queries
+                    .iter()
+                    .map(|bits| stn.prob_bitstring(bits))
+                    .collect::<Vec<_>>();
+                let batched = stn.prob_bitstrings(&queries);
+                assert_eq!(batched.len(), queries.len());
+                for (query_index, (&actual, &expected)) in batched.iter().zip(&singular).enumerate()
+                {
+                    assert_eq!(
+                        actual.to_bits(),
+                        expected.to_bits(),
+                        "truncating={truncating} n={num_qubits} seed={circuit_seed} \
+                         query={query_index} bits={:?}: batched={actual:.17e}, \
+                         singular={expected:.17e}",
+                        queries[query_index]
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        truncating_circuits_with_discarded_weight > 0,
+        "truncating agreement arm never exercised a discarded-weight state"
+    );
+
+    // Every false-q0 query is an endpoint-zero subtree. It must be pruned to
+    // the same positive zero returned by the singular API, while the inhabited
+    // branch and duplicate leaf retain their ordinary probabilities.
+    let mut endpoint = StabMps::new(4);
+    endpoint.x(&[QubitId(0)]);
+    let endpoint_queries = vec![
+        vec![false, false, false, false],
+        vec![false, false, false, true],
+        vec![false, true, true, true],
+        vec![true, false, false, false],
+        vec![true, false, false, false],
+    ];
+    let singular = endpoint_queries
+        .iter()
+        .map(|bits| endpoint.prob_bitstring(bits))
+        .collect::<Vec<_>>();
+    let batched = endpoint.prob_bitstrings(&endpoint_queries);
+    assert_eq!(
+        batched
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>(),
+        singular
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(batched[..3], [0.0; 3]);
+    assert_eq!(batched[3..], [1.0; 2]);
+
+    let empty: Vec<Vec<bool>> = Vec::new();
+    assert!(endpoint.prob_bitstrings(&empty).is_empty());
 }
 
 fn apply_weak_branch_readout_fixture(stn: &mut StabMps) {

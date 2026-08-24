@@ -35,6 +35,17 @@ them entirely from standard `rx`, `ry`, `rz`, and `cx` operations. Direct Rust
 adapter tests separately exercise Selene's leakage-valued measurement operation,
 so that path does not require a hardware gate library.
 
+Rust adapter-contract tests complement the statistical cases. They verify exact
+RXY, RZ, RZZ, reset, and measurement translation; per-qubit runtime ordering;
+nanosecond-to-second idle insertion for every idle family; and clear rejection of
+invalid batches, qubit indices, custom operations, and abstract crosstalk groups.
+These tests are deterministic and remain in the fast lane.
+
+`test_qec_workload.py` runs one round of the three-qubit repetition code using
+only standard operations. It checks the noiseless syndrome, a known middle-data
+fault, analytic noisy-readout syndromes, and agreement across sequential and
+parallel Selene workers. Its larger statistical checks carry the `slow` marker.
+
 The generated matrix and additional statistical seed repetitions carry the
 repository's `slow` marker. The default fast lane retains one seed for every
 qutrit circuit family. Run the two layers explicitly with:
@@ -55,6 +66,12 @@ three idle families, leakage and seepage, preparation crosstalk, global and
 topology-defined local measurement crosstalk, family/global/noiseless controls,
 combined-channel behavior over several seeds, and both Stim and PECOS StateVec
 simulator boundaries.
+
+The in-test qutrit density matrix remains an independent oracle rather than a
+Selene simulator plugin. End-to-end outcomes `0`, `1`, and leaked `2` are covered
+at the Rust adapter boundary today. Moving those tests onto native qutrit
+state-vector and density-matrix simulator plugins is tracked by
+[PECOS issue #585](https://github.com/PECOS-packages/PECOS/issues/585).
 
 Keep conformance circuits shallow and use elevated probabilities. These tests are
 for correctness of channel semantics, not estimation of realistic device error

@@ -598,7 +598,11 @@ export_error_model_plugin!(crate::GeneralNoiseFactory);
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::PI;
+
     use anyhow::Result;
+    use pecos_core::Angle64;
+    use pecos_engines::prelude::ByteMessage;
     use selene_core::error_model::BatchResult;
     use selene_core::error_model::interface::ErrorModelInterface;
     use selene_core::runtime::{BatchOperation, Operation};
@@ -607,6 +611,7 @@ mod tests {
     use selene_core::utils::MetricValue;
 
     use super::{Config, GeneralNoiseErrorModel};
+    use crate::simulator::SeleneSimulator;
 
     #[derive(Default)]
     struct ZeroSimulator;
@@ -643,6 +648,85 @@ mod tests {
         fn get_metric(&mut self, _nth_metric: u8) -> Result<Option<(String, MetricValue)>> {
             Ok(None)
         }
+    }
+
+    #[derive(Default)]
+    struct ClassicalSimulator {
+        bits: Vec<bool>,
+        received: Vec<Vec<Operation>>,
+    }
+
+    impl ClassicalSimulator {
+        fn with_qubits(n_qubits: usize) -> Self {
+            Self {
+                bits: vec![false; n_qubits],
+                received: Vec::new(),
+            }
+        }
+    }
+
+    impl SimulatorInterface for ClassicalSimulator {
+        fn exit(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn shot_start(&mut self, _shot_id: u64, _seed: u64) -> Result<()> {
+            Ok(())
+        }
+
+        fn shot_end(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn handle_operations(&mut self, operations: BatchOperation) -> Result<BatchResult> {
+            self.received
+                .push(operations.iter_ops().cloned().collect::<Vec<_>>());
+            let mut result = BatchResult::default();
+            for operation in operations {
+                match operation {
+                    Operation::Reset { qubit_id } => {
+                        self.bits[usize::try_from(qubit_id).unwrap()] = false;
+                    }
+                    Operation::RXYGate {
+                        qubit_id,
+                        theta,
+                        phi,
+                    } if (theta.abs() - PI).abs() < 1e-12
+                        && (phi.abs() < 1e-12 || (phi.abs() - PI / 2.0).abs() < 1e-12) =>
+                    {
+                        let qubit = usize::try_from(qubit_id).unwrap();
+                        self.bits[qubit] = !self.bits[qubit];
+                    }
+                    Operation::Measure {
+                        qubit_id,
+                        result_id,
+                    } => {
+                        result.set_bool_result(
+                            result_id,
+                            self.bits[usize::try_from(qubit_id).unwrap()],
+                        );
+                    }
+                    Operation::MeasureLeaked { result_id, .. } => {
+                        result.set_u64_result(result_id, 0);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(result)
+        }
+
+        fn get_metric(&mut self, _nth_metric: u8) -> Result<Option<(String, MetricValue)>> {
+            Ok(None)
+        }
+    }
+
+    fn runtime_batch(operations: Vec<Operation>, start: u64, duration: u64) -> BatchOperation {
+        BatchOperation::runtime(operations, Instant::from(start), Duration::from(duration))
+    }
+
+    fn build_error_model(config_json: &str, n_qubits: usize) -> GeneralNoiseErrorModel {
+        let config: Config = serde_json::from_str(config_json).unwrap();
+        GeneralNoiseErrorModel::new(config.build_model().unwrap(), n_qubits, &config).unwrap()
     }
 
     fn leakage_measurement(config_json: &str) -> u64 {
@@ -731,6 +815,238 @@ mod tests {
         assert_eq!(
             leakage_measurement(r#"{"preparation":{"probability":1.0,"leakage_ratio":1.0}}"#,),
             2
+        );
+    }
+
+    #[test]
+    fn simulator_bridge_translates_pecos_operations_in_order() {
+        let mut builder = ByteMessage::quantum_operations_builder();
+        builder.pz(&[0]);
+        builder.r1xy(
+            Angle64::from_radians(0.75),
+            Angle64::from_radians(-0.25),
+            &[0],
+        );
+        builder.rz(Angle64::from_radians(0.5), &[1]);
+        builder.rzz(Angle64::from_radians(-0.125), &[(0, 1)]);
+        builder.mz(&[0, 1]);
+        let message = builder.build();
+        let mut simulator = ClassicalSimulator::with_qubits(2);
+
+        let output = SeleneSimulator::process(&mut simulator, &message).unwrap();
+
+        assert_eq!(output.outcomes().unwrap(), vec![0, 0]);
+        assert_eq!(simulator.received.len(), 1);
+        let operations = &simulator.received[0];
+        assert_eq!(operations.len(), 6);
+        assert!(matches!(operations[0], Operation::Reset { qubit_id: 0 }));
+        assert!(matches!(
+            operations[1],
+            Operation::RXYGate { qubit_id: 0, .. }
+        ));
+        let Operation::RXYGate { theta, phi, .. } = operations[1] else {
+            unreachable!()
+        };
+        assert!((theta - 0.75).abs() < 1e-12);
+        assert!((phi + 0.25).abs() < 1e-12);
+        assert!(matches!(
+            operations[2],
+            Operation::RZGate { qubit_id: 1, .. }
+        ));
+        let Operation::RZGate { theta, .. } = operations[2] else {
+            unreachable!()
+        };
+        assert!((theta - 0.5).abs() < 1e-12);
+        assert!(matches!(
+            operations[3],
+            Operation::RZZGate {
+                qubit_id_1: 0,
+                qubit_id_2: 1,
+                ..
+            }
+        ));
+        let Operation::RZZGate { theta, .. } = operations[3] else {
+            unreachable!()
+        };
+        assert!((theta + 0.125).abs() < 1e-12);
+        assert!(matches!(
+            operations[4],
+            Operation::Measure {
+                qubit_id: 0,
+                result_id: 0
+            }
+        ));
+        assert!(matches!(
+            operations[5],
+            Operation::Measure {
+                qubit_id: 1,
+                result_id: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn runtime_timestamps_drive_every_idle_family() {
+        let configurations = [
+            r#"{"idle":{"linear_rate":1.0,"linear_model":{"X":1.0}}}"#,
+            r#"{"idle":{"sin_squared_rate":1.5707963267948966,"sin_squared_model":{"X":1.0}}}"#,
+            r#"{"idle":{"coherent_rate":3.141592653589793,"coherent_model":{"RX":1.0}}}"#,
+        ];
+        for config in configurations {
+            let mut error_model = build_error_model(config, 1);
+            let mut simulator = ClassicalSimulator::with_qubits(1);
+            error_model.shot_start(0, 41).unwrap();
+            error_model
+                .handle_operations(
+                    runtime_batch(vec![Operation::Reset { qubit_id: 0 }], 0, 1),
+                    &mut simulator,
+                )
+                .unwrap();
+
+            let result = error_model
+                .handle_operations(
+                    runtime_batch(
+                        vec![Operation::Measure {
+                            qubit_id: 0,
+                            result_id: 9,
+                        }],
+                        1_000_000_001,
+                        1,
+                    ),
+                    &mut simulator,
+                )
+                .unwrap();
+
+            assert_eq!(result.bool_results.len(), 1);
+            assert_eq!(result.bool_results[0].result_id, 9);
+            assert!(result.bool_results[0].value, "idle configuration: {config}");
+        }
+    }
+
+    #[test]
+    fn runtime_timestamps_accumulate_per_qubit_between_operations() {
+        let mut error_model = build_error_model(
+            r#"{"idle":{"linear_rate":1.0,"linear_model":{"X":1.0}}}"#,
+            1,
+        );
+        let mut simulator = ClassicalSimulator::with_qubits(1);
+        error_model.shot_start(0, 43).unwrap();
+        error_model
+            .handle_operations(
+                runtime_batch(vec![Operation::Reset { qubit_id: 0 }], 0, 1),
+                &mut simulator,
+            )
+            .unwrap();
+        error_model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::RZGate {
+                        qubit_id: 0,
+                        theta: 0.25,
+                    }],
+                    1_000_000_001,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        let result = error_model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::Measure {
+                        qubit_id: 0,
+                        result_id: 11,
+                    }],
+                    2_000_000_002,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+
+        assert!(!result.bool_results[0].value);
+    }
+
+    #[test]
+    fn adapter_rejects_invalid_runtime_contracts() {
+        let config: Config =
+            serde_json::from_str(r#"{"measurement":{"local_groups":[[0,2]]}}"#).unwrap();
+        let error = GeneralNoiseErrorModel::new(config.build_model().unwrap(), 2, &config)
+            .err()
+            .expect("an out-of-bounds local group must fail");
+        assert!(error.to_string().contains("contains qubit 2"));
+
+        let mut error_model = build_error_model("{}", 1);
+        let mut simulator = ClassicalSimulator::with_qubits(1);
+        error_model.shot_start(0, 41).unwrap();
+        error_model
+            .handle_operations(
+                runtime_batch(vec![Operation::Reset { qubit_id: 0 }], 10, 10),
+                &mut simulator,
+            )
+            .unwrap();
+        let error = error_model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::Measure {
+                        qubit_id: 0,
+                        result_id: 0,
+                    }],
+                    19,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .err()
+            .expect("overlapping operations must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("before its previous operation ended")
+        );
+
+        let mut error_model = build_error_model("{}", 1);
+        let error = error_model
+            .handle_operations(
+                BatchOperation::error_model(vec![Operation::Reset { qubit_id: 0 }]),
+                &mut simulator,
+            )
+            .err()
+            .expect("an error-model batch must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("expects a runtime operation batch")
+        );
+
+        let error = error_model
+            .handle_operations(
+                runtime_batch(vec![Operation::Reset { qubit_id: 1 }], 0, 1),
+                &mut simulator,
+            )
+            .err()
+            .expect("an out-of-bounds operation must fail");
+        assert!(error.to_string().contains("qubit 1 is out of bounds"));
+
+        let mut error_model = build_error_model("{}", 1);
+        let error = error_model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::Custom {
+                        custom_tag: 17,
+                        data: Vec::new().into_boxed_slice(),
+                    }],
+                    0,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .err()
+            .expect("a custom operation must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("no device-neutral PECOS meaning")
         );
     }
 }

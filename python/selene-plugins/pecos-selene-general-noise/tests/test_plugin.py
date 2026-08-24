@@ -1,6 +1,7 @@
 """Tests for the public general-noise configuration API."""
 
 import json
+from collections.abc import Callable
 
 import pytest
 from guppylang import guppy
@@ -11,6 +12,11 @@ from pecos_selene_general_noise import (
     GateNoise,
     GeneralNoiseParameters,
     GeneralNoisePlugin,
+    IdleNoise,
+    MeasurementNoise,
+    NoiseScaling,
+    PreparationNoise,
+    TwoQubitGateNoise,
 )
 from selene_sim import Stim
 from selene_sim.build import build
@@ -62,6 +68,96 @@ def test_rejects_ambiguous_infidelity() -> None:
 def test_rejects_bad_distribution() -> None:
     with pytest.raises(ValueError, match="sum to 1"):
         GeneralNoiseParameters(single_qubit=GateNoise(pauli_model={"X": 0.2, "Z": 0.2}))
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        pytest.param(
+            lambda: GeneralNoiseParameters(preparation=PreparationNoise(probability=-0.01)),
+            id="negative-probability",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(measurement=MeasurementNoise(p0_to_1=1.01)),
+            id="probability-above-one",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(single_qubit=GateNoise(probability=float("nan"))),
+            id="nan-probability",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(two_qubit=TwoQubitGateNoise(angle_power=0.0)),
+            id="non-positive-angle-power",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(idle=IdleNoise(linear_rate=float("inf"))),
+            id="infinite-idle-rate",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(scaling=NoiseScaling(overall=-1.0)),
+            id="negative-scale",
+        ),
+    ],
+)
+def test_rejects_non_physical_numeric_boundaries(parameters: Callable[[], GeneralNoiseParameters]) -> None:
+    """Every numeric family rejects non-finite or out-of-domain values."""
+    with pytest.raises(ValueError, match="must"):
+        parameters()
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        pytest.param(
+            lambda: GeneralNoiseParameters(single_qubit=GateNoise(pauli_model={"A": 1.0})),
+            id="invalid-one-qubit-key",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(single_qubit=GateNoise(pauli_model={})),
+            id="empty-distribution",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(two_qubit=TwoQubitGateNoise(emission_model={"III": 1.0})),
+            id="invalid-two-qubit-key",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(idle=IdleNoise(coherent_model={"X": 1.0})),
+            id="invalid-coherent-axis",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(idle=IdleNoise(linear_model={"X": 1.0})),
+            id="idle-model-without-rate",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(measurement=MeasurementNoise(crosstalk_model={"0->0": 1.0, "1->0": 0.5})),
+            id="incomplete-transition-model",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters(measurement=MeasurementNoise(local_groups=((0, -1),))),
+            id="negative-local-qubit",
+        ),
+    ],
+)
+def test_rejects_malformed_channel_shapes(parameters: Callable[[], GeneralNoiseParameters]) -> None:
+    """Channel keys, transition rows, and abstract topology are validated early."""
+    with pytest.raises(ValueError, match=r"unsupported|cannot|requires|must sum"):
+        parameters()
+
+
+def test_rejects_average_infidelity_outside_supported_conversions() -> None:
+    """Average-infidelity setters enforce the dimensional conversion domains."""
+    with pytest.raises(ValueError, match="2/3"):
+        GeneralNoiseParameters().with_average_p1(2.0 / 3.0 + 1e-9)
+    with pytest.raises(ValueError, match=r"0\.8"):
+        GeneralNoiseParameters().with_average_p2(0.8 + 1e-9)
+    with pytest.raises(ValueError, match="5/18"):
+        GeneralNoiseParameters().with_average_p_prep_crosstalk(5.0 / 18.0 + 1e-9)
+
+
+def test_rejects_invalid_plugin_seed() -> None:
+    """Selene-owned randomness rejects a negative seed before native loading."""
+    with pytest.raises(ValueError, match="non-negative"):
+        GeneralNoisePlugin(random_seed=-1)
 
 
 def test_accepts_crosstalk_transition_model_per_input_state() -> None:

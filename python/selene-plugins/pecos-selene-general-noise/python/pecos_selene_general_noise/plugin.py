@@ -43,6 +43,9 @@ def _distribution(
 ) -> None:
     if value is None:
         return
+    if not value:
+        message = f"{name} cannot be empty"
+        raise ValueError(message)
     invalid = set(value) - allowed
     if invalid:
         message = f"{name} contains unsupported entries: {sorted(invalid)}"
@@ -171,6 +174,10 @@ class IdleNoise:
             frozenset({"RX", "RY", "RZ"}),
             normalized=False,
         )
+        for family in ("linear", "sin_squared", "coherent"):
+            if getattr(self, f"{family}_model") is not None and getattr(self, f"{family}_rate") is None:
+                message = f"idle.{family}_model requires idle.{family}_rate"
+                raise ValueError(message)
 
 
 @dataclass(frozen=True)

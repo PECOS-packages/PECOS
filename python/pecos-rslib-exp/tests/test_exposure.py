@@ -136,7 +136,7 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     assert q0_one.amplitude_iterative([True, False]) == (1.0, 0.0)
     assert math.isclose(q0_one.prob_bitstring([True, False]), 1.0)
     assert q0_one.prob_bitstrings(
-        [[True, False], [False, False], [True, False]]
+        [[True, False], [False, False], [True, False]],
     ) == [1.0, 0.0, 1.0]
     assert q0_one.prob_bitstrings([]) == []
 

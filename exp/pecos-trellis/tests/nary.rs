@@ -217,6 +217,34 @@ fn seeded_small_nary_models_match_brute_force_for_every_syndrome() {
     }
 }
 
+#[test]
+fn drifted_binary_baseline_uses_stored_probability_in_nary_kernel() {
+    let p = 0.999_999_f64;
+    let complement = 1.0 - p;
+    let q = complement + 5e-11;
+    assert_ne!(q.to_bits(), complement.to_bits());
+    let model = FactorModel::new(
+        vec![Factor {
+            outcomes: vec![outcome(q, &[], &[]), outcome(p, &[0], &[0])],
+        }],
+        1,
+        1,
+    )
+    .unwrap();
+
+    assert_invalid(
+        TrellisDecoder::from_factor_model(
+            &model,
+            TrellisConfig {
+                bp_score_iterations: 1,
+                ..exact_config()
+            },
+        ),
+        "BP-guided pruning requires a binary model",
+    );
+    assert_decode_matches_enumeration(&model, usize::MAX);
+}
+
 fn symmetric_difference(left: &[u32], right: &[u32]) -> Vec<u32> {
     let mut parity = BTreeMap::new();
     for &index in left.iter().chain(right) {

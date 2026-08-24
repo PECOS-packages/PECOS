@@ -600,8 +600,8 @@ impl TrellisDecoder {
                     NormalizedFactor::Forced(outcome) => {
                         (1.0, outcome.detectors, outcome.observables)
                     }
-                    NormalizedFactor::Binary(outcome) => {
-                        (outcome.probability, outcome.detectors, outcome.observables)
+                    NormalizedFactor::Binary { toggle, .. } => {
+                        (toggle.probability, toggle.detectors, toggle.observables)
                     }
                     NormalizedFactor::Nary(_) => unreachable!("model was classified binary-shaped"),
                 })
@@ -636,7 +636,7 @@ impl TrellisDecoder {
             .unwrap_or_else(|| (0..model.factors().len()).collect());
         let mut forced_syndrome = vec![0; detector_words];
         let mut forced_logical = vec![0; logical_words];
-        let mut raw_columns = Vec::with_capacity(model.factors().len());
+        let mut raw_columns: Vec<Vec<ColumnOutcome>> = Vec::with_capacity(model.factors().len());
 
         for factor_index in order {
             match model.normalized_factor(factor_index) {
@@ -646,27 +646,14 @@ impl TrellisDecoder {
                     xor_assign(&mut forced_syndrome, &detector_toggle);
                     xor_assign(&mut forced_logical, &logical_toggle);
                 }
-                NormalizedFactor::Binary(outcome) => {
-                    let baseline_probability = 1.0 - outcome.probability;
-                    raw_columns.push(vec![
-                        column_outcome(
-                            &Outcome {
-                                probability: baseline_probability,
-                                detectors: Vec::new(),
-                                observables: Vec::new(),
-                            },
-                            detector_words,
-                            logical_words,
-                        ),
-                        column_outcome(&outcome, detector_words, logical_words),
-                    ]);
+                NormalizedFactor::Binary { outcomes, .. } | NormalizedFactor::Nary(outcomes) => {
+                    raw_columns.push(
+                        outcomes
+                            .into_iter()
+                            .map(|outcome| column_outcome(&outcome, detector_words, logical_words))
+                            .collect(),
+                    );
                 }
-                NormalizedFactor::Nary(outcomes) => raw_columns.push(
-                    outcomes
-                        .into_iter()
-                        .map(|outcome| column_outcome(&outcome, detector_words, logical_words))
-                        .collect(),
-                ),
             }
         }
 

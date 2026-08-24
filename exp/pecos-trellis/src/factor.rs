@@ -52,7 +52,10 @@ pub struct FactorModel {
 #[derive(Clone, Debug)]
 pub(crate) enum NormalizedFactor {
     Forced(Outcome),
-    Binary(Outcome),
+    Binary {
+        outcomes: Vec<Outcome>,
+        toggle: Outcome,
+    },
     Nary(Vec<Outcome>),
 }
 
@@ -189,7 +192,12 @@ fn normalize_factor(factor: &Factor) -> NormalizedFactor {
         // choice. This pins normalization even though either choice is
         // mathematically equivalent.
         let toggle_index = usize::from(outcomes[0].is_empty());
-        return NormalizedFactor::Binary(outcomes[toggle_index].clone());
+        let baseline_index = 1 - toggle_index;
+        let complement = 1.0 - outcomes[toggle_index].probability;
+        if outcomes[baseline_index].probability.to_bits() == complement.to_bits() {
+            let toggle = outcomes[toggle_index].clone();
+            return NormalizedFactor::Binary { outcomes, toggle };
+        }
     }
     NormalizedFactor::Nary(outcomes)
 }

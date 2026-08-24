@@ -43,6 +43,14 @@ def one_qubit_gate() -> None:
 
 
 @guppy
+def emission_replacement_probe() -> None:
+    """Apply an X whose removal is distinguishable from an emitted Z."""
+    q = qubit()
+    x(q)
+    result("outcome", measure(q).read())
+
+
+@guppy
 def two_qubit_gate() -> None:
     """Apply a standard entangling operation and measure both qubits."""
     q0 = qubit()
@@ -382,6 +390,21 @@ def test_emission_scale_changes_fault_family() -> None:
     )
     experiment = ConformanceExperiment(
         runner=build(one_qubit_gate.compile()),
+        n_qubits=1,
+        result_tags=("outcome",),
+        parameters=parameters,
+        expected=ZERO,
+        comparison=ONE,
+        shots=64,
+    )
+    experiment.assert_conforms(Stim(random_seed=23))
+
+
+def test_one_qubit_emission_replaces_original_gate() -> None:
+    """The emission branch substitutes its fault instead of following the ideal gate."""
+    parameters = GeneralNoiseParameters().with_p1(1.0).with_p1_emission_ratio(1.0).with_p1_emission_model({"Z": 1.0})
+    experiment = ConformanceExperiment(
+        runner=build(emission_replacement_probe.compile()),
         n_qubits=1,
         result_tags=("outcome",),
         parameters=parameters,

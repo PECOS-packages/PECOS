@@ -81,6 +81,11 @@ at the Rust adapter boundary today. Moving those tests onto native qutrit
 state-vector and density-matrix simulator plugins is tracked by
 [PECOS issue #585](https://github.com/PECOS-packages/PECOS/issues/585).
 
+`MUTATION_AUDIT.md` records a representative defect-injection audit and the
+specific test that rejected each mutation. It also documents the focused
+one-qubit emission-replacement test added after that mutation initially survived
+the broader statistical matrix.
+
 Keep conformance circuits shallow and use elevated probabilities. These tests are
 for correctness of channel semantics, not estimation of realistic device error
 rates. New cases should state an analytic distribution and a distinct comparison;

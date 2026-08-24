@@ -67,10 +67,11 @@ With the default float metric, when `status` is `"exact"` (nothing was pruned),
 the masses are the true unnormalized posteriors: a large gap means one logical
 class really was overwhelmingly more likely, and a gap near zero means the
 shot was nearly a coin flip -- a natural candidate for post-selection or a
-soft-output pipeline. Under the integer `maxlog_int` metric (Rust API only for
-now), each terminal mass is instead the best-route (Viterbi) mass for that
-logical class, the gap is a route-mass margin, and `log_evidence` is the winning
-route mass rather than evidence.
+soft-output pipeline. Under the integer `maxlog_int` metric (accepted by Python
+`FrontierDecoder` as `metric_mode="maxlog_int"`; the committee remains
+float-only), each terminal mass is instead the best-route (Viterbi) mass for
+that logical class, the gap is a route-mass margin, and `log_evidence` is the
+winning route mass rather than evidence.
 When the result was pruned, the gap and the masses describe only what the
 search retained, not a certified confidence -- treat them as search
 diagnostics, not posteriors.

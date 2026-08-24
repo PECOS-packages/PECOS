@@ -28,6 +28,13 @@ gate library or runtime. It covers deep and parallel single-qubit sequences plus
 correlated and anti-correlated Bell-state circuits, including the full two-qubit
 Pauli channel.
 
+`test_generated_conformance.py` adds a reproducible matrix of mixed-axis and
+parity-sensitive entangling circuits. The generator retains only circuits whose
+ideal and noisy distributions are statistically distinguishable, and compiles
+them entirely from standard `rx`, `ry`, `rz`, and `cx` operations. Direct Rust
+adapter tests separately exercise Selene's leakage-valued measurement operation,
+so that path does not require a hardware gate library.
+
 Every behavioral case also supplies a comparison distribution. Before taking
 shots, the framework verifies that the circuit is sensitive enough to distinguish
 the configured channel from that comparison. This prevents a test from passing

@@ -598,7 +598,87 @@ export_error_model_plugin!(crate::GeneralNoiseFactory);
 
 #[cfg(test)]
 mod tests {
-    use super::Config;
+    use anyhow::Result;
+    use selene_core::error_model::BatchResult;
+    use selene_core::error_model::interface::ErrorModelInterface;
+    use selene_core::runtime::{BatchOperation, Operation};
+    use selene_core::simulator::SimulatorInterface;
+    use selene_core::time::{Duration, Instant};
+    use selene_core::utils::MetricValue;
+
+    use super::{Config, GeneralNoiseErrorModel};
+
+    #[derive(Default)]
+    struct ZeroSimulator;
+
+    impl SimulatorInterface for ZeroSimulator {
+        fn exit(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn shot_start(&mut self, _shot_id: u64, _seed: u64) -> Result<()> {
+            Ok(())
+        }
+
+        fn shot_end(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn handle_operations(&mut self, operations: BatchOperation) -> Result<BatchResult> {
+            let mut result = BatchResult::default();
+            for operation in operations {
+                match operation {
+                    Operation::Measure { result_id, .. } => {
+                        result.set_bool_result(result_id, false);
+                    }
+                    Operation::MeasureLeaked { result_id, .. } => {
+                        result.set_u64_result(result_id, 0);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(result)
+        }
+
+        fn get_metric(&mut self, _nth_metric: u8) -> Result<Option<(String, MetricValue)>> {
+            Ok(None)
+        }
+    }
+
+    fn leakage_measurement(config_json: &str) -> u64 {
+        let config: Config = serde_json::from_str(config_json).unwrap();
+        let mut error_model =
+            GeneralNoiseErrorModel::new(config.build_model().unwrap(), 1, &config).unwrap();
+        let mut simulator = ZeroSimulator;
+        error_model.shot_start(0, 41).unwrap();
+        error_model
+            .handle_operations(
+                BatchOperation::runtime(
+                    vec![Operation::Reset { qubit_id: 0 }],
+                    Instant::from(0),
+                    Duration::from(1),
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        let result = error_model
+            .handle_operations(
+                BatchOperation::runtime(
+                    vec![Operation::MeasureLeaked {
+                        qubit_id: 0,
+                        result_id: 7,
+                    }],
+                    Instant::from(1),
+                    Duration::from(1),
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        assert!(result.bool_results.is_empty());
+        assert_eq!(result.u64_results.len(), 1);
+        assert_eq!(result.u64_results[0].result_id, 7);
+        result.u64_results[0].value
+    }
 
     #[test]
     fn rich_configuration_builds_the_current_pecos_model() {
@@ -643,5 +723,14 @@ mod tests {
         let error = serde_json::from_str::<Config>(r#"{"device_profile":"example"}"#)
             .expect_err("device-specific fields must not enter the generic API");
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn measure_leaked_reports_computational_and_leaked_outcomes() {
+        assert_eq!(leakage_measurement("{}"), 0);
+        assert_eq!(
+            leakage_measurement(r#"{"preparation":{"probability":1.0,"leakage_ratio":1.0}}"#,),
+            2
+        );
     }
 }

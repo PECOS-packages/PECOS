@@ -246,13 +246,28 @@ def test_seeded_experiment_is_reproducible() -> None:
             ExpectedDistribution({(1, 0): 0.5, (1, 1): 0.5}),
             id="emission",
         ),
+        pytest.param(
+            GeneralNoiseParameters().with_p2(1.0).with_p2_emission_ratio(1.0).with_p2_emission_model({"IL": 1.0}),
+            ExpectedDistribution({(0, 1): 1.0}),
+            id="emission-leak-second",
+        ),
+        pytest.param(
+            GeneralNoiseParameters().with_p2(1.0).with_p2_emission_ratio(1.0).with_p2_emission_model({"LI": 1.0}),
+            ExpectedDistribution({(1, 0): 0.5, (1, 1): 0.5}),
+            id="emission-leak-first",
+        ),
+        pytest.param(
+            GeneralNoiseParameters().with_p2(1.0).with_p2_emission_ratio(1.0).with_p2_emission_model({"LL": 1.0}),
+            ExpectedDistribution({(1, 1): 1.0}),
+            id="emission-leak-both",
+        ),
     ],
 )
 def test_two_qubit_fault_families(
     parameters: GeneralNoiseParameters,
     expected: ExpectedDistribution,
 ) -> None:
-    """Two-qubit Pauli and non-leaking emission channels preserve target ordering."""
+    """Two-qubit Pauli, emission, and leakage channels preserve target ordering."""
     experiment = ConformanceExperiment(
         runner=build(two_qubit_gate.compile()),
         n_qubits=2,

@@ -134,10 +134,7 @@ def test_single_qubit_error_probability(parameters: GeneralNoiseParameters) -> N
             id="pauli",
         ),
         pytest.param(
-            GeneralNoiseParameters()
-            .with_p1(1.0)
-            .with_p1_emission_ratio(1.0)
-            .with_p1_emission_model({"X": 1.0}),
+            GeneralNoiseParameters().with_p1(1.0).with_p1_emission_ratio(1.0).with_p1_emission_model({"X": 1.0}),
             id="emission",
         ),
     ],
@@ -160,21 +157,15 @@ def test_one_qubit_fault_families(parameters: GeneralNoiseParameters) -> None:
     "parameters",
     [
         pytest.param(
-            GeneralNoiseParameters()
-            .with_p_idle_linear(1.0, {"X": 1.0})
-            .with_idle_after_2q(1.0),
+            GeneralNoiseParameters().with_p_idle_linear(1.0, {"X": 1.0}).with_idle_after_2q(1.0),
             id="linear",
         ),
         pytest.param(
-            GeneralNoiseParameters()
-            .with_p_idle_sin_squared(math.pi / 2.0, {"X": 1.0})
-            .with_idle_after_2q(1.0),
+            GeneralNoiseParameters().with_p_idle_sin_squared(math.pi / 2.0, {"X": 1.0}).with_idle_after_2q(1.0),
             id="sine-squared",
         ),
         pytest.param(
-            GeneralNoiseParameters()
-            .with_p_idle_coherent(math.pi, {"RX": 1.0})
-            .with_idle_after_2q(1.0),
+            GeneralNoiseParameters().with_p_idle_coherent(math.pi, {"RX": 1.0}).with_idle_after_2q(1.0),
             id="coherent",
         ),
     ],
@@ -218,10 +209,7 @@ def test_seeded_experiment_is_reproducible() -> None:
             id="pauli",
         ),
         pytest.param(
-            GeneralNoiseParameters()
-            .with_p2(1.0)
-            .with_p2_emission_ratio(1.0)
-            .with_p2_emission_model({"XI": 1.0}),
+            GeneralNoiseParameters().with_p2(1.0).with_p2_emission_ratio(1.0).with_p2_emission_model({"XI": 1.0}),
             ExpectedDistribution({(1, 0): 0.5, (1, 1): 0.5}),
             id="emission",
         ),
@@ -247,10 +235,7 @@ def test_two_qubit_fault_families(
 def test_angle_scaling_can_suppress_two_qubit_noise() -> None:
     """Angle coefficients affect the RZZ fault rate used by a compiled entangler."""
     parameters = (
-        GeneralNoiseParameters()
-        .with_p2(1.0)
-        .with_p2_pauli_model({"XI": 1.0})
-        .with_p2_angle_params(0.0, 0.0, 0.0, 0.0)
+        GeneralNoiseParameters().with_p2(1.0).with_p2_pauli_model({"XI": 1.0}).with_p2_angle_params(0.0, 0.0, 0.0, 0.0)
     )
     experiment = ConformanceExperiment(
         runner=build(two_qubit_gate.compile()),
@@ -289,24 +274,15 @@ def test_angle_power_controls_two_qubit_fault_probability() -> None:
     "parameters",
     [
         pytest.param(
-            GeneralNoiseParameters()
-            .with_p1(1.0)
-            .with_p1_pauli_model({"X": 1.0})
-            .with_scale(0.0),
+            GeneralNoiseParameters().with_p1(1.0).with_p1_pauli_model({"X": 1.0}).with_scale(0.0),
             id="global-scale",
         ),
         pytest.param(
-            GeneralNoiseParameters()
-            .with_p1(1.0)
-            .with_p1_pauli_model({"X": 1.0})
-            .with_p1_scale(0.0),
+            GeneralNoiseParameters().with_p1(1.0).with_p1_pauli_model({"X": 1.0}).with_p1_scale(0.0),
             id="one-qubit-scale",
         ),
         pytest.param(
-            GeneralNoiseParameters()
-            .with_p1(1.0)
-            .with_p1_pauli_model({"X": 1.0})
-            .with_noiseless_gate("RZ"),
+            GeneralNoiseParameters().with_p1(1.0).with_p1_pauli_model({"X": 1.0}).with_noiseless_gate("RZ"),
             id="noiseless-gate",
         ),
     ],

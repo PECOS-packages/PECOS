@@ -68,8 +68,7 @@ class ExpectedDistribution:
         """Return total variation distance from another exact distribution."""
         outcomes = self.probabilities.keys() | other.probabilities.keys()
         return 0.5 * sum(
-            abs(self.probabilities.get(outcome, 0.0) - other.probabilities.get(outcome, 0.0))
-            for outcome in outcomes
+            abs(self.probabilities.get(outcome, 0.0) - other.probabilities.get(outcome, 0.0)) for outcome in outcomes
         )
 
     def assert_sensitive_to(
@@ -106,10 +105,9 @@ class ExpectedDistribution:
                 mismatches.append(
                     f"{outcome}: observed={observed:.4f}, expected={expected:.4f}",
                 )
-        assert not mismatches, (
-            f"empirical distribution exceeds Hoeffding tolerance {tolerance:.4f}: "
-            + "; ".join(mismatches)
-        )
+        details = "; ".join(mismatches)
+        message = f"empirical distribution exceeds Hoeffding tolerance {tolerance:.4f}: {details}"
+        assert not mismatches, message
 
 
 @dataclass(frozen=True)

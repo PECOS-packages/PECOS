@@ -23,8 +23,8 @@ pub use crate::{
     pauli_prop::PauliProp,
     quantum_simulator::QuantumSimulator,
     qudit::{
-        QuditDensityMatrix, QuditStateVec, QutritDensityMatrix, QutritStateVec,
-        qutrit_leakage_channel, qutrit_seepage_channel,
+        InstrumentSample, KrausSample, MeasurementSample, QuditDensityMatrix, QuditStateVec,
+        QutritDensityMatrix, QutritStateVec, qutrit_leakage_channel, qutrit_seepage_channel,
     },
     sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign},
     sparse_stab::SparseStab,

@@ -67,6 +67,18 @@ channels without sampling. The density-matrix backend is therefore intended only
 for small reference problems. It provides reduced density matrices and numerical
 trace, Hermiticity, and positive-semidefiniteness diagnostics.
 
+Trajectory Kraus samples report both the selected operator and its pre-collapse
+probability. Generalized measurement instruments group one or more Kraus
+operators into each reported outcome; the state-vector backend samples an
+individual pure-state branch while the density-matrix backend retains the exact
+conditional mixed state. Joint basis measurements and coarse-grained projective
+partitions are also supported on arbitrary target sets.
+
+Constructing a density-matrix simulator from external data validates trace,
+Hermiticity, and positive semidefiniteness by default. The `required_memory_bytes`
+helpers estimate dense storage before construction, and internal dense allocations
+return errors when their requested capacity cannot be reserved.
+
 Full measurement reports any local basis level. Computational measurement is
 strict: it returns an error when a site has population outside `|0>, |1>`, avoiding
 an implicit device-specific rule for assigning leakage to a detector outcome.

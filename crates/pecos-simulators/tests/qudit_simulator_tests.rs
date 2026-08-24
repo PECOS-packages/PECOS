@@ -10,8 +10,9 @@
 // either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
+use nalgebra::DMatrix;
 use num_complex::Complex64;
-use pecos_random::PecosRng;
+use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::{
     QuditDensityMatrix, QuditError, QuditStateVec, QutritDensityMatrix, QutritStateVec, basis_swap,
     qutrit_leakage_channel, qutrit_seepage_channel,
@@ -131,6 +132,72 @@ fn state_vector_and_density_matrix_agree_for_coherent_qutrit_evolution() {
 }
 
 #[test]
+fn randomized_multilevel_unitaries_cross_validate_backends() {
+    let mut rng = PecosRng::seed_from_u64(0xD1_7E_57);
+    for local_dimension in 2..=4 {
+        for num_sites in 1..=3 {
+            for trial in 0..8_u64 {
+                let seed = 10_000 * u64::try_from(local_dimension).unwrap()
+                    + 100 * u64::try_from(num_sites).unwrap()
+                    + trial;
+                let mut state = QuditStateVec::with_seed(num_sites, local_dimension, seed).unwrap();
+                let mut density =
+                    QuditDensityMatrix::with_seed(num_sites, local_dimension, seed).unwrap();
+                for _ in 0..8 {
+                    let first = rng.random_range(0..num_sites);
+                    let targets = if num_sites > 1 && rng.random::<bool>() {
+                        let mut second = rng.random_range(0..num_sites);
+                        while second == first {
+                            second = rng.random_range(0..num_sites);
+                        }
+                        if rng.random::<bool>() {
+                            vec![first, second]
+                        } else {
+                            vec![second, first]
+                        }
+                    } else {
+                        vec![first]
+                    };
+                    let size = local_dimension.pow(u32::try_from(targets.len()).unwrap());
+                    let random_matrix = DMatrix::from_fn(size, size, |_, _| {
+                        Complex64::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0))
+                    });
+                    let unitary = random_matrix.qr().q();
+                    let mut row_major = Vec::with_capacity(size * size);
+                    for row in 0..size {
+                        for column in 0..size {
+                            row_major.push(unitary[(row, column)]);
+                        }
+                    }
+                    state.apply_operator(&targets, &row_major).unwrap();
+                    density.apply_operator(&targets, &row_major).unwrap();
+                }
+
+                for (actual, expected) in density
+                    .density_matrix()
+                    .iter()
+                    .zip(pure_density(state.state()))
+                {
+                    assert!(
+                        (*actual - expected).norm() < 1e-9,
+                        "d={local_dimension}, sites={num_sites}, trial={trial}"
+                    );
+                }
+                for (state_value, density_value) in state
+                    .reduced_density_matrix(&[0])
+                    .unwrap()
+                    .into_iter()
+                    .zip(density.reduced_density_matrix(&[0]).unwrap())
+                {
+                    assert!((state_value - density_value).norm() < 1e-9);
+                }
+                assert!(density.diagnostics().is_physical(1e-9));
+            }
+        }
+    }
+}
+
+#[test]
 fn exact_leakage_and_seepage_channels_have_analytic_distributions() {
     let h = [
         c(FRAC_1_SQRT_2),
@@ -225,13 +292,168 @@ fn seeded_trajectory_execution_is_reproducible() {
         (0..64)
             .map(|_| {
                 state.prepare_basis(0, 1).unwrap();
-                let branch = state.apply_kraus(&[0], &channel).unwrap();
+                let branch = state.apply_kraus(&[0], &channel).unwrap().operator_index;
                 let outcome = state.measure(0).unwrap();
                 (branch, outcome)
             })
             .collect::<Vec<_>>()
     };
     assert_eq!(run(), run());
+}
+
+#[test]
+fn kraus_samples_report_branch_probability() {
+    let channel = qutrit_leakage_channel(0.3).unwrap();
+    for seed in 0..64_u64 {
+        let mut state = QutritStateVec::qutrit_with_seed(1, seed).unwrap();
+        state.prepare_basis(0, 1).unwrap();
+        let sample = state.apply_kraus(&[0], &channel).unwrap();
+        match sample.operator_index {
+            0 => {
+                assert_close(sample.probability, 0.7);
+                assert_close(state.probability(1).unwrap(), 1.0);
+            }
+            2 => {
+                assert_close(sample.probability, 0.3);
+                assert_close(state.probability(2).unwrap(), 1.0);
+            }
+            index => panic!("zero-probability Kraus branch {index} was selected"),
+        }
+    }
+}
+
+#[test]
+fn joint_and_partitioned_measurements_agree_across_backends() {
+    let mut state = vec![c(0.0); 9];
+    let amplitude = 1.0 / 3.0_f64.sqrt();
+    state[0] = c(amplitude);
+    state[4] = c(amplitude);
+    state[8] = c(amplitude);
+    let mut state_vector =
+        QuditStateVec::from_state(2, 3, state.clone(), PecosRng::seed_from_u64(71)).unwrap();
+    let mut density = QuditDensityMatrix::from_density_matrix(
+        2,
+        3,
+        pure_density(&state),
+        PecosRng::seed_from_u64(71),
+    )
+    .unwrap();
+
+    let expected = [
+        1.0 / 3.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0 / 3.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0 / 3.0,
+    ];
+    for (actual, expected) in state_vector
+        .joint_outcome_probabilities(&[0, 1])
+        .unwrap()
+        .into_iter()
+        .zip(expected)
+    {
+        assert_close(actual, expected);
+    }
+    assert_eq!(
+        state_vector.joint_outcome_probabilities(&[0, 1]).unwrap(),
+        density.joint_outcome_probabilities(&[0, 1]).unwrap()
+    );
+
+    // First outcome: both sites remain in the computational subspace.
+    // Second outcome: at least one site is leaked.
+    let partition = vec![vec![0, 1, 3, 4], vec![2, 5, 6, 7, 8]];
+    let state_sample = state_vector.measure_partition(&[0, 1], &partition).unwrap();
+    let density_sample = density.measure_partition(&[0, 1], &partition).unwrap();
+    assert_eq!(state_sample.outcome, density_sample.outcome);
+    assert_close(state_sample.probability, density_sample.probability);
+    let expected_probability = if state_sample.outcome == 0 {
+        2.0 / 3.0
+    } else {
+        1.0 / 3.0
+    };
+    assert_close(state_sample.probability, expected_probability);
+    for (actual, expected) in density
+        .density_matrix()
+        .iter()
+        .zip(pure_density(state_vector.state()))
+    {
+        assert!((*actual - expected).norm() < TOLERANCE);
+    }
+
+    assert_eq!(
+        state_vector
+            .measure_partition(&[0], &[vec![0], vec![0, 1, 2]])
+            .unwrap_err(),
+        QuditError::InvalidMeasurementPartition
+    );
+}
+
+#[test]
+fn generalized_measurement_instruments_preserve_outcome_semantics() {
+    let projector = |level: usize| {
+        let mut operator = vec![c(0.0); 9];
+        operator[level * 3 + level] = c(1.0);
+        operator
+    };
+    let instrument = vec![vec![projector(0), projector(1)], vec![projector(2)]];
+    let amplitude = 1.0 / 3.0_f64.sqrt();
+    let initial = vec![c(amplitude); 3];
+
+    for seed in 0..64_u64 {
+        let mut state =
+            QuditStateVec::from_state(1, 3, initial.clone(), PecosRng::seed_from_u64(seed))
+                .unwrap();
+        let mut density = QuditDensityMatrix::from_density_matrix(
+            1,
+            3,
+            pure_density(&initial),
+            PecosRng::seed_from_u64(seed),
+        )
+        .unwrap();
+        let state_probabilities = state.instrument_probabilities(&[0], &instrument).unwrap();
+        let density_probabilities = density.instrument_probabilities(&[0], &instrument).unwrap();
+        assert_close(state_probabilities[0], 2.0 / 3.0);
+        assert_close(state_probabilities[1], 1.0 / 3.0);
+        assert_eq!(state_probabilities, density_probabilities);
+        let trajectory = state.measure_instrument(&[0], &instrument).unwrap();
+        let exact = density.measure_instrument(&[0], &instrument).unwrap();
+        assert_eq!(trajectory.outcome, exact.outcome);
+        assert_close(trajectory.branch_probability, 1.0 / 3.0);
+        assert_close(trajectory.outcome_probability, exact.probability);
+        if exact.outcome == 0 {
+            assert_close(exact.probability, 2.0 / 3.0);
+            assert_close(density.probability(0).unwrap(), 0.5);
+            assert_close(density.probability(1).unwrap(), 0.5);
+            assert_close(density.probability(2).unwrap(), 0.0);
+            assert_close(density.purity(), 0.5);
+            assert!(trajectory.operator_index < 2);
+        } else {
+            assert_close(exact.probability, 1.0 / 3.0);
+            assert_close(density.probability(2).unwrap(), 1.0);
+            assert_close(density.purity(), 1.0);
+            assert_eq!(trajectory.operator_index, 0);
+        }
+        assert!(density.diagnostics().is_physical(TOLERANCE));
+    }
+
+    let mut state = QutritStateVec::qutrit_with_seed(1, 1).unwrap();
+    assert_eq!(
+        state.measure_instrument(&[0], &[]).unwrap_err(),
+        QuditError::InvalidMeasurementInstrument
+    );
+}
+
+#[test]
+fn memory_estimates_cover_qudits_and_density_operators() {
+    assert_eq!(QuditStateVec::required_memory_bytes(3, 4).unwrap(), 1_024);
+    assert_eq!(
+        QuditDensityMatrix::required_memory_bytes(3, 4).unwrap(),
+        65_536
+    );
 }
 
 #[test]
@@ -320,20 +542,31 @@ fn reduced_density_matrix_honors_requested_target_order() {
 
 #[test]
 fn diagnostics_reject_non_hermitian_trace_one_input() {
-    let density = QuditDensityMatrix::from_density_matrix(
+    let entries = vec![
+        c(1.0),
+        c(0.5),
+        c(0.0),
+        c(0.0),
+        c(0.0),
+        c(0.0),
+        c(0.0),
+        c(0.0),
+        c(0.0),
+    ];
+    assert!(matches!(
+        QuditDensityMatrix::from_density_matrix(
+            1,
+            3,
+            entries.clone(),
+            PecosRng::seed_from_u64(31),
+        )
+        .unwrap_err(),
+        QuditError::NonHermitian { .. }
+    ));
+    let density = QuditDensityMatrix::from_density_matrix_unchecked(
         1,
         3,
-        vec![
-            c(1.0),
-            c(0.5),
-            c(0.0),
-            c(0.0),
-            c(0.0),
-            c(0.0),
-            c(0.0),
-            c(0.0),
-            c(0.0),
-        ],
+        entries,
         PecosRng::seed_from_u64(31),
     )
     .unwrap();
@@ -341,6 +574,31 @@ fn diagnostics_reject_non_hermitian_trace_one_input() {
     assert!(diagnostics.hermiticity_error > 0.4);
     assert!(diagnostics.minimum_eigenvalue < -0.05);
     assert!(!diagnostics.is_physical(TOLERANCE));
+
+    assert!(matches!(
+        QuditDensityMatrix::from_density_matrix(
+            1,
+            3,
+            vec![
+                c(1.1),
+                c(0.0),
+                c(0.0),
+                c(0.0),
+                c(-0.1),
+                c(0.0),
+                c(0.0),
+                c(0.0),
+                c(0.0)
+            ],
+            PecosRng::seed_from_u64(31),
+        )
+        .unwrap_err(),
+        QuditError::NotPositiveSemidefinite { .. }
+    ));
+    assert_eq!(
+        density.validate_physicality(-1.0).unwrap_err(),
+        QuditError::InvalidTolerance(-1.0)
+    );
 }
 
 #[test]

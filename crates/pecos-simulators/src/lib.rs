@@ -98,9 +98,9 @@ pub use pauli_prop::PauliProp;
 pub use pecos_core::{QubitId, VecSet, qid, qid2, qids, qids2};
 pub use quantum_simulator::QuantumSimulator;
 pub use qudit::{
-    DensityMatrixDiagnostics, QuditDensityMatrix, QuditError, QuditStateVec, QutritDensityMatrix,
-    QutritStateVec, basis_swap, embedded_qubit_unitary, qutrit_leakage_channel,
-    qutrit_seepage_channel,
+    DensityMatrixDiagnostics, InstrumentSample, KrausSample, MeasurementSample, QuditDensityMatrix,
+    QuditError, QuditStateVec, QutritDensityMatrix, QutritStateVec, basis_swap,
+    embedded_qubit_unitary, qutrit_leakage_channel, qutrit_seepage_channel,
 };
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
 pub use sparse_stab::{

@@ -246,6 +246,13 @@ full and computational-subspace measurements, preparation and reset, and Kraus
 channels. The state-vector backend samples channel trajectories, while the
 density-matrix backend evolves mixed states exactly.
 
+Both backends support joint basis measurements, coarse-grained projective
+partitions, and generalized measurement instruments expressed as outcome-grouped
+Kraus operators. Trajectory samples expose branch probabilities, while exact
+density-matrix measurements retain mixed conditional states. Imported density
+operators are checked for normalization, Hermiticity, and positive
+semidefiniteness.
+
 These are reference backends for physical leakage and noise-model verification,
 not replacements for PECOS's scalable stabilizer simulators or the classical
 leakage bookkeeping used in large QEC studies. Storage scales as `3^N` for a

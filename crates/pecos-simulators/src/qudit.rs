@@ -59,6 +59,18 @@ pub enum QuditError {
     NotTracePreserving { deviation: f64 },
     /// A qubit-style measurement was requested for a state with leakage support.
     LeakagePopulation { probability: f64 },
+    /// A projective measurement did not partition every local basis state exactly once.
+    InvalidMeasurementPartition,
+    /// A generalized measurement contained no outcomes or an empty outcome.
+    InvalidMeasurementInstrument,
+    /// A density operator was not Hermitian within the validation tolerance.
+    NonHermitian { deviation: f64 },
+    /// A density operator had a negative eigenvalue outside the validation tolerance.
+    NotPositiveSemidefinite { minimum_eigenvalue: f64 },
+    /// Allocating the requested dense state failed.
+    AllocationFailed { entries: usize },
+    /// A numerical validation tolerance was negative or non-finite.
+    InvalidTolerance(f64),
 }
 
 impl Display for QuditError {
@@ -108,11 +120,67 @@ impl Display for QuditError {
                 f,
                 "computational measurement is undefined with leakage probability {probability}"
             ),
+            Self::InvalidMeasurementPartition => write!(
+                f,
+                "measurement groups must partition every local basis state exactly once"
+            ),
+            Self::InvalidMeasurementInstrument => write!(
+                f,
+                "a measurement instrument must contain non-empty outcome operator groups"
+            ),
+            Self::NonHermitian { deviation } => write!(
+                f,
+                "density operator is not Hermitian; maximum deviation is {deviation}"
+            ),
+            Self::NotPositiveSemidefinite { minimum_eigenvalue } => write!(
+                f,
+                "density operator is not positive semidefinite; minimum eigenvalue is {minimum_eigenvalue}"
+            ),
+            Self::AllocationFailed { entries } => {
+                write!(f, "could not allocate {entries} complex state entries")
+            }
+            Self::InvalidTolerance(tolerance) => {
+                write!(
+                    f,
+                    "tolerance must be finite and non-negative, received {tolerance}"
+                )
+            }
         }
     }
 }
 
 impl Error for QuditError {}
+
+/// Result of sampling a Kraus trajectory branch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KrausSample {
+    /// Index of the selected operator in the supplied Kraus list.
+    pub operator_index: usize,
+    /// Probability of the selected branch before renormalization.
+    pub probability: f64,
+}
+
+/// Result of sampling a projective measurement.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeasurementSample {
+    /// Selected joint basis index or partition-group index.
+    pub outcome: usize,
+    /// Probability of the selected outcome before collapse.
+    pub probability: f64,
+}
+
+/// Result of sampling a generalized-measurement trajectory.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InstrumentSample {
+    /// Selected reported outcome.
+    pub outcome: usize,
+    /// Selected Kraus operator within that outcome's operator group.
+    pub operator_index: usize,
+    /// Total probability of the reported outcome.
+    pub outcome_probability: f64,
+    /// Probability of the selected pure-state trajectory branch.
+    pub branch_probability: f64,
+}
 
 /// Numerical diagnostics for an exact density operator.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -154,6 +222,20 @@ where
 pub type QutritStateVec<R = PecosRng> = QuditStateVec<R>;
 
 impl QuditStateVec<PecosRng> {
+    /// Bytes required for the dense state amplitudes, excluding container overhead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid or overflowing Hilbert-space dimension.
+    pub fn required_memory_bytes(
+        num_sites: usize,
+        local_dimension: usize,
+    ) -> Result<usize, QuditError> {
+        global_dimension(num_sites, local_dimension)?
+            .checked_mul(core::mem::size_of::<Complex64>())
+            .ok_or(QuditError::DimensionOverflow)
+    }
+
     /// Create `|0...0>` with entropy-derived randomness.
     ///
     /// # Errors
@@ -161,6 +243,15 @@ impl QuditStateVec<PecosRng> {
     /// Returns an error for an invalid or overflowing Hilbert-space dimension.
     pub fn new(num_sites: usize, local_dimension: usize) -> Result<Self, QuditError> {
         Self::with_rng(num_sites, local_dimension, rand::make_rng())
+    }
+
+    /// Create a qutrit simulator in `|0...0>` with entropy-derived randomness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the qutrit Hilbert-space dimension or allocation is invalid.
+    pub fn qutrit(num_sites: usize) -> Result<Self, QuditError> {
+        Self::new(num_sites, 3)
     }
 
     /// Create `|0...0>` with deterministic randomness.
@@ -197,7 +288,7 @@ where
     /// Returns an error for an invalid or overflowing Hilbert-space dimension.
     pub fn with_rng(num_sites: usize, local_dimension: usize, rng: R) -> Result<Self, QuditError> {
         let dimension = global_dimension(num_sites, local_dimension)?;
-        let mut state = vec![Complex64::new(0.0, 0.0); dimension];
+        let mut state = zeroed_complex_entries(dimension)?;
         state[0] = Complex64::new(1.0, 0.0);
         Ok(Self {
             local_dimension,
@@ -273,11 +364,23 @@ where
     ///
     /// Returns an error if `target` does not identify a simulated site.
     pub fn outcome_probabilities(&self, target: usize) -> Result<Vec<f64>, QuditError> {
-        validate_targets(&[target], self.num_sites)?;
-        let stride = radix_power(self.local_dimension, target)?;
-        let mut probabilities = vec![0.0; self.local_dimension];
+        self.joint_outcome_probabilities(&[target])
+    }
+
+    /// Joint local-basis outcome distribution for the ordered target sites.
+    ///
+    /// `targets[0]` is the least-significant digit of the returned outcome index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if targets are invalid or the outcome-space dimension overflows.
+    pub fn joint_outcome_probabilities(&self, targets: &[usize]) -> Result<Vec<f64>, QuditError> {
+        validate_targets(targets, self.num_sites)?;
+        let local_size = radix_power(self.local_dimension, targets.len())?;
+        let mut probabilities = vec![0.0; local_size];
         for (index, amplitude) in self.state.iter().enumerate() {
-            probabilities[(index / stride) % self.local_dimension] += amplitude.norm_sqr();
+            probabilities[extract_local_index(index, targets, self.local_dimension)?] +=
+                amplitude.norm_sqr();
         }
         Ok(probabilities)
     }
@@ -319,7 +422,7 @@ where
         self.apply_operator(&[target], &operator)
     }
 
-    /// Sample and apply a Kraus channel, returning the selected Kraus index.
+    /// Sample and apply a Kraus channel, returning its index and branch probability.
     ///
     /// # Errors
     ///
@@ -328,7 +431,7 @@ where
         &mut self,
         targets: &[usize],
         operators: &[Vec<Complex64>],
-    ) -> Result<usize, QuditError> {
+    ) -> Result<KrausSample, QuditError> {
         if operators.is_empty() {
             return Err(QuditError::EmptyKrausChannel);
         }
@@ -364,7 +467,122 @@ where
         for amplitude in &mut self.state {
             *amplitude /= scale;
         }
-        Ok(selected)
+        Ok(KrausSample {
+            operator_index: selected,
+            probability: probabilities[selected],
+        })
+    }
+
+    /// Probabilities of generalized-measurement outcomes without changing the state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for empty outcomes, invalid operators, or incomplete measurements.
+    pub fn instrument_probabilities(
+        &self,
+        targets: &[usize],
+        outcomes: &[Vec<Vec<Complex64>>],
+    ) -> Result<Vec<f64>, QuditError> {
+        validate_instrument_shape(outcomes)?;
+        let operator_slices = outcomes
+            .iter()
+            .flatten()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        let local_size = validate_kraus_slices(
+            targets,
+            &operator_slices,
+            self.num_sites,
+            self.local_dimension,
+        )?;
+        let mut probabilities = vec![0.0; outcomes.len()];
+        for (outcome, operators) in outcomes.iter().enumerate() {
+            for operator in operators {
+                let branch = apply_operator_to_vector(
+                    &self.state,
+                    targets,
+                    operator,
+                    local_size,
+                    self.local_dimension,
+                )?;
+                probabilities[outcome] += branch.iter().map(Complex64::norm_sqr).sum::<f64>();
+            }
+        }
+        validate_total_probability(probabilities.iter().sum())?;
+        Ok(probabilities)
+    }
+
+    /// Sample a generalized quantum measurement described by grouped Kraus operators.
+    ///
+    /// Each outer element is one reported outcome and may contain multiple Kraus
+    /// operators. The union of every outcome's operators must be trace preserving.
+    /// A pure-state trajectory samples both the reported outcome and its internal
+    /// Kraus branch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for empty outcomes, invalid operators, or incomplete measurements.
+    pub fn measure_instrument(
+        &mut self,
+        targets: &[usize],
+        outcomes: &[Vec<Vec<Complex64>>],
+    ) -> Result<InstrumentSample, QuditError> {
+        validate_instrument_shape(outcomes)?;
+        let indexed_operators = outcomes
+            .iter()
+            .enumerate()
+            .flat_map(|(outcome, operators)| {
+                operators
+                    .iter()
+                    .enumerate()
+                    .map(move |(operator, values)| (outcome, operator, values.as_slice()))
+            })
+            .collect::<Vec<_>>();
+        let operator_slices = indexed_operators
+            .iter()
+            .map(|(_, _, operator)| *operator)
+            .collect::<Vec<_>>();
+        let local_size = validate_kraus_slices(
+            targets,
+            &operator_slices,
+            self.num_sites,
+            self.local_dimension,
+        )?;
+        let mut branches = Vec::with_capacity(operator_slices.len());
+        let mut branch_probabilities = Vec::with_capacity(operator_slices.len());
+        let mut outcome_probabilities = vec![0.0; outcomes.len()];
+        for ((outcome, _, _), operator_slice) in indexed_operators.iter().zip(operator_slices) {
+            let branch = apply_operator_to_vector(
+                &self.state,
+                targets,
+                operator_slice,
+                local_size,
+                self.local_dimension,
+            )?;
+            let probability = branch.iter().map(Complex64::norm_sqr).sum::<f64>();
+            if !probability.is_finite() {
+                return Err(QuditError::NonFiniteValue);
+            }
+            outcome_probabilities[*outcome] += probability;
+            branch_probabilities.push(probability);
+            branches.push(branch);
+        }
+        let total = branch_probabilities.iter().sum::<f64>();
+        validate_total_probability(total)?;
+        let selected = sample_distribution(&mut self.rng, &branch_probabilities, total);
+        let (outcome, operator_index, _) = indexed_operators[selected];
+        let branch_probability = branch_probabilities[selected];
+        self.state = branches.swap_remove(selected);
+        let scale = branch_probability.sqrt();
+        for amplitude in &mut self.state {
+            *amplitude /= scale;
+        }
+        Ok(InstrumentSample {
+            outcome,
+            operator_index,
+            outcome_probability: outcome_probabilities[outcome],
+            branch_probability,
+        })
     }
 
     /// Measure a site in its complete local basis and collapse the state.
@@ -373,22 +591,63 @@ where
     ///
     /// Returns an error if `target` is invalid or the selected branch has zero norm.
     pub fn measure(&mut self, target: usize) -> Result<usize, QuditError> {
-        let probabilities = self.outcome_probabilities(target)?;
-        let selected = sample_distribution(&mut self.rng, &probabilities, 1.0);
+        Ok(self.measure_joint(&[target])?.outcome)
+    }
+
+    /// Measure several sites jointly in their complete local basis.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid targets or an impossible selected outcome.
+    pub fn measure_joint(&mut self, targets: &[usize]) -> Result<MeasurementSample, QuditError> {
+        let probabilities = self.joint_outcome_probabilities(targets)?;
+        let total = probabilities.iter().sum::<f64>();
+        let selected = sample_distribution(&mut self.rng, &probabilities, total);
         let probability = probabilities[selected];
-        if probability <= PROBABILITY_TOLERANCE {
-            return Err(QuditError::ZeroNorm);
+        let mut allowed = vec![false; probabilities.len()];
+        allowed[selected] = true;
+        self.collapse_local_partition(targets, &allowed, probability)?;
+        Ok(MeasurementSample {
+            outcome: selected,
+            probability,
+        })
+    }
+
+    /// Measure a coarse-grained partition of the targets' joint local basis.
+    ///
+    /// Each inner vector lists the joint basis indices belonging to one reported
+    /// outcome. The groups must contain every joint basis index exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid targets, an invalid partition, or an impossible outcome.
+    pub fn measure_partition(
+        &mut self,
+        targets: &[usize],
+        groups: &[Vec<usize>],
+    ) -> Result<MeasurementSample, QuditError> {
+        let basis_probabilities = self.joint_outcome_probabilities(targets)?;
+        validate_measurement_partition(groups, basis_probabilities.len())?;
+        let probabilities = groups
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|&outcome| basis_probabilities[outcome])
+                    .sum::<f64>()
+            })
+            .collect::<Vec<_>>();
+        let total = probabilities.iter().sum::<f64>();
+        let selected = sample_distribution(&mut self.rng, &probabilities, total);
+        let mut allowed = vec![false; basis_probabilities.len()];
+        for &outcome in &groups[selected] {
+            allowed[outcome] = true;
         }
-        let stride = radix_power(self.local_dimension, target)?;
-        let scale = probability.sqrt();
-        for (index, amplitude) in self.state.iter_mut().enumerate() {
-            if (index / stride) % self.local_dimension == selected {
-                *amplitude /= scale;
-            } else {
-                *amplitude = Complex64::new(0.0, 0.0);
-            }
-        }
-        Ok(selected)
+        self.collapse_local_partition(targets, &allowed, probabilities[selected])?;
+        Ok(MeasurementSample {
+            outcome: selected,
+            probability: probabilities[selected],
+        })
     }
 
     /// Measure zero versus one when the site has no support outside the qubit subspace.
@@ -410,15 +669,9 @@ where
         }
         let selected = sample_distribution(&mut self.rng, &probabilities[..2], 1.0);
         let probability = probabilities[selected];
-        let stride = radix_power(self.local_dimension, target)?;
-        let scale = probability.sqrt();
-        for (index, amplitude) in self.state.iter_mut().enumerate() {
-            if (index / stride) % self.local_dimension == selected {
-                *amplitude /= scale;
-            } else {
-                *amplitude = Complex64::new(0.0, 0.0);
-            }
-        }
+        let mut allowed = vec![false; self.local_dimension];
+        allowed[selected] = true;
+        self.collapse_local_partition(&[target], &allowed, probability)?;
         Ok(selected == 1)
     }
 
@@ -459,6 +712,56 @@ where
         }
         Ok(self)
     }
+
+    /// Reduced density matrix for the ordered target sites of this pure state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if targets are invalid or the reduced allocation fails.
+    pub fn reduced_density_matrix(&self, targets: &[usize]) -> Result<Vec<Complex64>, QuditError> {
+        validate_targets(targets, self.num_sites)?;
+        let local_size = radix_power(self.local_dimension, targets.len())?;
+        let mut reduced = zeroed_complex_entries(square(local_size)?)?;
+        let target_mask = target_membership(targets, self.num_sites);
+        for row in 0..self.dimension() {
+            for column in 0..self.dimension() {
+                if traced_digits_match(
+                    row,
+                    column,
+                    &target_mask,
+                    self.num_sites,
+                    self.local_dimension,
+                ) {
+                    let local_row = extract_local_index(row, targets, self.local_dimension)?;
+                    let local_column = extract_local_index(column, targets, self.local_dimension)?;
+                    reduced[local_row * local_size + local_column] +=
+                        self.state[row] * self.state[column].conj();
+                }
+            }
+        }
+        Ok(reduced)
+    }
+
+    fn collapse_local_partition(
+        &mut self,
+        targets: &[usize],
+        allowed: &[bool],
+        probability: f64,
+    ) -> Result<(), QuditError> {
+        if probability <= PROBABILITY_TOLERANCE {
+            return Err(QuditError::ZeroNorm);
+        }
+        let scale = probability.sqrt();
+        for (index, amplitude) in self.state.iter_mut().enumerate() {
+            let local_index = extract_local_index(index, targets, self.local_dimension)?;
+            if allowed[local_index] {
+                *amplitude /= scale;
+            } else {
+                *amplitude = Complex64::new(0.0, 0.0);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// An exact dense density-matrix simulator with a uniform local dimension.
@@ -478,6 +781,21 @@ where
 pub type QutritDensityMatrix<R = PecosRng> = QuditDensityMatrix<R>;
 
 impl QuditDensityMatrix<PecosRng> {
+    /// Bytes required for the dense density operator, excluding container overhead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid or overflowing Hilbert-space dimension.
+    pub fn required_memory_bytes(
+        num_sites: usize,
+        local_dimension: usize,
+    ) -> Result<usize, QuditError> {
+        let dimension = global_dimension(num_sites, local_dimension)?;
+        square(dimension)?
+            .checked_mul(core::mem::size_of::<Complex64>())
+            .ok_or(QuditError::DimensionOverflow)
+    }
+
     /// Create `|0...0><0...0|` with entropy-derived randomness.
     ///
     /// # Errors
@@ -485,6 +803,15 @@ impl QuditDensityMatrix<PecosRng> {
     /// Returns an error for an invalid or overflowing Hilbert-space dimension.
     pub fn new(num_sites: usize, local_dimension: usize) -> Result<Self, QuditError> {
         Self::with_rng(num_sites, local_dimension, rand::make_rng())
+    }
+
+    /// Create a qutrit simulator in `|0...0><0...0|` with entropy-derived randomness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the qutrit Hilbert-space dimension or allocation is invalid.
+    pub fn qutrit(num_sites: usize) -> Result<Self, QuditError> {
+        Self::new(num_sites, 3)
     }
 
     /// Create `|0...0><0...0|` with deterministic randomness.
@@ -521,10 +848,8 @@ where
     /// Returns an error for an invalid or overflowing Hilbert-space dimension.
     pub fn with_rng(num_sites: usize, local_dimension: usize, rng: R) -> Result<Self, QuditError> {
         let dimension = global_dimension(num_sites, local_dimension)?;
-        let matrix_size = dimension
-            .checked_mul(dimension)
-            .ok_or(QuditError::DimensionOverflow)?;
-        let mut density_matrix = vec![Complex64::new(0.0, 0.0); matrix_size];
+        let matrix_size = square(dimension)?;
+        let mut density_matrix = zeroed_complex_entries(matrix_size)?;
         density_matrix[0] = Complex64::new(1.0, 0.0);
         Ok(Self {
             local_dimension,
@@ -539,17 +864,35 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if the dimension, length, entries, or trace is invalid.
+    /// Returns an error if the dimension, entries, trace, Hermiticity, or positivity is invalid.
     pub fn from_density_matrix(
         num_sites: usize,
         local_dimension: usize,
         density_matrix: Vec<Complex64>,
         rng: R,
     ) -> Result<Self, QuditError> {
+        let simulator =
+            Self::from_density_matrix_unchecked(num_sites, local_dimension, density_matrix, rng)?;
+        simulator.validate_physicality(PROBABILITY_TOLERANCE * 10.0)?;
+        Ok(simulator)
+    }
+
+    /// Construct from a trace-one matrix without checking Hermiticity or positivity.
+    ///
+    /// This is useful for diagnostics and tests. Normal simulation should use
+    /// [`Self::from_density_matrix`]. Length, finiteness, and trace are still checked.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the dimension, length, entries, or trace is invalid.
+    pub fn from_density_matrix_unchecked(
+        num_sites: usize,
+        local_dimension: usize,
+        density_matrix: Vec<Complex64>,
+        rng: R,
+    ) -> Result<Self, QuditError> {
         let dimension = global_dimension(num_sites, local_dimension)?;
-        let expected = dimension
-            .checked_mul(dimension)
-            .ok_or(QuditError::DimensionOverflow)?;
+        let expected = square(dimension)?;
         if density_matrix.len() != expected {
             return Err(QuditError::InvalidStateLength {
                 expected,
@@ -625,6 +968,20 @@ where
             .sum()
     }
 
+    /// Purity `Tr(rho^2)` of the density operator.
+    #[must_use]
+    pub fn purity(&self) -> f64 {
+        let dimension = self.dimension();
+        let mut purity = Complex64::new(0.0, 0.0);
+        for row in 0..dimension {
+            for column in 0..dimension {
+                purity += self.density_matrix[row * dimension + column]
+                    * self.density_matrix[column * dimension + row];
+            }
+        }
+        purity.re
+    }
+
     /// Numerical physicality diagnostics.
     #[must_use]
     pub fn diagnostics(&self) -> DensityMatrixDiagnostics {
@@ -652,18 +1009,59 @@ where
         }
     }
 
+    /// Validate trace, Hermiticity, and positive semidefiniteness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `tolerance` is invalid or the density operator is unphysical.
+    pub fn validate_physicality(&self, tolerance: f64) -> Result<(), QuditError> {
+        if !tolerance.is_finite() || tolerance < 0.0 {
+            return Err(QuditError::InvalidTolerance(tolerance));
+        }
+        let diagnostics = self.diagnostics();
+        if (diagnostics.trace - 1.0).abs() > tolerance
+            || diagnostics.trace_imaginary_error > tolerance
+        {
+            return Err(QuditError::NotNormalized {
+                norm: diagnostics.trace,
+            });
+        }
+        if diagnostics.hermiticity_error > tolerance {
+            return Err(QuditError::NonHermitian {
+                deviation: diagnostics.hermiticity_error,
+            });
+        }
+        if diagnostics.minimum_eigenvalue < -tolerance {
+            return Err(QuditError::NotPositiveSemidefinite {
+                minimum_eigenvalue: diagnostics.minimum_eigenvalue,
+            });
+        }
+        Ok(())
+    }
+
     /// Outcome distribution for a full local-basis measurement.
     ///
     /// # Errors
     ///
     /// Returns an error if `target` does not identify a simulated site.
     pub fn outcome_probabilities(&self, target: usize) -> Result<Vec<f64>, QuditError> {
-        validate_targets(&[target], self.num_sites)?;
+        self.joint_outcome_probabilities(&[target])
+    }
+
+    /// Joint local-basis outcome distribution for the ordered target sites.
+    ///
+    /// `targets[0]` is the least-significant digit of the returned outcome index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if targets are invalid or the outcome-space dimension overflows.
+    pub fn joint_outcome_probabilities(&self, targets: &[usize]) -> Result<Vec<f64>, QuditError> {
+        validate_targets(targets, self.num_sites)?;
         let dimension = self.dimension();
-        let stride = radix_power(self.local_dimension, target)?;
-        let mut probabilities = vec![0.0; self.local_dimension];
+        let local_size = radix_power(self.local_dimension, targets.len())?;
+        let mut probabilities = vec![0.0; local_size];
         for index in 0..dimension {
-            probabilities[(index / stride) % self.local_dimension] +=
+            probabilities[extract_local_index(index, targets, self.local_dimension)?] +=
                 self.density_matrix[index * dimension + index].re;
         }
         Ok(probabilities)
@@ -723,7 +1121,7 @@ where
         let local_size =
             validate_kraus_channel(targets, operators, self.num_sites, self.local_dimension)?;
         let dimension = self.dimension();
-        let mut result = vec![Complex64::new(0.0, 0.0); self.density_matrix.len()];
+        let mut result = zeroed_complex_entries(self.density_matrix.len())?;
         for operator in operators {
             let branch = apply_operator_to_density_matrix(
                 &self.density_matrix,
@@ -750,33 +1148,179 @@ where
         Ok(self)
     }
 
+    /// Probabilities of generalized-measurement outcomes without changing the state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for empty outcomes, invalid operators, or incomplete measurements.
+    pub fn instrument_probabilities(
+        &self,
+        targets: &[usize],
+        outcomes: &[Vec<Vec<Complex64>>],
+    ) -> Result<Vec<f64>, QuditError> {
+        validate_instrument_shape(outcomes)?;
+        let operator_slices = outcomes
+            .iter()
+            .flatten()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        let local_size = validate_kraus_slices(
+            targets,
+            &operator_slices,
+            self.num_sites,
+            self.local_dimension,
+        )?;
+        let dimension = self.dimension();
+        let mut probabilities = vec![0.0; outcomes.len()];
+        for (outcome, operators) in outcomes.iter().enumerate() {
+            for operator in operators {
+                let branch = apply_operator_to_density_matrix(
+                    &self.density_matrix,
+                    dimension,
+                    targets,
+                    operator,
+                    local_size,
+                    self.local_dimension,
+                )?;
+                probabilities[outcome] += (0..dimension)
+                    .map(|index| branch[index * dimension + index].re)
+                    .sum::<f64>();
+            }
+        }
+        validate_total_probability(probabilities.iter().sum())?;
+        Ok(probabilities)
+    }
+
+    /// Sample a generalized quantum measurement described by grouped Kraus operators.
+    ///
+    /// Each outer element is one reported outcome and may contain multiple Kraus
+    /// operators. All operators together must be trace preserving. The selected
+    /// outcome retains the exact mixed post-measurement state of its operator group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for empty outcomes, invalid operators, or incomplete measurements.
+    pub fn measure_instrument(
+        &mut self,
+        targets: &[usize],
+        outcomes: &[Vec<Vec<Complex64>>],
+    ) -> Result<MeasurementSample, QuditError> {
+        validate_instrument_shape(outcomes)?;
+        let operator_slices = outcomes
+            .iter()
+            .flatten()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        let local_size = validate_kraus_slices(
+            targets,
+            &operator_slices,
+            self.num_sites,
+            self.local_dimension,
+        )?;
+        let dimension = self.dimension();
+        let mut outcome_states = Vec::with_capacity(outcomes.len());
+        let mut probabilities = Vec::with_capacity(outcomes.len());
+        for operators in outcomes {
+            let mut outcome_state = zeroed_complex_entries(self.density_matrix.len())?;
+            for operator in operators {
+                let branch = apply_operator_to_density_matrix(
+                    &self.density_matrix,
+                    dimension,
+                    targets,
+                    operator,
+                    local_size,
+                    self.local_dimension,
+                )?;
+                for (value, contribution) in outcome_state.iter_mut().zip(branch) {
+                    *value += contribution;
+                }
+            }
+            let probability = (0..dimension)
+                .map(|index| outcome_state[index * dimension + index].re)
+                .sum::<f64>();
+            if !probability.is_finite() {
+                return Err(QuditError::NonFiniteValue);
+            }
+            probabilities.push(probability);
+            outcome_states.push(outcome_state);
+        }
+        let total = probabilities.iter().sum::<f64>();
+        validate_total_probability(total)?;
+        let selected = sample_distribution(&mut self.rng, &probabilities, total);
+        let probability = probabilities[selected];
+        self.density_matrix = outcome_states.swap_remove(selected);
+        for value in &mut self.density_matrix {
+            *value /= probability;
+        }
+        Ok(MeasurementSample {
+            outcome: selected,
+            probability,
+        })
+    }
+
     /// Measure a site in its complete local basis and collapse the density operator.
     ///
     /// # Errors
     ///
     /// Returns an error if `target` is invalid or the selected branch has zero probability.
     pub fn measure(&mut self, target: usize) -> Result<usize, QuditError> {
-        let probabilities = self.outcome_probabilities(target)?;
-        let selected = sample_distribution(&mut self.rng, &probabilities, 1.0);
+        Ok(self.measure_joint(&[target])?.outcome)
+    }
+
+    /// Measure several sites jointly in their complete local basis.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid targets or an impossible selected outcome.
+    pub fn measure_joint(&mut self, targets: &[usize]) -> Result<MeasurementSample, QuditError> {
+        let probabilities = self.joint_outcome_probabilities(targets)?;
+        let total = probabilities.iter().sum::<f64>();
+        let selected = sample_distribution(&mut self.rng, &probabilities, total);
         let probability = probabilities[selected];
-        if probability <= PROBABILITY_TOLERANCE {
-            return Err(QuditError::ZeroNorm);
+        let mut allowed = vec![false; probabilities.len()];
+        allowed[selected] = true;
+        self.collapse_local_partition(targets, &allowed, probability)?;
+        Ok(MeasurementSample {
+            outcome: selected,
+            probability,
+        })
+    }
+
+    /// Measure a coarse-grained partition of the targets' joint local basis.
+    ///
+    /// Each inner vector lists the joint basis indices belonging to one reported
+    /// outcome. The groups must contain every joint basis index exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid targets, an invalid partition, or an impossible outcome.
+    pub fn measure_partition(
+        &mut self,
+        targets: &[usize],
+        groups: &[Vec<usize>],
+    ) -> Result<MeasurementSample, QuditError> {
+        let basis_probabilities = self.joint_outcome_probabilities(targets)?;
+        validate_measurement_partition(groups, basis_probabilities.len())?;
+        let probabilities = groups
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|&outcome| basis_probabilities[outcome])
+                    .sum::<f64>()
+            })
+            .collect::<Vec<_>>();
+        let total = probabilities.iter().sum::<f64>();
+        let selected = sample_distribution(&mut self.rng, &probabilities, total);
+        let mut allowed = vec![false; basis_probabilities.len()];
+        for &outcome in &groups[selected] {
+            allowed[outcome] = true;
         }
-        let dimension = self.dimension();
-        let stride = radix_power(self.local_dimension, target)?;
-        for row in 0..dimension {
-            let row_matches = (row / stride) % self.local_dimension == selected;
-            for column in 0..dimension {
-                let column_matches = (column / stride) % self.local_dimension == selected;
-                let element = &mut self.density_matrix[row * dimension + column];
-                if row_matches && column_matches {
-                    *element /= probability;
-                } else {
-                    *element = Complex64::new(0.0, 0.0);
-                }
-            }
-        }
-        Ok(selected)
+        self.collapse_local_partition(targets, &allowed, probabilities[selected])?;
+        Ok(MeasurementSample {
+            outcome: selected,
+            probability: probabilities[selected],
+        })
     }
 
     /// Measure zero versus one when the site has no support outside the qubit subspace.
@@ -798,20 +1342,9 @@ where
         }
         let selected = sample_distribution(&mut self.rng, &probabilities[..2], 1.0);
         let probability = probabilities[selected];
-        let dimension = self.dimension();
-        let stride = radix_power(self.local_dimension, target)?;
-        for row in 0..dimension {
-            let row_matches = (row / stride) % self.local_dimension == selected;
-            for column in 0..dimension {
-                let column_matches = (column / stride) % self.local_dimension == selected;
-                let element = &mut self.density_matrix[row * dimension + column];
-                if row_matches && column_matches {
-                    *element /= probability;
-                } else {
-                    *element = Complex64::new(0.0, 0.0);
-                }
-            }
-        }
+        let mut allowed = vec![false; self.local_dimension];
+        allowed[selected] = true;
+        self.collapse_local_partition(&[target], &allowed, probability)?;
         Ok(selected == 1)
     }
 
@@ -825,7 +1358,7 @@ where
         let mut operators = Vec::with_capacity(self.local_dimension);
         let operator_size = square(self.local_dimension)?;
         for input in 0..self.local_dimension {
-            let mut operator = vec![Complex64::new(0.0, 0.0); operator_size];
+            let mut operator = zeroed_complex_entries(operator_size)?;
             operator[input] = Complex64::new(1.0, 0.0);
             operators.push(operator);
         }
@@ -865,7 +1398,7 @@ where
         validate_targets(targets, self.num_sites)?;
         let local_size = radix_power(self.local_dimension, targets.len())?;
         let dimension = self.dimension();
-        let mut reduced = vec![Complex64::new(0.0, 0.0); local_size * local_size];
+        let mut reduced = zeroed_complex_entries(square(local_size)?)?;
         let target_mask = target_membership(targets, self.num_sites);
         for row in 0..dimension {
             for column in 0..dimension {
@@ -885,6 +1418,31 @@ where
         }
         Ok(reduced)
     }
+
+    fn collapse_local_partition(
+        &mut self,
+        targets: &[usize],
+        allowed: &[bool],
+        probability: f64,
+    ) -> Result<(), QuditError> {
+        if probability <= PROBABILITY_TOLERANCE {
+            return Err(QuditError::ZeroNorm);
+        }
+        let dimension = self.dimension();
+        for row in 0..dimension {
+            let local_row = extract_local_index(row, targets, self.local_dimension)?;
+            for column in 0..dimension {
+                let local_column = extract_local_index(column, targets, self.local_dimension)?;
+                let element = &mut self.density_matrix[row * dimension + column];
+                if allowed[local_row] && allowed[local_column] {
+                    *element /= probability;
+                } else {
+                    *element = Complex64::new(0.0, 0.0);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Embed a row-major 2x2 unitary in the computational subspace.
@@ -899,7 +1457,7 @@ pub fn embedded_qubit_unitary(
     if local_dimension < 2 {
         return Err(QuditError::InvalidLocalDimension(local_dimension));
     }
-    let mut operator = vec![Complex64::new(0.0, 0.0); square(local_dimension)?];
+    let mut operator = zeroed_complex_entries(square(local_dimension)?)?;
     for level in 2..local_dimension {
         operator[level * local_dimension + level] = Complex64::new(1.0, 0.0);
     }
@@ -935,7 +1493,7 @@ pub fn basis_swap(
             dimension: local_dimension,
         });
     }
-    let mut operator = vec![Complex64::new(0.0, 0.0); square(local_dimension)?];
+    let mut operator = zeroed_complex_entries(square(local_dimension)?)?;
     for level in 0..local_dimension {
         let output = if level == first {
             second
@@ -1067,6 +1625,15 @@ fn square(value: usize) -> Result<usize, QuditError> {
         .ok_or(QuditError::DimensionOverflow)
 }
 
+fn zeroed_complex_entries(entries: usize) -> Result<Vec<Complex64>, QuditError> {
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(entries)
+        .map_err(|_| QuditError::AllocationFailed { entries })?;
+    values.resize(entries, Complex64::new(0.0, 0.0));
+    Ok(values)
+}
+
 fn radix_power(radix: usize, exponent: usize) -> Result<usize, QuditError> {
     radix
         .checked_pow(
@@ -1121,6 +1688,47 @@ fn validate_targets(targets: &[usize], num_sites: usize) -> Result<(), QuditErro
     Ok(())
 }
 
+fn validate_measurement_partition(
+    groups: &[Vec<usize>],
+    basis_size: usize,
+) -> Result<(), QuditError> {
+    if groups.is_empty() || groups.iter().any(Vec::is_empty) {
+        return Err(QuditError::InvalidMeasurementPartition);
+    }
+    let mut seen = vec![false; basis_size];
+    for &outcome in groups.iter().flatten() {
+        if outcome >= basis_size || seen[outcome] {
+            return Err(QuditError::InvalidMeasurementPartition);
+        }
+        seen[outcome] = true;
+    }
+    if seen.into_iter().all(core::convert::identity) {
+        Ok(())
+    } else {
+        Err(QuditError::InvalidMeasurementPartition)
+    }
+}
+
+fn validate_instrument_shape(outcomes: &[Vec<Vec<Complex64>>]) -> Result<(), QuditError> {
+    if outcomes.is_empty() || outcomes.iter().any(Vec::is_empty) {
+        Err(QuditError::InvalidMeasurementInstrument)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_total_probability(total: f64) -> Result<(), QuditError> {
+    if !total.is_finite() {
+        Err(QuditError::NonFiniteValue)
+    } else if total <= PROBABILITY_TOLERANCE {
+        Err(QuditError::ZeroNorm)
+    } else if (total - 1.0).abs() > PROBABILITY_TOLERANCE * 10.0 {
+        Err(QuditError::NotNormalized { norm: total })
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_operator(
     targets: &[usize],
     operator: &[Complex64],
@@ -1162,12 +1770,21 @@ fn validate_kraus_channel(
     num_sites: usize,
     local_dimension: usize,
 ) -> Result<usize, QuditError> {
+    let operator_slices = operators.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    validate_kraus_slices(targets, &operator_slices, num_sites, local_dimension)
+}
+
+fn validate_kraus_slices(
+    targets: &[usize],
+    operators: &[&[Complex64]],
+    num_sites: usize,
+    local_dimension: usize,
+) -> Result<usize, QuditError> {
     let mut local_size = 0;
-    for operator in operators {
+    for &operator in operators {
         local_size = validate_operator(targets, operator, num_sites, local_dimension)?;
     }
-    let operator_slices = operators.iter().map(Vec::as_slice).collect::<Vec<_>>();
-    let deviation = completeness_deviation(&operator_slices, local_size);
+    let deviation = completeness_deviation(operators, local_size);
     if deviation > OPERATOR_TOLERANCE {
         Err(QuditError::NotTracePreserving { deviation })
     } else {
@@ -1238,7 +1855,7 @@ fn apply_operator_to_vector(
     local_size: usize,
     local_dimension: usize,
 ) -> Result<Vec<Complex64>, QuditError> {
-    let mut result = vec![Complex64::new(0.0, 0.0); state.len()];
+    let mut result = zeroed_complex_entries(state.len())?;
     for (input, amplitude) in state.iter().copied().enumerate() {
         if amplitude == Complex64::new(0.0, 0.0) {
             continue;
@@ -1263,7 +1880,7 @@ fn apply_operator_to_density_matrix(
     local_size: usize,
     local_dimension: usize,
 ) -> Result<Vec<Complex64>, QuditError> {
-    let mut result = vec![Complex64::new(0.0, 0.0); density_matrix.len()];
+    let mut result = zeroed_complex_entries(density_matrix.len())?;
     for input_row in 0..dimension {
         let local_input_row = extract_local_index(input_row, targets, local_dimension)?;
         for input_column in 0..dimension {

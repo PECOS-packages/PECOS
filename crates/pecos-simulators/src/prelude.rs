@@ -22,6 +22,10 @@ pub use crate::{
     measurement_sampler::{MeasurementSampler, SampleResult, SequentialMeasurementSampler},
     pauli_prop::PauliProp,
     quantum_simulator::QuantumSimulator,
+    qudit::{
+        QuditDensityMatrix, QuditStateVec, QutritDensityMatrix, QutritStateVec,
+        qutrit_leakage_channel, qutrit_seepage_channel,
+    },
     sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign},
     sparse_stab::SparseStab,
     stabilizer_tableau::StabilizerTableauSimulator,

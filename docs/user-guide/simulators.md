@@ -80,6 +80,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | **SparseStab** | Stabilizer | QEC simulations, Clifford circuits | None (default) |
 | **Stabilizer** | Stabilizer | Dense Clifford circuits | None |
 | **StateVec** | State vector | Arbitrary circuits, small systems | None |
+| **QutritStateVec** | Qutrit state vector | Physical leakage trajectories, small systems | Rust API |
+| **QutritDensityMatrix** | Qutrit density matrix | Exact leakage/noise references, very small systems | Rust API |
 | **StabVec** | Clifford + Rz | Clifford circuits with Z rotations | None |
 | **PauliProp** | Fault tracking | Error propagation analysis | None |
 | **CuStateVec** | State vector (GPU, Python) | Large circuits with GPU | CUDA, cuQuantum |
@@ -234,6 +236,20 @@ results = sim(Qasm(circuit)).quantum(stab_vec()).run(100)
 
 - Efficient for Clifford-heavy workloads that need `RZ` support
 - Uses the native Rust backend that ships with PECOS
+
+### Qutrit and Qudit Simulators
+
+The Rust `QuditStateVec` and `QuditDensityMatrix` APIs simulate a uniform local
+dimension rather than assuming qubits. Their qutrit aliases use the basis
+`|0>, |1>, |L>` and support arbitrary local unitaries, embedded qubit gates,
+full and computational-subspace measurements, preparation and reset, and Kraus
+channels. The state-vector backend samples channel trajectories, while the
+density-matrix backend evolves mixed states exactly.
+
+These are reference backends for physical leakage and noise-model verification,
+not replacements for PECOS's scalable stabilizer simulators or the classical
+leakage bookkeeping used in large QEC studies. Storage scales as `3^N` for a
+qutrit state vector and `9^N` for a qutrit density matrix.
 
 ## GPU-Accelerated Simulators
 

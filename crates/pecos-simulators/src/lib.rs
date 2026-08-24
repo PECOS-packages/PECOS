@@ -39,6 +39,7 @@ pub mod stab_vec;
 // pub mod paulis;
 pub mod prelude;
 pub mod quantum_simulator;
+pub mod qudit;
 pub mod rotation_test_utils;
 pub mod sign_algebra;
 pub mod sparse_stab;
@@ -96,6 +97,11 @@ pub use measurement_sampler::{
 pub use pauli_prop::PauliProp;
 pub use pecos_core::{QubitId, VecSet, qid, qid2, qids, qids2};
 pub use quantum_simulator::QuantumSimulator;
+pub use qudit::{
+    DensityMatrixDiagnostics, QuditDensityMatrix, QuditError, QuditStateVec, QutritDensityMatrix,
+    QutritStateVec, basis_swap, embedded_qubit_unitary, qutrit_leakage_channel,
+    qutrit_seepage_channel,
+};
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
 pub use sparse_stab::{
     SparseStab, SparseStabBitSet, SparseStabGeneric, SparseStabHybrid, SparseStabSortedVecSet,

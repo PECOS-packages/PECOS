@@ -14,7 +14,7 @@ use pecos_decoder_core::dem::SparseDem;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
 use pecos_trellis::{
-    TrellisConfig, TrellisDecodeAttempt, TrellisDecoder, TrellisResult, TrellisStatus,
+    MetricMode, TrellisConfig, TrellisDecodeAttempt, TrellisDecoder, TrellisResult, TrellisStatus,
 };
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -41,6 +41,8 @@ fn exact_config() -> TrellisConfig {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations: 0,
+        metric_mode: MetricMode::default(),
+        int_metric_scale: 1024,
     }
 }
 
@@ -413,6 +415,8 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
         column_order: Some(vec![3, 2, 1, 0]),
         merge_indistinguishable: true,
         bp_score_iterations: 0,
+        metric_mode: MetricMode::default(),
+        int_metric_scale: 1024,
     };
     let mut merged = TrellisDecoder::from_sparse_dem(&dem, pruning).unwrap();
     let mut hand_built = TrellisDecoder::from_sparse_dem(
@@ -424,6 +428,8 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -436,6 +442,8 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -591,6 +599,24 @@ fn wide_logical_ties_use_numeric_label_order() {
     assert_eq!(result.predicted, ObsMask::from_u64(1));
     assert_eq!(result.runner_up_gap, Some(0.0));
     assert_eq!(result.logical_masses[0].logical, ObsMask::from_u64(1));
+
+    let mut maxlog = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            k: 1_000_000_000,
+            delta: 1_000_000.0,
+            metric_mode: MetricMode::MaxLogInt,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
+    let maxlog_result = maxlog.decode(&[1]).unwrap();
+    assert_eq!(maxlog_result.predicted, ObsMask::from_u64(1));
+    assert_eq!(maxlog_result.runner_up_gap, Some(0.0));
+    assert_eq!(
+        maxlog_result.logical_masses[0].logical,
+        ObsMask::from_u64(1)
+    );
 }
 
 #[test]
@@ -733,6 +759,8 @@ fn overpruning_can_remove_the_only_eventually_feasible_prefix() {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations: 0,
+        metric_mode: MetricMode::default(),
+        int_metric_scale: 1024,
     };
     let mut overpruned = TrellisDecoder::from_sparse_dem(&dem, tight).unwrap();
     assert!(overpruned.decode(&[0, 1]).is_err());
@@ -768,6 +796,8 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -782,6 +812,8 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -823,6 +855,8 @@ fn width_pruning_accounts_for_the_discarded_state_and_mass() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -831,6 +865,37 @@ fn width_pruning_accounts_for_the_discarded_state_and_mass() {
     assert_eq!(result.transitions, 2);
     assert_eq!(result.dropped_states, 1);
     assert!((result.dropped_log_mass.exp() - 0.25).abs() < 1e-15);
+    assert_eq!(
+        result.status,
+        TrellisStatus::Pruned {
+            k_capped: true,
+            delta_pruned: false,
+        }
+    );
+}
+
+#[test]
+fn maxlog_dropped_mass_is_the_largest_discarded_route() {
+    let dem = sparse_dem(vec![(0.5, vec![], vec![0]), (0.25, vec![], vec![1])], 0, 2);
+    let mut decoder = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            k: 2,
+            delta: 1_000_000.0,
+            score_alpha: 0.0,
+            metric_mode: MetricMode::MaxLogInt,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
+    let result = decoder.decode(&[]).unwrap();
+    let expected_dropped_mass = -2_130.0_f64 / 1024.0;
+
+    assert_eq!(result.dropped_states, 2);
+    assert_eq!(
+        result.dropped_log_mass.to_bits(),
+        expected_dropped_mass.to_bits()
+    );
     assert_eq!(
         result.status,
         TrellisStatus::Pruned {
@@ -854,6 +919,8 @@ fn delta_pruning_reports_its_status_flag() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -885,6 +952,8 @@ fn one_prune_call_can_trigger_both_pruning_flags() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -919,6 +988,8 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -931,6 +1002,8 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -988,6 +1061,11 @@ fn validates_probabilities_indices_order_and_pruning_configuration() {
         0.8_f64.to_bits()
     );
     assert_eq!(TrellisConfig::default().bp_score_iterations, 0);
+    assert_eq!(
+        TrellisConfig::default().metric_mode,
+        MetricMode::LogSumExpFloat
+    );
+    assert_eq!(TrellisConfig::default().int_metric_scale, 1024);
     let probability_one_dem = sparse_dem(vec![(1.0, vec![], vec![])], 0, 0);
     assert!(TrellisDecoder::from_sparse_dem(&probability_one_dem, exact_config()).is_ok());
 
@@ -1052,6 +1130,38 @@ fn validates_probabilities_indices_order_and_pruning_configuration() {
     .unwrap_err();
     assert!(nan_delta_error.to_string().contains("delta"));
 
+    let maxlog_infinite_delta = TrellisDecoder::from_sparse_dem(
+        &zero_dem,
+        TrellisConfig {
+            delta: f64::INFINITY,
+            metric_mode: MetricMode::MaxLogInt,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        maxlog_infinite_delta.to_string(),
+        "Invalid configuration: delta must be finite under maxlog_int; infinite delta would quantize to zero and prune to score-ties"
+    );
+
+    for metric_mode in [MetricMode::LogSumExpFloat, MetricMode::MaxLogInt] {
+        for int_metric_scale in [0, -1] {
+            let scale_error = TrellisDecoder::from_sparse_dem(
+                &zero_dem,
+                TrellisConfig {
+                    metric_mode,
+                    int_metric_scale,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(
+                scale_error.to_string(),
+                "Invalid configuration: TrellisConfig.int_metric_scale must be positive"
+            );
+        }
+    }
+
     for score_alpha in [-0.1, f64::NAN, f64::INFINITY] {
         let alpha_error = TrellisDecoder::from_sparse_dem(
             &zero_dem,
@@ -1109,6 +1219,8 @@ fn bp_scores_change_the_greedy_survivor_without_changing_its_mass() {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations: 5,
+        metric_mode: MetricMode::default(),
+        int_metric_scale: 1024,
     };
     let mut bp_scored = TrellisDecoder::from_sparse_dem(&dem, bp_config.clone()).unwrap();
     let mut dem_scored = TrellisDecoder::from_sparse_dem(
@@ -1151,6 +1263,8 @@ fn bp_scoring_is_bitwise_deterministic_across_reuse_and_fresh_construction() {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations: 5,
+        metric_mode: MetricMode::default(),
+        int_metric_scale: 1024,
     };
     let mut reused_decoder = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
     let first = reused_decoder.decode(&[1, 0]).unwrap();
@@ -1186,6 +1300,8 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations: 0,
+        metric_mode: MetricMode::default(),
+        int_metric_scale: 1024,
     };
     let mut off = TrellisDecoder::from_sparse_dem(&dem, off_config.clone()).unwrap();
     let mut on = TrellisDecoder::from_sparse_dem(
@@ -1239,6 +1355,8 @@ fn subnormal_priors_decode_with_bp_scoring_instead_of_reporting_no_path() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 1,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -1251,6 +1369,8 @@ fn subnormal_priors_decode_with_bp_scoring_instead_of_reporting_no_path() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -1285,6 +1405,8 @@ fn non_finite_bp_posteriors_are_an_engine_fault_not_a_no_path() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 5,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();

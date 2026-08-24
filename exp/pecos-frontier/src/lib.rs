@@ -24,7 +24,7 @@
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{
-    DecoderError, ObsMask, SparseDem, backward_deadline_column_order,
+    DecoderError, MetricMode, ObsMask, SparseDem, backward_deadline_column_order,
     backward_deadline_column_order_for_factors, deadline_column_order,
     deadline_column_order_for_factors,
 };
@@ -112,6 +112,8 @@ impl FrontierCommittee {
             column_order,
             merge_indistinguishable,
             bp_score_iterations,
+            metric_mode,
+            int_metric_scale,
         } = config;
         let mut forward_order = column_order.unwrap_or_else(|| (0..dem.mechanisms.len()).collect());
         let forward = FrontierDecoder::from_sparse_dem(
@@ -123,6 +125,8 @@ impl FrontierCommittee {
                 column_order: Some(forward_order.clone()),
                 merge_indistinguishable,
                 bp_score_iterations,
+                metric_mode,
+                int_metric_scale,
             },
         )?;
         forward_order.reverse();
@@ -133,6 +137,8 @@ impl FrontierCommittee {
             column_order: Some(forward_order),
             merge_indistinguishable,
             bp_score_iterations,
+            metric_mode,
+            int_metric_scale,
         };
         let backward = FrontierDecoder::from_sparse_dem(dem, backward_config)?;
         let build_seconds = build_started.elapsed().as_secs_f64();
@@ -311,7 +317,7 @@ fn committee_rank(result: Option<&FrontierResult>, is_forward: bool) -> [f64; 6]
 mod tests {
     use super::{
         CommitteeStatus, DecoderError, FrontierCommittee, FrontierConfig, FrontierDecodeAttempt,
-        FrontierLogicalMass, FrontierResult, FrontierStatus, SparseDem, committee_rank,
+        FrontierLogicalMass, FrontierResult, FrontierStatus, MetricMode, SparseDem, committee_rank,
         resolve_committee_attempts,
     };
     use pecos_decoder_core::obs_mask::ObsMask;
@@ -384,6 +390,8 @@ mod tests {
                 column_order: None,
                 merge_indistinguishable: false,
                 bp_score_iterations: 0,
+                metric_mode: MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();
@@ -424,6 +432,8 @@ mod tests {
                 column_order: None,
                 merge_indistinguishable: true,
                 bp_score_iterations: 0,
+                metric_mode: MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();
@@ -456,6 +466,8 @@ mod tests {
                 column_order: None,
                 merge_indistinguishable: false,
                 bp_score_iterations: 5,
+                metric_mode: MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();

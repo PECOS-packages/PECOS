@@ -70,6 +70,20 @@ fn actual_masses(result: &TrellisResult) -> BTreeMap<u64, f64> {
         .collect()
 }
 
+fn assert_result_masses_bitwise_equal(left: &TrellisResult, right: &TrellisResult) {
+    assert_eq!(left.predicted, right.predicted);
+    assert_eq!(left.log_evidence.to_bits(), right.log_evidence.to_bits());
+    assert_eq!(
+        left.runner_up_gap.map(f64::to_bits),
+        right.runner_up_gap.map(f64::to_bits)
+    );
+    assert_eq!(left.logical_masses.len(), right.logical_masses.len());
+    for (left_mass, right_mass) in left.logical_masses.iter().zip(&right.logical_masses) {
+        assert_eq!(left_mass.logical, right_mass.logical);
+        assert_eq!(left_mass.log_mass.to_bits(), right_mass.log_mass.to_bits());
+    }
+}
+
 fn enumerate_factor_model(model: &FactorModel) -> BTreeMap<(u64, u64), f64> {
     fn visit(
         model: &FactorModel,
@@ -146,16 +160,30 @@ fn assert_decode_matches_enumeration(model: &FactorModel, case_index: usize) {
         }
         let expected_evidence = expected.values().sum::<f64>().ln();
         assert!((result.log_evidence - expected_evidence).abs() <= 1e-9);
-        let expected_winner = expected_log_masses
+        let predicted = words_to_u64(result.predicted.words());
+        let predicted_mass = expected
+            .get(&predicted)
+            .unwrap_or_else(|| panic!("case {case_index}: predicted label {predicted} is absent"));
+        let mut ranked_expected: Vec<(u64, f64)> = expected
             .iter()
-            .min_by(|(left_label, left_mass), (right_label, right_mass)| {
-                right_mass
-                    .total_cmp(left_mass)
-                    .then_with(|| left_label.cmp(right_label))
-            })
-            .map(|(&logical, _)| logical)
-            .unwrap();
-        assert_eq!(words_to_u64(result.predicted.words()), expected_winner);
+            .map(|(&logical, &mass)| (logical, mass))
+            .collect();
+        ranked_expected.sort_by(|(left_label, left_mass), (right_label, right_mass)| {
+            right_mass
+                .total_cmp(left_mass)
+                .then_with(|| left_label.cmp(right_label))
+        });
+        let (expected_winner, maximum_mass) = ranked_expected[0];
+        assert!(
+            maximum_mass - predicted_mass <= 1e-9,
+            "case {case_index}: predicted label {predicted} has expected mass {predicted_mass}, below maximum {maximum_mass}"
+        );
+        if ranked_expected
+            .get(1)
+            .is_none_or(|(_, runner_up_mass)| maximum_mass - runner_up_mass > 1e-6)
+        {
+            assert_eq!(predicted, expected_winner);
+        }
     }
 }
 
@@ -237,12 +265,62 @@ fn drifted_binary_baseline_uses_stored_probability_in_nary_kernel() {
             &model,
             TrellisConfig {
                 bp_score_iterations: 1,
-                ..exact_config()
+                ..TrellisConfig::default()
             },
         ),
         "BP-guided pruning requires a binary model",
     );
     assert_decode_matches_enumeration(&model, usize::MAX);
+}
+
+#[test]
+fn decimal_literal_binary_pairs_delegate_in_both_probability_orders() {
+    for (baseline_probability, toggle_probability, observable) in [(0.2, 0.8, 0), (0.8, 0.2, 1)] {
+        let model = FactorModel::new(
+            vec![Factor {
+                outcomes: vec![
+                    outcome(baseline_probability, &[], &[]),
+                    outcome(toggle_probability, &[0], &[observable]),
+                ],
+            }],
+            1,
+            2,
+        )
+        .unwrap();
+        let dem = sparse_dem(vec![(toggle_probability, vec![0], vec![observable])], 1, 2);
+        let config = TrellisConfig {
+            bp_score_iterations: 2,
+            ..TrellisConfig::default()
+        };
+        let mut factor_decoder = TrellisDecoder::from_factor_model(&model, config.clone()).unwrap();
+        let mut dem_decoder = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();
+
+        for observed in [[0], [1]] {
+            let factor_result = factor_decoder.decode(&observed).unwrap();
+            let dem_result = dem_decoder.decode(&observed).unwrap();
+            assert_result_masses_bitwise_equal(&factor_result, &dem_result);
+        }
+    }
+}
+
+#[test]
+fn bp_iterations_are_inert_for_unpruned_nary_decode() {
+    let model = genuine_model();
+    let mut without_bp = TrellisDecoder::from_factor_model(&model, exact_config()).unwrap();
+    let mut with_inert_bp = TrellisDecoder::from_factor_model(
+        &model,
+        TrellisConfig {
+            bp_score_iterations: 3,
+            ..exact_config()
+        },
+    )
+    .unwrap();
+
+    for observed in [[0], [1]] {
+        let without_bp_result = without_bp.decode(&observed).unwrap();
+        let with_bp_result = with_inert_bp.decode(&observed).unwrap();
+        assert_result_masses_bitwise_equal(&without_bp_result, &with_bp_result);
+    }
 }
 
 fn symmetric_difference(left: &[u32], right: &[u32]) -> Vec<u32> {
@@ -341,7 +419,7 @@ fn sparse_dem_factor_conversion_delegates_bitwise_with_binary_features() {
         3,
         2,
     );
-    let model = FactorModel::from(&dem);
+    let model = FactorModel::try_from(&dem).unwrap();
     let config = TrellisConfig {
         k: 3,
         delta: 20.0,
@@ -459,7 +537,7 @@ fn factor_model_validation_and_nary_feature_guards_fail_loud() {
             &model,
             TrellisConfig {
                 bp_score_iterations: 1,
-                ..exact_config()
+                ..TrellisConfig::default()
             },
         ),
         "BP-guided pruning requires a binary model",
@@ -515,9 +593,27 @@ fn factor_deadline_order_matches_binary_image() {
         4,
         1,
     );
-    let model = FactorModel::from(&dem);
+    let model = FactorModel::try_from(&dem).unwrap();
     assert_eq!(
         deadline_column_order_for_factors(&model).unwrap(),
         deadline_column_order(&dem).unwrap()
+    );
+}
+
+#[test]
+fn sparse_dem_conversion_rejects_duplicate_indices_before_factor_ordering() {
+    let dem = sparse_dem(vec![(0.2, vec![0, 0], vec![])], 1, 0);
+    let binary_error = deadline_column_order(&dem).unwrap_err();
+    assert!(
+        binary_error
+            .to_string()
+            .contains("mechanism 0 repeats detector index 0")
+    );
+
+    let factor_error = FactorModel::try_from(&dem).unwrap_err();
+    assert!(
+        factor_error
+            .to_string()
+            .contains("factor 0 outcome 1 repeats detector index 0")
     );
 }

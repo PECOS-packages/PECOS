@@ -16,6 +16,7 @@ use crate::{DecoderError, SparseDem};
 use std::collections::BTreeSet;
 
 const PROBABILITY_SUM_TOLERANCE: f64 = 1e-10;
+const BINARY_COMPLEMENT_RELATIVE_TOLERANCE: f64 = 1e-12;
 
 /// One mutually exclusive outcome of a factor.
 #[derive(Clone, Debug, PartialEq)]
@@ -136,19 +137,15 @@ impl FactorModel {
         self.num_observables
     }
 
-    pub(crate) fn normalized_factor(&self, factor_index: usize) -> NormalizedFactor {
-        normalize_factor(&self.factors[factor_index])
-    }
-
-    pub(crate) fn is_binary_shaped(&self) -> bool {
-        self.factors
-            .iter()
-            .all(|factor| !matches!(normalize_factor(factor), NormalizedFactor::Nary(_)))
+    pub(crate) fn normalized_factors(&self) -> Vec<NormalizedFactor> {
+        self.factors.iter().map(normalize_factor).collect()
     }
 }
 
-impl From<&SparseDem> for FactorModel {
-    fn from(dem: &SparseDem) -> Self {
+impl TryFrom<&SparseDem> for FactorModel {
+    type Error = DecoderError;
+
+    fn try_from(dem: &SparseDem) -> Result<Self, Self::Error> {
         let factors = dem
             .mechanisms
             .iter()
@@ -167,11 +164,7 @@ impl From<&SparseDem> for FactorModel {
                 ],
             })
             .collect();
-        Self {
-            factors,
-            num_detectors: dem.num_detectors,
-            num_observables: dem.num_observables,
-        }
+        Self::new(factors, dem.num_detectors, dem.num_observables)
     }
 }
 
@@ -194,7 +187,13 @@ fn normalize_factor(factor: &Factor) -> NormalizedFactor {
         let toggle_index = usize::from(outcomes[0].is_empty());
         let baseline_index = 1 - toggle_index;
         let complement = 1.0 - outcomes[toggle_index].probability;
-        if outcomes[baseline_index].probability.to_bits() == complement.to_bits() {
+        let baseline = outcomes[baseline_index].probability;
+        // Agreement at 1e-12 relative is float-roundoff noise: it is thousands
+        // of times machine epsilon, covers decimal-literal pairs in either
+        // listing order, and remains three decades below the engine's 1e-9
+        // acceptance bar. Larger disagreement is deliberate parameterization
+        // and stays faithful on the N-ary kernel.
+        if (baseline - complement).abs() <= BINARY_COMPLEMENT_RELATIVE_TOLERANCE * baseline {
             let toggle = outcomes[toggle_index].clone();
             return NormalizedFactor::Binary { outcomes, toggle };
         }
@@ -223,4 +222,33 @@ fn validate_outcome_indices(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Factor, FactorModel, Outcome};
+    use crate::deadline_column_order_for_factors;
+
+    #[test]
+    fn factor_ordering_errors_name_the_factor() {
+        // Public constructors reject this model. Construct it here only to
+        // exercise the ordering helper's factor-specific diagnostic.
+        let model = FactorModel {
+            factors: vec![Factor {
+                outcomes: vec![Outcome {
+                    probability: 1.0,
+                    detectors: vec![1],
+                    observables: Vec::new(),
+                }],
+            }],
+            num_detectors: 1,
+            num_observables: 0,
+        };
+        let error = deadline_column_order_for_factors(&model).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("factor 0 detector index 1 is out of range 0..1")
+        );
+    }
 }

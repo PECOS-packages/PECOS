@@ -103,7 +103,7 @@ pub fn deadline_column_order(dem: &SparseDem) -> Result<Vec<usize>, DecoderError
         .map(|(_, detectors, _)| detectors.clone())
         .collect();
     let time_order: Vec<usize> = (0..dem.mechanisms.len()).collect();
-    deadline_order_for_sequence(&supports, dem.num_detectors, &time_order)
+    deadline_order_for_sequence(&supports, dem.num_detectors, "mechanism", &time_order)
 }
 
 /// Generate the backward deadline-optimized processing order for a sparse DEM.
@@ -124,7 +124,7 @@ pub fn backward_deadline_column_order(dem: &SparseDem) -> Result<Vec<usize>, Dec
         .collect();
     let mut reversed_forward = deadline_column_order(dem)?;
     reversed_forward.reverse();
-    deadline_order_for_sequence(&supports, dem.num_detectors, &reversed_forward)
+    deadline_order_for_sequence(&supports, dem.num_detectors, "mechanism", &reversed_forward)
 }
 
 /// Generate the deadline-optimized processing order for a factor model.
@@ -139,7 +139,7 @@ pub fn backward_deadline_column_order(dem: &SparseDem) -> Result<Vec<usize>, Dec
 pub fn deadline_column_order_for_factors(model: &FactorModel) -> Result<Vec<usize>, DecoderError> {
     let supports = factor_supports(model);
     let time_order: Vec<usize> = (0..model.factors().len()).collect();
-    deadline_order_for_sequence(&supports, model.num_detectors(), &time_order)
+    deadline_order_for_sequence(&supports, model.num_detectors(), "factor", &time_order)
 }
 
 /// Generate the backward deadline-optimized processing order for a factor model.
@@ -154,7 +154,12 @@ pub fn backward_deadline_column_order_for_factors(
     let supports = factor_supports(model);
     let mut reversed_forward = deadline_column_order_for_factors(model)?;
     reversed_forward.reverse();
-    deadline_order_for_sequence(&supports, model.num_detectors(), &reversed_forward)
+    deadline_order_for_sequence(
+        &supports,
+        model.num_detectors(),
+        "factor",
+        &reversed_forward,
+    )
 }
 
 /// Retained unnormalized joint log mass for one logical label.
@@ -432,11 +437,18 @@ impl TrellisDecoder {
         for mechanism_index in order {
             let (probability, detectors, observables) = &dem.mechanisms[mechanism_index];
             validate_probability(*probability, mechanism_index)?;
-            validate_indices(detectors, dem.num_detectors, "detector", mechanism_index)?;
+            validate_indices(
+                detectors,
+                dem.num_detectors,
+                "detector",
+                "mechanism",
+                mechanism_index,
+            )?;
             validate_indices(
                 observables,
                 dem.num_observables,
                 "observable",
+                "mechanism",
                 mechanism_index,
             )?;
             if *probability == 0.0 {
@@ -581,8 +593,10 @@ impl TrellisDecoder {
 
     /// Construct a decoder from a validated multi-outcome factor model.
     ///
-    /// Binary-shaped models delegate to [`Self::from_sparse_dem`] so their
-    /// floating-point path is identical to the equivalent sparse DEM. Models
+    /// Binary-shaped models delegate to [`Self::from_sparse_dem`] and are
+    /// bitwise-identical to the equivalent sparse DEM parameterized by each
+    /// toggle probability. A stored baseline may differ from that DEM's implied
+    /// complement only within the binary complement relative tolerance. Models
     /// containing any genuinely multi-outcome factor use the N-ary kernel.
     ///
     /// # Errors
@@ -594,9 +608,14 @@ impl TrellisDecoder {
         model: &FactorModel,
         config: TrellisConfig,
     ) -> Result<Self, DecoderError> {
-        if model.is_binary_shaped() {
-            let mechanisms = (0..model.factors().len())
-                .map(|factor_index| match model.normalized_factor(factor_index) {
+        let normalized_factors = model.normalized_factors();
+        if normalized_factors
+            .iter()
+            .all(|factor| !matches!(factor, NormalizedFactor::Nary(_)))
+        {
+            let mechanisms = normalized_factors
+                .into_iter()
+                .map(|factor| match factor {
                     NormalizedFactor::Forced(outcome) => {
                         (1.0, outcome.detectors, outcome.observables)
                     }
@@ -615,7 +634,8 @@ impl TrellisDecoder {
             return Self::from_sparse_dem(&dem, config);
         }
 
-        if config.bp_score_iterations > 0 {
+        if config.bp_score_iterations > 0 && !(config.k == usize::MAX && config.delta.is_infinite())
+        {
             return Err(DecoderError::InvalidConfiguration(
                 "BP-guided pruning requires a binary model".into(),
             ));
@@ -637,9 +657,19 @@ impl TrellisDecoder {
         let mut forced_syndrome = vec![0; detector_words];
         let mut forced_logical = vec![0; logical_words];
         let mut raw_columns: Vec<Vec<ColumnOutcome>> = Vec::with_capacity(model.factors().len());
+        let mut normalized_factors: Vec<Option<NormalizedFactor>> =
+            normalized_factors.into_iter().map(Some).collect();
 
         for factor_index in order {
-            match model.normalized_factor(factor_index) {
+            let factor = normalized_factors
+                .get_mut(factor_index)
+                .and_then(Option::take)
+                .ok_or_else(|| {
+                    DecoderError::InternalError(
+                        "validated column_order did not select each normalized factor once".into(),
+                    )
+                })?;
+            match factor {
                 NormalizedFactor::Forced(outcome) => {
                     let detector_toggle = indices_to_words(&outcome.detectors, detector_words);
                     let logical_toggle = indices_to_words(&outcome.observables, logical_words);
@@ -1117,6 +1147,7 @@ type DeadlineKey = (usize, usize, usize, usize, usize);
 fn deadline_order_for_sequence(
     supports: &[Vec<u32>],
     num_detectors: usize,
+    item_noun: &str,
     sequence: &[usize],
 ) -> Result<Vec<usize>, DecoderError> {
     let sentinel = supports.len() + 1;
@@ -1125,7 +1156,13 @@ fn deadline_order_for_sequence(
 
     for (position, &mechanism_index) in sequence.iter().enumerate() {
         let detectors = &supports[mechanism_index];
-        validate_indices(detectors, num_detectors, "detector", mechanism_index)?;
+        validate_indices(
+            detectors,
+            num_detectors,
+            "detector",
+            item_noun,
+            mechanism_index,
+        )?;
         for &detector in detectors {
             let detector = detector as usize;
             first_touch[detector] = first_touch[detector].min(position);
@@ -1282,18 +1319,19 @@ fn validate_indices(
     indices: &[u32],
     upper_bound: usize,
     kind: &str,
-    mechanism_index: usize,
+    item_noun: &str,
+    item_index: usize,
 ) -> Result<(), DecoderError> {
     let mut seen = std::collections::BTreeSet::new();
     for &index in indices {
         if index as usize >= upper_bound {
             return Err(DecoderError::InvalidConfiguration(format!(
-                "mechanism {mechanism_index} {kind} index {index} is out of range 0..{upper_bound}"
+                "{item_noun} {item_index} {kind} index {index} is out of range 0..{upper_bound}"
             )));
         }
         if !seen.insert(index) {
             return Err(DecoderError::InvalidConfiguration(format!(
-                "mechanism {mechanism_index} repeats {kind} index {index}"
+                "{item_noun} {item_index} repeats {kind} index {index}"
             )));
         }
     }

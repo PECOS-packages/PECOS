@@ -33,6 +33,11 @@ p11 = sim.prob_bitstring([True, True])
 assert math.isclose(p00, 0.5, abs_tol=1e-12)
 assert math.isclose(p11, 0.5, abs_tol=1e-12)
 
+# Batched queries share common-prefix projection work and return exactly the
+# per-query results.
+batch = sim.prob_bitstrings([[False, False], [True, True]])
+assert batch == [p00, p11]
+
 # Python reads auto-flush lazy operations and merged RZ rotations.
 accuracy = {
     "state_exact": sim.is_state_exact(),

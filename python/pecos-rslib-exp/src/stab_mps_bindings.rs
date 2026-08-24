@@ -344,6 +344,21 @@ impl PyStabMps {
         Ok(bits)
     }
 
+    fn bitstrings(&self, value: &Bound<'_, PyAny>, method: &str) -> PyResult<Vec<Vec<bool>>> {
+        let iterator = value.try_iter().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "{method}: queries must be an iterable of bitstrings"
+            ))
+        })?;
+        iterator
+            .enumerate()
+            .map(|(query_index, item)| {
+                let item = item?;
+                self.bitstring(&item, &format!("{method}: query {query_index}"))
+            })
+            .collect()
+    }
+
     fn pauli_kind(value: &str) -> PyResult<PauliKind> {
         match value {
             "X" => Ok(PauliKind::X),
@@ -572,9 +587,10 @@ impl PyStabMps {
     /// Indexing is little-endian: the entry for `bits` is at
     /// `sum(int(bits[q]) << q)`. This allocates `2**num_qubits` amplitudes and
     /// constructs dense operators, so it is restricted to `num_qubits <= 14`.
-    /// Prefer `amplitude_iterative`, `prob_bitstring`, `pauli_expectation`, or
-    /// `sample_bitstrings` for scalable reads. Pending work is auto-flushed;
-    /// a tracked Pauli frame must be materialized explicitly.
+    /// Prefer `amplitude_iterative`, `prob_bitstring`, `prob_bitstrings`,
+    /// `pauli_expectation`, or `sample_bitstrings` for scalable reads. Pending
+    /// work is auto-flushed; a tracked Pauli frame must be materialized
+    /// explicitly.
     ///
     /// Raises `ValueError` when more than 14 qubits are present.
     fn state_vector(&mut self, py: Python<'_>) -> PyResult<Py<PyList>> {
@@ -677,6 +693,28 @@ impl PyStabMps {
         let bitstring = self.bitstring(bitstring, "prob_bitstring")?;
         self.inner.flush();
         Ok(self.inner.prob_bitstring(&bitstring))
+    }
+
+    /// Return computational-basis probabilities for a batch of bitstrings.
+    ///
+    /// The outer iterable contains query bitstrings, each with exactly
+    /// `num_qubits` actual Python `bool` values. For every query,
+    /// `bitstring[q]` specifies qubit `q`. Results preserve input order and
+    /// duplicates and equal the corresponding `prob_bitstring` calls, while
+    /// common-prefix forced projections are shared. An empty batch returns an
+    /// empty list. Pending work is auto-flushed; materialize a tracked Pauli
+    /// frame explicitly.
+    ///
+    /// Raises `ValueError` for a malformed batch or bitstring.
+    fn prob_bitstrings(&mut self, bitstrings: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
+        let bitstrings = self.bitstrings(bitstrings, "prob_bitstrings")?;
+        // Flush before the empty-batch return so the documented auto-flush
+        // holds for every call, matching prob_bitstring.
+        self.inner.flush();
+        if bitstrings.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(self.inner.prob_bitstrings(&bitstrings))
     }
 
     /// Return second Renyi entropy across the cut after qubits `[0, cut)`.

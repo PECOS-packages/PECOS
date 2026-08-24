@@ -240,8 +240,9 @@ results = sim(Qasm(circuit)).quantum(stab_vec()).run(100)
 ### Qutrit and Qudit Simulators
 
 The Rust `QuditStateVec` and `QuditDensityMatrix` APIs simulate a uniform local
-dimension rather than assuming qubits. Their qutrit aliases use the basis
-`|0>, |1>, |L>` and support arbitrary local unitaries, embedded qubit gates,
+dimension rather than assuming qubits. Their qutrit wrappers fix the local
+dimension to three, use the basis `|0>, |1>, |L>`, and support arbitrary local
+unitaries, embedded qubit gates,
 full and computational-subspace measurements, preparation and reset, and Kraus
 channels. The state-vector backend samples channel trajectories, while the
 density-matrix backend evolves mixed states exactly.

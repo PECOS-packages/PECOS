@@ -32,28 +32,31 @@ Defines simulator traits and provides native Rust quantum simulator implementati
 
 ## Qutrit and Qudit Simulation
 
-The generalized simulators use a uniform local dimension. Their qutrit aliases use
-the physical basis `|0>, |1>, |L>` and are designed for leakage studies and
-independent noise-model verification:
+The generalized simulators use a uniform local dimension. Their qutrit wrappers
+fix that dimension to three, use the physical basis `|0>, |1>, |L>`, and are
+designed for leakage studies and independent noise-model verification:
 
 ```rust
 use num_complex::Complex64;
 use pecos_simulators::{QutritDensityMatrix, qutrit_leakage_channel};
 
-let inv_sqrt_two = 1.0 / 2.0_f64.sqrt();
-let h = [
-    Complex64::new(inv_sqrt_two, 0.0),
-    Complex64::new(inv_sqrt_two, 0.0),
-    Complex64::new(inv_sqrt_two, 0.0),
-    Complex64::new(-inv_sqrt_two, 0.0),
-];
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let inv_sqrt_two = 1.0 / 2.0_f64.sqrt();
+    let h = [
+        Complex64::new(inv_sqrt_two, 0.0),
+        Complex64::new(inv_sqrt_two, 0.0),
+        Complex64::new(inv_sqrt_two, 0.0),
+        Complex64::new(-inv_sqrt_two, 0.0),
+    ];
 
-let mut state = QutritDensityMatrix::qutrit_with_seed(1, 42)?;
-state
-    .apply_embedded_qubit_unitary(0, &h)?
-    .apply_kraus(&[0], &qutrit_leakage_channel(0.01)?)?;
-let probabilities = state.outcome_probabilities(0)?;
-# Ok::<(), Box<dyn std::error::Error>>(())
+    let mut state = QutritDensityMatrix::with_seed(1, 42)?;
+    state
+        .apply_embedded_qubit_unitary(0, &h)?
+        .apply_kraus(&[0], &qutrit_leakage_channel(0.01)?)?;
+    let probabilities = state.outcome_probabilities(0)?;
+    println!("{probabilities:?}");
+    Ok(())
+}
 ```
 
 Site zero is the least-significant radix digit. In a multi-site operation,

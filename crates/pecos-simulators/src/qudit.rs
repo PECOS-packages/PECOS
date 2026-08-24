@@ -18,6 +18,7 @@
 //! least-significant digit of the operator's row and column indices.
 
 use core::fmt::{Debug, Display, Formatter};
+use core::ops::{Deref, DerefMut};
 use nalgebra::DMatrix;
 use num_complex::Complex64;
 use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
@@ -219,7 +220,107 @@ where
 }
 
 /// A qutrit state-vector simulator using the basis `|0>, |1>, |L>`.
-pub type QutritStateVec<R = PecosRng> = QuditStateVec<R>;
+///
+/// Unlike [`QuditStateVec`], this wrapper fixes the local dimension to three.
+#[derive(Clone, Debug)]
+pub struct QutritStateVec<R = PecosRng>(QuditStateVec<R>)
+where
+    R: Rng + SeedableRng + Debug + Clone;
+
+impl QutritStateVec<PecosRng> {
+    /// Bytes required for the dense qutrit amplitudes, excluding container overhead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension overflows.
+    pub fn required_memory_bytes(num_sites: usize) -> Result<usize, QuditError> {
+        QuditStateVec::required_memory_bytes(num_sites, 3)
+    }
+
+    /// Create a qutrit simulator in `|0...0>` with entropy-derived randomness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn new(num_sites: usize) -> Result<Self, QuditError> {
+        Ok(Self(QuditStateVec::new(num_sites, 3)?))
+    }
+
+    /// Alias for [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn qutrit(num_sites: usize) -> Result<Self, QuditError> {
+        Self::new(num_sites)
+    }
+
+    /// Create a qutrit simulator in `|0...0>` with deterministic randomness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn with_seed(num_sites: usize, seed: u64) -> Result<Self, QuditError> {
+        Ok(Self(QuditStateVec::with_seed(num_sites, 3, seed)?))
+    }
+
+    /// Alias for [`Self::with_seed`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn qutrit_with_seed(num_sites: usize, seed: u64) -> Result<Self, QuditError> {
+        Self::with_seed(num_sites, seed)
+    }
+}
+
+impl<R> QutritStateVec<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    /// Create a qutrit simulator in `|0...0>` with a caller-provided RNG.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn with_rng(num_sites: usize, rng: R) -> Result<Self, QuditError> {
+        Ok(Self(QuditStateVec::with_rng(num_sites, 3, rng)?))
+    }
+
+    /// Construct a qutrit simulator from a normalized state vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the state length, entries, or normalization is invalid.
+    pub fn from_state(num_sites: usize, state: Vec<Complex64>, rng: R) -> Result<Self, QuditError> {
+        Ok(Self(QuditStateVec::from_state(num_sites, 3, state, rng)?))
+    }
+
+    /// Consume the qutrit wrapper and return its generalized simulator.
+    pub fn into_inner(self) -> QuditStateVec<R> {
+        self.0
+    }
+}
+
+impl<R> Deref for QutritStateVec<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    type Target = QuditStateVec<R>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<R> DerefMut for QutritStateVec<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 impl QuditStateVec<PecosRng> {
     /// Bytes required for the dense state amplitudes, excluding container overhead.
@@ -458,7 +559,7 @@ where
         if total <= PROBABILITY_TOLERANCE {
             return Err(QuditError::ZeroNorm);
         }
-        if (total - 1.0).abs() > PROBABILITY_TOLERANCE * 10.0 {
+        if (total - 1.0).abs() > channel_normalization_tolerance(local_size) {
             return Err(QuditError::NotNormalized { norm: total });
         }
         let selected = sample_distribution(&mut self.rng, &probabilities, total);
@@ -508,7 +609,10 @@ where
                 probabilities[outcome] += branch.iter().map(Complex64::norm_sqr).sum::<f64>();
             }
         }
-        validate_total_probability(probabilities.iter().sum())?;
+        validate_total_probability(
+            probabilities.iter().sum(),
+            channel_normalization_tolerance(local_size),
+        )?;
         Ok(probabilities)
     }
 
@@ -568,7 +672,7 @@ where
             branches.push(branch);
         }
         let total = branch_probabilities.iter().sum::<f64>();
-        validate_total_probability(total)?;
+        validate_total_probability(total, channel_normalization_tolerance(local_size))?;
         let selected = sample_distribution(&mut self.rng, &branch_probabilities, total);
         let (outcome, operator_index, _) = indexed_operators[selected];
         let branch_probability = branch_probabilities[selected];
@@ -778,7 +882,135 @@ where
 }
 
 /// A qutrit density-matrix simulator using the basis `|0>, |1>, |L>`.
-pub type QutritDensityMatrix<R = PecosRng> = QuditDensityMatrix<R>;
+///
+/// Unlike [`QuditDensityMatrix`], this wrapper fixes the local dimension to three.
+#[derive(Clone, Debug)]
+pub struct QutritDensityMatrix<R = PecosRng>(QuditDensityMatrix<R>)
+where
+    R: Rng + SeedableRng + Debug + Clone;
+
+impl QutritDensityMatrix<PecosRng> {
+    /// Bytes required for the dense qutrit density operator, excluding container overhead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension overflows.
+    pub fn required_memory_bytes(num_sites: usize) -> Result<usize, QuditError> {
+        QuditDensityMatrix::required_memory_bytes(num_sites, 3)
+    }
+
+    /// Create `|0...0><0...0|` with entropy-derived randomness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn new(num_sites: usize) -> Result<Self, QuditError> {
+        Ok(Self(QuditDensityMatrix::new(num_sites, 3)?))
+    }
+
+    /// Alias for [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn qutrit(num_sites: usize) -> Result<Self, QuditError> {
+        Self::new(num_sites)
+    }
+
+    /// Create `|0...0><0...0|` with deterministic randomness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn with_seed(num_sites: usize, seed: u64) -> Result<Self, QuditError> {
+        Ok(Self(QuditDensityMatrix::with_seed(num_sites, 3, seed)?))
+    }
+
+    /// Alias for [`Self::with_seed`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn qutrit_with_seed(num_sites: usize, seed: u64) -> Result<Self, QuditError> {
+        Self::with_seed(num_sites, seed)
+    }
+}
+
+impl<R> QutritDensityMatrix<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    /// Create `|0...0><0...0|` with a caller-provided RNG.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Hilbert-space dimension or allocation is invalid.
+    pub fn with_rng(num_sites: usize, rng: R) -> Result<Self, QuditError> {
+        Ok(Self(QuditDensityMatrix::with_rng(num_sites, 3, rng)?))
+    }
+
+    /// Construct an exact simulator from a row-major qutrit density operator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the entries do not form a normalized, Hermitian,
+    /// positive-semidefinite qutrit density operator.
+    pub fn from_density_matrix(
+        num_sites: usize,
+        density_matrix: Vec<Complex64>,
+        rng: R,
+    ) -> Result<Self, QuditError> {
+        Ok(Self(QuditDensityMatrix::from_density_matrix(
+            num_sites,
+            3,
+            density_matrix,
+            rng,
+        )?))
+    }
+
+    /// Construct from a trace-one matrix without checking Hermiticity or positivity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the matrix length, entries, or trace is invalid.
+    pub fn from_density_matrix_unchecked(
+        num_sites: usize,
+        density_matrix: Vec<Complex64>,
+        rng: R,
+    ) -> Result<Self, QuditError> {
+        Ok(Self(QuditDensityMatrix::from_density_matrix_unchecked(
+            num_sites,
+            3,
+            density_matrix,
+            rng,
+        )?))
+    }
+
+    /// Consume the qutrit wrapper and return its generalized simulator.
+    pub fn into_inner(self) -> QuditDensityMatrix<R> {
+        self.0
+    }
+}
+
+impl<R> Deref for QutritDensityMatrix<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    type Target = QuditDensityMatrix<R>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<R> DerefMut for QutritDensityMatrix<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 impl QuditDensityMatrix<PecosRng> {
     /// Bytes required for the dense density operator, excluding container overhead.
@@ -1135,16 +1367,19 @@ where
                 *value += contribution;
             }
         }
-        self.density_matrix = result;
-        let trace = self.trace();
+        let trace = (0..dimension)
+            .map(|index| result[index * dimension + index])
+            .sum::<Complex64>();
         if !trace.re.is_finite() || !trace.im.is_finite() {
             return Err(QuditError::NonFiniteValue);
         }
-        if (trace.re - 1.0).abs() > PROBABILITY_TOLERANCE * 10.0
-            || trace.im.abs() > PROBABILITY_TOLERANCE * 10.0
+        let normalization_tolerance = channel_normalization_tolerance(local_size);
+        if (trace.re - 1.0).abs() > normalization_tolerance
+            || trace.im.abs() > normalization_tolerance
         {
             return Err(QuditError::NotNormalized { norm: trace.re });
         }
+        self.density_matrix = result;
         Ok(self)
     }
 
@@ -1187,7 +1422,10 @@ where
                     .sum::<f64>();
             }
         }
-        validate_total_probability(probabilities.iter().sum())?;
+        validate_total_probability(
+            probabilities.iter().sum(),
+            channel_normalization_tolerance(local_size),
+        )?;
         Ok(probabilities)
     }
 
@@ -1245,7 +1483,7 @@ where
             outcome_states.push(outcome_state);
         }
         let total = probabilities.iter().sum::<f64>();
-        validate_total_probability(total)?;
+        validate_total_probability(total, channel_normalization_tolerance(local_size))?;
         let selected = sample_distribution(&mut self.rng, &probabilities, total);
         let probability = probabilities[selected];
         self.density_matrix = outcome_states.swap_remove(selected);
@@ -1449,7 +1687,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if `local_dimension` is less than two.
+/// Returns an error if `local_dimension` is less than two or the supplied matrix is not unitary.
 pub fn embedded_qubit_unitary(
     local_dimension: usize,
     qubit_unitary: &[Complex64; 4],
@@ -1457,6 +1695,7 @@ pub fn embedded_qubit_unitary(
     if local_dimension < 2 {
         return Err(QuditError::InvalidLocalDimension(local_dimension));
     }
+    validate_unitary(qubit_unitary, 2)?;
     let mut operator = zeroed_complex_entries(square(local_dimension)?)?;
     for level in 2..local_dimension {
         operator[level * local_dimension + level] = Complex64::new(1.0, 0.0);
@@ -1717,16 +1956,21 @@ fn validate_instrument_shape(outcomes: &[Vec<Vec<Complex64>>]) -> Result<(), Qud
     }
 }
 
-fn validate_total_probability(total: f64) -> Result<(), QuditError> {
+fn validate_total_probability(total: f64, tolerance: f64) -> Result<(), QuditError> {
     if !total.is_finite() {
         Err(QuditError::NonFiniteValue)
     } else if total <= PROBABILITY_TOLERANCE {
         Err(QuditError::ZeroNorm)
-    } else if (total - 1.0).abs() > PROBABILITY_TOLERANCE * 10.0 {
+    } else if (total - 1.0).abs() > tolerance {
         Err(QuditError::NotNormalized { norm: total })
     } else {
         Ok(())
     }
+}
+
+fn channel_normalization_tolerance(local_size: usize) -> f64 {
+    let scale = u32::try_from(local_size).map_or(f64::from(u32::MAX), f64::from);
+    OPERATOR_TOLERANCE * scale
 }
 
 fn validate_operator(

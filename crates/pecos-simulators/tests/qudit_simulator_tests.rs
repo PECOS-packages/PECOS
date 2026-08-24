@@ -15,7 +15,7 @@ use num_complex::Complex64;
 use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::{
     QuditDensityMatrix, QuditError, QuditStateVec, QutritDensityMatrix, QutritStateVec, basis_swap,
-    qutrit_leakage_channel, qutrit_seepage_channel,
+    embedded_qubit_unitary, qutrit_leakage_channel, qutrit_seepage_channel,
 };
 use std::f64::consts::FRAC_1_SQRT_2;
 
@@ -64,6 +64,10 @@ fn constructors_validate_dimension_and_normalization() {
     assert_eq!(state.local_dimension(), 3);
     assert_eq!(state.dimension(), 9);
     assert_close(state.probability(0).unwrap(), 1.0);
+
+    let density = QutritDensityMatrix::with_seed(2, 7).unwrap();
+    assert_eq!(density.local_dimension(), 3);
+    assert_eq!(density.dimension(), 9);
 }
 
 #[test]
@@ -97,6 +101,37 @@ fn embedded_qubit_gates_leave_the_leakage_level_unchanged() {
         .apply_embedded_qubit_unitary(0, &h)
         .unwrap();
     assert_close(state.probability(2).unwrap(), 1.0);
+}
+
+#[test]
+fn embedded_qubit_helper_rejects_nonunitary_input() {
+    let nonunitary = [c(1.0), c(1.0), c(0.0), c(1.0)];
+    assert!(matches!(
+        embedded_qubit_unitary(3, &nonunitary).unwrap_err(),
+        QuditError::NonUnitary { .. }
+    ));
+}
+
+#[test]
+fn accepted_kraus_tolerance_is_consistent_with_result_normalization() {
+    let scale = (1.0 + 5e-11_f64).sqrt();
+    let mut operator = basis_swap(3, 0, 0).unwrap();
+    for value in &mut operator {
+        *value *= scale;
+    }
+    let channel = vec![operator];
+
+    let mut trajectory = QutritStateVec::with_seed(1, 7).unwrap();
+    trajectory.apply_kraus(&[0], &channel).unwrap();
+    assert_close(
+        trajectory.state().iter().map(Complex64::norm_sqr).sum(),
+        1.0,
+    );
+
+    let mut exact = QutritDensityMatrix::with_seed(1, 7).unwrap();
+    exact.apply_kraus(&[0], &channel).unwrap();
+    assert!((exact.trace().re - 1.0).abs() < 1e-10);
+    assert_close(exact.trace().im, 0.0);
 }
 
 #[test]
@@ -453,6 +488,11 @@ fn memory_estimates_cover_qudits_and_density_operators() {
     assert_eq!(
         QuditDensityMatrix::required_memory_bytes(3, 4).unwrap(),
         65_536
+    );
+    assert_eq!(QutritStateVec::required_memory_bytes(3).unwrap(), 432);
+    assert_eq!(
+        QutritDensityMatrix::required_memory_bytes(3).unwrap(),
+        11_664
     );
 }
 

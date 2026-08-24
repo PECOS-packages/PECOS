@@ -428,17 +428,23 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
             })
             .collect::<BTreeSet<_>>();
 
-        if !measured.is_empty() {
-            self.builder
-                .meas_crosstalk_global_payload(&measured.iter().copied().collect::<Vec<_>>());
-            let local = self.local_victims(&measured);
-            if !local.is_empty() {
-                self.builder.meas_crosstalk_local_payload(&local);
-            }
-        }
-
         let mut expected = Vec::new();
+        let mut crosstalk_added = false;
         for operation in operations {
+            if !crosstalk_added
+                && matches!(
+                    &operation,
+                    Operation::Measure { .. } | Operation::MeasureLeaked { .. }
+                )
+            {
+                self.builder
+                    .meas_crosstalk_global_payload(&measured.iter().copied().collect::<Vec<_>>());
+                let local = self.local_victims(&measured);
+                if !local.is_empty() {
+                    self.builder.meas_crosstalk_local_payload(&local);
+                }
+                crosstalk_added = true;
+            }
             match operation {
                 Operation::RXYGate {
                     qubit_id,

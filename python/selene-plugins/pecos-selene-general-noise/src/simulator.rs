@@ -29,87 +29,119 @@ impl SeleneSimulator {
                 .map_err(|error| Self::error("qubit conversion", error))?;
             let angle = |index: usize| gate.angles[index].to_radians_signed();
             match gate.gate_type {
-                GateType::X => operations.push(Operation::RXYGate {
-                    qubit_id: qubits[0],
-                    theta: PI,
-                    phi: 0.0,
-                }),
-                GateType::Y => operations.push(Operation::RXYGate {
-                    qubit_id: qubits[0],
-                    theta: PI,
-                    phi: PI / 2.0,
-                }),
-                GateType::Z => operations.push(Operation::RZGate {
-                    qubit_id: qubits[0],
-                    theta: PI,
-                }),
-                GateType::H => operations.push(Operation::RXYGate {
-                    qubit_id: qubits[0],
-                    theta: PI / 2.0,
-                    phi: -PI / 2.0,
-                }),
-                GateType::RX => operations.push(Operation::RXYGate {
-                    qubit_id: qubits[0],
-                    theta: angle(0),
-                    phi: 0.0,
-                }),
-                GateType::RY => operations.push(Operation::RXYGate {
-                    qubit_id: qubits[0],
-                    theta: angle(0),
-                    phi: PI / 2.0,
-                }),
-                GateType::RZ => operations.push(Operation::RZGate {
-                    qubit_id: qubits[0],
-                    theta: angle(0),
-                }),
-                GateType::R1XY => operations.push(Operation::RXYGate {
-                    qubit_id: qubits[0],
-                    theta: angle(0),
-                    phi: angle(1),
-                }),
-                GateType::RZZ => operations.push(Operation::RZZGate {
-                    qubit_id_1: qubits[0],
-                    qubit_id_2: qubits[1],
-                    theta: angle(0),
-                }),
-                GateType::SZZ => operations.push(Operation::RZZGate {
-                    qubit_id_1: qubits[0],
-                    qubit_id_2: qubits[1],
-                    theta: PI / 2.0,
-                }),
-                GateType::SZZdg => operations.push(Operation::RZZGate {
-                    qubit_id_1: qubits[0],
-                    qubit_id_2: qubits[1],
-                    theta: -PI / 2.0,
-                }),
-                GateType::SZ => operations.push(Operation::RZGate {
-                    qubit_id: qubits[0],
-                    theta: PI / 2.0,
-                }),
-                GateType::SZdg => operations.push(Operation::RZGate {
-                    qubit_id: qubits[0],
-                    theta: -PI / 2.0,
-                }),
-                GateType::T => operations.push(Operation::RZGate {
-                    qubit_id: qubits[0],
-                    theta: PI / 4.0,
-                }),
-                GateType::Tdg => operations.push(Operation::RZGate {
-                    qubit_id: qubits[0],
-                    theta: -PI / 4.0,
-                }),
-                GateType::MZ | GateType::MeasureLeaked => {
-                    let result_id = u64::try_from(measurement_count)
-                        .map_err(|error| Self::error("measurement ID conversion", error))?;
-                    operations.push(Operation::Measure {
-                        qubit_id: qubits[0],
-                        result_id,
-                    });
-                    measurement_count += 1;
+                GateType::X => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RXYGate {
+                        qubit_id,
+                        theta: PI,
+                        phi: 0.0,
+                    }));
                 }
-                GateType::PZ => operations.push(Operation::Reset {
-                    qubit_id: qubits[0],
-                }),
+                GateType::Y => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RXYGate {
+                        qubit_id,
+                        theta: PI,
+                        phi: PI / 2.0,
+                    }));
+                }
+                GateType::Z => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RZGate {
+                        qubit_id,
+                        theta: PI,
+                    }));
+                }
+                GateType::H => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RXYGate {
+                        qubit_id,
+                        theta: PI / 2.0,
+                        phi: -PI / 2.0,
+                    }));
+                }
+                GateType::RX => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RXYGate {
+                        qubit_id,
+                        theta: angle(0),
+                        phi: 0.0,
+                    }));
+                }
+                GateType::RY => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RXYGate {
+                        qubit_id,
+                        theta: angle(0),
+                        phi: PI / 2.0,
+                    }));
+                }
+                GateType::RZ => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RZGate {
+                        qubit_id,
+                        theta: angle(0),
+                    }));
+                }
+                GateType::R1XY => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RXYGate {
+                        qubit_id,
+                        theta: angle(0),
+                        phi: angle(1),
+                    }));
+                }
+                GateType::RZZ => {
+                    operations.extend(qubits.chunks_exact(2).map(|pair| Operation::RZZGate {
+                        qubit_id_1: pair[0],
+                        qubit_id_2: pair[1],
+                        theta: angle(0),
+                    }));
+                }
+                GateType::SZZ => {
+                    operations.extend(qubits.chunks_exact(2).map(|pair| Operation::RZZGate {
+                        qubit_id_1: pair[0],
+                        qubit_id_2: pair[1],
+                        theta: PI / 2.0,
+                    }));
+                }
+                GateType::SZZdg => {
+                    operations.extend(qubits.chunks_exact(2).map(|pair| Operation::RZZGate {
+                        qubit_id_1: pair[0],
+                        qubit_id_2: pair[1],
+                        theta: -PI / 2.0,
+                    }));
+                }
+                GateType::SZ => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RZGate {
+                        qubit_id,
+                        theta: PI / 2.0,
+                    }));
+                }
+                GateType::SZdg => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RZGate {
+                        qubit_id,
+                        theta: -PI / 2.0,
+                    }));
+                }
+                GateType::T => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RZGate {
+                        qubit_id,
+                        theta: PI / 4.0,
+                    }));
+                }
+                GateType::Tdg => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RZGate {
+                        qubit_id,
+                        theta: -PI / 4.0,
+                    }));
+                }
+                GateType::MZ | GateType::MeasureLeaked => {
+                    for qubit_id in qubits {
+                        let result_id = u64::try_from(measurement_count)
+                            .map_err(|error| Self::error("measurement ID conversion", error))?;
+                        operations.push(Operation::Measure {
+                            qubit_id,
+                            result_id,
+                        });
+                        measurement_count += 1;
+                    }
+                }
+                GateType::PZ => {
+                    operations.extend(qubits.iter().map(|&qubit_id| Operation::Reset { qubit_id }));
+                }
                 GateType::Idle
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::MeasCrosstalkLocalPayload => {}

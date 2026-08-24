@@ -49,6 +49,12 @@ groups rather than a hard-coded device layout.
 
 ## Development
 
+The test suite includes a device-neutral statistical conformance framework. It
+checks small analytic outcome distributions against samples from the native
+plugin, rejects circuits that cannot distinguish a channel from their comparison
+model, and runs against both Stim and PECOS StateVec. See
+[`tests/README.md`](tests/README.md) for its coverage and extension rules.
+
 From the PECOS repository root:
 
 ```bash

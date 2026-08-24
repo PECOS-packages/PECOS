@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+from functools import cache
 from itertools import product
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from selene_sim.instance import SeleneInstance
 
 type OperationSequence = tuple[int, ...]
+
+pytestmark = pytest.mark.slow
 
 LOCAL_GATES: tuple[Matrix, ...] = (
     rx(math.pi / 2),
@@ -150,8 +153,17 @@ def _generated_two_qubit_sequences() -> tuple[OperationSequence, ...]:
 
 ONE_QUBIT_SEQUENCES = _generated_one_qubit_sequences()
 TWO_QUBIT_SEQUENCES = _generated_two_qubit_sequences()
-ONE_QUBIT_RUNNERS = tuple(_one_qubit_program(sequence) for sequence in ONE_QUBIT_SEQUENCES)
-TWO_QUBIT_RUNNERS = tuple(_two_qubit_program(sequence) for sequence in TWO_QUBIT_SEQUENCES)
+
+
+@cache
+def _one_qubit_runner(case_id: int) -> SeleneInstance:
+    return _one_qubit_program(ONE_QUBIT_SEQUENCES[case_id])
+
+
+@cache
+def _two_qubit_runner(case_id: int) -> SeleneInstance:
+    return _two_qubit_program(TWO_QUBIT_SEQUENCES[case_id])
+
 
 ONE_QUBIT_NOISE = QutritNoise(
     preparation_probability=0.08,
@@ -212,7 +224,7 @@ def test_generated_one_qubit_matrix_matches_qutrit_reference(
     """Generated mixed-axis circuits agree with the exact qutrit oracle."""
     operations = ONE_QUBIT_SEQUENCES[case_id]
     experiment = ConformanceExperiment(
-        runner=ONE_QUBIT_RUNNERS[case_id],
+        runner=_one_qubit_runner(case_id),
         n_qubits=1,
         result_tags=("outcome",),
         parameters=ONE_QUBIT_PARAMETERS,
@@ -229,7 +241,7 @@ def test_generated_entangling_matrix_matches_qutrit_reference(case_id: int) -> N
     """Generated parity-sensitive circuits agree for uniform two-qubit noise."""
     operations = TWO_QUBIT_SEQUENCES[case_id]
     experiment = ConformanceExperiment(
-        runner=TWO_QUBIT_RUNNERS[case_id],
+        runner=_two_qubit_runner(case_id),
         n_qubits=2,
         result_tags=("q0", "q1"),
         parameters=TWO_QUBIT_PARAMETERS,

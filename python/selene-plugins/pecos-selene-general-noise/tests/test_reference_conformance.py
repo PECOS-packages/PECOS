@@ -51,7 +51,14 @@ def preparation_crosstalk_probe() -> None:
     result("source", measure(source).read())
 
 
-@pytest.mark.parametrize(("error_seed", "simulator_seed"), [(17, 31), (101, 103), (211, 223)])
+@pytest.mark.parametrize(
+    ("error_seed", "simulator_seed"),
+    [
+        pytest.param(17, 31, id="primary"),
+        pytest.param(101, 103, id="repeat-1", marks=pytest.mark.slow),
+        pytest.param(211, 223, id="repeat-2", marks=pytest.mark.slow),
+    ],
+)
 def test_combined_basis_channels_match_independent_reference(error_seed: int, simulator_seed: int) -> None:
     """Combined SPAM, Pauli, emission, leakage, and seepage match an exact oracle."""
     reference_noise = BasisNoise(

@@ -35,6 +35,15 @@ them entirely from standard `rx`, `ry`, `rz`, and `cx` operations. Direct Rust
 adapter tests separately exercise Selene's leakage-valued measurement operation,
 so that path does not require a hardware gate library.
 
+The generated matrix and additional statistical seed repetitions carry the
+repository's `slow` marker. The default fast lane retains one seed for every
+qutrit circuit family. Run the two layers explicitly with:
+
+```console
+uv run pytest python/selene-plugins/pecos-selene-general-noise/tests -m "not slow"
+uv run pytest python/selene-plugins/pecos-selene-general-noise/tests -m slow
+```
+
 Every behavioral case also supplies a comparison distribution. Before taking
 shots, the framework verifies that the circuit is sensitive enough to distinguish
 the configured channel from that comparison. This prevents a test from passing

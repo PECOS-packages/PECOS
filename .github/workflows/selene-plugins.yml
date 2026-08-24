@@ -125,7 +125,12 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest python/selene-plugins/ -v --tb=short
+          pytest python/selene-plugins/ -m "not slow" -v --tb=short
+
+      - name: Run extended semantic tests
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        run: |
+          pytest python/selene-plugins/ -m slow -v --tb=short
 
   # Build wheels for distribution
   build-wheels:

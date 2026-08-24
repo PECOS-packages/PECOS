@@ -243,7 +243,14 @@ def _bell_reference(noise: QutritNoise, *, anti_correlated: bool) -> QutritRefer
 
 
 @pytest.mark.parametrize("case_name", COHERENT_CASES)
-@pytest.mark.parametrize(("error_seed", "simulator_seed"), [(401, 409), (419, 421), (431, 433)])
+@pytest.mark.parametrize(
+    ("error_seed", "simulator_seed"),
+    [
+        pytest.param(401, 409, id="primary"),
+        pytest.param(419, 421, id="repeat-1", marks=pytest.mark.slow),
+        pytest.param(431, 433, id="repeat-2", marks=pytest.mark.slow),
+    ],
+)
 def test_coherent_clifford_matrix_matches_qutrit_reference(
     case_name: str,
     error_seed: int,
@@ -266,7 +273,14 @@ def test_coherent_clifford_matrix_matches_qutrit_reference(
     experiment.assert_conforms(Stim(random_seed=simulator_seed), n_processes=2)
 
 
-@pytest.mark.parametrize(("error_seed", "simulator_seed"), [(443, 449), (457, 461), (463, 467)])
+@pytest.mark.parametrize(
+    ("error_seed", "simulator_seed"),
+    [
+        pytest.param(443, 449, id="primary"),
+        pytest.param(457, 461, id="repeat-1", marks=pytest.mark.slow),
+        pytest.param(463, 467, id="repeat-2", marks=pytest.mark.slow),
+    ],
+)
 def test_parallel_coherent_sequences_match_joint_qutrit_reference(
     error_seed: int,
     simulator_seed: int,
@@ -292,7 +306,14 @@ def test_parallel_coherent_sequences_match_joint_qutrit_reference(
         pytest.param(build(anti_correlated_bell_state.compile()), True, id="anti-correlated-bell"),
     ],
 )
-@pytest.mark.parametrize(("error_seed", "simulator_seed"), [(479, 487), (491, 499), (503, 509)])
+@pytest.mark.parametrize(
+    ("error_seed", "simulator_seed"),
+    [
+        pytest.param(479, 487, id="primary"),
+        pytest.param(491, 499, id="repeat-1", marks=pytest.mark.slow),
+        pytest.param(503, 509, id="repeat-2", marks=pytest.mark.slow),
+    ],
+)
 def test_entangling_cliffords_match_two_qutrit_reference(
     runner: SeleneInstance,
     anti_correlated: bool,

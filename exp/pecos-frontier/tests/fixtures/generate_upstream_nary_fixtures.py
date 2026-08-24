@@ -27,8 +27,12 @@ import json
 import math
 import random
 import sys
+from typing import TYPE_CHECKING
 
 from frontier import FrontierModel, decode_frontier
+
+if TYPE_CHECKING:
+    from frontier import FrontierResult
 from frontier.progressive import (
     FactorTransition,
     OutcomeTransition,
@@ -75,7 +79,7 @@ def build_model(
     )
 
 
-def result_to_dict(syndrome: int, r) -> dict:
+def result_to_dict(syndrome: int, r: FrontierResult) -> dict:
     """Record one upstream FrontierResult as a JSON-safe dict."""
     # Keep the JSON strictly standard: no-path decodes report -inf
     # log_evidence upstream; emit null instead (allow_nan=False enforces).
@@ -84,9 +88,7 @@ def result_to_dict(syndrome: int, r) -> dict:
         "status": r.status,
         "logical_hat": r.logical_hat,
         "log_evidence": r.log_evidence if math.isfinite(r.log_evidence) else None,
-        "terminal_log_masses": {
-            str(k_): v for k_, v in sorted(r.terminal_log_masses.items()) if math.isfinite(v)
-        },
+        "terminal_log_masses": {str(k_): v for k_, v in sorted(r.terminal_log_masses.items()) if math.isfinite(v)},
         "engine": r.engine,
     }
 
@@ -99,16 +101,17 @@ def decode_all(model: FrontierModel, syndromes: list, k: int, delta: float, cros
         if cross_check:
             ref = decode_frontier(model, syndrome, K=k, Delta=delta, _engine="python")
             if ref.status != r.status or ref.logical_hat != r.logical_hat:
-                raise AssertionError(
+                message = (
                     f"engine disagreement at syndrome {syndrome}: "
                     f"{r.engine} ({r.status}, {r.logical_hat}) vs "
                     f"python ({ref.status}, {ref.logical_hat})"
                 )
+                raise AssertionError(message)
             if math.isfinite(r.log_evidence) and abs(ref.log_evidence - r.log_evidence) > 1e-9:
-                raise AssertionError(
-                    f"log_evidence disagreement at syndrome {syndrome}: "
-                    f"{r.log_evidence!r} vs {ref.log_evidence!r}"
+                message = (
+                    f"log_evidence disagreement at syndrome {syndrome}: {r.log_evidence!r} vs {ref.log_evidence!r}"
                 )
+                raise AssertionError(message)
         out.append(result_to_dict(syndrome, r))
     return out
 
@@ -133,10 +136,7 @@ def random_factors(
         for i, p in enumerate(probs):
             if i == 0:
                 # Baseline-style outcome: usually trivial, sometimes not.
-                if rng.random() < 0.3:
-                    dets = sorted(rng.sample(range(num_detectors), 1))
-                else:
-                    dets = []
+                dets = sorted(rng.sample(range(num_detectors), 1)) if rng.random() < 0.3 else []
                 obs = []
             else:
                 n_d = rng.choice([1, 1, 2])

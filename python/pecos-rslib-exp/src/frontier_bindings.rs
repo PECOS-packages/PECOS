@@ -44,7 +44,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ColumnOrderArgument {
         }
         Err(PyValueError::new_err(
             "column_order must be 'deadline_reorder', 'time_order', \
-             'backward_deadline_reorder', or a list of mechanism indices",
+             'backward_deadline_reorder', or a list of column indices",
         ))
     }
 }
@@ -104,7 +104,7 @@ fn resolve_column_order(
                 .map_err(|e| runtime_error(&e)),
             _ => Err(PyValueError::new_err(format!(
                 "invalid column_order {name:?}; expected 'deadline_reorder', 'time_order', \
-                 'backward_deadline_reorder', or a list of mechanism indices"
+                 'backward_deadline_reorder', or a list of column indices"
             ))),
         },
         ColumnOrderArgument::Explicit(order) => Ok(Some(order)),
@@ -126,7 +126,7 @@ fn resolve_factor_column_order(
                 .map_err(|error| runtime_error(&error)),
             _ => Err(PyValueError::new_err(format!(
                 "invalid column_order {name:?}; expected 'deadline_reorder', 'time_order', \
-                 'backward_deadline_reorder', or a list of factor indices"
+                 'backward_deadline_reorder', or a list of column indices"
             ))),
         },
         ColumnOrderArgument::Explicit(order) => Ok(Some(order)),
@@ -536,6 +536,7 @@ impl PyFrontierDecoder {
         metric_mode: &str,
         int_metric_scale: i32,
     ) -> PyResult<Self> {
+        let metric_mode = parse_metric_mode(metric_mode)?;
         let factors = factors
             .into_iter()
             .map(|outcomes| Factor {
@@ -550,7 +551,7 @@ impl PyFrontierDecoder {
             })
             .collect();
         let model = FactorModel::new(factors, num_detectors, num_observables)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            .map_err(|error| runtime_error(&error))?;
         let column_order = resolve_factor_column_order(&model, column_order)?;
         let config = RustFrontierConfig {
             k,
@@ -559,7 +560,7 @@ impl PyFrontierDecoder {
             column_order,
             merge_indistinguishable,
             bp_score_iterations,
-            metric_mode: parse_metric_mode(metric_mode)?,
+            metric_mode,
             int_metric_scale,
         };
         let inner = RustFrontierDecoder::from_factor_model(&model, config)

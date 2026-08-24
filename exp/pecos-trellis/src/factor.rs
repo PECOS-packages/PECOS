@@ -65,15 +65,26 @@ impl FactorModel {
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError::InvalidConfiguration`] if a factor has no
-    /// outcomes, an outcome probability or index is invalid, an outcome
-    /// repeats an index, or a factor's probabilities do not sum to one within
-    /// `1e-10`.
+    /// Returns [`DecoderError::InvalidConfiguration`] if a declared width
+    /// exceeds the `u32` outcome-index range, a factor has no outcomes, an
+    /// outcome probability or index is invalid, an outcome repeats an index,
+    /// or a factor's probabilities do not sum to one within `1e-10`.
     pub fn new(
         factors: Vec<Factor>,
         num_detectors: usize,
         num_observables: usize,
     ) -> Result<Self, DecoderError> {
+        if num_detectors > u32::MAX as usize {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "num_detectors {num_detectors} exceeds the u32 detector-index range"
+            )));
+        }
+        if num_observables > u32::MAX as usize {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "num_observables {num_observables} exceeds the u32 observable-index range"
+            )));
+        }
+
         for (factor_index, factor) in factors.iter().enumerate() {
             if factor.outcomes.is_empty() {
                 return Err(DecoderError::InvalidConfiguration(format!(
@@ -244,6 +255,30 @@ fn validate_outcome_indices(
 mod tests {
     use super::{Factor, FactorModel, Outcome};
     use crate::deadline_column_order_for_factors;
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn factor_model_widths_are_bounded_by_the_u32_index_range() {
+        let max_width = u32::MAX as usize;
+        FactorModel::new(Vec::new(), max_width, max_width).unwrap();
+
+        let too_wide = max_width + 1;
+        let detector_error = FactorModel::new(Vec::new(), too_wide, 0).unwrap_err();
+        assert_eq!(
+            detector_error.to_string(),
+            format!(
+                "Invalid configuration: num_detectors {too_wide} exceeds the u32 detector-index range"
+            )
+        );
+
+        let observable_error = FactorModel::new(Vec::new(), 0, too_wide).unwrap_err();
+        assert_eq!(
+            observable_error.to_string(),
+            format!(
+                "Invalid configuration: num_observables {too_wide} exceeds the u32 observable-index range"
+            )
+        );
+    }
 
     #[test]
     fn factor_ordering_errors_name_the_factor() {

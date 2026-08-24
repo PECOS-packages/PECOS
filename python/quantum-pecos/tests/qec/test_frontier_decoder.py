@@ -36,6 +36,8 @@ N1_FACTORS = [
     [(0.80, [], []), (0.20, [0], [])],
 ]
 
+METRIC_FLIP_DEM = "error(0.20) D0 L0\nerror(0.15) D0\nerror(0.15) D0\n"
+
 
 def test_sparse_and_dense_decode_agree() -> None:
     decoder = FrontierDecoder.from_dem(SMALL_DEM)
@@ -109,10 +111,9 @@ def test_factor_model_decode_preserves_degeneracy_mass() -> None:
 
 
 def test_maxlog_metric_can_flip_the_prediction() -> None:
-    dem = "error(0.20) D0 L0\nerror(0.15) D0\nerror(0.15) D0\n"
-    default_result = FrontierDecoder.from_dem(dem).decode_syndrome([1])
+    default_result = FrontierDecoder.from_dem(METRIC_FLIP_DEM).decode_syndrome([1])
     maxlog_result = FrontierDecoder.from_dem(
-        dem,
+        METRIC_FLIP_DEM,
         k=10**9,
         delta=1e6,
         metric_mode="frontier_lite",
@@ -121,7 +122,29 @@ def test_maxlog_metric_can_flip_the_prediction() -> None:
     assert default_result.observable_flips.mask == 0
     assert maxlog_result.observable_flips.mask == 1
     assert maxlog_result.status == "exact"
-    assert all(isinstance(log_mass, float) for _, log_mass in maxlog_result.logical_masses)
+    assert maxlog_result.logical_masses[0] == (1, -1.93359375)
+
+
+@pytest.mark.parametrize(
+    ("int_metric_scale", "expected_masses"),
+    [
+        (1, [(1, -1.0), (0, -2.0)]),
+        (1024, [(1, -1.93359375), (0, -2.28125)]),
+    ],
+)
+def test_maxlog_int_metric_scale_is_forwarded(
+    int_metric_scale: int,
+    expected_masses: list[tuple[int, float]],
+) -> None:
+    result = FrontierDecoder.from_dem(
+        METRIC_FLIP_DEM,
+        k=10**9,
+        delta=1e6,
+        metric_mode="maxlog_int",
+        int_metric_scale=int_metric_scale,
+    ).decode_syndrome([1])
+
+    assert result.logical_masses == expected_masses
 
 
 @pytest.mark.parametrize(
@@ -150,6 +173,14 @@ def test_metric_mode_aliases_are_accepted_with_surrounding_whitespace(metric_mod
 def test_metric_and_factor_model_error_paths() -> None:
     with pytest.raises(ValueError, match=r"logsumexp_float.*maxlog_int"):
         FrontierDecoder.from_dem(SMALL_DEM, metric_mode="not_a_metric")
+    with pytest.raises(ValueError, match=r"logsumexp_float.*maxlog_int"):
+        FrontierDecoder.from_factors(
+            N1_FACTORS,
+            1,
+            1,
+            column_order="not_an_order",
+            metric_mode="not_a_metric",
+        )
     with pytest.raises(RuntimeError, match="integer max-log metric is not supported"):
         FrontierCommitteeDecoder.from_dem(SMALL_DEM, metric_mode="maxlog_int")
     with pytest.raises(RuntimeError, match="delta must be finite under maxlog_int"):
@@ -165,26 +196,28 @@ def test_metric_and_factor_model_error_paths() -> None:
             1,
             bp_score_iterations=1,
         )
-    with pytest.raises(ValueError, match="outcome probabilities must sum to 1"):
+    with pytest.raises(RuntimeError, match="outcome probabilities must sum to 1"):
         FrontierDecoder.from_factors(
             [[(0.6, [], []), (0.3, [0], [])]],
             1,
             0,
         )
+    with pytest.raises(
+        RuntimeError,
+        match="num_detectors 1000000000000000 exceeds the u32 detector-index range",
+    ):
+        FrontierDecoder.from_factors(
+            [[(0.5, [], []), (0.5, [0], [])]],
+            10**15,
+            1,
+        )
 
 
-@pytest.mark.parametrize("column_order", ["deadline_reorder", "backward_deadline_reorder"])
-def test_factor_model_named_column_orders_construct_and_decode(column_order: str) -> None:
-    decoder = FrontierDecoder.from_factors(
-        N1_FACTORS,
-        1,
-        1,
-        column_order=column_order,
-    )
-    assert decoder.decode_syndrome([1]).status == "exact"
-
-
-def test_binary_factor_model_delegates_identically_to_dem() -> None:
+@pytest.mark.parametrize(
+    "column_order",
+    ["time_order", "deadline_reorder", "backward_deadline_reorder"],
+)
+def test_binary_factor_model_delegates_identically_to_dem(column_order: str) -> None:
     factors = [
         [(0.9, [], []), (0.1, [0], [0])],
         [(0.8, [], []), (0.2, [1], [])],
@@ -194,7 +227,7 @@ def test_binary_factor_model_delegates_identically_to_dem() -> None:
         "delta": 1e6,
         "score_alpha": 0.7,
         "bp_score_iterations": 2,
-        "column_order": "time_order",
+        "column_order": column_order,
     }
     factor_decoder = FrontierDecoder.from_factors(factors, 2, 1, **config)
     dem_decoder = FrontierDecoder.from_dem(SMALL_DEM, **config)

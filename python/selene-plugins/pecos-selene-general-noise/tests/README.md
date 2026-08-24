@@ -41,10 +41,18 @@ nanosecond-to-second idle insertion for every idle family; and clear rejection o
 invalid batches, qubit indices, custom operations, and abstract crosstalk groups.
 These tests are deterministic and remain in the fast lane.
 
+A seeded randomized differential trace also sends the same 97 runtime batches
+through the Selene adapter and directly through `GeneralNoiseModel`. It compares
+every operation delivered to the simulator and every Boolean or leakage-valued
+result while mixing timing gaps, parallel batches, all supported runtime gates,
+all three idle families, leakage/seepage, and measurement crosstalk.
+
 `test_qec_workload.py` runs one round of the three-qubit repetition code using
 only standard operations. It checks the noiseless syndrome, a known middle-data
 fault, analytic noisy-readout syndromes, and agreement across sequential and
-parallel Selene workers. Its larger statistical checks carry the `slow` marker.
+parallel Selene workers. A two-round history localizes a known fault between
+rounds and checks the full analytic distribution under asymmetric readout noise.
+Its larger statistical checks carry the `slow` marker.
 
 The generated matrix and additional statistical seed repetitions carry the
 repository's `slow` marker. The default fast lane retains one seed for every

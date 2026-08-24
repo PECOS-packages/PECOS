@@ -598,11 +598,12 @@ export_error_model_plugin!(crate::GeneralNoiseFactory);
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::f64::consts::PI;
 
     use anyhow::Result;
     use pecos_core::Angle64;
-    use pecos_engines::prelude::ByteMessage;
+    use pecos_engines::prelude::{ByteMessage, EngineStage, NoiseModel};
     use selene_core::error_model::BatchResult;
     use selene_core::error_model::interface::ErrorModelInterface;
     use selene_core::runtime::{BatchOperation, Operation};
@@ -727,6 +728,131 @@ mod tests {
     fn build_error_model(config_json: &str, n_qubits: usize) -> GeneralNoiseErrorModel {
         let config: Config = serde_json::from_str(config_json).unwrap();
         GeneralNoiseErrorModel::new(config.build_model().unwrap(), n_qubits, &config).unwrap()
+    }
+
+    fn process_direct_model(
+        model: &mut dyn NoiseModel,
+        message: ByteMessage,
+        simulator: &mut dyn SimulatorInterface,
+    ) -> ByteMessage {
+        let mut stage = model.start(message).unwrap();
+        loop {
+            match stage {
+                EngineStage::NeedsProcessing(operations) => {
+                    let output = SeleneSimulator::process(simulator, &operations).unwrap();
+                    stage = model.continue_processing(output).unwrap();
+                }
+                EngineStage::Complete(output) => return output,
+            }
+        }
+    }
+
+    fn reference_message(
+        operations: &[Operation],
+        start: u64,
+        end: u64,
+        last_operation_end: &mut [u64],
+        local_groups: &[BTreeSet<usize>],
+    ) -> (ByteMessage, Vec<(u64, bool)>) {
+        let mut builder = ByteMessage::quantum_operations_builder();
+        let measured = operations
+            .iter()
+            .filter_map(|operation| match operation {
+                Operation::Measure { qubit_id, .. } | Operation::MeasureLeaked { qubit_id, .. } => {
+                    Some(usize::try_from(*qubit_id).unwrap())
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        if !measured.is_empty() {
+            builder.meas_crosstalk_global_payload(&measured.iter().copied().collect::<Vec<_>>());
+            let local = local_groups
+                .iter()
+                .filter(|group| !group.is_disjoint(&measured))
+                .flat_map(BTreeSet::iter)
+                .filter(|qubit| !measured.contains(qubit))
+                .copied()
+                .collect::<BTreeSet<_>>();
+            if !local.is_empty() {
+                builder.meas_crosstalk_local_payload(&local.iter().copied().collect::<Vec<_>>());
+            }
+        }
+
+        let mut expected = Vec::new();
+        for operation in operations {
+            let mut idle_before = |qubit: usize| {
+                if start > last_operation_end[qubit] {
+                    let seconds =
+                        std::time::Duration::from_nanos(start - last_operation_end[qubit])
+                            .as_secs_f64();
+                    builder.idle(seconds, &[qubit]);
+                }
+                last_operation_end[qubit] = end;
+            };
+            match operation {
+                Operation::RXYGate {
+                    qubit_id,
+                    theta,
+                    phi,
+                } => {
+                    let qubit = usize::try_from(*qubit_id).unwrap();
+                    idle_before(qubit);
+                    builder.r1xy(
+                        Angle64::from_radians(*theta),
+                        Angle64::from_radians(*phi),
+                        &[qubit],
+                    );
+                }
+                Operation::RZGate { qubit_id, theta } => {
+                    let qubit = usize::try_from(*qubit_id).unwrap();
+                    idle_before(qubit);
+                    builder.rz(Angle64::from_radians(*theta), &[qubit]);
+                }
+                Operation::RZZGate {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta,
+                } => {
+                    let first = usize::try_from(*qubit_id_1).unwrap();
+                    let second = usize::try_from(*qubit_id_2).unwrap();
+                    idle_before(first);
+                    idle_before(second);
+                    builder.rzz(Angle64::from_radians(*theta), &[(first, second)]);
+                }
+                Operation::Measure {
+                    qubit_id,
+                    result_id,
+                } => {
+                    let qubit = usize::try_from(*qubit_id).unwrap();
+                    idle_before(qubit);
+                    builder.mz(&[qubit]);
+                    expected.push((*result_id, false));
+                }
+                Operation::MeasureLeaked {
+                    qubit_id,
+                    result_id,
+                } => {
+                    let qubit = usize::try_from(*qubit_id).unwrap();
+                    idle_before(qubit);
+                    builder.measure_leakages(&[qubit]);
+                    expected.push((*result_id, true));
+                }
+                Operation::Reset { qubit_id } => {
+                    let qubit = usize::try_from(*qubit_id).unwrap();
+                    idle_before(qubit);
+                    builder.pz(&[qubit]);
+                }
+                _ => unreachable!(),
+            }
+        }
+        (builder.build(), expected)
+    }
+
+    fn next_random(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        *state
     }
 
     fn leakage_measurement(config_json: &str) -> u64 {
@@ -965,6 +1091,197 @@ mod tests {
             .unwrap();
 
         assert!(!result.bool_results[0].value);
+    }
+
+    #[test]
+    fn seeded_randomized_traces_match_direct_general_noise_execution() {
+        const N_QUBITS: usize = 3;
+        const CONFIG: &str = r#"{
+            "preparation":{"probability":0.17,"leakage_ratio":0.29},
+            "measurement":{
+                "p0_to_1":0.11,
+                "p1_to_0":0.07,
+                "global_crosstalk_probability":0.13,
+                "local_crosstalk_probability":0.19,
+                "crosstalk_model":{
+                    "0->0":0.7,"0->1":0.2,"0->L":0.1,
+                    "1->0":0.15,"1->1":0.75,"1->L":0.1
+                },
+                "local_groups":[[0,1],[1,2]]
+            },
+            "single_qubit":{
+                "probability":0.23,
+                "pauli_model":{"X":0.5,"Z":0.5},
+                "emission_ratio":0.31,
+                "emission_model":{"X":0.6,"L":0.4},
+                "seepage_probability":0.27
+            },
+            "two_qubit":{
+                "probability":0.21,
+                "pauli_model":{"XI":0.4,"IZ":0.3,"ZZ":0.3},
+                "emission_ratio":0.25,
+                "emission_model":{"XI":0.5,"IL":0.25,"LI":0.25},
+                "seepage_probability":0.33
+            },
+            "idle":{
+                "linear_rate":500000.0,
+                "linear_model":{"X":0.5,"Z":0.5},
+                "sin_squared_rate":700000.0,
+                "sin_squared_model":{"X":0.4,"L":0.2},
+                "coherent_rate":300000.0,
+                "coherent_model":{"RX":0.7,"RZ":0.2}
+            }
+        }"#;
+
+        let config: Config = serde_json::from_str(CONFIG).unwrap();
+        let mut direct_model = config.build_model().unwrap();
+        let mut adapter =
+            GeneralNoiseErrorModel::new(config.build_model().unwrap(), N_QUBITS, &config).unwrap();
+        let mut direct_simulator = ClassicalSimulator::with_qubits(N_QUBITS);
+        let mut adapter_simulator = ClassicalSimulator::with_qubits(N_QUBITS);
+        let local_groups = [BTreeSet::from([0, 1]), BTreeSet::from([1, 2])];
+        let mut reference_last_end = vec![0; N_QUBITS];
+        let error_seed = 8_191;
+        direct_model.set_seed(error_seed);
+        adapter.shot_start(0, error_seed).unwrap();
+
+        let mut random = 0x5eed_d1ff_e2e5_u64;
+        let mut cursor = 0_u64;
+        let mut result_id = 100_u64;
+        let mut trace = vec![(
+            vec![
+                Operation::Reset { qubit_id: 0 },
+                Operation::Reset { qubit_id: 1 },
+                Operation::Reset { qubit_id: 2 },
+            ],
+            0,
+            2,
+        )];
+        cursor += 2;
+        for case_id in 0..96 {
+            let gap = 1 + next_random(&mut random) % 17;
+            let duration = 1 + next_random(&mut random) % 5;
+            let start = cursor + gap;
+            let first = next_random(&mut random) % N_QUBITS as u64;
+            let second = (first + 1 + next_random(&mut random) % 2) % N_QUBITS as u64;
+            let angle = match next_random(&mut random) % 5 {
+                0 => -PI,
+                1 => -PI / 2.0,
+                2 => PI / 4.0,
+                3 => PI / 2.0,
+                _ => PI,
+            };
+            let mut operations = match next_random(&mut random) % 6 {
+                0 => vec![Operation::Reset { qubit_id: first }],
+                1 => vec![Operation::RXYGate {
+                    qubit_id: first,
+                    theta: angle,
+                    phi: angle / 3.0,
+                }],
+                2 => vec![Operation::RZGate {
+                    qubit_id: first,
+                    theta: angle,
+                }],
+                3 => vec![Operation::RZZGate {
+                    qubit_id_1: first,
+                    qubit_id_2: second,
+                    theta: angle,
+                }],
+                4 => {
+                    let operation = Operation::Measure {
+                        qubit_id: first,
+                        result_id,
+                    };
+                    result_id += 1;
+                    vec![operation]
+                }
+                _ => {
+                    let operation = Operation::MeasureLeaked {
+                        qubit_id: first,
+                        result_id,
+                    };
+                    result_id += 1;
+                    vec![operation]
+                }
+            };
+            if case_id % 12 == 0 && !matches!(operations[0], Operation::RZZGate { .. }) {
+                let parallel = match operations[0] {
+                    Operation::Reset { .. } => Operation::Reset { qubit_id: second },
+                    Operation::RXYGate { theta, phi, .. } => Operation::RXYGate {
+                        qubit_id: second,
+                        theta,
+                        phi,
+                    },
+                    Operation::RZGate { theta, .. } => Operation::RZGate {
+                        qubit_id: second,
+                        theta,
+                    },
+                    Operation::Measure { .. } => {
+                        let operation = Operation::Measure {
+                            qubit_id: second,
+                            result_id,
+                        };
+                        result_id += 1;
+                        operation
+                    }
+                    Operation::MeasureLeaked { .. } => {
+                        let operation = Operation::MeasureLeaked {
+                            qubit_id: second,
+                            result_id,
+                        };
+                        result_id += 1;
+                        operation
+                    }
+                    _ => unreachable!(),
+                };
+                operations.push(parallel);
+            }
+            trace.push((operations, start, duration));
+            cursor = start + duration;
+        }
+
+        for (operations, start, duration) in trace {
+            let end = start + duration;
+            let (reference, expected_results) = reference_message(
+                &operations,
+                start,
+                end,
+                &mut reference_last_end,
+                &local_groups,
+            );
+            let adapter_result = adapter
+                .handle_operations(
+                    runtime_batch(operations, start, duration),
+                    &mut adapter_simulator,
+                )
+                .unwrap();
+            let direct_output =
+                process_direct_model(direct_model.as_mut(), reference, &mut direct_simulator);
+
+            if !expected_results.is_empty() {
+                let outcomes = direct_output.outcomes().unwrap();
+                assert_eq!(outcomes.len(), expected_results.len());
+                for ((id, leakage), outcome) in expected_results.iter().zip(outcomes) {
+                    if *leakage {
+                        let actual = adapter_result
+                            .u64_results
+                            .iter()
+                            .find(|result| result.result_id == *id)
+                            .unwrap();
+                        assert_eq!(actual.value, u64::from(outcome));
+                    } else {
+                        let actual = adapter_result
+                            .bool_results
+                            .iter()
+                            .find(|result| result.result_id == *id)
+                            .unwrap();
+                        assert_eq!(actual.value, outcome == 1);
+                    }
+                }
+            }
+            assert_eq!(adapter_simulator.received, direct_simulator.received);
+            assert_eq!(adapter_simulator.bits, direct_simulator.bits);
+        }
     }
 
     #[test]

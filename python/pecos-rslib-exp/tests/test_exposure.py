@@ -135,6 +135,10 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     assert q0_one.amplitude([True, False]) == (1.0, 0.0)
     assert q0_one.amplitude_iterative([True, False]) == (1.0, 0.0)
     assert math.isclose(q0_one.prob_bitstring([True, False]), 1.0)
+    assert q0_one.prob_bitstrings(
+        [[True, False], [False, False], [True, False]]
+    ) == [1.0, 0.0, 1.0]
+    assert q0_one.prob_bitstrings([]) == []
 
     merged = exp.StabMps(2, seed=17, merge_rz=True)
     merged.run_1q_gate("H", 0)
@@ -164,6 +168,21 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
         q0_one.amplitude([True])
     with pytest.raises(ValueError, match="bitstring item 0 must be bool"):
         q0_one.prob_bitstring([1, False])
+    with pytest.raises(
+        ValueError,
+        match="prob_bitstrings: query 0: bitstring item 0 must be bool",
+    ):
+        q0_one.prob_bitstrings([[1, False]])
+    with pytest.raises(
+        ValueError,
+        match="prob_bitstrings: query 1: bitstring length 1, expected 2",
+    ):
+        q0_one.prob_bitstrings([[True, False], [True]])
+    with pytest.raises(
+        ValueError,
+        match="prob_bitstrings: queries must be an iterable of bitstrings",
+    ):
+        q0_one.prob_bitstrings(1)
     with pytest.raises(IndexError):
         q0_one.frame_x_bit(2)
     with pytest.raises(IndexError):

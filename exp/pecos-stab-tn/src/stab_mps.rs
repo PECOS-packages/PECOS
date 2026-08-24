@@ -877,6 +877,38 @@ struct PrefixSamplingContext<'a> {
     output: &'a mut Vec<Vec<bool>>,
 }
 
+/// Tableau/MPS state owned by one node of a forced-projection prefix tree.
+///
+/// Both batched probability queries and prefix-tree sampling use this type so
+/// the clone-at-branch and atomic-projection rules have a single owner.
+#[derive(Clone)]
+struct PrefixProjectionState {
+    tableau: SparseStabY,
+    mps: Mps,
+}
+
+impl PrefixProjectionState {
+    fn project_z(&mut self, qubit: usize, outcome: bool) -> Result<f64, MpsError> {
+        measure::project_forced_z(&mut self.tableau, &mut self.mps, qubit, outcome)
+    }
+}
+
+#[derive(Default)]
+struct ProbabilityQueryTrieNode {
+    children: [Option<Box<Self>>; 2],
+    query_indices: Vec<usize>,
+}
+
+impl ProbabilityQueryTrieNode {
+    fn insert(&mut self, bitstring: &[bool], query_index: usize) {
+        let mut node = self;
+        for &bit in bitstring {
+            node = node.children[usize::from(bit)].get_or_insert_with(|| Box::new(Self::default()));
+        }
+        node.query_indices.push(query_index);
+    }
+}
+
 impl StabMps {
     /// Create a builder for configuring the simulator.
     #[must_use]
@@ -1361,6 +1393,122 @@ impl StabMps {
         total_prob.clamp(0.0, 1.0)
     }
 
+    /// Probabilities of measuring each requested computational-basis
+    /// bitstring, sharing forced projections across common prefixes.
+    ///
+    /// Each input and the corresponding output use the same convention as
+    /// [`Self::prob_bitstring`]: `bitstrings[i][q]` specifies qubit `q`, and
+    /// `probabilities[i]` is exactly the result of the corresponding singular
+    /// call, including its configured MPS-truncation and endpoint behavior.
+    /// Input order and duplicates are preserved. An empty input returns an
+    /// empty output.
+    ///
+    /// The query set is represented as a prefix trie over qubits
+    /// `0..num_qubits`. A node with one occupied child moves its working
+    /// tableau/MPS state into that child without cloning. A branch point makes
+    /// one clone and gives one working state to each child. Thus every
+    /// distinct query prefix receives exactly one atomic forced projection.
+    /// If the accumulated probability reaches the singular API's snapped-zero
+    /// threshold, the entire query subtree remains exactly `0.0`.
+    ///
+    /// Call [`Self::flush`] first when lazy measurement or RZ merging is
+    /// enabled, and materialize a tracked Pauli frame when it must be included.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any bitstring length doesn't match `num_qubits`, or if forced
+    /// projection encounters an unrecoverable numerical MPS state.
+    #[must_use]
+    pub fn prob_bitstrings<B: AsRef<[bool]>>(&self, bitstrings: &[B]) -> Vec<f64> {
+        let mut trie = ProbabilityQueryTrieNode::default();
+        for (query_index, bitstring) in bitstrings.iter().enumerate() {
+            let bitstring = bitstring.as_ref();
+            assert_eq!(
+                bitstring.len(),
+                self.num_qubits,
+                "bitstring length mismatch at query {query_index}"
+            );
+            trie.insert(bitstring, query_index);
+        }
+        if bitstrings.is_empty() {
+            return Vec::new();
+        }
+
+        let state = PrefixProjectionState {
+            tableau: self.tableau.clone(),
+            mps: self.mps.clone(),
+        };
+        let mut probabilities = vec![0.0; bitstrings.len()];
+        expect_mps_operation(
+            Self::probability_query_prefix_tree(&trie, state, 0, 1.0, &mut probabilities),
+            "StabMps::prob_bitstrings forced projection",
+        );
+        probabilities
+    }
+
+    fn probability_query_prefix_tree(
+        node: &ProbabilityQueryTrieNode,
+        mut state: PrefixProjectionState,
+        qubit: usize,
+        total_probability: f64,
+        probabilities: &mut [f64],
+    ) -> Result<(), MpsError> {
+        if qubit == state.tableau.num_qubits() {
+            let probability = total_probability.clamp(0.0, 1.0);
+            for &query_index in &node.query_indices {
+                probabilities[query_index] = probability;
+            }
+            return Ok(());
+        }
+
+        match (&node.children[0], &node.children[1]) {
+            (Some(zero), Some(one)) => {
+                let mut zero_state = state.clone();
+                let zero_probability = total_probability * zero_state.project_z(qubit, false)?;
+                if zero_probability >= 1e-30 {
+                    Self::probability_query_prefix_tree(
+                        zero,
+                        zero_state,
+                        qubit + 1,
+                        zero_probability,
+                        probabilities,
+                    )?;
+                }
+
+                let one_probability = total_probability * state.project_z(qubit, true)?;
+                if one_probability >= 1e-30 {
+                    Self::probability_query_prefix_tree(
+                        one,
+                        state,
+                        qubit + 1,
+                        one_probability,
+                        probabilities,
+                    )?;
+                }
+            }
+            (Some(child), None) | (None, Some(child)) => {
+                let outcome = node.children[1].is_some();
+                let child_probability = total_probability * state.project_z(qubit, outcome)?;
+                if child_probability >= 1e-30 {
+                    Self::probability_query_prefix_tree(
+                        child,
+                        state,
+                        qubit + 1,
+                        child_probability,
+                        probabilities,
+                    )?;
+                }
+            }
+            (None, None) => {
+                debug_assert!(
+                    node.query_indices.is_empty(),
+                    "probability-query trie leaf before the final qubit"
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Second Rényi entropy `S_2` = -`ln(Tr_A(ρ_A²))` at a bipartition
     /// (qubits 0..cut vs qubits cut..N).
     ///
@@ -1821,22 +1969,19 @@ impl StabMps {
             num_qubits: self.num_qubits,
             output: &mut shots,
         };
+        let mut state = PrefixProjectionState {
+            tableau: working.tableau,
+            mps: working.mps,
+        };
         expect_mps_operation(
-            Self::sample_prefix_tree(
-                &mut working.tableau,
-                &mut working.mps,
-                num_shots,
-                &mut prefix,
-                &mut context,
-            ),
+            Self::sample_prefix_tree(&mut state, num_shots, &mut prefix, &mut context),
             "StabMps::sample_bitstrings prefix projection",
         );
         shots
     }
 
     fn sample_prefix_tree(
-        tableau: &mut SparseStabY,
-        mps: &mut Mps,
+        state: &mut PrefixProjectionState,
         num_shots: usize,
         prefix: &mut Vec<bool>,
         context: &mut PrefixSamplingContext<'_>,
@@ -1854,11 +1999,8 @@ impl StabMps {
         // pre-reduction can produce a trivial MPS, and a second entry would take
         // the trivial fast path instead of completing the in-progress general
         // projection as `prob_bitstring` does.
-        let mut zero_tableau = tableau.clone();
-        let mut zero_mps = mps.clone();
-        let probability_zero =
-            measure::project_forced_z(&mut zero_tableau, &mut zero_mps, q, context.frame_x[q])?
-                .clamp(0.0, 1.0);
+        let mut zero_state = state.clone();
+        let probability_zero = zero_state.project_z(q, context.frame_x[q])?.clamp(0.0, 1.0);
         let probability_one = 1.0 - probability_zero;
         let num_zero = if probability_zero == 0.0 {
             0
@@ -1873,13 +2015,12 @@ impl StabMps {
 
         if num_zero > 0 {
             prefix.push(false);
-            Self::sample_prefix_tree(&mut zero_tableau, &mut zero_mps, num_zero, prefix, context)?;
+            Self::sample_prefix_tree(&mut zero_state, num_zero, prefix, context)?;
             prefix.pop();
         }
 
         if num_one > 0 {
-            let projected_probability =
-                measure::project_forced_z(tableau, mps, q, !context.frame_x[q])?;
+            let projected_probability = state.project_z(q, !context.frame_x[q])?;
             // Invariant: `probability_zero` and this forced-projection
             // probability deterministically recompute the same expectation on
             // identical parent states. A positive one-branch probability
@@ -1890,7 +2031,7 @@ impl StabMps {
                 "positive-probability one branch rejected by forced projection at qubit {q}"
             );
             prefix.push(true);
-            Self::sample_prefix_tree(tableau, mps, num_one, prefix, context)?;
+            Self::sample_prefix_tree(state, num_one, prefix, context)?;
             prefix.pop();
         }
         Ok(())

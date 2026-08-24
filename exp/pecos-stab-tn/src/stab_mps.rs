@@ -178,6 +178,12 @@ fn cheap_product_zero_site_test(mps: &Mps, site: usize) -> Option<bool> {
 // value. Thus that workload contains no observed marginal in (1e-15, 1e-12].
 const PRODUCT_ZERO_PROBABILITY_TOLERANCE: f64 = 1e-15;
 
+// A running bitstring probability below this is reported as exactly zero.
+// The singular and batched query walks MUST share this constant: the batched
+// API's contract is bit-for-bit agreement with per-query singular calls, and
+// that guarantee is load-bearing on the two paths pruning identically.
+const QUERY_ZERO_PROBABILITY_FLOOR: f64 = 1e-30;
+
 #[cfg(test)]
 const STORED_PROOF_SOUNDNESS_TOLERANCE: f64 = 5e-16;
 
@@ -1386,7 +1392,7 @@ impl StabMps {
                 "StabMps::prob_bitstring forced projection",
             );
             total_prob *= pi_q;
-            if total_prob < 1e-30 {
+            if total_prob < QUERY_ZERO_PROBABILITY_FLOOR {
                 return 0.0;
             }
         }
@@ -1440,7 +1446,14 @@ impl StabMps {
         };
         let mut probabilities = vec![0.0; bitstrings.len()];
         expect_mps_operation(
-            Self::probability_query_prefix_tree(&trie, state, 0, 1.0, &mut probabilities),
+            Self::probability_query_prefix_tree(
+                &trie,
+                state,
+                self.num_qubits,
+                0,
+                1.0,
+                &mut probabilities,
+            ),
             "StabMps::prob_bitstrings forced projection",
         );
         probabilities
@@ -1449,11 +1462,12 @@ impl StabMps {
     fn probability_query_prefix_tree(
         node: &ProbabilityQueryTrieNode,
         mut state: PrefixProjectionState,
+        num_qubits: usize,
         qubit: usize,
         total_probability: f64,
         probabilities: &mut [f64],
     ) -> Result<(), MpsError> {
-        if qubit == state.tableau.num_qubits() {
+        if qubit == num_qubits {
             let probability = total_probability.clamp(0.0, 1.0);
             for &query_index in &node.query_indices {
                 probabilities[query_index] = probability;
@@ -1465,10 +1479,13 @@ impl StabMps {
             (Some(zero), Some(one)) => {
                 let mut zero_state = state.clone();
                 let zero_probability = total_probability * zero_state.project_z(qubit, false)?;
-                if zero_probability >= 1e-30 {
+                // NaN must follow the singular walk (which keeps projecting on
+                // NaN) rather than being silently pruned to zero.
+                if zero_probability.is_nan() || zero_probability >= QUERY_ZERO_PROBABILITY_FLOOR {
                     Self::probability_query_prefix_tree(
                         zero,
                         zero_state,
+                        num_qubits,
                         qubit + 1,
                         zero_probability,
                         probabilities,
@@ -1476,10 +1493,11 @@ impl StabMps {
                 }
 
                 let one_probability = total_probability * state.project_z(qubit, true)?;
-                if one_probability >= 1e-30 {
+                if one_probability.is_nan() || one_probability >= QUERY_ZERO_PROBABILITY_FLOOR {
                     Self::probability_query_prefix_tree(
                         one,
                         state,
+                        num_qubits,
                         qubit + 1,
                         one_probability,
                         probabilities,
@@ -1489,10 +1507,11 @@ impl StabMps {
             (Some(child), None) | (None, Some(child)) => {
                 let outcome = node.children[1].is_some();
                 let child_probability = total_probability * state.project_z(qubit, outcome)?;
-                if child_probability >= 1e-30 {
+                if child_probability.is_nan() || child_probability >= QUERY_ZERO_PROBABILITY_FLOOR {
                     Self::probability_query_prefix_tree(
                         child,
                         state,
+                        num_qubits,
                         qubit + 1,
                         child_probability,
                         probabilities,

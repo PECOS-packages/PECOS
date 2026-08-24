@@ -708,10 +708,12 @@ impl PyStabMps {
     /// Raises `ValueError` for a malformed batch or bitstring.
     fn prob_bitstrings(&mut self, bitstrings: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
         let bitstrings = self.bitstrings(bitstrings, "prob_bitstrings")?;
+        // Flush before the empty-batch return so the documented auto-flush
+        // holds for every call, matching prob_bitstring.
+        self.inner.flush();
         if bitstrings.is_empty() {
             return Ok(Vec::new());
         }
-        self.inner.flush();
         Ok(self.inner.prob_bitstrings(&bitstrings))
     }
 

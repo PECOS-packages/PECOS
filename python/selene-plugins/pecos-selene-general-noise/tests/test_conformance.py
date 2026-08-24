@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import pytest
 from general_noise_conformance import ConformanceExperiment, ExpectedDistribution
@@ -13,6 +14,9 @@ from guppylang.std.quantum import cx, measure, qubit, rz, x
 from pecos_selene_general_noise import GeneralNoiseParameters
 from selene_sim import Stim
 from selene_sim.build import build
+
+if TYPE_CHECKING:
+    from selene_sim.instance import SeleneInstance
 
 
 @guppy
@@ -99,6 +103,30 @@ def test_one_to_zero_readout_channel() -> None:
         parameters=GeneralNoiseParameters().with_p_meas_1(0.3),
         expected=ExpectedDistribution({(0,): 0.3, (1,): 0.7}),
         comparison=ONE,
+        shots=512,
+    )
+    experiment.assert_conforms(Stim(random_seed=23), n_processes=2)
+
+
+@pytest.mark.parametrize(
+    ("runner", "expected"),
+    [
+        pytest.param(build(prepared_zero.compile()), {(0,): 0.7, (1,): 0.3}, id="zero"),
+        pytest.param(build(prepared_one.compile()), {(0,): 0.3, (1,): 0.7}, id="one"),
+    ],
+)
+def test_symmetric_measurement_alias(
+    runner: SeleneInstance,
+    expected: dict[tuple[int, ...], float],
+) -> None:
+    """The symmetric measurement convenience method configures both transitions."""
+    experiment = ConformanceExperiment(
+        runner=runner,
+        n_qubits=1,
+        result_tags=("outcome",),
+        parameters=GeneralNoiseParameters().with_p_meas(0.3),
+        expected=ExpectedDistribution(expected),
+        comparison=ZERO if expected[(0,)] < 0.5 else ONE,
         shots=512,
     )
     experiment.assert_conforms(Stim(random_seed=23), n_processes=2)
@@ -411,18 +439,70 @@ def test_preparation_leakage_skips_gates() -> None:
     experiment.assert_conforms(Stim(random_seed=23))
 
 
-def test_seepage_releases_a_leaked_qubit() -> None:
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        pytest.param(
+            GeneralNoiseParameters()
+            .with_p_prep(1.0)
+            .with_prep_leak_ratio(1.0)
+            .with_p1(1.0)
+            .with_p1_emission_ratio(1.0)
+            .with_p1_seepage_prob(1.0),
+            id="one-qubit-specific",
+        ),
+        pytest.param(
+            GeneralNoiseParameters()
+            .with_p_prep(1.0)
+            .with_prep_leak_ratio(1.0)
+            .with_p1(1.0)
+            .with_p1_emission_ratio(1.0)
+            .with_seepage_prob(1.0),
+            id="shared-alias",
+        ),
+    ],
+)
+def test_seepage_releases_a_leaked_qubit(parameters: GeneralNoiseParameters) -> None:
     """Certain seepage resets a leaked qubit to the documented random bit."""
+    experiment = ConformanceExperiment(
+        runner=build(prepared_one.compile()),
+        n_qubits=1,
+        result_tags=("outcome",),
+        parameters=parameters,
+        expected=ExpectedDistribution({(0,): 0.5, (1,): 0.5}),
+        comparison=ONE,
+        shots=512,
+    )
+    experiment.assert_conforms(Stim(random_seed=23), n_processes=2)
+
+
+def test_two_qubit_seepage_releases_leaked_pair() -> None:
+    """Two-qubit seepage independently returns both leaked operands to random bits."""
     parameters = (
         GeneralNoiseParameters()
         .with_p_prep(1.0)
         .with_prep_leak_ratio(1.0)
-        .with_p1(1.0)
-        .with_p1_emission_ratio(1.0)
-        .with_p1_seepage_prob(1.0)
+        .with_p2(1.0)
+        .with_p2_emission_ratio(1.0)
+        .with_p2_seepage_prob(1.0)
     )
     experiment = ConformanceExperiment(
-        runner=build(prepared_one.compile()),
+        runner=build(two_qubit_gate.compile()),
+        n_qubits=2,
+        result_tags=("q0", "q1"),
+        parameters=parameters,
+        expected=ExpectedDistribution({(0, 0): 0.25, (0, 1): 0.25, (1, 0): 0.25, (1, 1): 0.25}),
+        comparison=ExpectedDistribution({(1, 1): 1.0}),
+        shots=1024,
+    )
+    experiment.assert_conforms(Stim(random_seed=23), n_processes=2)
+
+
+def test_leakage_scale_converts_leakage_to_depolarization() -> None:
+    """Zero leakage scale converts an otherwise certain leak to a random bit."""
+    parameters = GeneralNoiseParameters().with_p_prep(1.0).with_prep_leak_ratio(1.0).with_leakage_scale(0.0)
+    experiment = ConformanceExperiment(
+        runner=build(prepared_zero.compile()),
         n_qubits=1,
         result_tags=("outcome",),
         parameters=parameters,
@@ -453,6 +533,23 @@ def test_seepage_releases_a_leaked_qubit() -> None:
 )
 def test_measurement_crosstalk_is_device_neutral(parameters: GeneralNoiseParameters) -> None:
     """Global and user-defined local crosstalk project an unmeasured victim."""
+    experiment = ConformanceExperiment(
+        runner=build(measurement_crosstalk_probe.compile()),
+        n_qubits=2,
+        result_tags=("source", "victim"),
+        parameters=parameters,
+        expected=ExpectedDistribution({(0, 1): 1.0}),
+        comparison=ZERO_ZERO,
+        shots=64,
+    )
+    experiment.assert_conforms(Stim(random_seed=23))
+
+
+def test_measurement_crosstalk_alias_enables_global_channel() -> None:
+    """The shared crosstalk convenience method includes the global channel."""
+    parameters = (
+        GeneralNoiseParameters().with_p_meas_crosstalk(1.0).with_p_meas_crosstalk_model({"0->1": 1.0, "1->0": 1.0})
+    )
     experiment = ConformanceExperiment(
         runner=build(measurement_crosstalk_probe.compile()),
         n_qubits=2,

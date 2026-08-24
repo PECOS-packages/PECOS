@@ -9,6 +9,7 @@ dependencies = ["selene-core~=0.3.0"]
 
 [project.optional-dependencies]
 test = [
+    "numpy>=2.0",
     "pytest>=9.0",
     "selene-sim~=0.3.0",
     "guppylang~=1.0.1",

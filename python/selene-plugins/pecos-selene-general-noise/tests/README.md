@@ -19,6 +19,15 @@ Pauli channels, emission gate replacement, leakage, seepage, and asymmetric
 readout. This makes combined-channel tests possible without copying PECOS's Rust
 implementation or relying on a device gate set.
 
+`qutrit_reference.py` extends that independent specification to coherent density-
+matrix evolution. It embeds standard quantum rotations into a qutrit space and
+models computational/leaked projections, non-unitary leakage and reset, emission
+gate replacement, seepage, and noisy readout. The associated circuit matrix uses
+only `guppylang.std.quantum` operations; it does not import a hardware-specific
+gate library or runtime. It covers deep and parallel single-qubit sequences plus
+correlated and anti-correlated Bell-state circuits, including the full two-qubit
+Pauli channel.
+
 Every behavioral case also supplies a comparison distribution. Before taking
 shots, the framework verifies that the circuit is sensitive enough to distinguish
 the configured channel from that comparison. This prevents a test from passing

@@ -209,6 +209,11 @@ def test_seeded_experiment_is_reproducible() -> None:
             id="pauli",
         ),
         pytest.param(
+            GeneralNoiseParameters().with_average_p2(0.8).with_p2_pauli_model({"XI": 1.0}),
+            ExpectedDistribution({(1, 0): 1.0}),
+            id="average-infidelity",
+        ),
+        pytest.param(
             GeneralNoiseParameters().with_p2(1.0).with_p2_emission_ratio(1.0).with_p2_emission_model({"XI": 1.0}),
             ExpectedDistribution({(1, 0): 0.5, (1, 1): 0.5}),
             id="emission",
@@ -296,6 +301,96 @@ def test_noise_suppression_controls(parameters: GeneralNoiseParameters) -> None:
         parameters=parameters,
         expected=ZERO,
         comparison=ONE,
+        shots=64,
+    )
+    experiment.assert_conforms(Stim(random_seed=23))
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        pytest.param(GeneralNoiseParameters().with_p_prep(1.0).with_prep_scale(0.0), id="preparation-scale"),
+        pytest.param(GeneralNoiseParameters().with_p_meas_0(1.0).with_meas_scale(0.0), id="measurement-scale"),
+    ],
+)
+def test_spam_scale_controls(parameters: GeneralNoiseParameters) -> None:
+    """Preparation and measurement scales suppress their respective channels."""
+    experiment = ConformanceExperiment(
+        runner=build(prepared_zero.compile()),
+        n_qubits=1,
+        result_tags=("outcome",),
+        parameters=parameters,
+        expected=ZERO,
+        comparison=ONE,
+        shots=64,
+    )
+    experiment.assert_conforms(Stim(random_seed=23))
+
+
+def test_emission_scale_changes_fault_family() -> None:
+    """Zero emission scale selects the configured Pauli path instead of emission."""
+    parameters = (
+        GeneralNoiseParameters()
+        .with_p1(1.0)
+        .with_p1_pauli_model({"Z": 1.0})
+        .with_p1_emission_ratio(1.0)
+        .with_p1_emission_model({"X": 1.0})
+        .with_emission_scale(0.0)
+    )
+    experiment = ConformanceExperiment(
+        runner=build(one_qubit_gate.compile()),
+        n_qubits=1,
+        result_tags=("outcome",),
+        parameters=parameters,
+        expected=ZERO,
+        comparison=ONE,
+        shots=64,
+    )
+    experiment.assert_conforms(Stim(random_seed=23))
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        pytest.param(
+            GeneralNoiseParameters().with_p2(1.0).with_p2_pauli_model({"XI": 1.0}).with_p2_scale(0.0),
+            id="two-qubit-scale",
+        ),
+        pytest.param(
+            GeneralNoiseParameters().with_p_idle_linear(1.0, {"X": 1.0}).with_idle_after_2q(1.0).with_idle_scale(0.0),
+            id="idle-scale",
+        ),
+    ],
+)
+def test_two_qubit_and_idle_scale_controls(parameters: GeneralNoiseParameters) -> None:
+    """Two-qubit and idle family scales suppress their observable faults."""
+    experiment = ConformanceExperiment(
+        runner=build(two_qubit_gate.compile()),
+        n_qubits=2,
+        result_tags=("q0", "q1"),
+        parameters=parameters,
+        expected=ZERO_ZERO,
+        comparison=ExpectedDistribution({(1, 0): 1.0}),
+        shots=64,
+    )
+    experiment.assert_conforms(Stim(random_seed=23))
+
+
+def test_measurement_crosstalk_scale_can_disable_channel() -> None:
+    """The measurement-crosstalk scale is independently observable."""
+    parameters = (
+        GeneralNoiseParameters()
+        .with_p_meas_crosstalk_global(1.0)
+        .with_p_meas_crosstalk_model({"0->1": 1.0, "1->0": 1.0})
+        .with_p_meas_crosstalk_scale(0.0)
+    )
+    experiment = ConformanceExperiment(
+        runner=build(measurement_crosstalk_probe.compile()),
+        n_qubits=2,
+        result_tags=("source", "victim"),
+        parameters=parameters,
+        expected=ZERO_ZERO,
+        comparison=ExpectedDistribution({(0, 1): 1.0}),
         shots=64,
     )
     experiment.assert_conforms(Stim(random_seed=23))

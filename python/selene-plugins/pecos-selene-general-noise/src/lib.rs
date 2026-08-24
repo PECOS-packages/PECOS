@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn unknown_configuration_fields_are_rejected() {
-        let error = serde_json::from_str::<Config>(r#"{"quantinuum_device":"H2"}"#)
+        let error = serde_json::from_str::<Config>(r#"{"device_profile":"example"}"#)
             .expect_err("device-specific fields must not enter the generic API");
         assert!(error.to_string().contains("unknown field"));
     }

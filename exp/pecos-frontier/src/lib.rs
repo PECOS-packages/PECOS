@@ -105,6 +105,12 @@ impl FrontierCommittee {
     /// DEM is invalid.
     pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
         let build_started = Instant::now();
+        if config.metric_mode == MetricMode::MaxLogInt {
+            return Err(DecoderError::InvalidConfiguration(
+                "FrontierCommittee arbitration ranks on coset-mass posteriors; the integer max-log metric is not supported"
+                    .into(),
+            ));
+        }
         let FrontierConfig {
             k,
             delta,
@@ -443,6 +449,28 @@ mod tests {
         assert_eq!(forward.processed_columns, 2);
         assert_eq!(backward.processed_columns, 2);
         assert_eq!(forward.processed_columns, backward.processed_columns);
+    }
+
+    #[test]
+    fn committee_rejects_maxlog_metric() {
+        let dem = SparseDem {
+            mechanisms: vec![(0.2, vec![0], vec![0])],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 1,
+            num_observables: 1,
+        };
+        let error = FrontierCommittee::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                metric_mode: MetricMode::MaxLogInt,
+                ..FrontierConfig::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid configuration: FrontierCommittee arbitration ranks on coset-mass posteriors; the integer max-log metric is not supported"
+        );
     }
 
     #[test]

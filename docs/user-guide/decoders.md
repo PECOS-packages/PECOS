@@ -356,9 +356,9 @@ written with `^` separators passes: each component is graphlike). See
 BP-Trellis decoders, which additionally report a per-shot complementary gap,
 and for provenance-based decomposition of a hyperedge model into a graphlike
 one. Frontier's exact default-float masses are true unnormalized posteriors.
-Under its integer `maxlog_int` metric, terminal masses are per-label best-route
-(Viterbi) masses, the gap is a route-mass margin, and `log_evidence` is the
-winner's mass rather than evidence.
+Under its integer `maxlog_int` metric (Rust API only for now), terminal masses
+are per-label best-route (Viterbi) masses, the gap is a route-mass margin, and
+`log_evidence` is the winner's mass rather than evidence.
 
 ## See Also
 

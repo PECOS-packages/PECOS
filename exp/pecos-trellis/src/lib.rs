@@ -323,6 +323,7 @@ struct SuffixCompatibility {
     log_probability_one: f64,
     log_probability_zero_int: i64,
     log_probability_one_int: i64,
+    int_metric_scale: Option<i32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -644,7 +645,7 @@ impl TrellisDecoder {
             &columns,
             &column_moments,
             dem.num_detectors,
-            config.int_metric_scale,
+            (config.metric_mode == MetricMode::MaxLogInt).then_some(config.int_metric_scale),
         );
         for (column, suffix_compatibility) in columns.iter_mut().zip(suffix_tables) {
             column.suffix_compatibility = suffix_compatibility;
@@ -813,7 +814,7 @@ impl TrellisDecoder {
         let suffix_tables = build_suffix_compatibility_tables_nary(
             &columns,
             model.num_detectors(),
-            config.int_metric_scale,
+            (config.metric_mode == MetricMode::MaxLogInt).then_some(config.int_metric_scale),
         );
         for (column, suffix_compatibility) in columns.iter_mut().zip(suffix_tables) {
             column.suffix_compatibility = suffix_compatibility;
@@ -1212,7 +1213,11 @@ impl TrellisDecoder {
         let mut k_capped = false;
         let mut delta_pruned = false;
         let scale = self.config.int_metric_scale;
-        let delta_int = quantize_metric(self.config.delta, scale).max(0);
+        let delta_int = quantize_metric(self.config.delta, scale);
+        debug_assert!(
+            delta_int >= 0,
+            "validate_config rejects negative and non-finite delta under maxlog_int"
+        );
         let alpha_int = quantize_metric(self.config.score_alpha, scale);
 
         let Kernel::Binary(columns) = &self.kernel else {
@@ -1324,7 +1329,11 @@ impl TrellisDecoder {
         let mut k_capped = false;
         let mut delta_pruned = false;
         let scale = self.config.int_metric_scale;
-        let delta_int = quantize_metric(self.config.delta, scale).max(0);
+        let delta_int = quantize_metric(self.config.delta, scale);
+        debug_assert!(
+            delta_int >= 0,
+            "validate_config rejects negative and non-finite delta under maxlog_int"
+        );
         let alpha_int = quantize_metric(self.config.score_alpha, scale);
 
         let Kernel::Nary(columns) = &self.kernel else {
@@ -1433,7 +1442,8 @@ impl TrellisDecoder {
             columns,
             &moments,
             self.num_detectors,
-            self.config.int_metric_scale,
+            (self.config.metric_mode == MetricMode::MaxLogInt)
+                .then_some(self.config.int_metric_scale),
         );
         Ok((Some(tables), started.elapsed().as_secs_f64()))
     }
@@ -1674,8 +1684,10 @@ fn compare_words_as_unsigned(left: &[u64], right: &[u64]) -> Ordering {
 }
 
 /// Quantizes with an `f64` product and round-half-away-from-zero. Upstream's
-/// intermediate `long double` width is x86-specific; PECOS requires exact
-/// agreement at the fixture values rather than bit-replicating that type.
+/// intermediate `long double` width is x86-specific. Divergence is confined to
+/// non-power-of-two scales whose exact product lands within one ulp of a half
+/// boundary; PECOS owns these numerics, and fixture parity covers the shipped
+/// power-of-two scales.
 fn quantize_metric(value: f64, scale: i32) -> i64 {
     if !value.is_finite() {
         return INT_METRIC_NEG_INF;
@@ -1700,7 +1712,10 @@ fn i64_to_f64(value: i64) -> f64 {
 }
 
 fn integral_f64_to_i64(value: f64) -> i64 {
-    debug_assert!(value.is_finite() && value.fract() == 0.0);
+    debug_assert!(
+        value.is_finite() && value.fract() == 0.0 && value.abs() <= i64_to_f64(INT_METRIC_MAX),
+        "integral metric conversion requires a finite integer within the metric saturation range"
+    );
     let bits = value.to_bits();
     let negative = bits >> 63 != 0;
     let biased_exponent = i32::try_from((bits >> 52) & 0x7ff).expect("exponent fits i32");
@@ -1930,6 +1945,7 @@ fn prune_maxlog(
                 &key.active_syndrome,
                 observed,
                 suffix_compatibility,
+                scale,
             );
             ScoredIntCandidate {
                 candidate: IntCandidate { key, log_mass },
@@ -1937,6 +1953,8 @@ fn prune_maxlog(
             }
         })
         .collect();
+    // The parity contract deliberately orders score ties by StateKey ascending;
+    // upstream additionally compares log mass descending before its key tie-break.
     candidates.sort_by(|left, right| {
         right
             .score
@@ -1976,7 +1994,7 @@ fn build_suffix_compatibility_tables(
     columns: &[Column],
     column_moments: &[f64],
     num_detectors: usize,
-    int_metric_scale: i32,
+    int_metric_scale: Option<i32>,
 ) -> Vec<Vec<SuffixCompatibility>> {
     assert_eq!(columns.len(), column_moments.len());
     let mut tables = vec![Vec::new(); columns.len()];
@@ -1997,11 +2015,16 @@ fn build_suffix_compatibility_tables(
                     bit_mask: 1 << (detector % WORD_BITS),
                     log_probability_zero,
                     log_probability_one,
-                    log_probability_zero_int: quantize_metric(
-                        log_probability_zero,
-                        int_metric_scale,
-                    ),
-                    log_probability_one_int: quantize_metric(log_probability_one, int_metric_scale),
+                    // Float tables never read these sentinels; the scale tag is
+                    // asserted before integer suffix scoring.
+                    log_probability_zero_int: int_metric_scale
+                        .map_or(INT_METRIC_NEG_INF, |scale| {
+                            quantize_metric(log_probability_zero, scale)
+                        }),
+                    log_probability_one_int: int_metric_scale.map_or(INT_METRIC_NEG_INF, |scale| {
+                        quantize_metric(log_probability_one, scale)
+                    }),
+                    int_metric_scale,
                 }
             })
             .collect();
@@ -2015,7 +2038,7 @@ fn build_suffix_compatibility_tables(
 fn build_suffix_compatibility_tables_nary(
     columns: &[FactorColumn],
     num_detectors: usize,
-    int_metric_scale: i32,
+    int_metric_scale: Option<i32>,
 ) -> Vec<Vec<SuffixCompatibility>> {
     let mut tables = vec![Vec::new(); columns.len()];
     let mut row_moments = vec![1.0; num_detectors];
@@ -2030,11 +2053,16 @@ fn build_suffix_compatibility_tables_nary(
                     bit_mask: 1 << (detector % WORD_BITS),
                     log_probability_zero,
                     log_probability_one,
-                    log_probability_zero_int: quantize_metric(
-                        log_probability_zero,
-                        int_metric_scale,
-                    ),
-                    log_probability_one_int: quantize_metric(log_probability_one, int_metric_scale),
+                    // Float tables never read these sentinels; the scale tag is
+                    // asserted before integer suffix scoring.
+                    log_probability_zero_int: int_metric_scale
+                        .map_or(INT_METRIC_NEG_INF, |scale| {
+                            quantize_metric(log_probability_zero, scale)
+                        }),
+                    log_probability_one_int: int_metric_scale.map_or(INT_METRIC_NEG_INF, |scale| {
+                        quantize_metric(log_probability_one, scale)
+                    }),
+                    int_metric_scale,
                 }
             })
             .collect();
@@ -2155,8 +2183,14 @@ fn suffix_compatibility_score_int(
     active_syndrome: &[u64],
     observed: &[u64],
     suffix_compatibility: &[SuffixCompatibility],
+    scale: i32,
 ) -> i64 {
     suffix_compatibility.iter().fold(0, |total, row| {
+        assert_eq!(
+            row.int_metric_scale,
+            Some(scale),
+            "integer suffix scoring requires a table quantized at the decoder's metric scale"
+        );
         let term =
             if (active_syndrome[row.word_index] ^ observed[row.word_index]) & row.bit_mask == 0 {
                 row.log_probability_zero_int
@@ -2174,10 +2208,13 @@ fn finish_maxlog_decode(
 ) -> TrellisDecodeAttempt {
     let mut terminal_by_logical = BTreeMap::<Vec<u64>, i64>::new();
     for (key, log_mass) in frontier {
-        terminal_by_logical
-            .entry(key.logical)
-            .and_modify(|mass| *mass = (*mass).max(log_mass))
-            .or_insert(log_mass);
+        // The final column closes every active detector, so StateKey uniqueness
+        // already implies one terminal entry per logical label. Upstream's
+        // per-label MAX fold is therefore a no-op in this representation.
+        assert!(
+            terminal_by_logical.insert(key.logical, log_mass).is_none(),
+            "terminal boundary states must be unique per logical label"
+        );
     }
     let mut terminal: Vec<(Vec<u64>, i64)> = terminal_by_logical.into_iter().collect();
     terminal.sort_by(|(left_logical, left_mass), (right_logical, right_mass)| {
@@ -2349,14 +2386,23 @@ mod tests {
         }
         assert_eq!(quantize_metric(f64::MIN, 1024), INT_METRIC_NEG_INF);
         assert_eq!(quantize_metric(f64::MAX, 1024), INT_METRIC_MAX);
+        assert_eq!(quantize_metric(-3e18, 1), INT_METRIC_NEG_INF);
+        // `INT_METRIC_NEG_INF + 1` rounds back to the same f64 as the sentinel,
+        // so upstream's `+ 1` low-bound detail is inert in this f64 port.
+        let just_inside_low = i64_to_f64(INT_METRIC_NEG_INF) + 1024.0;
         assert_eq!(
-            quantize_metric(i64_to_f64(INT_METRIC_NEG_INF), 1),
-            INT_METRIC_NEG_INF
+            quantize_metric(just_inside_low, 1),
+            INT_METRIC_NEG_INF + 1024
         );
         assert_eq!(
             quantize_metric(i64_to_f64(INT_METRIC_MAX), 1),
             INT_METRIC_MAX
         );
+        assert_eq!(quantize_metric(1.5 / 1024.0, 1024), 2);
+        assert_eq!(quantize_metric(-1.5 / 1024.0, 1024), -2);
+        // Unlike 1.5, 2.5 distinguishes half-away from ties-to-even.
+        assert_eq!(quantize_metric(2.5 / 1024.0, 1024), 3);
+        assert_eq!(quantize_metric(-2.5 / 1024.0, 1024), -3);
     }
 
     #[test]

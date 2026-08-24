@@ -876,7 +876,19 @@ fn width_pruning_accounts_for_the_discarded_state_and_mass() {
 
 #[test]
 fn maxlog_dropped_mass_is_the_largest_discarded_route() {
-    let dem = sparse_dem(vec![(0.5, vec![], vec![0]), (0.25, vec![], vec![1])], 0, 2);
+    // K=2 first fills at column 0. Columns 1 and 2 both prune two routes:
+    // column 1 drops -1943 and -2358, while column 2 drops -3176 and -3591.
+    // The reported value must therefore be the largest within a prune call and
+    // across prune calls, not whichever discarded route or call came last.
+    let dem = sparse_dem(
+        vec![
+            (0.4, vec![], vec![0]),
+            (0.25, vec![], vec![1]),
+            (0.1, vec![], vec![2]),
+        ],
+        0,
+        3,
+    );
     let mut decoder = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
@@ -889,9 +901,9 @@ fn maxlog_dropped_mass_is_the_largest_discarded_route() {
     )
     .unwrap();
     let result = decoder.decode(&[]).unwrap();
-    let expected_dropped_mass = -2_130.0_f64 / 1024.0;
+    let expected_dropped_mass = -1_943.0_f64 / 1024.0;
 
-    assert_eq!(result.dropped_states, 2);
+    assert_eq!(result.dropped_states, 4);
     assert_eq!(
         result.dropped_log_mass.to_bits(),
         expected_dropped_mass.to_bits()
@@ -903,6 +915,27 @@ fn maxlog_dropped_mass_is_the_largest_discarded_route() {
             delta_pruned: false,
         }
     );
+}
+
+#[test]
+fn maxlog_delta_retains_a_candidate_exactly_at_the_cutoff() {
+    let dem = sparse_dem(vec![(0.25, vec![], vec![0])], 0, 1);
+    let mut decoder = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            k: usize::MAX,
+            delta: 1125.0 / 1024.0,
+            score_alpha: 0.0,
+            metric_mode: MetricMode::MaxLogInt,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
+    let result = decoder.decode(&[]).unwrap();
+
+    assert_eq!(result.logical_masses.len(), 2);
+    assert_eq!(result.dropped_states, 0);
+    assert_eq!(result.status, TrellisStatus::Exact);
 }
 
 #[test]
@@ -1243,6 +1276,48 @@ fn bp_scores_change_the_greedy_survivor_without_changing_its_mass() {
         .expect("the BP-retained label must exist in the exact enumeration");
     assert!((bp_result.logical_masses[0].log_mass.exp() - expected_log_mass.exp()).abs() <= 1e-12);
     assert!((bp_result.logical_masses[0].log_mass.exp() - 0.1173).abs() <= 1e-12);
+}
+
+#[test]
+fn bp_scored_maxlog_changes_the_greedy_binary_survivor() {
+    let dem = sparse_dem(
+        vec![
+            (0.15, vec![0], vec![]),
+            (0.15, vec![0, 1], vec![0]),
+            (0.08, vec![1], vec![]),
+        ],
+        2,
+        1,
+    );
+    let config = TrellisConfig {
+        k: 1,
+        delta: 1_000_000.0,
+        score_alpha: 0.8,
+        metric_mode: MetricMode::MaxLogInt,
+        ..TrellisConfig::default()
+    };
+    let mut without_bp = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+    let mut with_bp = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            bp_score_iterations: 5,
+            ..config
+        },
+    )
+    .unwrap();
+
+    let without_bp = without_bp.decode(&[1, 0]).unwrap();
+    let with_bp = with_bp.decode(&[1, 0]).unwrap();
+    assert_eq!(without_bp.predicted, ObsMask::from_u64(1));
+    assert!(with_bp.predicted.is_zero());
+    assert_eq!(
+        without_bp.status,
+        TrellisStatus::Pruned {
+            k_capped: true,
+            delta_pruned: false,
+        }
+    );
+    assert_eq!(with_bp.status, without_bp.status);
 }
 
 #[test]

@@ -1147,6 +1147,53 @@ input-to-output pass-through with identical types; otherwise the diagnostic
 asks for an explicit `if_else` with region yields. There should be no implicit
 truth-value conversion or implicit capture of a patch.
 
+#### Structured loops and branch joins
+
+Loops should use the same structured-region model rather than introduce an
+unrestricted control-flow graph into `InstrGraph`. The initial forms should be:
+
+- `repeat(count)`, where `count` is a compile-time or elaboration-time positive
+  integer and the body is a reusable region;
+- `while_loop(condition, carried=...)`, where a shot-time Boolean controls
+  entry to another iteration;
+- `repeat_until(success, carried=...)`, useful sugar for protocols such as
+  state preparation, decoding, or repeat-until-success injection where the
+  condition is produced by the body.
+
+Every loop has explicit loop-carried arguments and yields. A linear QEC block
+enters one iteration exactly once, is consumed and replaced inside the body,
+and the replacement becomes either the next iteration's argument or the loop's
+result. The verifier requires compatible carried types at the back edge and at
+loop exit; it rejects implicit capture, dropping, duplicating, or returning an
+iteration-local QEC value. Copyable classical constants may be explicit
+invariant arguments.
+
+Conceptually:
+
+```text
+(%data_out, %last_syndrome) = repeat_until (%data_in) {
+  body(%data):
+    (%next, %syndrome) = call %surface.syn_extract(%data)
+    %done = call %decoder.converged(%syndrome)
+    continue_if_not %done yielding %next, %syndrome
+}
+```
+
+This syntax is illustrative. The serialized representation needs typed region
+arguments, yielded carried values, a typed condition, and an explicit result
+signature. It must also distinguish compile/elaboration-time control from
+shot-time control. Static repetition can remain compact for analysis and then
+be unrolled or lowered to a backend loop. Dynamic loops require runtime
+feedback support and may require a declared maximum-iteration bound, timeout
+result, or explicitly unbounded resource estimate before a target will accept
+them.
+
+Branches follow the same ownership rule. Both arms receive their own region
+arguments representing mutually exclusive uses of the incoming values, and the
+join produces one new value version. This is not quantum cloning: only the
+selected arm executes in a shot. Nested `if_else`, `repeat`, and dynamic loops
+are legal when their region boundaries and backend capabilities compose.
+
 Logical Pauli feed-forward needs a still higher-level representation. A raw
 teleportation or surgery instruction may return both a block and a typed
 `PauliByproduct` computed from its measurement outputs. A separate instruction
@@ -1602,12 +1649,31 @@ a parameterized implementation planner. It is then a claimed abstraction that
 the eventual detailed circuit must satisfy, not a separate semantic
 implementation.
 
-This model must also work before exact mapping. A cell can contain symbolic
+Structured control has corresponding shape projections:
+
+- a conditional realization is a `ChoiceShape` with a shared typed entry and
+  join plus one mutually exclusive shape per branch;
+- a static `repeat(count)` is a `RepeatShape` whose body shape can be retained
+  symbolically or expanded along time;
+- a dynamic loop is a loop-body shape plus its carried-resource interface,
+  feedback edge, termination condition, and any iteration bound or resource
+  distribution known to the planner.
+
+These are compact descriptions, not literal cyclic physical time. A concrete
+execution trace unfolds whichever branch and iterations actually execute into
+an acyclic 2+1D history. Placement may reserve the union of conditional branch
+occupancy, reuse resources known to be mutually exclusive, or use a target-
+specific dynamic policy; the choice must be recorded. Duration and volume
+queries must state whether they report a per-branch value, minimum, maximum,
+expected estimate, bounded range, or `Unknown`. An unbounded dynamic loop cannot
+claim a finite exact total space-time volume.
+
+This model must also work before exact mapping. A realization can contain symbolic
 coordinates, relative placement constraints, alternative orientations, and
-resource bounds. Only a mapped realization names target physical qubits and calibrated
-durations. Time may initially be rounds or a partial order, then later refine
-to ticks and hardware time; the model should not assume that every abstract
-cell already occupies an integer rectangular prism.
+resource bounds. Only a mapped realization names target physical qubits and
+calibrated durations. Time may initially be rounds or a partial order, then
+later refine to ticks and hardware time; the model should not assume that every
+abstract shape is an integer rectangular prism.
 
 The black-box shape or realization summary should make at least the following
 information inspectable when known:
@@ -2661,8 +2727,13 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 
 ### Stage 6: structured control and repetition
 
+- Add typed `repeat`, `while_loop`, and `repeat_until` regions with explicit
+  loop-carried linear values, conditions, yields, and result signatures.
 - Evaluate a structured syndrome-round loop aligned with
-  `design/measurement-id-system.md`.
+  `design/measurement-id-system.md`, including stable dynamic measurement
+  identities across iterations.
+- Add `ChoiceShape` and `RepeatShape` projections, with explicit mutually
+  exclusive occupancy policy and bounded/estimated/unknown resource totals.
 - Lower genuinely adaptive non-Pauli regions only for runtimes, schedulers, and
   analysis paths that explicitly advertise support; otherwise reject them.
 - Keep unrolled lowering as a compatibility/debug option.
@@ -2704,6 +2775,19 @@ Required tests include:
 - conditional regions rejecting non-Boolean predicates, implicit linear
   captures, missing yields, incompatible branch result types, and double use
   of a branch input;
+- loop regions rejecting incompatible carried types, implicit linear captures,
+  dropped or duplicated QEC blocks, non-Boolean dynamic conditions, and
+  iteration-local values escaping their scope;
+- static repeats producing equivalent unrolled and structured Guppy/QIS traces,
+  measurement identities, detector definitions, and shape projections;
+- dynamic loop lowering being rejected with an actionable capability diagnostic
+  when the runtime, mapper, trace collector, or DEM path lacks required feedback
+  support;
+- conditional shapes treating branches as mutually exclusive, preserving their
+  shared typed join, and reporting whether resource values are per-branch,
+  reserved-union, minimum, maximum, expected, bounded, or unknown;
+- dynamic loop shapes never claiming a finite exact total volume without a
+  proven iteration bound;
 - `.when(predicate)` serializing identically to its explicit type-preserving
   `if_else` expansion and rejecting instructions without an unambiguous
   pass-through;

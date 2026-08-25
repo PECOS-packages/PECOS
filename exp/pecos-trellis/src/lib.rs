@@ -74,9 +74,10 @@ pub struct TrellisConfig {
     /// Merge probabilistic mechanisms with identical detector and observable
     /// sets using their XOR-combined probability.
     ///
-    /// This merge is mathematically exact, but it takes a different
-    /// floating-point path and the external parity contract on this engine is
-    /// bitwise, so it is disabled by default.
+    /// This merge is mathematically exact under the default float metric and is
+    /// rejected under `maxlog_int`. It takes a different floating-point path and
+    /// the external parity contract on this engine is bitwise, so it is disabled
+    /// by default.
     /// Zero-probability mechanisms are already discarded, while probability-one
     /// mechanisms remain separate in the forced layer and are not merged with
     /// otherwise identical probabilistic mechanisms.
@@ -1572,6 +1573,12 @@ fn validate_config(config: &TrellisConfig, mechanism_count: usize) -> Result<(),
                 .into(),
         ));
     }
+    if config.metric_mode == MetricMode::MaxLogInt && config.merge_indistinguishable {
+        return Err(DecoderError::InvalidConfiguration(
+            "indistinguishable-mechanism merging sums coset mass and is incompatible with the max-log route metric"
+                .into(),
+        ));
+    }
     if config.int_metric_scale <= 0 {
         return Err(DecoderError::InvalidConfiguration(
             "TrellisConfig.int_metric_scale must be positive".into(),
@@ -1689,6 +1696,10 @@ fn compare_words_as_unsigned(left: &[u64], right: &[u64]) -> Ordering {
 /// boundary; PECOS owns these numerics, and fixture parity covers the shipped
 /// power-of-two scales.
 fn quantize_metric(value: f64, scale: i32) -> i64 {
+    debug_assert!(
+        value != f64::INFINITY,
+        "positive-infinite metric input would saturate to the negative sentinel"
+    );
     if !value.is_finite() {
         return INT_METRIC_NEG_INF;
     }
@@ -1938,27 +1949,38 @@ fn prune_maxlog(
     suffix_compatibility: &[SuffixCompatibility],
     observed: &[u64],
 ) -> IntPruneResult {
+    assert!(
+        suffix_compatibility
+            .first()
+            .is_none_or(|row| row.int_metric_scale == Some(scale)),
+        "integer suffix scoring requires a table quantized at the decoder's metric scale"
+    );
     let mut candidates: Vec<ScoredIntCandidate> = frontier
         .into_iter()
         .map(|(key, log_mass)| {
-            let parity = suffix_compatibility_score_int(
-                &key.active_syndrome,
-                observed,
-                suffix_compatibility,
-                scale,
-            );
+            let score = if alpha_int == 0 {
+                log_mass
+            } else {
+                let parity = suffix_compatibility_score_int(
+                    &key.active_syndrome,
+                    observed,
+                    suffix_compatibility,
+                );
+                score_int_metric(log_mass, parity, alpha_int, scale)
+            };
             ScoredIntCandidate {
                 candidate: IntCandidate { key, log_mass },
-                score: score_int_metric(log_mass, parity, alpha_int, scale),
+                score,
             }
         })
         .collect();
-    // The parity contract deliberately orders score ties by StateKey ascending;
-    // upstream additionally compares log mass descending before its key tie-break.
+    // The integer path matches upstream's common score ties by preferring log
+    // mass descending before StateKey; the float path keeps this engine's order.
     candidates.sort_by(|left, right| {
         right
             .score
             .cmp(&left.score)
+            .then_with(|| right.candidate.log_mass.cmp(&left.candidate.log_mass))
             .then_with(|| left.candidate.key.cmp(&right.candidate.key))
     });
     let cutoff = candidates[0].score.saturating_sub(delta_int);
@@ -2183,14 +2205,8 @@ fn suffix_compatibility_score_int(
     active_syndrome: &[u64],
     observed: &[u64],
     suffix_compatibility: &[SuffixCompatibility],
-    scale: i32,
 ) -> i64 {
     suffix_compatibility.iter().fold(0, |total, row| {
-        assert_eq!(
-            row.int_metric_scale,
-            Some(scale),
-            "integer suffix scoring requires a table quantized at the decoder's metric scale"
-        );
         let term =
             if (active_syndrome[row.word_index] ^ observed[row.word_index]) & row.bit_mask == 0 {
                 row.log_probability_zero_int
@@ -2381,9 +2397,13 @@ mod tests {
 
     #[test]
     fn integer_metric_quantization_saturates_at_its_boundaries() {
-        for non_finite in [f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+        for non_finite in [f64::NEG_INFINITY, f64::NAN] {
             assert_eq!(quantize_metric(non_finite, 1024), INT_METRIC_NEG_INF);
         }
+        assert!(
+            std::panic::catch_unwind(|| quantize_metric(f64::INFINITY, 1024)).is_err(),
+            "positive infinity must trip the debug-only caller-contract assertion"
+        );
         assert_eq!(quantize_metric(f64::MIN, 1024), INT_METRIC_NEG_INF);
         assert_eq!(quantize_metric(f64::MAX, 1024), INT_METRIC_MAX);
         assert_eq!(quantize_metric(-3e18, 1), INT_METRIC_NEG_INF);

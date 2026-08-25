@@ -13,6 +13,7 @@
 use pecos_decoder_core::dem::SparseDem;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
+use pecos_trellis::factor::FactorModel;
 use pecos_trellis::{
     MetricMode, TrellisConfig, TrellisDecodeAttempt, TrellisDecoder, TrellisResult, TrellisStatus,
 };
@@ -939,6 +940,71 @@ fn maxlog_delta_retains_a_candidate_exactly_at_the_cutoff() {
 }
 
 #[test]
+fn maxlog_zero_alpha_skips_negative_infinite_suffix_scores() {
+    let dem = sparse_dem(
+        vec![
+            (1e-18, vec![0], vec![0]),
+            (0.3, vec![1], vec![]),
+            (1e-18, vec![0], vec![]),
+        ],
+        2,
+        1,
+    );
+    let config = TrellisConfig {
+        score_alpha: 0.0,
+        ..TrellisConfig::default()
+    };
+    let mut float_decoder = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+    let mut maxlog_decoder = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            metric_mode: MetricMode::MaxLogInt,
+            ..config
+        },
+    )
+    .unwrap();
+
+    let float_result = float_decoder.decode(&[1, 0]).unwrap();
+    let maxlog_result = maxlog_decoder.decode(&[1, 0]).unwrap();
+    assert!(float_result.predicted.is_zero());
+    assert_eq!(float_result.status, TrellisStatus::Exact);
+    assert_eq!(float_result.logical_masses.len(), 2);
+    assert_eq!(maxlog_result.predicted, float_result.predicted);
+    assert_eq!(maxlog_result.status, TrellisStatus::Exact);
+    assert_eq!(maxlog_result.logical_masses.len(), 2);
+}
+
+#[test]
+fn maxlog_score_ties_prefer_the_higher_mass_state() {
+    // At scale 1 after column 0, skip has mass -1 and parity 0, while take has
+    // mass 0 and parity -1. Both scores are -1, so K=1 must retain take.
+    let dem = sparse_dem(vec![(0.7, vec![0], vec![0]), (0.7, vec![0], vec![])], 1, 1);
+    let mut decoder = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            k: 1,
+            delta: 1_000_000.0,
+            score_alpha: 0.8,
+            metric_mode: MetricMode::MaxLogInt,
+            int_metric_scale: 1,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
+
+    let result = decoder.decode(&[1]).unwrap();
+    assert_eq!(result.predicted, ObsMask::from_u64(1));
+    assert_eq!(result.logical_masses.len(), 1);
+    assert_eq!(
+        result.status,
+        TrellisStatus::Pruned {
+            k_capped: true,
+            delta_pruned: false,
+        }
+    );
+}
+
+#[test]
 fn delta_pruning_reports_its_status_flag() {
     // The two masses are 0.75 and 0.25, whose log-score gap ln(3) exceeds the
     // 0.5 window. With unlimited K, Delta alone drops the take state.
@@ -1176,6 +1242,20 @@ fn validates_probabilities_indices_order_and_pruning_configuration() {
         maxlog_infinite_delta.to_string(),
         "Invalid configuration: delta must be finite under maxlog_int; infinite delta would quantize to zero and prune to score-ties"
     );
+
+    let maxlog_merge_config = TrellisConfig {
+        merge_indistinguishable: true,
+        metric_mode: MetricMode::MaxLogInt,
+        ..TrellisConfig::default()
+    };
+    let expected_merge_error = "Invalid configuration: indistinguishable-mechanism merging sums coset mass and is incompatible with the max-log route metric";
+    let sparse_merge_error =
+        TrellisDecoder::from_sparse_dem(&zero_dem, maxlog_merge_config.clone()).unwrap_err();
+    assert_eq!(sparse_merge_error.to_string(), expected_merge_error);
+    let binary_factor_model = FactorModel::try_from(&zero_dem).unwrap();
+    let factor_merge_error =
+        TrellisDecoder::from_factor_model(&binary_factor_model, maxlog_merge_config).unwrap_err();
+    assert_eq!(factor_merge_error.to_string(), expected_merge_error);
 
     for metric_mode in [MetricMode::LogSumExpFloat, MetricMode::MaxLogInt] {
         for int_metric_scale in [0, -1] {

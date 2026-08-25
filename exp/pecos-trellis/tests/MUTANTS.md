@@ -37,3 +37,6 @@ executing the mutant against this crate's suite rather than assumed.
 | `maxlog_delta_excludes_cutoff_tie` | In `prune_maxlog`, replace `"scored.score >= cutoff"` with `"scored.score > cutoff"`. | `maxlog_delta_retains_a_candidate_exactly_at_the_cutoff` |
 | `bp_maxlog_builds_unquantized_suffix_tables` | In `bp_suffix_compatibility`, pass `None` instead of the selected integer scale. | `bp_scored_maxlog_changes_the_greedy_binary_survivor` |
 | `bp_maxlog_uses_static_suffix_tables` | In binary max-log decode, ignore `bp_suffix_compatibility` and use `column.suffix_compatibility`. | `bp_scored_maxlog_changes_the_greedy_binary_survivor` |
+| `maxlog_zero_alpha_scores_suffix` | Remove the `alpha_int == 0` short-circuit in `prune_maxlog`. | `maxlog_zero_alpha_skips_negative_infinite_suffix_scores` |
+| `allow_maxlog_indistinguishable_merge` | Delete the `MetricMode::MaxLogInt` plus `merge_indistinguishable` rejection from `validate_config`. | `validates_probabilities_indices_order_and_pruning_configuration` |
+| `maxlog_score_tie_ignores_log_mass` | Delete the log-mass comparator from `prune_maxlog`'s candidate ordering. | `maxlog_score_ties_prefer_the_higher_mass_state` |

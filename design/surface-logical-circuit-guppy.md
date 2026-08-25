@@ -1,68 +1,80 @@
-# QEC-instruction logical circuits with Guppy output
+# Typed instruction programs for logical QEC and Guppy output
 
 Status: proposed.
 
 ## Summary
 
-PECOS should support constructing an experiment from abstract surface-code
-patches and logical operations, then lowering the same experiment to Guppy,
-`TickCircuit`, `DagCircuit`, Stim, and detector error models.
+PECOS should support constructing programs from typed resources and unresolved
+instruction applications, then selecting implementations in an explicit
+lowering environment. Logical QEC is the first motivating dialect: users create
+abstract surface-code patches and logical operations, then lower the program to
+Guppy, `TickCircuit`, `DagCircuit`, Stim, and detector error models.
 
-The authoring IR should be an opaque typed dataflow container for logical
-resources and QEC instruction applications. It should not have built-in knowledge of
-operation names such as H, CX, preparation, or syndrome extraction. Explicit
-instruction sets define those operations, their typed code-block boundaries,
-intended logical transformations, and available implementations. A surface-code
-convenience API should live under
+The generic authoring model is an `InstrProgram` containing reusable
+`InstrModule` definitions and appendable `InstrGraph` bodies. It does not have
+built-in knowledge of instruction names. `InstrDef` objects declare typed
+ports, parameters, effects, and domain semantic interfaces; `InstrImpl` objects
+describe selectable realizations. QEC adds code-block types, logical
+transformations, Pauli-frame transfer, protocol planning, and surface-specific
+implementation support without changing the generic graph container.
+
+A surface-code convenience API should live under
 `pecos.qec.surface` and use `SurfacePatch` as its only source of surface-code
 geometry. SLR is useful precedent for separating authoring from rendering, but
 the new API should not depend on SLR. The existing SLR surface gate library is
 incomplete, and its generic representation is lower-level than users need for
 logical QEC experiments.
 
-The authoritative implementation should be Rust-first. Core types, validation,
-resolution, planning, serialization, and deterministic Guppy source generation
-belong in `crates/pecos-qec`. PyO3 bindings in `python/pecos-rslib` expose those
-types, while `quantum-pecos` supplies only Pythonic construction conveniences
-and the bridge into Guppy's Python compiler.
+The generic graph must not become a second general-purpose PECOS IR. PHIR
+already has modules, regions, blocks, SSA operands/results, custom dialects,
+and extensible types. `InstrProgram`/`InstrGraph` should be a deliberately
+smaller high-level authoring, elaboration, and implementation-resolution model
+that can generate PHIR after its domain choices are resolved. It may reuse PHIR
+types and structural utilities where that keeps the boundary clean, but it
+should not duplicate PHIR's general compiler responsibilities. QEC definitions,
+semantics, planning, and Guppy generation remain in `crates/pecos-qec`.
+PyO3 bindings expose the Rust-owned artifacts, while `quantum-pecos` supplies
+only Pythonic construction conveniences and the bridge into Guppy's Python
+compiler.
 
 The core direction is:
 
 ```text
-Logical resources + opaque QEC instruction applications
+Typed resources + opaque instruction applications
                          |
                          v
-                 LogicalCircuit IR
+      InstrProgram / InstrModule / InstrGraph
+        (compact high-level structure)
                          |
                          v
-       parameter/type/hierarchy elaboration
+   parameter/type/hierarchy/dialect elaboration
                          |
                          v
-             ElaboratedLogicalCircuit
+             ElaboratedInstrProgram
                          |
                          v
-       explicit QecInstrSet resolution
+       explicit InstrSet resolution
+       + QEC semantic verification
                          |
                          v
             resolved instruction program
                          |
-                         v
-                       Guppy
-                         |
-                         v
-                HUGR / QIS lowering
-                         |
-                         v
-                    QIS trace
-                         |
-                         v
-              normalized TickCircuit
-                    |
-                    v
-               DagCircuit
-                    |
-                    v
-                   DEM
+             +-----------+-----------+
+             |                       |
+             v                       v
+           PHIR                    Guppy
+     (MLIR-like target)              |
+                                     v
+                            HUGR / QIS lowering
+                                     |
+                                     v
+                                QIS trace
+                                     |
+                                     v
+                          normalized TickCircuit
+                                     |
+                                     v
+                            DagCircuit / DEM
 
               optional exports:
               TickCircuit -> Stim circuit
@@ -96,6 +108,16 @@ Consequently, a user can express a logical experiment or obtain a Guppy
 program, but cannot use one supported abstraction to do both. Adding another
 specific experiment factory makes this split worse.
 
+There is older PECOS precedent for the generic shape. The original
+`QuantumCircuit` stored gate symbols, locations, and parameters without owning
+their executable meaning. A simulator's `gate_dict` resolved each symbol to a
+callable when the circuit ran. The modern `GateRegistry` similarly stores
+custom gate signatures and decompositions for later expansion. The proposed
+model retains that useful late binding while replacing string dispatch with
+stable definition identities, typed SSA values, explicit outputs, structured
+control, hierarchy, semantic contracts, and deterministic target-aware
+resolution.
+
 ### Current documentation and the missing layer
 
 The existing documentation does show how to obtain Guppy for surface-code
@@ -116,7 +138,7 @@ factory-specific recipe.
 
 1. Let users declare one or more `SurfacePatch` instances and compose supported
    logical operations on them.
-2. Keep operation names and semantics out of the circuit container itself.
+2. Keep instruction names and domain semantics out of `InstrGraph` itself.
 3. Separate a QEC instruction's semantic contract from the QEC protocol or
    physical implementation that realizes it.
 4. Make every instruction declare its typed QEC-block inputs and outputs and
@@ -134,12 +156,18 @@ factory-specific recipe.
 10. Keep existing factory APIs and `LogicalCircuitBuilder` programs working.
 11. Leave room for color codes, small block codes, and heterogeneous protocols
    without forcing surface-specific concepts into the generic IR.
+12. Make the generic instruction substrate usable by physical quantum,
+   classical, pulse, calibration, and other PECOS dialects without requiring
+   them to depend on QEC.
+13. Reuse or strengthen PHIR's structural IR rather than creating a parallel
+   module/region/SSA representation.
 
 ## Non-goals for the first version
 
-- Arbitrary measurement-dependent branching or repeat-until-success control
-  flow.
-- A general quantum compiler IR replacing HUGR or SLR.
+- Lowering every form of adaptive measurement-dependent control in the first
+  version; the generic structure may represent and validate more than every
+  initial backend supports.
+- A new general compiler IR replacing PHIR, HUGR, or SLR.
 - Automatic lattice-surgery synthesis.
 - Supporting operations whose detector-boundary semantics are not defined.
 - Converting an arbitrary `TickCircuit` back into structured Guppy.
@@ -149,27 +177,35 @@ factory-specific recipe.
 
 PECOS should have one implementation of this model, in Rust. Python must not
 maintain a parallel instruction graph, type checker, implementation resolver,
-surface planner, or serialization format. This follows the existing repository
-shape: QEC semantics live in `crates/pecos-qec`, PyO3 bindings live in
-`python/pecos-rslib`, and the `pecos` Python package re-exports or lightly wraps
-the bound types.
+surface planner, or serialization format. A small Rust instruction-program
+layer owns generic authoring and resolution; QEC semantics live in
+`crates/pecos-qec`; a Rust lowering generates `pecos-phir`; PyO3 bindings live
+in `python/pecos-rslib`; and the `pecos` Python package re-exports or lightly
+wraps the bound types.
 
 ### Rust core
 
-The initial implementation should add modules under `crates/pecos-qec` along
-these lines:
+The conceptual ownership should be along these lines:
 
 ```text
+pecos_instr (crate/module name provisional)
+    InstrProgram, InstrModule, InstrGraph, InstrCall
+    InstrDef, InstrSet, InstrImpl, generic resolver interfaces
+    InstrDefId, ImplDefId, ModuleDefId, ModuleInstanceId
+    ValueId, CallId, RegionId
+    symbol tables, hierarchy, typed SSA/linearity validation
+    dialect schemas, annotations, provenance, serialization
+
+pecos_phir::instr_lowering
+    ResolvedInstrProgram -> PHIR Module/Function/Region/Instruction
+    typed dialect operation and type emission
+    source/provenance maps back to instruction instances and values
+
 pecos_qec::instr
     QecInstr, QecInstrSet, QecInstrImpl, QecInstrPlan
-    InstrPort, InstrParam, QecTypeExpr, QecLogicalTransform
+    QecInstrSemantics, QecTypeExpr, QecLogicalTransform
+    QecFrameTransfer, QEC-specific support constraints
     type variables, substitution, constraints, and unification
-    support and resolution diagnostics
-
-pecos_qec::logical
-    LogicalCircuit, ElaboratedLogicalCircuit, QecInstrCall
-    InstrDefId, ImplDefId, BlockId, ValueId, CallId, RegionId
-    symbol tables, hierarchy, linear SSA validation, annotations, provenance
 
 pecos_qec::surface
     SurfacePatch / surface geometry
@@ -184,11 +220,22 @@ pecos_qec::guppy
     deterministic Guppy source and semantic sidecar generation
 ```
 
-The exact module split can evolve, but ownership should not. Stable IDs should
-be Rust newtypes rather than Python object identity. Core artifacts and
+The exact crate/module split can evolve after a focused PHIR integration audit.
+The important boundary is semantic: `InstrProgram` contains only the
+definition/instance/value/region structure needed for high-level composition
+and resolution, while PHIR owns the general compiler IR generated from it.
+Stable IDs should be Rust newtypes rather than Python object identity. Core artifacts and
 diagnostics should use typed Rust enums/structs and have versioned `serde`
 representations so Rust, Python, a future HDL, and stored experiment artifacts
 all share the same schema.
+
+PHIR's current `CustomOp`, `CustomType`, and dialect registration provide the
+right lowering targets but not the complete high-level contract needed here.
+`InstrProgram` must add stable definition references, named typed ports,
+parameter schemas, value linearity/copyability, implementation candidates,
+support diagnostics, and deterministic resolution. PHIR emission must use
+registered typed dialect operations/types and preserve source IDs; core QEC
+facts must not be smuggled through unvalidated string attributes.
 
 `QecInstrImpl` should be a Rust trait implemented by built-in strategies. An
 explicit `QecInstrSet` owns the implementations available to one compilation;
@@ -220,8 +267,9 @@ the same wrapper pattern as existing `StabilizerCode`, circuit, and fault-
 tolerance bindings. Bound objects own or reference their Rust counterparts;
 Python exceptions are translations of structured Rust error variants.
 
-The public `pecos.qec` and `pecos.qec.surface` modules provide:
+The public `pecos.instr`, `pecos.qec`, and `pecos.qec.surface` modules provide:
 
+- generic `InstrProgram`, `InstrModule`, and `InstrGraph` builders;
 - imports and Python type annotations for the bound Rust types;
 - keyword-friendly constructors and instruction lookup;
 - `LogicalBlock` cursor objects for the ergonomic imperative API;
@@ -230,10 +278,10 @@ The public `pecos.qec` and `pecos.qec.surface` modules provide:
 - small convenience profiles such as `SurfaceInstrSet.szz_transversal()`;
 - Guppy module loading/compilation and existing runtime orchestration.
 
-A Python `LogicalBlock` cursor contains a Rust circuit handle plus a `BlockId`;
+A Python `LogicalBlock` cursor contains a Rust graph handle plus a `BlockId`;
 it does not own a separate current-value model. `append`, `apply`, validation,
 default resolution, and introspection delegate immediately to Rust. The exact
-same Rust circuit can therefore be authored from Rust directly, from Python,
+same Rust program can therefore be authored from Rust directly, from Python,
 or later from an HDL.
 
 ### Guppy boundary
@@ -245,7 +293,7 @@ measurement, detector, observable, instruction-call, and provenance sidecars.
 The thin Python layer compiles/loads that source with Guppy and passes the
 result into the existing HUGR/QIS runtime path.
 
-No Python renderer should independently walk the logical circuit and decide how
+No Python renderer should independently walk the instruction graph and decide how
 an instruction is implemented. If a short-term migration reuses existing
 Python Guppy emission, it must consume a fully resolved serialized Rust plan and
 be treated as a replaceable bridge, not an alternate source of semantics.
@@ -261,44 +309,46 @@ Rust:
 
 ```rust
 let surface = SurfaceInstrSet::szz_transversal();
-let mut circuit = LogicalCircuit::new(surface.instr_set());
+let mut program = InstrProgram::new([surface.instr_set()]);
+let graph = program.main_mut();
 
-let data = circuit.block("data", SurfacePatch::rotated(3)?)?;
-let ancilla = circuit.block("ancilla", SurfacePatch::rotated(3)?)?;
+let data = graph.block("data", SurfacePatch::rotated(3)?)?;
+let ancilla = graph.block("ancilla", SurfacePatch::rotated(3)?)?;
 
-circuit.parallel(|region| {
+graph.parallel(|region| {
     region.append(surface.prepare().patch(data).basis(Basis::Z))?;
     region.append(surface.prepare().patch(ancilla).basis(Basis::X))?;
     Ok(())
 })?;
 
-circuit.append(surface.syn_extract().patch(data).rounds(3))?;
-circuit.append(surface.h().patch(data))?;
-circuit.append(surface.cx().control(data).target(ancilla))?;
+graph.append(surface.syn_extract().patch(data).rounds(3))?;
+graph.append(surface.h().patch(data))?;
+graph.append(surface.cx().control(data).target(ancilla))?;
 
-let data_x = circuit.append(surface.measure().patch(data).basis(Basis::X))?;
-circuit.export("data_x", data_x)?;
+let data_x = graph.append(surface.measure().patch(data).basis(Basis::X))?;
+graph.export("data_x", data_x)?;
 ```
 
 Python:
 
 ```python
 surface = SurfaceInstrSet.szz_transversal()
-circuit = LogicalCircuit(instruction_sets=[surface])
+program = InstrProgram(instruction_sets=[surface])
+graph = program.main()
 
-data = circuit.block("data", SurfacePatch.rotated(3))
-ancilla = circuit.block("ancilla", SurfacePatch.rotated(3))
+data = graph.block("data", SurfacePatch.rotated(3))
+ancilla = graph.block("ancilla", SurfacePatch.rotated(3))
 
-with circuit.parallel():
-    circuit.append(surface.prepare(patch=data, basis="Z"))
-    circuit.append(surface.prepare(patch=ancilla, basis="X"))
+with graph.parallel():
+    graph.append(surface.prepare(patch=data, basis="Z"))
+    graph.append(surface.prepare(patch=ancilla, basis="X"))
 
-circuit.append(surface.syn_extract(patch=data, rounds=3))
-circuit.append(surface.h(patch=data))
-circuit.append(surface.cx(control=data, target=ancilla))
+graph.append(surface.syn_extract(patch=data, rounds=3))
+graph.append(surface.h(patch=data))
+graph.append(surface.cx(control=data, target=ancilla))
 
-data_x = circuit.append(surface.measure(patch=data, basis="X"))
-circuit.export("data_x", data_x)
+data_x = graph.append(surface.measure(patch=data, basis="X"))
+graph.export("data_x", data_x)
 ```
 
 The spelling is intentionally parallel: `patch`, `basis`, `rounds`, `control`,
@@ -308,9 +358,58 @@ Rust should provide generated or handwritten typed call builders rather than
 forcing users to construct string maps for common instructions.
 
 Both APIs also retain a generic escape hatch for tooling: Rust can append a
-`BoundQecInstrCall`, while Python can call `apply(instr, **ports)`. Every public
+`BoundInstrCall`, while Python can call `apply(instr, **ports)`. Every public
 operation delegates to Rust and must produce byte-for-byte-equivalent
 serialized artifacts and equivalent structured errors.
+
+## Minimal generic instruction model
+
+The generic layer should remain deliberately small:
+
+- `InstrProgram` owns imported instruction sets, reusable module definitions,
+  entry points, exports, and program-level metadata.
+- `InstrModule` owns a named typed interface, parameters, requirements, and one
+  or more `InstrGraph` regions.
+- `InstrGraph` owns typed `ValueRef` edges, `InstrCall` nodes, structural
+  control regions, and exports. `append` validates a bound call and returns its
+  typed result values.
+- `InstrDef` owns a stable identity, named input/output ports, parameters,
+  generic traits/effects, and typed dialect semantic interfaces.
+- `InstrSet` owns definitions, candidate `InstrImpl` objects, explicit
+  defaults/preferences, and version identity.
+- `InstrImpl` answers whether it supports a bound call in a lowering context
+  and produces a serializable resolved plan or dialect lowering.
+
+The graph understands generic value properties such as type, linearity,
+copyability, definition/use, region ownership, and source identity. It does not
+understand QEC patches, qubits, pulses, decoder meanings, or operation names.
+Those belong to registered dialect interfaces. A program may import multiple
+dialects, allowing a later phase to compose QEC, physical quantum, and
+classical instructions without putting all of their concepts in one enum.
+
+This is intentionally less abstract than a general IR. The first version does
+not need arbitrary memory models, exceptions, object systems, unrestricted
+CFG construction, or a generic optimization framework. When resolved domain
+instructions need those facilities, lowering generates PHIR operations,
+regions, types, functions, and modules. PHIR then owns general analyses and
+compiler transformations.
+
+The generic resolution order mirrors the QEC-specific policy developed below:
+an explicit call constraint wins, then an explicit program/profile preference,
+then a sole supported candidate; zero or multiple remaining candidates are
+errors. A dialect can refine `supports`, plan contents, and semantic
+verification, but cannot change that deterministic selection contract.
+
+The relationship to existing artifacts is therefore:
+
+```text
+Original QuantumCircuit       symbol + locations + params
+Current GateRegistry          gate signature + one decomposition
+InstrProgram / InstrGraph     typed definition calls + selectable implementations
+ResolvedInstrProgram          every implementation and support decision fixed
+PHIR                          general MLIR-like compiler representation
+TickCircuit / DagCircuit      concrete scheduled quantum circuit representations
+```
 
 ## QEC instructions and implementations
 
@@ -346,16 +445,29 @@ Conceptually:
 
 ```python
 @dataclass(frozen=True)
-class QecInstr:
+class InstrDef:
+    definition_id: InstrDefId
     name: QualifiedInstrName
     inputs: tuple[InstrInput, ...]
     outputs: tuple[InstrOutput, ...]
+    parameters: tuple[InstrParameter, ...] = ()
+    traits: tuple[InstrTrait, ...] = ()
+    semantic_interfaces: tuple[DialectSemantics, ...] = ()
+
+
+@dataclass(frozen=True)
+class QecInstrSemantics(DialectSemantics):
     logical_transform: QecLogicalTransform
     logical_frame_transfer: QecFrameTransfer
-    parameters: tuple[InstrParameter, ...] = ()
 
 
-class QecInstrImpl:
+@dataclass(frozen=True)
+class QecInstr:
+    definition: InstrDef
+    semantics: QecInstrSemantics
+
+
+class QecInstrImpl(InstrImpl):
     implementation_id: str
     instruction: QecInstr
 
@@ -367,31 +479,33 @@ class QecInstrImpl:
 
     def plan(
         self,
-        call: QecInstrCall,
-        operands: tuple[LogicalValueRef, ...],
+        call: InstrCall,
+        operands: tuple[ValueRef, ...],
         context: LoweringContext,
     ) -> QecInstrPlan: ...
 ```
 
-The minimal instruction contract is therefore **name, typed inputs, typed
-outputs, intended logical transformation, and logical-frame transfer**. The
-frame transfer may be canonically derived for standard identity, preparation,
-measurement, and Clifford transforms, but it is still explicit in the
-elaborated artifact. Parameters describe non-resource configuration such as
-round count or basis; they do not replace typed input ports. Input and output
-ports are named so diagnostics and generated metadata can say `control`,
-`target`, `syndrome`, or `measured_patch` rather than only operand 0 or result
-1. Physical-frame effects belong to `QecInstrImpl`/`QecInstrPlan`, because they
-depend on the selected code realization and mapping.
+The minimal generic definition contract is **stable identity, name, typed
+inputs, typed outputs, parameters, traits, and dialect semantic interfaces**.
+The QEC interface requires an intended logical transformation and
+logical-frame transfer. Frame transfer may be canonically derived for standard
+identity, preparation, measurement, and Clifford transforms, but it is still
+explicit in the elaborated artifact. Parameters describe non-resource
+configuration such as round count or basis; they do not replace typed input
+ports. Input and output ports are named so diagnostics and generated metadata
+can say `control`, `target`, `syndrome`, or `measured_patch` rather than only
+operand 0 or result 1. Physical-frame effects belong to
+`QecInstrImpl`/`QecInstrPlan`, because they depend on the selected code
+realization and mapping.
 
 The name belongs to the QEC instruction and its owning set. It may have a
 stable qualified representation such as `pecos.surface/cx@1` for serialization,
-but the circuit stores it as opaque identity and never parses or dispatches on
+but the graph stores it as opaque identity and never parses or dispatches on
 the name.
 
 ### Code-block types and logical transformations
 
-The primary resource flowing through a logical circuit is a typed QEC code
+The primary QEC resource flowing through an instruction graph is a typed QEC code
 block. Conceptually, a block type identifies at least its code specification,
 number and organization of encoded logical qubits, and instruction-owned
 lifecycle state:
@@ -435,7 +549,7 @@ gate-name enumeration. Initial forms should cover identity, preparation,
 measurement, Clifford/symplectic maps, composition, conditional transforms,
 and Pauli byproducts. Later forms can express general logical channels and
 block-interface isometries.
-The logical circuit need not dispatch on these forms to append a call; semantic
+The generic graph need not dispatch on these forms to append a call; semantic
 analysis and verification consume them through a separate interface.
 
 Every `QecInstrImpl` has a proof obligation: its generated
@@ -448,8 +562,8 @@ precise property to verify.
 
 QEC instruction port types may be concrete or parameterized. A type variable binds
 properties from an input and can be referenced by later inputs and outputs.
-This supports three useful levels of specificity without changing the circuit
-IR.
+This supports three useful levels of specificity without changing the generic
+instruction model.
 
 ### Generic over patch parameters
 
@@ -468,7 +582,7 @@ The semantic instruction accepts a surface patch of any parameters and preserves
 its code specification. A transversal-H implementation can refine support to
 square rotated patches, while a different implementation may accept a broader
 set. Those restrictions belong to `implementation.supports`, not to the
-circuit.
+graph.
 
 Syndrome extraction can have the same block boundary while making its intended
 identity action explicit:
@@ -587,7 +701,7 @@ An application could then consume a surface block and return a color-code
 block:
 
 ```python
-color_data = circuit.append(
+color_data = graph.append(
     qec.code_switch(
         block=surface_data,
         target_code=TriangularColorPatch(distance=5),
@@ -645,13 +759,13 @@ implementation can therefore explain that its operands have different data
 layouts; a transversal H can reject a rectangular patch; and a lattice-surgery
 implementation can require compatible boundary orientations and workspace.
 
-Instruction-set resolution must be deterministic and local to the circuit or
+Instruction-set resolution must be deterministic and local to the program or
 lowering call. There is no process-global registry whose installed plugins
 silently change compilation. A QEC instruction application may carry an implementation
 constraint:
 
 ```python
-circuit.apply(surface.cx.using("transversal"), control, target)
+graph.apply(surface.cx.using("transversal"), control, target)
 ```
 
 An unconfigured `SurfaceInstrSet()` has no hidden defaults. Resolution follows
@@ -700,35 +814,45 @@ instruction, QEC protocol, implementation IDs, selection source
 (`call_constraint`, `configured_default`, or `sole_candidate`), and options are
 recorded in the generated artifact for reproducibility.
 
-## Generic circuit and instruction-owned authoring
+## Generic instruction programs and dialect-owned authoring
 
-The circuit container is not surface-code-specific and does not know instruction
-names. Its core concepts are typed logical values, opaque QEC instruction applications,
-attributes, results, and data dependencies. It never branches on strings or an
-enum such as `H`, `CX`, `PREPARE`, or `MEASURE`.
+`InstrProgram` is not surface-code-specific and does not know instruction
+names. It owns definitions/imports, reusable modules, entry points, and
+exports. Each `InstrModule` contains an `InstrGraph` whose core concepts are
+typed values, opaque instruction applications, attributes, results, regions,
+and data dependencies. Neither container branches on strings or an enum such
+as `H`, `CX`, `PREPARE`, or `MEASURE`.
 
-The `QecInstrSet` owns the user-facing names. A QEC instruction object may
-carry a stable ID for diagnostics and serialization, but `LogicalCircuit`
-treats the object and ID as opaque identity. Type checking is driven by the
-definition's supplied signature, not by recognizing its name.
+An `InstrSet` owns user-facing definitions and implementations. `QecInstrSet`
+refines that generic contract with QEC semantic interfaces. A QEC instruction
+may carry a stable ID for diagnostics and serialization, but `InstrGraph`
+treats the definition reference as opaque identity. Type checking is driven by
+the definition's supplied signature, traits, and dialect interfaces, not by
+recognizing its name.
+
+The abstraction should stop there. `InstrProgram` is not intended to model
+arbitrary host-language objects, general memory, operating systems, or every
+compiler concern. It is a compact typed instruction-composition layer with
+HDL-like definitions, instances, modules, elaboration, and implementation
+selection. PHIR remains the broader compiler representation.
 
 ### HDL and netlist analogy
 
-This model is intentionally HDL-like: QEC instructions are typed logic cells
-that transform owned resources, and a logical circuit is a dataflow/netlist of
-cell instances. The analogy is:
+This model is intentionally HDL-like: instructions are typed cells that
+transform resources, and an `InstrGraph` is a dataflow/control graph of
+instances. QEC specializes those generic ideas:
 
-| HDL concept | QEC model |
-|---|---|
-| Cell/module interface | `QecInstr` with named typed ports, parameters, and logical semantics |
-| Cell instance | Bound `QecInstrCall` |
-| Typed net | A versioned `LogicalValueRef`, usually carrying a `QecBlockType` |
-| Cell library | Explicit `QecInstrSet` |
-| Alternative cell implementation | `QecInstrImpl` / QEC protocol |
-| Elaboration | Parameter binding, type unification, and hierarchical instruction expansion |
-| Technology mapping | Implementation resolution and `QecInstrPlan` generation |
-| Placement/timing constraints | `SpaceTimeProgram` and resolved `SpaceTimePlan` |
-| Executable lower-level netlist | Generated Guppy followed by HUGR/QIS |
+| HDL concept | Generic instruction model | QEC specialization |
+|---|---|---|
+| Cell/module interface | `InstrDef` with named typed ports and parameters | `QecInstr` semantic interfaces |
+| Cell instance | Bound `InstrCall` | QEC block and classical operands |
+| Typed net | A versioned `ValueRef` | Usually a `QecBlockType` or frame/result value |
+| Cell library | Explicit `InstrSet` | `QecInstrSet` / `SurfaceInstrSet` |
+| Alternative cell implementation | `InstrImpl` | `QecInstrImpl` / QEC protocol |
+| Elaboration | Parameter binding, type unification, and hierarchical expansion | `QecTypeExpr` and block-interface instantiation |
+| Technology mapping | Deterministic `InstrImpl` resolution | `QecInstrPlan` generation |
+| Placement/timing constraints | Dialect-owned constraint views | `SpaceTimeProgram` / `SpaceTimePlan` |
+| Executable lower-level form | Generated PHIR | QEC PHIR and Guppy followed by HUGR/QIS |
 
 The analogy is useful for Rust APIs, serialization, an eventual textual HDL,
 and visual tooling. Hierarchical instructions can elaborate into lower-level
@@ -748,11 +872,10 @@ There are important differences from an ordinary combinational netlist:
 - spatial adjacency, duration, and reserved workspace can be part of a
   space-time composition without becoming physical target placement yet.
 
-“Cell” is therefore a helpful mental model, but `QecInstr` should remain the
-API term: it communicates operation/resource-transforming semantics and
-does not imply that the circuit is a classical hardware netlist. This is also
-an authoring/elaboration layer, not a replacement for HUGR's general program IR
-or the eventual mapped and timed physical circuit.
+“Cell” is therefore a helpful mental model, but `InstrDef`, `InstrCall`, and
+`InstrGraph` should remain the generic API terms. `QecInstr` remains the
+QEC-domain term. This is an authoring/elaboration layer, not a replacement for
+PHIR/HUGR or the eventual mapped and timed physical graph.
 
 ### HDL lessons incorporated into the design
 
@@ -766,9 +889,10 @@ named input/output ports and parameter bindings, and maintains an instance
 graph. MLIR separately defines scoped symbols and SSA value dominance. PECOS
 should mirror those distinctions:
 
-- `QecInstr` and `QecInstrImpl` are reusable definitions with stable qualified
-  `InstrDefId` and `ImplDefId` identities;
-- `QecInstrCall` is an instance with a circuit-local `CallId`, optional display
+- `InstrDef` and `InstrImpl` are reusable definitions with stable qualified
+  `InstrDefId` and `ImplDefId` identities; QEC attaches its typed semantics to
+  those definitions;
+- `InstrCall` is an instance with a program-local `CallId`, optional display
   label, bound parameters, and named value edges;
 - definition names, instance labels, and generated Guppy identifiers are
   different fields and must never be conflated;
@@ -782,8 +906,8 @@ scoping](https://mlir.llvm.org/docs/LangRef/).
 #### Explicit elaboration
 
 Parameterized HDL distinguishes a reusable definition from its elaborated
-instances. PECOS should add an `ElaboratedLogicalCircuit` artifact between the
-authored `LogicalCircuit` and implementation resolution. Elaboration:
+instances. PECOS should add an `ElaboratedInstrProgram` artifact between the
+authored `InstrProgram` and implementation resolution. Elaboration:
 
 - canonicalizes every supplied parameter value;
 - expands named convenience profiles into explicit instruction-to-
@@ -808,15 +932,15 @@ remain available for diagnostics, reuse, visualization, and provenance.
 
 #### Reusable logical modules and composite implementations
 
-A compound logical circuit should use a hierarchical definition, not a Python
-helper that eagerly copies calls into its caller. `LogicalModule` is a reusable,
+A compound instruction composition should use a hierarchical definition, not a Python
+helper that eagerly copies calls into its caller. `InstrModule` is a reusable,
 parameterized subcircuit whose body is the same typed instruction/control graph
-as a top-level `LogicalCircuit`. Its interface declares named typed block and
+as an `InstrProgram` entry graph. Its interface declares named typed block and
 classical ports, parameters, outputs, instruction-set imports, and required
 services. It cannot implicitly capture a live block, decoder, allocator, or
 host-language value.
 
-Calling a module creates a `LogicalModuleCall` with a stable `ModuleInstanceId`
+Calling a module creates a `InstrModuleCall` with a stable `ModuleInstanceId`
 and hierarchy path. Each call consumes its own linear inputs and returns fresh
 output versions; reusing a module definition never means reusing the same patch
 instance. Elaboration specializes parameters and block types, validates the
@@ -826,11 +950,11 @@ the first version.
 
 A module and a QEC instruction serve different purposes:
 
-- `LogicalModule` names and reuses a fixed composition. It introduces no new
+- `InstrModule` names and reuses a fixed composition. It introduces no new
   implementation-selection point; recursive resolution selects implementations
-  for the `QecInstrCall` nodes inside it.
+  for the `InstrCall` nodes inside it.
 - `QecInstr` declares a semantic operation contract. A
-  `CompositeQecInstrImpl` may use a `LogicalModule` as one selectable
+  `CompositeQecInstrImpl` may use a `InstrModule` as one selectable
   implementation of that contract.
 
 For example, an experiment may call a user-defined teleportation module
@@ -844,7 +968,7 @@ Python authoring could look like:
 ```python
 P = TypeVar("P", bound=SurfacePatchSpec)
 
-teleport = LogicalModule(
+teleport = InstrModule(
     name="example/teleport",
     inputs={
         "source": LogicalPatch[P, Active],
@@ -878,7 +1002,7 @@ with teleport.body() as body:
     )
     body.output("destination", destination)
 
-teleported = circuit.call(
+teleported = graph.call(
     teleport,
     source=source_a,
     bell=bell_a,
@@ -889,7 +1013,7 @@ teleported = circuit.call(
 
 The Python context manager is definition-time builder sugar over a Rust-owned
 module body; no Python callback is retained for elaboration or resolution.
-Rust should expose the same operation through `LogicalModuleBuilder`, typed
+Rust should expose the same operation through `InstrModuleBuilder`, typed
 port handles, fluent call binding, and `finish()`.
 
 Module definitions should be independently serializable and hashable. A
@@ -925,7 +1049,7 @@ injection, decoder decisions, and repeat-until-success protocols. SLR's
 lower to Guppy, but the new representation must additionally account for
 linear QEC blocks at branch boundaries.
 
-The generic circuit should have typed classical SSA values such as
+The generic graph should have typed classical SSA values such as
 `Bit`, `PauliByproduct[OneQubit]`, and instruction-defined decoder results.
 Value types declare whether they are copyable. Ordinary measurement bits may
 be copied; a QEC block remains linear; a byproduct token should normally be
@@ -962,12 +1086,12 @@ authored artifact even though only one executes in a shot.
 Predicating a single instruction is common enough to deserve generic sugar:
 
 ```python
-data = circuit.append(
+data = graph.append(
     surface.x(patch=data).using("frame_update").when(m_x)
 )
 ```
 
-`when` belongs to the bound-call/circuit authoring API, not to `surface.x`.
+`when` belongs to the bound-call/graph authoring API, not to `surface.x`.
 It desugars to an `if` whose false branch passes through the call's inputs.
 The shorthand is legal only when the instruction declares an unambiguous
 input-to-output pass-through with identical types; otherwise the diagnostic
@@ -980,10 +1104,10 @@ teleportation or surgery instruction may return both a block and a typed
 can consume the block and byproduct and promise a corrected logical output:
 
 ```python
-teleported, byproduct = circuit.append(
+teleported, byproduct = graph.append(
     surface.teleport_raw(source=data, destination=destination)
 )
-teleported = circuit.append(
+teleported = graph.append(
     surface.apply_byproduct(
         patch=teleported,
         byproduct=byproduct,
@@ -1029,7 +1153,7 @@ The model must distinguish two layers:
   particular code realization/layout epoch. It records deferred physical
   Paulis, together with the stabilizer/gauge convention needed to interpret
   equivalent representatives. It cannot generally exist in the authored
-  code-independent circuit and first becomes concrete in a resolved or mapped
+  code-independent program and first becomes concrete in a resolved or mapped
   plan.
 
 These are related but not interchangeable. A physical frame can project to a
@@ -1067,7 +1191,7 @@ workflows may update or inspect frame state explicitly through instruction-set
 operations and artifact introspection, for example:
 
 ```python
-destination = circuit.append(
+destination = graph.append(
     surface.update_logical_frame(
         patch=destination,
         delta=LogicalPauli(
@@ -1077,11 +1201,11 @@ destination = circuit.append(
     )
 )
 
-frame_expr = circuit.frame_of(destination)  # symbolic, read-only view
+frame_expr = graph.frame_of(destination)  # symbolic, read-only view
 ```
 
 `update_logical_frame` is a QEC instruction supplied by an instruction set;
-`LogicalCircuit` does not recognize its name. `frame_of` is generic IR
+`InstrGraph` does not recognize its name. `frame_of` is generic graph
 introspection and cannot mutate the frame behind a live block. The update is
 therefore explicit in serialized dataflow and consumes/returns the block like
 any other instruction. `apply_byproduct(...).using("frame_update")` is the
@@ -1090,7 +1214,7 @@ typed convenience when the delta is already packaged as a linear
 
 The Rust artifacts should make frame evolution inspectable at three points:
 
-1. the authored/elaborated circuit contains logical frame expressions and
+1. the authored/elaborated program contains logical frame expressions and
    instruction frame-transfer contracts;
 2. the resolved plan records frame policy, symbolic rewrites, materialization
    points, and decoder/service dependencies;
@@ -1165,8 +1289,8 @@ consumers of that map, not substitutes for it.
 
 Each explicit artifact has its own verifier:
 
-- authored circuit: symbol, port, linearity, and region well-formedness;
-- elaborated circuit: all parameters concrete, output types instantiated, and
+- authored program: symbol, port, linearity, and region well-formedness;
+- elaborated program: all parameters concrete, output types instantiated, and
   hierarchy valid;
 - resolved program: one supported implementation per call and all service/
   capability requirements bound;
@@ -1197,35 +1321,36 @@ classical RTL language.
 For example:
 
 ```python
-from pecos.qec import LogicalCircuit
+from pecos.instr import InstrProgram
 from pecos.qec.surface import SurfacePatch, SurfaceInstrSet
 
 surface = SurfaceInstrSet.szz_transversal()
-circuit = LogicalCircuit()
+program = InstrProgram(instruction_sets=[surface])
+graph = program.main()
 
-data = circuit.add_block("data", SurfacePatch.rotated(3))
-target = circuit.add_block("target", SurfacePatch.rotated(3))
+data = graph.add_block("data", SurfacePatch.rotated(3))
+target = graph.add_block("target", SurfacePatch.rotated(3))
 
-data = circuit.apply(surface.prepare(basis="Z"), patch=data)
-target = circuit.apply(surface.prepare(basis="X"), patch=target)
-data = circuit.apply(surface.syn_extract(rounds=3), patch=data)
-target = circuit.apply(surface.syn_extract(rounds=3), patch=target)
-data = circuit.apply(surface.h, patch=data)
-data, target = circuit.apply(
+data = graph.apply(surface.prepare(basis="Z"), patch=data)
+target = graph.apply(surface.prepare(basis="X"), patch=target)
+data = graph.apply(surface.syn_extract(rounds=3), patch=data)
+target = graph.apply(surface.syn_extract(rounds=3), patch=target)
+data = graph.apply(surface.h, patch=data)
+data, target = graph.apply(
     surface.cx,
     control=data,
     target=target,
 )
-data = circuit.apply(surface.syn_extract(rounds=3), patch=data)
-target = circuit.apply(surface.syn_extract(rounds=3), patch=target)
-data_result = circuit.apply(surface.measure(basis="X"), patch=data)
-target_result = circuit.apply(surface.measure(basis="Z"), patch=target)
+data = graph.apply(surface.syn_extract(rounds=3), patch=data)
+target = graph.apply(surface.syn_extract(rounds=3), patch=target)
+data_result = graph.apply(surface.measure(basis="X"), patch=data)
+target_result = graph.apply(surface.measure(basis="Z"), patch=target)
 ```
 
-Here `apply` is the only operation understood by `LogicalCircuit`. The names
+Here `apply` is the only operation understood by `InstrGraph`. The names
 `prepare`, `syn_extract`, `h`, `cx`, and `measure` are defined entirely by
 `SurfaceInstrSet`. Another instruction set may expose different names and
-contracts without modifying the circuit class.
+contracts without modifying the graph class.
 
 `CodeSpec` is an intentionally small interface implemented or adapted by
 `SurfacePatch`, color-code specifications, and block-code specifications. It
@@ -1235,20 +1360,21 @@ implementations.
 
 For discoverability and a narrow first implementation, PECOS may expose a
 surface authoring facade, but that facade should belong to the instruction set
-rather than subclassing the circuit. For example, convenience functions can
-build calls on an ordinary `LogicalCircuit`:
+rather than subclassing the graph. For example, convenience functions can
+build calls on an ordinary `InstrGraph`:
 
 ```python
-from pecos.qec import LogicalCircuit
+from pecos.instr import InstrProgram
 from pecos.qec.surface import SurfacePatch, SurfaceInstrSet
 
-circuit = LogicalCircuit()
 surface = SurfaceInstrSet.szz_transversal()
-data = circuit.add_block("data", SurfacePatch.rotated(3))
-data = surface.prepare_z(circuit, data)  # sugar for circuit.apply(...)
+program = InstrProgram(instruction_sets=[surface])
+graph = program.main()
+data = graph.add_block("data", SurfacePatch.rotated(3))
+data = surface.prepare_z(graph, data)  # sugar for graph.apply(...)
 ```
 
-The facade must not define a second circuit type or IR. Surface-only options
+The facade must not define a second program/graph type or IR. Surface-only options
 such as check plans are QEC protocol implementation options supplied through the
 surface instruction set.
 
@@ -1260,14 +1386,14 @@ This split avoids both extremes:
 
 Code-specific behavior remains expressible through extensible QEC instruction
 definitions. For example, `MergeBoundary` may be provided by the surface
-instruction set without becoming a method every `CodeSpec` or `LogicalCircuit`
+instruction set without becoming a method every `CodeSpec` or `InstrGraph`
 must support.
 
 ## Two authoring styles over one instruction graph
 
 The API should support both a circuit-like view and a space-time composition
 view without creating two semantic IRs. Both authoring styles produce the same
-typed graph of `QecInstrCall` nodes and `LogicalValueRef` edges. A
+typed graph of `InstrCall` nodes and `ValueRef` edges. A
 space-time program adds placement, adjacency, concurrency, and ordering
 constraints to that graph; it does not redefine what an instruction means.
 
@@ -1285,22 +1411,23 @@ makes multi-patch operations readable and produces useful diagnostics.
 
 ```python
 surface = SurfaceInstrSet.szz_transversal()
-circuit = LogicalCircuit()
+program = InstrProgram(instruction_sets=[surface])
+graph = program.main()
 
-data = circuit.add_block("data", SurfacePatch.rotated(3))
-target = circuit.add_block("target", SurfacePatch.rotated(3))
+data = graph.add_block("data", SurfacePatch.rotated(3))
+target = graph.add_block("target", SurfacePatch.rotated(3))
 
-data = circuit.apply(surface.prepare(basis="Z"), patch=data)
-target = circuit.apply(surface.prepare(basis="X"), patch=target)
-data = circuit.apply(surface.h, patch=data)
-data, target = circuit.apply(
+data = graph.apply(surface.prepare(basis="Z"), patch=data)
+target = graph.apply(surface.prepare(basis="X"), patch=target)
+data = graph.apply(surface.h, patch=data)
+data, target = graph.apply(
     surface.cx,
     control=data,
     target=target,
 )
-data = circuit.apply(surface.syn_extract(rounds=3), patch=data)
-target = circuit.apply(surface.syn_extract(rounds=3), patch=target)
-result = circuit.apply(surface.measure(basis="Z"), patch=data)
+data = graph.apply(surface.syn_extract(rounds=3), patch=data)
+target = graph.apply(surface.syn_extract(rounds=3), patch=target)
+result = graph.apply(surface.measure(basis="Z"), patch=data)
 ```
 
 `apply` is generic: it binds arguments using the supplied instruction
@@ -1331,8 +1458,8 @@ instruction still consumes one value version and produces another. The
 functional `apply` form remains the precise core API and serialization model.
 
 Parallel and repeated regions can later be structural circuit constructs, for
-example `circuit.parallel()` and `circuit.repeat(count)`. They constrain the
-dataflow graph but do not introduce named QEC operations into `LogicalCircuit`.
+example `graph.parallel()` and `graph.repeat(count)`. They constrain the
+dataflow graph but do not introduce named QEC operations into `InstrGraph`.
 
 ### Space-time-volume composition
 
@@ -1364,7 +1491,7 @@ space_time.after(
     patch=data,
 )
 
-circuit = space_time.to_logical_circuit()
+program = space_time.to_instr_program()
 ```
 
 The exact fluent spelling is provisional. The stable concepts should be:
@@ -1390,8 +1517,8 @@ mapped/timed execution layer.
 Consequently, these are two views of one pipeline:
 
 ```text
-circuit/QASM authoring --------------------+
-                                            +-> QEC instruction graph
+InstrGraph/QASM authoring -----------------+
+                                            +-> typed instruction graph
 space-time authoring -> spatial constraints +            |
                                                          v
                                   instruction resolution / SpaceTimePlan
@@ -1400,29 +1527,29 @@ space-time authoring -> spatial constraints +            |
                                                        Guppy
 ```
 
-A user may freely inspect a space-time projection of a sequential circuit, or
-linearize a space-time composition into a `LogicalCircuit`, provided the
+A user may freely inspect a space-time projection of a sequential graph, or
+linearize a space-time composition into an `InstrProgram`, provided the
 partial order is preserved. Backends must never need separate implementations
 of the QEC instruction semantics for the two styles.
 
 ## Proposed surface instruction API
 
 Surface authoring should be introduced through `SurfaceInstrSet`, while the
-circuit remains an ordinary `LogicalCircuit`. This avoids silently changing the
+program remains an ordinary `InstrProgram`. This avoids silently changing the
 current position-dependent semantics of `LogicalCircuitBuilder.add_memory`.
 The old builder can become a compatibility front end that emits QEC instruction applications
 after backend equivalence is established.
 
 ### Complete circuit-like experiment
 
-The recommended everyday form uses circuit-scoped `LogicalBlock` cursors. An
+The recommended everyday form uses program-scoped `LogicalBlock` cursors. An
 `append` consumes the cursor's current SSA value and advances it to the matching
 typed output port. Multi-block instructions advance every participating cursor.
 This keeps the source close to a physical-circuit or QASM listing without
 weakening the underlying linear representation:
 
 ```python
-from pecos.qec import LogicalCircuit
+from pecos.instr import InstrProgram
 from pecos.qec.surface import SurfaceInstrSet, SurfacePatch
 
 surface = SurfaceInstrSet.szz_transversal()
@@ -1432,50 +1559,51 @@ assert surface.defaults() == {
     "pecos.surface/syn_extract@1": "pecos.surface/syndrome_szz@1",
     "pecos.surface/cx@1": "pecos.surface/transversal_cx@1",
 }
-circuit = LogicalCircuit(instruction_sets=[surface])
+program = InstrProgram(instruction_sets=[surface])
+graph = program.main()
 
-data = circuit.block("data", SurfacePatch.rotated(3))
-ancilla = circuit.block("ancilla", SurfacePatch.rotated(3))
+data = graph.block("data", SurfacePatch.rotated(3))
+ancilla = graph.block("ancilla", SurfacePatch.rotated(3))
 
 # DeclaredBlock[d3] -> ActiveBlock[d3], with |0_L> and |+_L> semantics.
-with circuit.parallel():
-    circuit.append(surface.prepare(patch=data, basis="Z"))
-    circuit.append(surface.prepare(patch=ancilla, basis="X"))
+with graph.parallel():
+    graph.append(surface.prepare(patch=data, basis="Z"))
+    graph.append(surface.prepare(patch=ancilla, basis="X"))
 
 # Each call is logically identity, implemented by three syndrome rounds.
-with circuit.parallel():
-    circuit.append(surface.syn_extract(patch=data, rounds=3))
-    circuit.append(surface.syn_extract(patch=ancilla, rounds=3))
+with graph.parallel():
+    graph.append(surface.syn_extract(patch=data, rounds=3))
+    graph.append(surface.syn_extract(patch=ancilla, rounds=3))
 
-circuit.append(surface.h(patch=data))
-circuit.append(surface.cx(control=data, target=ancilla))
+graph.append(surface.h(patch=data))
+graph.append(surface.cx(control=data, target=ancilla))
 
-with circuit.parallel():
-    circuit.append(surface.syn_extract(patch=data, rounds=2))
-    circuit.append(surface.syn_extract(patch=ancilla, rounds=2))
+with graph.parallel():
+    graph.append(surface.syn_extract(patch=data, rounds=2))
+    graph.append(surface.syn_extract(patch=ancilla, rounds=2))
 
-circuit.append(surface.cx(control=ancilla, target=data))
+graph.append(surface.cx(control=ancilla, target=data))
 
-with circuit.parallel():
-    circuit.append(surface.syn_extract(patch=data, rounds=1))
-    circuit.append(surface.syn_extract(patch=ancilla, rounds=1))
+with graph.parallel():
+    graph.append(surface.syn_extract(patch=data, rounds=1))
+    graph.append(surface.syn_extract(patch=ancilla, rounds=1))
 
 # Active blocks are consumed and typed logical measurement values are returned.
-with circuit.parallel():
-    data_x = circuit.append(surface.measure(patch=data, basis="X"))
-    ancilla_z = circuit.append(surface.measure(patch=ancilla, basis="Z"))
+with graph.parallel():
+    data_x = graph.append(surface.measure(patch=data, basis="X"))
+    ancilla_z = graph.append(surface.measure(patch=ancilla, basis="Z"))
 
-circuit.export("data_x", data_x)
-circuit.export("ancilla_z", ancilla_z)
+graph.export("data_x", data_x)
+graph.export("ancilla_z", ancilla_z)
 
-artifact = surface.compile_to_guppy(circuit)
+artifact = surface.compile_to_guppy(program)
 trace = artifact.trace_qis(runtime=...)
 tick_circuit = trace.tick_circuit
 dem = artifact.build_dem(runtime=..., noise=...)
 ```
 
 The surface instruction set supplies every name, port signature, logical
-transformation, and implementation choice in this example. `LogicalCircuit`
+transformation, and implementation choice in this example. `InstrGraph`
 only understands declarations, opaque calls, typed dataflow, parallel regions,
 and exported values. In particular, it has no special cases for preparation,
 H, CX, syndrome extraction, or measurement.
@@ -1483,9 +1611,9 @@ H, CX, syndrome extraction, or measurement.
 The cursor form above desugars to the precise functional API. For example:
 
 ```python
-data_v1 = circuit.apply(surface.prepare(basis="Z"), patch=data_v0)
-data_v2 = circuit.apply(surface.syn_extract(rounds=3), patch=data_v1)
-data_v3, ancilla_v2 = circuit.apply(
+data_v1 = graph.apply(surface.prepare(basis="Z"), patch=data_v0)
+data_v2 = graph.apply(surface.syn_extract(rounds=3), patch=data_v1)
+data_v3, ancilla_v2 = graph.apply(
     surface.cx,
     control=data_v2,
     target=ancilla_v1,
@@ -1493,38 +1621,39 @@ data_v3, ancilla_v2 = circuit.apply(
 ```
 
 The imperative and functional forms therefore serialize to identical
-`QecInstrCall` nodes. The former is intended for experiment authors; the latter
+`InstrCall` nodes. The former is intended for experiment authors; the latter
 is useful to IR tooling, transforms, and tests.
 
 ```python
-from pecos.qec import LogicalCircuit
+from pecos.instr import InstrProgram
 from pecos.qec.surface import SurfacePatch, SurfaceInstrSet
 
 d3 = SurfacePatch.rotated(3)
 
-circuit = LogicalCircuit()
 surface = SurfaceInstrSet.szz_transversal()
-data = circuit.add_block("data", d3)
-ancilla = circuit.add_block("ancilla", d3)
+program = InstrProgram(instruction_sets=[surface])
+graph = program.main()
+data = graph.add_block("data", d3)
+ancilla = graph.add_block("ancilla", d3)
 
-data = circuit.apply(surface.prepare(basis="Z"), patch=data)
-ancilla = circuit.apply(surface.prepare(basis="X"), patch=ancilla)
-data = circuit.apply(surface.syn_extract(rounds=3), patch=data)
-ancilla = circuit.apply(surface.syn_extract(rounds=3), patch=ancilla)
-data = circuit.apply(surface.h, patch=data)
-data, ancilla = circuit.apply(
+data = graph.apply(surface.prepare(basis="Z"), patch=data)
+ancilla = graph.apply(surface.prepare(basis="X"), patch=ancilla)
+data = graph.apply(surface.syn_extract(rounds=3), patch=data)
+ancilla = graph.apply(surface.syn_extract(rounds=3), patch=ancilla)
+data = graph.apply(surface.h, patch=data)
+data, ancilla = graph.apply(
     surface.cx,
     control=data,
     target=ancilla,
 )
-data = circuit.apply(surface.syn_extract(rounds=3), patch=data)
-ancilla = circuit.apply(surface.syn_extract(rounds=3), patch=ancilla)
-data_result = circuit.apply(surface.measure(basis="X"), patch=data)
-ancilla_result = circuit.apply(surface.measure(basis="Z"), patch=ancilla)
+data = graph.apply(surface.syn_extract(rounds=3), patch=data)
+ancilla = graph.apply(surface.syn_extract(rounds=3), patch=ancilla)
+data_result = graph.apply(surface.measure(basis="X"), patch=data)
+ancilla_result = graph.apply(surface.measure(basis="Z"), patch=ancilla)
 
-artifact = surface.compile_to_guppy(circuit)
+artifact = surface.compile_to_guppy(program)
 source = artifact.source
-program = artifact.entry_point
+entry_point = artifact.entry_point
 
 trace = artifact.trace_qis(runtime=...)
 tick_circuit = trace.tick_circuit
@@ -1532,10 +1661,10 @@ dag_circuit = tick_circuit.to_dag_circuit()
 dem = artifact.build_dem(runtime=..., noise=...)
 ```
 
-`add_block` returns a circuit-scoped logical value, not the `SurfacePatch`
+`add_block` returns a program-scoped logical value, not the `SurfacePatch`
 itself.
 This distinguishes two logical patches with identical geometry and prevents a
-patch from accidentally being used in two circuits. Each QEC instruction application consumes
+patch from accidentally being used in two programs. Each QEC instruction application consumes
 its input value versions and returns new ones, following linear SSA-style
 ownership. A measurement instruction returns a logical-result handle that can name
 the final observable without relying on record position.
@@ -1543,8 +1672,8 @@ the final observable without relying on record position.
 Convenience instruction-set methods may expand into primitive IR operations:
 
 ```python
-data = surface.inject_s(circuit, data, magic, rounds_before=3, rounds_after=3)
-data = surface.inject_t(circuit, data, magic, rounds_before=3, rounds_after=3)
+data = surface.inject_s(graph, data, magic, rounds_before=3, rounds_after=3)
+data = surface.inject_t(graph, data, magic, rounds_before=3, rounds_after=3)
 ```
 
 Their expansion should happen before implementation planning so every
@@ -1558,36 +1687,37 @@ states that both corrections are tracked in the Pauli frame:
 
 ```python
 surface = SurfaceInstrSet()  # no hidden implementation defaults
-circuit = LogicalCircuit(instruction_sets=[surface])
+program = InstrProgram(instruction_sets=[surface])
+graph = program.main()
 
-source = circuit.block("source", SurfacePatch.rotated(3))
-destination = circuit.block("destination", SurfacePatch.rotated(3))
-bell = circuit.block("bell", SurfacePatch.rotated(3))
+source = graph.block("source", SurfacePatch.rotated(3))
+destination = graph.block("destination", SurfacePatch.rotated(3))
+bell = graph.block("bell", SurfacePatch.rotated(3))
 
-circuit.append(surface.prepare(patch=source, basis="X"))
-circuit.append(surface.prepare(patch=destination, basis="Z"))
-circuit.append(surface.prepare(patch=bell, basis="Z"))
+graph.append(surface.prepare(patch=source, basis="X"))
+graph.append(surface.prepare(patch=destination, basis="Z"))
+graph.append(surface.prepare(patch=bell, basis="Z"))
 
 # The exact primitive sequence is illustrative; a surface instruction set owns
 # its ports and supported implementations.
-circuit.append(surface.h(patch=bell).using("transversal"))
-circuit.append(
+graph.append(surface.h(patch=bell).using("transversal"))
+graph.append(
     surface.cx(control=bell, target=destination).using("transversal")
 )
-circuit.append(
+graph.append(
     surface.cx(control=source, target=bell).using("transversal")
 )
-m_x = circuit.append(surface.measure(patch=source, basis="X"))
-m_z = circuit.append(surface.measure(patch=bell, basis="Z"))
+m_x = graph.append(surface.measure(patch=source, basis="X"))
+m_z = graph.append(surface.measure(patch=bell, basis="Z"))
 
-destination = circuit.append(
+destination = graph.append(
     surface.x(patch=destination).using("frame_update").when(m_z)
 )
-destination = circuit.append(
+destination = graph.append(
     surface.z(patch=destination).using("frame_update").when(m_x)
 )
-result = circuit.append(surface.measure(patch=destination, basis="Z"))
-circuit.export("result", result)
+result = graph.append(surface.measure(patch=destination, basis="Z"))
+graph.export("result", result)
 ```
 
 The two `.when(...)` expressions are structural conditional regions after
@@ -1600,14 +1730,14 @@ A reusable teleportation protocol should generally expose its byproduct more
 directly:
 
 ```python
-destination, correction = circuit.append(
+destination, correction = graph.append(
     surface.teleport_raw(
         source=source,
         destination=destination,
     ).using("bell_measurement")
 )
 
-destination = circuit.append(
+destination = graph.append(
     surface.apply_byproduct(
         patch=destination,
         byproduct=correction,
@@ -1627,7 +1757,7 @@ For a genuinely branch-dependent protocol, the functional core API makes the
 resource join explicit:
 
 ```python
-(data,) = circuit.if_else(
+(data,) = graph.if_else(
     condition=needs_s,
     inputs=(data,),
     then=lambda region, data: (
@@ -1642,9 +1772,9 @@ retain the condition, both regions, their block arguments, and their yielded
 values. An omitted `otherwise` may be inferred only for the restricted
 type-preserving `.when(...)` shorthand.
 
-## Circuit state and validation
+## Program state and validation
 
-Logical values use linear SSA-style lifetimes. The circuit understands only
+QEC block values use linear SSA-style lifetimes. `InstrGraph` understands only
 that a linear input version may be consumed once and that a QEC instruction application
 produces zero or more typed output versions:
 
@@ -1655,7 +1785,7 @@ produces zero or more typed output versions:
 %result = call %surface.measure_z(%block2)
 ```
 
-Names and state meanings remain owned by the instruction set. The circuit does not
+Names and state meanings remain owned by the instruction set. The graph does not
 know that `prepare_z` changes a block from "declared" to "active" or that
 `measure_z` is destructive. It merely checks the opaque input and output types
 declared by their instruction signatures and enforces linear use. This maps
@@ -1663,7 +1793,7 @@ directly to Guppy's ownership rules and permits instructions with different
 lifecycles, including merge/split or code switching.
 
 Validation occurs when an operation is appended, with a full validation pass
-before lowering. Generic circuit validation checks:
+before lowering. Generic program/graph validation checks:
 
 - unique block labels;
 - instruction input arity and opaque signature types;
@@ -1694,7 +1824,7 @@ Instruction-set resolution checks:
 
 Validation therefore has two phases. Code-independent structural and linearity
 errors are reported while authoring. Implementation compatibility is checked during
-deterministic instruction-set resolution, because the circuit does not interpret
+deterministic instruction-set resolution, because the graph does not interpret
 the instruction identity and the same contract can be legal under one
 implementation and illegal under another.
 
@@ -1702,28 +1832,29 @@ This is stricter than the current `add_memory` model, where the first and last
 memory operations implicitly decide when preparation and final measurement
 occur.
 
-## Logical IR
+## `InstrGraph` IR
 
 The core semantic operation has one named-instruction form:
 
 ```python
 @dataclass(frozen=True)
-class QecInstrCall:
-    instruction: OpaqueInstrRef
-    inputs: tuple[LogicalValueRef, ...]
-    attributes: Mapping[str, object]
-    implementation_constraint: str | None
-    outputs: tuple[LogicalValueRef, ...]
+class InstrCall:
+    definition: InstrDefRef
+    inputs: tuple[PortBinding[ValueRef], ...]
+    parameters: tuple[ParamBinding, ...]
+    implementation_constraint: ImplConstraint | None
+    outputs: tuple[PortBinding[ValueRef], ...]
 ```
 
-The circuit may additionally contain declarations, constants, regions, and
+The graph may additionally contain declarations, constants, regions, and
 result exports as structural nodes, but it has no subclasses for particular
-logical operations. Preparation basis, syndrome-extraction rounds, physical qubit
-indices, stabilizer schedules, and words such as "transversal" are opaque
-attributes or implementation constraints defined by the owning instruction set.
+domain operations. Preparation basis, syndrome-extraction rounds, physical
+qubit indices, stabilizer schedules, and words such as "transversal" are typed
+parameters, dialect semantics, or implementation constraints defined by the
+owning instruction set.
 
 A call records an optional implementation constraint but not the resolved
-implementation itself. This permits the same authored circuit to be lowered
+implementation itself. This permits the same authored program to be lowered
 with two explicitly selected instruction sets while retaining reproducibility in
 each resolved artifact.
 
@@ -1742,7 +1873,7 @@ lowering proves that they are only Pauli-frame bookkeeping. That proof and its
 rewrite—from a conditional logical Pauli to a frame expression—must be
 recorded in the resolved plan.
 
-The IR retains logical intent even when a backend could be produced by first
+The QEC dialect retains logical intent even when a backend could be produced by first
 flattening to physical gates. In particular, Guppy generation must not accept
 an arbitrary `TickCircuit` as its input: that would discard patch ownership,
 structured arrays, logical gate boundaries, and qubit lifetime information.
@@ -1755,19 +1886,21 @@ transversal generators. The authoritative route should instead follow the
 program PECOS actually compiles and executes:
 
 ```text
-LogicalCircuit
-    -> parameter/type/hierarchy elaboration
-    -> ElaboratedLogicalCircuit
-    -> QecInstrSet resolution
-    -> resolved instruction program
-    -> generated Guppy
-    -> HUGR / QIS lowering
-    -> runtime QIS trace
-    -> normalized TickCircuit
-    -> DagCircuit / DEM / Stim-compatible exports
+InstrProgram
+    -> parameter/type/hierarchy/dialect elaboration
+    -> ElaboratedInstrProgram
+    -> InstrSet resolution + QEC semantic verification
+    -> ResolvedInstrProgram
+        +-> PHIR
+        |
+        +-> generated Guppy
+            -> HUGR / QIS lowering
+            -> runtime QIS trace
+            -> normalized TickCircuit
+            -> DagCircuit / DEM / Stim-compatible exports
 ```
 
-Elaboration first produces an `ElaboratedLogicalCircuit` with canonical
+Elaboration first produces an `ElaboratedInstrProgram` with canonical
 parameters, concrete output value types, resolved definition symbols, explicit
 profile preferences, and retained hierarchy/source paths. Instruction-set
 resolution then produces a `ResolvedInstrProgram` containing:
@@ -1784,7 +1917,7 @@ resolution then produces a `ResolvedInstrProgram` containing:
   policies;
 - conditional-effect lowering decisions, outstanding symbolic frame
   expressions, and materialization points;
-- the information needed to compose Guppy source.
+- the information needed to emit typed PHIR and compose Guppy source.
 
 This resolved program is not a second public authoring IR. Each implementation
 plan describes hardware-independent realization details such as ancilla
@@ -1792,12 +1925,20 @@ lifecycle, interaction partial order, measurement semantics, QEC protocol phases
 and decoder dependencies. The resolved program composes those plans into Guppy
 and retains the sidecar metadata needed to interpret the resulting trace.
 
+The PHIR lowering is a first-class Rust output of the same resolved artifact,
+not a Python reconstruction. It should emit registered dialect operations and
+types with source maps to program/module/call/value IDs. Initially, the existing
+Guppy -> HUGR/QIS -> QIS trace path remains authoritative for the physical
+TickCircuit and DEM because it is the route PECOS actually executes. PHIR
+lowering should be tested against that route before it is allowed to replace or
+bypass it for a backend.
+
 The QIS trace is authoritative for physical gate and measurement order. Guppy
 compilation, QIS lowering, and the selected runtime may schedule operations
 differently from source order. DEM construction must therefore use the
 normalized TickCircuit recovered from that trace, following the existing
 `build_dem_from_guppy` pipeline, rather than a separately rendered guess at the
-physical circuit.
+physical graph.
 
 A direct logical-to-Tick renderer may remain as a reference backend for fast
 tests, schedule development, or environments without Guppy. It is not the
@@ -1852,6 +1993,53 @@ Aggregate user-facing results such as per-round `synx` and `synz` arrays may be
 emitted in addition to scalar identity tags. Detector construction uses the
 identity tags, never the aggregate-array ordering.
 
+## PHIR lowering
+
+`InstrProgram` is a high-level semantic/elaboration artifact; it should
+generate PHIR rather than grow into PHIR. The Rust lowering maps:
+
+- `InstrProgram` entry points and `InstrModule` definitions to PHIR modules and
+  functions;
+- `InstrGraph` regions, arguments, calls, and yields to PHIR regions, blocks,
+  instructions, operands, results, and terminators;
+- generic value types and dialect types to registered PHIR types;
+- resolved QEC calls and plans to typed QEC dialect operations, optionally
+  followed by progressive lowering to physical quantum/classical operations;
+- instruction source identities to a separate typed provenance map consumed by
+  diagnostics, Guppy/QIS identity tracking, and visualization.
+
+The PHIR output must not encode essential semantics only as arbitrary strings.
+The existing PHIR QEC dialect is useful scaffolding, but its generic
+`logical_gate` operation and flexible attributes are not enough for code-block
+type transformations, logical maps, frame transfer, selected implementation
+identity, measurement identity, or protocol-plan references. Those need
+registered operation/type definitions or typed interfaces with verifier hooks.
+
+Progressive lowering may retain hierarchy and high-level resolved QEC
+operations for inspection, then expand selected implementation plans into
+lower-level QEC, quantum, and classical operations. Flattening is an optional
+backend transformation, not the definition of PHIR emission. Each stage must
+remain independently serializable and verifiable.
+
+Python only requests and wraps the Rust-produced PHIR artifact:
+
+```python
+resolved = program.resolve(context=surface.lowering_context())
+phir_module = resolved.to_phir()
+```
+
+The corresponding Rust operations should be equally direct:
+
+```rust
+let resolved = program.resolve(&surface.lowering_context())?;
+let phir_module = resolved.to_phir()?;
+```
+
+Initially PHIR generation is an additional authoritative semantic output while
+the executed Guppy/QIS trace remains authoritative for physical scheduling and
+DEM construction. Equivalence tests decide when a PHIR-based backend may take
+over a production route.
+
 ## Guppy lowering
 
 The Guppy backend generates a single Python module with:
@@ -1889,7 +2077,7 @@ the same generated program and make the authoritative analysis route explicit.
 ### `SurfacePatch`
 
 Remains the geometry authority. No stabilizer or logical-support calculation
-is copied into the new circuit, instruction set, or renderer. A surface QEC protocol
+is copied into the new program, instruction set, or renderer. A surface QEC protocol
 implementation receives the concrete `SurfacePatch` specifications associated
 with its operand logical values and validates them through `supports`.
 
@@ -1945,14 +2133,14 @@ must not fork stabilizer scheduling.
 ### Specific Guppy factories
 
 `make_surface_code` and surface transversal factories remain shortcuts. After
-parity tests pass, they should build a `LogicalCircuit` using a
+parity tests pass, they should build an `InstrProgram` using a
 `SurfaceInstrSet` and delegate to its Guppy backend. Their current signatures
 and result keys should remain stable.
 
 ### SLR
 
 No dependency is proposed. SLR demonstrates the value of a renderer boundary
-and may later gain adapters to or from the logical IR. Its
+and may later gain adapters to or from `InstrProgram`. Its
 `If(condition).Then(...).Else(...)` form and Steane injection/feed-forward
 examples are useful authoring precedent. The new Rust IR should not copy SLR's
 block model directly: it needs typed classical SSA values, explicit linear
@@ -1973,16 +2161,16 @@ The proposed types map onto the RFC ladder as follows:
 | #508 level | This proposal |
 |---|---|
 | `AbstractCode` | Referenced by logical value types; not redefined here |
-| `EncodedProgram` / logical ISA | `LogicalCircuit` calling logical-level `QecInstr` interfaces |
+| `EncodedProgram` / logical ISA | `InstrProgram` whose graph calls logical-level `QecInstr` interfaces |
 | `QecProtocol` | A selected `QecInstrImpl`, potentially expressed hierarchically as more QEC instruction applications |
 | `ImplementationPlan` | Concrete `QecInstrPlan` produced by the selected implementation |
 | Circuit/hybrid program | Generated Guppy and compiled HUGR/QIS |
 | Mapped/timed execution | Existing platform/runtime lowering observed through QIS trace |
 | Analysis product | Normalized TickCircuit, DagCircuit, and DEM from the trace |
 
-This design adopts #508's explicit-artifact rule: the authored circuit,
-elaborated circuit, instruction definition, selected QEC protocol,
-implementation plan, generated Guppy program, QIS trace, and DEM are distinct
+This design adopts #508's explicit-artifact rule: the authored
+`InstrProgram`, elaborated program, instruction definition, selected QEC
+protocol, implementation plan, generated PHIR/Guppy program, QIS trace, and DEM are distinct
 typed artifacts with provenance links. They must not become one object with
 optional fields for every level.
 
@@ -1994,8 +2182,8 @@ collapse an ideal logical request, its fault-tolerant strategy, and its
 ancilla/gate plan into one mutable object.
 
 Hierarchical QEC instruction applications provide the bridge: an implementation of a
-logical-level interface may expand into a `LogicalCircuit` of lower-level
-QEC instruction applications before those calls are themselves planned. The circuit remains
+logical-level interface may expand into an `InstrModule` of lower-level
+QEC instruction applications before those calls are themselves planned. The graph remains
 oblivious to their names and abstraction levels; the owning instruction sets and
 typed artifacts define the refinement boundary.
 
@@ -2006,10 +2194,10 @@ The recommended single-patch vertical slice is a candidate child workstream of
 
 ```text
 SurfacePatch-backed logical value
-    -> LogicalCircuit QEC instruction applications
-    -> ElaboratedLogicalCircuit
+    -> InstrProgram / InstrGraph QEC instruction applications
+    -> ElaboratedInstrProgram
     -> selected surface implementation plans
-    -> Guppy
+    -> PHIR and Guppy
     -> QIS trace
     -> normalized TickCircuit
     -> DEM
@@ -2034,22 +2222,23 @@ it must not infer geometry from a bare abstract stabilizer code.
 
 ### [#511: SLR/Zlup and a Rust-native QEC HDL](https://github.com/PECOS-packages/PECOS/issues/511)
 
-`QecInstr(name, inputs, outputs, logical_transform)` and opaque
-`QecInstrCall` are the common semantic model that an HDL, Python builder,
-Rust builder, or serialized schema can target. The examples in this document
-are Python-shaped but are not intended to make Python objects the interchange
-format.
+`InstrDef`, opaque `InstrCall`, `InstrModule`, and `InstrGraph` are the common
+structural model that an HDL, Python builder, Rust builder, or serialized schema
+can target. QEC attaches `QecInstrSemantics(logical_transform,
+frame_transfer, ...)` to definitions rather than changing the graph. The
+examples in this document are Python-shaped but are not intended to make Python
+objects the interchange format.
 
 The HDL exploration should test whether parameterized instruction signatures,
 multiple implementations, implementation constraints, linear values, and
 derived output types can be expressed naturally. SLR/Zlup may become one front
-end or implementation-plan notation; `LogicalCircuit` should not depend on its
+end or implementation-plan notation; `InstrProgram` should not depend on its
 surface syntax.
 
 The cell/netlist analogy above provides the likely HDL structure: instruction
 definitions are cell interfaces, bound calls are instances, linear QEC values
 are ownership-carrying nets, and resolution is technology mapping. An HDL front
-end should serialize to the same Rust `LogicalCircuit` rather than introduce a
+end should serialize to the same Rust `InstrProgram` rather than introduce a
 parallel semantic model.
 
 ### [#512: protocol and syndrome-extraction plans](https://github.com/PECOS-packages/PECOS/issues/512)
@@ -2067,7 +2256,7 @@ here is:
 - `QecInstrSet`: definitions, candidate implementations, explicit selection
   policy, and introspectable configured defaults;
 - `ResolvedInstrProgram`: selected plans composed according to the opaque
-  calls and linear values in a `LogicalCircuit`.
+  calls and linear values in an `InstrProgram`.
 
 The first implementation should be developed as part of #512 rather than
 introducing separate competing protocol types under `pecos.qec.surface`.
@@ -2108,7 +2297,7 @@ TickCircuit, is authoritative: it reflects the chosen target/runtime schedule.
 The trace artifact must retain links back through generated Guppy and the
 implementation plan to QEC instruction applications and code entities. Different runtime or
 target choices produce distinct traced artifacts and potentially distinct
-DEMs, even from the same logical circuit.
+DEMs, even from the same logical graph.
 
 ### [#515: qecdb importer](https://github.com/PECOS-packages/PECOS/issues/515)
 
@@ -2119,7 +2308,7 @@ parameters resemble a surface code. Geometry, extraction strategy, decoder,
 and implementation choice require explicit refinement after import.
 
 No qecdb transport, catalog metadata, or networking belongs in
-`LogicalCircuit`, `QecInstr`, or `QecInstrPlan`.
+`InstrProgram`, `QecInstr`, or `QecInstrPlan`.
 Provenance follows the abstract code by reference.
 
 ### [#516: architecture documentation](https://github.com/PECOS-packages/PECOS/issues/516)
@@ -2140,18 +2329,22 @@ experiment overlays, not different instruction, protocol, or code types.
 
 1. Reconcile the logical value's code/patch type references with #510's
    Level-1 contract; use a narrow adapter if #510 is not yet complete.
-2. Land the minimal instruction signature, opaque call, implementation selection,
-   and implementation-plan types in `crates/pecos-qec` as a first slice of #512;
-   add bindings only after the Rust API and serialization tests pass.
-3. Implement the single-patch Guppy -> QIS trace -> TickCircuit -> DEM path and
+2. Audit PHIR's module/region/SSA/dialect facilities and land the minimal
+   Rust-owned `InstrProgram`, `InstrGraph`, definition, call, and deterministic
+   resolution contracts without duplicating PHIR's general compiler model.
+3. Add QEC semantic/type/implementation interfaces in `crates/pecos-qec` as a
+   first slice of #512; add bindings only after the Rust API and serialization
+   tests pass.
+4. Implement `ResolvedInstrProgram` -> typed PHIR emission with source maps.
+5. Implement the single-patch Guppy -> QIS trace -> TickCircuit -> DEM path and
    semantic source map under #513.
-4. Exercise two surface implementations of one instruction so alternate
+6. Exercise two surface implementations of one instruction so alternate
    implementation support is demonstrated rather than only modeled.
-5. Carry the source/provenance map through one target/runtime path as an initial
+7. Carry the source/provenance map through one target/runtime path as an initial
    integration with #514.
-6. Feed the resulting semantic model and examples into #511; do not make the
+8. Feed the resulting semantic model and examples into #511; do not make the
    executable slice wait for a dedicated HDL syntax.
-7. Treat #515 as parallel Level-1 input work and #516 as the documentation
+9. Treat #515 as parallel Level-1 input work and #516 as the documentation
    consolidation after names and boundaries settle.
 
 ## Alternatives considered
@@ -2191,19 +2384,31 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 
 ## Implementation stages
 
-### Stage 1a: Rust IR and surface instruction-set skeleton
+### Stage 0: PHIR boundary audit
 
-- Implement `LogicalCircuit`, typed IDs and values, linear-use validation, and
-  the opaque `QecInstrCall` node in `crates/pecos-qec`.
-- Implement `LogicalModule`, `LogicalModuleBuilder`, typed module ports,
-  `LogicalModuleCall`, stable instance paths, and a first-version acyclic
+- Inventory PHIR's module/function/region/block/instruction, SSA, custom type,
+  custom operation, dialect, serialization, and source-location contracts.
+- Decide the narrow Rust crate/module boundary for `InstrProgram` and a
+  one-way lowering interface into PHIR without introducing circular
+  dependencies.
+- Specify which structural types/IDs can be reused directly and which
+  high-level definition/resolution concepts remain intentionally outside PHIR.
+- Add a design test fixture showing the expected PHIR produced from a tiny
+  resolved generic program before adding QEC-specific lowering.
+
+### Stage 1a: Rust `InstrProgram` and surface instruction-set skeleton
+
+- Implement Rust-owned `InstrProgram`, `InstrGraph`, typed IDs and values,
+  linear-use validation, and the opaque `InstrCall` in the generic layer.
+- Implement `InstrModule`, `InstrModuleBuilder`, typed module ports,
+  `InstrModuleCall`, stable instance paths, and a first-version acyclic
   instance-graph verifier.
 - Include copyability traits for classical values plus serializable structured
   region interfaces; implement `IfRegion` verification even if adaptive Guppy
   lowering lands in a later stage.
 - Define versioned `LogicalPauliFrame`, symbolic Boolean frame expressions,
   `FrameStateRef`, and instruction-level logical-frame transfer contracts in
-  the core IR. Reserve mapped `PhysicalPauliFrame` as a distinct artifact type.
+  the QEC dialect. Reserve mapped `PhysicalPauliFrame` as a distinct artifact type.
 - Implement `QecInstrSet`, `QecInstr`, the Rust `QecInstrImpl` trait,
   `QecInstrPlan`, structured diagnostics, and deterministic resolution there.
 - Implement the serializable `QecTypeExpr` algebra, substitution environment,
@@ -2212,25 +2417,36 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
   migration adapter before surface implementations depend on geometry.
 - Add Rust `SurfaceInstrSet` definitions, SZZ and CX extraction candidates, and
   transversal logical implementations.
-- Add versioned `serde` contracts for `LogicalCircuit`,
-  `ElaboratedLogicalCircuit`, `ResolvedInstrProgram`, plans, annotations,
+- Add versioned `serde` contracts for `InstrProgram`,
+  `ElaboratedInstrProgram`, `ResolvedInstrProgram`, plans, annotations,
   diagnostics, and provenance.
 - Provide ergonomic typed Rust call builders and a complete Rust-only surface
   experiment example.
 - Do not begin the public Python builder until Rust unit, serialization, and
   API tests for this layer pass.
 
-### Stage 1b: PyO3 bindings and Python parity
+### Stage 1b: Rust PHIR emission
 
-- Add bound wrappers in `python/pecos-rslib` under `pecos_rslib.qec` for the
-  Rust artifacts, IDs, builders, diagnostics, and introspection APIs.
-- Re-export them through `pecos.qec`; keep Python `LogicalBlock`, `parallel()`,
-  `if_else()`, `LogicalModule` definition, and keyword binding as thin
-  ergonomic facades over Rust calls.
+- Lower `ResolvedInstrProgram` into a PHIR module entirely in Rust.
+- Emit generic structure through PHIR module/function/region/block/SSA forms
+  and domain semantics through registered typed dialect operations/types.
+- Preserve program, module definition/instance, call, value, frame,
+  measurement, annotation, and source identities in an explicit provenance map.
+- Test serialization and verification of the emitted PHIR independently of
+  Python and Guppy.
+
+### Stage 1c: PyO3 bindings and Python parity
+
+- Add bound wrappers in `python/pecos-rslib` under `pecos_rslib.instr` and
+  `pecos_rslib.qec` for the Rust artifacts, IDs, builders, diagnostics, and
+  introspection APIs.
+- Re-export them through `pecos.instr` and `pecos.qec`; keep Python
+  `LogicalBlock`, `parallel()`, `if_else()`, `InstrModule` definition, and
+  keyword binding as thin ergonomic facades over Rust calls.
 - Map structured Rust errors to stable Python exception classes without
   reimplementing resolution logic in Python.
-- Require paired Rust/Python examples and byte-equivalent serialized circuits,
-  resolved programs, defaults, and provenance.
+- Require paired Rust/Python examples and byte-equivalent serialized programs,
+  resolved programs, PHIR artifacts, defaults, and provenance.
 
 ### Stage 2: Rust-planned single-patch Guppy, QIS trace, and DEM
 
@@ -2294,13 +2510,18 @@ Required tests include:
 
 - Rust-only construction, validation, resolution, planning, introspection, and
   serialization without importing or embedding Python;
+- the generic `InstrProgram` crate/module compiling and testing without a
+  dependency on `pecos-qec`;
+- one small non-QEC instruction set exercising definitions, typed calls,
+  modules, deterministic implementation resolution, and PHIR emission so the
+  generic boundary is real rather than nominal;
 - elaboration canonicalizing parameters, instantiating output types, expanding
   profile preferences, and rejecting unresolved required parameters;
 - stable definition IDs, instance IDs, and hierarchy paths across
   serialization and deterministic elaboration;
 - hierarchical composite implementations matching their external instruction
   contracts before and after flattening;
-- two calls to one `LogicalModule` producing distinct instance, block,
+- two calls to one `InstrModule` producing distinct instance, block,
   measurement, frame-expression, and provenance IDs while sharing the same
   definition ID;
 - direct module calls and provenance-preserving inlining producing equivalent
@@ -2323,8 +2544,9 @@ Required tests include:
 - typed annotations either following clone/specialize/inline/flatten rewrites
   through provenance maps or failing according to their declared retention
   policy;
-- paired Rust and Python authoring examples producing byte-equivalent logical
-  circuits, resolved plans, defaults, selection sources, and provenance;
+- paired Rust and Python authoring examples producing byte-equivalent
+  instruction programs, resolved plans, defaults, selection sources, and
+  provenance;
 - parity between Rust fluent call builders and Python keyword-bound calls;
 - Python cursor and parallel-region wrappers delegating state transitions and
   validation to Rust rather than maintaining shadow state;
@@ -2361,6 +2583,14 @@ Required tests include:
   representatives;
 - frame materialization, absorption into a measurement, and decoder-driven
   physical-frame updates remaining distinguishable in plan provenance;
+- deterministic Rust-only `ResolvedInstrProgram` -> PHIR generation;
+- PHIR module/function/region/SSA verification and serialization succeeding
+  without importing Python;
+- PHIR operation/type identities and source maps preserving every relevant
+  program, module, call, value, frame, and measurement ID;
+- the single-patch PHIR lowering and Guppy/QIS trace agreeing on declared
+  logical semantics and measurement identities before any PHIR backend is
+  treated as production-authoritative;
 - automatic resolution of a sole supported implementation;
 - an actionable ambiguity error when multiple implementations support an
   instruction and neither `.using(...)` nor a configured default selects one;
@@ -2373,7 +2603,7 @@ Required tests include:
 - useful support diagnostics for wrong code family, geometry, orientation, or
   operand arity;
 - explicit implementation hints and ambiguity rejection;
-- one generic logical circuit lowered under two explicitly chosen instruction
+- one generic instruction program lowered under two explicitly chosen instruction
   sets;
 - equivalent circuit-like and space-time-volume authoring producing the same
   instruction graph and traced behavior;
@@ -2409,15 +2639,15 @@ compilation.
 
 ## Open questions
 
-1. How rich should the initial opaque logical type system be? At minimum it
-   needs linear value kinds and instruction-supplied input/output signatures;
-   named lifecycle states can remain instruction-owned type tokens.
+1. How rich should the initial generic type interface be? At minimum it needs
+   linear/copyable value kinds and instruction-supplied input/output signatures;
+   QEC lifecycle states can remain QEC-dialect type tokens.
 2. Should instruction-set resolution happen eagerly when calls are appended or
    only when a target and lowering context are known? The proposed compromise
    is eager resolution when fully specified, followed by mandatory resolution
    during lowering.
 3. Should an instruction set be passed only to `lower`, or may an authoring helper
-   attach its owning set as an explicit circuit dependency? The circuit must
+   attach its owning set as an explicit program dependency? The graph must
    not interpret it either way, and the resolved artifact must record the
    actual choice.
 4. Should `compile_to_guppy()` be the artifact-returning name, or should the new
@@ -2431,18 +2661,27 @@ compilation.
    which can only be known after selecting a `QecInstrImpl`?
    The proposed default is a conservative interface-level constraint followed
    by a more concrete resolved `SpaceTimePlan`.
+8. Should the generic Rust layer be a small `pecos-instr` crate or a narrowly
+   scoped module owned by `pecos-phir`? Stage 0 should decide this from
+   dependency direction and type/ID reuse, not naming preference.
+9. Should initial PHIR emission preserve resolved high-level QEC operations,
+   immediately expand implementation plans, or provide both verified lowering
+   levels? The proposal favors both, with explicit artifact names.
 
 ## Recommended first implementation slice
 
-Implement Stage 1a entirely in Rust before adding public bindings. Include at
-least two Rust `QecInstrImpl` implementations for one instruction so selection
-and support diagnostics are real rather than interfaces with only one path.
-Freeze and test the serialized artifacts, then add the Stage 1b PyO3 wrappers
-and prove Rust/Python construction parity.
+Complete the Stage 0 PHIR boundary audit, then implement Stage 1a entirely in
+Rust before adding public bindings. First prove the generic boundary with one
+small non-QEC `InstrSet`. Then include at least two Rust `QecInstrImpl`
+implementations for one QEC instruction so selection and support diagnostics
+are real rather than interfaces with only one path. Freeze and test the
+serialized artifacts, lower one resolved fixture to PHIR in Rust, then add the
+Stage 1c PyO3 wrappers and prove Rust/Python construction parity.
 
-Only then implement one complete single-patch vertical slice: Rust logical QEC
-instruction applications -> Rust-resolved plan -> Rust-generated Guppy source
-and metadata -> thin Python Guppy compilation -> QIS trace -> normalized
-TickCircuit -> DEM. Compare that trace, measurement ledger, detectors,
+Only then implement one complete single-patch vertical slice: Rust
+`InstrProgram` QEC applications -> Rust-resolved plan -> Rust-generated PHIR
+and Guppy source/metadata -> thin Python Guppy compilation -> QIS trace ->
+normalized TickCircuit -> DEM. Compare the PHIR semantics and that trace's
+measurement ledger, detectors,
 observables, and DEM against `make_surface_code`. This proves the actual PECOS
 route before adding more instructions or a convenience reference Tick renderer.

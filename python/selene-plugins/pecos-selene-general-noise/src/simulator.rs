@@ -84,24 +84,30 @@ impl SeleneSimulator {
                     }));
                 }
                 GateType::RZZ => {
-                    operations.extend(qubits.chunks_exact(2).map(|pair| Operation::RZZGate {
-                        qubit_id_1: pair[0],
-                        qubit_id_2: pair[1],
-                        theta: angle(0),
+                    operations.extend(qubits.as_chunks::<2>().0.iter().map(|pair| {
+                        Operation::RZZGate {
+                            qubit_id_1: pair[0],
+                            qubit_id_2: pair[1],
+                            theta: angle(0),
+                        }
                     }));
                 }
                 GateType::SZZ => {
-                    operations.extend(qubits.chunks_exact(2).map(|pair| Operation::RZZGate {
-                        qubit_id_1: pair[0],
-                        qubit_id_2: pair[1],
-                        theta: PI / 2.0,
+                    operations.extend(qubits.as_chunks::<2>().0.iter().map(|pair| {
+                        Operation::RZZGate {
+                            qubit_id_1: pair[0],
+                            qubit_id_2: pair[1],
+                            theta: PI / 2.0,
+                        }
                     }));
                 }
                 GateType::SZZdg => {
-                    operations.extend(qubits.chunks_exact(2).map(|pair| Operation::RZZGate {
-                        qubit_id_1: pair[0],
-                        qubit_id_2: pair[1],
-                        theta: -PI / 2.0,
+                    operations.extend(qubits.as_chunks::<2>().0.iter().map(|pair| {
+                        Operation::RZZGate {
+                            qubit_id_1: pair[0],
+                            qubit_id_2: pair[1],
+                            theta: -PI / 2.0,
+                        }
                     }));
                 }
                 GateType::SZ => {

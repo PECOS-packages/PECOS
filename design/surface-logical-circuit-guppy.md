@@ -1,4 +1,4 @@
-# Typed instruction programs for logical QEC and Guppy output
+# Typed instruction programs for logical QEC and physical lowering
 
 Status: proposed.
 
@@ -32,7 +32,8 @@ smaller high-level authoring, elaboration, and implementation-resolution model
 that can generate PHIR after its domain choices are resolved. It may reuse PHIR
 types and structural utilities where that keeps the boundary clean, but it
 should not duplicate PHIR's general compiler responsibilities. QEC definitions,
-semantics, planning, and Guppy generation remain in `crates/pecos-qec`.
+semantics, physical planning, direct TickCircuit lowering, and Guppy generation
+remain in `crates/pecos-qec`.
 PyO3 bindings expose the Rust-owned artifacts, while `quantum-pecos` supplies
 only Pythonic construction conveniences and the bridge into Guppy's Python
 compiler.
@@ -59,22 +60,29 @@ Typed resources + opaque instruction applications
                          v
             resolved instruction program
                          |
-             +-----------+-----------+
-             |                       |
-             v                       v
-           PHIR                    Guppy
-     (MLIR-like target)              |
-                                     v
-                            HUGR / QIS lowering
-                                     |
-                                     v
-                                QIS trace
-                                     |
-                                     v
-                          normalized TickCircuit
-                                     |
-                                     v
-                            DagCircuit / DEM
+             +-------------+
+             |             |
+             v             v
+           PHIR    PhysicalCircuitPlan
+     (MLIR-like target)      |
+                       +-----+-----+
+                       |           |
+                       v           v
+                  direct Rust    Guppy
+                    lowering       |
+                       |           v
+                       |    HUGR / QIS lowering
+                       |           |
+                       |           v
+                       |    runtime QIS trace
+                       |           |
+                       +-----+-----+
+                             |
+                             v
+                   normalized TickCircuit
+                             |
+                             v
+                     DagCircuit / DEM
 
               optional exports:
               TickCircuit -> Stim circuit
@@ -147,8 +155,8 @@ factory-specific recipe.
    measurement, injection, and surgery uniformly as QEC instruction applications.
 6. Generate executable Guppy while retaining patch structure and linear qubit
    ownership.
-7. Reach PECOS-native circuit and analysis forms through the executed
-   Guppy-to-QIS trace path.
+7. Reach PECOS-native circuit and analysis forms directly in Rust as well as
+   through the executed Guppy-to-QIS trace path.
 8. Preserve measurement identity, detector definitions, observables, result
    tags, and code-block ownership across every lowering.
 9. Reuse the canonical geometry, check plans, Clifford-deformation rules, and
@@ -215,6 +223,10 @@ pecos_qec::surface
 
 pecos_qec::spacetime
     SpaceTimeProgram, volume constraints, SpaceTimePlan
+
+pecos_qec::physical
+    PhysicalCircuitPlan, scheduling context, GeneratedTickProgram
+    direct normalized TickCircuit and native DEM handoff
 
 pecos_qec::guppy
     deterministic Guppy source and semantic sidecar generation
@@ -444,6 +456,7 @@ Original QuantumCircuit       symbol + locations + params
 Current GateRegistry          gate signature + one decomposition
 InstrProgram / InstrGraph     typed definition calls + selectable implementations
 ResolvedInstrProgram          every implementation and support decision fixed
+PhysicalCircuitPlan           shared structured physical realization + metadata
 PHIR                          general MLIR-like compiler representation
 TickCircuit / DagCircuit      concrete scheduled quantum circuit representations
 ```
@@ -2186,12 +2199,12 @@ flattening to physical gates. In particular, Guppy generation must not accept
 an arbitrary `TickCircuit` as its input: that would discard patch ownership,
 structured arrays, logical gate boundaries, and qubit lifetime information.
 
-## Resolved instruction program and authoritative backend route
+## Resolved instruction program and physical backend routes
 
 Rendering each instruction independently into Guppy and TickCircuit would
 recreate the semantic drift that already exists between the memory and
-transversal generators. The authoritative route should instead follow the
-program PECOS actually compiles and executes:
+transversal generators. Both backends should instead consume a shared,
+Rust-owned physical realization assembled from the selected instruction plans:
 
 ```text
 InstrProgram
@@ -2201,11 +2214,16 @@ InstrProgram
     -> ResolvedInstrProgram
         +-> PHIR + optional SpaceTimePlan/shape projections
         |
-        +-> generated Guppy
-            -> HUGR / QIS lowering
-            -> runtime QIS trace
-            -> normalized TickCircuit
-            -> DagCircuit / DEM / Stim-compatible exports
+        +-> PhysicalCircuitPlan
+              +-> direct Rust TickCircuit lowering
+              |     -> normalized TickCircuit
+              |     -> DagCircuit / DEM / Stim-compatible exports
+              |
+              +-> generated Guppy
+                    -> HUGR / QIS lowering
+                    -> runtime QIS trace
+                    -> normalized TickCircuit
+                    -> DagCircuit / DEM / Stim-compatible exports
 ```
 
 Elaboration first produces an `ElaboratedInstrProgram` with canonical
@@ -2228,35 +2246,65 @@ resolution then produces a `ResolvedInstrProgram` containing:
   policies;
 - conditional-effect lowering decisions, outstanding symbolic frame
   expressions, and materialization points;
-- the information needed to emit typed PHIR and compose Guppy source.
+- the information needed to emit typed PHIR and construct a shared physical
+  circuit plan for direct TickCircuit and Guppy lowering.
 
 This resolved program is not a second public authoring IR. Each implementation
 plan describes hardware-independent realization details such as ancilla
 lifecycle, interaction partial order, measurement semantics, QEC protocol phases,
-and decoder dependencies. The resolved program composes those plans into Guppy
-and retains the sidecar metadata needed to interpret the resulting trace.
+and decoder dependencies. A Rust `PhysicalCircuitPlan` composes those selected
+plans into physical operations, resource lifetimes, scheduling constraints,
+structured control, and the measurement/detector/observable/provenance ledger.
+It retains logical-block and instruction boundaries even when a backend later
+flattens them.
+
+`PhysicalCircuitPlan` is the common physical-lowering seam, not an arbitrary
+already-flattened `TickCircuit`. It contains enough structure for Guppy's linear
+patch values and control flow while also supporting deterministic Rust
+scheduling and direct TickCircuit emission. This prevents a Python Guppy
+renderer and a Rust Tick renderer from independently rediscovering ancillas,
+check order, frame effects, measurements, or detector boundaries.
+
+It is also the executable detailed form of the previously described
+`SpaceTimeRealization`, not a competing representation. Before scheduling, it
+may retain partial orders and relative geometry; after a scheduling context is
+applied, its physical operations have concrete ticks and locations. Those same
+scheduled operations project both to the detailed 2+1D circuit view and to the
+normalized TickCircuit.
 
 The PHIR lowering is a first-class Rust output of the same resolved artifact,
 not a Python reconstruction. It should emit registered dialect operations and
-types with source maps to program/module/call/value IDs. Initially, the existing
-Guppy -> HUGR/QIS -> QIS trace path remains authoritative for the physical
-TickCircuit and DEM because it is the route PECOS actually executes. PHIR
-lowering should be tested against that route before it is allowed to replace or
-bypass it for a backend.
+types with source maps to program/module/call/value IDs. PHIR, direct Tick, and
+Guppy are sibling outputs with explicit capability sets; none needs Python in
+order for the Rust program to produce a usable physical circuit and DEM.
 
-The QIS trace is authoritative for physical gate and measurement order. Guppy
-compilation, QIS lowering, and the selected runtime may schedule operations
-differently from source order. DEM construction must therefore use the
-normalized TickCircuit recovered from that trace, following the existing
-`build_dem_from_guppy` pipeline, rather than a separately rendered guess at the
-physical graph.
+The direct backend deterministically schedules the physical plan under an
+explicit direct-lowering context and returns a `GeneratedTickProgram` containing
+the normalized `TickCircuit`, measurement ledger, detector/observable metadata,
+selected implementation IDs, schedule provenance, and links to logical calls.
+Its TickCircuit is authoritative for that direct route and may be passed to the
+native DEM builder without compiling or executing Guppy.
 
-A direct logical-to-Tick renderer may remain as a reference backend for fast
-tests, schedule development, or environments without Guppy. It is not the
-audited DEM input unless its operation and measurement-identity equivalence to
-the traced Guppy program has been established. The API should make the
-difference visible—for example, `trace.tick_circuit` versus
-`render_reference_tick_circuit()`.
+The Guppy backend emits the same physical plan through structured Guppy. Guppy
+compilation, QIS lowering, and a selected target/runtime may legally reschedule
+operations. For that route, the executed QIS trace is authoritative for physical
+gate and measurement order, and DEM construction uses the normalized
+TickCircuit recovered from the trace following `build_dem_from_guppy`.
+
+Both routes must make their schedule origin visible—for example,
+`generated_tick.tick_circuit` with `schedule_source="direct"` versus
+`trace.tick_circuit` with `schedule_source="qis_trace"`. Equivalence testing is
+required while implementations migrate and remains an important regression
+oracle, but a verified direct TickCircuit is not permanently subordinate to or
+dependent on Guppy.
+
+Some resolved programs exceed TickCircuit's control model. Static loops can be
+unrolled, compile-time branches specialized, and virtual Pauli corrections
+absorbed before direct emission. A genuinely dynamic branch or loop must either
+be lowered under an explicit supported convention or produce a capability
+diagnostic identifying the unsupported control region. The availability of a
+Guppy backend does not permit the direct backend to silently erase adaptive
+semantics.
 
 ### Current PECOS Stim paths
 
@@ -2276,10 +2324,13 @@ It is not the universal or usual intermediate for Guppy DEM construction:
   TickCircuit, not a Guppy/QIS trace;
 - SLR also has an independent AST-to-Stim path.
 
-The proposed instruction pipeline should use the traced normalized TickCircuit for
-native DEM construction. Stim-circuit export from that same TickCircuit is a
-supported optional export and an important equivalence oracle, while
-Stim-compatible DEM text remains an export of the native DEM itself.
+The proposed instruction pipeline supports native DEM construction from either
+a directly generated normalized TickCircuit or the normalized TickCircuit
+recovered from a Guppy/QIS trace. Each uses the same resolved
+measurement/detector/observable identities and records its schedule source.
+Stim-circuit export from either TickCircuit is a supported optional export and
+an important equivalence oracle, while Stim-compatible DEM text remains an
+export of the native DEM itself.
 
 ## Measurement identity
 
@@ -2346,10 +2397,39 @@ let resolved = program.resolve(&surface.lowering_context())?;
 let phir_module = resolved.to_phir()?;
 ```
 
-Initially PHIR generation is an additional authoritative semantic output while
-the executed Guppy/QIS trace remains authoritative for physical scheduling and
-DEM construction. Equivalence tests decide when a PHIR-based backend may take
-over a production route.
+PHIR generation is an additional authoritative semantic output. Direct
+TickCircuit lowering and executed Guppy/QIS tracing each produce a concrete
+physical schedule with an explicit origin; equivalence tests compare them and
+decide when future PHIR-based backends may take over another production route.
+
+## Direct TickCircuit lowering
+
+The Rust API should make the Guppy-independent route ordinary rather than
+special-purpose:
+
+```rust
+let resolved = program.resolve(&surface.lowering_context())?;
+let physical = resolved.lower_physical(&direct_context)?;
+let generated = physical.to_tick_program()?;
+let tick: &TickCircuit = generated.tick_circuit();
+let dem = generated.build_dem(&noise_model)?;
+```
+
+Python should be a thin wrapper over those same artifacts:
+
+```python
+resolved = program.resolve(context=surface.lowering_context())
+physical = resolved.lower_physical(context=direct_context)
+generated = physical.to_tick_program()
+tick = generated.tick_circuit
+dem = generated.build_dem(noise_model)
+```
+
+Convenience methods such as `resolved.to_tick_circuit(...)` and
+`resolved.build_dem(..., via="direct")` may compose these steps, but the
+inspectable `PhysicalCircuitPlan` and `GeneratedTickProgram` artifacts must
+remain available. Direct lowering must run entirely in Rust and must not import
+Guppy or Python.
 
 ## Guppy lowering
 
@@ -2381,7 +2461,10 @@ the existing convention of returning an entry point. The new
 `compile_to_guppy()` API returns a `GeneratedGuppyProgram` artifact containing
 source, entry point, resolved QEC protocol implementations, measurement layout, and
 detector/observable metadata. Its `trace_qis()` and `build_dem()` methods use
-the same generated program and make the authoritative analysis route explicit.
+the same generated program and make the traced analysis route explicit. Guppy
+emission consumes the shared physical plan plus retained structured
+block/control information; it is not generated by converting the direct
+TickCircuit back into Guppy.
 
 ## Relationship to existing code
 
@@ -2475,9 +2558,9 @@ The proposed types map onto the RFC ladder as follows:
 | `EncodedProgram` / logical ISA | `InstrProgram` whose graph calls logical-level `QecInstr` interfaces |
 | `QecProtocol` | A selected `QecInstrImpl`, potentially expressed hierarchically as more QEC instruction applications |
 | `ImplementationPlan` | Concrete `QecInstrPlan` produced by the selected implementation |
-| Circuit/hybrid program | Generated Guppy and compiled HUGR/QIS |
-| Mapped/timed execution | Existing platform/runtime lowering observed through QIS trace |
-| Analysis product | Normalized TickCircuit, DagCircuit, and DEM from the trace |
+| Circuit/hybrid program | `PhysicalCircuitPlan`, generated Guppy, and compiled HUGR/QIS |
+| Mapped/timed execution | Direct Rust schedule or platform/runtime lowering observed through QIS trace |
+| Analysis product | Normalized TickCircuit, DagCircuit, and DEM with recorded schedule source |
 
 This design adopts #508's explicit-artifact rule: the authored
 `InstrProgram`, elaborated program, instruction definition, selected QEC
@@ -2508,9 +2591,9 @@ SurfacePatch-backed logical value
     -> InstrProgram / InstrGraph QEC instruction applications
     -> ElaboratedInstrProgram
     -> selected surface implementation plans
-    -> PHIR and Guppy
-    -> QIS trace
-    -> normalized TickCircuit
+    -> PHIR and shared PhysicalCircuitPlan
+       +-> direct normalized TickCircuit
+       +-> Guppy -> QIS trace -> normalized TickCircuit
     -> DEM
 ```
 
@@ -2578,9 +2661,10 @@ The boundary for #513 is:
 
 ```text
 ResolvedInstrProgram / QecInstrPlan
-    -> generated Guppy + semantic source map
-    -> HUGR/QIS lowering
-    -> QIS trace + resolved measurement identity map
+    -> shared PhysicalCircuitPlan + semantic source map
+       +-> direct normalized TickCircuit
+       +-> generated Guppy -> HUGR/QIS -> QIS trace
+    -> resolved measurement identity map for either route
 ```
 
 The generated artifact must preserve source identities for QEC instruction applications,
@@ -2603,12 +2687,13 @@ native decomposition, placement, timing, idles, and feedback latency enter
 through the existing HUGR/QIS platform and runtime lowering selected by the
 `LoweringContext`.
 
-This is another reason the QIS trace, rather than a separately rendered
-TickCircuit, is authoritative: it reflects the chosen target/runtime schedule.
-The trace artifact must retain links back through generated Guppy and the
-implementation plan to QEC instruction applications and code entities. Different runtime or
-target choices produce distinct traced artifacts and potentially distinct
-DEMs, even from the same logical graph.
+For a target/runtime route, the QIS trace is authoritative because it reflects
+that route's chosen mapped schedule. For direct lowering, the
+`GeneratedTickProgram` is authoritative for its explicit scheduling context.
+Both artifacts retain links through the shared physical plan to QEC instruction
+applications and code entities. Different direct policies, runtimes, or target
+choices produce distinct scheduled artifacts and potentially distinct DEMs,
+even from the same logical graph.
 
 ### [#515: qecdb importer](https://github.com/PECOS-packages/PECOS/issues/515)
 
@@ -2647,8 +2732,9 @@ experiment overlays, not different instruction, protocol, or code types.
    first slice of #512; add bindings only after the Rust API and serialization
    tests pass.
 4. Implement `ResolvedInstrProgram` -> typed PHIR emission with source maps.
-5. Implement the single-patch Guppy -> QIS trace -> TickCircuit -> DEM path and
-   semantic source map under #513.
+5. Implement the single-patch shared physical plan with both direct
+   TickCircuit -> DEM and Guppy -> QIS trace -> TickCircuit -> DEM paths and a
+   common semantic source map under #513.
 6. Exercise two surface implementations of one instruction so alternate
    implementation support is demonstrated rather than only modeled.
 7. Carry the source/provenance map through one target/runtime path as an initial
@@ -2759,21 +2845,28 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 - Require paired Rust/Python examples and byte-equivalent serialized programs,
   resolved programs, PHIR artifacts, defaults, and provenance.
 
-### Stage 2: Rust-planned single-patch Guppy, QIS trace, and DEM
+### Stage 2: shared physical plan, direct TickCircuit, Guppy, and DEM
 
-- Port or extract reusable patch-level planning and deterministic Guppy source
-  emission from `guppy_gen.surface` into `crates/pecos-qec`.
+- Port or extract reusable patch-level planning into a Rust
+  `PhysicalCircuitPlan` in `crates/pecos-qec` rather than either renderer.
+- Implement Rust-only `PhysicalCircuitPlan` -> `GeneratedTickProgram` lowering,
+  including the normalized TickCircuit, measurement ledger,
+  detector/observable definitions, provenance, and native DEM construction.
+- Implement deterministic Guppy source emission from that same physical plan
+  and retained block/control structure.
 - Keep only Guppy source loading/compilation and runtime orchestration in the
   Python bridge.
 - Lower explicit prepare, syndrome rounds, logical Pauli, and measurement.
-- Route `trace_qis()` and `build_dem()` through the existing Guppy -> QIS trace
-  -> normalized TickCircuit pipeline.
-- Match `make_surface_code` QIS traces, result identities, TickCircuits, and
-  DEMs.
+- Support both `build_dem(via="direct")` and the existing Guppy -> QIS trace ->
+  normalized TickCircuit route.
+- Match `make_surface_code` result identities, TickCircuits, detector metadata,
+  and DEMs; compare the direct circuit with the traced Guppy schedule under a
+  context where they are expected to agree.
 
 ### Stage 3: multi-patch Clifford gates
 
-- Add transversal H, S/S-dagger, and CX Guppy lowering.
+- Add transversal H, S/S-dagger, and CX to the shared physical plan and both
+  direct TickCircuit and Guppy lowerings.
 - Support parallel syndrome rounds over compatible patches.
 - Match the existing logical builder's Tick traces and detector boundaries.
 
@@ -2837,10 +2930,12 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 
 ## Testing and acceptance criteria
 
-Each supported operation sequence must be validated through the generated
-Guppy program and its QIS trace. Existing direct Tick generation remains a
-valuable independent reference for equivalence tests, not the production DEM
-route.
+Each supported operation sequence must be validated through the Rust-owned
+physical plan and every backend that claims to support it. Direct TickCircuit
+lowering is a production Rust path; generated Guppy and its QIS trace are a
+separate production execution path. Cross-route equivalence is required where
+their declared scheduling contexts and capabilities should produce the same
+circuit, but neither backend is implemented as an independent QEC planner.
 
 Required tests include:
 
@@ -2946,14 +3041,23 @@ Required tests include:
   representatives;
 - frame materialization, absorption into a measurement, and decoder-driven
   physical-frame updates remaining distinguishable in plan provenance;
+- deterministic Rust-only `ResolvedInstrProgram` -> `PhysicalCircuitPlan` ->
+  `GeneratedTickProgram` lowering without importing Python or Guppy;
+- direct TickCircuit measurement identities, detector/observable metadata,
+  result tags, instruction boundaries, and provenance agreeing with the shared
+  physical plan;
+- native DEM construction succeeding directly from `GeneratedTickProgram` and
+  preserving the same detector/observable identities;
+- direct lowering rejecting unsupported adaptive branches/loops without
+  silently specializing, flattening, or erasing their semantics;
 - deterministic Rust-only `ResolvedInstrProgram` -> PHIR generation;
 - PHIR module/function/region/SSA verification and serialization succeeding
   without importing Python;
 - PHIR operation/type identities and source maps preserving every relevant
   program, module, call, value, frame, and measurement ID;
-- the single-patch PHIR lowering and Guppy/QIS trace agreeing on declared
-  logical semantics and measurement identities before any PHIR backend is
-  treated as production-authoritative;
+- the single-patch PHIR lowering, direct Tick program, and Guppy/QIS trace
+  agreeing on declared logical semantics and measurement identities before any
+  PHIR physical backend is treated as production-authoritative;
 - automatic resolution of a sole supported implementation;
 - an actionable ambiguity error when multiple implementations support an
   instruction and neither `.using(...)` nor a configured default selects one;
@@ -3007,8 +3111,10 @@ Required tests include:
 - ancilla-budget and check-plan preservation;
 - deterministic Guppy source generation;
 - Guppy compilation and execution;
-- traced Guppy operations versus the existing reference TickCircuit;
-- detector/observable and DEM equivalence;
+- direct generated Tick operations versus traced Guppy operations when both use
+  an equivalence-constrained scheduling context;
+- direct/traced detector, observable, and representative noisy DEM equivalence
+  where their concrete schedules agree;
 - non-positional measurement IDs and repeated result-tag occurrences;
 - loud rejection of invalid lifecycle and unsupported operations.
 
@@ -3060,8 +3166,10 @@ Stage 1c PyO3 wrappers and prove Rust/Python construction parity.
 
 Only then implement one complete single-patch vertical slice: Rust
 `InstrProgram` QEC applications -> Rust-resolved plan -> Rust-generated PHIR
-and Guppy source/metadata -> thin Python Guppy compilation -> QIS trace ->
-normalized TickCircuit -> DEM. Compare the PHIR semantics and that trace's
-measurement ledger, detectors,
-observables, and DEM against `make_surface_code`. This proves the actual PECOS
-route before adding more instructions or a convenience reference Tick renderer.
+and shared `PhysicalCircuitPlan`, then both (a) Rust-direct normalized
+TickCircuit -> DEM and (b) Guppy source/metadata -> thin Python compilation ->
+QIS trace -> normalized TickCircuit -> DEM. Compare both routes' measurement
+ledgers, detectors, observables, representative DEMs, and PHIR semantics against
+`make_surface_code`, and compare their concrete schedules where the selected
+contexts promise equivalence. This proves a Python-free PECOS-native route and
+the Guppy execution route before adding more instructions.

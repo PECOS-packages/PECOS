@@ -175,8 +175,18 @@ fn retained_block_reconstruction_tolerance_with_numerical_tail(
     // the Frobenius energy that the factorization actually reports in the
     // retained numerical tail. This is not discarded weight: the values stay
     // in the returned factors and public truncation accounting is unchanged.
-    // A factorization that silently reports a missing direction as zero gains
-    // no allowance and remains rejected.
+    //
+    // Two honest limits of this term, both measured rather than assumed:
+    // (1) coefficient one is the ALIGNED case, not a Frobenius bound -- an
+    // anti-aligned tail reaches 2x the reported energy (measured 1.0022x on
+    // the issue-586 fixture), so what actually carries the margin here is the
+    // max-entry-vs-Frobenius slack (measured 1.55-3.0x, ceiling sqrt(m*n)).
+    // (2) A silently zeroed direction contributes no allowance of its own but
+    // can still hide beneath the allowance the OTHER tail values generate;
+    // the resulting silent-loss band is the tail energy itself, structurally
+    // capped by sqrt(retained - floor_index) * sqrt(epsilon) * sigma_1. That
+    // is irreducible for this algorithm: at that scale it cannot distinguish
+    // a real direction from its own noise.
     let claimed_discarded_weight = factorization_discarded_weight(&factors.1, retained_rank);
     let numerical_tail_error = factors
         .1
@@ -381,14 +391,26 @@ fn svd_factors_are_certified(
 /// Eigenvalues at `O(epsilon * sigma_1^2)` cannot distinguish a true null
 /// space from roundoff in the formed Gram matrix. Its corresponding singular
 /// floor is `sqrt(epsilon) * sigma_1`. Triplets above that floor and the
-/// isometry of every retained vector remain independently certified. The
-/// reported retained energy below the floor bounds the part of reconstruction
-/// whose directions the algorithm cannot resolve.
+/// isometry of EVERY retained vector remain independently certified -- the
+/// isometry conjunct is what rejects a tail direction tilted into the signal
+/// subspace, which reconstruction alone cannot see. Below the floor, only the
+/// energy the factorization itself reports is admitted; that admission is
+/// the aligned-case estimate rather than a bound (see the derivation beside
+/// `retained_block_reconstruction_tolerance`).
+///
+/// This certificate closes the WELL-SEPARATED case: spectra whose content sits
+/// within roughly one to two orders of the floor can still fail every rung,
+/// because no available factorization resolves directions at its own noise
+/// scale (issue #586).
 fn gram_svd_factors_are_certified(
     matrix: &DMatrix<Complex64>,
     factors: &SvdFactors,
     retained_rank: usize,
 ) -> bool {
+    // The sqrt(epsilon) coefficient is the Gram algorithm's own resolution
+    // floor, not a tunable: inflating it would simultaneously shrink triplet
+    // coverage and widen the admitted tail energy. Pinned by
+    // `test_issue_586_gram_numerical_floor_coefficient_is_not_inflated`.
     let numerical_floor = factors.1[0] * f64::EPSILON.sqrt();
     let numerical_tail_start = factors
         .1
@@ -1533,6 +1555,49 @@ mod tests {
         );
 
         truncated_svd_with_error(&matrix, max_rank, cutoff, max_trunc_error).unwrap();
+    }
+
+    #[test]
+    fn test_issue_586_gram_numerical_floor_coefficient_is_not_inflated() {
+        // The floor classifies which retained directions are resolvable. An
+        // inflated coefficient would silently demote real signal into the
+        // unresolvable tail band, shrinking triplet coverage while widening
+        // the admitted energy -- the one-sided-guard failure mode. Pin it with
+        // a direction just ABOVE the true floor whose reported singular value
+        // is slightly wrong. The resulting error is far too small for the
+        // reconstruction allowance to catch, so ONLY the triplet check rejects
+        // it -- and triplets are checked only above the floor. An inflated
+        // floor reclassifies the direction as unresolvable tail, waives its
+        // triplet, and hands it a tail-energy allowance, admitting it.
+        let sigma_1 = 1.0_f64;
+        let borderline = sigma_1 * f64::EPSILON.sqrt() * 3.0;
+
+        let mut matrix = DMatrix::zeros(4, 4);
+        matrix[(0, 0)] = Complex64::new(sigma_1, 0.0);
+        matrix[(1, 1)] = Complex64::new(borderline, 0.0);
+        let honest = (
+            DMatrix::identity(4, 4),
+            DVector::from_vec(vec![sigma_1, borderline, 0.0, 0.0]),
+            DMatrix::identity(4, 4),
+        );
+        let retained_rank = 2;
+        assert!(gram_svd_factors_are_certified(
+            &matrix,
+            &honest,
+            retained_rank
+        ));
+
+        let mut corrupted = honest.clone();
+        corrupted.1[1] = borderline - 1e-9;
+        let error = retained_block_reconstruction_error(&matrix, &corrupted, retained_rank);
+        assert!(
+            error < corrupted.1[1],
+            "the corruption must be small enough that an inflated floor would admit it"
+        );
+        assert!(
+            !gram_svd_factors_are_certified(&matrix, &corrupted, retained_rank),
+            "a direction above sqrt(epsilon)*sigma_1 must stay triplet-certified"
+        );
     }
 
     #[test]

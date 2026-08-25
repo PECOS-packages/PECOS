@@ -1704,6 +1704,94 @@ forcing physical-circuit generation:
 4. the physical circuit with gates, measurements, resets, and feedback;
 5. the executed QIS trace, normalized TickCircuit, and DEM.
 
+#### Visualization boundary
+
+Both the coarse shape and detailed space-time circuit should be straightforward
+to visualize because they share stable resource, instruction-call, geometry,
+time, hierarchy, measurement, and provenance identities. Visualization should
+consume a Rust-produced, serializable `SpaceTimeView` rather than teach a GUI
+how to resolve instructions or reconstruct physical circuits.
+
+`SpaceTimeView` is a read-only presentation artifact, not another semantic IR.
+It contains selected geometry and time coordinates, drawable primitives or
+resource trajectories, hierarchy, annotations, and links back to the source
+`InstrCall`, `QecInstrPlan`, code element, physical operation, measurement,
+detector, observable, or frame effect. It may be regenerated at any requested
+level of detail from the authoritative realization.
+
+Useful presentations include:
+
+- an `x-y` patch/layout view at a selected time or round;
+- `x-time` and `y-time` projections showing resource motion and occupancy;
+- a rotatable 2+1D volume view of data, ancilla, workspace, and interactions;
+- resource-lane or Gantt-like views for durations, concurrency, measurement,
+  decoding, and feedback;
+- hierarchical expansion from instruction shape to composite protocol to
+  physical gates, with matching source/provenance selection;
+- overlays for boundaries, logical supports, physical-qubit IDs, instruction
+  calls, measurement IDs, detector/observable regions, Pauli-frame effects,
+  and fault/noise information when available.
+
+Conditional and repeated control should remain navigable rather than being
+flattened prematurely. A viewer can show a `ChoiceShape` as selectable branch
+tabs or juxtaposed alternatives and a `RepeatShape` as a collapsed body with an
+iteration count/range. It may optionally unfold a chosen branch, a fixed number
+of iterations, or an observed execution trace. Mutually exclusive branches
+must not be visually presented as simultaneously executed occupancy unless the
+view is explicitly showing reserved-union resources.
+
+The view model must label whether positions and times are symbolic, relative,
+scheduled, or target-calibrated, and whether resource quantities are exact,
+bounded, estimated, or unknown. Large realizations need hierarchy and
+level-of-detail queries so opening a factory or long syndrome history does not
+require materializing every gate primitive at once.
+
+The initial renderer can be modest: deterministic scene JSON plus a static
+`x-y`/time-slice or SVG-like debugging view from Rust, wrapped by a thin Python
+notebook display. An interactive web or desktop viewer can later consume the
+same scene artifact. Rendering choices must never feed back into implementation
+selection, mapping, or semantic verification.
+
+##### Bevy as an interactive viewer
+
+Bevy is a strong candidate for the interactive Rust viewer, but it should be an
+optional consumer rather than a dependency of `InstrProgram`, `pecos-qec`,
+PHIR, Guppy generation, or `SpaceTimeView` construction. A separate crate or
+binary such as `pecos-spacetime-viewer` can deserialize or directly receive a
+`SpaceTimeView` and map its stable IDs to Bevy entities/components.
+
+The ECS model is a natural fit for selectable data qubits, ancillas,
+interaction volumes, instruction instances, hierarchy nodes, and overlay
+components. Bevy provides native 2D/3D rendering, gizmos, cameras, UI, and mesh
+picking suitable for time slicing, orbiting a 2+1D realization, selecting a
+resource, and following its provenance. Its WebAssembly rendering options also
+leave open a browser or notebook-hosted viewer. At the time of this design,
+PECOS and Bevy 0.19 both use `wgpu` 29, which makes an initial integration spike
+particularly reasonable. See Bevy's [0.19 release
+notes](https://bevy.org/news/bevy-0-19/), [picking
+example](https://bevy.org/examples/picking/simple-picking/), and [rendering
+feature documentation](https://docs.rs/crate/bevy/latest/source/docs/cargo_features.md).
+
+The separation remains important:
+
+- core and headless PECOS builds must not compile Bevy or require a display/GPU;
+- the stable interchange is versioned `SpaceTimeView` data, not Bevy ECS world
+  serialization or Bevy entity IDs;
+- stable PECOS IDs are components on viewer entities and remain authoritative
+  for selection, annotations, cross-highlighting, and provenance;
+- deterministic static snapshots remain the CI/reference renderer because an
+  interactive GPU view is a poor golden-test boundary;
+- Bevy features should be selected narrowly to control compile time, binary
+  size, platform dependencies, and web payload;
+- another viewer must be able to consume the same scene without reproducing
+  QEC resolution or mapping logic.
+
+The spike should demonstrate one synchronized `x-y` time slice and 2+1D view,
+time/round scrubbing, visibility toggles for data/ancilla/workspace, picking
+back to an `InstrCall` and physical operation, and hierarchy expansion from a
+coarse instruction shape to gates. That is enough to validate the architecture
+before investing in editing, layout manipulation, or a full IDE.
+
 Each refinement carries a verification obligation:
 
 ```text
@@ -2706,6 +2794,15 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 - Verify instruction plan -> mapped realization -> physical-circuit refinement while
   retaining live resources, measurement identities, frame effects, and
   detector/observable boundaries.
+- Define a deterministic, serializable `SpaceTimeView` projection with stable
+  provenance links and implement one headless coarse-shape/time-slice renderer;
+  keep interactive notebook/web display as a thin consumer of that artifact.
+- Spike an optional `pecos-spacetime-viewer` using Bevy over the same
+  `SpaceTimeView`: synchronized time slice and 2+1D views, time scrubbing,
+  resource-layer toggles, stable-ID picking/provenance, and hierarchy expansion.
+- Keep Bevy out of the core dependency graph and evaluate native plus WASM
+  packaging, feature selection, compile time, binary/web size, and notebook
+  integration before selecting it as the supported interactive frontend.
 - Prove that circuit-like and space-time authoring of the same experiment
   produce equivalent instruction graphs, Guppy traces, and source identities.
 - Keep device placement and target timing out of this layer and hand the
@@ -2788,6 +2885,20 @@ Required tests include:
   reserved-union, minimum, maximum, expected, bounded, or unknown;
 - dynamic loop shapes never claiming a finite exact total volume without a
   proven iteration bound;
+- coarse and detailed `SpaceTimeView` artifacts preserving stable resource,
+  instruction, hierarchy, measurement, detector/observable, and provenance IDs;
+- deterministic headless visualization snapshots for a surface patch, syndrome
+  extraction, transversal CX, a conditional choice, and a repeated region;
+- the optional Bevy viewer and headless renderer consuming the same versioned
+  `SpaceTimeView`, with stable PECOS IDs rather than viewer entity IDs surviving
+  serialization and driving cross-selection;
+- core Rust construction, resolution, PHIR/Guppy generation, and headless tests
+  building without Bevy, a window system, or a graphics adapter;
+- visualization labeling symbolic versus mapped coordinates, abstract rounds
+  versus scheduled/calibrated time, and exact versus bounded/estimated/unknown
+  resource quantities;
+- branch visualization distinguishing alternative execution from reserved-union
+  occupancy and loop visualization distinguishing symbolic from unfolded traces;
 - `.when(predicate)` serializing identically to its explicit type-preserving
   `if_else` expansion and rejecting instructions without an unambiguous
   pass-through;

@@ -16,7 +16,7 @@ use crate::{DecoderError, SparseDem};
 use std::collections::BTreeSet;
 
 const PROBABILITY_SUM_TOLERANCE: f64 = 1e-10;
-const BINARY_COMPLEMENT_RELATIVE_TOLERANCE: f64 = 1e-12;
+const BINARY_COMPLEMENT_RELATIVE_TOLERANCE: f64 = 1e-9;
 
 /// One mutually exclusive outcome of a factor.
 #[derive(Clone, Debug, PartialEq)]
@@ -188,11 +188,14 @@ fn normalize_factor(factor: &Factor) -> NormalizedFactor {
         let baseline_index = 1 - toggle_index;
         let complement = 1.0 - outcomes[toggle_index].probability;
         let baseline = outcomes[baseline_index].probability;
-        // Agreement at 1e-12 relative is float-roundoff noise: it is thousands
-        // of times machine epsilon, covers decimal-literal pairs in either
-        // listing order, and remains three decades below the engine's 1e-9
-        // acceptance bar. Larger disagreement is deliberate parameterization
-        // and stays faithful on the N-ary kernel.
+        // Delegation substitutes fl(1 - p) for the stored baseline, changing
+        // its log mass by approximately |q - fl(1 - p)| / q. Accept exactly
+        // when that induced error is within the engine's 1e-9 acceptance bar:
+        // representation-noise pairs delegate in either listing order, while
+        // deliberate drift stays faithful on the N-ary kernel. Below roughly
+        // 2e-7, even an exact-sum pair may not delegate because ulp(1)-scale
+        // subtraction noise alone can exceed the bar; N-ary evaluation is then
+        // the faithful result, not a missed optimization.
         if (baseline - complement).abs() <= BINARY_COMPLEMENT_RELATIVE_TOLERANCE * baseline {
             let toggle = outcomes[toggle_index].clone();
             return NormalizedFactor::Binary { outcomes, toggle };

@@ -304,6 +304,131 @@ fn decimal_literal_binary_pairs_delegate_in_both_probability_orders() {
 }
 
 #[test]
+fn one_in_a_million_baseline_delegates_in_both_listing_orders() {
+    let baseline_probability = 1e-6_f64;
+    let toggle_probability = 0.999_999_f64;
+    assert_eq!(
+        (baseline_probability + toggle_probability).to_bits(),
+        1.0_f64.to_bits()
+    );
+    let dem = sparse_dem(vec![(toggle_probability, vec![0], vec![0])], 1, 1);
+
+    for baseline_first in [true, false] {
+        let baseline = outcome(baseline_probability, &[], &[]);
+        let toggle = outcome(toggle_probability, &[0], &[0]);
+        let outcomes = if baseline_first {
+            vec![baseline, toggle]
+        } else {
+            vec![toggle, baseline]
+        };
+        let model = FactorModel::new(vec![Factor { outcomes }], 1, 1).unwrap();
+        let config = TrellisConfig {
+            bp_score_iterations: 2,
+            ..TrellisConfig::default()
+        };
+        let mut factor_decoder = TrellisDecoder::from_factor_model(&model, config.clone()).unwrap();
+        let mut dem_decoder = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();
+
+        for observed in [[0], [1]] {
+            let factor_result = factor_decoder.decode(&observed).unwrap();
+            let dem_result = dem_decoder.decode(&observed).unwrap();
+            assert_result_masses_bitwise_equal(&factor_result, &dem_result);
+        }
+    }
+}
+
+#[test]
+fn tiny_exact_sum_baseline_stays_nary_when_binary_encoding_exceeds_tolerance() {
+    let baseline_probability = 1e-9_f64;
+    let toggle_probability = 1.0 - baseline_probability;
+    let model = FactorModel::new(
+        vec![Factor {
+            outcomes: vec![
+                outcome(baseline_probability, &[], &[]),
+                outcome(toggle_probability, &[0], &[0]),
+            ],
+        }],
+        1,
+        1,
+    )
+    .unwrap();
+
+    // At this scale, ulp(1)-level subtraction noise changes the baseline log
+    // mass by more than 1e-9. Refusing delegation is faithful evaluation, not
+    // a missed binary optimization.
+    assert_invalid(
+        TrellisDecoder::from_factor_model(
+            &model,
+            TrellisConfig {
+                bp_score_iterations: 2,
+                ..TrellisConfig::default()
+            },
+        ),
+        "BP-guided pruning requires a binary model",
+    );
+}
+
+#[test]
+fn seeded_complement_tolerance_sweep_classifies_exact_and_drifted_pairs() {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x434f_4d50_4c45_4d45);
+    let active_bp = TrellisConfig {
+        bp_score_iterations: 2,
+        ..TrellisConfig::default()
+    };
+
+    for exponent in 1..=7 {
+        let baseline_probability = 10_f64.powi(-exponent);
+        let toggle_probability = 1.0 - baseline_probability;
+        for baseline_first in [true, false] {
+            let observable = u32::from(rng.random_bool(0.5));
+            let baseline = outcome(baseline_probability, &[], &[]);
+            let toggle = outcome(toggle_probability, &[0], &[observable]);
+            let outcomes = if baseline_first {
+                vec![baseline, toggle]
+            } else {
+                vec![toggle, baseline]
+            };
+            let model = FactorModel::new(vec![Factor { outcomes }], 1, 2).unwrap();
+            TrellisDecoder::from_factor_model(&model, active_bp.clone()).unwrap();
+        }
+    }
+
+    for (baseline_probability, toggle_probability) in [(0.05, 0.95), (0.2, 0.8)] {
+        for baseline_first in [true, false] {
+            let baseline = outcome(baseline_probability, &[], &[]);
+            let toggle = outcome(toggle_probability, &[0], &[0]);
+            let outcomes = if baseline_first {
+                vec![baseline, toggle]
+            } else {
+                vec![toggle, baseline]
+            };
+            let model = FactorModel::new(vec![Factor { outcomes }], 1, 1).unwrap();
+            TrellisDecoder::from_factor_model(&model, active_bp.clone()).unwrap();
+        }
+    }
+
+    for exponent in 2..=7 {
+        let complement = 10_f64.powi(-exponent);
+        let baseline_probability = complement + 5e-11;
+        let toggle_probability = 1.0 - complement;
+        for baseline_first in [true, false] {
+            let baseline = outcome(baseline_probability, &[], &[]);
+            let toggle = outcome(toggle_probability, &[0], &[0]);
+            let outcomes = if baseline_first {
+                vec![baseline, toggle]
+            } else {
+                vec![toggle, baseline]
+            };
+            let model = FactorModel::new(vec![Factor { outcomes }], 1, 1).unwrap();
+            assert_invalid(
+                TrellisDecoder::from_factor_model(&model, active_bp.clone()),
+                "BP-guided pruning requires a binary model",
+            );
+        }
+    }
+}
+
+#[test]
 fn bp_iterations_are_inert_for_unpruned_nary_decode() {
     let model = genuine_model();
     let mut without_bp = TrellisDecoder::from_factor_model(&model, exact_config()).unwrap();

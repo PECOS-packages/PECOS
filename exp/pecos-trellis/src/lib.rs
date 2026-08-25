@@ -596,8 +596,9 @@ impl TrellisDecoder {
     /// Binary-shaped models delegate to [`Self::from_sparse_dem`] and are
     /// bitwise-identical to the equivalent sparse DEM parameterized by each
     /// toggle probability. A stored baseline may differ from that DEM's implied
-    /// complement only within the binary complement relative tolerance. Models
-    /// containing any genuinely multi-outcome factor use the N-ary kernel.
+    /// complement only when the induced relative baseline log-mass error is
+    /// within the engine's `1e-9` acceptance tolerance. Models containing any
+    /// genuinely multi-outcome factor use the N-ary kernel.
     ///
     /// # Errors
     ///

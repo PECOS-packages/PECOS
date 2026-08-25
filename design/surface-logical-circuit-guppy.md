@@ -260,6 +260,41 @@ type is acceptable during migration, but it must be lossless, validated, and
 removed once parity is reached. Rust and Python must not independently compute
 stabilizers or implementation support decisions.
 
+The canonical type should distinguish the code's intrinsic geometry from any
+particular extraction circuit. A useful layered model is:
+
+1. `CodeSpec` describes the algebraic code: physical data-qubit identities,
+   stabilizers or gauges, logical operators, encoded interface, and code
+   parameters.
+2. `CodeGeometry` optionally embeds those data qubits and code features in a
+   geometric space. A planar topological code can provide a two-dimensional
+   cellulation, embedded graph, or integer-grid view; a code with no useful
+   spatial embedding may omit this interface.
+3. `PatchSpec` selects a finite code region, boundaries, orientation, defects,
+   and logical-interface faces. `SurfacePatch` is the surface-code realization
+   of this layer and exposes a stable two-dimensional data-qubit view.
+4. `PhysicalLayout` maps the abstract data qubits onto target sites and adds
+   implementation resources such as measurement ancillas, flag qubits, buses,
+   routing workspace, and classical-control endpoints.
+5. `SpaceTimeVolume` extends a physical or still-partially-abstract layout
+   through time with preparation, interaction, measurement, reset, idle, and
+   feedback events.
+
+The first three layers describe what code block exists; the latter two describe
+how a selected QEC instruction is realized. In particular, syndrome ancillas
+must not become part of `SurfacePatch` merely because one extraction protocol
+uses them. Different SZZ, CX-based, flagged, or hardware-specific extraction
+implementations may refine the same data-qubit patch into different physical
+layouts and space-time shapes.
+
+`CodeGeometry` should not require every code to be a rectangular grid. Its
+portable core should be stable element identities, incidence/adjacency, optional
+coordinates, dimensionality, and named boundary or logical-interface features.
+Grid coordinates are an ergonomic surface-code view over that core. Coordinates
+may be exact lattice coordinates, symbolic/relative coordinates, or absent;
+target placement is a later mapping. This avoids conflating an abstract planar
+code drawing with calibrated device coordinates.
+
 ### PyO3 and Python responsibilities
 
 Bindings should be added to `python/pecos-rslib` under `pecos_rslib.qec`, using
@@ -851,6 +886,8 @@ instances. QEC specializes those generic ideas:
 | Alternative cell implementation | `InstrImpl` | `QecInstrImpl` / QEC protocol |
 | Elaboration | Parameter binding, type unification, and hierarchical expansion | `QecTypeExpr` and block-interface instantiation |
 | Technology mapping | Deterministic `InstrImpl` resolution | `QecInstrPlan` generation |
+| Abstract/parameterized macro | Optional implementation refinement interface | `SpaceTimeCellDef` |
+| Placed macro instance | Resolved implementation instance | `SpaceTimeCellInstance` / `SpaceTimeVolume` |
 | Placement/timing constraints | Dialect-owned constraint views | `SpaceTimeProgram` / `SpaceTimePlan` |
 | Executable lower-level form | Generated PHIR | QEC PHIR and Guppy followed by HUGR/QIS |
 
@@ -876,6 +913,14 @@ There are important differences from an ordinary combinational netlist:
 `InstrGraph` should remain the generic API terms. `QecInstr` remains the
 QEC-domain term. This is an authoring/elaboration layer, not a replacement for
 PHIR/HUGR or the eventual mapped and timed physical graph.
+
+A space-time cell is consequently an optional refinement of an instruction
+implementation, not a synonym for every `InstrDef`. A logical frame update or
+compile-time annotation can have a semantic implementation with zero physical
+volume. Syndrome extraction naturally has a time-extruded patch-shaped cell;
+transversal CX has a joint two-patch cell; lattice-surgery CX may elaborate to
+merge, hold, and split subcells; and code switching can have different code
+types and geometries on its input and output faces.
 
 ### HDL lessons incorporated into the design
 
@@ -1505,12 +1550,97 @@ The exact fluent spelling is provisional. The stable concepts should be:
 - composition operations such as `after`, `parallel`, `connect`, and `repeat`;
 - source identities that survive conversion to the common instruction graph.
 
+#### Space-time cells and geometry refinement
+
+A resolved QEC implementation may expose a reusable `SpaceTimeCellDef`. It is a
+parameterized black-box contract for the spatial and temporal resources needed
+to realize one instruction, analogous to a parameterized HDL macro. Binding it
+to concrete code-block values, parameters, and implementation choices creates a
+`SpaceTimeCellInstance`; satisfying its placement and scheduling constraints
+creates a `SpaceTimeVolume`.
+
+```text
+QecInstr                         semantic request
+    -> QecInstrImpl              selected protocol
+        -> SpaceTimeCellDef      parameterized resource/geometry contract
+            -> SpaceTimeCellInstance
+                                  bound patches, parameters, and frame state
+                -> SpaceTimeVolume
+                   data + ancilla + workspace occupancy in 2 space + 1 time
+                    -> mapped physical circuit
+```
+
+For a planar topological code, an instance begins with each input patch's
+abstract two-dimensional data-qubit geometry. The implementation may introduce
+ancilla qubits and workspace, impose adjacency or interaction constraints, and
+describe how all of those resources persist or change along the time axis. The
+result is a three-dimensional operation shape: two spatial dimensions plus one
+ordered time dimension. Its boundary faces correspond to typed input/output
+patches and classical or measurement ports, rather than being merely a box with
+a width, height, and duration.
+
+This model must also work before exact mapping. A cell can contain symbolic
+coordinates, relative placement constraints, alternative orientations, and
+resource bounds. Only a mapped cell names target physical qubits and calibrated
+durations. Time may initially be rounds or a partial order, then later refine
+to ticks and hardware time; the model should not assume that every abstract
+cell already occupies an integer rectangular prism.
+
+The black-box cell contract should make at least the following information
+inspectable when known:
+
+- typed QEC block input/output faces and their `CodeGeometry` views;
+- the logical transform/channel and logical/physical frame-transfer contract;
+- persistent data-qubit occupancy and allowed deformation through time;
+- temporary ancillas, routing/workspace, and their allocation/lifecycle rules;
+- duration, latency, and concurrency bounds;
+- adjacency, connectivity, orientation, and boundary compatibility constraints;
+- measurement, decoder, and classical-feedback ports and latency requirements;
+- detector/observable boundaries and live resources crossing the cell boundary;
+- fault/noise summaries or hooks when an implementation can provide them.
+
+Quantitative facts should carry their precision instead of presenting estimates
+as exact values. A common wrapper such as
+`ResourceQuantity<T> = Exact(T) | LowerBound(T) | UpperBound(T) | Estimate(T) |
+Unknown` can describe qubit count, area, duration, or volume at different
+refinement stages.
+
+Tools should be able to inspect the cheapest sufficient view without forcing
+physical-circuit generation:
+
+1. the cell contract for type, logical-effect, and resource-bound analysis;
+2. a protocol/composite view showing subcells and their partial order;
+3. a mapped view with concrete physical resources and scheduled intervals;
+4. the physical circuit with gates, measurements, resets, and feedback;
+5. the executed QIS trace, normalized TickCircuit, and DEM.
+
+Each refinement carries a verification obligation:
+
+```text
+physical circuit implements the mapped cell
+mapped cell satisfies the abstract space-time contract
+space-time cell realizes the QecInstr semantic contract
+```
+
+Black-boxing must therefore preserve all externally observable outputs and
+resource lifetimes. A live ancilla, measurement identity, decoder dependency,
+Pauli-frame effect, or detector boundary cannot disappear merely because an
+analysis chooses not to expand the cell internals.
+
+Implementation selection and placement may need to cooperate. Resolution can
+retain several supported cell templates or constraint alternatives until the
+space-time planner proves one feasible; it must still record the final selected
+implementation and selection source. An early explicit `.using(...)` remains a
+hard constraint and should produce an actionable placement error rather than
+silently falling back to another protocol.
+
 The authoring artifact should store constraints rather than pretend it already
 contains a target schedule. Before implementation selection, an instruction
 may expose only an abstract volume contract: required patch faces, possible
 adjacencies, workspace bounds, and ordering relations. Resolution selects QEC
-protocol implementations and produces a `SpaceTimePlan` whose concrete volumes
-reference the corresponding `QecInstrPlan` objects. Device placement,
+protocol implementations (or preserves explicit feasible alternatives for
+cooperative planning) and produces a `SpaceTimePlan` whose cells and concrete
+volumes reference the corresponding `QecInstrPlan` objects. Device placement,
 native timing, idle insertion, and feedback latency still belong to #514's
 mapped/timed execution layer.
 
@@ -1891,7 +2021,7 @@ InstrProgram
     -> ElaboratedInstrProgram
     -> InstrSet resolution + QEC semantic verification
     -> ResolvedInstrProgram
-        +-> PHIR
+        +-> PHIR + optional SpaceTimePlan/cell refinements
         |
         +-> generated Guppy
             -> HUGR / QIS lowering
@@ -1909,6 +2039,8 @@ resolution then produces a `ResolvedInstrProgram` containing:
 - typed classical values, structured regions, and predicate timing class;
 - selected QEC protocol implementation IDs and options;
 - inspectable `QecInstrPlan` artifacts for the selected calls;
+- abstract `SpaceTimeCellDef` contracts, bound instances, feasible alternatives,
+  and refinement/provenance links when implementations expose them;
 - instruction-application and syndrome-extraction-round boundaries;
 - detector and observable definitions in terms of instruction measurement
   identities;
@@ -2470,8 +2602,19 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 
 - Add `SpaceTimeProgram` as instruction calls plus placement, adjacency,
   workspace, and partial-order constraints—not as a second semantic IR.
-- Define abstract instruction-volume contracts and resolved `SpaceTimePlan`
-  artifacts that reference `QecInstrPlan` objects.
+- Define `CodeGeometry` as an optional code interface with stable data-qubit and
+  feature identities, incidence/adjacency, optional coordinates, dimensionality,
+  and named boundaries; expose a two-dimensional grid/cellulation view for
+  planar `SurfacePatch` values.
+- Define abstract `SpaceTimeCellDef` contracts, bound cell instances, resource
+  quantities with explicit precision, mapped refinements, and resolved
+  `SpaceTimePlan` artifacts that reference `QecInstrPlan` objects.
+- Demonstrate one syndrome-extraction cell that starts with a surface patch's
+  data-qubit geometry, adds protocol ancillas, and refines from rounds/partial
+  order into a concrete 2+1D physical circuit schedule.
+- Verify cell-contract -> mapped-cell -> physical-circuit refinement while
+  retaining live resources, measurement identities, frame effects, and
+  detector/observable boundaries.
 - Prove that circuit-like and space-time authoring of the same experiment
   produce equivalent instruction graphs, Guppy traces, and source identities.
 - Keep device placement and target timing out of this layer and hand the
@@ -2607,6 +2750,22 @@ Required tests include:
   sets;
 - equivalent circuit-like and space-time-volume authoring producing the same
   instruction graph and traced behavior;
+- surface-code data-qubit geometry remaining identical across instruction
+  implementations while SZZ, CX-based, or target-specific protocols may add
+  different ancilla/workspace layouts;
+- abstract grid/cellulation coordinates remaining distinct from mapped physical
+  device coordinates, with stable identities preserved through mapping;
+- space-time cell input/output faces matching the instruction's parameterized
+  code-block types, including geometry-changing and code-switching operations;
+- black-box resource analysis agreeing with expanded composite-cell analysis
+  whenever the contract claims exact counts or duration;
+- mapped cells satisfying abstract occupancy, adjacency, duration, live-resource,
+  frame-transfer, measurement, and detector/observable boundary contracts;
+- zero-volume semantic instructions such as virtual frame updates not acquiring
+  artificial data/ancilla occupancy;
+- infeasible cell alternatives being rejected during cooperative resolution and
+  placement without violating explicit `.using(...)` choices or silently
+  changing implementations;
 - rejection of unsatisfiable adjacency, workspace, and temporal constraints;
 - single-patch X- and Z-memory equivalence with `make_surface_code`;
 - preparation and measurement in every supported basis;

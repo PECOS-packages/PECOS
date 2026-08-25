@@ -80,8 +80,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | **SparseStab** | Stabilizer | QEC simulations, Clifford circuits | None (default) |
 | **Stabilizer** | Stabilizer | Dense Clifford circuits | None |
 | **StateVec** | State vector | Arbitrary circuits, small systems | None |
-| **QutritStateVec** | Qutrit state vector | Physical leakage trajectories, small systems | Rust API |
-| **QutritDensityMatrix** | Qutrit density matrix | Exact leakage/noise references, very small systems | Rust API |
+| **QutritStateVec** | Qutrit state vector | Physical leakage trajectories, small systems | Rust / Python API |
+| **QutritDensityMatrix** | Qutrit density matrix | Exact leakage/noise references, very small systems | Rust / Python API |
 | **StabVec** | Clifford + Rz | Clifford circuits with Z rotations | None |
 | **PauliProp** | Fault tracking | Error propagation analysis | None |
 | **CuStateVec** | State vector (GPU, Python) | Large circuits with GPU | CUDA, cuQuantum |
@@ -258,6 +258,20 @@ These are reference backends for physical leakage and noise-model verification,
 not replacements for PECOS's scalable stabilizer simulators or the classical
 leakage bookkeeping used in large QEC studies. Storage scales as `3^N` for a
 qutrit state vector and `9^N` for a qutrit density matrix.
+
+The thin `pecos-rslib` bindings expose the same operations without a NumPy
+runtime dependency. Python sequences of complex values are accepted directly:
+
+```python
+from pecos_rslib.simulators import QutritStateVec, qutrit_leakage_channel
+
+state = QutritStateVec(1, seed=42)
+sample = state.apply_kraus([0], qutrit_leakage_channel(0.01))
+print(sample.operator_index, state.outcome_probabilities(0))
+```
+
+Supplying `seed` makes stochastic trajectories and measurements reproducible;
+omitting it uses entropy-derived randomness.
 
 ## GPU-Accelerated Simulators
 

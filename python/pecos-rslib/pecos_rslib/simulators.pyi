@@ -1,0 +1,22 @@
+"""Rust-backed simulator classes exposed by :mod:`pecos_rslib.simulators`."""
+
+from pecos_rslib import (
+    CoinToss as CoinToss,
+    DensityMatrixDiagnostics as DensityMatrixDiagnostics,
+    InstrumentSample as InstrumentSample,
+    KrausSample as KrausSample,
+    MeasurementSample as MeasurementSample,
+    PauliProp as PauliProp,
+    QuditDensityMatrix as QuditDensityMatrix,
+    QuditStateVec as QuditStateVec,
+    QutritDensityMatrix as QutritDensityMatrix,
+    QutritStateVec as QutritStateVec,
+    SparseStab as SparseStab,
+    StabVec as StabVec,
+    Stabilizer as Stabilizer,
+    StateVec as StateVec,
+    basis_swap as basis_swap,
+    embedded_qubit_unitary as embedded_qubit_unitary,
+    qutrit_leakage_channel as qutrit_leakage_channel,
+    qutrit_seepage_channel as qutrit_seepage_channel,
+)

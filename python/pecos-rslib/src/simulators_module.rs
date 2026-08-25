@@ -18,6 +18,8 @@
 //! - `SparseStab` - Rust sparse stabilizer simulator
 //! - `Stabilizer` - Generic stabilizer simulator (recommended)
 //! - `StateVec` - State vector simulator
+//! - `QuditStateVec` / `QutritStateVec` - Multilevel state-vector simulators
+//! - `QuditDensityMatrix` / `QutritDensityMatrix` - Exact multilevel simulators
 //! - `CoinToss` - Random measurement simulator for testing
 //! - `PauliProp` - Pauli propagation/fault tracking simulator
 
@@ -48,6 +50,35 @@ pub fn register_simulators_module(parent: &Bound<'_, PyModule>) -> PyResult<()> 
 
     // State vector simulators
     simulators.add("StateVec", parent.getattr("StateVec")?)?;
+    simulators.add("QuditStateVec", parent.getattr("QuditStateVec")?)?;
+    simulators.add("QutritStateVec", parent.getattr("QutritStateVec")?)?;
+    simulators.add("QuditDensityMatrix", parent.getattr("QuditDensityMatrix")?)?;
+    simulators.add(
+        "QutritDensityMatrix",
+        parent.getattr("QutritDensityMatrix")?,
+    )?;
+
+    // Structured result and diagnostic types returned by multilevel simulators.
+    simulators.add("KrausSample", parent.getattr("KrausSample")?)?;
+    simulators.add("MeasurementSample", parent.getattr("MeasurementSample")?)?;
+    simulators.add("InstrumentSample", parent.getattr("InstrumentSample")?)?;
+    simulators.add(
+        "DensityMatrixDiagnostics",
+        parent.getattr("DensityMatrixDiagnostics")?,
+    )?;
+    simulators.add("basis_swap", parent.getattr("basis_swap")?)?;
+    simulators.add(
+        "embedded_qubit_unitary",
+        parent.getattr("embedded_qubit_unitary")?,
+    )?;
+    simulators.add(
+        "qutrit_leakage_channel",
+        parent.getattr("qutrit_leakage_channel")?,
+    )?;
+    simulators.add(
+        "qutrit_seepage_channel",
+        parent.getattr("qutrit_seepage_channel")?,
+    )?;
 
     // Other simulators
     simulators.add("CoinToss", parent.getattr("CoinToss")?)?;

@@ -905,9 +905,14 @@ fn simplify_rotation(
     fallback: QuantumOp,
 ) -> QuantumOp {
     match pecos_core::try_simplify_rotation(gate_type, angle) {
-        Some(pecos_core::gate_type::GateType::T | pecos_core::gate_type::GateType::Tdg) => fallback,
+        // Two distinct reasons to keep the original rotation: an eighth-turn
+        // would name a phase-sensitive T/Tdg token, which differs from
+        // RZ(+-pi/4) by a global phase, and a non-Clifford angle has no named
+        // equivalent at all.
+        Some(pecos_core::gate_type::GateType::T | pecos_core::gate_type::GateType::Tdg) | None => {
+            fallback
+        }
         Some(clifford) => gate_type_to_quantum_op(clifford),
-        None => fallback,
     }
 }
 

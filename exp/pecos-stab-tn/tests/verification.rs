@@ -1167,7 +1167,7 @@ fn test_seed319_minimal() {
         ("h", vec![1], None),
         ("rz", vec![3], Some(Angle64::from_radians(3.3427))),
         ("cz", vec![0, 3], None),
-        ("rz", vec![1], Some(t)), // T gate = RZ(pi/4)
+        ("rz", vec![1], Some(t)), // RZ(pi/4) equals T up to global phase.
         ("cz", vec![1, 2], None),
         ("sz", vec![1], None),
         ("h", vec![2], None),
@@ -1892,7 +1892,7 @@ fn test_t_on_every_qubit_product_state() {
 
 #[test]
 fn test_tdg_gate() {
-    // T-dagger = RZ(-pi/4)
+    // RZ(-pi/4) equals T-dagger up to global phase.
     let tdg = -(Angle64::QUARTER_TURN / 2u64);
     let gates = vec![("h", vec![0], None), ("rz", vec![0], Some(tdg))];
     let (stn_sv, crz_sv) = run_circuit_on_both(1, &gates, 42);

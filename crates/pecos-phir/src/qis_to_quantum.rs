@@ -5,6 +5,7 @@ Lowers QIS dialect `CustomOps` to standard PHIR `QuantumOps`:
 - `qis.qalloc` -> `QuantumOp::Alloc`
 - `qis.qfree` -> `QuantumOp::Dealloc`
 - `qis.reset` -> `QuantumOp::Reset`
+- `qis.t` / `qis.tdg` -> `QuantumOp::T` / `QuantumOp::Tdg`
 - `qis.rxy` -> `QuantumOp::R1XY(theta, phi)`
 - `qis.rz` -> `QuantumOp::RZ(angle)`
 - `qis.rzz` -> `QuantumOp::RZZ(angle)`
@@ -109,6 +110,20 @@ fn convert_qis_op(
         "reset" => Ok(Some(Instruction {
             results: vec![],
             operation: Operation::Quantum(QuantumOp::Reset),
+            operands: instr.operands.clone(),
+            result_types: vec![],
+            regions: vec![],
+            attributes: BTreeMap::new(),
+            location: instr.location.clone(),
+        })),
+
+        "t" | "tdg" => Ok(Some(Instruction {
+            results: vec![],
+            operation: Operation::Quantum(if custom.name() == "t" {
+                QuantumOp::T
+            } else {
+                QuantumOp::Tdg
+            }),
             operands: instr.operands.clone(),
             result_types: vec![],
             regions: vec![],
@@ -355,6 +370,42 @@ mod tests {
         assert!(matches!(
             quantum_ops[0].operation,
             Operation::Quantum(QuantumOp::RZ(v)) if v == Angle64::from_radians(FRAC_PI_2)
+        ));
+    }
+
+    #[test]
+    fn test_named_t_conversion() {
+        let q = SSAValue::new(0);
+        let mut module = make_module(vec![
+            Instruction {
+                results: vec![],
+                operation: Operation::Custom(CustomOp::new("qis", "t", vec![], BTreeMap::new())),
+                operands: vec![q],
+                result_types: vec![],
+                regions: vec![],
+                attributes: BTreeMap::new(),
+                location: None,
+            },
+            Instruction {
+                results: vec![],
+                operation: Operation::Custom(CustomOp::new("qis", "tdg", vec![], BTreeMap::new())),
+                operands: vec![q],
+                result_types: vec![],
+                regions: vec![],
+                attributes: BTreeMap::new(),
+                location: None,
+            },
+        ]);
+
+        convert_qis_to_quantum(&mut module).unwrap();
+
+        assert!(matches!(
+            module.body.blocks[0].operations[0].operation,
+            Operation::Quantum(QuantumOp::T)
+        ));
+        assert!(matches!(
+            module.body.blocks[0].operations[1].operation,
+            Operation::Quantum(QuantumOp::Tdg)
         ));
     }
 

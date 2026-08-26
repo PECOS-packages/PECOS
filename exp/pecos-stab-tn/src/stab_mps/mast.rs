@@ -807,6 +807,14 @@ impl ArbitraryRotationGateable for Mast {
         self
     }
 
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let scalar = Complex64::from_polar(1.0, phase.to_radians_signed());
+        for _ in qubits {
+            self.global_phase *= scalar;
+        }
+        self
+    }
+
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q0, q1) in pairs {
             self.cx(&[(q0, q1)]);
@@ -863,6 +871,14 @@ mod tests {
         let measurements = mast.mz(&qubits);
 
         assert_eq!(measurements.len(), qubits.len());
+    }
+
+    #[test]
+    fn test_global_phase_hook_accumulates_once_per_target() {
+        let mut mast = Mast::new(2, 0);
+        mast.apply_global_phase(Angle64::QUARTER_TURN / 4u64, &[QubitId(0), QubitId(1)]);
+        let expected = Complex64::from_polar(1.0, std::f64::consts::FRAC_PI_4);
+        assert!((mast.global_phase - expected).norm() < 1e-12);
     }
 
     #[test]
@@ -1558,7 +1574,7 @@ mod tests {
             // Magic state injection for T on q0:
             tab.h(&[QubitId(2)]); // ancilla in |+>
             tab.sz(&[QubitId(2)]); // S on ancilla (half of T = S*T^{1/2}... wait, we need T)
-            // Actually, SparseStabY can't do T. Let me use T = RZ(pi/4) via the Clifford S.
+            // SparseStabY cannot apply T; use the projectively equivalent RZ(pi/4).
             // T|+> via Clifford: not possible. T is non-Clifford.
             // In the SparseStabY world, we can test the protocol with S instead of T.
             // S|+> = (|0> + i|1>)/sqrt(2)

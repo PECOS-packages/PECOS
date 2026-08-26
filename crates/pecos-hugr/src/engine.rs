@@ -1798,16 +1798,10 @@ impl HugrEngine {
                 );
             }
             GateType::T => {
-                self.message_builder.rz(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                    &[qubits[0].0],
-                );
+                self.message_builder.t(&[qubits[0].0]);
             }
             GateType::Tdg => {
-                self.message_builder.rz(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                    &[qubits[0].0],
-                );
+                self.message_builder.tdg(&[qubits[0].0]);
             }
             GateType::RX => {
                 let angle = self.resolve_rotation_angle(hugr, node, op)?;
@@ -1888,33 +1882,18 @@ impl HugrEngine {
                 let target = qubits[2].0;
                 self.message_builder.h(&[target]);
                 self.message_builder.cx(&[(c1, target)]);
-                self.message_builder.rz(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                    &[target],
-                );
+                self.message_builder.tdg(&[target]);
                 self.message_builder.cx(&[(c0, target)]);
-                self.message_builder.rz(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                    &[target],
-                );
+                self.message_builder.t(&[target]);
                 self.message_builder.cx(&[(c1, target)]);
-                self.message_builder.rz(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                    &[target],
-                );
+                self.message_builder.tdg(&[target]);
                 self.message_builder.cx(&[(c0, target)]);
-                self.message_builder
-                    .rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[c1]);
-                self.message_builder.rz(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                    &[target],
-                );
+                self.message_builder.t(&[c1]);
+                self.message_builder.t(&[target]);
                 self.message_builder.h(&[target]);
                 self.message_builder.cx(&[(c0, c1)]);
-                self.message_builder
-                    .rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[c0]);
-                self.message_builder
-                    .rz(Angle64::from_radians(-std::f64::consts::FRAC_PI_4), &[c1]);
+                self.message_builder.t(&[c0]);
+                self.message_builder.tdg(&[c1]);
                 self.message_builder.cx(&[(c0, c1)]);
             }
 
@@ -3828,6 +3807,34 @@ mod tests {
                 rz_cmd.params[0]
             );
         }
+    }
+
+    #[test]
+    fn test_named_t_gate_command_generation() {
+        let mut dag = DagCircuit::new();
+        let q0 = QubitId::from(0);
+        dag.add_gate(Gate::with_angles(GateType::T, vec![], vec![q0]));
+        dag.add_gate(Gate::with_angles(GateType::Tdg, vec![], vec![q0]));
+
+        let mut engine = engine_from_dag(&dag);
+        let msg = engine
+            .generate_commands()
+            .expect("Failed to generate commands");
+        let ops = msg.quantum_ops().expect("Failed to parse quantum ops");
+        let gates: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op.gate_type {
+                GateType::T | GateType::Tdg | GateType::RZ => Some(op.gate_type),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(gates.len(), 2);
+        assert_eq!(gates.iter().filter(|&&gate| gate == GateType::T).count(), 1);
+        assert_eq!(
+            gates.iter().filter(|&&gate| gate == GateType::Tdg).count(),
+            1
+        );
     }
 
     #[test]

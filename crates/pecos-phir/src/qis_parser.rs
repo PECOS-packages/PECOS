@@ -999,16 +999,12 @@ impl QisIrParser {
 
             "t" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, std::f64::consts::FRAC_PI_4));
-                out.push(emit_qis_rz(qubit, v));
+                out.push(make_custom_op("qis", "t", vec![qubit], vec![]));
             }
 
             "tdg" | "t_adj" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, -std::f64::consts::FRAC_PI_4));
-                out.push(emit_qis_rz(qubit, v));
+                out.push(make_custom_op("qis", "tdg", vec![qubit], vec![]));
             }
 
             "rx" => {
@@ -1486,6 +1482,32 @@ entry:
             })
             .collect();
         assert_eq!(qis_ops, vec!["qis.rz", "qis.rxy", "qis.rz"]);
+    }
+
+    #[test]
+    fn test_parse_qir_style_t_gates_preserves_named_ops() {
+        let ir = r"
+declare void @__quantum__qis__t__body(%Qubit*)
+declare void @__quantum__qis__tdg__body(%Qubit*)
+
+define void @main() {
+entry:
+  call void @__quantum__qis__t__body(%Qubit* null)
+  call void @__quantum__qis__tdg__body(%Qubit* null)
+  ret void
+}
+";
+        let module = parse_qis_llvm_ir(ir).unwrap();
+        let qis_ops: Vec<String> = module.body.blocks[0]
+            .operations
+            .iter()
+            .filter_map(|instruction| match &instruction.operation {
+                Operation::Custom(op) => Some(format!("{}.{}", op.dialect(), op.name())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(qis_ops, vec!["qis.t", "qis.tdg"]);
     }
 
     #[test]

@@ -67,6 +67,30 @@ impl Dialect for QisDialect {
             },
         )?;
 
+        registry.register_operation(
+            self.namespace(),
+            OperationDef {
+                name: "t".to_string(),
+                description: "T gate (___t)".to_string(),
+                num_operands: 1,
+                num_results: 0,
+                num_regions: 0,
+                traits: vec![OpTrait::NoSideEffect],
+            },
+        )?;
+
+        registry.register_operation(
+            self.namespace(),
+            OperationDef {
+                name: "tdg".to_string(),
+                description: "T-dagger gate (___tdg)".to_string(),
+                num_operands: 1,
+                num_results: 0,
+                num_regions: 0,
+                traits: vec![OpTrait::NoSideEffect],
+            },
+        )?;
+
         // Hardware-native rotation gates
         registry.register_operation(
             self.namespace(),
@@ -179,7 +203,7 @@ impl Dialect for QisDialect {
 
     fn get_operation_traits(&self, op_name: &str) -> Vec<OpTrait> {
         match op_name {
-            "rxy" | "rz" | "rzz" => vec![OpTrait::NoSideEffect],
+            "t" | "tdg" | "rxy" | "rz" | "rzz" => vec![OpTrait::NoSideEffect],
             _ => vec![],
         }
     }

@@ -10,6 +10,7 @@ The conversion maps high-level quantum gates to hardware-native gates:
 - CNOT/CX → RXY(π/2, 0) on target, RZZ(π/2), RZ(-π/2) on control, RXY(-π/2, 0) on target
 - RX(θ) → RXY(θ, 0)
 - RY(θ) → RXY(θ, π/2)
+- T / T-dagger → named QIS T / T-dagger operations
 */
 
 use crate::error::Result;
@@ -257,6 +258,23 @@ impl HugrToQisConverter {
                 instructions.push(emit_qis_rz(operands[0], operands[1]));
             }
 
+            "t" | "tdg" => {
+                instructions.push(Instruction {
+                    results: vec![],
+                    operation: Operation::Custom(CustomOp::new(
+                        "qis",
+                        op.name(),
+                        vec![],
+                        BTreeMap::new(),
+                    )),
+                    operands: operands.to_vec(),
+                    result_types: vec![],
+                    regions: vec![],
+                    attributes: BTreeMap::new(),
+                    location: None,
+                });
+            }
+
             "measure" => {
                 // HUGR measure → QIS lazy_measure + read_future
                 let qubit = &operands[0];
@@ -417,5 +435,48 @@ mod tests {
             })
             .collect();
         assert_eq!(qis_ops, vec!["rxy", "rzz", "rz", "rxy"]);
+    }
+
+    #[test]
+    fn test_named_t_gates_are_preserved() {
+        let mut module = Module {
+            name: "test".to_string(),
+            attributes: BTreeMap::new(),
+            body: Region {
+                kind: crate::region_kinds::RegionKind::Graph,
+                attributes: BTreeMap::new(),
+                blocks: vec![Block {
+                    label: None,
+                    arguments: vec![],
+                    attributes: BTreeMap::new(),
+                    operations: ["t", "tdg"]
+                        .into_iter()
+                        .map(|name| Instruction {
+                            results: vec![],
+                            operation: Operation::Custom(CustomOp::new(
+                                "hugr",
+                                name,
+                                vec![],
+                                BTreeMap::new(),
+                            )),
+                            operands: vec![SSAValue::new(0)],
+                            result_types: vec![],
+                            regions: vec![],
+                            attributes: BTreeMap::new(),
+                            location: None,
+                        })
+                        .collect(),
+                    terminator: None,
+                }],
+            },
+        };
+
+        convert_hugr_to_qis(&mut module).unwrap();
+        let qis_ops: Vec<_> = module.body.blocks[0]
+            .operations
+            .iter()
+            .map(|instruction| instruction.operation.name())
+            .collect();
+        assert_eq!(qis_ops, vec!["qis.t", "qis.tdg"]);
     }
 }

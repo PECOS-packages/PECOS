@@ -843,8 +843,8 @@ fn parse_leading_int(s: &str) -> Option<i64> {
 /// For rotation gates, `angle` should contain the angle in radians.
 /// When a rotation angle matches a known Clifford gate exactly (using `Angle64`
 /// fixed-point comparison), the named Clifford gate is returned instead of
-/// the generic rotation. This allows stabilizer simulators to handle these
-/// circuits without requiring the state-vector backend.
+/// the generic rotation. Projectively equivalent T/T-dagger substitutions are
+/// excluded because this parser feeds amplitude-exposing execution paths.
 fn hugr_name_to_quantum_op(name: &str, angle: Option<f64>) -> Option<QuantumOp> {
     match name {
         // Single-qubit gates
@@ -905,6 +905,7 @@ fn simplify_rotation(
     fallback: QuantumOp,
 ) -> QuantumOp {
     match pecos_core::try_simplify_rotation(gate_type, angle) {
+        Some(pecos_core::gate_type::GateType::T | pecos_core::gate_type::GateType::Tdg) => fallback,
         Some(clifford) => gate_type_to_quantum_op(clifford),
         None => fallback,
     }
@@ -1100,15 +1101,22 @@ mod tests {
             Some(QuantumOp::Sdg)
         );
 
-        // pi/4 = T gate for RZ
+        // RZ(pi/4) stays a rotation because T differs by an observable scalar.
         let pi_4 = Some(std::f64::consts::FRAC_PI_4);
-        assert_eq!(hugr_name_to_quantum_op("Rz", pi_4), Some(QuantumOp::T));
+        assert_eq!(
+            hugr_name_to_quantum_op("Rz", pi_4),
+            Some(QuantumOp::RZ(Angle64::from_radians(
+                std::f64::consts::FRAC_PI_4
+            )))
+        );
 
-        // -pi/4 = Tdg gate for RZ
+        // RZ(-pi/4) likewise remains a rotation rather than becoming Tdg.
         let neg_pi_4 = Some(-std::f64::consts::FRAC_PI_4);
         assert_eq!(
             hugr_name_to_quantum_op("Rz", neg_pi_4),
-            Some(QuantumOp::Tdg)
+            Some(QuantumOp::RZ(Angle64::from_radians(
+                -std::f64::consts::FRAC_PI_4
+            )))
         );
 
         // pi = X gate for RX

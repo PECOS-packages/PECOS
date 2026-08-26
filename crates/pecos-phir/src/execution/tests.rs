@@ -485,6 +485,7 @@ fn test_processor_cz_gate() {
 fn test_processor_s_sdg_t_tdg_gates() {
     let mut processor = PhirProcessor::new();
     let mut builder = ByteMessageBuilder::new();
+    let _ = builder.for_quantum_operations();
 
     for (op, name) in [
         (QuantumOp::S, "S"),
@@ -500,6 +501,10 @@ fn test_processor_s_sdg_t_tdg_gates() {
             "{name} gate should produce quantum instructions"
         );
     }
+
+    let ops = builder.build().quantum_ops().unwrap();
+    assert_eq!(ops[2].gate_type, pecos_core::gate_type::GateType::T);
+    assert_eq!(ops[3].gate_type, pecos_core::gate_type::GateType::Tdg);
 }
 
 // ──────────────────────────────────────────────────────────────────────

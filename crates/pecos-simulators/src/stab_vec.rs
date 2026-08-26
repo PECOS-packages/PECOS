@@ -555,9 +555,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             return;
         }
 
-        // Non-Clifford angle: decompose into two terms.
-        // Use Angle64's built-in half-angle trig (exact halving in fixed-point,
-        // optimized minimax polynomials -- no radians conversion needed).
+        // Non-Clifford angle: decompose into two terms. The shared helper uses
+        // the signed fixed-point representative before taking the half-angle.
         let (sin_half, cos_half_val) = theta.half_angle_sin_cos();
 
         // Prune negligible terms before doubling to limit growth.
@@ -1404,6 +1403,24 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
         self
     }
 
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        // Materialize the rotation before applying its scalar correction. The
+        // pending Angle64 sum is projective: wrapping by one turn drops the -1
+        // from RZ(theta + 2*pi) = -RZ(theta).
+        for &q in qubits {
+            self.flush_pending_rz(q.index());
+        }
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        for (coeff, _) in &mut self.terms {
+            *coeff *= global_phase;
+        }
+        self
+    }
+
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // RZZ = CX * RZ_tgt * CX. Use frame-aware CX and RZ.
         self.cx(pairs);
@@ -1544,7 +1561,7 @@ mod tests {
         let mut crz = StabVec::new(1);
         let mut sv = StateVec::new(1);
 
-        // T gate = RZ(pi/4)
+        // Exercise the T-equivalent RZ(pi/4), which differs by a global phase.
         let theta = Angle64::from_radians(std::f64::consts::FRAC_PI_4);
         crz.h(&qid(0)).rz(theta, &qid(0));
         sv.h(&qid(0)).rz(theta, &qid(0));
@@ -2267,6 +2284,36 @@ mod tests {
             sim.num_terms() < 16,
             "Aggressive pruning should reduce term count"
         );
+    }
+
+    #[test]
+    fn t_only_flushes_pending_rotation_on_its_target() {
+        let epsilon = Angle64::from_radians(1e-5);
+        let q0 = qid(0);
+        let q1 = qid(1);
+
+        let mut interleaved = StabVec::new(2);
+        interleaved.h(&q0).h(&q1).rz(epsilon, &q1);
+        assert_eq!(interleaved.pending_rz[1], epsilon);
+        interleaved.t(&q0);
+        assert_eq!(
+            interleaved.pending_rz[1], epsilon,
+            "T on q0 must not materialize and prune q1's pending rotation"
+        );
+        interleaved.rz(-epsilon, &q1);
+        assert_eq!(interleaved.pending_rz[1], Angle64::ZERO);
+
+        let mut reference = StabVec::new(2);
+        reference.h(&q0).h(&q1).t(&q0);
+
+        let actual = interleaved.state_vector();
+        let expected = reference.state_vector();
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            assert!(
+                (actual - expected).norm() < 1e-10,
+                "basis {index}: actual={actual}, expected={expected}"
+            );
+        }
     }
 
     #[test]

@@ -1882,3 +1882,29 @@ pub fn new_stabilizer_engine(num_qubits: usize) -> Box<dyn QuantumEngine> {
 pub fn new_stabilizer_engine_with_seed(num_qubits: usize, seed: u64) -> Box<dyn QuantumEngine> {
     Box::new(SparseStabEngine::with_seed(num_qubits, seed))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::byte_message::ByteMessageBuilder;
+    use std::f64::consts::FRAC_1_SQRT_2;
+
+    #[test]
+    fn byte_message_engine_executes_conventional_t_amplitudes() {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.h(&[0]).t(&[0]);
+
+        let mut engine = DenseStateVecEngine::new(1);
+        engine.process(builder.build()).unwrap();
+        let state = engine.simulator.state();
+        let expected = [(FRAC_1_SQRT_2, 0.0), (0.5, 0.5)];
+
+        for (actual, (expected_re, expected_im)) in state.iter().zip(expected) {
+            assert!(
+                (actual.re - expected_re).abs() < 1e-14 && (actual.im - expected_im).abs() < 1e-14,
+                "actual {actual:?}, expected ({expected_re}, {expected_im})"
+            );
+        }
+    }
+}

@@ -513,7 +513,7 @@ fn crz_non_clifford_fails_with_useful_message() {
 
 #[test]
 fn crz_quarter_turn_fails() {
-    // CRZ(pi/2) requires RZ(pi/4) = T gate, which is NOT Clifford
+    // CRZ(pi/2) requires RZ(pi/4), projectively T and NOT Clifford.
     let msg = expect_sparse_stab_error(2, |b| {
         let gate = Gate::crz(Angle64::QUARTER_TURN, &[(0usize, 1usize)]);
         b.add_gate_command(&gate);
@@ -760,7 +760,7 @@ fn ryy_zero_is_identity() {
 
 #[test]
 fn rz_pi_over_4_rejected_as_non_clifford() {
-    // RZ(pi/4) = T gate, which is not Clifford -- should fail on stabilizer engine
+    // RZ(pi/4) is projectively T and not Clifford -- should fail on stabilizer engine.
     let msg = expect_sparse_stab_error(1, |b| {
         b.rz(Angle64::QUARTER_TURN / 2u64, &[0]);
         b.mz(&[0]);
@@ -773,7 +773,7 @@ fn rz_pi_over_4_rejected_as_non_clifford() {
 
 #[test]
 fn rz_neg_pi_over_4_rejected_as_non_clifford() {
-    // RZ(-pi/4) = Tdg gate, also not Clifford
+    // RZ(-pi/4) is projectively Tdg and also not Clifford.
     let msg = expect_sparse_stab_error(1, |b| {
         b.rz(-(Angle64::QUARTER_TURN / 2u64), &[0]);
         b.mz(&[0]);

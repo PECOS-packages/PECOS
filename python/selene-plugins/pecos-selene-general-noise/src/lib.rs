@@ -1349,6 +1349,25 @@ mod tests {
         let error = error_model
             .handle_operations(
                 runtime_batch(
+                    vec![Operation::RPPGate {
+                        qubit_id_1: 0,
+                        qubit_id_2: 0,
+                        theta: PI / 2.0,
+                        phi: 0.0,
+                    }],
+                    0,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .err()
+            .expect("an RPP operation must fail");
+        assert!(error.to_string().contains("RPP operations do not yet have"));
+
+        let mut error_model = build_error_model("{}", 1);
+        let error = error_model
+            .handle_operations(
+                runtime_batch(
                     vec![Operation::Custom {
                         custom_tag: 17,
                         data: Vec::new().into_boxed_slice(),

@@ -26,7 +26,9 @@ one-qubit, and two-qubit operations.
 
 The fluent method names intentionally follow PECOS's Rust
 `GeneralNoiseModelBuilder`. Parameter objects are immutable: every `with_*`
-call returns a new validated configuration, making presets safe to reuse.
+call returns a new locally validated configuration, making presets safe to
+reuse. Cross-field scale combinations are validated when the plugin is created,
+so compensating scales may be supplied in either fluent-call order.
 `with_seed` is intentionally not a parameter method because Selene owns and
 supplies the per-shot error-model seed; set `random_seed` on
 `GeneralNoisePlugin` instead. PECOS's historical `auto()` demonstration preset
@@ -46,6 +48,13 @@ is also omitted so that this package remains explicitly device-neutral.
 Idle rates use seconds because the adapter converts Selene's nanosecond schedule
 to the units expected by PECOS. Local crosstalk is described with neutral qubit
 groups rather than a hard-coded device layout.
+
+The adapter supports Selene's RXY, RZ, RZZ, reset, Boolean measurement, and
+leakage-valued measurement operations. Selene `RPP` operations are rejected
+until PECOS defines a device-neutral general-noise representation for them;
+silently decomposing them would change which primitive gate-error channels are
+applied. Device-specific `Custom` operations are likewise outside this generic
+adapter.
 
 ## Development
 

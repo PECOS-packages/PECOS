@@ -121,7 +121,11 @@ class BasisStateReference:
             for qubit in qubits:
                 value = state[qubit]
                 if value == LEAKED:
-                    per_qubit.append(((1, 1.0),))
+                    # PECOS regular measurement first maps leakage to Boolean 1,
+                    # then applies the ordinary 1 -> 0 readout channel.
+                    per_qubit.append(
+                        ((0, noise.measurement_1_to_0), (1, 1.0 - noise.measurement_1_to_0)),
+                    )
                 elif value == 0:
                     per_qubit.append(
                         ((0, 1.0 - noise.measurement_0_to_1), (1, noise.measurement_0_to_1)),

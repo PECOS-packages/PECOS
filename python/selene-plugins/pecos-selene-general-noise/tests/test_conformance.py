@@ -116,6 +116,22 @@ def test_one_to_zero_readout_channel() -> None:
     experiment.assert_conforms(Stim(random_seed=23), n_processes=2)
 
 
+def test_one_to_zero_readout_is_applied_after_leakage() -> None:
+    """A leaked Boolean measurement is forced to one before readout noise."""
+    parameters = GeneralNoiseParameters().with_p_prep(1.0).with_prep_leak_ratio(1.0).with_p_meas_1(1.0)
+    experiment = ConformanceExperiment(
+        runner=build(prepared_zero.compile()),
+        n_qubits=1,
+        result_tags=("outcome",),
+        parameters=parameters,
+        expected=ZERO,
+        comparison=ONE,
+        shots=32,
+        seed=29,
+    )
+    experiment.assert_conforms(Stim(random_seed=31))
+
+
 @pytest.mark.parametrize(
     ("runner", "expected"),
     [
@@ -424,7 +440,21 @@ def test_one_qubit_emission_replaces_original_gate() -> None:
         ),
         pytest.param(
             GeneralNoiseParameters().with_p_idle_linear(1.0, {"X": 1.0}).with_idle_after_2q(1.0).with_idle_scale(0.0),
-            id="idle-scale",
+            id="linear-idle-scale",
+        ),
+        pytest.param(
+            GeneralNoiseParameters()
+            .with_p_idle_sin_squared(math.pi / 2.0, {"X": 1.0})
+            .with_idle_after_2q(1.0)
+            .with_idle_scale(0.0),
+            id="sine-squared-idle-scale",
+        ),
+        pytest.param(
+            GeneralNoiseParameters()
+            .with_p_idle_coherent(math.pi, {"RX": 1.0})
+            .with_idle_after_2q(1.0)
+            .with_idle_scale(0.0),
+            id="coherent-idle-scale",
         ),
     ],
 )

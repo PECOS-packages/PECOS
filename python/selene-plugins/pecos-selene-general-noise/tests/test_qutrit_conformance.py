@@ -137,6 +137,20 @@ def anti_correlated_bell_state() -> None:
     result("q1", measure(q1).read())
 
 
+@guppy
+def three_qubit_entangling_chain() -> None:
+    """Entangle a three-qubit chain using only standard operations."""
+    q0 = qubit()
+    q1 = qubit()
+    q2 = qubit()
+    h(q0)
+    cx(q0, q1)
+    cx(q1, q2)
+    result("q0", measure(q0).read())
+    result("q1", measure(q1).read())
+    result("q2", measure(q2).read())
+
+
 SIX_LAYER_ZERO = (
     ry(math.pi / 2),
     rx(-math.pi / 2),
@@ -204,6 +218,8 @@ PLUGIN_PARAMETERS = (
 UNIFORM_P2_MODEL = {first + second: 1.0 / 15.0 for first, second in product("IXYZ", repeat=2) if first + second != "II"}
 TWO_QUBIT_NOISE = QutritNoise(p2=0.3)
 TWO_QUBIT_PARAMETERS = GeneralNoiseParameters().with_p2(0.3).with_p2_pauli_model(UNIFORM_P2_MODEL)
+THREE_QUBIT_NOISE = QutritNoise(p2=0.2)
+THREE_QUBIT_PARAMETERS = GeneralNoiseParameters().with_p2(0.2).with_p2_pauli_model(UNIFORM_P2_MODEL)
 
 
 def _reference(gates: tuple[Matrix, ...], noise: QutritNoise) -> QutritReference:
@@ -240,6 +256,18 @@ def _bell_reference(noise: QutritNoise, *, anti_correlated: bool) -> QutritRefer
     if anti_correlated:
         reference.one_qubit_gate(1, rx(math.pi))
     return reference
+
+
+def _three_qubit_reference(noise: QutritNoise) -> QutritReference:
+    reference = QutritReference(3, noise).reset(0).reset(1).reset(2)
+    return (
+        reference.one_qubit_gate(0, hadamard())
+        .two_qubit_gate(
+            (0, 1),
+            controlled_x(),
+        )
+        .two_qubit_gate((1, 2), controlled_x())
+    )
 
 
 @pytest.mark.parametrize("case_name", COHERENT_CASES)
@@ -332,6 +360,22 @@ def test_entangling_cliffords_match_two_qutrit_reference(
         seed=error_seed,
     )
     experiment.assert_conforms(Stim(random_seed=simulator_seed), n_processes=2)
+
+
+@pytest.mark.slow
+def test_three_qubit_entangling_chain_matches_qutrit_reference() -> None:
+    """A multi-edge entangling network agrees with the independent oracle."""
+    experiment = ConformanceExperiment(
+        runner=build(three_qubit_entangling_chain.compile()),
+        n_qubits=3,
+        result_tags=("q0", "q1", "q2"),
+        parameters=THREE_QUBIT_PARAMETERS,
+        expected=_three_qubit_reference(THREE_QUBIT_NOISE).measurement_distribution((0, 1, 2)),
+        comparison=_three_qubit_reference(QutritNoise()).measurement_distribution((0, 1, 2)),
+        shots=4096,
+        seed=521,
+    )
+    experiment.assert_conforms(Stim(random_seed=523), n_processes=2)
 
 
 def test_qutrit_reference_preserves_a_physical_density_operator() -> None:

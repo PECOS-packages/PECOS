@@ -834,7 +834,10 @@ impl GeneralNoiseModel {
         qubits: &[usize],
         builder: &mut ByteMessageBuilder,
     ) {
-        let prob = rate * duration;
+        // The linear family is an approximation whose raw rate-duration product
+        // can exceed one for long schedules. Saturation makes that boundary
+        // explicit and keeps debug and release builds semantically identical.
+        let prob = (rate * duration).clamp(0.0, 1.0);
         for qubit in qubits {
             if !self.is_leaked(*qubit) && self.rng.occurs(prob) {
                 let result = self.p_idle_linear_model.sample_gates(&mut self.rng, *qubit);
@@ -3256,6 +3259,26 @@ mod tests {
             [GateType::X, GateType::Z, GateType::RY]
         );
         assert_eq!(gates[2].angles, [Angle64::from_radians(0.25)].into());
+    }
+
+    #[test]
+    fn linear_idle_probability_saturates_for_long_durations() {
+        let linear_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear(0.75, &linear_model)
+            .build();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(2.0, &[0]);
+
+        let gates = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::X);
+        assert_eq!(gates[0].qubits, [QubitId(0)].into());
     }
 
     #[test]

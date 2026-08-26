@@ -12,17 +12,31 @@ on:
     branches: [master, development, dev]
     paths:
       - 'python/selene-plugins/**'
+      - 'crates/pecos-engines/**'
+      - 'crates/pecos-random/**'
+      - 'crates/pecos-quantum/**'
       - 'crates/pecos-simulators/**'
       - 'crates/pecos-core/**'
       - 'exp/pecos-stab-tn/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/selene-plugins.yml'
   pull_request:
     branches: [master, development, dev]
     paths:
       - 'python/selene-plugins/**'
+      - 'crates/pecos-engines/**'
+      - 'crates/pecos-random/**'
+      - 'crates/pecos-quantum/**'
       - 'crates/pecos-simulators/**'
       - 'crates/pecos-core/**'
       - 'exp/pecos-stab-tn/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/selene-plugins.yml'
   workflow_dispatch:
 

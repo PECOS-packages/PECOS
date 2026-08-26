@@ -295,7 +295,11 @@ class QutritReference:
             for qubit in qubits:
                 value = state[qubit]
                 if value == LEAKED:
-                    per_qubit.append(((1, 1.0),))
+                    # PECOS regular measurement first maps leakage to Boolean 1,
+                    # then applies the ordinary 1 -> 0 readout channel.
+                    per_qubit.append(
+                        ((0, self.noise.measurement_1_to_0), (1, 1.0 - self.noise.measurement_1_to_0)),
+                    )
                 elif value == 0:
                     per_qubit.append(
                         ((0, 1.0 - self.noise.measurement_0_to_1), (1, self.noise.measurement_0_to_1)),
@@ -312,5 +316,7 @@ class QutritReference:
                 probabilities[outcome] = probabilities.get(outcome, 0.0) + probability
 
         normalization = sum(probabilities.values())
-        normalized = {outcome: probability / normalization for outcome, probability in probabilities.items()}
-        return ExpectedDistribution(normalized)
+        if not math.isclose(normalization, 1.0, abs_tol=1e-12):
+            message = f"qutrit reference lost probability mass: trace-derived outcomes sum to {normalization}"
+            raise ValueError(message)
+        return ExpectedDistribution(probabilities)

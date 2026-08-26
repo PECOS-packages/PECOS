@@ -1,7 +1,10 @@
 """Tests for the public general-noise configuration API."""
 
+import inspect
 import json
+import re
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from guppylang import guppy
@@ -179,51 +182,53 @@ def test_fluent_setters_are_immutable_and_last_infidelity_wins() -> None:
     assert updated.single_qubit.average_infidelity is None
 
 
+def test_channel_models_are_deeply_immutable() -> None:
+    """Input dictionaries cannot mutate a validated reusable configuration."""
+    model = {"X": 1.0}
+    parameters = GeneralNoiseParameters().with_p1_pauli_model(model)
+    model.clear()
+    model["BAD"] = 2.0
+    assert parameters.single_qubit.pauli_model == {"X": 1.0}
+    with pytest.raises(TypeError):
+        parameters.single_qubit.pauli_model["X"] = 0.5  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        pytest.param(lambda: GeneralNoiseParameters().with_p1(0.8).with_scale(2.0), id="global-p1-scale"),
+        pytest.param(
+            lambda: GeneralNoiseParameters().with_p_meas_0(0.6).with_meas_scale(2.0),
+            id="measurement-scale",
+        ),
+        pytest.param(
+            lambda: GeneralNoiseParameters().with_p2(0.8).with_p2_angle_params(1.0, 1.0, 0.0, 1.0),
+            id="angle-scaling",
+        ),
+    ],
+)
+def test_rejects_out_of_range_effective_probabilities(parameters: Callable[[], GeneralNoiseParameters]) -> None:
+    """Cross-field scaling may not escape PECOS's probability domain."""
+    with pytest.raises(ValueError, match=r"effective .* probability"):
+        GeneralNoisePlugin(parameters=parameters())
+
+
+def test_compensating_scales_are_order_independent() -> None:
+    """Fluent construction may pass through an invalid intermediate scale."""
+    parameters = GeneralNoiseParameters().with_p1(0.8).with_scale(2.0).with_p1_scale(0.5)
+    GeneralNoisePlugin(parameters=parameters)
+
+
 def test_matches_all_configurable_pecos_builder_setters() -> None:
-    expected = {
-        "with_average_p1",
-        "with_average_p2",
-        "with_average_p_prep_crosstalk",
-        "with_emission_scale",
-        "with_idle_after_2q",
-        "with_idle_scale",
-        "with_leakage_scale",
-        "with_meas_scale",
-        "with_noiseless_gate",
-        "with_p1",
-        "with_p1_emission_model",
-        "with_p1_emission_ratio",
-        "with_p1_pauli_model",
-        "with_p1_scale",
-        "with_p1_seepage_prob",
-        "with_p2",
-        "with_p2_angle_params",
-        "with_p2_angle_power",
-        "with_p2_emission_model",
-        "with_p2_emission_ratio",
-        "with_p2_pauli_model",
-        "with_p2_scale",
-        "with_p2_seepage_prob",
-        "with_p_idle_coherent",
-        "with_p_idle_linear",
-        "with_p_idle_sin_squared",
-        "with_p_meas",
-        "with_p_meas_0",
-        "with_p_meas_1",
-        "with_p_meas_crosstalk",
-        "with_p_meas_crosstalk_global",
-        "with_p_meas_crosstalk_local",
-        "with_p_meas_crosstalk_model",
-        "with_p_meas_crosstalk_scale",
-        "with_p_prep",
-        "with_p_prep_crosstalk",
-        "with_p_prep_crosstalk_scale",
-        "with_prep_leak_ratio",
-        "with_prep_scale",
-        "with_scale",
-        "with_seepage_prob",
+    workspace = Path(__file__).parents[4]
+    builder_source = (workspace / "crates/pecos-engines/src/noise/general/builder.rs").read_text()
+    rust_setters = set(re.findall(r"pub fn (with_[a-zA-Z0-9_]+)", builder_source)) - {"with_seed"}
+    python_setters = {
+        name
+        for name, member in inspect.getmembers(GeneralNoiseParameters, predicate=inspect.isfunction)
+        if name.startswith("with_")
     }
-    assert expected <= set(dir(GeneralNoiseParameters))
+    assert rust_setters == python_setters - {"with_local_crosstalk_groups"}
 
 
 def test_plugin_executes_in_selene() -> None:

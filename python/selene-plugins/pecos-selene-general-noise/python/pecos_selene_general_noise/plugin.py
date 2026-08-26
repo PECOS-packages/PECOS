@@ -5,15 +5,34 @@ from __future__ import annotations
 import json
 import math
 import platform
-from dataclasses import asdict, dataclass, field, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import ClassVar
 
 from selene_core import ErrorModel
 
-Distribution = dict[str, float]
+Distribution = Mapping[str, float]
 ONE_QUBIT_PAULIS = frozenset({"X", "Y", "Z"})
 ONE_QUBIT_CHANNELS = ONE_QUBIT_PAULIS | {"L"}
+
+
+def _frozen_distribution(value: Distribution | None) -> Distribution | None:
+    if value is None:
+        return None
+    return MappingProxyType(dict(value))
+
+
+def _json_value(value: object) -> object:
+    """Convert frozen parameter values to ordinary JSON-compatible containers."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return {item.name: _json_value(getattr(value, item.name)) for item in fields(value)}
+    if isinstance(value, Mapping):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_json_value(item) for item in value]
+    return value
 
 
 def _probability(name: str, value: float | None) -> None:
@@ -102,6 +121,11 @@ class GateNoise:
     _paulis: ClassVar[frozenset[str]] = ONE_QUBIT_PAULIS
     _emissions: ClassVar[frozenset[str]] = ONE_QUBIT_CHANNELS
 
+    def __post_init__(self) -> None:
+        """Defensively freeze user-supplied channel distributions."""
+        object.__setattr__(self, "pauli_model", _frozen_distribution(self.pauli_model))
+        object.__setattr__(self, "emission_model", _frozen_distribution(self.emission_model))
+
     def validate(self, name: str = "single_qubit") -> None:
         """Validate gate-channel parameters."""
         if self.probability is not None and self.average_infidelity is not None:
@@ -157,6 +181,11 @@ class IdleNoise:
     coherent_model: Distribution | None = None
     scale: float | None = None
 
+    def __post_init__(self) -> None:
+        """Defensively freeze user-supplied idle channel models."""
+        for name in ("linear_model", "sin_squared_model", "coherent_model"):
+            object.__setattr__(self, name, _frozen_distribution(getattr(self, name)))
+
     def validate(self) -> None:
         """Validate idle-channel parameters."""
         for name in ("linear_rate", "sin_squared_rate", "coherent_rate", "scale"):
@@ -197,6 +226,11 @@ class MeasurementNoise:
     local_groups: tuple[tuple[int, ...], ...] = ()
     scale: float | None = None
     crosstalk_scale: float | None = None
+
+    def __post_init__(self) -> None:
+        """Defensively freeze transition models and topology groups."""
+        object.__setattr__(self, "crosstalk_model", _frozen_distribution(self.crosstalk_model))
+        object.__setattr__(self, "local_groups", tuple(tuple(group) for group in self.local_groups))
 
     def validate(self) -> None:
         """Validate measurement-channel parameters."""
@@ -256,12 +290,64 @@ class GeneralNoiseParameters:
 
     def __post_init__(self) -> None:
         """Validate the complete configuration after construction."""
+        object.__setattr__(self, "noiseless_gates", tuple(self.noiseless_gates))
         self.preparation.validate()
         self.measurement.validate()
         self.single_qubit.validate()
         self.two_qubit.validate()
         self.idle.validate()
         self.scaling.validate()
+
+    def validate_effective_probabilities(self) -> None:
+        """Reject scale combinations that leave PECOS's probability domain."""
+        overall = self.scaling.overall if self.scaling.overall is not None else 1.0
+        prep_scale = self.preparation.scale if self.preparation.scale is not None else 1.0
+        meas_scale = self.measurement.scale if self.measurement.scale is not None else 1.0
+        p1_scale = self.single_qubit.scale if self.single_qubit.scale is not None else 1.0
+        p2_scale = self.two_qubit.scale if self.two_qubit.scale is not None else 1.0
+        prep_crosstalk_scale = self.preparation.crosstalk_scale if self.preparation.crosstalk_scale is not None else 1.0
+        meas_crosstalk_scale = self.measurement.crosstalk_scale if self.measurement.crosstalk_scale is not None else 1.0
+
+        def require(name: str, probability: float) -> None:
+            if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+                message = f"effective {name} probability must be between 0 and 1, got {probability}"
+                raise ValueError(message)
+
+        prep = self.preparation.probability or 0.0
+        meas_0 = self.measurement.p0_to_1 or 0.0
+        meas_1 = self.measurement.p1_to_0 or 0.0
+        p1 = self.single_qubit.probability
+        if p1 is None:
+            p1 = (self.single_qubit.average_infidelity or 0.0) * 3.0 / 2.0
+        p2 = self.two_qubit.probability
+        if p2 is None:
+            p2 = (self.two_qubit.average_infidelity or 0.0) * 5.0 / 4.0
+        prep_crosstalk = self.preparation.crosstalk_probability
+        if prep_crosstalk is None:
+            prep_crosstalk = (self.preparation.average_crosstalk_probability or 0.0) * 18.0 / 5.0
+
+        require("preparation", prep * prep_scale * overall)
+        require("measurement 0 -> 1", meas_0 * meas_scale * overall)
+        require("measurement 1 -> 0", meas_1 * meas_scale * overall)
+        require("single-qubit gate", p1 * p1_scale * overall)
+        scaled_p2 = p2 * p2_scale * overall
+        require("two-qubit gate", scaled_p2)
+        require("preparation crosstalk", prep_crosstalk * prep_crosstalk_scale * prep_scale * overall)
+        for name, probability in (
+            ("global measurement crosstalk", self.measurement.global_crosstalk_probability or 0.0),
+            ("local measurement crosstalk", self.measurement.local_crosstalk_probability or 0.0),
+        ):
+            require(name, probability * meas_crosstalk_scale * meas_scale * overall)
+
+        a, b, c, d = self.two_qubit.angle_coefficients or (0.0, 1.0, 0.0, 1.0)
+        for name, multiplier in (
+            ("negative-angle two-qubit offset", b),
+            ("negative-angle two-qubit endpoint", a + b),
+            ("positive-angle two-qubit offset", d),
+            ("positive-angle two-qubit endpoint", c + d),
+            ("zero-angle two-qubit", (b + d) * 0.5),
+        ):
+            require(name, scaled_p2 * multiplier)
 
     @classmethod
     def uniform(cls, probability: float) -> GeneralNoiseParameters:
@@ -486,10 +572,12 @@ class GeneralNoisePlugin(ErrorModel):
         if self.random_seed is not None and self.random_seed < 0:
             message = "random_seed must be non-negative"
             raise ValueError(message)
+        self.parameters.validate_effective_probabilities()
 
     def get_init_args(self) -> list[str]:
         """Serialize the complete configuration as one versionable JSON argument."""
-        return [json.dumps(asdict(self.parameters), separators=(",", ":"), sort_keys=True)]
+        self.parameters.validate_effective_probabilities()
+        return [json.dumps(_json_value(self.parameters), separators=(",", ":"), sort_keys=True)]
 
     @property
     def library_file(self) -> Path:

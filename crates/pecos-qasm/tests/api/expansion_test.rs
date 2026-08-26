@@ -52,8 +52,7 @@ fn test_expansion_details() {
     println!("Expanded QASM:");
     println!("{expanded}");
 
-    // s gate expands to RZ(pi/2), which is native RZ
-    // h gate expands to H (native)
+    // Named s and h gates expand to their distinct native operations.
     assert!(expanded.contains("H q"));
-    assert!(expanded.contains("RZ("));
+    assert!(expanded.contains("S q"));
 }

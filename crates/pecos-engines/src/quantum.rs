@@ -1907,4 +1907,60 @@ mod tests {
             );
         }
     }
+
+    fn state_after_phase_gates(gates: impl FnOnce(&mut ByteMessageBuilder)) -> Vec<(f64, f64)> {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.h(&[0]);
+        gates(&mut builder);
+
+        let mut engine = DenseStateVecEngine::new(1);
+        engine.process(builder.build()).unwrap();
+        engine
+            .simulator
+            .state()
+            .iter()
+            .map(|amplitude| (amplitude.re, amplitude.im))
+            .collect()
+    }
+
+    fn assert_amplitudes_equal(actual: &[(f64, f64)], expected: &[(f64, f64)], context: &str) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            assert!(
+                (actual.0 - expected.0).abs() < 1e-14 && (actual.1 - expected.1).abs() < 1e-14,
+                "{context}, basis {index}: actual={actual:?}, expected={expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn byte_message_engine_executes_t_squared_as_exact_s() {
+        let t_squared = state_after_phase_gates(|builder| {
+            builder.t(&[0]).t(&[0]);
+        });
+        let s = state_after_phase_gates(|builder| {
+            builder.sz(&[0]);
+        });
+        let expected = [(FRAC_1_SQRT_2, 0.0), (0.0, FRAC_1_SQRT_2)];
+
+        assert_amplitudes_equal(&t_squared, &expected, "T^2 literal amplitudes");
+        assert_amplitudes_equal(&s, &expected, "S literal amplitudes");
+        assert_amplitudes_equal(&t_squared, &s, "T^2 == S");
+    }
+
+    #[test]
+    fn byte_message_engine_executes_tdg_squared_as_exact_sdg() {
+        let tdg_squared = state_after_phase_gates(|builder| {
+            builder.tdg(&[0]).tdg(&[0]);
+        });
+        let sdg = state_after_phase_gates(|builder| {
+            builder.szdg(&[0]);
+        });
+        let expected = [(FRAC_1_SQRT_2, 0.0), (0.0, -FRAC_1_SQRT_2)];
+
+        assert_amplitudes_equal(&tdg_squared, &expected, "Tdg^2 literal amplitudes");
+        assert_amplitudes_equal(&sdg, &expected, "Sdg literal amplitudes");
+        assert_amplitudes_equal(&tdg_squared, &sdg, "Tdg^2 == Sdg");
+    }
 }

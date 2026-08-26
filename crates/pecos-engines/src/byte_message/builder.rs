@@ -606,14 +606,18 @@ impl ByteMessageBuilder {
 
     /// Add an SZ (S) gate
     pub fn sz(&mut self, qubits: &[usize]) -> &mut Self {
-        // S gate is RZ(π/2)
-        self.rz(Angle64::QUARTER_TURN, qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::SZ, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::SZ, qubits, &[], &[])
     }
 
     /// Add an `SZdg` (S†) gate
     pub fn szdg(&mut self, qubits: &[usize]) -> &mut Self {
-        // S† gate is RZ(-π/2)
-        self.rz(-Angle64::QUARTER_TURN, qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::SZdg, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::SZdg, qubits, &[], &[])
     }
 
     /// Add a T gate
@@ -1038,20 +1042,27 @@ mod tests {
     }
 
     #[test]
-    fn test_t_tokens_survive_byte_message_round_trip() {
+    fn test_phase_gate_tokens_survive_byte_message_round_trip() {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
+        builder.sz(&[1]);
+        builder.szdg(&[0, 2]);
         builder.t(&[0, 2]);
         builder.tdg(&[1]);
 
         let commands = builder.build().quantum_ops().unwrap();
-        assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].gate_type, GateType::T);
-        assert_eq!(commands[0].qubits.as_slice(), &[QubitId(0), QubitId(2)]);
-        assert!(commands[0].angles.is_empty());
-        assert_eq!(commands[1].gate_type, GateType::Tdg);
-        assert_eq!(commands[1].qubits.as_slice(), &[QubitId(1)]);
-        assert!(commands[1].angles.is_empty());
+        assert_eq!(commands.len(), 4);
+        let expected = [
+            (GateType::SZ, &[QubitId(1)][..]),
+            (GateType::SZdg, &[QubitId(0), QubitId(2)][..]),
+            (GateType::T, &[QubitId(0), QubitId(2)][..]),
+            (GateType::Tdg, &[QubitId(1)][..]),
+        ];
+        for (command, (gate_type, qubits)) in commands.iter().zip(expected) {
+            assert_eq!(command.gate_type, gate_type);
+            assert_eq!(command.qubits.as_slice(), qubits);
+            assert!(command.angles.is_empty());
+        }
     }
 
     #[test]

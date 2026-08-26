@@ -840,11 +840,9 @@ fn parse_leading_int(s: &str) -> Option<i64> {
 
 /// Map a HUGR quantum operation name to a PHIR `QuantumOp`.
 ///
-/// For rotation gates, `angle` should contain the angle in radians.
-/// When a rotation angle matches a known Clifford gate exactly (using `Angle64`
-/// fixed-point comparison), the named Clifford gate is returned instead of
-/// the generic rotation. Projectively equivalent T/T-dagger substitutions are
-/// excluded because this parser feeds amplitude-exposing execution paths.
+/// For rotation gates, `angle` should contain the angle in radians. Rotations
+/// remain rotations even at Clifford angles: their named-gate equivalents
+/// generally differ by an observable global phase on amplitude-exposing paths.
 fn hugr_name_to_quantum_op(name: &str, angle: Option<f64>) -> Option<QuantumOp> {
     match name {
         // Single-qubit gates
@@ -856,30 +854,20 @@ fn hugr_name_to_quantum_op(name: &str, angle: Option<f64>) -> Option<QuantumOp> 
         "Sdg" => Some(QuantumOp::Sdg),
         "T" => Some(QuantumOp::T),
         "Tdg" => Some(QuantumOp::Tdg),
-        // Rotation gates -- try to simplify to a named Clifford gate
+        "V" => Some(QuantumOp::SX),
+        "Vdg" => Some(QuantumOp::SXdg),
+        // Rotation gates retain their symmetric rotation matrices.
         "Rx" => {
             let a = Angle64::from_radians(angle.unwrap_or(0.0));
-            Some(simplify_rotation(
-                pecos_core::gate_type::GateType::RX,
-                a,
-                QuantumOp::RX(a),
-            ))
+            Some(QuantumOp::RX(a))
         }
         "Ry" => {
             let a = Angle64::from_radians(angle.unwrap_or(0.0));
-            Some(simplify_rotation(
-                pecos_core::gate_type::GateType::RY,
-                a,
-                QuantumOp::RY(a),
-            ))
+            Some(QuantumOp::RY(a))
         }
         "Rz" => {
             let a = Angle64::from_radians(angle.unwrap_or(0.0));
-            Some(simplify_rotation(
-                pecos_core::gate_type::GateType::RZ,
-                a,
-                QuantumOp::RZ(a),
-            ))
+            Some(QuantumOp::RZ(a))
         }
         // Two-qubit gates
         "CX" => Some(QuantumOp::CX),
@@ -893,43 +881,6 @@ fn hugr_name_to_quantum_op(name: &str, angle: Option<f64>) -> Option<QuantumOp> 
         "Toffoli" | "CCX" => Some(QuantumOp::Toffoli),
         // Lifecycle ops handled in process_children; all else unknown
         _ => None,
-    }
-}
-
-/// Try to simplify a rotation gate to a named Clifford gate using the shared
-/// `pecos_core::try_simplify_rotation` utility. Falls back to the original
-/// rotation `QuantumOp` for non-Clifford angles.
-fn simplify_rotation(
-    gate_type: pecos_core::gate_type::GateType,
-    angle: Angle64,
-    fallback: QuantumOp,
-) -> QuantumOp {
-    match pecos_core::try_simplify_rotation(gate_type, angle) {
-        // Two distinct reasons to keep the original rotation: an eighth-turn
-        // would name a phase-sensitive T/Tdg token, which differs from
-        // RZ(+-pi/4) by a global phase, and a non-Clifford angle has no named
-        // equivalent at all.
-        Some(pecos_core::gate_type::GateType::T | pecos_core::gate_type::GateType::Tdg) | None => {
-            fallback
-        }
-        Some(clifford) => gate_type_to_quantum_op(clifford),
-    }
-}
-
-/// Map a `GateType` Clifford result back to a `QuantumOp`.
-fn gate_type_to_quantum_op(gt: pecos_core::gate_type::GateType) -> QuantumOp {
-    use pecos_core::gate_type::GateType;
-    match gt {
-        GateType::I => QuantumOp::RZ(Angle64::ZERO), // identity
-        GateType::X => QuantumOp::X,
-        GateType::Y => QuantumOp::Y,
-        GateType::Z => QuantumOp::Z,
-        GateType::SZ => QuantumOp::S,
-        GateType::SZdg => QuantumOp::Sdg,
-        GateType::T => QuantumOp::T,
-        GateType::Tdg => QuantumOp::Tdg,
-        GateType::H => QuantumOp::H,
-        _ => unreachable!("unexpected GateType from simplification: {gt}"),
     }
 }
 
@@ -1082,6 +1033,8 @@ mod tests {
         assert_eq!(hugr_name_to_quantum_op("X", None), Some(QuantumOp::X));
         assert_eq!(hugr_name_to_quantum_op("CX", None), Some(QuantumOp::CX));
         assert_eq!(hugr_name_to_quantum_op("CZ", None), Some(QuantumOp::CZ));
+        assert_eq!(hugr_name_to_quantum_op("V", None), Some(QuantumOp::SX));
+        assert_eq!(hugr_name_to_quantum_op("Vdg", None), Some(QuantumOp::SXdg));
         assert_eq!(hugr_name_to_quantum_op("SWAP", None), Some(QuantumOp::SWAP));
         assert_eq!(
             hugr_name_to_quantum_op("Toffoli", None),
@@ -1090,20 +1043,27 @@ mod tests {
     }
 
     #[test]
-    fn test_gate_mapping_rotation_clifford_simplification() {
-        // pi/2 = S gate for RZ
+    fn test_gate_mapping_preserves_rotations_at_clifford_angles() {
         let pi_2 = Some(std::f64::consts::FRAC_PI_2);
-        assert_eq!(hugr_name_to_quantum_op("Rz", pi_2), Some(QuantumOp::S));
+        assert_eq!(
+            hugr_name_to_quantum_op("Rz", pi_2),
+            Some(QuantumOp::RZ(Angle64::from_radians(
+                std::f64::consts::FRAC_PI_2
+            )))
+        );
 
-        // pi = Z gate for RZ
         let pi = Some(std::f64::consts::PI);
-        assert_eq!(hugr_name_to_quantum_op("Rz", pi), Some(QuantumOp::Z));
+        assert_eq!(
+            hugr_name_to_quantum_op("Rz", pi),
+            Some(QuantumOp::RZ(Angle64::from_radians(std::f64::consts::PI)))
+        );
 
-        // -pi/2 = Sdg gate for RZ
         let neg_pi_2 = Some(-std::f64::consts::FRAC_PI_2);
         assert_eq!(
             hugr_name_to_quantum_op("Rz", neg_pi_2),
-            Some(QuantumOp::Sdg)
+            Some(QuantumOp::RZ(Angle64::from_radians(
+                -std::f64::consts::FRAC_PI_2
+            )))
         );
 
         // RZ(pi/4) stays a rotation because T differs by an observable scalar.
@@ -1124,11 +1084,15 @@ mod tests {
             )))
         );
 
-        // pi = X gate for RX
-        assert_eq!(hugr_name_to_quantum_op("Rx", pi), Some(QuantumOp::X));
+        assert_eq!(
+            hugr_name_to_quantum_op("Rx", pi),
+            Some(QuantumOp::RX(Angle64::from_radians(std::f64::consts::PI)))
+        );
 
-        // pi = Y gate for RY
-        assert_eq!(hugr_name_to_quantum_op("Ry", pi), Some(QuantumOp::Y));
+        assert_eq!(
+            hugr_name_to_quantum_op("Ry", pi),
+            Some(QuantumOp::RY(Angle64::from_radians(std::f64::consts::PI)))
+        );
 
         // Non-Clifford angles stay as rotations
         let arbitrary = Some(1.23);

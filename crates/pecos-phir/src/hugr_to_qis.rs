@@ -5,15 +5,15 @@ This module provides a conversion pass that translates HUGR dialect operations
 to QIS dialect operations. This follows the same decomposition strategy used by
 Selene's hugr-qis compiler.
 
-The conversion maps high-level quantum gates to hardware-native gates:
-- Hadamard (H) → RZ(-π/2), RXY(π/2, 0), RZ(-π/2)
-- CNOT/CX → RXY(π/2, 0) on target, RZZ(π/2), RZ(-π/2) on control, RXY(-π/2, 0) on target
+The conversion preserves fixed named gates so amplitude-exposing execution
+paths retain their exact matrices. Parameterized gates map to QIS rotations:
 - RX(θ) → RXY(θ, 0)
 - RY(θ) → RXY(θ, π/2)
-- T / T-dagger → named QIS T / T-dagger operations
+- RZ(θ) → RZ(θ)
 */
 
 use crate::error::Result;
+use crate::hugr_dialect::is_hugr_named_gate;
 use crate::ops::{ClassicalOp, CustomOp, Operation};
 use crate::phir::{Block, Instruction, Module, Region, SSAValue};
 use std::collections::BTreeMap;
@@ -229,13 +229,20 @@ impl HugrToQisConverter {
                 });
             }
 
-            "h" => {
-                decompose_h(operands[0], &mut instructions, &mut || self.fresh_value());
-            }
-
-            "cx" => {
-                decompose_cx(operands[0], operands[1], &mut instructions, &mut || {
-                    self.fresh_value()
+            name if is_hugr_named_gate(name) => {
+                instructions.push(Instruction {
+                    results: vec![],
+                    operation: Operation::Custom(CustomOp::new(
+                        "qis",
+                        op.name(),
+                        vec![],
+                        BTreeMap::new(),
+                    )),
+                    operands: operands.to_vec(),
+                    result_types: vec![],
+                    regions: vec![],
+                    attributes: BTreeMap::new(),
+                    location: None,
                 });
             }
 
@@ -256,23 +263,6 @@ impl HugrToQisConverter {
             "rz" => {
                 // RZ(θ) → QIS RZ(θ) (direct mapping)
                 instructions.push(emit_qis_rz(operands[0], operands[1]));
-            }
-
-            "t" | "tdg" => {
-                instructions.push(Instruction {
-                    results: vec![],
-                    operation: Operation::Custom(CustomOp::new(
-                        "qis",
-                        op.name(),
-                        vec![],
-                        BTreeMap::new(),
-                    )),
-                    operands: operands.to_vec(),
-                    result_types: vec![],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                });
             }
 
             "measure" => {
@@ -330,7 +320,7 @@ mod tests {
     use crate::phir::{Block, Module, Region};
 
     #[test]
-    fn test_hadamard_decomposition() {
+    fn test_hadamard_is_preserved() {
         // Create a module with a Hadamard gate
         let mut module = Module {
             name: "test".to_string(),
@@ -365,8 +355,7 @@ mod tests {
         let mut converter = HugrToQisConverter::new();
         converter.convert_module(&mut module);
 
-        // 3 ConstFloat + 3 gate ops (RZ, RXY, RZ) = 6 total
-        assert_eq!(module.body.blocks[0].operations.len(), 6);
+        assert_eq!(module.body.blocks[0].operations.len(), 1);
 
         // Verify the QIS gate operations are correct
         let qis_ops: Vec<_> = module.body.blocks[0]
@@ -380,11 +369,11 @@ mod tests {
                 }
             })
             .collect();
-        assert_eq!(qis_ops, vec!["rz", "rxy", "rz"]);
+        assert_eq!(qis_ops, vec!["h"]);
     }
 
     #[test]
-    fn test_cnot_decomposition() {
+    fn test_cnot_is_preserved() {
         // Create a module with a CNOT gate
         let mut module = Module {
             name: "test".to_string(),
@@ -419,8 +408,7 @@ mod tests {
         let mut converter = HugrToQisConverter::new();
         converter.convert_module(&mut module);
 
-        // 3 ConstFloat + 4 gate ops (RXY, RZZ, RZ, RXY) = 7 total
-        assert_eq!(module.body.blocks[0].operations.len(), 7);
+        assert_eq!(module.body.blocks[0].operations.len(), 1);
 
         // Verify the sequence of QIS gate operations
         let qis_ops: Vec<_> = module.body.blocks[0]
@@ -434,11 +422,11 @@ mod tests {
                 }
             })
             .collect();
-        assert_eq!(qis_ops, vec!["rxy", "rzz", "rz", "rxy"]);
+        assert_eq!(qis_ops, vec!["cx"]);
     }
 
     #[test]
-    fn test_named_t_gates_are_preserved() {
+    fn test_named_gates_are_preserved() {
         let mut module = Module {
             name: "test".to_string(),
             attributes: BTreeMap::new(),
@@ -449,23 +437,29 @@ mod tests {
                     label: None,
                     arguments: vec![],
                     attributes: BTreeMap::new(),
-                    operations: ["t", "tdg"]
-                        .into_iter()
-                        .map(|name| Instruction {
-                            results: vec![],
-                            operation: Operation::Custom(CustomOp::new(
-                                "hugr",
-                                name,
-                                vec![],
-                                BTreeMap::new(),
-                            )),
-                            operands: vec![SSAValue::new(0)],
-                            result_types: vec![],
-                            regions: vec![],
-                            attributes: BTreeMap::new(),
-                            location: None,
-                        })
-                        .collect(),
+                    operations: [
+                        "h", "x", "y", "z", "s", "sdg", "t", "tdg", "sx", "sxdg", "cx",
+                    ]
+                    .into_iter()
+                    .map(|name| Instruction {
+                        results: vec![],
+                        operation: Operation::Custom(CustomOp::new(
+                            "hugr",
+                            name,
+                            vec![],
+                            BTreeMap::new(),
+                        )),
+                        operands: if name == "cx" {
+                            vec![SSAValue::new(0), SSAValue::new(1)]
+                        } else {
+                            vec![SSAValue::new(0)]
+                        },
+                        result_types: vec![],
+                        regions: vec![],
+                        attributes: BTreeMap::new(),
+                        location: None,
+                    })
+                    .collect(),
                     terminator: None,
                 }],
             },
@@ -477,6 +471,12 @@ mod tests {
             .iter()
             .map(|instruction| instruction.operation.name())
             .collect();
-        assert_eq!(qis_ops, vec!["qis.t", "qis.tdg"]);
+        assert_eq!(
+            qis_ops,
+            vec![
+                "qis.h", "qis.x", "qis.y", "qis.z", "qis.s", "qis.sdg", "qis.t", "qis.tdg",
+                "qis.sx", "qis.sxdg", "qis.cx"
+            ]
+        );
     }
 }

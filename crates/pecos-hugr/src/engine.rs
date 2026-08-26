@@ -1786,16 +1786,10 @@ impl HugrEngine {
                 self.message_builder.z(&[qubits[0].0]);
             }
             GateType::SZ => {
-                self.message_builder.rz(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                    &[qubits[0].0],
-                );
+                self.message_builder.sz(&[qubits[0].0]);
             }
             GateType::SZdg => {
-                self.message_builder.rz(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
-                    &[qubits[0].0],
-                );
+                self.message_builder.szdg(&[qubits[0].0]);
             }
             GateType::T => {
                 self.message_builder.t(&[qubits[0].0]);
@@ -1822,16 +1816,10 @@ impl HugrEngine {
                 self.message_builder.pz(&[qubits[0].0]);
             }
             GateType::SX => {
-                self.message_builder.rx(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                    &[qubits[0].0],
-                );
+                self.message_builder.sx(&[qubits[0].0]);
             }
             GateType::SXdg => {
-                self.message_builder.rx(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
-                    &[qubits[0].0],
-                );
+                self.message_builder.sxdg(&[qubits[0].0]);
             }
 
             // Two-qubit gates
@@ -3810,11 +3798,15 @@ mod tests {
     }
 
     #[test]
-    fn test_named_t_gate_command_generation() {
+    fn test_named_phase_sensitive_gate_command_generation() {
         let mut dag = DagCircuit::new();
         let q0 = QubitId::from(0);
+        dag.add_gate(Gate::with_angles(GateType::SZ, vec![], vec![q0]));
+        dag.add_gate(Gate::with_angles(GateType::SZdg, vec![], vec![q0]));
         dag.add_gate(Gate::with_angles(GateType::T, vec![], vec![q0]));
         dag.add_gate(Gate::with_angles(GateType::Tdg, vec![], vec![q0]));
+        dag.add_gate(Gate::with_angles(GateType::SX, vec![], vec![q0]));
+        dag.add_gate(Gate::with_angles(GateType::SXdg, vec![], vec![q0]));
 
         let mut engine = engine_from_dag(&dag);
         let msg = engine
@@ -3824,17 +3816,33 @@ mod tests {
         let gates: Vec<_> = ops
             .iter()
             .filter_map(|op| match op.gate_type {
-                GateType::T | GateType::Tdg | GateType::RZ => Some(op.gate_type),
+                GateType::SZ
+                | GateType::SZdg
+                | GateType::T
+                | GateType::Tdg
+                | GateType::SX
+                | GateType::SXdg
+                | GateType::RX
+                | GateType::RZ => Some(op.gate_type),
                 _ => None,
             })
             .collect();
 
-        assert_eq!(gates.len(), 2);
-        assert_eq!(gates.iter().filter(|&&gate| gate == GateType::T).count(), 1);
-        assert_eq!(
-            gates.iter().filter(|&&gate| gate == GateType::Tdg).count(),
-            1
-        );
+        assert_eq!(gates.len(), 6);
+        for expected in [
+            GateType::SZ,
+            GateType::SZdg,
+            GateType::T,
+            GateType::Tdg,
+            GateType::SX,
+            GateType::SXdg,
+        ] {
+            assert_eq!(
+                gates.iter().filter(|&&gate| gate == expected).count(),
+                1,
+                "expected one {expected} command, got {gates:?}"
+            );
+        }
     }
 
     #[test]

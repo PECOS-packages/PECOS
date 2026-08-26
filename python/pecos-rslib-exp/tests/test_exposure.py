@@ -8,7 +8,6 @@ import math
 
 import pecos_rslib_exp as exp
 import pytest
-from pecos.quantum import TickCircuit
 
 STATS_KEYS = {
     "total_nonclifford",
@@ -32,7 +31,16 @@ def assert_complex_tuple(value):
     assert all(isinstance(component, float) for component in value)
 
 
+def assert_state_vector(actual, expected):
+    assert len(actual) == len(expected)
+    for actual_amplitude, expected_amplitude in zip(actual, expected, strict=True):
+        assert math.isclose(actual_amplitude[0], expected_amplitude[0], abs_tol=1e-12)
+        assert math.isclose(actual_amplitude[1], expected_amplitude[1], abs_tol=1e-12)
+
+
 def test_sim_neo_stab_mps_measurement_and_boolean_builder_options():
+    from pecos.quantum import TickCircuit
+
     circuit = TickCircuit()
     circuit.tick().x([0])
     circuit.tick().mz([0])
@@ -118,6 +126,27 @@ def test_stab_mps_analysis_and_noise_exposure():
         -1.0,
         abs_tol=1e-12,
     )
+
+
+def test_stab_mps_named_t_has_conventional_exact_amplitudes():
+    inv_sqrt_2 = 1 / math.sqrt(2)
+
+    ht = exp.StabMps(1, merge_rz=False)
+    ht.run_1q_gate("H", 0)
+    ht.run_1q_gate("T", 0)
+    assert_state_vector(ht.state_vector(), [(inv_sqrt_2, 0.0), (0.5, 0.5)])
+
+    t_squared = exp.StabMps(1, merge_rz=False)
+    t_squared.run_1q_gate("H", 0)
+    t_squared.run_1q_gate("T", 0)
+    t_squared.run_1q_gate("T", 0)
+
+    s = exp.StabMps(1, merge_rz=False)
+    s.run_1q_gate("H", 0)
+    s.run_1q_gate("S", 0)
+    expected = [(inv_sqrt_2, 0.0), (0.0, inv_sqrt_2)]
+    assert_state_vector(t_squared.state_vector(), expected)
+    assert_state_vector(s.state_vector(), expected)
 
 
 def test_stab_mps_bitstring_convention_auto_flush_and_validation():

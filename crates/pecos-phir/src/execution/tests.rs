@@ -482,7 +482,7 @@ fn test_processor_cz_gate() {
 // ──────────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_processor_s_sdg_t_tdg_gates() {
+fn test_processor_named_phase_sensitive_gates() {
     let mut processor = PhirProcessor::new();
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
@@ -492,6 +492,8 @@ fn test_processor_s_sdg_t_tdg_gates() {
         (QuantumOp::Sdg, "Sdg"),
         (QuantumOp::T, "T"),
         (QuantumOp::Tdg, "Tdg"),
+        (QuantumOp::SX, "SX"),
+        (QuantumOp::SXdg, "SXdg"),
     ] {
         let gate_instr = instr(Operation::Quantum(op), vec![0], vec![10], vec![Type::Qubit]);
         let result = processor.process_instruction(&gate_instr, &mut builder);
@@ -503,8 +505,19 @@ fn test_processor_s_sdg_t_tdg_gates() {
     }
 
     let ops = builder.build().quantum_ops().unwrap();
-    assert_eq!(ops[2].gate_type, pecos_core::gate_type::GateType::T);
-    assert_eq!(ops[3].gate_type, pecos_core::gate_type::GateType::Tdg);
+    assert_eq!(ops.len(), 6);
+    assert_eq!(
+        ops.iter().map(|op| op.gate_type).collect::<Vec<_>>(),
+        [
+            pecos_core::gate_type::GateType::SZ,
+            pecos_core::gate_type::GateType::SZdg,
+            pecos_core::gate_type::GateType::T,
+            pecos_core::gate_type::GateType::Tdg,
+            pecos_core::gate_type::GateType::SX,
+            pecos_core::gate_type::GateType::SXdg,
+        ]
+    );
+    assert!(ops.iter().all(|op| op.angles.is_empty()));
 }
 
 // ──────────────────────────────────────────────────────────────────────

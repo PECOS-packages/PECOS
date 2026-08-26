@@ -384,3 +384,20 @@ def test_qutrit_reference_preserves_a_physical_density_operator() -> None:
     assert np.isclose(np.trace(reference.rho), 1.0)
     assert np.allclose(reference.rho, reference.rho.conj().T)
     assert np.linalg.eigvalsh(reference.rho).min() >= -1e-12
+
+
+def test_qutrit_reference_clips_only_floating_point_probability_residue() -> None:
+    """Cross-platform BLAS residue at zero and one is not treated as physics."""
+    reference = QutritReference(1)
+    reference.rho[0, 0] = 1.0 + 5e-16
+    reference.rho[1, 1] = -5e-16
+    assert reference.measurement_distribution((0,)).probabilities == {(0,): 1.0, (1,): 0.0}
+
+
+def test_qutrit_reference_rejects_materially_nonphysical_probabilities() -> None:
+    """The oracle must not hide real loss of density-matrix positivity."""
+    reference = QutritReference(1)
+    reference.rho[0, 0] = 1.01
+    reference.rho[1, 1] = -0.01
+    with pytest.raises(ValueError, match="outside the physical probability range"):
+        reference.measurement_distribution((0,))

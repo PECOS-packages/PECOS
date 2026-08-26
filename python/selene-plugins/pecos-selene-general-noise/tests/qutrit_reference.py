@@ -14,6 +14,16 @@ type Matrix = NDArray[np.complex128]
 type QutritState = tuple[int, ...]
 
 LEAKED = 2
+NUMERICAL_PROBABILITY_TOLERANCE = 1e-12
+
+
+def _roundoff_clipped_probability(value: float, *, context: str) -> float:
+    """Clip floating-point residue while rejecting material nonphysical values."""
+    tolerance = NUMERICAL_PROBABILITY_TOLERANCE
+    if not math.isfinite(value) or value < -tolerance or value > 1.0 + tolerance:
+        message = f"{context} is outside the physical probability range: {value}"
+        raise ValueError(message)
+    return min(1.0, max(0.0, value))
 
 
 def rx(theta: float) -> Matrix:
@@ -288,8 +298,12 @@ class QutritReference:
         """Return exact noisy Boolean measurement probabilities."""
         probabilities: dict[tuple[int, ...], float] = {}
         diagonal = np.real_if_close(np.diag(self.rho)).real
-        for state, state_probability in zip(self._states, diagonal, strict=True):
-            if state_probability <= 1e-15:
+        for state, raw_state_probability in zip(self._states, diagonal, strict=True):
+            state_probability = _roundoff_clipped_probability(
+                float(raw_state_probability),
+                context=f"density-matrix diagonal for state {state}",
+            )
+            if state_probability == 0.0:
                 continue
             per_qubit: list[tuple[tuple[int, float], ...]] = []
             for qubit in qubits:
@@ -310,13 +324,20 @@ class QutritReference:
                     )
             for choices in product(*per_qubit):
                 outcome = tuple(choice[0] for choice in choices)
-                probability = float(state_probability)
+                probability = state_probability
                 for _, readout_probability in choices:
                     probability *= readout_probability
                 probabilities[outcome] = probabilities.get(outcome, 0.0) + probability
 
         normalization = sum(probabilities.values())
-        if not math.isclose(normalization, 1.0, abs_tol=1e-12):
+        if not math.isclose(normalization, 1.0, abs_tol=NUMERICAL_PROBABILITY_TOLERANCE):
             message = f"qutrit reference lost probability mass: trace-derived outcomes sum to {normalization}"
             raise ValueError(message)
-        return ExpectedDistribution(probabilities)
+        clipped = {
+            outcome: _roundoff_clipped_probability(probability, context=f"measurement outcome {outcome}")
+            for outcome, probability in probabilities.items()
+        }
+        if not math.isclose(sum(clipped.values()), 1.0, abs_tol=NUMERICAL_PROBABILITY_TOLERANCE):
+            message = "qutrit reference roundoff clipping changed total probability mass"
+            raise ValueError(message)
+        return ExpectedDistribution(clipped)

@@ -17,7 +17,9 @@ use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StabVec};
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
-use pecos_stab_tn::stab_mps::{MeasurementMode, PauliKind, StabMps};
+use pecos_stab_tn::stab_mps::{
+    MeasurementMode, MultiStdSubtype, PauliKind, SignedEigenstateTelemetry, StabMps,
+};
 use rayon::prelude::*;
 
 /// Check that two state vectors match up to global phase.
@@ -2639,10 +2641,27 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                     profile
                         .by_depth
                         .iter()
-                        .map(|depth| depth.post_projection.svd_operations)
+                        .map(|depth| depth.post_projection_svd.svd_operations)
                         .sum::<u64>()
                         > 0,
                     "profiled query recorded no post-projection SVDs"
+                );
+                assert!(
+                    profile.phase_scopes_disjoint(),
+                    "query phases overlapped or did not close"
+                );
+                assert!(
+                    profile.attributed_wall_time_seconds() <= profile.whole_call_wall_time_seconds,
+                    "disjoint phase sum exceeded the complete query call"
+                );
+                assert_eq!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.post_projection_qr.svd_operations)
+                        .sum::<u64>(),
+                    0,
+                    "the exact QR bucket must not contain SVD operations"
                 );
                 for (query_index, (&actual, &expected)) in batched.iter().zip(&singular).enumerate()
                 {
@@ -3203,6 +3222,7 @@ fn test_numerical_flag_redetection_recovers_cancelled_rotation() {
     let mut stn = StabMps::builder(2)
         .merge_rz(false)
         .numerical_flag_redetection(true)
+        .saturation_telemetry(true)
         .build();
     let mut oracle = pecos_simulators::DenseStateVec::new(2);
 
@@ -3218,6 +3238,17 @@ fn test_numerical_flag_redetection_recovers_cancelled_rotation() {
     oracle.rz(final_angle, &[QubitId(1)]);
 
     assert_eq!(stn.stats.numerical_redetect, 1);
+    assert_eq!(
+        stn.stats.signed_eigenstate_candidates, 0,
+        "a stale flag repaired to +Z is not signed-eigenstate headroom"
+    );
+    assert_eq!(
+        stn.saturation_profile()
+            .signed_eigenstates
+            .multi_disent
+            .events,
+        1
+    );
     let expected = (0..4)
         .map(|idx| oracle.get_amplitude(idx))
         .collect::<Vec<_>>();
@@ -3261,6 +3292,112 @@ fn test_numerical_flag_redetection_rejects_nonzero_product_site() {
         &expected,
         1e-12,
         "nonzero product site rejection",
+    );
+}
+
+fn prepared_two_site_subtype_simulator(saturation_telemetry: bool) -> StabMps {
+    let mut simulator = StabMps::builder(2)
+        .merge_rz(false)
+        .saturation_telemetry(saturation_telemetry)
+        .build();
+    for site in 0..2 {
+        simulator.h(&[QubitId(site)]);
+        simulator.t(&[QubitId(site)]);
+    }
+    simulator
+}
+
+#[test]
+fn test_multi_std_subtype_labels_distinguish_add_and_cascade() {
+    let angle = Angle64::from_radians(0.37);
+
+    let mut add = prepared_two_site_subtype_simulator(true);
+    add.cx(&[(QubitId(0), QubitId(1))]);
+    add.rz(angle, &[QubitId(1)]);
+    assert_eq!(add.stats.multi_std_add, 1);
+    assert_eq!(add.stats.multi_std_cascade, 0);
+    assert_eq!(add.saturation_profile().multi_std_events.len(), 1);
+    assert_eq!(
+        add.saturation_profile().multi_std_events[0].subtype,
+        MultiStdSubtype::Add
+    );
+    assert_eq!(
+        add.saturation_profile()
+            .signed_eigenstates
+            .multi_std_add
+            .events,
+        1
+    );
+    assert_eq!(
+        add.saturation_profile()
+            .signed_eigenstates
+            .multi_std_add
+            .sites_tested,
+        2
+    );
+    assert_eq!(
+        add.saturation_profile()
+            .signed_eigenstates
+            .multi_std_cascade
+            .events,
+        0
+    );
+
+    let mut cascade = prepared_two_site_subtype_simulator(true);
+    cascade.cz(&[(QubitId(0), QubitId(1))]);
+    cascade.h(&[QubitId(0)]);
+    cascade.rz(angle, &[QubitId(0)]);
+    assert_eq!(cascade.stats.multi_std_add, 0);
+    assert_eq!(cascade.stats.multi_std_cascade, 1);
+    assert_eq!(cascade.saturation_profile().multi_std_events.len(), 1);
+    assert_eq!(
+        cascade.saturation_profile().multi_std_events[0].subtype,
+        MultiStdSubtype::Cascade
+    );
+    assert_eq!(
+        cascade
+            .saturation_profile()
+            .signed_eigenstates
+            .multi_std_cascade
+            .events,
+        1
+    );
+    assert_eq!(
+        cascade
+            .saturation_profile()
+            .signed_eigenstates
+            .multi_std_cascade
+            .sites_tested,
+        2
+    );
+    assert_eq!(
+        cascade
+            .saturation_profile()
+            .signed_eigenstates
+            .multi_std_add
+            .events,
+        0
+    );
+}
+
+#[test]
+fn test_saturation_telemetry_flag_off_records_no_expensive_diagnostics() {
+    let mut simulator = prepared_two_site_subtype_simulator(false);
+    simulator.cx(&[(QubitId(0), QubitId(1))]);
+    simulator.rz(Angle64::from_radians(0.37), &[QubitId(1)]);
+
+    assert_eq!(simulator.stats.multi_std_add, 1);
+    assert_eq!(simulator.stats.signed_eigenstate_candidates, 0);
+    assert!(simulator.saturation_profile().multi_std_events.is_empty());
+    assert!(
+        simulator
+            .saturation_profile()
+            .multi_disent_events
+            .is_empty()
+    );
+    assert_eq!(
+        simulator.saturation_profile().signed_eigenstates,
+        SignedEigenstateTelemetry::default()
     );
 }
 

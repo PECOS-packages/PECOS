@@ -96,41 +96,83 @@ fn cnot_hi_ctrl() -> DMatrix<Complex64> {
 }
 
 /// Per-site Pauli type for the rotation decomposition.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PauliType {
     X,
     Z,
     Y, // Both flip AND sign on the same site. In Y convention: Y = iXZ (Hermitian).
 }
 
-fn signed_product_eigenstate_axis(mps: &Mps, site: usize) -> Option<PauliType> {
-    const TOLERANCE: f64 = 1e-12;
-    const MIN_NORM_SQUARED: f64 = 1e-30;
+fn numerical_pauli_eigenstates(mps: &Mps, sites: &[usize]) -> Vec<Option<super::SiteEigenstate>> {
+    const TOLERANCE: f64 = 1e-9;
 
-    if mps.bond_dim(site) != 1 || mps.bond_dim(site + 1) != 1 {
-        return None;
+    if sites.is_empty() {
+        return Vec::new();
     }
-    let tensor = &mps.tensors()[site];
-    let zero = tensor[(0, 0)];
-    let one = tensor[(0, 1)];
-    let norm_squared = zero.norm_sqr() + one.norm_sqr();
-    if norm_squared <= MIN_NORM_SQUARED {
-        return None;
+    let environments = mps.environment_cache(sites);
+    if environments.norm_squared() <= 1e-20 {
+        return vec![None; sites.len()];
     }
-    let overlap = zero.conj() * one;
-    let bloch = [
-        2.0 * overlap.re / norm_squared,
-        2.0 * overlap.im / norm_squared,
-        (zero.norm_sqr() - one.norm_sqr()) / norm_squared,
-    ];
-    let axes = [PauliType::X, PauliType::Y, PauliType::Z];
-    bloch
+    sites
         .iter()
-        .zip(axes)
-        .find_map(|(&component, axis)| ((component.abs() - 1.0).abs() <= TOLERANCE).then_some(axis))
+        .map(|&site| {
+            let bloch = environments.one_site_bloch_vector(site);
+            bloch.iter().enumerate().find_map(|(axis, &component)| {
+                ((component.abs() - 1.0).abs() <= TOLERANCE).then(|| match axis {
+                    0 => super::SiteEigenstate::X(component.is_sign_negative()),
+                    1 => super::SiteEigenstate::Y(component.is_sign_negative()),
+                    2 => super::SiteEigenstate::Z(component.is_sign_negative()),
+                    _ => unreachable!("Bloch vectors have three axes"),
+                })
+            })
+        })
+        .collect()
 }
 
-fn multi_std_event_start(
+fn eigenstate_axis(eigenstate: super::SiteEigenstate) -> PauliType {
+    match eigenstate {
+        super::SiteEigenstate::X(_) => PauliType::X,
+        super::SiteEigenstate::Y(_) => PauliType::Y,
+        super::SiteEigenstate::Z(_) => PauliType::Z,
+    }
+}
+
+fn record_signed_eigenstate_candidates(
+    mps: &Mps,
+    pauli_map: &[(usize, PauliType)],
+    branch: super::SignedEigenstateBranch,
+    stats: &mut super::StabMpsStats,
+    telemetry: &mut super::SaturationTelemetry,
+) {
+    let sites: Vec<usize> = pauli_map.iter().map(|&(site, _)| site).collect();
+    // Evaluate the current +Z criterion from the same gauge-independent
+    // numerical test used by the pipeline's flag refresh. A stale stored flag
+    // must not turn an ordinary |0> site into signed-eigenstate headroom.
+    let current_product_zero = super::are_numerical_product_zero_sites(mps, &sites);
+    let eigenstates = numerical_pauli_eigenstates(mps, &sites);
+    let branch_telemetry = telemetry.signed_eigenstates.branch_mut(branch);
+    branch_telemetry.events += 1;
+    branch_telemetry.sites_tested += sites.len() as u64;
+
+    for ((&(_, rotation_axis), current_accepts_zero), eigenstate) in
+        pauli_map.iter().zip(current_product_zero).zip(eigenstates)
+    {
+        let current_accepts =
+            matches!(rotation_axis, PauliType::X | PauliType::Y) && current_accepts_zero;
+        let Some(eigenstate) = eigenstate else {
+            continue;
+        };
+        if current_accepts || eigenstate == super::SiteEigenstate::Z(false) {
+            continue;
+        }
+        if eigenstate_axis(eigenstate) != rotation_axis {
+            branch_telemetry.candidates.record(eigenstate);
+            stats.signed_eigenstate_candidates += 1;
+        }
+    }
+}
+
+fn event_profile_start(
     mps: &Mps,
     affected_sites: &[usize],
     enabled: bool,
@@ -139,9 +181,7 @@ fn multi_std_event_start(
         return None;
     }
     let first = affected_sites[0];
-    let last = *affected_sites
-        .last()
-        .expect("multi-site support must be non-empty");
+    let last = affected_sites[affected_sites.len() - 1];
     let bonds = (first + 1..=last).map(|bond| mps.bond_dim(bond)).collect();
     Some((Instant::now(), last - first, bonds))
 }
@@ -337,19 +377,6 @@ pub fn apply_rz_stab_mps(
                 return Ok(());
             }
 
-            if saturation_telemetry.is_some() && affected_sites.len() > 1 {
-                stats.signed_eigenstate_candidates += pauli_map
-                    .iter()
-                    .filter(|&&(site, rotation_axis)| {
-                        let current_accepts = matches!(rotation_axis, PauliType::X | PauliType::Y)
-                            && matches!(disent_flags[site], Some(super::SiteEigenstate::Z(false)));
-                        !current_accepts
-                            && signed_product_eigenstate_axis(mps, site)
-                                .is_some_and(|eigen_axis| eigen_axis != rotation_axis)
-                    })
-                    .count() as u64;
-            }
-
             // OFD disentangle check (Liu-Clark 2412.17209 Algorithm 1 Theorem 1):
             //   disentanglable iff some qubit i has MPS state |0⟩ AND P[i] ∈ {X, Y}.
             // Our `disent_flags[i] = Some(Z(false))` means MPS is |0⟩ at i (fresh
@@ -407,13 +434,26 @@ pub fn apply_rz_stab_mps(
                 stats.deferred_disent_bypass += 1;
             }
 
+            if affected_sites.len() > 1
+                && let Some(telemetry) = saturation_telemetry.as_deref_mut()
+            {
+                let branch = if disent_site.is_some() {
+                    super::SignedEigenstateBranch::MultiDisent
+                } else if sign_sites.is_empty() {
+                    super::SignedEigenstateBranch::MultiStdAdd
+                } else {
+                    super::SignedEigenstateBranch::MultiStdCascade
+                };
+                record_signed_eigenstate_candidates(mps, &pauli_map, branch, stats, telemetry);
+            }
+
             if let Some(rot_site) = disent_site {
                 stats.multi_disent += 1;
                 if is_ofd_in_span {
                     stats.ofd_in_span_disent += 1;
                 }
                 let event =
-                    multi_std_event_start(mps, &affected_sites, saturation_telemetry.is_some());
+                    event_profile_start(mps, &affected_sites, saturation_telemetry.is_some());
                 // Record effective single-site flip pattern with rot_site metadata
                 gf2_matrix.add_row_with_meta(&[rot_site], super::ofd::RowMetadata { rot_site });
 
@@ -554,7 +594,7 @@ pub fn apply_rz_stab_mps(
                     stats.ofd_in_span_std += 1;
                 }
                 let event =
-                    multi_std_event_start(mps, &affected_sites, saturation_telemetry.is_some());
+                    event_profile_start(mps, &affected_sites, saturation_telemetry.is_some());
                 // Note: std path creates MPS entanglement (not absorbed into
                 // tableau). Do NOT add to gf2 basis — OFD's is_in_span should
                 // only match against truly-absorbed rows.
@@ -595,7 +635,7 @@ pub fn apply_rz_stab_mps(
                     stats.ofd_in_span_std += 1;
                 }
                 let event =
-                    multi_std_event_start(mps, &affected_sites, saturation_telemetry.is_some());
+                    event_profile_start(mps, &affected_sites, saturation_telemetry.is_some());
                 // Std path creates MPS entanglement; do NOT add to gf2 basis.
                 // Multi-site rotation via CNOT cascade + RX + basis changes.
 
@@ -665,9 +705,7 @@ pub fn apply_rz_stab_mps(
 
                 // Right chain: [last] <- [last-1] <- ... <- [rot_idx]
                 if rot_idx + 1 < affected_sites.len() {
-                    prev = *affected_sites
-                        .last()
-                        .expect("affected_sites must be non-empty");
+                    prev = affected_sites[affected_sites.len() - 1];
                     for &site in affected_sites[rot_idx..affected_sites.len() - 1]
                         .iter()
                         .rev()
@@ -730,4 +768,70 @@ pub fn apply_rz_stab_mps(
         mps.normalize();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mps::MpsConfig;
+    use nalgebra::DVector;
+
+    #[test]
+    fn signed_candidate_breakdown_is_gauge_independent_and_excludes_plus_z() {
+        let mut product = Mps::new(6, MpsConfig::default());
+        let x_gate = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        );
+        let z_gate = DMatrix::from_diagonal(&DVector::from_row_slice(&z_diag()));
+
+        product.apply_one_site_gate(0, &h_gate()).unwrap();
+        product.apply_one_site_gate(1, &h_gate()).unwrap();
+        product.apply_one_site_gate(1, &z_gate).unwrap();
+        product.apply_one_site_gate(2, &h_gate()).unwrap();
+        product.apply_one_site_gate(2, &s_gate()).unwrap();
+        product.apply_one_site_gate(3, &h_gate()).unwrap();
+        product.apply_one_site_gate(3, &sdg_gate()).unwrap();
+        product.apply_one_site_gate(4, &x_gate).unwrap();
+
+        // Direct-summing identical states makes every interior virtual bond
+        // larger than one without changing any normalized one-site marginal.
+        let expanded = product.add(&product);
+        assert!(expanded.bond_dims()[1..6].iter().all(|&bond| bond == 2));
+
+        let pauli_map = [
+            (0, PauliType::Z),
+            (1, PauliType::Z),
+            (2, PauliType::X),
+            (3, PauliType::X),
+            (4, PauliType::X),
+            (5, PauliType::X),
+        ];
+        let mut stats = super::super::StabMpsStats::default();
+        let mut telemetry = super::super::SaturationTelemetry::default();
+        record_signed_eigenstate_candidates(
+            &expanded,
+            &pauli_map,
+            super::super::SignedEigenstateBranch::MultiStdAdd,
+            &mut stats,
+            &mut telemetry,
+        );
+
+        let branch = telemetry.signed_eigenstates.multi_std_add;
+        assert_eq!(branch.events, 1);
+        assert_eq!(branch.sites_tested, 6);
+        assert_eq!(branch.candidates.x_plus, 1);
+        assert_eq!(branch.candidates.x_minus, 1);
+        assert_eq!(branch.candidates.y_plus, 1);
+        assert_eq!(branch.candidates.y_minus, 1);
+        assert_eq!(branch.candidates.z_minus, 1);
+        assert_eq!(branch.candidates.total(), 5);
+        assert_eq!(stats.signed_eigenstate_candidates, 5);
+    }
 }

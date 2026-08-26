@@ -15,7 +15,8 @@
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_stab_tn::stab_mps::{
-    MultiStdSubtype, ProbabilityQueryTelemetry, SaturationTelemetry, StabMps, StabMpsStats,
+    MultiStdSubtype, ProbabilityQueryTelemetry, SaturationTelemetry,
+    SignedEigenstateBranchTelemetry, SignedEigenstateTelemetry, StabMps, StabMpsStats,
 };
 use std::collections::HashSet;
 use std::time::Instant;
@@ -46,7 +47,6 @@ struct Cell {
     seed: u64,
     family: Family,
     campaign_content_hash: &'static str,
-    query_available: bool,
 }
 
 const CELLS: [Cell; 5] = [
@@ -56,7 +56,6 @@ const CELLS: [Cell; 5] = [
         seed: 21_602,
         family: Family::SparseT { n_t: 32 },
         campaign_content_hash: "8ca2806e891b128cfc50fbaa7d33e2617ce96ad783c0f0e02a4f4d0eb69de3a7",
-        query_available: true,
     },
     Cell {
         name: "sparse-n32-tn",
@@ -64,7 +63,6 @@ const CELLS: [Cell; 5] = [
         seed: 23_201,
         family: Family::SparseT { n_t: 32 },
         campaign_content_hash: "31866e8b94c073969e8be2a50e897bd5e078eb520663768e5c63bf3307b15a84",
-        query_available: true,
     },
     Cell {
         name: "sparse-n32-t2n",
@@ -72,7 +70,6 @@ const CELLS: [Cell; 5] = [
         seed: 23_202,
         family: Family::SparseT { n_t: 64 },
         campaign_content_hash: "9f66034d85dc8f4296f04704f153ec0dd1aa290b8d6fedcd3811b1d3b5f6ca09",
-        query_available: true,
     },
     Cell {
         name: "sparse-n64-t2n",
@@ -80,7 +77,6 @@ const CELLS: [Cell; 5] = [
         seed: 26_402,
         family: Family::SparseT { n_t: 128 },
         campaign_content_hash: "f1f4846a69f8a6d5aac115f27e653e5dd490de1459e10049151f5ec78cdacee7",
-        query_available: false,
     },
     Cell {
         name: "dense-n16-l6",
@@ -88,7 +84,6 @@ const CELLS: [Cell; 5] = [
         seed: 40_016,
         family: Family::DenseRotation { layers: 6 },
         campaign_content_hash: "690dee8fb46dacd2aafae818b1d99efe29fa451c300f22ffe3b2eb1eadf830c6",
-        query_available: true,
     },
 ];
 
@@ -327,46 +322,76 @@ fn probability_hash(probabilities: &[f64]) -> u64 {
 #[derive(Clone, Default)]
 struct RunSummary {
     sim_seconds: f64,
-    query_seconds: Option<f64>,
+    profiled_sim_seconds: f64,
+    query_seconds: f64,
     expectation_seconds: f64,
     pre_reduction_seconds: f64,
+    decomposition_seconds: f64,
     projection_seconds: f64,
-    post_projection_seconds: f64,
+    post_projection_qr_seconds: f64,
+    post_projection_svd_seconds: f64,
+    survival_seconds: f64,
+    normalization_seconds: f64,
+    bookkeeping_seconds: f64,
+    query_residual_seconds: f64,
     cascade_seconds: f64,
     add_seconds: f64,
     disent_seconds: f64,
     ofd_avoidable_seconds: f64,
     stats: StabMpsStats,
-    output_hash: Option<u64>,
+    signed_eigenstates: SignedEigenstateTelemetry,
+    output_hash: u64,
 }
 
-fn query_totals(profile: &ProbabilityQueryTelemetry) -> (f64, f64, f64, f64, u64, u64) {
-    profile.by_depth.iter().fold(
-        (0.0, 0.0, 0.0, 0.0, 0, 0),
-        |(expectation, pre, projection, post, svds, capped), depth| {
-            (
-                expectation + depth.expectation.wall_time_seconds,
-                pre + depth.pre_reduction.wall_time_seconds,
-                projection + depth.projection.wall_time_seconds,
-                post + depth.post_projection.wall_time_seconds,
-                svds + depth.expectation.svd_operations
-                    + depth.pre_reduction.svd_operations
-                    + depth.projection.svd_operations
-                    + depth.post_projection.svd_operations,
-                capped
-                    + depth.expectation.capped_svd_operations
-                    + depth.pre_reduction.capped_svd_operations
-                    + depth.projection.capped_svd_operations
-                    + depth.post_projection.capped_svd_operations,
-            )
-        },
-    )
+#[derive(Clone, Copy, Default)]
+struct QueryTotals {
+    expectation: f64,
+    pre_reduction: f64,
+    decomposition: f64,
+    projection: f64,
+    post_projection_qr: f64,
+    post_projection_svd: f64,
+    survival: f64,
+    normalization: f64,
+    bookkeeping: f64,
+    svds: u64,
+    capped_svds: u64,
+}
+
+fn query_totals(profile: &ProbabilityQueryTelemetry) -> QueryTotals {
+    let mut totals = QueryTotals::default();
+    for depth in &profile.by_depth {
+        totals.expectation += depth.expectation.wall_time_seconds;
+        totals.pre_reduction += depth.pre_reduction.wall_time_seconds;
+        totals.decomposition += depth.decomposition.wall_time_seconds;
+        totals.projection += depth.projection.wall_time_seconds;
+        totals.post_projection_qr += depth.post_projection_qr.wall_time_seconds;
+        totals.post_projection_svd += depth.post_projection_svd.wall_time_seconds;
+        totals.survival += depth.survival.wall_time_seconds;
+        totals.normalization += depth.normalization.wall_time_seconds;
+        totals.bookkeeping += depth.bookkeeping.wall_time_seconds;
+        for phase in [
+            &depth.expectation,
+            &depth.pre_reduction,
+            &depth.decomposition,
+            &depth.projection,
+            &depth.post_projection_qr,
+            &depth.post_projection_svd,
+            &depth.survival,
+            &depth.normalization,
+            &depth.bookkeeping,
+        ] {
+            totals.svds += phase.svd_operations;
+            totals.capped_svds += phase.capped_svd_operations;
+        }
+    }
+    totals
 }
 
 fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetry) {
     for (depth, bucket) in profile.by_depth.iter().enumerate() {
         println!(
-            "DEPTH cell={} run={} depth={} calls={} expectation_s={:.9} expectation_svds={} expectation_capped={} pre_s={:.9} pre_svds={} pre_capped={} projection_s={:.9} projection_svds={} projection_capped={} post_s={:.9} post_svds={} post_capped={}",
+            "DEPTH cell={} run={} depth={} calls={} expectation_s={:.9} expectation_svds={} expectation_capped={} pre_s={:.9} pre_svds={} pre_capped={} decomposition_s={:.9} decomposition_svds={} decomposition_capped={} projection_s={:.9} projection_svds={} projection_capped={} qr_s={:.9} qr_svds={} qr_capped={} svd_s={:.9} svd_svds={} svd_capped={} survival_s={:.9} survival_svds={} survival_capped={} normalization_s={:.9} normalization_svds={} normalization_capped={} bookkeeping_s={:.9} bookkeeping_svds={} bookkeeping_capped={} attributed_s={:.9}",
             cell.name,
             run,
             depth,
@@ -377,14 +402,53 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
             bucket.pre_reduction.wall_time_seconds,
             bucket.pre_reduction.svd_operations,
             bucket.pre_reduction.capped_svd_operations,
+            bucket.decomposition.wall_time_seconds,
+            bucket.decomposition.svd_operations,
+            bucket.decomposition.capped_svd_operations,
             bucket.projection.wall_time_seconds,
             bucket.projection.svd_operations,
             bucket.projection.capped_svd_operations,
-            bucket.post_projection.wall_time_seconds,
-            bucket.post_projection.svd_operations,
-            bucket.post_projection.capped_svd_operations,
+            bucket.post_projection_qr.wall_time_seconds,
+            bucket.post_projection_qr.svd_operations,
+            bucket.post_projection_qr.capped_svd_operations,
+            bucket.post_projection_svd.wall_time_seconds,
+            bucket.post_projection_svd.svd_operations,
+            bucket.post_projection_svd.capped_svd_operations,
+            bucket.survival.wall_time_seconds,
+            bucket.survival.svd_operations,
+            bucket.survival.capped_svd_operations,
+            bucket.normalization.wall_time_seconds,
+            bucket.normalization.svd_operations,
+            bucket.normalization.capped_svd_operations,
+            bucket.bookkeeping.wall_time_seconds,
+            bucket.bookkeeping.svd_operations,
+            bucket.bookkeeping.capped_svd_operations,
+            bucket.attributed_wall_time_seconds(),
         );
     }
+}
+
+fn print_candidate_branch(
+    cell: Cell,
+    run: usize,
+    branch: &str,
+    telemetry: SignedEigenstateBranchTelemetry,
+) {
+    let candidates = telemetry.candidates;
+    println!(
+        "CANDIDATE cell={} run={} branch={} events={} sites_tested={} candidates={} x_plus={} x_minus={} y_plus={} y_minus={} z_minus={}",
+        cell.name,
+        run,
+        branch,
+        telemetry.events,
+        telemetry.sites_tested,
+        candidates.total(),
+        candidates.x_plus,
+        candidates.x_minus,
+        candidates.y_plus,
+        candidates.y_minus,
+        candidates.z_minus,
+    );
 }
 
 fn print_events(cell: Cell, run: usize, telemetry: &SaturationTelemetry) {
@@ -423,71 +487,106 @@ fn print_events(cell: Cell, run: usize, telemetry: &SaturationTelemetry) {
             cell.name, run, event_index, event.span, bonds, event.wall_time_seconds,
         );
     }
+    print_candidate_branch(
+        cell,
+        run,
+        "multi_disent",
+        telemetry.signed_eigenstates.multi_disent,
+    );
+    print_candidate_branch(
+        cell,
+        run,
+        "multi_std_add",
+        telemetry.signed_eigenstates.multi_std_add,
+    );
+    print_candidate_branch(
+        cell,
+        run,
+        "multi_std_cascade",
+        telemetry.signed_eigenstates.multi_std_cascade,
+    );
 }
 
 fn run_profiled(cell: Cell, run: usize) -> RunSummary {
-    let (simulator, sim_seconds) = simulate(cell, true);
+    let (_, sim_seconds) = simulate(cell, false);
+    let (simulator, profiled_sim_seconds) = simulate(cell, true);
     let telemetry = simulator.saturation_profile();
     let cascade_seconds = telemetry
         .multi_std_events
         .iter()
         .filter(|event| event.subtype == MultiStdSubtype::Cascade)
         .map(|event| event.wall_time_seconds)
-        .sum();
+        .fold(0.0_f64, |total, seconds| total + seconds);
     let add_seconds = telemetry
         .multi_std_events
         .iter()
         .filter(|event| event.subtype == MultiStdSubtype::Add)
         .map(|event| event.wall_time_seconds)
-        .sum();
+        .fold(0.0_f64, |total, seconds| total + seconds);
     let disent_seconds = telemetry
         .multi_disent_events
         .iter()
         .map(|event| event.wall_time_seconds)
-        .sum();
+        .fold(0.0_f64, |total, seconds| total + seconds);
     let ofd_avoidable_seconds = telemetry
         .multi_std_events
         .iter()
         .filter(|event| event.ofd_in_span)
         .map(|event| event.wall_time_seconds)
-        .sum();
+        .fold(0.0_f64, |total, seconds| total + seconds);
     print_events(cell, run, telemetry);
 
     let mut summary = RunSummary {
         sim_seconds,
+        profiled_sim_seconds,
         cascade_seconds,
         add_seconds,
         disent_seconds,
         ofd_avoidable_seconds,
         stats: simulator.stats,
+        signed_eigenstates: telemetry.signed_eigenstates,
         ..RunSummary::default()
     };
-    if cell.query_available {
-        let query_started = Instant::now();
-        let (probabilities, profile) =
-            simulator.prob_bitstrings_profiled(&queries(cell.n, cell.seed));
-        summary.query_seconds = Some(query_started.elapsed().as_secs_f64());
-        summary.output_hash = Some(probability_hash(&probabilities));
-        let (expectation, pre, projection, post, svds, capped) = query_totals(&profile);
-        summary.expectation_seconds = expectation;
-        summary.pre_reduction_seconds = pre;
-        summary.projection_seconds = projection;
-        summary.post_projection_seconds = post;
-        print_query_depths(cell, run, &profile);
-        println!(
-            "QUERY_OPS cell={} run={} svds={} capped_svds={}",
-            cell.name, run, svds, capped
-        );
-    }
+    let query_set = queries(cell.n, cell.seed);
+    let (probabilities, profile) = simulator.prob_bitstrings_profiled(&query_set);
+    assert!(profile.phase_scopes_disjoint());
+    let attributed_seconds = profile.attributed_wall_time_seconds();
+    assert!(
+        attributed_seconds <= profile.whole_call_wall_time_seconds,
+        "disjoint phase time cannot exceed the complete query call"
+    );
+    summary.query_seconds = profile.whole_call_wall_time_seconds;
+    summary.query_residual_seconds = profile.whole_call_wall_time_seconds - attributed_seconds;
+    summary.output_hash = probability_hash(&probabilities);
+    let totals = query_totals(&profile);
+    summary.expectation_seconds = totals.expectation;
+    summary.pre_reduction_seconds = totals.pre_reduction;
+    summary.decomposition_seconds = totals.decomposition;
+    summary.projection_seconds = totals.projection;
+    summary.post_projection_qr_seconds = totals.post_projection_qr;
+    summary.post_projection_svd_seconds = totals.post_projection_svd;
+    summary.survival_seconds = totals.survival;
+    summary.normalization_seconds = totals.normalization;
+    summary.bookkeeping_seconds = totals.bookkeeping;
+    print_query_depths(cell, run, &profile);
     println!(
-        "RUN cell={} run={} sim_s={:.9} query_s={} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} expectation_s={:.9} pre_s={:.9} projection_s={:.9} post_s={:.9} cascade_s={:.9} add_s={:.9} disent_s={:.9} ofd_avoidable_s={:.9} output_hash={}",
+        "QUERY_OPS cell={} run={} svds={} capped_svds={} attributed_s={:.9} whole_call_s={:.9} trie_clone_residual_s={:.9}",
+        cell.name,
+        run,
+        totals.svds,
+        totals.capped_svds,
+        attributed_seconds,
+        profile.whole_call_wall_time_seconds,
+        summary.query_residual_seconds,
+    );
+    println!(
+        "RUN cell={} run={} sim_s={:.9} profiled_sim_s={:.9} telemetry_on_overhead_s={:.9} query_s={:.9} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} expectation_s={:.9} pre_s={:.9} decomposition_s={:.9} projection_s={:.9} qr_s={:.9} svd_s={:.9} survival_s={:.9} normalization_s={:.9} bookkeeping_s={:.9} trie_clone_residual_s={:.9} cascade_s={:.9} add_s={:.9} disent_s={:.9} ofd_avoidable_s={:.9} output_hash={:016x}",
         cell.name,
         run,
         summary.sim_seconds,
-        summary.query_seconds.map_or_else(
-            || "unavailable-issue-586".to_owned(),
-            |value| format!("{value:.9}")
-        ),
+        summary.profiled_sim_seconds,
+        summary.profiled_sim_seconds - summary.sim_seconds,
+        summary.query_seconds,
         summary.stats.multi_std,
         summary.stats.multi_std_add,
         summary.stats.multi_std_cascade,
@@ -496,63 +595,70 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
         summary.stats.ofd_in_span_std,
         summary.expectation_seconds,
         summary.pre_reduction_seconds,
+        summary.decomposition_seconds,
         summary.projection_seconds,
-        summary.post_projection_seconds,
+        summary.post_projection_qr_seconds,
+        summary.post_projection_svd_seconds,
+        summary.survival_seconds,
+        summary.normalization_seconds,
+        summary.bookkeeping_seconds,
+        summary.query_residual_seconds,
         summary.cascade_seconds,
         summary.add_seconds,
         summary.disent_seconds,
         summary.ofd_avoidable_seconds,
-        summary.output_hash.map_or_else(
-            || "unavailable-issue-586".to_owned(),
-            |hash| format!("{hash:016x}")
-        ),
+        summary.output_hash,
     );
     summary
 }
 
-fn median(values: impl Iterator<Item = f64>) -> f64 {
-    let mut values: Vec<f64> = values.collect();
-    values.sort_by(f64::total_cmp);
-    if values.len().is_multiple_of(2) {
-        f64::midpoint(values[values.len() / 2 - 1], values[values.len() / 2])
-    } else {
-        values[values.len() / 2]
-    }
+fn median_run_by(runs: &[RunSummary], key: impl Fn(&RunSummary) -> f64) -> (usize, &RunSummary) {
+    let mut indexed: Vec<(usize, &RunSummary)> = runs.iter().enumerate().collect();
+    indexed.sort_by(|(_, left), (_, right)| key(left).total_cmp(&key(right)));
+    indexed[(indexed.len() - 1) / 2]
 }
 
 fn print_summary(cell: Cell, runs: &[RunSummary]) {
-    let query_seconds = cell
-        .query_available
-        .then(|| median(runs.iter().filter_map(|run| run.query_seconds)));
+    let (sim_run_index, sim_run) = median_run_by(runs, |run| run.sim_seconds);
+    let (query_run_index, query_run) = median_run_by(runs, |run| run.query_seconds);
     let first = &runs[0];
     assert!(runs.iter().all(|run| run.output_hash == first.output_hash));
+    assert!(
+        runs.iter()
+            .all(|run| run.signed_eigenstates == first.signed_eigenstates),
+        "candidate populations must be deterministic"
+    );
     println!(
-        "SUMMARY cell={} repetitions={} sim_median_s={:.9} query_median_s={} expectation_median_s={:.9} pre_median_s={:.9} projection_median_s={:.9} post_median_s={:.9} cascade_median_s={:.9} add_median_s={:.9} disent_median_s={:.9} ofd_avoidable_median_s={:.9} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} output_hash={}",
+        "SUMMARY cell={} repetitions={} sim_median_run={} query_median_run={} sim_median_s={:.9} profiled_sim_s={:.9} telemetry_on_overhead_s={:.9} query_median_s={:.9} expectation_s={:.9} pre_s={:.9} decomposition_s={:.9} projection_s={:.9} qr_s={:.9} svd_s={:.9} survival_s={:.9} normalization_s={:.9} bookkeeping_s={:.9} trie_clone_residual_s={:.9} cascade_s={:.9} add_s={:.9} disent_s={:.9} ofd_avoidable_s={:.9} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} output_hash={:016x}",
         cell.name,
         runs.len(),
-        median(runs.iter().map(|run| run.sim_seconds)),
-        query_seconds.map_or_else(
-            || "unavailable-issue-586".to_owned(),
-            |value| format!("{value:.9}")
-        ),
-        median(runs.iter().map(|run| run.expectation_seconds)),
-        median(runs.iter().map(|run| run.pre_reduction_seconds)),
-        median(runs.iter().map(|run| run.projection_seconds)),
-        median(runs.iter().map(|run| run.post_projection_seconds)),
-        median(runs.iter().map(|run| run.cascade_seconds)),
-        median(runs.iter().map(|run| run.add_seconds)),
-        median(runs.iter().map(|run| run.disent_seconds)),
-        median(runs.iter().map(|run| run.ofd_avoidable_seconds)),
+        sim_run_index,
+        query_run_index,
+        sim_run.sim_seconds,
+        sim_run.profiled_sim_seconds,
+        sim_run.profiled_sim_seconds - sim_run.sim_seconds,
+        query_run.query_seconds,
+        query_run.expectation_seconds,
+        query_run.pre_reduction_seconds,
+        query_run.decomposition_seconds,
+        query_run.projection_seconds,
+        query_run.post_projection_qr_seconds,
+        query_run.post_projection_svd_seconds,
+        query_run.survival_seconds,
+        query_run.normalization_seconds,
+        query_run.bookkeeping_seconds,
+        query_run.query_residual_seconds,
+        sim_run.cascade_seconds,
+        sim_run.add_seconds,
+        sim_run.disent_seconds,
+        sim_run.ofd_avoidable_seconds,
         first.stats.multi_std,
         first.stats.multi_std_add,
         first.stats.multi_std_cascade,
         first.stats.multi_disent,
         first.stats.signed_eigenstate_candidates,
         first.stats.ofd_in_span_std,
-        first.output_hash.map_or_else(
-            || "unavailable-issue-586".to_owned(),
-            |hash| format!("{hash:016x}")
-        ),
+        first.output_hash,
     );
 }
 
@@ -594,42 +700,22 @@ fn main() {
     for cell in selected_cells() {
         let gate_count = gates(cell).len();
         println!(
-            "CELL cell={} n={} seed={} gates={} campaign_content_hash={} query_status={}",
-            cell.name,
-            cell.n,
-            cell.seed,
-            gate_count,
-            cell.campaign_content_hash,
-            if cell.query_available {
-                "available"
-            } else {
-                "unavailable-issue-586"
-            },
+            "CELL cell={} n={} seed={} gates={} campaign_content_hash={} query_status=available",
+            cell.name, cell.n, cell.seed, gate_count, cell.campaign_content_hash,
         );
         for warmup in 0..warmups {
             let (simulator, sim_seconds) = simulate(cell, false);
-            let query_seconds = if cell.query_available {
-                let started = Instant::now();
-                let probabilities = simulator.prob_bitstrings(&queries(cell.n, cell.seed));
-                let elapsed = started.elapsed().as_secs_f64();
-                println!(
-                    "WARMUP cell={} warmup={} sim_s={:.9} query_s={:.9} output_hash={:016x}",
-                    cell.name,
-                    warmup,
-                    sim_seconds,
-                    elapsed,
-                    probability_hash(&probabilities),
-                );
-                Some(elapsed)
-            } else {
-                None
-            };
-            if query_seconds.is_none() {
-                println!(
-                    "WARMUP cell={} warmup={} sim_s={:.9} query_s=unavailable-issue-586",
-                    cell.name, warmup, sim_seconds
-                );
-            }
+            let started = Instant::now();
+            let probabilities = simulator.prob_bitstrings(&queries(cell.n, cell.seed));
+            let elapsed = started.elapsed().as_secs_f64();
+            println!(
+                "WARMUP cell={} warmup={} sim_s={:.9} query_s={:.9} output_hash={:016x}",
+                cell.name,
+                warmup,
+                sim_seconds,
+                elapsed,
+                probability_hash(&probabilities),
+            );
         }
         let runs: Vec<RunSummary> = (0..repetitions)
             .map(|run| run_profiled(cell, run))

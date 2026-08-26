@@ -49,6 +49,7 @@ use pecos_random::PecosRng;
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, SparseStabY,
 };
+use std::time::Instant;
 
 fn initial_tableau_and_rng(num_qubits: usize, seed: Option<u64>) -> (SparseStabY, PecosRng) {
     if let Some(seed) = seed {
@@ -885,8 +886,10 @@ pub struct StabMpsStats {
     pub multi_std_add: u64,
     /// Standard multi-site rotations implemented by a long-range CNOT cascade.
     pub multi_std_cascade: u64,
-    /// Product sites rejected by the current detector that a signed X/Y/Z
-    /// Pauli-eigenstate detector could accept.
+    /// Non-`+Z` product-site opportunities rejected by the current detector
+    /// that a signed X/Y/Z Pauli-eigenstate detector could accept. Populated
+    /// only when saturated-regime telemetry is enabled; branch denominators
+    /// and axis/sign counts live in [`SaturationTelemetry::signed_eigenstates`].
     pub signed_eigenstate_candidates: u64,
     /// Non-Cliffords that hit the Stabilizer branch (scalar or diagonal).
     pub stabilizer: u64,
@@ -941,6 +944,88 @@ pub struct MultiDisentEventTelemetry {
     pub wall_time_seconds: f64,
 }
 
+/// Actual multi-site branch whose signed-eigenstate opportunities were tested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignedEigenstateBranch {
+    /// Exact tableau-right-composing disentangling branch.
+    MultiDisent,
+    /// Standard clone/add/compress branch.
+    MultiStdAdd,
+    /// Standard long-range CNOT-cascade branch.
+    MultiStdCascade,
+}
+
+/// Candidate counts separated by detected Pauli axis and eigenvalue sign.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SignedEigenstateBreakdown {
+    /// `|+>` candidates.
+    pub x_plus: u64,
+    /// `|->` candidates.
+    pub x_minus: u64,
+    /// `|+i>` candidates.
+    pub y_plus: u64,
+    /// `|-i>` candidates.
+    pub y_minus: u64,
+    /// `|1>` candidates. `|0>` is deliberately excluded.
+    pub z_minus: u64,
+}
+
+impl SignedEigenstateBreakdown {
+    /// Total candidates across every non-`+Z` axis/sign bucket.
+    #[must_use]
+    pub const fn total(self) -> u64 {
+        self.x_plus + self.x_minus + self.y_plus + self.y_minus + self.z_minus
+    }
+
+    pub(super) fn record(&mut self, eigenstate: SiteEigenstate) {
+        match eigenstate {
+            SiteEigenstate::X(false) => self.x_plus += 1,
+            SiteEigenstate::X(true) => self.x_minus += 1,
+            SiteEigenstate::Y(false) => self.y_plus += 1,
+            SiteEigenstate::Y(true) => self.y_minus += 1,
+            SiteEigenstate::Z(true) => self.z_minus += 1,
+            SiteEigenstate::Z(false) => {
+                unreachable!("+Z is the current criterion, not a signed candidate")
+            }
+        }
+    }
+}
+
+/// Signed-eigenstate candidate numerator and denominators for one actual branch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SignedEigenstateBranchTelemetry {
+    /// Number of multi-site events routed through this branch and inspected.
+    pub events: u64,
+    /// Number of local Pauli-support sites tested across those events.
+    pub sites_tested: u64,
+    /// Candidate numerator by detected axis and sign.
+    pub candidates: SignedEigenstateBreakdown,
+}
+
+/// Signed-eigenstate diagnostics separated by the branch actually taken.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SignedEigenstateTelemetry {
+    /// Exact multi-site disentangling events.
+    pub multi_disent: SignedEigenstateBranchTelemetry,
+    /// Standard clone/add/compress events.
+    pub multi_std_add: SignedEigenstateBranchTelemetry,
+    /// Standard long-range CNOT-cascade events.
+    pub multi_std_cascade: SignedEigenstateBranchTelemetry,
+}
+
+impl SignedEigenstateTelemetry {
+    pub(super) fn branch_mut(
+        &mut self,
+        branch: SignedEigenstateBranch,
+    ) -> &mut SignedEigenstateBranchTelemetry {
+        match branch {
+            SignedEigenstateBranch::MultiDisent => &mut self.multi_disent,
+            SignedEigenstateBranch::MultiStdAdd => &mut self.multi_std_add,
+            SignedEigenstateBranch::MultiStdCascade => &mut self.multi_std_cascade,
+        }
+    }
+}
+
 /// Runtime-gated saturated-regime event details.
 #[derive(Clone, Debug, Default)]
 pub struct SaturationTelemetry {
@@ -948,6 +1033,8 @@ pub struct SaturationTelemetry {
     pub multi_std_events: Vec<MultiStdEventTelemetry>,
     /// One entry for every exact multi-site disentangling rotation.
     pub multi_disent_events: Vec<MultiDisentEventTelemetry>,
+    /// Gauge-independent signed-eigenstate candidates and branch denominators.
+    pub signed_eigenstates: SignedEigenstateTelemetry,
 }
 
 /// Operation counts and wall time for one query phase at one trie depth.
@@ -970,10 +1057,21 @@ pub struct QueryDepthTelemetry {
     pub expectation: QueryPhaseTelemetry,
     /// Compensated tableau-generator pre-reduction.
     pub pre_reduction: QueryPhaseTelemetry,
-    /// Projection construction and tableau update, excluding post-compression.
+    /// Stabilizer/destabilizer decomposition after any pre-reduction.
+    pub decomposition: QueryPhaseTelemetry,
+    /// Projection construction and tableau update.
     pub projection: QueryPhaseTelemetry,
-    /// Post-projection right-canonicalization and configured compression.
-    pub post_projection: QueryPhaseTelemetry,
+    /// Exact post-projection right-canonical QR sweep.
+    pub post_projection_qr: QueryPhaseTelemetry,
+    /// Post-projection configured SVD compression.
+    pub post_projection_svd: QueryPhaseTelemetry,
+    /// Projection survival-ratio contraction.
+    pub survival: QueryPhaseTelemetry,
+    /// Conditional post-projection normalization.
+    pub normalization: QueryPhaseTelemetry,
+    /// Path selection and returned modified-site bookkeeping.
+    pub bookkeeping: QueryPhaseTelemetry,
+    phase_active: bool,
 }
 
 /// Depth-bucketed profile returned by [`StabMps::prob_bitstrings_profiled`].
@@ -981,17 +1079,33 @@ pub struct QueryDepthTelemetry {
 pub struct ProbabilityQueryTelemetry {
     /// Entry `d` contains work performed for trie projections at depth `d`.
     pub by_depth: Vec<QueryDepthTelemetry>,
+    /// Wall time of the complete `prob_bitstrings` call, including trie walks
+    /// and state cloning outside forced projection.
+    pub whole_call_wall_time_seconds: f64,
 }
 
 #[derive(Clone, Copy)]
 pub(super) enum QueryPhase {
     Expectation,
     PreReduction,
+    Decomposition,
     Projection,
-    PostProjection,
+    PostProjectionQr,
+    PostProjectionSvd,
+    Survival,
+    Normalization,
+    Bookkeeping,
 }
 
 impl QueryDepthTelemetry {
+    pub(super) fn begin_phase(&mut self) {
+        assert!(
+            !self.phase_active,
+            "query telemetry phase scopes must be disjoint"
+        );
+        self.phase_active = true;
+    }
+
     pub(super) fn record(
         &mut self,
         phase: QueryPhase,
@@ -999,16 +1113,62 @@ impl QueryDepthTelemetry {
         capped_svd_operations: u64,
         wall_time_seconds: f64,
     ) {
+        assert!(self.phase_active, "query telemetry phase was not started");
+        self.phase_active = false;
         let target = match phase {
             QueryPhase::Expectation => &mut self.expectation,
             QueryPhase::PreReduction => &mut self.pre_reduction,
+            QueryPhase::Decomposition => &mut self.decomposition,
             QueryPhase::Projection => &mut self.projection,
-            QueryPhase::PostProjection => &mut self.post_projection,
+            QueryPhase::PostProjectionQr => &mut self.post_projection_qr,
+            QueryPhase::PostProjectionSvd => &mut self.post_projection_svd,
+            QueryPhase::Survival => &mut self.survival,
+            QueryPhase::Normalization => &mut self.normalization,
+            QueryPhase::Bookkeeping => &mut self.bookkeeping,
         };
         target.calls += 1;
         target.svd_operations += svd_operations;
         target.capped_svd_operations += capped_svd_operations;
         target.wall_time_seconds += wall_time_seconds;
+    }
+
+    /// Sum of every disjoint phase bucket at this trie depth.
+    #[must_use]
+    pub fn attributed_wall_time_seconds(&self) -> f64 {
+        self.expectation.wall_time_seconds
+            + self.pre_reduction.wall_time_seconds
+            + self.decomposition.wall_time_seconds
+            + self.projection.wall_time_seconds
+            + self.post_projection_qr.wall_time_seconds
+            + self.post_projection_svd.wall_time_seconds
+            + self.survival.wall_time_seconds
+            + self.normalization.wall_time_seconds
+            + self.bookkeeping.wall_time_seconds
+    }
+
+    /// Return whether every phase scope at this depth closed without overlap.
+    #[must_use]
+    pub const fn phase_scopes_disjoint(&self) -> bool {
+        !self.phase_active
+    }
+}
+
+impl ProbabilityQueryTelemetry {
+    /// Sum of all depth-bucketed phase wall times.
+    #[must_use]
+    pub fn attributed_wall_time_seconds(&self) -> f64 {
+        self.by_depth
+            .iter()
+            .map(QueryDepthTelemetry::attributed_wall_time_seconds)
+            .sum()
+    }
+
+    /// Return whether all depth-local timing scopes completed without nesting.
+    #[must_use]
+    pub fn phase_scopes_disjoint(&self) -> bool {
+        self.by_depth
+            .iter()
+            .all(QueryDepthTelemetry::phase_scopes_disjoint)
     }
 }
 
@@ -1594,8 +1754,11 @@ impl StabMps {
     ) -> (Vec<f64>, ProbabilityQueryTelemetry) {
         let mut telemetry = ProbabilityQueryTelemetry {
             by_depth: vec![QueryDepthTelemetry::default(); self.num_qubits],
+            whole_call_wall_time_seconds: 0.0,
         };
+        let started = Instant::now();
         let probabilities = self.prob_bitstrings_impl(bitstrings, Some(&mut telemetry));
+        telemetry.whole_call_wall_time_seconds = started.elapsed().as_secs_f64();
         (probabilities, telemetry)
     }
 

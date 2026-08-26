@@ -555,6 +555,18 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
         attributed_seconds <= profile.whole_call_wall_time_seconds,
         "disjoint phase time cannot exceed the complete query call"
     );
+    // The upper bound alone would still pass if a phase scope were dropped
+    // entirely, quietly shrinking the attribution. Bound the residual too --
+    // but only for calls long enough that timer overhead is negligible
+    // (microsecond-scale calls spend ~11% of themselves in `Instant`).
+    if profile.whole_call_wall_time_seconds > 0.1 {
+        assert!(
+            attributed_seconds >= 0.95 * profile.whole_call_wall_time_seconds,
+            "attribution lost {:.2}% of a {:.3} s query; a phase scope is missing",
+            100.0 * (1.0 - attributed_seconds / profile.whole_call_wall_time_seconds),
+            profile.whole_call_wall_time_seconds
+        );
+    }
     summary.query_seconds = profile.whole_call_wall_time_seconds;
     summary.query_residual_seconds = profile.whole_call_wall_time_seconds - attributed_seconds;
     summary.output_hash = probability_hash(&probabilities);

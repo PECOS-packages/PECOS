@@ -984,9 +984,14 @@ impl SignedEigenstateBreakdown {
             SiteEigenstate::Y(false) => self.y_plus += 1,
             SiteEigenstate::Y(true) => self.y_minus += 1,
             SiteEigenstate::Z(true) => self.z_minus += 1,
-            SiteEigenstate::Z(false) => {
-                unreachable!("+Z is the current criterion, not a signed candidate")
-            }
+            // +Z is the current criterion, not a signed candidate; the sole
+            // call site excludes it. Skip rather than panic: a data-dependent
+            // release panic on a diagnostic path would be worse than a
+            // miscount in telemetry that changes no result.
+            SiteEigenstate::Z(false) => debug_assert!(
+                false,
+                "+Z reached the signed-candidate breakdown despite its exclusion"
+            ),
         }
     }
 }

@@ -2654,6 +2654,11 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                     profile.attributed_wall_time_seconds() <= profile.whole_call_wall_time_seconds,
                     "disjoint phase sum exceeded the complete query call"
                 );
+                // A lower bound belongs here in principle, but not at this
+                // scale: these queries run in microseconds, where `Instant`
+                // overhead alone is ~11% of the call. The residual bound is
+                // enforced in the campaign example instead, where calls are
+                // long enough for it to mean something.
                 assert_eq!(
                     profile
                         .by_depth

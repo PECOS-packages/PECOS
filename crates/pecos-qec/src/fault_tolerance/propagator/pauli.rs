@@ -15,12 +15,24 @@
 //! This module provides functions for propagating Pauli operators forward and backward
 //! through quantum circuits. This is the foundation of fault tolerance analysis.
 
-use super::PauliFault;
+use super::{PauliFault, is_supported_noop_or_metadata_gate, is_supported_prep_gate};
 use pecos_core::gate_type::GateType;
 use pecos_core::{half_turn_decomposition, try_simplify_r1xy, try_simplify_rotation};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
 use smallvec::SmallVec;
+
+/// Whether a gate was faithfully handled by Pauli propagation.
+///
+/// `Propagated` includes gates that are intentionally transparent to Pauli
+/// propagation. `Unsupported` means the gate changes quantum state in a way
+/// this Pauli-only representation cannot express.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum PauliPropagationOutcome {
+    Propagated,
+    Unsupported,
+}
 
 // ============================================================================
 // Direction and Unified Propagation
@@ -74,10 +86,49 @@ fn consecutive_pairs(
 ///   walkers that model resets clear at their own call sites)
 /// - **Measure gates**: collapse via [`cross_measurement`] -- the component that
 ///   commutes with the measurement in the direction of travel is absorbed
+///
+/// Rotation eligibility follows the core lowering policy. Axis rotations such
+/// as `RZ` require exact Clifford-angle equality, while `R1XY` snaps angles
+/// within `1e-9` turns of its Clifford grid. [`InfluenceBuilder`](crate::fault_tolerance::InfluenceBuilder)
+/// is intentionally more conservative: its symbolic replay accepts `RX`,
+/// `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, and `CRZ` only with one exactly-zero
+/// angle, and rejects every `R1XY`, including `R1XY(0, phi)`.
+///
+/// Returns [`PauliPropagationOutcome::Unsupported`] when the gate changes the
+/// state in a way this Pauli-only representation cannot faithfully express, or
+/// when its payload fails [`pecos_core::Gate::validate`].
 #[inline]
-pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Direction) {
+pub fn apply_gate(
+    prop: &mut PauliProp,
+    gate: &pecos_core::Gate,
+    direction: Direction,
+) -> PauliPropagationOutcome {
+    if gate.validate().is_err() {
+        return PauliPropagationOutcome::Unsupported;
+    }
+
+    apply_gate_unchecked(prop, gate, direction)
+}
+
+/// Apply a gate after a circuit-level preflight has validated its payload.
+///
+/// Unlike [`apply_gate`], this dispatcher deliberately avoids
+/// [`pecos_core::Gate::validate`] so repeated propagation walks do not allocate
+/// and sort the gate's qubits again. Its angle access remains bounds-safe so
+/// permissive non-DEM callers cannot panic if they bypass a preflight.
+#[inline]
+pub(crate) fn apply_gate_unchecked(
+    prop: &mut PauliProp,
+    gate: &pecos_core::Gate,
+    direction: Direction,
+) -> PauliPropagationOutcome {
+    if is_supported_prep_gate(gate.gate_type) || is_supported_noop_or_metadata_gate(gate.gate_type)
+    {
+        return PauliPropagationOutcome::Propagated;
+    }
+
     if apply_named_gate(prop, gate.gate_type, &gate.qubits, direction) {
-        return;
+        return PauliPropagationOutcome::Propagated;
     }
 
     match gate.gate_type {
@@ -87,27 +138,41 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
         | GateType::RZZ
         | GateType::RXX
         | GateType::RYY => {
-            if let Some(&angle) = gate.angles.first() {
-                if let Some(clifford) = try_simplify_rotation(gate.gate_type, angle) {
-                    let _ = apply_named_gate(prop, clifford, &gate.qubits, direction);
-                    return;
-                }
+            let Some(&angle) = gate.angles.first() else {
+                return PauliPropagationOutcome::Unsupported;
+            };
+            if let Some(clifford) = try_simplify_rotation(gate.gate_type, angle) {
+                return if apply_named_gate(prop, clifford, &gate.qubits, direction) {
+                    PauliPropagationOutcome::Propagated
+                } else {
+                    PauliPropagationOutcome::Unsupported
+                };
+            }
 
-                if let Some(pauli) = half_turn_decomposition(gate.gate_type, angle) {
-                    for &qubit in &gate.qubits {
-                        let _ = apply_named_gate(prop, pauli, &[qubit], direction);
+            if let Some(pauli) = half_turn_decomposition(gate.gate_type, angle) {
+                for &qubit in &gate.qubits {
+                    if !apply_named_gate(prop, pauli, &[qubit], direction) {
+                        return PauliPropagationOutcome::Unsupported;
                     }
                 }
+                return PauliPropagationOutcome::Propagated;
             }
+            PauliPropagationOutcome::Unsupported
         }
         GateType::R1XY if gate.angles.len() >= 2 => {
             let theta = gate.angles[0];
             let phi = gate.angles[1];
             if let Some(clifford) = try_simplify_r1xy(theta, phi) {
-                let _ = apply_named_gate(prop, clifford, &gate.qubits, direction);
+                if apply_named_gate(prop, clifford, &gate.qubits, direction) {
+                    PauliPropagationOutcome::Propagated
+                } else {
+                    PauliPropagationOutcome::Unsupported
+                }
+            } else {
+                PauliPropagationOutcome::Unsupported
             }
         }
-        _ => {}
+        _ => PauliPropagationOutcome::Unsupported,
     }
 }
 
@@ -380,14 +445,14 @@ pub fn propagate_through_circuit(
         Direction::Forward => {
             for tick in circuit.ticks() {
                 for gate in tick.iter_gate_batches() {
-                    apply_gate(prop, gate.as_gate(), direction);
+                    let _outcome = apply_gate(prop, gate.as_gate(), direction);
                 }
             }
         }
         Direction::Backward => {
             for tick in circuit.ticks().iter().rev() {
                 for gate in tick.iter_gate_batches() {
-                    apply_gate(prop, gate.as_gate(), direction);
+                    let _outcome = apply_gate(prop, gate.as_gate(), direction);
                 }
             }
         }
@@ -421,7 +486,7 @@ pub fn propagate_tick_range(
             for tick_idx in start..=end {
                 let tick = &circuit.ticks()[tick_idx];
                 for gate in tick.iter_gate_batches() {
-                    apply_gate(prop, gate.as_gate(), direction);
+                    let _outcome = apply_gate(prop, gate.as_gate(), direction);
                 }
             }
         }
@@ -429,7 +494,7 @@ pub fn propagate_tick_range(
             for tick_idx in (start..=end).rev() {
                 let tick = &circuit.ticks()[tick_idx];
                 for gate in tick.iter_gate_batches() {
-                    apply_gate(prop, gate.as_gate(), direction);
+                    let _outcome = apply_gate(prop, gate.as_gate(), direction);
                 }
             }
         }
@@ -647,7 +712,7 @@ mod batched_pair_tests {
                         let mut prop = seeded(seed);
                         let gate =
                             Gate::simple(gate_type, vec![0.into(), 1.into(), 2.into(), 3.into()]);
-                        apply_gate(&mut prop, &gate, direction);
+                        let _outcome = apply_gate(&mut prop, &gate, direction);
                         signature(&prop)
                     };
                     let split = {
@@ -655,7 +720,7 @@ mod batched_pair_tests {
                         for pair in [[0usize, 1], [2, 3]] {
                             let gate =
                                 Gate::simple(gate_type, vec![pair[0].into(), pair[1].into()]);
-                            apply_gate(&mut prop, &gate, direction);
+                            let _outcome = apply_gate(&mut prop, &gate, direction);
                         }
                         signature(&prop)
                     };
@@ -690,7 +755,7 @@ mod batched_pair_tests {
                 let mut prop = seeded(seed);
                 let before = signature(&prop);
                 let gate = Gate::simple(gate_type, vec![2.into(), 3.into()]);
-                apply_gate(&mut prop, &gate, Direction::Forward);
+                let _outcome = apply_gate(&mut prop, &gate, Direction::Forward);
                 signature(&prop) != before
             });
             assert!(

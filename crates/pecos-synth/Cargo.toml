@@ -1,0 +1,19 @@
+[package]
+name = "pecos-synth"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+description = "Exact ring arithmetic for Clifford+T synthesis"
+
+[dependencies]
+num-bigint.workspace = true
+num-traits.workspace = true
+
+[lints]
+workspace = true

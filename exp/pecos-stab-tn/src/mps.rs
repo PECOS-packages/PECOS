@@ -99,6 +99,11 @@ pub struct Mps {
     /// Number of SVDs that were capped by `max_bond_dim` (rank-limited rather
     /// than cutoff-limited). If > 0 the caller may want to raise `max_bond_dim`.
     bond_cap_hits: u64,
+    /// Phase-local count of SVD operations. Profiling code clears this before
+    /// each measured phase, so clone/add history cannot masquerade as work.
+    phase_svd_operations: u64,
+    /// Phase-local subset of `phase_svd_operations` at which the bond cap bound.
+    phase_capped_svd_operations: u64,
     /// True sum of every relative singular-value weight discarded by an SVD.
     summed_discarded_weight: f64,
     /// Largest bond dimension held by this MPS during its lifetime.
@@ -224,6 +229,8 @@ impl Mps {
             config,
             truncation_error: 0.0,
             bond_cap_hits: 0,
+            phase_svd_operations: 0,
+            phase_capped_svd_operations: 0,
             summed_discarded_weight: 0.0,
             lifetime_peak_bond: 1,
             branch_vanish_retry_count: 0,
@@ -297,6 +304,8 @@ impl Mps {
     pub fn reset_truncation_stats(&mut self) {
         self.truncation_error = 0.0;
         self.bond_cap_hits = 0;
+        self.phase_svd_operations = 0;
+        self.phase_capped_svd_operations = 0;
         self.summed_discarded_weight = 0.0;
         self.branch_vanish_retry_count = 0;
         self.deferred_branch_lost_count = 0;
@@ -307,13 +316,28 @@ impl Mps {
 
     /// Record the outcome of one truncated SVD for telemetry.
     pub(crate) fn record_truncation(&mut self, discarded_weight: f64, hit_cap: bool) {
+        self.phase_svd_operations += 1;
         if discarded_weight > 0.0 {
             self.truncation_error += (1.0 - self.truncation_error) * discarded_weight;
             self.summed_discarded_weight += discarded_weight;
         }
         if hit_cap {
             self.bond_cap_hits += 1;
+            self.phase_capped_svd_operations += 1;
         }
+    }
+
+    /// Clear the operation counters used by query-phase profiling.
+    pub(crate) fn reset_phase_svd_operations(&mut self) {
+        self.phase_svd_operations = 0;
+        self.phase_capped_svd_operations = 0;
+    }
+
+    /// Take and clear the operation counters used by query-phase profiling.
+    pub(crate) fn take_phase_svd_operations(&mut self) -> (u64, u64) {
+        let result = (self.phase_svd_operations, self.phase_capped_svd_operations);
+        self.reset_phase_svd_operations();
+        result
     }
 
     pub(crate) fn record_branch_vanish_retry(&mut self) {
@@ -1068,6 +1092,9 @@ impl Mps {
             config: self.config.clone(),
             truncation_error: self.truncation_error.max(other.truncation_error),
             bond_cap_hits: self.bond_cap_hits + other.bond_cap_hits,
+            phase_svd_operations: self.phase_svd_operations + other.phase_svd_operations,
+            phase_capped_svd_operations: self.phase_capped_svd_operations
+                + other.phase_capped_svd_operations,
             summed_discarded_weight: self
                 .summed_discarded_weight
                 .max(other.summed_discarded_weight),
@@ -1386,6 +1413,8 @@ impl Clone for Mps {
             config: self.config.clone(),
             truncation_error: self.truncation_error,
             bond_cap_hits: self.bond_cap_hits,
+            phase_svd_operations: self.phase_svd_operations,
+            phase_capped_svd_operations: self.phase_capped_svd_operations,
             summed_discarded_weight: self.summed_discarded_weight,
             lifetime_peak_bond: self.lifetime_peak_bond,
             branch_vanish_retry_count: self.branch_vanish_retry_count,

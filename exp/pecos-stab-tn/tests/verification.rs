@@ -2613,7 +2613,37 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                     .map(|bits| stn.prob_bitstring(bits))
                     .collect::<Vec<_>>();
                 let batched = stn.prob_bitstrings(&queries);
+                let (profiled, profile) = stn.prob_bitstrings_profiled(&queries);
                 assert_eq!(batched.len(), queries.len());
+                assert_eq!(
+                    profiled
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    batched
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    "profiled query changed outputs for truncating={truncating} n={num_qubits} seed={circuit_seed}"
+                );
+                assert!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.expectation.calls)
+                        .sum::<u64>()
+                        > 0,
+                    "profiled query recorded no projection calls"
+                );
+                assert!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.post_projection.svd_operations)
+                        .sum::<u64>()
+                        > 0,
+                    "profiled query recorded no post-projection SVDs"
+                );
                 for (query_index, (&actual, &expected)) in batched.iter().zip(&singular).enumerate()
                 {
                     assert_eq!(
@@ -3206,6 +3236,7 @@ fn test_numerical_flag_redetection_rejects_nonzero_product_site() {
     let mut stn = StabMps::builder(2)
         .merge_rz(false)
         .numerical_flag_redetection(true)
+        .saturation_telemetry(true)
         .build();
     let mut oracle = pecos_simulators::DenseStateVec::new(2);
 
@@ -3220,6 +3251,8 @@ fn test_numerical_flag_redetection_rejects_nonzero_product_site() {
 
     assert_eq!(stn.stats.numerical_redetect, 0);
     assert_eq!(stn.stats.multi_std, 1);
+    assert_eq!(stn.stats.multi_std_add + stn.stats.multi_std_cascade, 1);
+    assert_eq!(stn.saturation_profile().multi_std_events.len(), 1);
     let expected = (0..4)
         .map(|idx| oracle.get_amplitude(idx))
         .collect::<Vec<_>>();

@@ -29,6 +29,7 @@ use crate::mps::Mps;
 use nalgebra::DMatrix;
 use num_complex::Complex64;
 use pecos_simulators::SparseStabY;
+use std::time::Instant;
 
 fn z_diag() -> [Complex64; 2] {
     [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)]
@@ -102,6 +103,87 @@ enum PauliType {
     Y, // Both flip AND sign on the same site. In Y convention: Y = iXZ (Hermitian).
 }
 
+fn signed_product_eigenstate_axis(mps: &Mps, site: usize) -> Option<PauliType> {
+    const TOLERANCE: f64 = 1e-12;
+    const MIN_NORM_SQUARED: f64 = 1e-30;
+
+    if mps.bond_dim(site) != 1 || mps.bond_dim(site + 1) != 1 {
+        return None;
+    }
+    let tensor = &mps.tensors()[site];
+    let zero = tensor[(0, 0)];
+    let one = tensor[(0, 1)];
+    let norm_squared = zero.norm_sqr() + one.norm_sqr();
+    if norm_squared <= MIN_NORM_SQUARED {
+        return None;
+    }
+    let overlap = zero.conj() * one;
+    let bloch = [
+        2.0 * overlap.re / norm_squared,
+        2.0 * overlap.im / norm_squared,
+        (zero.norm_sqr() - one.norm_sqr()) / norm_squared,
+    ];
+    let axes = [PauliType::X, PauliType::Y, PauliType::Z];
+    bloch
+        .iter()
+        .zip(axes)
+        .find_map(|(&component, axis)| ((component.abs() - 1.0).abs() <= TOLERANCE).then_some(axis))
+}
+
+fn multi_std_event_start(
+    mps: &Mps,
+    affected_sites: &[usize],
+    enabled: bool,
+) -> Option<(Instant, usize, Vec<usize>)> {
+    if !enabled {
+        return None;
+    }
+    let first = affected_sites[0];
+    let last = *affected_sites
+        .last()
+        .expect("multi-site support must be non-empty");
+    let bonds = (first + 1..=last).map(|bond| mps.bond_dim(bond)).collect();
+    Some((Instant::now(), last - first, bonds))
+}
+
+fn finish_multi_std_event(
+    telemetry: &mut Option<&mut super::SaturationTelemetry>,
+    started: Option<(Instant, usize, Vec<usize>)>,
+    subtype: super::MultiStdSubtype,
+    ofd_in_span: bool,
+) {
+    if let (Some(telemetry), Some((started, span, bond_profile))) =
+        (telemetry.as_deref_mut(), started)
+    {
+        telemetry
+            .multi_std_events
+            .push(super::MultiStdEventTelemetry {
+                subtype,
+                span,
+                bond_profile,
+                ofd_in_span,
+                wall_time_seconds: started.elapsed().as_secs_f64(),
+            });
+    }
+}
+
+fn finish_multi_disent_event(
+    telemetry: &mut Option<&mut super::SaturationTelemetry>,
+    started: Option<(Instant, usize, Vec<usize>)>,
+) {
+    if let (Some(telemetry), Some((started, span, bond_profile))) =
+        (telemetry.as_deref_mut(), started)
+    {
+        telemetry
+            .multi_disent_events
+            .push(super::MultiDisentEventTelemetry {
+                span,
+                bond_profile,
+                wall_time_seconds: started.elapsed().as_secs_f64(),
+            });
+    }
+}
+
 /// Mutable context carried alongside the rotation decomposition.
 pub struct RzContext<'a> {
     /// Per-site disentangling eigenstate flags.
@@ -114,6 +196,8 @@ pub struct RzContext<'a> {
     pub gf2_matrix: &'a mut super::ofd::Gf2FlipMatrix,
     /// Running statistics for the STN simulator.
     pub stats: &'a mut super::StabMpsStats,
+    /// Optional detailed saturated-regime event sink.
+    pub saturation_telemetry: Option<&'a mut super::SaturationTelemetry>,
 }
 
 /// Apply RZ(theta) on qubit q using the rotation decomposition.
@@ -145,6 +229,7 @@ pub fn apply_rz_stab_mps(
         numerical_flag_redetection,
         gf2_matrix,
         stats,
+        saturation_telemetry,
     } = ctx;
     stats.total_nonclifford += 1;
     let tableau_decomp = decompose_z(tableau.stabs(), tableau.destabs(), q);
@@ -252,6 +337,19 @@ pub fn apply_rz_stab_mps(
                 return Ok(());
             }
 
+            if saturation_telemetry.is_some() && affected_sites.len() > 1 {
+                stats.signed_eigenstate_candidates += pauli_map
+                    .iter()
+                    .filter(|&&(site, rotation_axis)| {
+                        let current_accepts = matches!(rotation_axis, PauliType::X | PauliType::Y)
+                            && matches!(disent_flags[site], Some(super::SiteEigenstate::Z(false)));
+                        !current_accepts
+                            && signed_product_eigenstate_axis(mps, site)
+                                .is_some_and(|eigen_axis| eigen_axis != rotation_axis)
+                    })
+                    .count() as u64;
+            }
+
             // OFD disentangle check (Liu-Clark 2412.17209 Algorithm 1 Theorem 1):
             //   disentanglable iff some qubit i has MPS state |0⟩ AND P[i] ∈ {X, Y}.
             // Our `disent_flags[i] = Some(Z(false))` means MPS is |0⟩ at i (fresh
@@ -314,6 +412,8 @@ pub fn apply_rz_stab_mps(
                 if is_ofd_in_span {
                     stats.ofd_in_span_disent += 1;
                 }
+                let event =
+                    multi_std_event_start(mps, &affected_sites, saturation_telemetry.is_some());
                 // Record effective single-site flip pattern with rot_site metadata
                 gf2_matrix.add_row_with_meta(&[rot_site], super::ofd::RowMetadata { rot_site });
 
@@ -391,6 +491,7 @@ pub fn apply_rz_stab_mps(
 
                 // Clear the flag (rot_site's MPS is no longer |0⟩).
                 disent_flags[rot_site] = None;
+                finish_multi_disent_event(saturation_telemetry, event);
             } else if affected_sites.len() == 1 {
                 stats.single_site += 1;
                 if is_ofd_in_span {
@@ -448,9 +549,12 @@ pub fn apply_rz_stab_mps(
                 disent_flags[site] = None;
             } else if sign_sites.is_empty() {
                 stats.multi_std += 1;
+                stats.multi_std_add += 1;
                 if is_ofd_in_span {
                     stats.ofd_in_span_std += 1;
                 }
+                let event =
+                    multi_std_event_start(mps, &affected_sites, saturation_telemetry.is_some());
                 // Note: std path creates MPS entanglement (not absorbed into
                 // tableau). Do NOT add to gf2 basis — OFD's is_in_span should
                 // only match against truly-absorbed rows.
@@ -478,11 +582,20 @@ pub fn apply_rz_stab_mps(
                 for &j in flip_sites {
                     disent_flags[j] = None;
                 }
+                finish_multi_std_event(
+                    saturation_telemetry,
+                    event,
+                    super::MultiStdSubtype::Add,
+                    is_ofd_in_span,
+                );
             } else {
                 stats.multi_std += 1;
+                stats.multi_std_cascade += 1;
                 if is_ofd_in_span {
                     stats.ofd_in_span_std += 1;
                 }
+                let event =
+                    multi_std_event_start(mps, &affected_sites, saturation_telemetry.is_some());
                 // Std path creates MPS entanglement; do NOT add to gf2 basis.
                 // Multi-site rotation via CNOT cascade + RX + basis changes.
 
@@ -600,6 +713,12 @@ pub fn apply_rz_stab_mps(
                 for &site in &affected_sites {
                     disent_flags[site] = None;
                 }
+                finish_multi_std_event(
+                    saturation_telemetry,
+                    event,
+                    super::MultiStdSubtype::Cascade,
+                    is_ofd_in_span,
+                );
             }
         }
     }

@@ -30,6 +30,25 @@ use num_complex::Complex64;
 use pecos_core::BitSet;
 use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, MeasurementResult, SparseStabY};
+use std::time::Instant;
+
+fn profile_query_phase<T>(
+    mps: &mut Mps,
+    telemetry: &mut Option<&mut super::QueryDepthTelemetry>,
+    phase: super::QueryPhase,
+    operation: impl FnOnce(&mut Mps) -> T,
+) -> T {
+    let Some(telemetry) = telemetry.as_deref_mut() else {
+        return operation(mps);
+    };
+    mps.reset_phase_svd_operations();
+    let started = Instant::now();
+    let result = operation(mps);
+    let elapsed = started.elapsed().as_secs_f64();
+    let (svd_operations, capped_svd_operations) = mps.take_phase_svd_operations();
+    telemetry.record(phase, svd_operations, capped_svd_operations, elapsed);
+    result
+}
 
 #[cfg(test)]
 std::thread_local! {
@@ -1185,8 +1204,15 @@ fn project_forced_z_with_update_impl(
     q_idx: usize,
     outcome: bool,
     mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
+    mut telemetry: Option<&mut super::QueryDepthTelemetry>,
 ) -> Result<ForcedProjectionResult, MpsError> {
-    let pre_projection_norm_squared = mps.norm_squared();
+    let (pre_projection_norm_squared, probability) =
+        profile_query_phase(mps, &mut telemetry, super::QueryPhase::Expectation, |mps| {
+            let norm_squared = mps.norm_squared();
+            let probability =
+                z_outcome_probability(tableau, mps, q_idx, outcome, "forced Z projection");
+            (norm_squared, probability)
+        });
     assert!(
         pre_projection_norm_squared.is_finite(),
         "forced Z projection received a non-finite pre-projection norm"
@@ -1195,59 +1221,65 @@ fn project_forced_z_with_update_impl(
         pre_projection_norm_squared > 0.0,
         "cannot project a zero-norm MPS"
     );
-    let probability = z_outcome_probability(tableau, mps, q_idx, outcome, "forced Z projection");
     if is_mps_trivial(mps) {
         // A trivial coefficient MPS represents a pure stabilizer state. First
         // absorb a possible nonzero virtual basis word into the tableau; only
         // then can its forced update supply the exact probability and state.
-        let modified_sites =
-            canonicalize_trivial_mps_basis(tableau, mps, phase_accumulator.as_deref_mut());
-        let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
-        let tableau_probability: f64 = match decomp {
-            ZDecomposition::Stabilizer { phase, .. } => {
-                if (phase.re < 0.0) == outcome {
-                    1.0
-                } else {
-                    0.0
+        return profile_query_phase(mps, &mut telemetry, super::QueryPhase::Projection, |mps| {
+            let modified_sites =
+                canonicalize_trivial_mps_basis(tableau, mps, phase_accumulator.as_deref_mut());
+            let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
+            let tableau_probability: f64 = match decomp {
+                ZDecomposition::Stabilizer { phase, .. } => {
+                    if (phase.re < 0.0) == outcome {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                ZDecomposition::DestabilizerFlip { .. } => 0.5,
+            };
+            debug_assert_eq!(probability.to_bits(), tableau_probability.to_bits());
+            if probability > 0.0 {
+                let before_measurement = phase_accumulator.as_ref().map(|_| tableau.clone());
+                tableau.mz_forced(q_idx, outcome);
+                if let (Some(accumulator), Some(before_measurement)) = (
+                    phase_accumulator.as_deref_mut(),
+                    before_measurement.as_ref(),
+                ) {
+                    accumulator.forced_measurement(
+                        before_measurement,
+                        tableau,
+                        q_idx,
+                        outcome,
+                        probability,
+                    );
                 }
             }
-            ZDecomposition::DestabilizerFlip { .. } => 0.5,
-        };
-        debug_assert_eq!(probability.to_bits(), tableau_probability.to_bits());
-        if probability > 0.0 {
-            let before_measurement = phase_accumulator.as_ref().map(|_| tableau.clone());
-            tableau.mz_forced(q_idx, outcome);
-            if let (Some(accumulator), Some(before_measurement)) = (
-                phase_accumulator.as_deref_mut(),
-                before_measurement.as_ref(),
-            ) {
-                accumulator.forced_measurement(
-                    before_measurement,
-                    tableau,
-                    q_idx,
-                    outcome,
-                    probability,
-                );
+            inject_projection_vanish_if_requested(mps);
+            let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
+            if probability > 0.0 && survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
+                mps.normalize();
             }
-        }
-        inject_projection_vanish_if_requested(mps);
-        let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
-        if probability > 0.0 && survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
-            mps.normalize();
-        }
-        return Ok(ForcedProjectionResult {
-            snapped_probability: inject_zero_projection_probability_if_requested(probability),
-            survival_ratio,
-            update: ProjectionUpdate {
-                collapsed_site: None,
-                modified_sites,
-            },
+            Ok(ForcedProjectionResult {
+                snapped_probability: inject_zero_projection_probability_if_requested(probability),
+                survival_ratio,
+                update: ProjectionUpdate {
+                    collapsed_site: None,
+                    modified_sites,
+                },
+            })
         });
     }
 
     // Reduce to one virtual X site while compensating every generator-basis
     // CNOT on the MPS. This preserves C·MPS exactly.
-    let mut modified_sites = pre_reduce_for_measurement(tableau, mps, q_idx, true)?;
+    let mut modified_sites = profile_query_phase(
+        mps,
+        &mut telemetry,
+        super::QueryPhase::PreReduction,
+        |mps| pre_reduce_for_measurement(tableau, mps, q_idx, true),
+    )?;
     let decomposition = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
 
     match decomposition {
@@ -1263,18 +1295,25 @@ fn project_forced_z_with_update_impl(
                     },
                 });
             }
-            apply_pauli_projection(
-                mps,
-                &[],
-                &sign_sites,
-                phase,
-                if outcome { -1.0 } else { 1.0 },
-                probability,
-            );
+            profile_query_phase(mps, &mut telemetry, super::QueryPhase::Projection, |mps| {
+                apply_pauli_projection(
+                    mps,
+                    &[],
+                    &sign_sites,
+                    phase,
+                    if outcome { -1.0 } else { 1.0 },
+                    probability,
+                );
+            });
             // The physical observable was already in the stabilizer span, so
             // mz_forced performs no Clifford-basis change. The projected
             // stabilizer-sign superposition remains encoded in the MPS.
-            reduce_exact_projection_bonds(mps)?;
+            profile_query_phase(
+                mps,
+                &mut telemetry,
+                super::QueryPhase::PostProjection,
+                reduce_exact_projection_bonds,
+            )?;
             inject_projection_vanish_if_requested(mps);
             let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
             if survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
@@ -1313,45 +1352,60 @@ fn project_forced_z_with_update_impl(
                     },
                 });
             }
-            let sign_f = if outcome { -1.0 } else { 1.0 };
-            let is_local_projection = sign_sites.is_empty();
-            if is_local_projection {
-                project_single_flip_without_sign(
-                    mps,
-                    flip_sites[0],
-                    Complex64::new(sign_f, 0.0) * phase,
-                    probability,
-                );
-            } else {
-                apply_pauli_projection(mps, &flip_sites, &sign_sites, phase, sign_f, probability);
-            }
-            if !is_local_projection {
-                collapse_projected_flip_site(mps, flip_sites[0]);
-            }
+            let gauge_sites =
+                profile_query_phase(mps, &mut telemetry, super::QueryPhase::Projection, |mps| {
+                    let sign_f = if outcome { -1.0 } else { 1.0 };
+                    let is_local_projection = sign_sites.is_empty();
+                    if is_local_projection {
+                        project_single_flip_without_sign(
+                            mps,
+                            flip_sites[0],
+                            Complex64::new(sign_f, 0.0) * phase,
+                            probability,
+                        );
+                    } else {
+                        apply_pauli_projection(
+                            mps,
+                            &flip_sites,
+                            &sign_sites,
+                            phase,
+                            sign_f,
+                            probability,
+                        );
+                    }
+                    if !is_local_projection {
+                        collapse_projected_flip_site(mps, flip_sites[0]);
+                    }
 
-            assert!(
-                tableau.tracks_destab_signs(),
-                "exact forced projection requires destabilizer-sign tracking"
-            );
-            let mut predicted_tableau = tableau.clone();
-            right_compose_measurement_basis_rotation(
-                &mut predicted_tableau,
-                flip_sites[0],
-                phase,
-                &sign_sites,
-                outcome,
-                phase_accumulator,
-            );
+                    assert!(
+                        tableau.tracks_destab_signs(),
+                        "exact forced projection requires destabilizer-sign tracking"
+                    );
+                    let mut predicted_tableau = tableau.clone();
+                    right_compose_measurement_basis_rotation(
+                        &mut predicted_tableau,
+                        flip_sites[0],
+                        phase,
+                        &sign_sites,
+                        outcome,
+                        phase_accumulator,
+                    );
 
-            let result = tableau.mz_forced(q_idx, outcome);
-            debug_assert_eq!(result.outcome, outcome);
-            let gauge_sites = compensate_measurement_pauli_gauge(mps, &predicted_tableau, tableau);
+                    let result = tableau.mz_forced(q_idx, outcome);
+                    debug_assert_eq!(result.outcome, outcome);
+                    compensate_measurement_pauli_gauge(mps, &predicted_tableau, tableau)
+                });
             // `mz_forced` produces the same projected stabilizer group as the
             // predicted basis rotation; compensation changes only the
             // destabilizer gauge. Therefore the post-H canonical ket cached
             // by the phase tracker remains valid for the measured tableau and
             // can be the before-ket of the next scalar site.
-            reduce_exact_projection_bonds(mps)?;
+            profile_query_phase(
+                mps,
+                &mut telemetry,
+                super::QueryPhase::PostProjection,
+                reduce_exact_projection_bonds,
+            )?;
             inject_projection_vanish_if_requested(mps);
             let survival_ratio = projection_survival_ratio(mps, pre_projection_norm_squared);
             if survival_ratio >= BRANCH_VANISH_SURVIVAL_THRESHOLD {
@@ -1390,7 +1444,7 @@ pub(super) fn project_forced_z_with_update(
     q_idx: usize,
     outcome: bool,
 ) -> Result<ForcedProjectionResult, MpsError> {
-    project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, None)
+    project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, None, None)
 }
 
 /// Forced projection with canonical-ket scalar tracking for phase-sensitive
@@ -1403,10 +1457,15 @@ pub(super) fn project_forced_z_with_phase(
     outcome: bool,
     phase_accumulator: &mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker,
 ) -> Result<f64, MpsError> {
-    Ok(
-        project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, Some(phase_accumulator))?
-            .snapped_probability,
-    )
+    Ok(project_forced_z_with_update_impl(
+        tableau,
+        mps,
+        q_idx,
+        outcome,
+        Some(phase_accumulator),
+        None,
+    )?
+    .snapped_probability)
 }
 
 /// Project qubit `q_idx` onto a forced Z-basis outcome and return the
@@ -1422,6 +1481,20 @@ pub fn project_forced_z(
     outcome: bool,
 ) -> Result<f64, MpsError> {
     Ok(project_forced_z_with_update(tableau, mps, q_idx, outcome)?.snapped_probability)
+}
+
+/// Profiled sibling of [`project_forced_z`] used by batched query telemetry.
+pub(super) fn project_forced_z_profiled(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    q_idx: usize,
+    outcome: bool,
+    telemetry: &mut super::QueryDepthTelemetry,
+) -> Result<f64, MpsError> {
+    Ok(
+        project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, None, Some(telemetry))?
+            .snapped_probability,
+    )
 }
 
 /// Measure qubit `q_idx` in the Z basis using the STN protocol.

@@ -555,13 +555,19 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
         attributed_seconds <= profile.whole_call_wall_time_seconds,
         "disjoint phase time cannot exceed the complete query call"
     );
-    // The upper bound alone would still pass if a phase scope were dropped
-    // entirely, quietly shrinking the attribution. Bound the residual too --
-    // but only for calls long enough that timer overhead is negligible
-    // (microsecond-scale calls spend ~11% of themselves in `Instant`).
+    // Bound the residual as well as the total. This catches unscoped work,
+    // but only that: a dropped scope whose share is below the tolerance still
+    // passes, so the per-bucket `calls > 0` assertions in the randomized test
+    // are the guard against a scope disappearing outright. 0.99 is set from
+    // measurement -- healthy residuals run 0.0009%-0.05%, the instrumentation
+    // floor at this gate is ~0.2%, and deleting the survival scope produces
+    // 1.65%-4.09%, which 0.95 would have admitted. Gated on call length
+    // because a microsecond-scale call spends ~100 ns per phase scope in
+    // `Instant`, which is a large percentage of a small call and none of a
+    // real one.
     if profile.whole_call_wall_time_seconds > 0.1 {
         assert!(
-            attributed_seconds >= 0.95 * profile.whole_call_wall_time_seconds,
+            attributed_seconds >= 0.99 * profile.whole_call_wall_time_seconds,
             "attribution lost {:.2}% of a {:.3} s query; a phase scope is missing",
             100.0 * (1.0 - attributed_seconds / profile.whole_call_wall_time_seconds),
             profile.whole_call_wall_time_seconds

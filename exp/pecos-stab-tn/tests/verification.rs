@@ -2646,6 +2646,63 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         > 0,
                     "profiled query recorded no post-projection SVDs"
                 );
+                // Every phase bucket must record calls. A time-share bound
+                // cannot do this job: a scope worth 0.4% of the query (or a
+                // sub-0.01% bucket) can be deleted outright and still sit
+                // inside any tolerance that survives timing noise. Call
+                // counts are immune to that and to machine speed.
+                for (label, calls) in [
+                    (
+                        "expectation",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.expectation.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "pre_reduction",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.pre_reduction.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "projection",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.projection.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "post_projection_qr",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.post_projection_qr.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "post_projection_svd",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.post_projection_svd.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "survival",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.survival.calls)
+                            .sum::<u64>(),
+                    ),
+                ] {
+                    assert!(calls > 0, "phase scope {label} recorded no calls");
+                }
                 assert!(
                     profile.phase_scopes_disjoint(),
                     "query phases overlapped or did not close"

@@ -120,6 +120,32 @@ pub struct Mps {
     center_reuse_count: u64,
 }
 
+/// Disjoint MPS work nested inside one runtime-gated pre-reduction phase.
+///
+/// The query profiler owns the complete phase timer. These nested timers cover
+/// only the expensive numerical primitives; its residual is deliberately left
+/// to the owning measurement layer as rollback/tableau/vector bookkeeping.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MpsPreReductionTiming {
+    pub(crate) svd_compute: f64,
+    pub(crate) qr_gauge: f64,
+    pub(crate) tensor_contraction: f64,
+}
+
+fn time_pre_reduction_work<const DIAGNOSTICS: bool, T>(
+    seconds: &mut f64,
+    operation: impl FnOnce() -> T,
+) -> T {
+    if DIAGNOSTICS {
+        let started = std::time::Instant::now();
+        let result = operation();
+        *seconds += started.elapsed().as_secs_f64();
+        result
+    } else {
+        operation()
+    }
+}
+
 /// Pass-scoped left and right identity environments for selected MPS sites.
 ///
 /// The cache stores the contractions bordering each candidate, so one-site
@@ -618,21 +644,26 @@ impl Mps {
         self.apply_two_site_gate_with_absorption(q, gate, false)
     }
 
-    /// Apply an adjacent two-site gate while leaving the orthogonality center
-    /// on the right site.
-    pub(crate) fn apply_two_site_gate_right_absorb(
-        &mut self,
-        q: usize,
-        gate: &DMatrix<Complex64>,
-    ) -> Result<(), MpsError> {
-        self.apply_two_site_gate_with_absorption(q, gate, true)
-    }
-
     fn apply_two_site_gate_with_absorption(
         &mut self,
         q: usize,
         gate: &DMatrix<Complex64>,
         absorb_right: bool,
+    ) -> Result<(), MpsError> {
+        self.apply_two_site_gate_with_absorption_impl::<false>(
+            q,
+            gate,
+            absorb_right,
+            &mut MpsPreReductionTiming::default(),
+        )
+    }
+
+    fn apply_two_site_gate_with_absorption_impl<const DIAGNOSTICS: bool>(
+        &mut self,
+        q: usize,
+        gate: &DMatrix<Complex64>,
+        absorb_right: bool,
+        timing: &mut MpsPreReductionTiming,
     ) -> Result<(), MpsError> {
         let d = self.phys_dim;
         let d2 = d * d;
@@ -659,74 +690,82 @@ impl Mps {
         let chi_mid = self.bond_dims[q + 1];
         let chi_r = self.bond_dims[q + 2];
 
-        // Contract the two site tensors into a two-site tensor
-        let two_site = contract_two_sites(
-            &self.tensors[q],
-            chi_l,
-            chi_mid,
-            &self.tensors[q + 1],
-            chi_r,
-            d,
-        );
+        let (svd_matrix, scaled_cutoff) =
+            time_pre_reduction_work::<DIAGNOSTICS, _>(&mut timing.tensor_contraction, || {
+                // Contract the two site tensors into a two-site tensor.
+                let two_site = contract_two_sites(
+                    &self.tensors[q],
+                    chi_l,
+                    chi_mid,
+                    &self.tensors[q + 1],
+                    chi_r,
+                    d,
+                );
 
-        // Apply the gate to the physical indices
-        // two_site: (chi_l, d * d * chi_r)
-        // We need to contract gate[sigma_l_out * d + sigma_r_out, sigma_l_in * d + sigma_r_in]
-        // with two_site[alpha_l, sigma_l_in * d * chi_r + sigma_r_in * chi_r + alpha_r]
-        let mut gated = DMatrix::zeros(chi_l, d * d * chi_r);
-        for alpha_l in 0..chi_l {
-            for alpha_r in 0..chi_r {
-                for sigma_l_out in 0..d {
-                    for sigma_r_out in 0..d {
-                        let mut val = Complex64::new(0.0, 0.0);
-                        for sigma_l_in in 0..d {
-                            for sigma_r_in in 0..d {
-                                let gate_val = gate
-                                    [(sigma_l_out * d + sigma_r_out, sigma_l_in * d + sigma_r_in)];
-                                if gate_val != Complex64::new(0.0, 0.0) {
-                                    let in_col = (sigma_l_in * d + sigma_r_in) * chi_r + alpha_r;
-                                    val += gate_val * two_site[(alpha_l, in_col)];
+                // Apply the gate to the physical indices.
+                let mut gated = DMatrix::zeros(chi_l, d * d * chi_r);
+                for alpha_l in 0..chi_l {
+                    for alpha_r in 0..chi_r {
+                        for sigma_l_out in 0..d {
+                            for sigma_r_out in 0..d {
+                                let mut val = Complex64::new(0.0, 0.0);
+                                for sigma_l_in in 0..d {
+                                    for sigma_r_in in 0..d {
+                                        let gate_val = gate[(
+                                            sigma_l_out * d + sigma_r_out,
+                                            sigma_l_in * d + sigma_r_in,
+                                        )];
+                                        if gate_val != Complex64::new(0.0, 0.0) {
+                                            let in_col =
+                                                (sigma_l_in * d + sigma_r_in) * chi_r + alpha_r;
+                                            val += gate_val * two_site[(alpha_l, in_col)];
+                                        }
+                                    }
                                 }
+                                let out_col = (sigma_l_out * d + sigma_r_out) * chi_r + alpha_r;
+                                gated[(alpha_l, out_col)] = val;
                             }
                         }
-                        let out_col = (sigma_l_out * d + sigma_r_out) * chi_r + alpha_r;
-                        gated[(alpha_l, out_col)] = val;
                     }
                 }
-            }
-        }
 
-        // Reshape for SVD: (chi_l * d, d * chi_r)
-        let svd_matrix = reshape_two_site_for_svd(&gated, chi_l, chi_r, d);
-        let scaled_cutoff = self.config.svd_cutoff * svd_matrix.norm();
+                // Reshape for SVD: (chi_l * d, d * chi_r).
+                let svd_matrix = reshape_two_site_for_svd(&gated, chi_l, chi_r, d);
+                let scaled_cutoff = self.config.svd_cutoff * svd_matrix.norm();
+                (svd_matrix, scaled_cutoff)
+            });
 
         // SVD split with truncation
-        let (left, right, disc, hit) = if absorb_right {
-            svd::truncated_svd_right_absorb_with_error(
-                &svd_matrix,
-                self.config.max_bond_dim,
-                scaled_cutoff,
-                self.config.max_truncation_error,
-            )?
-        } else {
-            svd::truncated_svd_left_absorb_with_error(
-                &svd_matrix,
-                self.config.max_bond_dim,
-                scaled_cutoff,
-                self.config.max_truncation_error,
-            )?
-        };
+        let (left, right, disc, hit) =
+            time_pre_reduction_work::<DIAGNOSTICS, _>(&mut timing.svd_compute, || {
+                if absorb_right {
+                    svd::truncated_svd_right_absorb_with_error(
+                        &svd_matrix,
+                        self.config.max_bond_dim,
+                        scaled_cutoff,
+                        self.config.max_truncation_error,
+                    )
+                } else {
+                    svd::truncated_svd_left_absorb_with_error(
+                        &svd_matrix,
+                        self.config.max_bond_dim,
+                        scaled_cutoff,
+                        self.config.max_truncation_error,
+                    )
+                }
+            })?;
         self.record_truncation(disc, hit);
 
-        let new_chi = left.ncols();
+        let new_chi =
+            time_pre_reduction_work::<DIAGNOSTICS, _>(&mut timing.tensor_contraction, || {
+                let new_chi = left.ncols();
+                // U or U_S: (chi_l * d, new_chi) -> reshape to the left site.
+                self.tensors[q] = reshape_left_ungroup(&left, chi_l, d, new_chi);
+                // Vt or S_Vt is already in right-site tensor format.
+                self.tensors[q + 1] = right;
+                new_chi
+            });
 
-        // U or U_S: (chi_l * d, new_chi) -> reshape to the left site.
-        self.tensors[q] = reshape_left_ungroup(&left, chi_l, d, new_chi);
-
-        // Vt or S_Vt is already in right-site tensor format.
-        self.tensors[q + 1] = right;
-
-        // Update bond dimension
         self.bond_dims[q + 1] = new_chi;
         self.center = can_track_absorption.then_some(if absorb_right { q + 1 } else { q });
         self.record_current_peak_bond();
@@ -759,6 +798,33 @@ impl Mps {
         q1: usize,
         gate: &DMatrix<Complex64>,
     ) -> Result<(), MpsError> {
+        self.apply_long_range_two_site_gate_impl::<false>(
+            q0,
+            q1,
+            gate,
+            &mut MpsPreReductionTiming::default(),
+        )
+    }
+
+    /// Runtime-gated variant that attributes the numerical primitives used by
+    /// compensated measurement pre-reduction.
+    pub(crate) fn apply_long_range_two_site_gate_profiled(
+        &mut self,
+        q0: usize,
+        q1: usize,
+        gate: &DMatrix<Complex64>,
+        timing: &mut MpsPreReductionTiming,
+    ) -> Result<(), MpsError> {
+        self.apply_long_range_two_site_gate_impl::<true>(q0, q1, gate, timing)
+    }
+
+    fn apply_long_range_two_site_gate_impl<const DIAGNOSTICS: bool>(
+        &mut self,
+        q0: usize,
+        q1: usize,
+        gate: &DMatrix<Complex64>,
+        timing: &mut MpsPreReductionTiming,
+    ) -> Result<(), MpsError> {
         if q0 >= q1 {
             return Err(MpsError::NonAdjacentSites { q0, q1 });
         }
@@ -780,47 +846,55 @@ impl Mps {
 
         // Adjacent case: establish physical environments before truncating.
         if q1 == q0 + 1 {
-            self.canonicalize_around_bond(q0);
-            return self.apply_two_site_gate(q0, gate);
+            time_pre_reduction_work::<DIAGNOSTICS, _>(&mut timing.qr_gauge, || {
+                self.canonicalize_around_bond(q0);
+            });
+            return self
+                .apply_two_site_gate_with_absorption_impl::<DIAGNOSTICS>(q0, gate, false, timing);
         }
 
         // Non-adjacent: SWAP chain to bring sites together, apply gate, SWAP back.
-        let swap = DMatrix::from_row_slice(
-            4,
-            4,
-            &[
-                Complex64::new(1.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(1.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(1.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-                Complex64::new(1.0, 0.0),
-            ],
-        );
+        let swap =
+            time_pre_reduction_work::<DIAGNOSTICS, _>(&mut timing.tensor_contraction, || {
+                DMatrix::from_row_slice(
+                    4,
+                    4,
+                    &[
+                        Complex64::new(1.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(1.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(1.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(0.0, 0.0),
+                        Complex64::new(1.0, 0.0),
+                    ],
+                )
+            });
 
         // Establish a mixed-canonical form once. Left absorption on the
         // inward SWAPs walks the center from q1 - 1 down to q0.
-        self.canonicalize_around_bond(q1 - 1);
+        time_pre_reduction_work::<DIAGNOSTICS, _>(&mut timing.qr_gauge, || {
+            self.canonicalize_around_bond(q1 - 1);
+        });
         for i in (q0 + 1..q1).rev() {
-            self.apply_two_site_gate(i, &swap)?;
+            self.apply_two_site_gate_with_absorption_impl::<DIAGNOSTICS>(i, &swap, false, timing)?;
         }
 
         // Right absorption starts the center back outward.
-        self.apply_two_site_gate_right_absorb(q0, gate)?;
+        self.apply_two_site_gate_with_absorption_impl::<DIAGNOSTICS>(q0, gate, true, timing)?;
 
         // Keep moving the center with the transported site on the return path.
         for i in q0 + 1..q1 {
-            self.apply_two_site_gate_right_absorb(i, &swap)?;
+            self.apply_two_site_gate_with_absorption_impl::<DIAGNOSTICS>(i, &swap, true, timing)?;
         }
 
         Ok(())

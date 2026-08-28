@@ -1055,6 +1055,63 @@ pub struct QueryPhaseTelemetry {
     pub wall_time_seconds: f64,
 }
 
+/// Runtime-gated details for one compensated query pre-reduction call.
+///
+/// The fingerprint intentionally describes only the cheap structural input:
+/// chain length, complete internal-bond profile, and number of already
+/// accumulated trie projectors. Equal fingerprints are candidate reuse, not a
+/// claim that the tensor entries or tableau generators are equal.
+#[derive(Clone, Debug)]
+pub struct PreReductionTelemetry {
+    /// Number of MPS sites at phase entry.
+    pub chain_length: usize,
+    /// Number of earlier forced projectors on this trie path.
+    pub accumulated_projector_count: usize,
+    /// Pair identifier shared only by the two outcomes projected from one trie parent.
+    pub sibling_pair_id: Option<u64>,
+    /// Configured hard cap used to classify entry bonds.
+    pub bond_cap: usize,
+    /// Internal bond dimensions at phase entry, excluding boundary bonds.
+    pub input_bond_profile: Vec<usize>,
+    /// Internal bond dimensions when the phase returned.
+    pub output_bond_profile: Vec<usize>,
+    /// Maximum entry bond, or one for a chain without an internal bond.
+    pub input_max_bond: usize,
+    /// Sum of entry bond dimensions; divide by `input_bond_profile.len()` for the mean.
+    pub input_bond_sum: usize,
+    /// Number of entry bonds equal to the configured cap.
+    pub input_cap_saturated_bonds: usize,
+    /// Stable FNV-1a fingerprint of the documented cheap structural fields.
+    pub input_fingerprint: u64,
+    /// Time to collect and fingerprint the entry bond profile, outside phase timing.
+    pub input_profile_scan_seconds: f64,
+    /// Time to collect the output bond profile, outside phase timing.
+    pub output_profile_scan_seconds: f64,
+    /// Complete pre-reduction phase wall time.
+    pub wall_time_seconds: f64,
+    /// Time inside truncating two-site SVD implementations.
+    pub svd_compute_seconds: f64,
+    /// Time establishing mixed-canonical environments with QR/LQ gauge work.
+    pub qr_gauge_seconds: f64,
+    /// Time contracting, transforming, reshaping, and installing MPS tensors.
+    pub tensor_contraction_seconds: f64,
+    /// Uninstrumented phase residual: rollback snapshots, structural checks,
+    /// tableau composition, vector metadata, and timing overhead.
+    pub bookkeeping_seconds: f64,
+    /// SVD operations observed during this call.
+    pub svd_operations: u64,
+    /// SVD operations at which the configured cap bound.
+    pub capped_svd_operations: u64,
+    /// Generator-basis CNOT compensations requested by this call.
+    pub compensating_cnot_count: u64,
+    /// Requested CNOTs skipped because the control-one block was structurally zero.
+    pub structural_identity_cnot_count: u64,
+    /// Requested CNOTs reduced to an unconditional one-site X.
+    pub unconditional_x_cnot_count: u64,
+    /// Whether the output bond profile exactly equals the input profile.
+    pub output_profile_unchanged: bool,
+}
+
 /// Tensor construction used by one exact forced projection.
 ///
 /// This labels the projection algorithm, not the operation that invalidated
@@ -1165,8 +1222,10 @@ pub struct QueryDepthTelemetry {
     pub normalization: QueryPhaseTelemetry,
     /// Path selection and returned modified-site bookkeeping.
     pub bookkeeping: QueryPhaseTelemetry,
-    /// Opt-in event details for every nontrivial projection at this depth.
+    /// Opt-in locality details for every nontrivial projection at this depth.
     pub projection_qr_locality: Vec<ProjectionQrLocalityTelemetry>,
+    /// Opt-in event details for every pre-reduction call at this depth.
+    pub pre_reduction_diagnostics: Vec<PreReductionTelemetry>,
     phase_active: bool,
     projection_locality_active: bool,
 }
@@ -1179,6 +1238,7 @@ pub struct ProbabilityQueryTelemetry {
     /// Wall time of the complete `prob_bitstrings` call, including trie walks
     /// and state cloning outside forced projection.
     pub whole_call_wall_time_seconds: f64,
+    next_sibling_pair_id: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -1205,6 +1265,14 @@ impl QueryDepthTelemetry {
             "projection locality telemetry was not enabled"
         );
         self.projection_qr_locality.push(event);
+    }
+
+    pub(super) fn record_pre_reduction_diagnostics(&mut self, event: PreReductionTelemetry) {
+        assert!(
+            self.projection_locality_active,
+            "pre-reduction diagnostics were not enabled"
+        );
+        self.pre_reduction_diagnostics.push(event);
     }
 
     pub(super) fn record_projection_normalization(&mut self, preserved_center: bool) {
@@ -1275,6 +1343,17 @@ impl QueryDepthTelemetry {
 }
 
 impl ProbabilityQueryTelemetry {
+    fn allocate_sibling_pair_id(&mut self) -> Option<u64> {
+        self.by_depth
+            .first()
+            .is_some_and(QueryDepthTelemetry::projection_locality_active)
+            .then(|| {
+                let id = self.next_sibling_pair_id;
+                self.next_sibling_pair_id += 1;
+                id
+            })
+    }
+
     /// Sum of all depth-bucketed phase wall times.
     #[must_use]
     pub fn attributed_wall_time_seconds(&self) -> f64 {
@@ -1316,6 +1395,7 @@ impl PrefixProjectionState {
         qubit: usize,
         outcome: bool,
         telemetry: Option<&mut QueryDepthTelemetry>,
+        sibling_pair_id: Option<u64>,
     ) -> Result<f64, MpsError> {
         match telemetry {
             Some(telemetry) => measure::project_forced_z_profiled(
@@ -1324,6 +1404,7 @@ impl PrefixProjectionState {
                 qubit,
                 outcome,
                 telemetry,
+                sibling_pair_id,
             ),
             None => measure::project_forced_z(&mut self.tableau, &mut self.mps, qubit, outcome),
         }
@@ -1876,9 +1957,11 @@ impl StabMps {
         self.prob_bitstrings_profiled_impl(bitstrings, false)
     }
 
-    /// Profiled [`Self::prob_bitstrings`] with opt-in projection-locality events.
+    /// Profiled [`Self::prob_bitstrings`] with opt-in projection-locality and
+    /// pre-reduction diagnostic events.
     ///
-    /// This diagnostic sibling clones the entry tensors and performs exact
+    /// This diagnostic sibling profiles pre-reduction numerical primitives,
+    /// captures its bond profiles, and clones entry tensors for exact
     /// comparisons before every post-projection QR. Use it for diagnosis, not
     /// timing; the ordinary profiled method has no such overhead.
     #[must_use]
@@ -1902,6 +1985,7 @@ impl StabMps {
                 })
                 .collect(),
             whole_call_wall_time_seconds: 0.0,
+            next_sibling_pair_id: 0,
         };
         let started = Instant::now();
         let probabilities = self.prob_bitstrings_impl(bitstrings, Some(&mut telemetry));
@@ -1967,6 +2051,9 @@ impl StabMps {
 
         match (&node.children[0], &node.children[1]) {
             (Some(zero), Some(one)) => {
+                let sibling_pair_id = telemetry
+                    .as_deref_mut()
+                    .and_then(ProbabilityQueryTelemetry::allocate_sibling_pair_id);
                 let mut zero_state = state.clone();
                 let zero_probability = total_probability
                     * zero_state.project_z(
@@ -1975,6 +2062,7 @@ impl StabMps {
                         telemetry
                             .as_deref_mut()
                             .map(|profile| &mut profile.by_depth[qubit]),
+                        sibling_pair_id,
                     )?;
                 // NaN must follow the singular walk (which keeps projecting on
                 // NaN) rather than being silently pruned to zero.
@@ -1997,6 +2085,7 @@ impl StabMps {
                         telemetry
                             .as_deref_mut()
                             .map(|profile| &mut profile.by_depth[qubit]),
+                        sibling_pair_id,
                     )?;
                 if one_probability.is_nan() || one_probability >= QUERY_ZERO_PROBABILITY_FLOOR {
                     Self::probability_query_prefix_tree(
@@ -2019,6 +2108,7 @@ impl StabMps {
                         telemetry
                             .as_deref_mut()
                             .map(|profile| &mut profile.by_depth[qubit]),
+                        None,
                     )?;
                 if child_probability.is_nan() || child_probability >= QUERY_ZERO_PROBABILITY_FLOOR {
                     Self::probability_query_prefix_tree(
@@ -2534,7 +2624,7 @@ impl StabMps {
         // projection as `prob_bitstring` does.
         let mut zero_state = state.clone();
         let probability_zero = zero_state
-            .project_z(q, context.frame_x[q], None)?
+            .project_z(q, context.frame_x[q], None, None)?
             .clamp(0.0, 1.0);
         let probability_one = 1.0 - probability_zero;
         let num_zero = if probability_zero == 0.0 {
@@ -2555,7 +2645,7 @@ impl StabMps {
         }
 
         if num_one > 0 {
-            let projected_probability = state.project_z(q, !context.frame_x[q], None)?;
+            let projected_probability = state.project_z(q, !context.frame_x[q], None, None)?;
             // Invariant: `probability_zero` and this forced-projection
             // probability deterministically recompute the same expectation on
             // identical parent states. A positive one-branch probability

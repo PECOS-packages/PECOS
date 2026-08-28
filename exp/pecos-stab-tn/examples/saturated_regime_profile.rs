@@ -11,12 +11,15 @@
 //!
 //! Select one cell with `SATURATION_CELL` and control the campaign protocol
 //! with `SATURATION_WARMUPS` (default 1) and `SATURATION_REPETITIONS` (default 5).
+//! Set `SATURATION_PROJECTION_LOCALITY=1` for the runtime-gated projection and
+//! pre-reduction diagnostic events.
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_stab_tn::stab_mps::{
-    MultiStdSubtype, ProbabilityQueryTelemetry, ProjectionConstruction, SaturationTelemetry,
-    SignedEigenstateBranchTelemetry, SignedEigenstateTelemetry, StabMps, StabMpsStats,
+    MultiStdSubtype, PreReductionTelemetry, ProbabilityQueryTelemetry, ProjectionConstruction,
+    SaturationTelemetry, SignedEigenstateBranchTelemetry, SignedEigenstateTelemetry, StabMps,
+    StabMpsStats,
 };
 use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
@@ -396,6 +399,205 @@ fn projection_construction_label(construction: ProjectionConstruction) -> &'stat
     }
 }
 
+fn print_pre_reduction_summary(
+    cell: Cell,
+    run: usize,
+    depth: Option<usize>,
+    events: &[&PreReductionTelemetry],
+) {
+    if events.is_empty() {
+        return;
+    }
+    let mut fingerprints = BTreeMap::<u64, Vec<&PreReductionTelemetry>>::new();
+    let mut sibling_pairs = BTreeMap::<u64, Vec<&PreReductionTelemetry>>::new();
+    let mut wall_seconds = 0.0;
+    let mut svd_seconds = 0.0;
+    let mut qr_seconds = 0.0;
+    let mut tensor_seconds = 0.0;
+    let mut bookkeeping_seconds = 0.0;
+    let mut input_bond_sum = 0_usize;
+    let mut input_bonds = 0_usize;
+    let mut cap_saturated_bonds = 0_usize;
+    let mut calls_with_cap = 0_usize;
+    let mut calls_with_cap_seconds = 0.0;
+    let mut no_op_calls = 0_usize;
+    let mut no_op_seconds = 0.0;
+    let mut profile_scan_seconds = 0.0;
+    let mut svd_operations = 0_u64;
+    let mut capped_svd_operations = 0_u64;
+    let mut compensating_cnots = 0_u64;
+    let mut structural_identity_cnots = 0_u64;
+    let mut unconditional_x_cnots = 0_u64;
+    let mut maximum_entry_bond = 1_usize;
+    for &event in events {
+        fingerprints
+            .entry(event.input_fingerprint)
+            .or_default()
+            .push(event);
+        if let Some(pair_id) = event.sibling_pair_id {
+            sibling_pairs.entry(pair_id).or_default().push(event);
+        }
+        wall_seconds += event.wall_time_seconds;
+        svd_seconds += event.svd_compute_seconds;
+        qr_seconds += event.qr_gauge_seconds;
+        tensor_seconds += event.tensor_contraction_seconds;
+        bookkeeping_seconds += event.bookkeeping_seconds;
+        input_bond_sum += event.input_bond_sum;
+        input_bonds += event.input_bond_profile.len();
+        cap_saturated_bonds += event.input_cap_saturated_bonds;
+        maximum_entry_bond = maximum_entry_bond.max(event.input_max_bond);
+        if event.input_cap_saturated_bonds > 0 {
+            calls_with_cap += 1;
+            calls_with_cap_seconds += event.wall_time_seconds;
+        }
+        if event.output_profile_unchanged {
+            no_op_calls += 1;
+            no_op_seconds += event.wall_time_seconds;
+        }
+        profile_scan_seconds +=
+            event.input_profile_scan_seconds + event.output_profile_scan_seconds;
+        svd_operations += event.svd_operations;
+        capped_svd_operations += event.capped_svd_operations;
+        compensating_cnots += event.compensating_cnot_count;
+        structural_identity_cnots += event.structural_identity_cnot_count;
+        unconditional_x_cnots += event.unconditional_x_cnot_count;
+    }
+
+    let repeated_fingerprint_calls = fingerprints
+        .values()
+        .map(|group| group.len().saturating_sub(1))
+        .sum::<usize>();
+    let repeated_fingerprint_wall_ceiling = fingerprints
+        .values()
+        .map(|group| {
+            let retained = group
+                .iter()
+                .map(|event| event.wall_time_seconds)
+                .fold(f64::INFINITY, f64::min);
+            group
+                .iter()
+                .map(|event| event.wall_time_seconds)
+                .sum::<f64>()
+                - retained
+        })
+        .sum::<f64>();
+    let mut sibling_calls = 0_usize;
+    let mut sibling_fingerprint_match_calls = 0_usize;
+    let mut sibling_share_wall_ceiling = 0.0;
+    for pair in sibling_pairs.values() {
+        assert_eq!(
+            pair.len(),
+            2,
+            "each populated trie sibling pair has two calls"
+        );
+        sibling_calls += 2;
+        if pair[0].input_fingerprint == pair[1].input_fingerprint
+            && pair[0].input_bond_profile == pair[1].input_bond_profile
+        {
+            sibling_fingerprint_match_calls += 2;
+            sibling_share_wall_ceiling += pair[0].wall_time_seconds.min(pair[1].wall_time_seconds);
+        }
+    }
+    let depth = depth.map_or_else(|| "all".to_owned(), |value| value.to_string());
+    println!(
+        "PRERED_SUMMARY cell={} run={} depth={} calls={} wall_s={:.9} svd_compute_s={:.9} qr_gauge_s={:.9} tensor_s={:.9} bookkeeping_s={:.9} svds={} capped_svds={} max_entry_bond={} mean_entry_bond={:.9} entry_bonds={} cap_saturated_bonds={} cap_bond_fraction={:.9} calls_with_cap={} calls_with_cap_s={:.9} unique_fingerprints={} repeated_fingerprint_calls={} repeated_fingerprint_wall_ceiling_s={:.9} sibling_calls={} sibling_fingerprint_match_calls={} sibling_share_wall_ceiling_s={:.9} no_op_calls={} no_op_s={:.9} profile_scan_s={:.9} compensating_cnots={} structural_identity_cnots={} unconditional_x_cnots={}",
+        cell.name,
+        run,
+        depth,
+        events.len(),
+        wall_seconds,
+        svd_seconds,
+        qr_seconds,
+        tensor_seconds,
+        bookkeeping_seconds,
+        svd_operations,
+        capped_svd_operations,
+        maximum_entry_bond,
+        input_bond_sum as f64 / input_bonds.max(1) as f64,
+        input_bonds,
+        cap_saturated_bonds,
+        cap_saturated_bonds as f64 / input_bonds.max(1) as f64,
+        calls_with_cap,
+        calls_with_cap_seconds,
+        fingerprints.len(),
+        repeated_fingerprint_calls,
+        repeated_fingerprint_wall_ceiling,
+        sibling_calls,
+        sibling_fingerprint_match_calls,
+        sibling_share_wall_ceiling,
+        no_op_calls,
+        no_op_seconds,
+        profile_scan_seconds,
+        compensating_cnots,
+        structural_identity_cnots,
+        unconditional_x_cnots,
+    );
+}
+
+fn print_pre_reduction_depth(
+    cell: Cell,
+    run: usize,
+    depth: usize,
+    events: &[PreReductionTelemetry],
+) {
+    for (event_index, event) in events.iter().enumerate() {
+        let input_bonds = event
+            .input_bond_profile
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let output_bonds = event
+            .output_bond_profile
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let sibling_pair = event
+            .sibling_pair_id
+            .map_or_else(|| "none".to_owned(), |value| value.to_string());
+        println!(
+            "PRERED_EVENT cell={} run={} depth={} event={} sibling_pair={} accumulated_projectors={} fingerprint={:016x} cap={} input_max={} input_sum={} input_cap_bonds={} input_bonds={} output_bonds={} no_op={} wall_s={:.9} svd_compute_s={:.9} qr_gauge_s={:.9} tensor_s={:.9} bookkeeping_s={:.9} svds={} capped_svds={} input_scan_s={:.9} output_scan_s={:.9} compensating_cnots={} structural_identity_cnots={} unconditional_x_cnots={}",
+            cell.name,
+            run,
+            depth,
+            event_index,
+            sibling_pair,
+            event.accumulated_projector_count,
+            event.input_fingerprint,
+            event.bond_cap,
+            event.input_max_bond,
+            event.input_bond_sum,
+            event.input_cap_saturated_bonds,
+            input_bonds,
+            output_bonds,
+            event.output_profile_unchanged,
+            event.wall_time_seconds,
+            event.svd_compute_seconds,
+            event.qr_gauge_seconds,
+            event.tensor_contraction_seconds,
+            event.bookkeeping_seconds,
+            event.svd_operations,
+            event.capped_svd_operations,
+            event.input_profile_scan_seconds,
+            event.output_profile_scan_seconds,
+            event.compensating_cnot_count,
+            event.structural_identity_cnot_count,
+            event.unconditional_x_cnot_count,
+        );
+    }
+    print_pre_reduction_summary(cell, run, Some(depth), &events.iter().collect::<Vec<_>>());
+}
+
+fn print_pre_reduction_total(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetry) {
+    let events = profile
+        .by_depth
+        .iter()
+        .flat_map(|depth| &depth.pre_reduction_diagnostics)
+        .collect::<Vec<_>>();
+    print_pre_reduction_summary(cell, run, None, &events);
+}
+
 fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetry) {
     for (depth, bucket) in profile.by_depth.iter().enumerate() {
         println!(
@@ -433,6 +635,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
             bucket.bookkeeping.capped_svd_operations,
             bucket.attributed_wall_time_seconds(),
         );
+        print_pre_reduction_depth(cell, run, depth, &bucket.pre_reduction_diagnostics);
         for (event_index, event) in bucket.projection_qr_locality.iter().enumerate() {
             let option = |value: Option<usize>| {
                 value.map_or_else(|| "none".to_owned(), |value| value.to_string())
@@ -788,6 +991,7 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
     summary.normalization_seconds = totals.normalization;
     summary.bookkeeping_seconds = totals.bookkeeping;
     print_query_depths(cell, run, &profile);
+    print_pre_reduction_total(cell, run, &profile);
     print_locality_total(cell, run, &profile);
     println!(
         "QUERY_OPS cell={} run={} svds={} capped_svds={} attributed_s={:.9} whole_call_s={:.9} trie_clone_residual_s={:.9}",

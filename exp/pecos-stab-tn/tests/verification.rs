@@ -2586,6 +2586,8 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     let mut truncating_circuits_with_discarded_weight = 0;
     let mut locality_direct_sum_events = 0;
     let mut locality_block_write_events = 0;
+    let mut pre_reduction_sibling_pairs = 0;
+    let mut pre_reduction_numerical_events = 0;
     for truncating in [false, true] {
         for num_qubits in 3..=6 {
             for seed_family in 0..4_u64 {
@@ -2651,6 +2653,89 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         .all(|depth| depth.projection_qr_locality.is_empty()),
                     "ordinary query profiling unexpectedly collected locality snapshots"
                 );
+                assert!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .all(|depth| depth.pre_reduction_diagnostics.is_empty()),
+                    "ordinary query profiling unexpectedly collected pre-reduction diagnostics"
+                );
+                let pre_reduction_events = locality_profile
+                    .by_depth
+                    .iter()
+                    .flat_map(|depth| &depth.pre_reduction_diagnostics)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    pre_reduction_events.len() as u64,
+                    locality_profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.pre_reduction.calls)
+                        .sum::<u64>(),
+                    "every pre-reduction phase must have one diagnostic event"
+                );
+                let mut sibling_pairs = std::collections::BTreeMap::<u64, Vec<_>>::new();
+                for (depth, bucket) in locality_profile.by_depth.iter().enumerate() {
+                    for event in &bucket.pre_reduction_diagnostics {
+                        assert_eq!(event.chain_length, num_qubits);
+                        assert_eq!(event.accumulated_projector_count, depth);
+                        assert_eq!(event.input_bond_profile.len(), num_qubits - 1);
+                        assert_eq!(event.output_bond_profile.len(), num_qubits - 1);
+                        assert_eq!(
+                            event.input_max_bond,
+                            event.input_bond_profile.iter().copied().max().unwrap_or(1)
+                        );
+                        assert_eq!(
+                            event.input_bond_sum,
+                            event.input_bond_profile.iter().sum::<usize>()
+                        );
+                        assert_eq!(
+                            event.input_cap_saturated_bonds,
+                            event
+                                .input_bond_profile
+                                .iter()
+                                .filter(|&&bond| bond == event.bond_cap)
+                                .count()
+                        );
+                        assert_eq!(
+                            event.output_profile_unchanged,
+                            event.input_bond_profile == event.output_bond_profile
+                        );
+                        let nested_seconds = event.svd_compute_seconds
+                            + event.qr_gauge_seconds
+                            + event.tensor_contraction_seconds
+                            + event.bookkeeping_seconds;
+                        assert!(
+                            (nested_seconds - event.wall_time_seconds).abs() <= f64::EPSILON,
+                            "pre-reduction breakdown must exactly partition its phase"
+                        );
+                        assert!(event.capped_svd_operations <= event.svd_operations);
+                        assert!(
+                            event.structural_identity_cnot_count + event.unconditional_x_cnot_count
+                                <= event.compensating_cnot_count
+                        );
+                        if event.svd_operations > 0 {
+                            pre_reduction_numerical_events += 1;
+                        }
+                        if let Some(pair_id) = event.sibling_pair_id {
+                            sibling_pairs.entry(pair_id).or_default().push(event);
+                        }
+                    }
+                }
+                for pair in sibling_pairs.values() {
+                    assert_eq!(
+                        pair.len(),
+                        2,
+                        "trie sibling pair must contain both outcomes"
+                    );
+                    assert_eq!(pair[0].input_fingerprint, pair[1].input_fingerprint);
+                    assert_eq!(pair[0].input_bond_profile, pair[1].input_bond_profile);
+                    assert_eq!(
+                        pair[0].accumulated_projector_count,
+                        pair[1].accumulated_projector_count
+                    );
+                    pre_reduction_sibling_pairs += 1;
+                }
                 let locality_events = locality_profile
                     .by_depth
                     .iter()
@@ -2846,6 +2931,14 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     assert!(
         locality_block_write_events > 0,
         "locality diagnostics never exercised block-write construction"
+    );
+    assert!(
+        pre_reduction_sibling_pairs > 0,
+        "pre-reduction diagnostics never exercised a trie sibling pair"
+    );
+    assert!(
+        pre_reduction_numerical_events > 0,
+        "pre-reduction diagnostics never observed an SVD-bearing event"
     );
 
     // Every false-q0 query is an endpoint-zero subtree. It must be pruned to

@@ -24,7 +24,7 @@
 
 use super::pauli_decomp::{ZDecomposition, decompose_z};
 use crate::errors::MpsError;
-use crate::mps::Mps;
+use crate::mps::{Mps, MpsPreReductionTiming};
 use nalgebra::DMatrix;
 use num_complex::Complex64;
 use pecos_core::BitSet;
@@ -49,6 +49,154 @@ fn profile_query_phase<T>(
     let (svd_operations, capped_svd_operations) = mps.take_phase_svd_operations();
     telemetry.record(phase, svd_operations, capped_svd_operations, elapsed);
     result
+}
+
+fn mix_pre_reduction_fingerprint(hash: &mut u64, value: usize) {
+    *hash ^= value as u64;
+    *hash = hash.wrapping_mul(0x100_0000_01b3);
+}
+
+fn begin_pre_reduction_diagnostics(
+    mps: &Mps,
+    accumulated_projector_count: usize,
+    sibling_pair_id: Option<u64>,
+) -> super::PreReductionTelemetry {
+    let started = Instant::now();
+    let input_bond_profile = mps
+        .bond_dims()
+        .iter()
+        .copied()
+        .skip(1)
+        .take(mps.num_sites().saturating_sub(1))
+        .collect::<Vec<_>>();
+    let bond_cap = mps.config().max_bond_dim;
+    let input_max_bond = input_bond_profile.iter().copied().max().unwrap_or(1);
+    let input_bond_sum = input_bond_profile.iter().sum();
+    let input_cap_saturated_bonds = input_bond_profile
+        .iter()
+        .filter(|&&bond| bond == bond_cap)
+        .count();
+    let mut input_fingerprint = 0xcbf2_9ce4_8422_2325;
+    mix_pre_reduction_fingerprint(&mut input_fingerprint, mps.num_sites());
+    mix_pre_reduction_fingerprint(&mut input_fingerprint, accumulated_projector_count);
+    mix_pre_reduction_fingerprint(&mut input_fingerprint, input_bond_profile.len());
+    for &bond in &input_bond_profile {
+        mix_pre_reduction_fingerprint(&mut input_fingerprint, bond);
+    }
+    let input_profile_scan_seconds = started.elapsed().as_secs_f64();
+    super::PreReductionTelemetry {
+        chain_length: mps.num_sites(),
+        accumulated_projector_count,
+        sibling_pair_id,
+        bond_cap,
+        input_bond_profile,
+        output_bond_profile: Vec::new(),
+        input_max_bond,
+        input_bond_sum,
+        input_cap_saturated_bonds,
+        input_fingerprint,
+        input_profile_scan_seconds,
+        output_profile_scan_seconds: 0.0,
+        wall_time_seconds: 0.0,
+        svd_compute_seconds: 0.0,
+        qr_gauge_seconds: 0.0,
+        tensor_contraction_seconds: 0.0,
+        bookkeeping_seconds: 0.0,
+        svd_operations: 0,
+        capped_svd_operations: 0,
+        compensating_cnot_count: 0,
+        structural_identity_cnot_count: 0,
+        unconditional_x_cnot_count: 0,
+        output_profile_unchanged: false,
+    }
+}
+
+fn profile_pre_reduction<T>(
+    mps: &mut Mps,
+    telemetry: &mut Option<&mut super::QueryDepthTelemetry>,
+    accumulated_projector_count: usize,
+    sibling_pair_id: Option<u64>,
+    operation: impl FnOnce(&mut Mps, Option<&mut super::PreReductionTelemetry>) -> T,
+) -> T {
+    let diagnostics_active = telemetry
+        .as_deref()
+        .is_some_and(super::QueryDepthTelemetry::projection_locality_active);
+    if !diagnostics_active {
+        return profile_query_phase(mps, telemetry, super::QueryPhase::PreReduction, |mps| {
+            operation(mps, None)
+        });
+    }
+
+    let mut event =
+        begin_pre_reduction_diagnostics(mps, accumulated_projector_count, sibling_pair_id);
+    let telemetry = telemetry
+        .as_deref_mut()
+        .expect("active pre-reduction diagnostics require query telemetry");
+    telemetry.begin_phase();
+    mps.reset_phase_svd_operations();
+    let started = Instant::now();
+    let result = operation(mps, Some(&mut event));
+    event.wall_time_seconds = started.elapsed().as_secs_f64();
+    let (svd_operations, capped_svd_operations) = mps.take_phase_svd_operations();
+    event.svd_operations = svd_operations;
+    event.capped_svd_operations = capped_svd_operations;
+    telemetry.record(
+        super::QueryPhase::PreReduction,
+        svd_operations,
+        capped_svd_operations,
+        event.wall_time_seconds,
+    );
+
+    let output_started = Instant::now();
+    event.output_bond_profile = mps
+        .bond_dims()
+        .iter()
+        .copied()
+        .skip(1)
+        .take(mps.num_sites().saturating_sub(1))
+        .collect();
+    event.output_profile_unchanged = event.output_bond_profile == event.input_bond_profile;
+    event.output_profile_scan_seconds = output_started.elapsed().as_secs_f64();
+    let attributed =
+        event.svd_compute_seconds + event.qr_gauge_seconds + event.tensor_contraction_seconds;
+    assert!(
+        attributed <= event.wall_time_seconds,
+        "nested pre-reduction timers exceeded the owning phase"
+    );
+    event.bookkeeping_seconds = event.wall_time_seconds - attributed;
+    telemetry.record_pre_reduction_diagnostics(event);
+    result
+}
+
+#[derive(Default)]
+struct PreReductionWork {
+    mps: MpsPreReductionTiming,
+    compensating_cnot_count: u64,
+    structural_identity_cnot_count: u64,
+    unconditional_x_cnot_count: u64,
+}
+
+fn finish_pre_reduction_work(event: &mut super::PreReductionTelemetry, work: &PreReductionWork) {
+    event.svd_compute_seconds += work.mps.svd_compute;
+    event.qr_gauge_seconds += work.mps.qr_gauge;
+    event.tensor_contraction_seconds += work.mps.tensor_contraction;
+    event.compensating_cnot_count += work.compensating_cnot_count;
+    event.structural_identity_cnot_count += work.structural_identity_cnot_count;
+    event.unconditional_x_cnot_count += work.unconditional_x_cnot_count;
+}
+
+fn time_pre_reduction_tensor_work<const DIAGNOSTICS: bool, T>(
+    timing: &mut MpsPreReductionTiming,
+    operation: impl FnOnce() -> T,
+) -> T {
+    if DIAGNOSTICS {
+        let started = Instant::now();
+        let result = operation();
+        timing.tensor_contraction += started.elapsed().as_secs_f64();
+        result
+    } else {
+        operation()
+    }
 }
 
 #[cfg(test)]
@@ -163,28 +311,63 @@ fn is_mps_trivial(mps: &Mps) -> bool {
 fn canonicalize_trivial_mps_basis(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
-    mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
+    phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
 ) -> Vec<usize> {
-    let norm_squared = mps.norm_squared();
+    canonicalize_trivial_mps_basis_impl::<false>(
+        tableau,
+        mps,
+        phase_accumulator,
+        &mut PreReductionWork::default(),
+    )
+}
+
+fn canonicalize_trivial_mps_basis_profiled(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
+    event: &mut super::PreReductionTelemetry,
+) -> Vec<usize> {
+    let mut work = PreReductionWork::default();
+    let modified_sites =
+        canonicalize_trivial_mps_basis_impl::<true>(tableau, mps, phase_accumulator, &mut work);
+    finish_pre_reduction_work(event, &work);
+    modified_sites
+}
+
+fn canonicalize_trivial_mps_basis_impl<const DIAGNOSTICS: bool>(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
+    work: &mut PreReductionWork,
+) -> Vec<usize> {
+    let norm_squared =
+        time_pre_reduction_tensor_work::<DIAGNOSTICS, _>(&mut work.mps, || mps.norm_squared());
     debug_assert!(
         (norm_squared - 1.0).abs() < 1e-8,
         "trivial-basis canonicalization requires a normalized MPS, got norm²={norm_squared}"
     );
-    let x_gate = DMatrix::from_row_slice(
-        2,
-        2,
-        &[
-            Complex64::new(0.0, 0.0),
-            Complex64::new(1.0, 0.0),
-            Complex64::new(1.0, 0.0),
-            Complex64::new(0.0, 0.0),
-        ],
-    );
+    let x_gate = time_pre_reduction_tensor_work::<DIAGNOSTICS, _>(&mut work.mps, || {
+        DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        )
+    });
     let mut modified_sites = Vec::new();
     for site in 0..mps.num_sites() {
         let chi_r = mps.bond_dim(site + 1);
-        let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[site], 0, chi_r);
-        let block_0_norm: f64 = block_0.iter().map(num_complex::Complex::norm_sqr).sum();
+        let block_0_norm = time_pre_reduction_tensor_work::<DIAGNOSTICS, _>(&mut work.mps, || {
+            let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[site], 0, chi_r);
+            block_0
+                .iter()
+                .map(num_complex::Complex::norm_sqr)
+                .sum::<f64>()
+        });
         // Every project_forced_z entry path normalizes before this helper can
         // be reached again, so the block weight has unit-state scale and this
         // absolute zero threshold is intentional.
@@ -197,8 +380,10 @@ fn canonicalize_trivial_mps_basis(
             {
                 accumulator.right_compose_x(before, tableau, site);
             }
-            mps.apply_one_site_gate(site, &x_gate)
-                .expect("MPS op on valid site");
+            time_pre_reduction_tensor_work::<DIAGNOSTICS, _>(&mut work.mps, || {
+                mps.apply_one_site_gate(site, &x_gate)
+                    .expect("MPS op on valid site");
+            });
             modified_sites.push(site);
         }
     }
@@ -476,6 +661,34 @@ fn pre_reduce_for_measurement(
     q_idx: usize,
     apply_mps_compensation: bool,
 ) -> Result<Vec<usize>, MpsError> {
+    pre_reduce_for_measurement_impl::<false>(
+        tableau,
+        mps,
+        q_idx,
+        apply_mps_compensation,
+        &mut PreReductionWork::default(),
+    )
+}
+
+fn pre_reduce_for_measurement_profiled(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    q_idx: usize,
+    event: &mut super::PreReductionTelemetry,
+) -> Result<Vec<usize>, MpsError> {
+    let mut work = PreReductionWork::default();
+    let result = pre_reduce_for_measurement_impl::<true>(tableau, mps, q_idx, true, &mut work);
+    finish_pre_reduction_work(event, &work);
+    result
+}
+
+fn pre_reduce_for_measurement_impl<const DIAGNOSTICS: bool>(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    q_idx: usize,
+    apply_mps_compensation: bool,
+    work: &mut PreReductionWork,
+) -> Result<Vec<usize>, MpsError> {
     let col_x = &tableau.stabs().col_x[q_idx];
     if col_x.len() <= 1 {
         return Ok(Vec::new());
@@ -497,7 +710,9 @@ fn pre_reduce_for_measurement(
         let mut modified_sites = Vec::with_capacity(1 + anticom.len());
         modified_sites.push(replaced_idx);
         for other_id in anticom {
-            if let Err(error) = apply_cnot_to_mps(mps, replaced_idx, other_id) {
+            if let Err(error) =
+                apply_cnot_to_mps_impl::<DIAGNOSTICS>(mps, replaced_idx, other_id, work)
+            {
                 *tableau = original_tableau;
                 *mps = original_mps;
                 return Err(error);
@@ -536,52 +751,75 @@ fn pre_reduce_for_measurement(
 }
 
 fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) -> Result<(), MpsError> {
+    apply_cnot_to_mps_impl::<false>(mps, control, target, &mut PreReductionWork::default())
+}
+
+fn apply_cnot_to_mps_impl<const DIAGNOSTICS: bool>(
+    mps: &mut Mps,
+    control: usize,
+    target: usize,
+    work: &mut PreReductionWork,
+) -> Result<(), MpsError> {
+    work.compensating_cnot_count += 1;
     // Optimization: if the control site has no |1⟩_virt amplitude, CNOT is
     // identity on this MPS — skip the unnecessary SWAP/SVD work.
     // Mirror: if control has no |0⟩_virt amp, CNOT reduces to X on target.
     if mps_site_block_is_structurally_zero(mps, control, 1) {
+        work.structural_identity_cnot_count += 1;
         return Ok(());
     }
     if mps_site_block_is_structurally_zero(mps, control, 0) {
+        work.unconditional_x_cnot_count += 1;
         // Control is |1⟩ → CNOT unconditionally flips target = X on target.
-        let x_gate = DMatrix::from_row_slice(
-            2,
-            2,
-            &[
-                Complex64::new(0.0, 0.0),
-                Complex64::new(1.0, 0.0),
-                Complex64::new(1.0, 0.0),
-                Complex64::new(0.0, 0.0),
-            ],
-        );
-        mps.apply_one_site_gate(target, &x_gate)?;
+        let result = time_pre_reduction_tensor_work::<DIAGNOSTICS, _>(&mut work.mps, || {
+            let x_gate = DMatrix::from_row_slice(
+                2,
+                2,
+                &[
+                    Complex64::new(0.0, 0.0),
+                    Complex64::new(1.0, 0.0),
+                    Complex64::new(1.0, 0.0),
+                    Complex64::new(0.0, 0.0),
+                ],
+            );
+            mps.apply_one_site_gate(target, &x_gate)
+        });
+        result?;
         return Ok(());
     }
 
-    let zero = Complex64::new(0.0, 0.0);
-    let one = Complex64::new(1.0, 0.0);
-    let cnot_control_low = DMatrix::from_row_slice(
-        4,
-        4,
-        &[
-            one, zero, zero, zero, zero, one, zero, zero, zero, zero, zero, one, zero, zero, one,
-            zero,
-        ],
-    );
-    let cnot_control_high = DMatrix::from_row_slice(
-        4,
-        4,
-        &[
-            one, zero, zero, zero, zero, zero, zero, one, zero, zero, one, zero, zero, one, zero,
-            zero,
-        ],
-    );
+    let (cnot_control_low, cnot_control_high) =
+        time_pre_reduction_tensor_work::<DIAGNOSTICS, _>(&mut work.mps, || {
+            let zero = Complex64::new(0.0, 0.0);
+            let one = Complex64::new(1.0, 0.0);
+            let cnot_control_low = DMatrix::from_row_slice(
+                4,
+                4,
+                &[
+                    one, zero, zero, zero, zero, one, zero, zero, zero, zero, zero, one, zero,
+                    zero, one, zero,
+                ],
+            );
+            let cnot_control_high = DMatrix::from_row_slice(
+                4,
+                4,
+                &[
+                    one, zero, zero, zero, zero, zero, zero, one, zero, zero, one, zero, zero, one,
+                    zero, zero,
+                ],
+            );
+            (cnot_control_low, cnot_control_high)
+        });
     let (first, second, gate) = if control < target {
         (control, target, cnot_control_low)
     } else {
         (target, control, cnot_control_high)
     };
-    mps.apply_long_range_two_site_gate(first, second, &gate)
+    if DIAGNOSTICS {
+        mps.apply_long_range_two_site_gate_profiled(first, second, &gate, &mut work.mps)
+    } else {
+        mps.apply_long_range_two_site_gate(first, second, &gate)
+    }
 }
 
 /// A deferred Clifford primitive in the virtual-frame queue.
@@ -1356,6 +1594,7 @@ fn project_forced_z_with_update_impl(
     outcome: bool,
     mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
     mut telemetry: Option<&mut super::QueryDepthTelemetry>,
+    sibling_pair_id: Option<u64>,
 ) -> Result<ForcedProjectionResult, MpsError> {
     let projection_locality_active = telemetry
         .as_deref()
@@ -1380,11 +1619,22 @@ fn project_forced_z_with_update_impl(
         // A trivial coefficient MPS represents a pure stabilizer state. First
         // absorb a possible nonzero virtual basis word into the tableau; only
         // then can its forced update supply the exact probability and state.
-        let modified_sites = profile_query_phase(
+        let modified_sites = profile_pre_reduction(
             mps,
             &mut telemetry,
-            super::QueryPhase::PreReduction,
-            |mps| canonicalize_trivial_mps_basis(tableau, mps, phase_accumulator.as_deref_mut()),
+            q_idx,
+            sibling_pair_id,
+            |mps, diagnostics| match diagnostics {
+                Some(diagnostics) => canonicalize_trivial_mps_basis_profiled(
+                    tableau,
+                    mps,
+                    phase_accumulator.as_deref_mut(),
+                    diagnostics,
+                ),
+                None => {
+                    canonicalize_trivial_mps_basis(tableau, mps, phase_accumulator.as_deref_mut())
+                }
+            },
         );
         let decomp = profile_query_phase(
             mps,
@@ -1450,11 +1700,17 @@ fn project_forced_z_with_update_impl(
 
     // Reduce to one virtual X site while compensating every generator-basis
     // CNOT on the MPS. This preserves C·MPS exactly.
-    let mut modified_sites = profile_query_phase(
+    let mut modified_sites = profile_pre_reduction(
         mps,
         &mut telemetry,
-        super::QueryPhase::PreReduction,
-        |mps| pre_reduce_for_measurement(tableau, mps, q_idx, true),
+        q_idx,
+        sibling_pair_id,
+        |mps, diagnostics| match diagnostics {
+            Some(diagnostics) => {
+                pre_reduce_for_measurement_profiled(tableau, mps, q_idx, diagnostics)
+            }
+            None => pre_reduce_for_measurement(tableau, mps, q_idx, true),
+        },
     )?;
     // Snapshot only after expectation and compensated pre-reduction. Bitwise
     // differences in the resulting event therefore belong to the projection
@@ -1732,7 +1988,7 @@ pub(super) fn project_forced_z_with_update(
     q_idx: usize,
     outcome: bool,
 ) -> Result<ForcedProjectionResult, MpsError> {
-    project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, None, None)
+    project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, None, None, None)
 }
 
 /// Forced projection with canonical-ket scalar tracking for phase-sensitive
@@ -1751,6 +2007,7 @@ pub(super) fn project_forced_z_with_phase(
         q_idx,
         outcome,
         Some(phase_accumulator),
+        None,
         None,
     )?
     .snapped_probability)
@@ -1778,11 +2035,18 @@ pub(super) fn project_forced_z_profiled(
     q_idx: usize,
     outcome: bool,
     telemetry: &mut super::QueryDepthTelemetry,
+    sibling_pair_id: Option<u64>,
 ) -> Result<f64, MpsError> {
-    Ok(
-        project_forced_z_with_update_impl(tableau, mps, q_idx, outcome, None, Some(telemetry))?
-            .snapped_probability,
-    )
+    Ok(project_forced_z_with_update_impl(
+        tableau,
+        mps,
+        q_idx,
+        outcome,
+        None,
+        Some(telemetry),
+        sibling_pair_id,
+    )?
+    .snapped_probability)
 }
 
 /// Measure qubit `q_idx` in the Z basis using the STN protocol.

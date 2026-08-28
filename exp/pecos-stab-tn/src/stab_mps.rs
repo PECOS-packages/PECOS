@@ -1055,6 +1055,44 @@ pub struct QueryPhaseTelemetry {
     pub wall_time_seconds: f64,
 }
 
+/// One truncating two-site SVD executed by compensated pre-reduction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreReductionSvdTelemetry {
+    /// Row dimension of the matrix passed to the SVD.
+    pub input_rows: usize,
+    /// Column dimension of the matrix passed to the SVD.
+    pub input_columns: usize,
+    /// Rank retained by the configured truncation policy.
+    pub output_rank: usize,
+    /// Whether `max_bond_dim` was the binding rank limit.
+    pub cap_binding: bool,
+}
+
+/// Rank telemetry for one requested generator-basis compensation CNOT.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreReductionCnotTelemetry {
+    /// Virtual control site, equal to the selected replacement generator.
+    pub control: usize,
+    /// Virtual target site.
+    pub target: usize,
+    /// Absolute one-dimensional site distance.
+    pub distance: usize,
+    /// Complete internal-bond profile immediately before this CNOT.
+    pub input_bond_profile: Vec<usize>,
+    /// Complete internal-bond profile immediately after this CNOT.
+    pub output_bond_profile: Vec<usize>,
+    /// Largest retained bond rank at entry or at any SVD within this CNOT.
+    pub peak_bond_rank: usize,
+    /// Index of this CNOT's first entry in the owning event's `svd_steps`.
+    pub svd_start: usize,
+    /// Number of entries belonging to this CNOT in the owning event's `svd_steps`.
+    pub svd_count: usize,
+    /// Whether the CNOT was structurally the identity and skipped numerically.
+    pub structural_identity: bool,
+    /// Whether the CNOT reduced to an unconditional one-site X.
+    pub unconditional_x: bool,
+}
+
 /// Runtime-gated details for one compensated query pre-reduction call.
 ///
 /// The fingerprint intentionally describes only the cheap structural input:
@@ -1069,6 +1107,8 @@ pub struct PreReductionTelemetry {
     pub accumulated_projector_count: usize,
     /// Pair identifier shared only by the two outcomes projected from one trie parent.
     pub sibling_pair_id: Option<u64>,
+    /// Physical qubit whose forced Z projection requested this phase.
+    pub measured_qubit: usize,
     /// Configured hard cap used to classify entry bonds.
     pub bond_cap: usize,
     /// Internal bond dimensions at phase entry, excluding boundary bonds.
@@ -1087,6 +1127,30 @@ pub struct PreReductionTelemetry {
     pub input_profile_scan_seconds: f64,
     /// Time to collect the output bond profile, outside phase timing.
     pub output_profile_scan_seconds: f64,
+    /// Stabilizer selected by the current minimum-weight, iteration-order rule.
+    pub chosen_stabilizer: Option<usize>,
+    /// Weight used by the current replacement rule.
+    pub chosen_stabilizer_weight: Option<usize>,
+    /// Number of anticommuting stabilizers eligible for replacement.
+    pub replacement_candidate_count: usize,
+    /// Number of candidates tied at the selected minimum weight.
+    pub minimum_weight_candidate_count: usize,
+    /// Current compensation cost, `sum(2 * distance - 1)` over targets.
+    pub chosen_compensation_cost: usize,
+    /// Minimum compensation cost among all minimum-weight candidates.
+    pub minimum_weight_optimal_cost: usize,
+    /// Number of candidates exactly one weight above the selected minimum.
+    pub weight_plus_one_candidate_count: usize,
+    /// Minimum cost among candidates exactly one weight above the minimum.
+    pub weight_plus_one_optimal_cost: Option<usize>,
+    /// Smallest compensation target site, excluding the selected control.
+    pub target_min: Option<usize>,
+    /// Largest compensation target site, excluding the selected control.
+    pub target_max: Option<usize>,
+    /// `target_max - target_min`, or zero for fewer than two targets.
+    pub target_span: usize,
+    /// Span covering the replacement control and every compensation target.
+    pub compensation_support_span: usize,
     /// Complete pre-reduction phase wall time.
     pub wall_time_seconds: f64,
     /// Time inside truncating two-site SVD implementations.
@@ -1108,6 +1172,10 @@ pub struct PreReductionTelemetry {
     pub structural_identity_cnot_count: u64,
     /// Requested CNOTs reduced to an unconditional one-site X.
     pub unconditional_x_cnot_count: u64,
+    /// SVD matrix dimensions, retained ranks, and cap outcomes in execution order.
+    pub svd_steps: Vec<PreReductionSvdTelemetry>,
+    /// Input/output profiles and within-CNOT peak ranks in execution order.
+    pub cnot_steps: Vec<PreReductionCnotTelemetry>,
     /// Whether the output bond profile exactly equals the input profile.
     pub output_profile_unchanged: bool,
 }

@@ -295,7 +295,7 @@ fn simulate(cell: Cell, collect_telemetry: bool) -> (StabMps, f64) {
     let started = Instant::now();
     let mut simulator = StabMps::builder(cell.n)
         .seed(cell.seed)
-        .max_bond_dim(64)
+        .max_bond_dim(env_count("SATURATION_MAX_BOND_DIM", 64))
         .svd_cutoff(1e-12)
         .max_truncation_error(0.0)
         .merge_rz(true)
@@ -428,6 +428,14 @@ fn print_pre_reduction_summary(
     let mut compensating_cnots = 0_u64;
     let mut structural_identity_cnots = 0_u64;
     let mut unconditional_x_cnots = 0_u64;
+    let mut replacement_events = 0_usize;
+    let mut tied_replacement_events = 0_usize;
+    let mut chosen_compensation_cost = 0_usize;
+    let mut minimum_weight_optimal_cost = 0_usize;
+    let mut weight_plus_one_available_events = 0_usize;
+    let mut weight_plus_one_available_chosen_cost = 0_usize;
+    let mut weight_plus_one_only_optimal_cost = 0_usize;
+    let mut minimum_or_weight_plus_one_optimal_cost = 0_usize;
     let mut maximum_entry_bond = 1_usize;
     for &event in events {
         fingerprints
@@ -461,6 +469,23 @@ fn print_pre_reduction_summary(
         compensating_cnots += event.compensating_cnot_count;
         structural_identity_cnots += event.structural_identity_cnot_count;
         unconditional_x_cnots += event.unconditional_x_cnot_count;
+        if event.chosen_stabilizer.is_some() {
+            replacement_events += 1;
+            tied_replacement_events += usize::from(event.minimum_weight_candidate_count > 1);
+            chosen_compensation_cost += event.chosen_compensation_cost;
+            minimum_weight_optimal_cost += event.minimum_weight_optimal_cost;
+            let best_at_most_plus_one = event
+                .weight_plus_one_optimal_cost
+                .map_or(event.minimum_weight_optimal_cost, |cost| {
+                    cost.min(event.minimum_weight_optimal_cost)
+                });
+            minimum_or_weight_plus_one_optimal_cost += best_at_most_plus_one;
+            if let Some(cost) = event.weight_plus_one_optimal_cost {
+                weight_plus_one_available_events += 1;
+                weight_plus_one_available_chosen_cost += event.chosen_compensation_cost;
+                weight_plus_one_only_optimal_cost += cost;
+            }
+        }
     }
 
     let repeated_fingerprint_calls = fingerprints
@@ -500,7 +525,7 @@ fn print_pre_reduction_summary(
     }
     let depth = depth.map_or_else(|| "all".to_owned(), |value| value.to_string());
     println!(
-        "PRERED_SUMMARY cell={} run={} depth={} calls={} wall_s={:.9} svd_compute_s={:.9} qr_gauge_s={:.9} tensor_s={:.9} bookkeeping_s={:.9} svds={} capped_svds={} max_entry_bond={} mean_entry_bond={:.9} entry_bonds={} cap_saturated_bonds={} cap_bond_fraction={:.9} calls_with_cap={} calls_with_cap_s={:.9} unique_fingerprints={} repeated_fingerprint_calls={} repeated_fingerprint_wall_ceiling_s={:.9} sibling_calls={} sibling_fingerprint_match_calls={} sibling_share_wall_ceiling_s={:.9} no_op_calls={} no_op_s={:.9} profile_scan_s={:.9} compensating_cnots={} structural_identity_cnots={} unconditional_x_cnots={}",
+        "PRERED_SUMMARY cell={} run={} depth={} calls={} wall_s={:.9} svd_compute_s={:.9} qr_gauge_s={:.9} tensor_s={:.9} bookkeeping_s={:.9} svds={} capped_svds={} max_entry_bond={} mean_entry_bond={:.9} entry_bonds={} cap_saturated_bonds={} cap_bond_fraction={:.9} calls_with_cap={} calls_with_cap_s={:.9} unique_fingerprints={} repeated_fingerprint_calls={} repeated_fingerprint_wall_ceiling_s={:.9} sibling_calls={} sibling_fingerprint_match_calls={} sibling_share_wall_ceiling_s={:.9} no_op_calls={} no_op_s={:.9} profile_scan_s={:.9} compensating_cnots={} structural_identity_cnots={} unconditional_x_cnots={} replacement_events={} tied_replacement_events={} chosen_cost={} minimum_weight_optimal_cost={} plus_one_available_events={} plus_one_available_chosen_cost={} plus_one_only_optimal_cost={} minimum_or_plus_one_optimal_cost={}",
         cell.name,
         run,
         depth,
@@ -531,6 +556,14 @@ fn print_pre_reduction_summary(
         compensating_cnots,
         structural_identity_cnots,
         unconditional_x_cnots,
+        replacement_events,
+        tied_replacement_events,
+        chosen_compensation_cost,
+        minimum_weight_optimal_cost,
+        weight_plus_one_available_events,
+        weight_plus_one_available_chosen_cost,
+        weight_plus_one_only_optimal_cost,
+        minimum_or_weight_plus_one_optimal_cost,
     );
 }
 
@@ -556,14 +589,18 @@ fn print_pre_reduction_depth(
         let sibling_pair = event
             .sibling_pair_id
             .map_or_else(|| "none".to_owned(), |value| value.to_string());
+        let option = |value: Option<usize>| {
+            value.map_or_else(|| "none".to_owned(), |value| value.to_string())
+        };
         println!(
-            "PRERED_EVENT cell={} run={} depth={} event={} sibling_pair={} accumulated_projectors={} fingerprint={:016x} cap={} input_max={} input_sum={} input_cap_bonds={} input_bonds={} output_bonds={} no_op={} wall_s={:.9} svd_compute_s={:.9} qr_gauge_s={:.9} tensor_s={:.9} bookkeeping_s={:.9} svds={} capped_svds={} input_scan_s={:.9} output_scan_s={:.9} compensating_cnots={} structural_identity_cnots={} unconditional_x_cnots={}",
+            "PRERED_EVENT cell={} run={} depth={} event={} sibling_pair={} accumulated_projectors={} measured_qubit={} fingerprint={:016x} cap={} input_max={} input_sum={} input_cap_bonds={} input_bonds={} output_bonds={} no_op={} wall_s={:.9} svd_compute_s={:.9} qr_gauge_s={:.9} tensor_s={:.9} bookkeeping_s={:.9} svds={} capped_svds={} input_scan_s={:.9} output_scan_s={:.9} compensating_cnots={} structural_identity_cnots={} unconditional_x_cnots={} chosen_stabilizer={} chosen_weight={} replacement_candidates={} minimum_weight_candidates={} chosen_cost={} minimum_weight_optimal_cost={} plus_one_candidates={} plus_one_optimal_cost={} target_min={} target_max={} target_span={} support_span={}",
             cell.name,
             run,
             depth,
             event_index,
             sibling_pair,
             event.accumulated_projector_count,
+            event.measured_qubit,
             event.input_fingerprint,
             event.bond_cap,
             event.input_max_bond,
@@ -584,7 +621,73 @@ fn print_pre_reduction_depth(
             event.compensating_cnot_count,
             event.structural_identity_cnot_count,
             event.unconditional_x_cnot_count,
+            option(event.chosen_stabilizer),
+            option(event.chosen_stabilizer_weight),
+            event.replacement_candidate_count,
+            event.minimum_weight_candidate_count,
+            event.chosen_compensation_cost,
+            event.minimum_weight_optimal_cost,
+            event.weight_plus_one_candidate_count,
+            option(event.weight_plus_one_optimal_cost),
+            option(event.target_min),
+            option(event.target_max),
+            event.target_span,
+            event.compensation_support_span,
         );
+        for (cnot_index, cnot) in event.cnot_steps.iter().enumerate() {
+            let cnot_input_bonds = cnot
+                .input_bond_profile
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let cnot_output_bonds = cnot
+                .output_bond_profile
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            println!(
+                "PRERED_CNOT cell={} run={} depth={} event={} cnot={} control={} target={} distance={} input_max={} output_max={} peak_rank={} svd_start={} svds={} structural_identity={} unconditional_x={} input_bonds={} output_bonds={}",
+                cell.name,
+                run,
+                depth,
+                event_index,
+                cnot_index,
+                cnot.control,
+                cnot.target,
+                cnot.distance,
+                cnot.input_bond_profile.iter().copied().max().unwrap_or(1),
+                cnot.output_bond_profile.iter().copied().max().unwrap_or(1),
+                cnot.peak_bond_rank,
+                cnot.svd_start,
+                cnot.svd_count,
+                cnot.structural_identity,
+                cnot.unconditional_x,
+                cnot_input_bonds,
+                cnot_output_bonds,
+            );
+            for (svd_in_cnot, svd) in event.svd_steps
+                [cnot.svd_start..cnot.svd_start + cnot.svd_count]
+                .iter()
+                .enumerate()
+            {
+                println!(
+                    "PRERED_SVD cell={} run={} depth={} event={} cnot={} svd_in_cnot={} svd={} input_rows={} input_columns={} output_rank={} capped={}",
+                    cell.name,
+                    run,
+                    depth,
+                    event_index,
+                    cnot_index,
+                    svd_in_cnot,
+                    cnot.svd_start + svd_in_cnot,
+                    svd.input_rows,
+                    svd.input_columns,
+                    svd.output_rank,
+                    svd.cap_binding,
+                );
+            }
+        }
     }
     print_pre_reduction_summary(cell, run, Some(depth), &events.iter().collect::<Vec<_>>());
 }
@@ -1120,12 +1223,14 @@ fn main() {
 
     let warmups = env_count("SATURATION_WARMUPS", 1);
     let repetitions = env_count("SATURATION_REPETITIONS", 5);
+    let bond_cap = env_count("SATURATION_MAX_BOND_DIM", 64);
+    assert!(bond_cap > 0, "SATURATION_MAX_BOND_DIM must be positive");
     assert!(repetitions > 0, "at least one timed repetition is required");
     for cell in selected_cells() {
         let gate_count = gates(cell).len();
         println!(
-            "CELL cell={} n={} seed={} gates={} campaign_content_hash={} query_status=available",
-            cell.name, cell.n, cell.seed, gate_count, cell.campaign_content_hash,
+            "CELL cell={} n={} seed={} gates={} bond_cap={} campaign_content_hash={} query_status=available",
+            cell.name, cell.n, cell.seed, gate_count, bond_cap, cell.campaign_content_hash,
         );
         for warmup in 0..warmups {
             let (simulator, sim_seconds) = simulate(cell, false);

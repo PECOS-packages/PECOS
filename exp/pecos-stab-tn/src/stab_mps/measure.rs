@@ -88,6 +88,7 @@ fn begin_pre_reduction_diagnostics(
         chain_length: mps.num_sites(),
         accumulated_projector_count,
         sibling_pair_id,
+        measured_qubit: accumulated_projector_count,
         bond_cap,
         input_bond_profile,
         output_bond_profile: Vec::new(),
@@ -97,6 +98,18 @@ fn begin_pre_reduction_diagnostics(
         input_fingerprint,
         input_profile_scan_seconds,
         output_profile_scan_seconds: 0.0,
+        chosen_stabilizer: None,
+        chosen_stabilizer_weight: None,
+        replacement_candidate_count: 0,
+        minimum_weight_candidate_count: 0,
+        chosen_compensation_cost: 0,
+        minimum_weight_optimal_cost: 0,
+        weight_plus_one_candidate_count: 0,
+        weight_plus_one_optimal_cost: None,
+        target_min: None,
+        target_max: None,
+        target_span: 0,
+        compensation_support_span: 0,
         wall_time_seconds: 0.0,
         svd_compute_seconds: 0.0,
         qr_gauge_seconds: 0.0,
@@ -107,6 +120,8 @@ fn begin_pre_reduction_diagnostics(
         compensating_cnot_count: 0,
         structural_identity_cnot_count: 0,
         unconditional_x_cnot_count: 0,
+        svd_steps: Vec::new(),
+        cnot_steps: Vec::new(),
         output_profile_unchanged: false,
     }
 }
@@ -174,6 +189,19 @@ struct PreReductionWork {
     compensating_cnot_count: u64,
     structural_identity_cnot_count: u64,
     unconditional_x_cnot_count: u64,
+    chosen_stabilizer: Option<usize>,
+    chosen_stabilizer_weight: Option<usize>,
+    replacement_candidate_count: usize,
+    minimum_weight_candidate_count: usize,
+    chosen_compensation_cost: usize,
+    minimum_weight_optimal_cost: usize,
+    weight_plus_one_candidate_count: usize,
+    weight_plus_one_optimal_cost: Option<usize>,
+    target_min: Option<usize>,
+    target_max: Option<usize>,
+    target_span: usize,
+    compensation_support_span: usize,
+    cnot_steps: Vec<super::PreReductionCnotTelemetry>,
 }
 
 fn finish_pre_reduction_work(event: &mut super::PreReductionTelemetry, work: &PreReductionWork) {
@@ -183,6 +211,20 @@ fn finish_pre_reduction_work(event: &mut super::PreReductionTelemetry, work: &Pr
     event.compensating_cnot_count += work.compensating_cnot_count;
     event.structural_identity_cnot_count += work.structural_identity_cnot_count;
     event.unconditional_x_cnot_count += work.unconditional_x_cnot_count;
+    event.chosen_stabilizer = work.chosen_stabilizer;
+    event.chosen_stabilizer_weight = work.chosen_stabilizer_weight;
+    event.replacement_candidate_count = work.replacement_candidate_count;
+    event.minimum_weight_candidate_count = work.minimum_weight_candidate_count;
+    event.chosen_compensation_cost = work.chosen_compensation_cost;
+    event.minimum_weight_optimal_cost = work.minimum_weight_optimal_cost;
+    event.weight_plus_one_candidate_count = work.weight_plus_one_candidate_count;
+    event.weight_plus_one_optimal_cost = work.weight_plus_one_optimal_cost;
+    event.target_min = work.target_min;
+    event.target_max = work.target_max;
+    event.target_span = work.target_span;
+    event.compensation_support_span = work.compensation_support_span;
+    event.svd_steps.clone_from(&work.mps.svd_steps);
+    event.cnot_steps.clone_from(&work.cnot_steps);
 }
 
 fn time_pre_reduction_tensor_work<const DIAGNOSTICS: bool, T>(
@@ -619,6 +661,77 @@ fn find_replaced_stabilizer(tableau: &SparseStabY, q_idx: usize) -> usize {
     best_id.expect("col_x should be non-empty for DestabilizerFlip case")
 }
 
+fn stabilizer_weight(tableau: &SparseStabY, stabilizer: usize) -> usize {
+    let stabs = tableau.stabs();
+    stabs.row_x[stabilizer].len() + stabs.row_z[stabilizer].len()
+}
+
+fn replacement_compensation_cost(candidates: &[usize], replacement: usize) -> usize {
+    candidates
+        .iter()
+        .copied()
+        .filter(|&candidate| candidate != replacement)
+        .map(|target| 2 * replacement.abs_diff(target) - 1)
+        .sum()
+}
+
+fn record_replacement_choice_diagnostics(
+    tableau: &SparseStabY,
+    q_idx: usize,
+    chosen: usize,
+    work: &mut PreReductionWork,
+) {
+    let candidates = tableau.stabs().col_x[q_idx].iter().collect::<Vec<_>>();
+    let chosen_weight = stabilizer_weight(tableau, chosen);
+    let minimum_weight_candidates = candidates
+        .iter()
+        .copied()
+        .filter(|&candidate| stabilizer_weight(tableau, candidate) == chosen_weight)
+        .collect::<Vec<_>>();
+    let weight_plus_one_candidates = chosen_weight
+        .checked_add(1)
+        .map_or_else(Vec::new, |weight| {
+            candidates
+                .iter()
+                .copied()
+                .filter(|&candidate| stabilizer_weight(tableau, candidate) == weight)
+                .collect()
+        });
+    let targets = candidates
+        .iter()
+        .copied()
+        .filter(|&candidate| candidate != chosen)
+        .collect::<Vec<_>>();
+    let target_min = targets.iter().copied().min();
+    let target_max = targets.iter().copied().max();
+    let support_min = candidates.iter().copied().min().unwrap_or(chosen);
+    let support_max = candidates.iter().copied().max().unwrap_or(chosen);
+
+    work.chosen_stabilizer = Some(chosen);
+    work.chosen_stabilizer_weight = Some(chosen_weight);
+    work.replacement_candidate_count = candidates.len();
+    work.minimum_weight_candidate_count = minimum_weight_candidates.len();
+    work.chosen_compensation_cost = replacement_compensation_cost(&candidates, chosen);
+    work.minimum_weight_optimal_cost = minimum_weight_candidates
+        .iter()
+        .copied()
+        .map(|candidate| replacement_compensation_cost(&candidates, candidate))
+        .min()
+        .expect("the chosen stabilizer is a minimum-weight candidate");
+    work.weight_plus_one_candidate_count = weight_plus_one_candidates.len();
+    work.weight_plus_one_optimal_cost = weight_plus_one_candidates
+        .iter()
+        .copied()
+        .map(|candidate| replacement_compensation_cost(&candidates, candidate))
+        .min();
+    work.target_min = target_min;
+    work.target_max = target_max;
+    work.target_span = target_min
+        .zip(target_max)
+        .map_or(0, |(minimum, maximum)| maximum - minimum);
+    work.compensation_support_span = support_max - support_min;
+}
+
 /// Test hook for `pre_reduce_for_measurement`.
 ///
 /// # Errors
@@ -695,6 +808,9 @@ fn pre_reduce_for_measurement_impl<const DIAGNOSTICS: bool>(
     }
 
     let replaced_idx = find_replaced_stabilizer(tableau, q_idx);
+    if DIAGNOSTICS {
+        record_replacement_choice_diagnostics(tableau, q_idx, replaced_idx, work);
+    }
     let anticom: Vec<usize> = tableau.stabs().col_x[q_idx]
         .iter()
         .filter(|&id| id != replaced_idx)
@@ -754,6 +870,51 @@ fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) -> Result<(),
     apply_cnot_to_mps_impl::<false>(mps, control, target, &mut PreReductionWork::default())
 }
 
+fn internal_bond_profile(mps: &Mps) -> Vec<usize> {
+    mps.bond_dims()
+        .iter()
+        .copied()
+        .skip(1)
+        .take(mps.num_sites().saturating_sub(1))
+        .collect()
+}
+
+fn record_cnot_diagnostics(
+    mps: &Mps,
+    control: usize,
+    target: usize,
+    input_bond_profile: Vec<usize>,
+    svd_start: usize,
+    route: (bool, bool),
+    work: &mut PreReductionWork,
+) {
+    let (structural_identity, unconditional_x) = route;
+    let output_bond_profile = internal_bond_profile(mps);
+    let svd_count = work.mps.svd_steps.len() - svd_start;
+    let peak_bond_rank = input_bond_profile
+        .iter()
+        .copied()
+        .chain(
+            work.mps.svd_steps[svd_start..]
+                .iter()
+                .map(|step| step.output_rank),
+        )
+        .max()
+        .unwrap_or(1);
+    work.cnot_steps.push(super::PreReductionCnotTelemetry {
+        control,
+        target,
+        distance: control.abs_diff(target),
+        input_bond_profile,
+        output_bond_profile,
+        peak_bond_rank,
+        svd_start,
+        svd_count,
+        structural_identity,
+        unconditional_x,
+    });
+}
+
 fn apply_cnot_to_mps_impl<const DIAGNOSTICS: bool>(
     mps: &mut Mps,
     control: usize,
@@ -761,11 +922,24 @@ fn apply_cnot_to_mps_impl<const DIAGNOSTICS: bool>(
     work: &mut PreReductionWork,
 ) -> Result<(), MpsError> {
     work.compensating_cnot_count += 1;
+    let input_bond_profile = DIAGNOSTICS.then(|| internal_bond_profile(mps));
+    let svd_start = work.mps.svd_steps.len();
     // Optimization: if the control site has no |1⟩_virt amplitude, CNOT is
     // identity on this MPS — skip the unnecessary SWAP/SVD work.
     // Mirror: if control has no |0⟩_virt amp, CNOT reduces to X on target.
     if mps_site_block_is_structurally_zero(mps, control, 1) {
         work.structural_identity_cnot_count += 1;
+        if DIAGNOSTICS {
+            record_cnot_diagnostics(
+                mps,
+                control,
+                target,
+                input_bond_profile.expect("diagnostic CNOT has an input profile"),
+                svd_start,
+                (true, false),
+                work,
+            );
+        }
         return Ok(());
     }
     if mps_site_block_is_structurally_zero(mps, control, 0) {
@@ -785,6 +959,17 @@ fn apply_cnot_to_mps_impl<const DIAGNOSTICS: bool>(
             mps.apply_one_site_gate(target, &x_gate)
         });
         result?;
+        if DIAGNOSTICS {
+            record_cnot_diagnostics(
+                mps,
+                control,
+                target,
+                input_bond_profile.expect("diagnostic CNOT has an input profile"),
+                svd_start,
+                (false, true),
+                work,
+            );
+        }
         return Ok(());
     }
 
@@ -815,11 +1000,23 @@ fn apply_cnot_to_mps_impl<const DIAGNOSTICS: bool>(
     } else {
         (target, control, cnot_control_high)
     };
-    if DIAGNOSTICS {
+    let result = if DIAGNOSTICS {
         mps.apply_long_range_two_site_gate_profiled(first, second, &gate, &mut work.mps)
     } else {
         mps.apply_long_range_two_site_gate(first, second, &gate)
+    };
+    if DIAGNOSTICS && result.is_ok() {
+        record_cnot_diagnostics(
+            mps,
+            control,
+            target,
+            input_bond_profile.expect("diagnostic CNOT has an input profile"),
+            svd_start,
+            (false, false),
+            work,
+        );
     }
+    result
 }
 
 /// A deferred Clifford primitive in the virtual-frame queue.

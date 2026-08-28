@@ -2679,6 +2679,7 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                     for event in &bucket.pre_reduction_diagnostics {
                         assert_eq!(event.chain_length, num_qubits);
                         assert_eq!(event.accumulated_projector_count, depth);
+                        assert_eq!(event.measured_qubit, depth);
                         assert_eq!(event.input_bond_profile.len(), num_qubits - 1);
                         assert_eq!(event.output_bond_profile.len(), num_qubits - 1);
                         assert_eq!(
@@ -2710,10 +2711,131 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                             "pre-reduction breakdown must exactly partition its phase"
                         );
                         assert!(event.capped_svd_operations <= event.svd_operations);
+                        assert_eq!(
+                            event.svd_steps.len() as u64,
+                            event.svd_operations,
+                            "every pre-reduction SVD must have a shape record"
+                        );
+                        assert_eq!(
+                            event
+                                .svd_steps
+                                .iter()
+                                .filter(|step| step.cap_binding)
+                                .count() as u64,
+                            event.capped_svd_operations,
+                            "per-SVD cap records must reproduce the phase counter"
+                        );
+                        for step in &event.svd_steps {
+                            assert!(step.input_rows > 0);
+                            assert!(step.input_columns > 0);
+                            assert!(step.output_rank > 0);
+                            assert!(step.output_rank <= step.input_rows.min(step.input_columns));
+                            if step.cap_binding {
+                                assert_eq!(step.output_rank, event.bond_cap);
+                            }
+                        }
                         assert!(
                             event.structural_identity_cnot_count + event.unconditional_x_cnot_count
                                 <= event.compensating_cnot_count
                         );
+                        assert_eq!(
+                            event.cnot_steps.len() as u64,
+                            event.compensating_cnot_count,
+                            "every requested compensation CNOT must have a rank record"
+                        );
+                        for (cnot_index, cnot) in event.cnot_steps.iter().enumerate() {
+                            assert_eq!(cnot.distance, cnot.control.abs_diff(cnot.target));
+                            assert_eq!(cnot.input_bond_profile.len(), num_qubits - 1);
+                            assert_eq!(cnot.output_bond_profile.len(), num_qubits - 1);
+                            assert!(cnot.svd_start + cnot.svd_count <= event.svd_steps.len());
+                            if cnot_index == 0 {
+                                assert_eq!(cnot.input_bond_profile, event.input_bond_profile);
+                            } else {
+                                assert_eq!(
+                                    cnot.input_bond_profile,
+                                    event.cnot_steps[cnot_index - 1].output_bond_profile
+                                );
+                            }
+                            let expected_peak = cnot
+                                .input_bond_profile
+                                .iter()
+                                .copied()
+                                .chain(
+                                    event.svd_steps
+                                        [cnot.svd_start..cnot.svd_start + cnot.svd_count]
+                                        .iter()
+                                        .map(|step| step.output_rank),
+                                )
+                                .max()
+                                .unwrap_or(1);
+                            assert_eq!(cnot.peak_bond_rank, expected_peak);
+                            let is_numerical = !cnot.structural_identity && !cnot.unconditional_x;
+                            assert_eq!(
+                                cnot.svd_count,
+                                usize::from(is_numerical) * (2 * cnot.distance - 1)
+                            );
+                        }
+                        if let Some(last) = event.cnot_steps.last() {
+                            assert_eq!(last.output_bond_profile, event.output_bond_profile);
+                        }
+                        if let Some(chosen) = event.chosen_stabilizer {
+                            assert!(event.chosen_stabilizer_weight.is_some());
+                            assert!(event.replacement_candidate_count > 1);
+                            assert!(event.minimum_weight_candidate_count > 0);
+                            assert_eq!(
+                                event.replacement_candidate_count,
+                                event.cnot_steps.len() + 1
+                            );
+                            assert!(
+                                event.minimum_weight_optimal_cost <= event.chosen_compensation_cost
+                            );
+                            assert_eq!(
+                                event.chosen_compensation_cost,
+                                event
+                                    .cnot_steps
+                                    .iter()
+                                    .map(|cnot| 2 * cnot.distance - 1)
+                                    .sum::<usize>()
+                            );
+                            assert!(event.cnot_steps.iter().all(|cnot| cnot.control == chosen));
+                            let target_min = event.cnot_steps.iter().map(|cnot| cnot.target).min();
+                            let target_max = event.cnot_steps.iter().map(|cnot| cnot.target).max();
+                            assert_eq!(event.target_min, target_min);
+                            assert_eq!(event.target_max, target_max);
+                            assert_eq!(
+                                event.target_span,
+                                target_min
+                                    .zip(target_max)
+                                    .map_or(0, |(minimum, maximum)| maximum - minimum)
+                            );
+                            let support_min = event
+                                .cnot_steps
+                                .iter()
+                                .map(|cnot| cnot.target)
+                                .chain(std::iter::once(chosen))
+                                .min()
+                                .unwrap();
+                            let support_max = event
+                                .cnot_steps
+                                .iter()
+                                .map(|cnot| cnot.target)
+                                .chain(std::iter::once(chosen))
+                                .max()
+                                .unwrap();
+                            assert_eq!(event.compensation_support_span, support_max - support_min);
+                            assert_eq!(
+                                event.weight_plus_one_candidate_count == 0,
+                                event.weight_plus_one_optimal_cost.is_none()
+                            );
+                        } else {
+                            assert!(event.cnot_steps.is_empty());
+                            assert_eq!(event.replacement_candidate_count, 0);
+                            assert_eq!(event.minimum_weight_candidate_count, 0);
+                            assert_eq!(event.chosen_compensation_cost, 0);
+                            assert_eq!(event.minimum_weight_optimal_cost, 0);
+                            assert_eq!(event.weight_plus_one_candidate_count, 0);
+                            assert_eq!(event.weight_plus_one_optimal_cost, None);
+                        }
                         if event.svd_operations > 0 {
                             pre_reduction_numerical_events += 1;
                         }

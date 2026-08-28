@@ -125,11 +125,12 @@ pub struct Mps {
 /// The query profiler owns the complete phase timer. These nested timers cover
 /// only the expensive numerical primitives; its residual is deliberately left
 /// to the owning measurement layer as rollback/tableau/vector bookkeeping.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct MpsPreReductionTiming {
     pub(crate) svd_compute: f64,
     pub(crate) qr_gauge: f64,
     pub(crate) tensor_contraction: f64,
+    pub(crate) svd_steps: Vec<crate::stab_mps::PreReductionSvdTelemetry>,
 }
 
 fn time_pre_reduction_work<const DIAGNOSTICS: bool, T>(
@@ -755,6 +756,16 @@ impl Mps {
                 }
             })?;
         self.record_truncation(disc, hit);
+        if DIAGNOSTICS {
+            timing
+                .svd_steps
+                .push(crate::stab_mps::PreReductionSvdTelemetry {
+                    input_rows: svd_matrix.nrows(),
+                    input_columns: svd_matrix.ncols(),
+                    output_rank: left.ncols(),
+                    cap_binding: hit,
+                });
+        }
 
         let new_chi =
             time_pre_reduction_work::<DIAGNOSTICS, _>(&mut timing.tensor_contraction, || {

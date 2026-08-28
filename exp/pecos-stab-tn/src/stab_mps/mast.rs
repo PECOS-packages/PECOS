@@ -732,168 +732,6 @@ impl CliffordGateable for Mast {
         self
     }
 
-    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sy(qubits).z(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).y(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).x(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).z(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).y(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // XZ = -iY. Keep the trait default's projective decomposition and
-        // restore the named gate's exact phase in the amplitude scalar.
-        self.z(qubits).x(qubits);
-        for _ in qubits {
-            self.global_phase *= Complex64::i();
-        }
-        self
-    }
-
-    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // HZ = exp(-i*pi/4) SY. The tableau keeps the projective part; the
-        // amplitude scalar restores the conventional named-gate phase.
-        self.z(qubits).h(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // ZH = exp(i*pi/4) SYdg. The tableau keeps the projective part; the
-        // amplitude scalar restores the conventional named-gate phase.
-        self.h(qubits).z(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).sz(qubits);
-        for _ in qubits {
-            self.global_phase *= Complex64::i();
-        }
-        self
-    }
-
-    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.szdg(qubits).sxdg(qubits);
-        for _ in qubits {
-            self.global_phase *= -Complex64::i();
-        }
-        self
-    }
-
-    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).sy(qubits);
-        for _ in qubits {
-            self.global_phase = -self.global_phase;
-        }
-        self
-    }
-
-    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sydg(qubits).sx(qubits);
-        for _ in qubits {
-            self.global_phase = -self.global_phase;
-        }
-        self
-    }
-
-    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).sz(qubits);
-        for _ in qubits {
-            self.global_phase = -self.global_phase;
-        }
-        self
-    }
-
-    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.szdg(qubits).sx(qubits);
-        for _ in qubits {
-            self.global_phase = -self.global_phase;
-        }
-        self
-    }
-
-    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).sx(qubits);
-        for _ in qubits {
-            self.global_phase *= Complex64::i();
-        }
-        self
-    }
-
-    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).szdg(qubits);
-        for _ in qubits {
-            self.global_phase *= -Complex64::i();
-        }
-        self
-    }
-
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // CX doesn't commute with RZ on arbitrary qubits: flush both.
         for &(c, t) in pairs {
@@ -992,7 +830,9 @@ impl ArbitraryRotationGateable for Mast {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stab_mps::StabMps;
     use approx::assert_relative_eq;
+    use pecos_core::Clifford;
 
     fn assert_mast_disent_flags_sound(mast: &Mast, context: &str) {
         super::super::assert_disent_flags_match_stored_mps(&mast.mps, &mast.disent_flags, context);
@@ -1045,88 +885,82 @@ mod tests {
         assert!((mast.global_phase - expected).norm() < 1e-12);
     }
 
-    #[test]
-    fn test_named_y_family_phases_are_carried_exactly() {
-        let q = [QubitId(0)];
-        let root_half = std::f64::consts::FRAC_1_SQRT_2;
-        let mutation = Complex64::new(root_half, root_half);
-
-        let mut y = Mast::new(1, 0);
-        y.y(&q);
-        let expected_y = Complex64::i();
-        assert!((y.global_phase - expected_y).norm() < 1e-12);
-        assert!((y.global_phase - expected_y * mutation).norm() > 1e-12);
-
-        let mut sy = Mast::new(1, 0);
-        sy.sy(&q);
-        let expected_sy = Complex64::new(root_half, root_half);
-        assert!((sy.global_phase - expected_sy).norm() < 1e-12);
-        assert!((sy.global_phase - expected_sy * mutation).norm() > 1e-12);
-
-        let mut sydg = Mast::new(1, 0);
-        sydg.sydg(&q);
-        let expected_sydg = Complex64::new(root_half, -root_half);
-        assert!((sydg.global_phase - expected_sydg).norm() < 1e-12);
-        assert!((sydg.global_phase - expected_sydg * mutation).norm() > 1e-12);
-    }
-
-    fn apply_order_fixed_clifford(mast: &mut Mast, gate: pecos_core::Clifford) {
-        let q = [QubitId(0)];
+    fn apply_single_qubit_clifford(mast: &mut Mast, gate: Clifford, qubits: &[QubitId]) {
         match gate {
-            pecos_core::Clifford::H2 => mast.h2(&q),
-            pecos_core::Clifford::H3 => mast.h3(&q),
-            pecos_core::Clifford::H4 => mast.h4(&q),
-            pecos_core::Clifford::H5 => mast.h5(&q),
-            pecos_core::Clifford::H6 => mast.h6(&q),
-            pecos_core::Clifford::F => mast.f(&q),
-            pecos_core::Clifford::Fdg => mast.fdg(&q),
-            pecos_core::Clifford::F2 => mast.f2(&q),
-            pecos_core::Clifford::F2dg => mast.f2dg(&q),
-            pecos_core::Clifford::F3 => mast.f3(&q),
-            pecos_core::Clifford::F3dg => mast.f3dg(&q),
-            pecos_core::Clifford::F4 => mast.f4(&q),
-            pecos_core::Clifford::F4dg => mast.f4dg(&q),
-            _ => unreachable!(),
+            Clifford::I => mast.identity(qubits),
+            Clifford::X => mast.x(qubits),
+            Clifford::Y => mast.y(qubits),
+            Clifford::Z => mast.z(qubits),
+            Clifford::H => mast.h(qubits),
+            Clifford::H2 => mast.h2(qubits),
+            Clifford::H3 => mast.h3(qubits),
+            Clifford::H4 => mast.h4(qubits),
+            Clifford::H5 => mast.h5(qubits),
+            Clifford::H6 => mast.h6(qubits),
+            Clifford::SX => mast.sx(qubits),
+            Clifford::SXdg => mast.sxdg(qubits),
+            Clifford::SY => mast.sy(qubits),
+            Clifford::SYdg => mast.sydg(qubits),
+            Clifford::SZ => mast.sz(qubits),
+            Clifford::SZdg => mast.szdg(qubits),
+            Clifford::F => mast.f(qubits),
+            Clifford::Fdg => mast.fdg(qubits),
+            Clifford::F2 => mast.f2(qubits),
+            Clifford::F2dg => mast.f2dg(qubits),
+            Clifford::F3 => mast.f3(qubits),
+            Clifford::F3dg => mast.f3dg(qubits),
+            Clifford::F4 => mast.f4(qubits),
+            Clifford::F4dg => mast.f4dg(qubits),
+            _ => panic!("expected a single-qubit Clifford, got {gate}"),
         };
     }
 
-    #[test]
-    fn test_order_fixed_clifford_phases_are_carried_exactly() {
-        let mutation = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for (gate, phase8) in [
-            (pecos_core::Clifford::H2, 0),
-            (pecos_core::Clifford::H3, 1),
-            (pecos_core::Clifford::H4, 7),
-            (pecos_core::Clifford::H5, 7),
-            (pecos_core::Clifford::H6, 1),
-            (pecos_core::Clifford::F, 2),
-            (pecos_core::Clifford::Fdg, 6),
-            (pecos_core::Clifford::F2, 5),
-            (pecos_core::Clifford::F2dg, 3),
-            (pecos_core::Clifford::F3, 4),
-            (pecos_core::Clifford::F3dg, 4),
-            (pecos_core::Clifford::F4, 2),
-            (pecos_core::Clifford::F4dg, 6),
-        ] {
-            let mut mast = Mast::new(1, 0);
-            apply_order_fixed_clifford(&mut mast, gate);
-            let expected =
-                Complex64::from_polar(1.0, f64::from(phase8) * std::f64::consts::FRAC_PI_4);
-            let exact_error = (mast.global_phase - expected).norm();
-            let mutation_error = (mast.global_phase - expected * mutation).norm();
-            assert!(
-                exact_error < 1e-12,
-                "Mast::{gate} scalar error {exact_error:e}; actual={:?}; expected={expected:?}",
-                mast.global_phase
-            );
-            assert!(
-                mutation_error > 1e-12,
-                "Mast::{gate} accepted an exp(i*pi/4) phase mutation"
-            );
+    fn single_qubit_clifford_order(gate: Clifford) -> usize {
+        let mut power = Clifford::I;
+        for order in 1..=4 {
+            power = gate.compose(power);
+            if power == Clifford::I {
+                return order;
+            }
         }
+        panic!("single-qubit Clifford {gate} has order greater than four");
+    }
+
+    fn mast_state_vector(mast: &Mast) -> Vec<Complex64> {
+        let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+        view.tableau = mast.tableau.clone();
+        view.mps = mast.mps.clone();
+        view.global_phase = mast.global_phase;
+        view.state_vector()
+    }
+
+    #[test]
+    fn test_mast_clifford_powers_restore_observable_state_phase_exactly() {
+        let mut failures = Vec::new();
+        for &gate in Clifford::all_1q() {
+            let mut mast = Mast::new(2, 0);
+            mast.h(&[QubitId(0)])
+                .sz(&[QubitId(0)])
+                .cx(&[(QubitId(0), QubitId(1))]);
+            let expected = mast_state_vector(&mast);
+            for _ in 0..single_qubit_clifford_order(gate) {
+                apply_single_qubit_clifford(&mut mast, gate, &[QubitId(0)]);
+            }
+            let actual = mast_state_vector(&mast);
+            let error = actual
+                .iter()
+                .zip(&expected)
+                .map(|(actual, expected)| (actual - expected).norm())
+                .fold(0.0, f64::max);
+            if error > 1e-10 {
+                failures.push((gate, error));
+            }
+        }
+        eprintln!(
+            "Mast: {}/24 exact; failures={failures:?}",
+            24 - failures.len()
+        );
+        assert!(failures.is_empty(), "Mast phase failures: {failures:?}");
     }
 
     #[test]

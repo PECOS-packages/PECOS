@@ -3205,66 +3205,6 @@ impl CliffordGateable for StabMps {
         self
     }
 
-    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sy(qubits).z(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).y(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).x(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).z(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).y(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
         // X anticommutes with RZ: X·RZ(θ) = RZ(-θ)·X, so applying X
         // after a pending RZ(θ) is equivalent to applying X first then
@@ -3294,103 +3234,6 @@ impl CliffordGateable for StabMps {
         self.tableau.y(qubits);
         for &q in qubits {
             self.propagate_frame_single_qubit(SingleQubitCliffordKind::Y, q.index());
-        }
-        // The phase-free tableau's native Y selects the XZ = -iY projective
-        // representative. Restore the named gate's exact phase here.
-        for _ in qubits {
-            self.global_phase *= Complex64::i();
-        }
-        self
-    }
-
-    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // HZ = exp(-i*pi/4) SY; retain the tableau decomposition and restore
-        // the named gate's exact phase in the amplitude-carrying scalar.
-        self.z(qubits).h(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // ZH = exp(i*pi/4) SYdg; retain the tableau decomposition and restore
-        // the named gate's exact phase in the amplitude-carrying scalar.
-        self.h(qubits).z(qubits);
-        let phase = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            -std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for _ in qubits {
-            self.global_phase *= phase;
-        }
-        self
-    }
-
-    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).sz(qubits);
-        for _ in qubits {
-            self.global_phase *= Complex64::i();
-        }
-        self
-    }
-
-    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.szdg(qubits).sxdg(qubits);
-        for _ in qubits {
-            self.global_phase *= -Complex64::i();
-        }
-        self
-    }
-
-    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).sy(qubits);
-        for _ in qubits {
-            self.global_phase = -self.global_phase;
-        }
-        self
-    }
-
-    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sydg(qubits).sx(qubits);
-        for _ in qubits {
-            self.global_phase = -self.global_phase;
-        }
-        self
-    }
-
-    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).sz(qubits);
-        for _ in qubits {
-            self.global_phase = -self.global_phase;
-        }
-        self
-    }
-
-    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.szdg(qubits).sx(qubits);
-        for _ in qubits {
-            self.global_phase = -self.global_phase;
-        }
-        self
-    }
-
-    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).sx(qubits);
-        for _ in qubits {
-            self.global_phase *= Complex64::i();
-        }
-        self
-    }
-
-    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).szdg(qubits);
-        for _ in qubits {
-            self.global_phase *= -Complex64::i();
         }
         self
     }
@@ -3495,7 +3338,8 @@ impl ArbitraryRotationGateable for StabMps {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use pecos_simulators::StabVec;
+    use pecos_core::Clifford;
+    use pecos_simulators::{CHForm, StabVec};
 
     #[test]
     fn test_stn_initial_state() {
@@ -3504,88 +3348,105 @@ mod tests {
         assert_eq!(stn.max_bond_dim(), 1);
     }
 
-    #[test]
-    fn test_named_y_family_phases_are_carried_exactly() {
-        let q = [QubitId(0)];
-        let root_half = std::f64::consts::FRAC_1_SQRT_2;
-        let mutation = Complex64::new(root_half, root_half);
-
-        let mut y = StabMps::new(1);
-        y.y(&q);
-        let expected_y = Complex64::i();
-        assert!((y.global_phase - expected_y).norm() < 1e-12);
-        assert!((y.global_phase - expected_y * mutation).norm() > 1e-12);
-
-        let mut sy = StabMps::new(1);
-        sy.sy(&q);
-        let expected_sy = Complex64::new(root_half, root_half);
-        assert!((sy.global_phase - expected_sy).norm() < 1e-12);
-        assert!((sy.global_phase - expected_sy * mutation).norm() > 1e-12);
-
-        let mut sydg = StabMps::new(1);
-        sydg.sydg(&q);
-        let expected_sydg = Complex64::new(root_half, -root_half);
-        assert!((sydg.global_phase - expected_sydg).norm() < 1e-12);
-        assert!((sydg.global_phase - expected_sydg * mutation).norm() > 1e-12);
-    }
-
-    fn apply_order_fixed_clifford(sim: &mut StabMps, gate: pecos_core::Clifford) {
-        let q = [QubitId(0)];
+    fn apply_single_qubit_clifford<S: CliffordGateable>(
+        sim: &mut S,
+        gate: Clifford,
+        qubits: &[QubitId],
+    ) {
         match gate {
-            pecos_core::Clifford::H2 => sim.h2(&q),
-            pecos_core::Clifford::H3 => sim.h3(&q),
-            pecos_core::Clifford::H4 => sim.h4(&q),
-            pecos_core::Clifford::H5 => sim.h5(&q),
-            pecos_core::Clifford::H6 => sim.h6(&q),
-            pecos_core::Clifford::F => sim.f(&q),
-            pecos_core::Clifford::Fdg => sim.fdg(&q),
-            pecos_core::Clifford::F2 => sim.f2(&q),
-            pecos_core::Clifford::F2dg => sim.f2dg(&q),
-            pecos_core::Clifford::F3 => sim.f3(&q),
-            pecos_core::Clifford::F3dg => sim.f3dg(&q),
-            pecos_core::Clifford::F4 => sim.f4(&q),
-            pecos_core::Clifford::F4dg => sim.f4dg(&q),
-            _ => unreachable!(),
+            Clifford::I => sim.identity(qubits),
+            Clifford::X => sim.x(qubits),
+            Clifford::Y => sim.y(qubits),
+            Clifford::Z => sim.z(qubits),
+            Clifford::H => sim.h(qubits),
+            Clifford::H2 => sim.h2(qubits),
+            Clifford::H3 => sim.h3(qubits),
+            Clifford::H4 => sim.h4(qubits),
+            Clifford::H5 => sim.h5(qubits),
+            Clifford::H6 => sim.h6(qubits),
+            Clifford::SX => sim.sx(qubits),
+            Clifford::SXdg => sim.sxdg(qubits),
+            Clifford::SY => sim.sy(qubits),
+            Clifford::SYdg => sim.sydg(qubits),
+            Clifford::SZ => sim.sz(qubits),
+            Clifford::SZdg => sim.szdg(qubits),
+            Clifford::F => sim.f(qubits),
+            Clifford::Fdg => sim.fdg(qubits),
+            Clifford::F2 => sim.f2(qubits),
+            Clifford::F2dg => sim.f2dg(qubits),
+            Clifford::F3 => sim.f3(qubits),
+            Clifford::F3dg => sim.f3dg(qubits),
+            Clifford::F4 => sim.f4(qubits),
+            Clifford::F4dg => sim.f4dg(qubits),
+            _ => panic!("expected a single-qubit Clifford, got {gate}"),
         };
     }
 
-    #[test]
-    fn test_order_fixed_clifford_phases_are_carried_exactly() {
-        let mutation = Complex64::new(
-            std::f64::consts::FRAC_1_SQRT_2,
-            std::f64::consts::FRAC_1_SQRT_2,
-        );
-        for (gate, phase8) in [
-            (pecos_core::Clifford::H2, 0),
-            (pecos_core::Clifford::H3, 1),
-            (pecos_core::Clifford::H4, 7),
-            (pecos_core::Clifford::H5, 7),
-            (pecos_core::Clifford::H6, 1),
-            (pecos_core::Clifford::F, 2),
-            (pecos_core::Clifford::Fdg, 6),
-            (pecos_core::Clifford::F2, 5),
-            (pecos_core::Clifford::F2dg, 3),
-            (pecos_core::Clifford::F3, 4),
-            (pecos_core::Clifford::F3dg, 4),
-            (pecos_core::Clifford::F4, 2),
-            (pecos_core::Clifford::F4dg, 6),
-        ] {
-            let mut sim = StabMps::new(1);
-            apply_order_fixed_clifford(&mut sim, gate);
-            let expected =
-                Complex64::from_polar(1.0, f64::from(phase8) * std::f64::consts::FRAC_PI_4);
-            let exact_error = (sim.global_phase - expected).norm();
-            let mutation_error = (sim.global_phase - expected * mutation).norm();
-            assert!(
-                exact_error < 1e-12,
-                "StabMps::{gate} scalar error {exact_error:e}; actual={:?}; expected={expected:?}",
-                sim.global_phase
-            );
-            assert!(
-                mutation_error > 1e-12,
-                "StabMps::{gate} accepted an exp(i*pi/4) phase mutation"
-            );
+    fn single_qubit_clifford_order(gate: Clifford) -> usize {
+        let mut power = Clifford::I;
+        for order in 1..=4 {
+            power = gate.compose(power);
+            if power == Clifford::I {
+                return order;
+            }
         }
+        panic!("single-qubit Clifford {gate} has order greater than four");
+    }
+
+    fn state_vector_max_error(actual: &[Complex64], expected: &[Complex64]) -> f64 {
+        actual
+            .iter()
+            .zip(expected)
+            .map(|(actual, expected)| (actual - expected).norm())
+            .fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn test_stab_mps_clifford_powers_restore_observable_state_phase_exactly() {
+        let mut failures = Vec::new();
+        for &gate in Clifford::all_1q() {
+            let mut sim = StabMps::new(2);
+            sim.h(&[QubitId(0)])
+                .sz(&[QubitId(0)])
+                .cx(&[(QubitId(0), QubitId(1))]);
+            let expected = sim.state_vector();
+            for _ in 0..single_qubit_clifford_order(gate) {
+                apply_single_qubit_clifford(&mut sim, gate, &[QubitId(0)]);
+            }
+            let error = state_vector_max_error(&sim.state_vector(), &expected);
+            if error > 1e-10 {
+                failures.push((gate, error));
+            }
+        }
+        eprintln!(
+            "StabMps: {}/24 exact; failures={failures:?}",
+            24 - failures.len()
+        );
+        assert!(failures.is_empty(), "StabMps phase failures: {failures:?}");
+    }
+
+    #[test]
+    fn test_ch_form_clifford_powers_restore_observable_state_phase_exactly() {
+        let mut failures = Vec::new();
+        for &gate in Clifford::all_1q() {
+            let mut sim = CHForm::new(2);
+            sim.h(&[QubitId(0)])
+                .sz(&[QubitId(0)])
+                .cx(&[(QubitId(0), QubitId(1))]);
+            let expected = sim.state_vector();
+            for _ in 0..single_qubit_clifford_order(gate) {
+                apply_single_qubit_clifford(&mut sim, gate, &[QubitId(0)]);
+            }
+            let error = state_vector_max_error(&sim.state_vector(), &expected);
+            if error > 1e-10 {
+                failures.push((gate, error));
+            }
+        }
+        eprintln!(
+            "CHForm: {}/24 exact; failures={failures:?}",
+            24 - failures.len()
+        );
+        assert!(failures.is_empty(), "CHForm phase failures: {failures:?}");
     }
 
     fn assert_state_vectors_equal(lhs: &mut StabMps, rhs: &mut StabMps, context: &str) {

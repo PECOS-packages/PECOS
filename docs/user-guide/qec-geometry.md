@@ -399,12 +399,12 @@ The `pecos.qec` geometry can be used with different circuit generation approache
 
 | Approach | Module | Description |
 |----------|--------|-------------|
-| **Guppy** (recommended) | `pecos.guppy` | High-level, generates Guppy programs |
+| **Guppy** (recommended) | `pecos.guppy_gen` | High-level, generates Guppy programs |
 | **SLR** (advanced) | `pecos.slr.qeclib` | Low-level, generates Guppy/QASM/QIR |
 
 ```python
 # Using geometry with Guppy (recommended)
-from pecos.guppy import make_surface_code
+from pecos.guppy_gen import make_surface_code
 
 prog = make_surface_code(distance=3, num_rounds=2, basis="Z")
 

@@ -74,6 +74,7 @@ pub mod pauli_group;
 pub mod pauli_sequence;
 pub mod pauli_set;
 pub mod stabilizer_group;
+pub mod symplectic_matrix;
 mod tick_circuit;
 pub mod unitary_matrix;
 
@@ -82,12 +83,13 @@ pub mod hugr_convert;
 
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
 pub use dag_circuit::{
-    AnnotationKind, Attribute, DagCircuit, DagTraversalIndex, MeasRef, PauliAnnotation,
-    TraversalWorkBuffers,
+    AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagTraversalIndex, MeasRef,
+    MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
 };
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
-    Tick, TickCircuit, TickGateError, TickHandle, TickMeasRef, TickMeasureHandle, TickPrepHandle,
+    Tick, TickAnnotationRefError, TickCircuit, TickGateError, TickHandle, TickMeasRef,
+    TickMeasureHandle, TickPrepHandle,
 };
 
 // Re-export commonly used types from dependencies
@@ -126,6 +128,7 @@ pub use pauli_group::{PauliGroup, PauliGroupError};
 pub use pauli_sequence::{F2Matrix, PauliSequence};
 pub use pauli_set::PauliSet;
 pub use stabilizer_group::{PauliStabilizerGroup, PauliStabilizerGroupError};
+pub use symplectic_matrix::{SymplecticMatrix, SymplecticMatrixError};
 
 // Re-export HUGR types when the feature is enabled
 #[cfg(feature = "hugr")]

@@ -3,11 +3,124 @@
 //! Provides functions for extracting archives to various locations:
 //! - `extract_archive()` - Extract to a specified directory (for legacy/custom use)
 //! - `extract_to_deps()` - Extract to `~/.pecos/deps/` (recommended for build scripts)
+//! - `contained_entry_path()` - Resolve an archive entry name inside a destination
 
 use crate::errors::{Error, Result};
 use crate::home::{get_deps_dir, get_tmp_dir};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+/// Names Windows resolves as devices in every directory, so `NUL.txt` is the null
+/// device rather than a file. Matched case-insensitively against the part of a
+/// component before its first `.` or `:`.
+const WINDOWS_DEVICE_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "COM1", "COM2", "COM3", "COM4", "COM5",
+    "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+    "LPT9",
+];
+
+/// Resolves an archive entry name to a path inside `dest`, rejecting escapes.
+///
+/// Archive entry names are attacker-controlled data: a crafted archive can name an
+/// entry `../../etc/foo` or `/etc/foo` and a naive `dest.join(name)` will then write
+/// outside the extraction directory. Callers must route every entry name through this
+/// function before creating anything on disk.
+///
+/// Rejection is deliberately unconditional rather than `cfg(windows)`-gated. The rules
+/// below are Windows-specific, but a gated guard is one CI never exercises, and an
+/// archive extracted on one platform can be consumed on another.
+///
+/// Which readers need this:
+/// - The `tar` crate does **not** filter names lexically either, but it is safe by a
+///   stronger mechanism: it canonicalizes each entry's parent and rejects anything
+///   landing outside the destination, so the OS collapses names before the comparison.
+/// - The `zip` crate's `enclosed_name` only balances `..` lexically; it accepts trailing
+///   dots and spaces and device names. Zip entries must therefore come through here too.
+/// - 7z readers hand the raw name to the caller with no validation at all.
+///
+/// Containment here is **lexical**. It cannot stop a write that travels through a symlink
+/// or junction already present under `dest`. No archive can plant such a link through the
+/// callers in this crate, which only ever create directories and regular files; the
+/// residual case is a link placed there by something else.
+///
+/// # Errors
+///
+/// Returns [`Error::Archive`] if the entry name is absolute, contains a `..` component,
+/// contains a Windows prefix such as `C:`, has a component with trailing dots or spaces,
+/// contains `:` (a Windows alternate data stream or device suffix), or names a Windows
+/// device.
+pub fn contained_entry_path(dest: &Path, entry_name: &str) -> Result<PathBuf> {
+    // Treat both separators as separating on every platform: a Windows-built archive
+    // read on Unix would otherwise carry "..\\.." through as a single opaque name.
+    let normalized = entry_name.replace('\\', "/");
+    let candidate = Path::new(&normalized);
+
+    for component in candidate.components() {
+        match component {
+            Component::Normal(name) => {
+                let name = name.to_string_lossy();
+
+                // Windows strips trailing dots and spaces while resolving a path, so a
+                // component like ".. " arrives here as an innocuous Normal and is only
+                // turned back into ".." by the filesystem -- after this check would have
+                // passed. Rejecting any trailing dot or space closes that class without
+                // having to model Win32 normalization; such names are unrepresentable on
+                // Windows anyway and do not occur in the archives this reads.
+                if name.ends_with('.') || name.ends_with(' ') {
+                    return Err(Error::Archive(format!(
+                        "archive entry has a component with trailing dots or spaces, \
+                         which some filesystems resolve to a different path: {entry_name}"
+                    )));
+                }
+
+                // A colon opens an NTFS alternate data stream (`nvcc.exe:payload`) or names
+                // a device (`nul:`), so the file on disk stops matching the name in the
+                // archive. Nothing in these archives legitimately contains one.
+                if name.contains(':') {
+                    return Err(Error::Archive(format!(
+                        "archive entry contains ':', which names a data stream or device \
+                         on Windows: {entry_name}"
+                    )));
+                }
+
+                // Device names are reserved in every directory, and an extension leaves them
+                // reserved, so compare the stem before the first dot. A trailing space keeps
+                // the reservation too (`CON .txt`), so trim it. A `:` cannot appear here --
+                // the check above already returned for any component containing one.
+                let stem = name
+                    .split('.')
+                    .next()
+                    .unwrap_or(&name)
+                    .trim_end_matches(' ');
+                if WINDOWS_DEVICE_NAMES
+                    .iter()
+                    .any(|device| stem.eq_ignore_ascii_case(device))
+                {
+                    return Err(Error::Archive(format!(
+                        "archive entry names a reserved device: {entry_name}"
+                    )));
+                }
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(Error::Archive(format!(
+                    "archive entry escapes the extraction directory: {entry_name}"
+                )));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(Error::Archive(format!(
+                    "archive entry is an absolute path: {entry_name}"
+                )));
+            }
+        }
+    }
+
+    if candidate.as_os_str().is_empty() {
+        return Err(Error::Archive("archive entry has an empty name".into()));
+    }
+
+    Ok(dest.join(candidate))
+}
 
 /// Extract a tar.gz or tar.bz2 archive
 ///
@@ -132,4 +245,138 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
 pub fn extract_to_deps(data: &[u8], dir_name: &str) -> Result<PathBuf> {
     let deps_dir = get_deps_dir()?;
     extract_archive(data, &deps_dir, Some(dir_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_entry_names_resolve_inside_the_destination() {
+        let path = contained_entry_path(Path::new("/out"), "bin/nvcc").unwrap();
+        assert_eq!(path, Path::new("/out/bin/nvcc"));
+    }
+
+    #[test]
+    fn windows_separators_resolve_component_wise() {
+        let path = contained_entry_path(Path::new("/out"), "bin\\nvcc.exe").unwrap();
+        assert_eq!(path, Path::new("/out/bin/nvcc.exe"));
+    }
+
+    #[test]
+    fn parent_components_are_rejected() {
+        for name in [
+            "../escape",
+            "bin/../../escape",
+            "..\\escape",
+            "bin\\..\\..\\escape",
+        ] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("escapes")),
+                "expected an escape rejection for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn absolute_entry_names_are_rejected() {
+        for name in ["/etc/passwd", "\\windows\\system32\\evil.dll"] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("absolute")),
+                "expected an absolute-path rejection for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn trailing_space_or_dot_components_are_rejected() {
+        // Windows strips trailing dots and spaces during path resolution, so ".. " would
+        // become ".." after this check and escape the destination.
+        for name in [
+            ".. /nvcc",
+            "nvcc/.. /x",
+            "...",
+            "nvcc/... /x",
+            "trailing.",
+            "trailing ",
+        ] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("trailing dots or spaces")),
+                "expected a trailing dot/space rejection for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_device_names_are_rejected() {
+        for name in [
+            "nvcc/NUL.txt",
+            "nvcc/COM1",
+            "con",
+            "AUX",
+            "bin/lpt9.dll",
+            "NuL",
+        ] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("reserved device")),
+                "expected a device-name rejection for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn colon_bearing_components_are_rejected() {
+        // ':' opens an NTFS alternate data stream or names a device, so the file written
+        // stops matching the name in the archive even though nothing escapes `dest`.
+        for name in [
+            "nvcc/nvcc.exe:payload",
+            "bin/nul:",
+            "bin/NUL::$DATA",
+            "notes:evil.exe",
+        ] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message)
+                    if message.contains("data stream") || message.contains("reserved device")),
+                "expected a colon/device rejection for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn console_device_aliases_are_rejected() {
+        for name in ["bin/CONIN$", "bin/conout$", "CONIN$.txt"] {
+            let error = contained_entry_path(Path::new("/out"), name).unwrap_err();
+            assert!(
+                matches!(error, Error::Archive(message) if message.contains("reserved device")),
+                "expected a device rejection for {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_names_containing_device_words_are_allowed() {
+        // Only an exact device stem is reserved; these merely contain the letters.
+        for name in ["console.dll", "nulled.txt", "bin/comment.h", "auxiliary/x"] {
+            assert!(
+                contained_entry_path(Path::new("/out"), name).is_ok(),
+                "{name} should be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_entry_names_are_rejected() {
+        assert!(contained_entry_path(Path::new("/out"), "").is_err());
+    }
+
+    #[test]
+    fn current_directory_components_are_allowed() {
+        let path = contained_entry_path(Path::new("/out"), "./bin/nvcc").unwrap();
+        assert_eq!(path, Path::new("/out/bin/nvcc"));
+    }
 }

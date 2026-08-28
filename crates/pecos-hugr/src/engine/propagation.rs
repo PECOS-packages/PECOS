@@ -109,7 +109,9 @@ impl HugrEngine {
                 // The wire key is (input_node, output_port) which was set during block transition
                 debug!("DataflowBlock container - checking Input node directly");
                 let wire_key = (input_node, output_port);
-                if self.wire_state.wire_to_qubit.contains_key(&wire_key) {
+                if self.wire_state.wire_to_qubit.contains_key(&wire_key)
+                    || self.wire_state.classical_values.contains_key(&wire_key)
+                {
                     return Some(wire_key);
                 }
                 // If not found, try to trace through the CFG structure
@@ -248,13 +250,30 @@ impl HugrEngine {
                         depth + 1,
                     );
                 }
-                OpType::Input(_)
+                OpType::Input(_) => {
                     if hugr
                         .get_parent(src_node)
-                        .is_some_and(|p| matches!(hugr.get_optype(p), OpType::DFG(_))) =>
-                {
-                    let dfg_node = hugr.get_parent(src_node)?;
-                    return self.get_input_value_depth(hugr, dfg_node, src_port.index(), depth + 1);
+                        .is_some_and(|parent| matches!(hugr.get_optype(parent), OpType::DFG(_)))
+                    {
+                        let dfg_node = hugr.get_parent(src_node)?;
+                        return self.get_input_value_depth(
+                            hugr,
+                            dfg_node,
+                            src_port.index(),
+                            depth + 1,
+                        );
+                    }
+                    let traced = self.trace_through_input_node(hugr, src_node, src_port.index())?;
+                    if let Some(value) = self.wire_state.classical_values.get(&traced).cloned() {
+                        return Some(value);
+                    }
+                }
+                // An Output node is a structural forwarding boundary: its
+                // outgoing port represents the value wired into the
+                // corresponding input port. This occurs when a Guppy result
+                // operation follows a function body's Output directly.
+                OpType::Output(_) => {
+                    return self.get_input_value_depth(hugr, src_node, src_port.index(), depth + 1);
                 }
                 _ => {}
             }
@@ -304,6 +323,9 @@ impl HugrEngine {
                 {
                     let dfg_node = hugr.get_parent(src_node)?;
                     self.get_input_qubit_depth(hugr, dfg_node, src_port.index(), depth + 1)
+                }
+                OpType::Output(_) => {
+                    self.get_input_qubit_depth(hugr, src_node, src_port.index(), depth + 1)
                 }
                 _ => None,
             }
@@ -502,7 +524,6 @@ impl HugrEngine {
     /// Tuple constants convert element-wise so a downstream `UnpackTuple`
     /// can unpack them at runtime exactly like a `MakeTuple`-built tuple.
     fn const_value_to_classical(value: &Value) -> Option<ClassicalValue> {
-        use tket::extension::bool::ConstBool;
         use tket::extension::rotation::ConstRotation;
         use tket::hugr::std_extensions::arithmetic::float_types::ConstF64;
         use tket::hugr::std_extensions::arithmetic::int_types::ConstInt;
@@ -545,8 +566,8 @@ impl HugrEngine {
             return Some(ClassicalValue::Float(float_value));
         }
 
-        if let Some(const_bool) = value.get_custom_value::<ConstBool>() {
-            let bool_value = const_bool.value();
+        if value == &Value::true_val() || value == &Value::false_val() {
+            let bool_value = value == &Value::true_val();
             debug!("const_value_to_classical: found ConstBool with value {bool_value}");
             return Some(ClassicalValue::Bool(bool_value));
         }

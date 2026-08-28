@@ -17,6 +17,7 @@ import json
 import random
 
 import pytest
+from pecos.decoders import bp_osd, pecos_uf, pymatching
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos_rslib import SparseStab
 from pecos_rslib.quantum import TickCircuit
@@ -588,8 +589,8 @@ class TestDecoderPipeline:
 
         parsed = ParsedDem.from_string(dem_str)
         rust_sampler = parsed.to_dem_sampler()
-        batch = rust_sampler.generate_samples(5000, seed=42)
-        errors = batch.decode_count(dem_str, "pecos_uf:fast")
+        batch = rust_sampler.sample_batch(5000, seed=42)
+        errors = batch.decode(dem_str, bp_osd()).num_errors
         ler = errors / 5000
         # At d=3 p=0.001, LER should be very low
         assert ler < 0.05, f"LER too high: {ler}"
@@ -628,8 +629,8 @@ class TestDecoderPipeline:
         dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
         parsed = ParsedDem.from_string(dem_str)
         rust_sampler = parsed.to_dem_sampler()
-        batch = rust_sampler.generate_samples(5000, seed=42)
-        errors = batch.decode_count(dem_str, "pecos_uf:fast")
+        batch = rust_sampler.sample_batch(5000, seed=42)
+        errors = batch.decode(dem_str, bp_osd()).num_errors
         ler = errors / 5000
         assert ler < 0.1, f"CX LER too high: {ler}"
 
@@ -660,8 +661,8 @@ class TestThreshold:
         dem_str = str(dem)
         parsed = ParsedDem.from_string(dem_str)
         sampler = parsed.to_dem_sampler()
-        batch = sampler.generate_samples(20000, seed=42)
-        errors = batch.decode_count(dem_str, decoder_type)
+        batch = sampler.sample_batch(20000, seed=42)
+        errors = batch.decode(dem_str, decoder_type).num_errors
         return errors / 20000
 
     def test_memory_suppression(self):
@@ -672,7 +673,7 @@ class TestThreshold:
             b = LogicalCircuitBuilder()
             b.add_patch(patch, "A")
             b.add_memory("A", rounds=d, basis="Z")
-            lers[d] = self._run_threshold(b, d, "pymatching")
+            lers[d] = self._run_threshold(b, d, pymatching(correlated=True))
         assert lers[5] < lers[3], f"d=5 ({lers[5]}) not better than d=3 ({lers[3]})"
 
     def test_h_suppression(self):
@@ -685,7 +686,7 @@ class TestThreshold:
             b.add_memory("A", rounds=d, basis="Z")
             b.add_transversal_h("A")
             b.add_memory("A", rounds=d, basis="X")
-            lers[d] = self._run_threshold(b, d, "pymatching")
+            lers[d] = self._run_threshold(b, d, pymatching(correlated=True))
         assert lers[5] < lers[3], f"d=5 ({lers[5]}) not better than d=3 ({lers[3]})"
 
 
@@ -726,8 +727,8 @@ class TestNoisyFuzz:
         dem = c.detector_error_model(decompose_errors=True)
         dem_str = str(dem)
         parsed = ParsedDem.from_string(dem_str)
-        batch = parsed.to_dem_sampler().generate_samples(5000, seed=seed)
-        errors = batch.decode_count(dem_str, "pecos_uf:fast")
+        batch = parsed.to_dem_sampler().sample_batch(5000, seed=seed)
+        errors = batch.decode(dem_str, bp_osd()).num_errors
         ler = errors / 5000
         assert ler < 0.1, f"LER too high: {ler}"
 
@@ -767,8 +768,8 @@ class TestNoisyComposition:
         dem = c.detector_error_model(decompose_errors=True, ignore_decomposition_failures=True)
         dem_str = str(dem)
         parsed = ParsedDem.from_string(dem_str)
-        batch = parsed.to_dem_sampler().generate_samples(10000, seed=42)
-        errors = batch.decode_count(dem_str, "pecos_uf:fast")
+        batch = parsed.to_dem_sampler().sample_batch(10000, seed=42)
+        errors = batch.decode(dem_str, bp_osd()).num_errors
         ler = errors / 10000
         assert ler < 0.1, f"H-CX-H LER too high: {ler}"
 
@@ -805,8 +806,8 @@ class TestNoisyComposition:
         dem = c.detector_error_model(decompose_errors=True, ignore_decomposition_failures=True)
         dem_str = str(dem)
         parsed = ParsedDem.from_string(dem_str)
-        batch = parsed.to_dem_sampler().generate_samples(5000, seed=42)
-        errors = batch.decode_count(dem_str, "pecos_uf:fast")
+        batch = parsed.to_dem_sampler().sample_batch(5000, seed=42)
+        errors = batch.decode(dem_str, bp_osd()).num_errors
         ler = errors / 5000
         assert ler < 0.2, f"Random composition LER too high: {ler}"
 
@@ -842,8 +843,8 @@ class TestLogicalSubgraphAccuracy:
         # Naive: decomposed MWPM via PECOS UF
         dem_decomp = c.detector_error_model(decompose_errors=True, ignore_decomposition_failures=True)
         parsed = ParsedDem.from_string(str(dem_decomp))
-        batch_naive = parsed.to_dem_sampler().generate_samples(20000, seed=42)
-        naive_errors = batch_naive.decode_count(str(dem_decomp), "pecos_uf:fast")
+        batch_naive = parsed.to_dem_sampler().sample_batch(20000, seed=42)
+        naive_errors = batch_naive.decode(str(dem_decomp), pecos_uf(preset="fast")).num_errors
         naive_ler = naive_errors / 20000
 
         # logical-subgraph decoder with FB
@@ -895,8 +896,8 @@ class TestPecosDemWithLogicalSubgraph:
 
         # Sample and decode
         parsed = ParsedDem.from_string(dem_str)
-        batch = parsed.to_dem_sampler().generate_samples(5000, seed=42)
-        errors = batch.decode_count(dem_str, "pecos_uf:fast")
+        batch = parsed.to_dem_sampler().sample_batch(5000, seed=42)
+        errors = batch.decode(dem_str, bp_osd()).num_errors
         ler = errors / 5000
         assert ler < 0.1, f"PECOS DEM + logical-subgraph decoder CX LER too high: {ler}"
 

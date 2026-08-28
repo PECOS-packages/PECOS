@@ -26,7 +26,7 @@ class TestNoiseModels:
         def deterministic_circuit() -> bool:
             q = qubit()
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         # Run with seed for reproducibility
         results = sim(deterministic_circuit).qubits(10).quantum(state_vector()).seed(42).run(10).to_dict()
@@ -43,15 +43,15 @@ class TestNoiseModels:
         def simple_circuit() -> bool:
             q = qubit()
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         # Create depolarizing noise - must chain all probability setters
         noise = (
             depolarizing_noise()
-            .with_prep_probability(0.0)  # No prep errors
-            .with_p1_probability(0.2)  # 20% chance of error on single-qubit gates
-            .with_p2_probability(0.0)  # No two-qubit gate errors
-            .with_meas_probability(0.0)
+            .with_p_prep(0.0)  # No prep errors
+            .with_p1(0.2)  # 20% chance of error on single-qubit gates
+            .with_p2(0.0)  # No two-qubit gate errors
+            .with_p_meas(0.0)
         )  # No measurement errors
 
         # High depolarizing probability to see effect
@@ -72,16 +72,16 @@ class TestNoiseModels:
         def simple_circuit() -> bool:
             q = qubit()
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         # Use biased depolarizing - must chain all probability setters
         noise = (
             biased_depolarizing_noise()
-            .with_prep_probability(0.05)  # State prep errors
-            .with_p1_probability(0.1)  # Single-qubit gate errors
-            .with_p2_probability(0.0)  # No two-qubit gate errors
-            .with_meas_0_probability(0.05)  # Measurement errors for |0⟩
-            .with_meas_1_probability(0.05)
+            .with_p_prep(0.05)  # State prep errors
+            .with_p1(0.1)  # Single-qubit gate errors
+            .with_p2(0.0)  # No two-qubit gate errors
+            .with_p_meas_0(0.05)  # Measurement errors for |0⟩
+            .with_p_meas_1(0.05)
         )  # Measurement errors for |1⟩
 
         results = sim(simple_circuit).qubits(10).quantum(state_vector()).noise(noise).seed(42).run(100).to_dict()
@@ -100,11 +100,11 @@ class TestNoiseModels:
         def simple_circuit() -> bool:
             q = qubit()
             x(q)
-            return measure(q)
+            return measure(q).read()
 
         # Use general noise model with multiple error types
         noise_builder = (
-            general_noise().with_p1_probability(0.01).with_prep_probability(0.01)  # Single-qubit gate errors
+            general_noise().with_p1(0.01).with_p_prep(0.01)  # Single-qubit gate errors
         )  # Preparation errors
 
         results = (
@@ -129,7 +129,7 @@ class TestNoiseModels:
             q2 = qubit()
             h(q1)
             cx(q1, q2)
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         # Run without noise
         results_clean = sim(Guppy(bell_circuit)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
@@ -137,10 +137,10 @@ class TestNoiseModels:
         # Run with depolarizing noise - chain all probability setters
         noise = (
             depolarizing_noise()
-            .with_prep_probability(0.0)  # No prep errors
-            .with_p1_probability(0.05)  # 5% error on single-qubit gates
-            .with_p2_probability(0.05)  # 5% error on two-qubit gates
-            .with_meas_probability(0.0)
+            .with_p_prep(0.0)  # No prep errors
+            .with_p1(0.05)  # 5% error on single-qubit gates
+            .with_p2(0.05)  # 5% error on two-qubit gates
+            .with_p_meas(0.0)
         )  # No measurement errors
 
         results_noisy = sim(bell_circuit).qubits(10).quantum(state_vector()).noise(noise).seed(42).run(100).to_dict()
@@ -168,29 +168,15 @@ def test_noise_model_builder_pattern() -> None:
     def simple_x_circuit() -> bool:
         q = qubit()
         x(q)
-        return measure(q)
+        return measure(q).read()
 
     # Test that builder pattern works - chain all probability setters
-    noise1 = (
-        depolarizing_noise()
-        .with_prep_probability(0.0)
-        .with_p1_probability(0.1)
-        .with_p2_probability(0.0)
-        .with_meas_probability(0.0)
-        .with_seed(1)
-    )
+    noise1 = depolarizing_noise().with_p_prep(0.0).with_p1(0.1).with_p2(0.0).with_p_meas(0.0).with_seed(1)
 
     results1 = sim(simple_x_circuit).qubits(10).quantum(state_vector()).noise(noise1).seed(42).run(10).to_dict()
 
     # Different seed should give different results
-    noise2 = (
-        depolarizing_noise()
-        .with_prep_probability(0.0)
-        .with_p1_probability(0.1)
-        .with_p2_probability(0.0)
-        .with_meas_probability(0.0)
-        .with_seed(2)
-    )
+    noise2 = depolarizing_noise().with_p_prep(0.0).with_p1(0.1).with_p2(0.0).with_p_meas(0.0).with_seed(2)
 
     results2 = sim(simple_x_circuit).qubits(10).quantum(state_vector()).noise(noise2).seed(43).run(10).to_dict()
 
@@ -205,6 +191,15 @@ def test_noise_model_builder_pattern() -> None:
     assert len(measurements2) == 10
 
 
+def test_general_noise_idle_after_2q_api() -> None:
+    """The after-2q idle API accepts a duration and has no probability alias."""
+    builder = general_noise()
+
+    assert callable(builder.with_idle_after_2q)
+    assert builder.with_p_idle_linear(0.01, {"X": 1 / 3, "Y": 1 / 3, "Z": 1 / 3}).with_idle_after_2q(1.0) is not None
+    assert not hasattr(builder, "with_p2_idle")
+
+
 def test_noise_on_single_qubit_gates() -> None:
     """Test noise specifically on single-qubit gates."""
 
@@ -213,10 +208,10 @@ def test_noise_on_single_qubit_gates() -> None:
         q = qubit()
         h(q)  # Should get noise
         x(q)  # Should get noise
-        return measure(q)
+        return measure(q).read()
 
     # Configure noise only for single-qubit gates
-    noise = general_noise().with_p1_probability(0.3)  # High error rate to see effect
+    noise = general_noise().with_p1(0.3)  # High error rate to see effect
 
     results = sim(multi_gate_circuit).qubits(10).quantum(state_vector()).noise(noise).seed(42).run(100).to_dict()
 
@@ -236,10 +231,10 @@ def test_measurement_noise() -> None:
     def simple_circuit() -> bool:
         q = qubit()
         x(q)
-        return measure(q)
+        return measure(q).read()
 
     # Configure noise only for measurements
-    noise = general_noise().with_meas_probability(0.2)  # High measurement error
+    noise = general_noise().with_p_meas(0.2)  # High measurement error
 
     results = sim(simple_circuit).qubits(10).quantum(state_vector()).noise(noise).seed(42).run(100).to_dict()
 

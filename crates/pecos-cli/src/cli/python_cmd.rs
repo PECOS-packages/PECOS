@@ -152,26 +152,13 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
         std::env::var("PATH").unwrap_or_default()
     );
 
-    // Enable the mwpf decoder when cmake is reachable. Whichever cmake
-    // find_cmake() resolves (PECOS-managed install or system) is exported as
-    // $CMAKE via env_cmd::collect_env() below, so highs-sys's cmake-rs picks
-    // it up without any PATH plumbing here.
-    let cmake_available = pecos_build::cmake::find_cmake().is_some();
+    // The mwpf decoder builds pure-Rust (its LP solver is the workspace
+    // `highs` shim, patched in via the root Cargo.toml), so it is enabled by
+    // default; PECOS_BUILD_MWPF=0 opts out.
     let mwpf_override = std::env::var("PECOS_BUILD_MWPF").ok();
-    let mwpf_enabled = match mwpf_override.as_deref() {
-        Some("1" | "true" | "yes") => true,
-        Some("0" | "false" | "no") => false,
-        _ => cmake_available,
-    };
-    if mwpf_enabled && !cmake_available {
-        eprintln!(
-            "  Warning: PECOS_BUILD_MWPF requested but cmake was not found. \
-             Build will likely fail; run `pecos install cmake` or install cmake \
-             system-wide, or unset PECOS_BUILD_MWPF."
-        );
-    }
+    let mwpf_enabled = !matches!(mwpf_override.as_deref(), Some("0" | "false" | "no"));
     if !mwpf_enabled {
-        println!("  (mwpf decoder disabled — cmake not detected; run `pecos setup` to enable)");
+        println!("  (mwpf decoder disabled via PECOS_BUILD_MWPF)");
     }
 
     // Build all rslib crates via maturin (incremental — cargo inside maturin

@@ -68,17 +68,27 @@ fn build_repetition_code(num_rounds: usize) -> DagCircuit {
         // Detectors
         if round == 0 {
             // First round: each measurement should be 0 (fresh code state)
-            dag.detector_labeled(&format!("Z01_r{round}"), &[ms_01[0]]);
-            dag.detector_labeled(&format!("Z12_r{round}"), &[ms_12[0]]);
+            dag.detector_labeled(&format!("Z01_r{round}"), &[ms_01[0]])
+                .expect("refs are from this circuit");
+            dag.detector_labeled(&format!("Z12_r{round}"), &[ms_12[0]])
+                .expect("refs are from this circuit");
         } else {
             // Subsequent rounds: compare with previous round
-            dag.detector_labeled(&format!("Z01_r{round}"), &[prev_meas_01.unwrap(), ms_01[0]]);
-            dag.detector_labeled(&format!("Z12_r{round}"), &[prev_meas_12.unwrap(), ms_12[0]]);
+            dag.detector_labeled(&format!("Z01_r{round}"), &[prev_meas_01.unwrap(), ms_01[0]])
+                .expect("refs are from this circuit");
+            dag.detector_labeled(&format!("Z12_r{round}"), &[prev_meas_12.unwrap(), ms_12[0]])
+                .expect("refs are from this circuit");
         }
 
         prev_meas_01 = Some(ms_01[0]);
         prev_meas_12 = Some(ms_12[0]);
     }
+
+    // Pauli operator: track logical X = X_0 X_1 X_2. Placed BEFORE the
+    // transversal Z readout: after it, every data qubit has collapsed and an
+    // X-type operator is destroyed as an observable -- no fault can
+    // deterministically flip it.
+    dag.tracked_pauli_labeled("logical_X", X(0) & X(1) & X(2));
 
     // Final data qubit measurements
     let ms_data = dag.mz(&data);
@@ -88,18 +98,18 @@ fn build_repetition_code(num_rounds: usize) -> DagCircuit {
     dag.detector_labeled(
         "Z01_final",
         &[ms_data[0], ms_data[1], prev_meas_01.unwrap()],
-    );
+    )
+    .expect("refs are from this circuit");
     // Z_1 Z_2 from data should match last ancilla measurement
     dag.detector_labeled(
         "Z12_final",
         &[ms_data[1], ms_data[2], prev_meas_12.unwrap()],
-    );
+    )
+    .expect("refs are from this circuit");
 
     // Observable: logical Z readout = Z_0 (any single data qubit works for rep code)
-    dag.observable_labeled("logical_Z", &[ms_data[0]]);
-
-    // Pauli operator: track logical X = X_0 X_1 X_2
-    dag.tracked_pauli_labeled("logical_X", X(0) & X(1) & X(2));
+    dag.observable_labeled("logical_Z", &[ms_data[0]])
+        .expect("refs are from this circuit");
 
     dag
 }
@@ -122,8 +132,10 @@ fn repetition_code_fault_enumeration() {
 
     // Build influence map (InfluenceBuilder handles annotations)
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     let locs = map.gate_fault_locations();
     println!(
@@ -286,8 +298,10 @@ fn repetition_code_fault_enumeration() {
 fn repetition_code_labels() {
     let dag = build_repetition_code(1); // 1 round for simplicity
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     // Check DEM-output labels are populated (observables + tracked Paulis)
     println!("DEM output labels: {:?}", map.dem_output_labels);
@@ -296,9 +310,10 @@ fn repetition_code_labels() {
     assert_eq!(map.num_dem_outputs(), 1, "1 observable");
     assert_eq!(map.num_tracked_paulis(), 1, "1 tracked Pauli");
 
-    // Labels accessible via internal index
-    assert_eq!(map.dem_output_label(0), Some("logical_Z"));
-    assert_eq!(map.dem_output_label(1), Some("logical_X"));
+    // Labels accessible via internal index -- annotation order: the tracked
+    // Pauli is placed before the readout, so it precedes the observable.
+    assert_eq!(map.dem_output_label(0), Some("logical_X"));
+    assert_eq!(map.dem_output_label(1), Some("logical_Z"));
     assert_eq!(map.dem_output_label(99), None);
 
     // Use labels during fault introspection
@@ -325,8 +340,10 @@ fn repetition_code_labels() {
 fn repetition_code_lookup_table() {
     let dag = build_repetition_code(3);
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     // Build lookup: syndrome pattern -> list of possible logical effects
     let mut lookup: std::collections::BTreeMap<Vec<u32>, Vec<pecos_core::PauliString>> =
@@ -368,8 +385,10 @@ fn repetition_code_ml_decoder() {
 
     // Build influence map
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     // Build ML decoder from fault enumeration up to weight 3
     let decoder = LookupDecoder::build(&map, &noise, 3);
@@ -445,8 +464,10 @@ fn decoder_empty_syndrome() {
     let dag = build_repetition_code(1);
     let noise = NoiseConfig::uniform(0.01);
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     let decoder = LookupDecoder::build(&map, &noise, 2);
 
@@ -469,8 +490,10 @@ fn decoder_table_size_and_truncation() {
     let dag = build_repetition_code(1);
     let noise = NoiseConfig::uniform(0.001);
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     let d1 = LookupDecoder::build(&map, &noise, 1);
     let d2 = LookupDecoder::build(&map, &noise, 2);
@@ -571,18 +594,30 @@ fn build_422_code(num_rounds: usize) -> DagCircuit {
         // Detectors
         if round == 0 {
             // Z stabilizer is deterministic on |0000⟩ (Z eigenstate)
-            dag.detector_labeled(&format!("Sz_r{round}"), &[ms_z[0]]);
+            dag.detector_labeled(&format!("Sz_r{round}"), &[ms_z[0]])
+                .expect("refs are from this circuit");
             // X stabilizer is NOT deterministic on |0000⟩ -- no standalone detector.
             // First X measurement is a random coin flip; only round-to-round
             // comparisons are valid detectors.
         } else {
-            dag.detector_labeled(&format!("Sx_r{round}"), &[prev_meas_x.unwrap(), ms_x[0]]);
-            dag.detector_labeled(&format!("Sz_r{round}"), &[prev_meas_z.unwrap(), ms_z[0]]);
+            dag.detector_labeled(&format!("Sx_r{round}"), &[prev_meas_x.unwrap(), ms_x[0]])
+                .expect("refs are from this circuit");
+            dag.detector_labeled(&format!("Sz_r{round}"), &[prev_meas_z.unwrap(), ms_z[0]])
+                .expect("refs are from this circuit");
         }
 
         prev_meas_x = Some(ms_x[0]);
         prev_meas_z = Some(ms_z[0]);
     }
+
+    // Tracked Paulis: logical X operators. Placed BEFORE the transversal Z
+    // readout: after it, every data qubit has collapsed and an X-type
+    // operator is destroyed as an observable -- no fault can
+    // deterministically flip it.
+    // Logical X_1 = X_0 X_2
+    dag.tracked_pauli_labeled("logical_X1", X(0) & X(2));
+    // Logical X_2 = X_0 X_1
+    dag.tracked_pauli_labeled("logical_X2", X(0) & X(1));
 
     // Final data qubit measurements
     let ms_data = dag.mz(&data);
@@ -598,21 +633,18 @@ fn build_422_code(num_rounds: usize) -> DagCircuit {
             ms_data[3],
             prev_meas_z.unwrap(),
         ],
-    );
+    )
+    .expect("refs are from this circuit");
     // No final X-stabilizer detector: Z-basis data measurements cannot
     // reconstruct X_0 X_1 X_2 X_3 parity.
 
     // Observables: logical Z readouts
     // Logical Z_1 = Z_0 Z_1
-    dag.observable_labeled("logical_Z1", &[ms_data[0], ms_data[1]]);
+    dag.observable_labeled("logical_Z1", &[ms_data[0], ms_data[1]])
+        .expect("refs are from this circuit");
     // Logical Z_2 = Z_0 Z_2
-    dag.observable_labeled("logical_Z2", &[ms_data[0], ms_data[2]]);
-
-    // Tracked Paulis: logical X operators
-    // Logical X_1 = X_0 X_2
-    dag.tracked_pauli_labeled("logical_X1", X(0) & X(2));
-    // Logical X_2 = X_0 X_1
-    dag.tracked_pauli_labeled("logical_X2", X(0) & X(1));
+    dag.observable_labeled("logical_Z2", &[ms_data[0], ms_data[2]])
+        .expect("refs are from this circuit");
 
     dag
 }
@@ -636,8 +668,10 @@ fn code_422_fault_enumeration() {
 
     // Build influence map
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     let locs = map.gate_fault_locations();
     println!(
@@ -711,8 +745,10 @@ fn code_422_ml_decoder() {
     let noise = NoiseConfig::uniform(0.001);
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     // Build ML decoder up to weight 2
     let decoder = LookupDecoder::build(&map, &noise, 2);

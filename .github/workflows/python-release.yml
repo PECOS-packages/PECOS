@@ -7,7 +7,7 @@ env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
-  MACOS_WHEEL_DEPLOYMENT_TARGET: "15.0"
+  MACOS_WHEEL_DEPLOYMENT_TARGET: "13.0"
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
@@ -136,7 +136,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "0.11.14"
+          version-file: ".github/uv.toml"
           enable-cache: true
           save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -150,7 +150,7 @@ jobs:
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
@@ -206,7 +206,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.14']
+        python-version: ['3.12', '3.14']
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -218,10 +218,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # This job is deliberately checkout-free: it consumes the built wheels
+      # as a pure PyPI-style consumer. The uv version pin is tooling, not part
+      # of that consumer contract, so fetch ONLY the pin file for setup-uv.
+      - name: Fetch the uv version pin
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          sparse-checkout: .github/uv.toml
+          sparse-checkout-cone-mode: false
+
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "0.11.14"
+          version-file: ".github/uv.toml"
 
       - name: Download PR smoke artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
@@ -254,16 +263,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 with CUDA support. The manylinux 2.34 image's default
-          # compiler is GCC 14, which emits libstdc++ symbols newer than
-          # auditwheel's manylinux_2_35 policy allows. Install and pin the
-          # AlmaLinux system GCC 11 toolchain in the Linux build environment.
+          # Linux x86_64 with CUDA support. Build in manylinux 2.28 and use the
+          # GCC 13 toolset that previously produced policy-compatible wheels.
           - os: ubuntu-latest
             architecture: x86_64
             cibw_archs: x86_64
             install_cuda: true
+            python_command: python3
+            expected_wheel_platform_tag: manylinux_2_28_x86_64
           # Linux aarch64 - temporarily disabled while the LLVM 21.1
-          # manylinux_2_34 bootstrap is validated on the primary x86_64 lane.
+          # manylinux 2.28 bootstrap is validated on the primary x86_64 lane.
           # - os: ubuntu-24.04-arm
           #   architecture: aarch64
           #   runner: ubuntu-24.04-arm
@@ -274,19 +283,26 @@ jobs:
           #   gcc_cc: ""
           #   gcc_cxx: ""
           # macOS without CUDA (NVIDIA dropped macOS CUDA support in 2019)
-          # Use macos-15 (not macos-14) because Xcode 15.4's libc++ has a
-          # pointer_traits bug with CXX crate's contiguous iterators in C++20.
+          # Use macos-15 builders (not macos-14) because Xcode 15.4's libc++
+          # has a pointer_traits bug with CXX crate's contiguous iterators in
+          # C++20. MACOSX_DEPLOYMENT_TARGET still produces macOS 13 wheels.
           - os: macos-15
             architecture: aarch64
             install_cuda: false
+            python_command: python3
+            expected_wheel_platform_tag: macosx_13_0_arm64
           - os: macos-15-intel
             architecture: x86_64
             install_cuda: false
+            python_command: python3
+            expected_wheel_platform_tag: macosx_13_0_x86_64
           # Windows x86_64 with CUDA support
           # Note: Uses specific sub-packages to avoid VS integration bug (see Jimver/cuda-toolkit#382)
           - os: windows-2022
             architecture: x86_64
             install_cuda: true
+            python_command: python
+            expected_wheel_platform_tag: win_amd64
 
     steps:
       - name: Harden the runner (egress audit)
@@ -301,6 +317,39 @@ jobs:
           ref: ${{ github.event.inputs.sha || github.sha }}
           submodules: recursive
 
+      - name: Restore release LLVM archive
+        if: runner.os != 'Windows'
+        id: restore-release-llvm
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .ci-llvm
+          key: release-llvm-${{ env.LLVM_RELEASE_VERSION }}-macos-${{ env.MACOS_WHEEL_DEPLOYMENT_TARGET }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ci/build-llvm-21-*.sh') }}-v1
+
+      - name: Build LLVM 21.1 for manylinux 2.28
+        if: runner.os == 'Linux' && steps.restore-release-llvm.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .ci-llvm
+          docker run --rm \
+            --volume "$PWD:/project" \
+            --workdir /project \
+            quay.io/pypa/manylinux_2_28_x86_64:2026.01.04-1@sha256:4d62ce9d1ca259171e7cde403686e538e6f8fdc517660a557a66e102577d67d3 \
+            bash scripts/ci/build-llvm-21-manylinux.sh \
+            /project/.ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
+
+      - name: Build LLVM 21.1 for macOS 13
+        if: runner.os == 'macOS' && steps.restore-release-llvm.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .ci-llvm
+          bash scripts/ci/build-llvm-21-macos.sh \
+            .ci-llvm/llvm-21.1.8-macos-${{ matrix.architecture }}.tar.gz
+
+      - name: Save release LLVM archive
+        if: runner.os != 'Windows' && steps.restore-release-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .ci-llvm
+          key: ${{ steps.restore-release-llvm.outputs.cache-primary-key }}
+
       # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
       - name: Set up Visual Studio environment (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
@@ -313,6 +362,10 @@ jobs:
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
         uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
+        # Bounded like the other CUDA installs so a stalled download fails instead of
+        # hanging the job. More generous than those: `method: local` pulls the full
+        # installer rather than network sub-packages.
+        timeout-minutes: 30
         with:
           cuda: '12.5.1'
           method: 'local'
@@ -366,33 +419,35 @@ jobs:
           output-dir: wheelhouse
         env:
           # Build configuration
-          CIBW_BUILD: "cp310-*"
+          CIBW_BUILD: "cp312-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
-          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_34"
-          CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_34"
+          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
+          CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
           # Linux configuration - CUDA paths are conditional via matrix variables
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-21.1/bin:$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin:/usr/local/cuda-12.6/bin:$PATH
+            PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-21.1/bin:$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin:/usr/local/cuda-12.6/bin:$PATH
+            LD_LIBRARY_PATH=/opt/rh/gcc-toolset-13/root/usr/lib64:/opt/rh/gcc-toolset-13/root/usr/lib:$LD_LIBRARY_PATH
             LLVM_SYS_211_PREFIX=$HOME/.pecos/deps/llvm-21.1
             LIBCLANG_PATH=$HOME/.pecos/deps/llvm-21.1/lib
             CMAKE=$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin/cmake
             CUDA_PATH=/usr/local/cuda-12.6
-            CC=/usr/bin/gcc
-            CXX=/usr/bin/g++
-            CUDAHOSTCXX=/usr/bin/g++
-            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
-            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+            CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
+            CUDAHOSTCXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
             MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_LINUX: |
             bash scripts/ci/ensure-rust.sh stable minimal
             export PATH=$HOME/.cargo/bin:$PATH
-            dnf install -y bzip2 gcc gcc-c++ libffi-devel xz
-            export CC=/usr/bin/gcc
-            export CXX=/usr/bin/g++
-            export CUDAHOSTCXX=/usr/bin/g++
-            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+            dnf install -y bzip2 gcc-toolset-13 libffi-devel xz
+            source /opt/rh/gcc-toolset-13/enable
+            export CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            export CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
+            export CUDAHOSTCXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
             # Install CUDA Toolkit for GPU support on x86_64 (compile-time only, no GPU needed)
             if [ "${{ matrix.install_cuda }}" = "true" ]; then
               echo "Installing CUDA Toolkit from NVIDIA repos..."
@@ -409,12 +464,12 @@ jobs:
             fi
             "$CC" --version
             "$CXX" --version
-            bash scripts/ci/install-llvm-21-conda-linux.sh
+            bash scripts/ci/install-llvm-21-manylinux.sh .ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
             cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
             cargo run --locked --release -p pecos-cli -- install cmake --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             LD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-21.1/lib:$LD_LIBRARY_PATH
-            auditwheel repair --plat manylinux_2_35_${{ matrix.cibw_archs }} -w {dest_dir} {wheel} &&
+            auditwheel repair --plat manylinux_2_28_${{ matrix.cibw_archs }} -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           # macOS configuration
           CIBW_ENVIRONMENT_MACOS: >
@@ -429,9 +484,7 @@ jobs:
             bash scripts/ci/ensure-rust.sh stable minimal
             export PATH=$HOME/.cargo/bin:$PATH
             rustup update
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
-            mkdir -p "$HOME/.pecos/deps"
-            ln -sfn "$(brew --prefix llvm@21)" "$HOME/.pecos/deps/llvm-21.1"
+            bash scripts/ci/install-llvm-21-macos.sh .ci-llvm/llvm-21.1.8-macos-${{ matrix.architecture }}.tar.gz
             cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
             cargo run --locked --release -p pecos-cli -- install cmake --force
             # Create a codesign wrapper that strips DYLD_LIBRARY_PATH to prevent
@@ -468,6 +521,19 @@ jobs:
             delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
+      - name: Verify pecos-rslib wheel platform tag
+        run: >
+          ${{ matrix.python_command }} scripts/ci/check_wheel_platform_tags.py
+          --expected-platform-tag "${{ matrix.expected_wheel_platform_tag }}"
+          wheelhouse/*.whl
+
+      - name: Verify pecos-rslib Mach-O deployment target
+        if: runner.os == 'macOS'
+        run: >
+          python3 scripts/ci/check_macos_wheel_minos.py
+          --maximum-version "${{ env.MACOS_WHEEL_DEPLOYMENT_TARGET }}"
+          wheelhouse/*.whl
+
       - name: Upload pecos-rslib wheels
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -475,42 +541,63 @@ jobs:
           path: ./wheelhouse/*.whl
           if-no-files-found: error
 
-      # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build)
+      - name: Install uv for Linux wheel verification
+        if: runner.os == 'Linux'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version-file: ".github/uv.toml"
+          enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+      # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build).
+      # Linux only: Windows already links LLVM statically (llvm-sys has no dynamic
+      # support on MSVC), and macOS deliberately keeps shared LLVM with a bundled dylib.
+      - name: Select static LLVM linkage for pecos-rslib-llvm release wheel
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          test "$(git grep -l 'llvm21-1-prefer-dynamic' -- '*Cargo.toml')" = "Cargo.toml"
+          test "$(grep -c 'llvm21-1-prefer-dynamic' Cargo.toml)" -eq 1
+          sed -i 's/llvm21-1-prefer-dynamic/llvm21-1-force-static/' Cargo.toml
+          test "$(grep -c 'llvm21-1-force-static' Cargo.toml)" -eq 1
+          ! grep -q 'llvm21-1-prefer-dynamic' Cargo.toml
+
       - name: Build pecos-rslib-llvm wheels
         uses: pypa/cibuildwheel@298ed2fb2c105540f5ed055e8a6ad78d82dd3a7e # v3.3.1
         with:
           package-dir: python/pecos-rslib-llvm
           output-dir: wheelhouse-llvm
         env:
-          CIBW_BUILD: "cp310-*"
+          CIBW_BUILD: "cp312-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
-          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_34"
-          CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_34"
+          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
+          CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-21.1/bin:$PATH
-            LD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-21.1/lib:$LD_LIBRARY_PATH
+            PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-21.1/bin:$PATH
+            LD_LIBRARY_PATH=/opt/rh/gcc-toolset-13/root/usr/lib64:/opt/rh/gcc-toolset-13/root/usr/lib:$HOME/.pecos/deps/llvm-21.1/lib:$LD_LIBRARY_PATH
             LLVM_SYS_211_PREFIX=$HOME/.pecos/deps/llvm-21.1
             LIBCLANG_PATH=$HOME/.pecos/deps/llvm-21.1/lib
-            CC=/usr/bin/gcc
-            CXX=/usr/bin/g++
-            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
-            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+            CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
           CIBW_BEFORE_ALL_LINUX: |
             bash scripts/ci/ensure-rust.sh stable minimal
             export PATH=$HOME/.cargo/bin:$PATH
-            dnf install -y bzip2 gcc gcc-c++ libffi-devel xz
-            export CC=/usr/bin/gcc
-            export CXX=/usr/bin/g++
-            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+            dnf install -y bzip2 gcc-toolset-13 libffi-devel xz
+            source /opt/rh/gcc-toolset-13/enable
+            export CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            export CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
             "$CC" --version
             "$CXX" --version
-            bash scripts/ci/install-llvm-21-conda-linux.sh
+            bash scripts/ci/install-llvm-21-manylinux.sh .ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
             cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             LD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-21.1/lib:$LD_LIBRARY_PATH
-            auditwheel repair --plat manylinux_2_35_${{ matrix.cibw_archs }} -w {dest_dir} {wheel} &&
+            auditwheel repair --plat manylinux_2_28_${{ matrix.cibw_archs }} -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           CIBW_ENVIRONMENT_MACOS: >
             PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-21.1/bin:$PATH
@@ -525,9 +612,7 @@ jobs:
             fi
             if [ ! -d "$HOME/.pecos/deps/llvm-21.1/bin" ]; then
               rustup update
-              HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
-              mkdir -p "$HOME/.pecos/deps"
-              ln -sfn "$(brew --prefix llvm@21)" "$HOME/.pecos/deps/llvm-21.1"
+              bash scripts/ci/install-llvm-21-macos.sh .ci-llvm/llvm-21.1.8-macos-${{ matrix.architecture }}.tar.gz
               cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
             else
               echo "LLVM already installed from pecos-rslib build, skipping"
@@ -553,6 +638,32 @@ jobs:
             delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
+      - name: Restore workspace LLVM linkage after release wheel
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: git checkout -- Cargo.toml
+
+      - name: Verify static LLVM release wheel isolation
+        if: runner.os == 'Linux'
+        run: >
+          uv run --frozen --no-project --python 3.12 --with patchelf==0.17.2.4 python scripts/ci/verify_static_llvm_wheels.py
+          --base-wheel wheelhouse/*.whl
+          --llvm-wheel wheelhouse-llvm/*.whl
+          --llvm-archive .ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
+
+      - name: Verify pecos-rslib-llvm wheel platform tag
+        run: >
+          ${{ matrix.python_command }} scripts/ci/check_wheel_platform_tags.py
+          --expected-platform-tag "${{ matrix.expected_wheel_platform_tag }}"
+          wheelhouse-llvm/*.whl
+
+      - name: Verify pecos-rslib-llvm Mach-O deployment target
+        if: runner.os == 'macOS'
+        run: >
+          python3 scripts/ci/check_macos_wheel_minos.py
+          --maximum-version "${{ env.MACOS_WHEEL_DEPLOYMENT_TARGET }}"
+          wheelhouse-llvm/*.whl
+
       - name: Upload pecos-rslib-llvm wheels
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -569,7 +680,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.12', '3.13', '3.14']
         platform:
           - runner: ubuntu-latest
             os: ubuntu-latest
@@ -580,7 +691,9 @@ jobs:
           - runner: macos-15-intel
             os: macos-15-intel
             architecture: x86_64
-          - runner: macos-15
+          # Build on macOS 15, then exercise the arm64 wheel on the oldest
+          # standard macOS runner still available from GitHub.
+          - runner: macos-14
             os: macos-15
             architecture: aarch64
     steps:
@@ -600,18 +713,26 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Download abi3 wheel
+      - name: Download pecos-rslib abi3 wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./pecos-rslib-wheel
 
-      - name: Test abi3 wheel with Python ${{ matrix.python-version }}
+      - name: Download pecos-rslib-llvm abi3 wheel
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: wheel-pecos-rslib-llvm-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
+          path: ./pecos-rslib-llvm-wheel
+
+      - name: Test abi3 wheels with Python ${{ matrix.python-version }}
         run: |
-          echo "Testing abi3 wheel with Python ${{ matrix.python-version }}"
+          echo "Testing abi3 wheels with Python ${{ matrix.python-version }}"
           python --version
-          pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl
+          python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
           python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
+          python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print(f"LLVM bitcode bytes: {len(bitcode)}")'
+          python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
           python -c 'import sys; print(f"Python version: {sys.version}")'
 
       - name: Debug DLL loading (Windows)
@@ -646,6 +767,40 @@ jobs:
             Write-Host "No pecos_rslib.libs directory found"
           }
 
+  test_manylinux_2_28_wheels:
+    needs: build_wheelspecos_rslib
+    if: |
+      always() &&
+      needs.build_wheelspecos_rslib.result == 'success'
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_28_x86_64:2026.01.04-1@sha256:4d62ce9d1ca259171e7cde403686e538e6f8fdc517660a557a66e102577d67d3
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Download pecos-rslib wheel
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: wheel-pecos-rslib-ubuntu-latest-x86_64
+          path: ./pecos-rslib-wheel
+
+      - name: Download pecos-rslib-llvm wheel
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
+          path: ./pecos-rslib-llvm-wheel
+
+      - name: Install and import wheels on glibc 2.28
+        run: |
+          /opt/python/cp312-cp312/bin/python -m pip install --no-index \
+            ./pecos-rslib-wheel/*.whl \
+            ./pecos-rslib-llvm-wheel/*.whl
+          /opt/python/cp312-cp312/bin/python -c 'import pecos_rslib; import pecos_rslib_llvm; print({"pecos_rslib": pecos_rslib.__version__})'
+          /opt/python/cp312-cp312/bin/python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print({"llvm_bitcode_bytes": len(bitcode)})'
+          /opt/python/cp312-cp312/bin/python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
+
   build_sdist_quantum_pecos:
     needs: build_wheelspecos_rslib
     if: |
@@ -666,7 +821,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
@@ -726,7 +881,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
@@ -766,12 +921,18 @@ jobs:
           if-no-files-found: error
 
   collect_artifacts:
-    needs: [build_wheelspecos_rslib, build_sdist_quantum_pecos, build_wheels_quantum_pecos, test_abi3_wheels]
+    needs:
+      - build_wheelspecos_rslib
+      - build_sdist_quantum_pecos
+      - build_wheels_quantum_pecos
+      - test_abi3_wheels
+      - test_manylinux_2_28_wheels
     if: |
       needs.build_wheelspecos_rslib.result == 'success' &&
       needs.build_sdist_quantum_pecos.result == 'success' &&
       needs.build_wheels_quantum_pecos.result == 'success' &&
-      needs.test_abi3_wheels.result == 'success'
+      needs.test_abi3_wheels.result == 'success' &&
+      needs.test_manylinux_2_28_wheels.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (egress audit)

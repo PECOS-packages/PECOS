@@ -39,6 +39,7 @@ mod clifford_fusion;
 mod gpu;
 mod gpu64;
 mod gpu_auto;
+mod gpu_bounded_enumeration;
 mod gpu_density_matrix;
 mod gpu_influence_sampler;
 mod gpu_noisy_sampler;
@@ -56,6 +57,11 @@ mod gpu_sampler_validation;
 pub use circuit_compiler::{CompiledCircuit, Gate as CompiledGate, GateType};
 pub use gpu::{GpuError, GpuStateVec32, RequiredFeature};
 pub use gpu_auto::GpuStateVecAuto;
+pub use gpu_bounded_enumeration::{
+    GpuBoundedEnumerationBackend, GpuBoundedEnumerationError,
+    gpu_bounded_enumeration_code_distance, gpu_bounded_enumeration_stabilizer_distance,
+    gpu_bounded_enumeration_x_distance, gpu_bounded_enumeration_z_distance,
+};
 pub use gpu_density_matrix::{
     GpuDensityMatrix, GpuDensityMatrix32, GpuDensityMatrix64, GpuStateVecBackend,
 };

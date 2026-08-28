@@ -21,9 +21,11 @@ from typing import (
     Any,
     Callable,
     Generic,
+    Iterable,
     Iterator,
     Mapping,
     Sequence,
+    SupportsIndex,
     TypeVar,
     overload,
 )
@@ -147,6 +149,11 @@ class ScalarComplex128(Scalar):
     @property
     def imag(self) -> float: ...
     def __complex__(self) -> complex: ...
+
+class integer:
+    """Abstract category for signed and unsigned integer dtypes."""
+
+    ...
 
 # Scalar type shortcuts
 i8: type[ScalarI8]
@@ -362,6 +369,7 @@ class DTypes:
     def bool(self) -> DType: ...
 
 dtypes: DTypes
+bool_: DType
 
 # =============================================================================
 # Array Type
@@ -442,9 +450,13 @@ class Array(Generic[_ScalarT]):
     def conj(self) -> Array[_ScalarT]: ...
 
     # Methods
+    @overload
+    def reshape(self, shape: tuple[int, ...]) -> Array[_ScalarT]: ...
+    @overload
     def reshape(self, *shape: int) -> Array[_ScalarT]: ...
     def flatten(self) -> Array[_ScalarT]: ...
     def ravel(self) -> Array[_ScalarT]: ...
+    def fill(self, value: object) -> None: ...
     def transpose(self, *axes: int) -> Array[_ScalarT]: ...
     def sum(self, axis: int | None = None) -> Scalar | Array[_ScalarT]: ...
     def mean(self, axis: int | None = None) -> ScalarF64 | Array[ScalarF64]: ...
@@ -464,12 +476,17 @@ def array(
     data: Sequence[int | float | complex] | Sequence[Sequence[int | float | complex]],
     dtype: type[Scalar] | DType | None = None,
 ) -> Array[Scalar]: ...
+def asarray(
+    data: Sequence[int | float | complex] | Sequence[Sequence[int | float | complex]] | Array[Scalar],
+    dtype: type[Scalar] | DType | None = None,
+) -> Array[Scalar]: ...
 
 # =============================================================================
 # Array Creation Functions
 # =============================================================================
 def zeros(shape: int | tuple[int, ...], dtype: type[Scalar] | DType | None = None) -> Array[Scalar]: ...
 def ones(shape: int | tuple[int, ...], dtype: type[Scalar] | DType | None = None) -> Array[Scalar]: ...
+def zeros_like(a: Array[_ScalarT]) -> Array[_ScalarT]: ...
 def linspace(
     start: float, stop: float, num: int = 50, dtype: type[Scalar] | DType | None = None
 ) -> Array[ScalarF64]: ...
@@ -482,6 +499,7 @@ def arange(
 def diag(v: Array[Scalar], k: int = 0) -> Array[Scalar]: ...
 def delete(arr: Array[Scalar], indices: int | Sequence[int], axis: int | None = None) -> Array[Scalar]: ...
 def kron(a: Array[Scalar], b: Array[Scalar]) -> Array[Scalar]: ...
+def nonzero(a: Array[Scalar]) -> tuple[Array[ScalarI64], ...]: ...
 
 # =============================================================================
 # Mathematical Functions
@@ -533,6 +551,7 @@ def allclose(
     atol: float = 1e-8,
 ) -> bool: ...
 def array_equal(a: Array[Scalar], b: Array[Scalar]) -> bool: ...
+def issubdtype(arg1: DType | type[Scalar] | str, arg2: DType | type[Scalar] | type[integer] | str) -> bool: ...
 def all(a: Array[Scalar], axis: int | None = None) -> bool | Array[ScalarU8]: ...  # noqa: A001
 def any(a: Array[Scalar], axis: int | None = None) -> bool | Array[ScalarU8]: ...  # noqa: A001
 def where(
@@ -1060,13 +1079,149 @@ class PauliString:
     def __eq__(self, other: object) -> bool: ...
 
 def X(qubit: int) -> PauliString: ...
+def Xs(qubits: Sequence[int]) -> PauliString: ...
 def Y(qubit: int) -> PauliString: ...
+def Ys(qubits: Sequence[int]) -> PauliString: ...
 def Z(qubit: int) -> PauliString: ...
+def Zs(qubits: Sequence[int]) -> PauliString: ...
 
 class PauliStabilizerGroup:
     """A group of commuting Pauli operators with real phases."""
 
     ...
+
+class StabilizerCode:
+    """A stabilizer group with an explicit physical-qubit count."""
+
+    def __init__(self, group: PauliStabilizerGroup, num_qubits: int | None = None) -> None: ...
+    @staticmethod
+    def repetition(n: int) -> StabilizerCode: ...
+    @staticmethod
+    def steane() -> StabilizerCode: ...
+    @staticmethod
+    def five_qubit() -> StabilizerCode: ...
+    @staticmethod
+    def shor() -> StabilizerCode: ...
+    @staticmethod
+    def four_two_two() -> StabilizerCode: ...
+    @staticmethod
+    def toric(l: int) -> StabilizerCode: ...
+    def num_qubits(self) -> int: ...
+    def num_logical_qubits(self) -> int: ...
+    def code_parameters(self) -> str: ...
+    def distance(self) -> int | None: ...
+    def syndrome(self, error: PauliString) -> list[bool]: ...
+    def logical_operators(self) -> list[PauliString]: ...
+    def group(self) -> PauliStabilizerGroup: ...
+
+class DistanceResult:
+    """A code distance and one minimum-weight logical operator."""
+
+    @property
+    def distance(self) -> int: ...
+    @property
+    def min_weight_operator(self) -> PauliString: ...
+    def __repr__(self) -> str: ...
+
+class LogicalOperatorInfo:
+    """A minimum-weight logical operator and its logical equivalence."""
+
+    @property
+    def operator(self) -> PauliString: ...
+    @property
+    def weight(self) -> int: ...
+    @property
+    def equivalent_logicals(self) -> list[tuple[str, int]]: ...
+    def equivalence_string(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+class ParityCheckMatrix:
+    """A role-neutral binary parity-check matrix."""
+
+    def __init__(self, rows: Sequence[Sequence[int]]) -> None: ...
+    @classmethod
+    def from_dense(cls, rows: Sequence[Sequence[int]]) -> ParityCheckMatrix: ...
+    @classmethod
+    def zeros(cls, num_checks: int, num_qubits: int) -> ParityCheckMatrix: ...
+    def num_checks(self) -> int: ...
+    def num_qubits(self) -> int: ...
+    def rank(self) -> int: ...
+    def rows(self) -> list[list[int]]: ...
+    def to_x_stabilizers(self) -> list[PauliString]: ...
+    def to_z_stabilizers(self) -> list[PauliString]: ...
+    def __repr__(self) -> str: ...
+
+class SymplecticMatrix:
+    """A binary symplectic matrix whose rows represent Pauli operators."""
+
+    def __init__(self, rows: Sequence[Sequence[int]]) -> None: ...
+    @classmethod
+    def from_dense(cls, rows: Sequence[Sequence[int]]) -> SymplecticMatrix: ...
+    @classmethod
+    def zeros(cls, num_rows: int, num_qubits: int) -> SymplecticMatrix: ...
+    def num_rows(self) -> int: ...
+    def num_qubits(self) -> int: ...
+    def rank(self) -> int: ...
+    def rows(self) -> list[list[int]]: ...
+    def x_block(self) -> list[list[int]]: ...
+    def z_block(self) -> list[list[int]]: ...
+    def to_positive_paulis(self) -> list[PauliString]: ...
+    def __repr__(self) -> str: ...
+
+class StabilizerCodeSpecBuilder:
+    """Mutable Python wrapper around the consuming Rust specification builder."""
+
+    def check(self, op: PauliString) -> None: ...
+    def checks_from_css(self, x_stabilizers: ParityCheckMatrix, z_stabilizers: ParityCheckMatrix) -> None: ...
+    def checks_from_symplectic(self, matrix: SymplecticMatrix) -> None: ...
+    def logical_z(self, op: PauliString) -> None: ...
+    def logical_x(self, op: PauliString) -> None: ...
+    def build(self) -> StabilizerCodeSpec: ...
+    def build_verified(self) -> StabilizerCodeSpec: ...
+    def build_with_discovered_logicals(self) -> StabilizerCodeSpec: ...
+
+class StabilizerCodeSpec:
+    """A complete stabilizer-code specification with paired logical operators."""
+
+    def __init__(
+        self,
+        num_qubits: int,
+        stabilizers: list[PauliString],
+        logical_zs: list[PauliString],
+        logical_xs: list[PauliString],
+    ) -> None: ...
+    @staticmethod
+    def builder(num_qubits: int) -> StabilizerCodeSpecBuilder: ...
+    @classmethod
+    def from_stabilizer_code(cls, code: StabilizerCode) -> StabilizerCodeSpec: ...
+    @property
+    def num_qubits(self) -> int: ...
+    @property
+    def num_logical_qubits(self) -> int: ...
+    @property
+    def stabilizers(self) -> list[PauliString]: ...
+    @property
+    def destabilizers(self) -> list[PauliString]: ...
+    @property
+    def logical_zs(self) -> list[PauliString]: ...
+    @property
+    def logical_xs(self) -> list[PauliString]: ...
+    def verify(self) -> None: ...
+    def distance(
+        self, max_weight: int | None = None, css: bool = False, verbose: bool = False
+    ) -> DistanceResult | None: ...
+    def min_weight_logicals(
+        self, max_weight: int | None = None, css: bool = False, verbose: bool = False
+    ) -> list[LogicalOperatorInfo]: ...
+    def shortest_logicals(
+        self,
+        delta: int = 0,
+        max_weight: int | None = None,
+        css: bool = False,
+        verbose: bool = False,
+    ) -> list[LogicalOperatorInfo]: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
 
 class PauliSequence:
     """Ordered sequence of Pauli operators with symplectic analysis."""
@@ -1438,8 +1593,10 @@ class GateType:
     CH: GateType
     CRZ: GateType
     CCX: GateType
+    MeasureX: GateType
     Measure: GateType
     MeasureFree: GateType
+    PrepX: GateType
     Prep: GateType
     QAlloc: GateType
     QFree: GateType
@@ -1489,7 +1646,11 @@ class Gate:
     @staticmethod
     def cz(pairs: Sequence[tuple[int, int]]) -> Gate: ...
     @staticmethod
+    def mx(qubits: Sequence[int]) -> Gate: ...
+    @staticmethod
     def mz(qubits: Sequence[int]) -> Gate: ...
+    @staticmethod
+    def px(qubits: Sequence[int]) -> Gate: ...
     @staticmethod
     def pz(qubits: Sequence[int]) -> Gate: ...
 
@@ -1585,7 +1746,9 @@ class TickHandle:
         qubits: Sequence[int],
         angles: Sequence[float] | None = None,
     ) -> TickHandle: ...
+    def px(self, qubits: Sequence[int]) -> TickPrepHandle: ...
     def pz(self, qubits: Sequence[int]) -> TickPrepHandle: ...
+    def mx(self, qubits: Sequence[int]) -> list[tuple[int, int, int]]: ...
     def mz(self, qubits: Sequence[int]) -> list[tuple[int, int, int]]: ...
     def mz_with_ids(
         self,
@@ -1663,7 +1826,8 @@ class TickCircuit:
     def set_gate_meta(self, tick_idx: int, gate_idx: int, key: str, value: Any) -> None: ...
     def get_gate_meta(self, tick_idx: int, gate_idx: int, key: str) -> Any | None: ...
     def lower_clifford_rotations(self) -> None: ...
-    def remove_identity(self) -> None: ...
+    def strip_identities(self) -> None: ...
+    def strip_idles(self) -> None: ...
     def cancel_inverses(self) -> None: ...
     def merge_adjacent_rotations(self) -> None: ...
     def peephole_optimize(self) -> None: ...
@@ -2031,11 +2195,714 @@ class WasmForeignObject:
         ...
 
 # =============================================================================
+# Quantum Error Correction Types
+# =============================================================================
+
+class ObservableFlips:
+    """Which logical observables flipped, with an explicit observable count.
+
+    Returned by both decoder results and sampled ground truth, so a
+    prediction can be compared to the truth directly. ``flips[i]`` is
+    bounds-checked against the observable count.
+    """
+
+    @property
+    def mask(self) -> int: ...
+    def indices(self) -> list[int]: ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, index: int) -> bool: ...
+    def __iter__(self) -> Iterator[bool]: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __repr__(self) -> str: ...
+    @staticmethod
+    def from_mask(mask: SupportsIndex, num_observables: int) -> ObservableFlips: ...
+    @staticmethod
+    def from_bits(bits: Iterable[SupportsIndex]) -> ObservableFlips: ...
+
+class qec:
+    """Fault-tolerance and detector-error-model submodule."""
+
+    PAULI_I: int
+    PAULI_X: int
+    PAULI_Y: int
+    PAULI_Z: int
+
+    class FaultLocation:
+        @property
+        def node(self) -> int: ...
+        @property
+        def qubits(self) -> list[int]: ...
+        @property
+        def before(self) -> bool: ...
+        @property
+        def gate_type(self) -> str: ...
+
+    class DagFaultInfluenceMap:
+        @property
+        def num_locations(self) -> int: ...
+        @property
+        def num_detectors(self) -> int: ...
+        @property
+        def num_dem_outputs(self) -> int: ...
+        @property
+        def num_observables(self) -> int: ...
+        @property
+        def num_tracked_paulis(self) -> int: ...
+        def get_locations(self) -> list[qec.FaultLocation]: ...
+        def get_location(self, loc_idx: int) -> qec.FaultLocation | None: ...
+        def classify_fault(self, loc_idx: int, pauli: int) -> tuple[bool, bool]: ...
+        def get_detector_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+        def get_dem_output_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+        def get_internal_dem_output_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+        def get_tracked_pauli_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+        def get_observable_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+        def has_detector_flips(self, loc_idx: int, pauli: int) -> bool: ...
+        def has_dem_output_flips(self, loc_idx: int, pauli: int) -> bool: ...
+        def has_observable_flips(self, loc_idx: int, pauli: int) -> bool: ...
+        def has_tracked_pauli_flips(self, loc_idx: int, pauli: int) -> bool: ...
+        def merge_dem_outputs_from(self, other: qec.DagFaultInfluenceMap) -> None: ...
+        def memory_stats(self) -> dict[str, Any]: ...
+        def export_csr(self) -> dict[str, Any]: ...
+        def measurements(self) -> list[tuple[int, int, int]]: ...
+        def __len__(self) -> int: ...
+
+    class DagFaultAnalyzer:
+        def __init__(self, dag: DagCircuit) -> None: ...
+        def build_influence_map(self) -> qec.DagFaultInfluenceMap: ...
+        @property
+        def max_node(self) -> int: ...
+        @property
+        def max_qubit(self) -> int: ...
+
+    class InfluenceBuilder:
+        def __init__(self, dag: DagCircuit) -> None: ...
+        def with_tracked_x(self, qubits: Sequence[int]) -> qec.InfluenceBuilder: ...
+        def with_tracked_z(self, qubits: Sequence[int]) -> qec.InfluenceBuilder: ...
+        def with_tracked_pauli(self, entries: Sequence[tuple[int, str]]) -> qec.InfluenceBuilder: ...
+        def with_circuit_annotations(self) -> qec.InfluenceBuilder: ...
+        def build(self) -> qec.DagFaultInfluenceMap: ...
+
+    class PauliFrameLookup:
+        @staticmethod
+        def from_circuit(
+            dag: DagCircuit,
+            detectors: Sequence[Sequence[int]],
+            observables: Sequence[Sequence[int]],
+        ) -> qec.PauliFrameLookup: ...
+        @property
+        def num_pauli_sites(self) -> int: ...
+        @property
+        def num_tracked_paulis(self) -> int: ...
+        @property
+        def num_detectors(self) -> int: ...
+        @property
+        def num_observables(self) -> int: ...
+        def row(self, tracked_idx: int) -> tuple[list[int], list[int]]: ...
+        def mask_firings(self, pauli_masks: Any) -> list[list[bool]]: ...
+        def compute_mask_xor(self, pauli_masks: Any) -> tuple[list[list[bool]], list[list[bool]]]: ...
+
+    class DetectorErrorModel:
+        @staticmethod
+        def from_circuit(
+            circuit: DagCircuit | TickCircuit,
+            p1: float = ...,
+            p2: float = ...,
+            p_meas: float = ...,
+            p_prep: float = ...,
+            **noise_options: Any,
+        ) -> qec.DetectorErrorModel: ...
+        @staticmethod
+        def from_pecos_metadata_json(json: str) -> qec.DetectorErrorModel: ...
+        @property
+        def num_detectors(self) -> int: ...
+        @property
+        def num_dem_outputs(self) -> int: ...
+        @property
+        def num_observables(self) -> int: ...
+        @property
+        def num_tracked_paulis(self) -> int: ...
+        @property
+        def num_contributions(self) -> int: ...
+        def to_string(self) -> str: ...
+        def to_string_decomposed(self) -> str: ...
+        def to_string_decomposed_maximally(self) -> str: ...
+        def to_string_decomposed_with_two_detector_direct_policy(self, policy: str) -> str: ...
+        def to_string_source_decomposed(self) -> str: ...
+        def to_string_source_graphlike_decomposed(self) -> str: ...
+        def to_string_terminal_graphlike_decomposed(self) -> str: ...
+        def to_string_graphlike_search_decomposed(self) -> str: ...
+        def all_contribution_effects(self) -> str: ...
+        def contribution_effect_summaries(self) -> list[Any]: ...
+        def contribution_render_records(self) -> list[Any]: ...
+        def contribution_render_records_with_two_detector_direct_policy(self, policy: str) -> list[Any]: ...
+        def contribution_render_summaries(self) -> list[Any]: ...
+        def contribution_render_summaries_with_two_detector_direct_policy(self, policy: str) -> list[Any]: ...
+        def contribution_source_graphlike_render_records(self) -> list[Any]: ...
+        def contributions_for_effect(self, detectors: Sequence[int], dem_outputs: Sequence[int]) -> list[Any]: ...
+        def contributions_for_mechanism(self, detectors: Sequence[int]) -> str: ...
+        def to_sampler(self) -> qec.DemSampler: ...
+
+    class DemBuilder:
+        def __init__(self, influence_map: qec.DagFaultInfluenceMap) -> None: ...
+        def with_noise(
+            self,
+            p1: float,
+            p2: float,
+            p_meas: float,
+            p_prep: float,
+            **noise_options: Any,
+        ) -> qec.DemBuilder: ...
+        def with_detectors_json(self, json: str) -> qec.DemBuilder: ...
+        def with_observables_json(self, json: str) -> qec.DemBuilder: ...
+        def with_measurement_order(self, order: Sequence[int]) -> qec.DemBuilder: ...
+        def with_num_measurements(self, num: int) -> qec.DemBuilder: ...
+        def with_exact_branch_replay_circuit(self, circuit: DagCircuit) -> qec.DemBuilder: ...
+        def build(self) -> qec.DetectorErrorModel: ...
+        def build_with_source_tracking(self) -> qec.DetectorErrorModel: ...
+
+    ObservableFlips = ObservableFlips
+
+    class SampleBatch:
+        def __init__(
+            self,
+            detection_events: Sequence[Sequence[int | bool]],
+            observable_masks: Sequence[int],
+            *,
+            num_observables: int | None = ...,
+        ) -> None: ...
+        @property
+        def num_shots(self) -> int: ...
+        @property
+        def num_observables(self) -> int: ...
+        @property
+        def seed(self) -> int | None: ...
+        @property
+        def dem(self) -> str | None: ...
+        @property
+        def metadata_json(self) -> str | None: ...
+        @property
+        def generator(self) -> str | None: ...
+        @property
+        def format_version(self) -> int | None: ...
+        def get_syndrome(self, i: int) -> list[int]: ...
+        def get_observable_flips(self, i: int) -> ObservableFlips: ...
+        def detector_events(self) -> list[list[bool]]: ...
+        def observable_flips(self) -> list[list[bool]]: ...
+        def save(
+            self,
+            path: str | os.PathLike[str],
+            *,
+            dem: str,
+            metadata_json: str | None = ...,
+            clear_metadata: bool = ...,
+            allow_dem_mismatch: bool = ...,
+        ) -> None: ...
+        @staticmethod
+        def load(path: str | os.PathLike[str]) -> qec.SampleBatch: ...
+        def decode(
+            self,
+            dem: str | None = ...,
+            decoder: decoders.DecoderSpec | str = ...,
+            *,
+            workers: int | None = ...,
+            predictions: bool = ...,
+            timing: bool = ...,
+            allow_dem_mismatch: bool = ...,
+        ) -> qec.DecodeResult:
+            """Decode all shots with planned native, sequential, or parallel execution.
+
+            ``decoder`` is a typed decoder spec or legacy string. ``dem=None``
+            requires a corpus-loaded batch with an embedded DEM. Explicit
+            ``workers`` requests that exact count; automatic execution respects
+            stateful and wall-clock-limited decoder contracts. Predictions are
+            wide Python integers, and timing forces per-shot dispatch.
+            """
+            ...
+
+        def compare_decoders(
+            self,
+            dem: str,
+            dut_decoder_type: str,
+            reference_decoder_type: str,
+            alpha: float = ...,
+            *,
+            allow_dem_mismatch: bool = ...,
+        ) -> qec.DecoderComparisonResult: ...
+
+    class DecodeStats:
+        num_shots: int
+        num_errors: int
+        logical_error_rate: float
+        total_seconds: float
+        wall_elapsed: float
+        summed_decode_elapsed: float
+        num_timing_samples: int
+        per_shot_mean: float
+        per_shot_median: float
+        per_shot_p99: float
+        per_shot_min: float
+        per_shot_max: float
+        quantiles: list[float]
+
+    class DecodeResult:
+        num_shots: int
+        num_errors: int
+        logical_error_rate: float
+        execution_path: str
+        workers_used: int
+        reproducibility_warnings: list[str]
+        sampling_seed_used: int | None
+        predictions: list[int] | None
+        stats: qec.DecodeStats | None
+        def interval(self, alpha: float = ...) -> tuple[float, float]: ...
+
+    class DemSampler:
+        @staticmethod
+        def from_circuit(
+            circuit: DagCircuit | TickCircuit,
+            p1: float = ...,
+            p2: float = ...,
+            p_meas: float = ...,
+            p_prep: float = ...,
+            **noise_options: Any,
+        ) -> qec.DemSampler: ...
+        @staticmethod
+        def from_dem_string(dem_string: str) -> qec.DemSampler: ...
+        @staticmethod
+        def raw_uniform(influence_map: qec.DagFaultInfluenceMap, p_error: float) -> qec.DemSampler: ...
+        @staticmethod
+        def raw(
+            influence_map: qec.DagFaultInfluenceMap,
+            p1: float,
+            p2: float,
+            p_meas: float,
+            p_prep: float,
+        ) -> qec.DemSampler: ...
+        @staticmethod
+        def with_detectors(
+            influence_map: qec.DagFaultInfluenceMap,
+            detectors: Sequence[Sequence[int]],
+            observables: Sequence[Sequence[int]],
+            p1: float,
+            p2: float,
+            p_meas: float,
+            p_prep: float,
+            **noise_options: Any,
+        ) -> qec.DemSampler: ...
+        @staticmethod
+        def from_influence_map(
+            influence_map: qec.DagFaultInfluenceMap,
+            p_error: float,
+        ) -> qec.DemSampler: ...
+        @staticmethod
+        def from_influence_map_circuit_noise(
+            influence_map: qec.DagFaultInfluenceMap,
+            p1: float,
+            p2: float,
+            p_meas: float,
+            p_prep: float,
+        ) -> qec.DemSampler: ...
+        @property
+        def num_mechanisms(self) -> int: ...
+        @property
+        def num_outputs(self) -> int: ...
+        @property
+        def num_detectors(self) -> int: ...
+        @property
+        def num_observables(self) -> int: ...
+        @property
+        def num_dem_outputs(self) -> int: ...
+        @property
+        def num_tracked_paulis(self) -> int: ...
+        def sample(self, seed: int | None = ...) -> tuple[list[bool], list[bool]]: ...
+        def sample_batch(self, num_shots: int, seed: int | None = ...) -> qec.SampleBatch: ...
+        def sample_batch_with_pauli_masks(
+            self,
+            num_shots: int,
+            lookup: qec.PauliFrameLookup,
+            pauli_masks: Any,
+            seed: int | None = ...,
+        ) -> qec.SampleBatch: ...
+        def sample_tracked_paulis(self, seed: int | None = ...) -> list[bool]: ...
+        def sample_tracked_pauli_batch(self, num_shots: int, seed: int | None = ...) -> list[list[bool]]: ...
+        def sample_statistics(self, num_shots: int, seed: int | None = ...) -> dict[str, Any]: ...
+        def decode(
+            self,
+            dem: str,
+            num_shots: int,
+            decoder: decoders.DecoderSpec | str,
+            *,
+            seed: int | None = ...,
+            workers: int | None = ...,
+            predictions: bool = ...,
+            timing: bool = ...,
+        ) -> qec.DecodeResult:
+            """Sample and decode under sampling ABI v1.
+
+            A fixed seed produces the same shot stream for all worker counts and
+            execution paths. Predictions and counts match too, except when
+            ``reproducibility_warnings`` is non-empty -- a wall-clock-limited
+            decoder run in parallel can decode differently under CPU contention.
+            The resolved replay seed is returned in ``sampling_seed_used``;
+            timing is always outside the reproducibility guarantee.
+            """
+            ...
+
+        def labels(self) -> dict[str, Any]: ...
+
+    class DemSamplerBuilder:
+        def __init__(self, influence_map: qec.DagFaultInfluenceMap) -> None: ...
+        def with_noise(
+            self,
+            p1: float,
+            p2: float,
+            p_meas: float,
+            p_prep: float,
+            **noise_options: Any,
+        ) -> qec.DemSamplerBuilder: ...
+        def with_detectors_json(self, json: str) -> qec.DemSamplerBuilder: ...
+        def with_observables_json(self, json: str) -> qec.DemSamplerBuilder: ...
+        def with_measurement_order(self, order: Sequence[int]) -> qec.DemSamplerBuilder: ...
+        def build(self) -> qec.DemSampler: ...
+
+    class EquivalenceResult:
+        equivalent: bool
+        max_rate_difference: float
+        max_relative_difference: float
+        correlation: float
+        syndrome_rate_correlation: float
+        detector_rate_differences: list[float]
+        observable_rate_differences: list[float]
+        dem1_mechanism_count: int
+        dem2_mechanism_count: int
+        only_in_dem1: list[str]
+        only_in_dem2: list[str]
+        def details(self) -> dict[str, Any]: ...
+
+    class ParsedDem:
+        @staticmethod
+        def from_string(dem_str: str) -> qec.ParsedDem: ...
+        @property
+        def num_mechanisms(self) -> int: ...
+        @property
+        def num_detectors(self) -> int: ...
+        @property
+        def num_observables(self) -> int: ...
+        @property
+        def num_dem_outputs(self) -> int: ...
+        @property
+        def num_tracked_paulis(self) -> int: ...
+        def to_string_decomposed(self) -> str: ...
+        def aggregate(self) -> dict[tuple[tuple[int, ...], tuple[int, ...]], float]: ...
+        def sample(self, seed: int | None = ...) -> tuple[list[bool], list[bool]]: ...
+        def sample_batch(self, num_shots: int, seed: int | None = ...) -> qec.SampleBatch: ...
+        def to_dem_sampler(self) -> qec.DemSampler: ...
+
+    class CssUfDecoder:
+        def __init__(self, x_dem: str, z_dem: str) -> None: ...
+        @property
+        def num_qubit_pairs(self) -> int: ...
+        def decode_css(self, x_syndrome: Sequence[int], z_syndrome: Sequence[int]) -> tuple[int, int]: ...
+        def count_erasures(self, x_syndrome: Sequence[int], z_syndrome: Sequence[int]) -> int: ...
+        def decode_count_batch(
+            self,
+            syndromes: Sequence[Sequence[int]],
+            true_obs_masks: Sequence[int],
+            x_num_detectors: int,
+        ) -> int: ...
+
+    class LogicalSubgraphDecoder:
+        def __init__(
+            self,
+            dem: str,
+            stab_coords: Sequence[Mapping[str, Any]],
+            inner_decoder: str = ...,
+            max_time_radius: int | None = ...,
+        ) -> None: ...
+        @staticmethod
+        def from_membership(
+            dem: str,
+            membership: Sequence[Sequence[int]],
+            inner_decoder: str = ...,
+        ) -> qec.LogicalSubgraphDecoder: ...
+        @staticmethod
+        def count_ghost_edges(dem: str, stab_coords: Sequence[Mapping[str, Any]]) -> tuple[int, int]: ...
+        @property
+        def inner_decoder(self) -> str: ...
+        def decode(self, syndrome: Sequence[int]) -> int: ...
+        def decode_batch(self, syndromes: Sequence[Sequence[int]]) -> list[int]: ...
+        def decode_count(self, batch: qec.SampleBatch) -> int: ...
+        def decode_count_parallel(
+            self,
+            batch: qec.SampleBatch,
+            dem: str,
+            stab_coords: Sequence[Mapping[str, Any]],
+            inner_decoder: str | None = ...,
+            num_workers: int | None = ...,
+            max_time_radius: int | None = ...,
+        ) -> int: ...
+        def num_observables(self) -> int: ...
+        def observing_regions(self) -> list[Any]: ...
+        def subgraph_dems(self) -> list[str]: ...
+        def subgraph_detector_maps(self) -> list[list[int]]: ...
+        def subgraph_diagnostics(self) -> list[Any]: ...
+        def subgraph_sizes(self) -> list[int]: ...
+
+    class WindowedLogicalSubgraphDecoder:
+        def __init__(
+            self,
+            dem: str,
+            stab_coords: Sequence[Mapping[str, Any]],
+            step: int = ...,
+            buffer: int = ...,
+        ) -> None: ...
+        def decode(self, syndrome: Sequence[int]) -> int: ...
+        def decode_count(self, batch: qec.SampleBatch) -> int: ...
+        def num_windows(self) -> int: ...
+
+    class LogicalAlgorithmDecoder:
+        def __init__(self, descriptor: Mapping[str, Any], inner_decoder: str = ...) -> None: ...
+        def feed_dense(self, syndrome: Sequence[int]) -> None: ...
+        def feed_sparse(self, detectors: Sequence[tuple[int, int]]) -> None: ...
+        def flush(self) -> int: ...
+        def decode(self, syndrome: Sequence[int]) -> int: ...
+        def decode_count(self, batch: qec.SampleBatch) -> int: ...
+        def reset(self) -> None: ...
+        def accumulated_obs(self) -> int: ...
+        def accumulated_obs_mask(self) -> int: ...
+        def rounds_fed(self) -> int: ...
+        def num_segments(self) -> int: ...
+
+    class LogicalCircuitDecoder:
+        def __init__(
+            self,
+            descriptor: Mapping[str, Any],
+            budget: str = ...,
+            inner_decoder: str = ...,
+            strict: bool = ...,
+        ) -> None: ...
+        def decode(self, syndrome: Sequence[int]) -> int: ...
+        def decode_count(self, batch: qec.SampleBatch) -> int: ...
+        def reset(self) -> None: ...
+        def num_segments(self) -> int: ...
+        @property
+        def can_window(self) -> bool: ...
+        @property
+        def actual_num_windows(self) -> list[int]: ...
+        @property
+        def effective_windowing(self) -> str: ...
+        def has_decision_points(self) -> bool: ...
+        def num_decision_points(self) -> int: ...
+        def total_detectors(self) -> int: ...
+
+    @staticmethod
+    def compare_dems_exact(
+        dem1: str | qec.ParsedDem, dem2: str | qec.ParsedDem, prob_tolerance: float = ...
+    ) -> qec.EquivalenceResult: ...
+    @staticmethod
+    def compare_dems_statistical(
+        dem1: str | qec.ParsedDem,
+        dem2: str | qec.ParsedDem,
+        num_shots: int = ...,
+        seed: int = ...,
+        tolerance: float = ...,
+    ) -> qec.EquivalenceResult: ...
+    @staticmethod
+    def verify_dem_equivalence(
+        dem1: str | qec.ParsedDem,
+        dem2: str | qec.ParsedDem,
+        method: str = ...,
+        prob_tolerance: float = ...,
+        num_shots: int = ...,
+        tolerance: float = ...,
+        seed: int = ...,
+    ) -> qec.EquivalenceResult: ...
+    @staticmethod
+    def assert_dems_equivalent(
+        dem1: str | qec.ParsedDem,
+        dem2: str | qec.ParsedDem,
+        method: str = ...,
+        prob_tolerance: float = ...,
+        num_shots: int = ...,
+        tolerance: float = ...,
+        seed: int = ...,
+    ) -> None: ...
+    @staticmethod
+    def detector_flip_matrix(fired_per_shot: Sequence[Sequence[int]], num_detectors: int) -> list[float]: ...
+    @staticmethod
+    def detector_flip_matrices_by_round(
+        fired_per_shot: Sequence[Sequence[int]],
+        num_detectors: int,
+        dets_per_round: int,
+    ) -> list[Any]: ...
+    @staticmethod
+    def detector_k_body_rates(
+        fired_per_shot: Sequence[Sequence[int]],
+        num_detectors: int,
+        max_order: int = ...,
+    ) -> list[tuple[list[int], float]]: ...
+    @staticmethod
+    def detector_k_body_rates_by_round(
+        fired_per_shot: Sequence[Sequence[int]],
+        num_detectors: int,
+        dets_per_round: int,
+        max_order: int = ...,
+    ) -> list[Any]: ...
+    @staticmethod
+    def compare_flip_matrices_rs(
+        sim: Sequence[float], dem: Sequence[float], num_detectors: int, min_rate: float = ...
+    ) -> tuple[float, float, int, int]: ...
+    @staticmethod
+    def compare_k_body_rates_rs(
+        sim: Sequence[tuple[Sequence[int], float]],
+        dem: Sequence[tuple[Sequence[int], float]],
+        min_rate: float = ...,
+    ) -> list[tuple[int, float, float, list[int]]]: ...
+    @staticmethod
+    def fit_dem_to_marginals(
+        mechanisms: Sequence[tuple[float, Sequence[int], Sequence[int]]],
+        target_marginals: Sequence[float],
+        max_iterations: int = ...,
+        tolerance: float = ...,
+    ) -> tuple[list[tuple[float, list[int], list[int]]], list[float]]: ...
+    @staticmethod
+    def mechanisms_to_dem_string(mechanisms: Sequence[tuple[float, Sequence[int], Sequence[int]]]) -> str: ...
+    @staticmethod
+    def decoder_dem_requirement(decoder_type: str) -> str: ...
+
+DemSampler = qec.DemSampler
+
+# =============================================================================
 # Decoder Types
 # =============================================================================
 
 class decoders:
     """Decoder submodule for quantum error correction."""
+
+    ObservableFlips = ObservableFlips
+
+    class DecoderSpec:
+        """Immutable typed decoder construction specification."""
+
+        @staticmethod
+        def parse(type_string: str) -> decoders.DecoderSpec: ...
+        @property
+        def family(self) -> str: ...
+        @property
+        def history_dependent(self) -> bool: ...
+        @property
+        def wall_clock_dependent(self) -> bool: ...
+        def __repr__(self) -> str: ...
+        def __eq__(self, other: object) -> bool: ...
+
+    @staticmethod
+    def pymatching(*, correlated: bool, error_probability: float | None = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def tesseract(
+        *,
+        preset: str = ...,
+        det_beam: int | None = ...,
+        beam_climbing: bool | None = ...,
+        verbose: bool | None = ...,
+        no_revisit_dets: bool | None = ...,
+        pqlimit: int | None = ...,
+        det_penalty: float | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def bp_osd(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        bp_schedule: str = ...,
+        ms_scaling_factor: float | None = ...,
+        osd_order: int = ...,
+        random_schedule_seed: int | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def bp_lsd(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        bp_schedule: str = ...,
+        ms_scaling_factor: float | None = ...,
+        lsd_order: int = ...,
+        bits_per_step: int = ...,
+        random_schedule_seed: int | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def fusion_blossom(*, correlated: bool = ..., solver: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def relay_bp(
+        *,
+        error_rate: float | None = ...,
+        max_iter: int = ...,
+        alpha: float | None = ...,
+        alpha_iteration_scaling_factor: float = ...,
+        gamma0: float | None = ...,
+        pre_iter: int = ...,
+        num_sets: int = ...,
+        set_max_iter: int = ...,
+        gamma_dist_interval: tuple[float, float] = ...,
+        stopping_criterion: str | int = ...,
+        seed: int = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def min_sum_bp(
+        *, error_rate: float | None = ..., max_iter: int = ..., alpha: float | None = ...
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def pecos_uf(*, preset: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def belief_matching(*, mode: str = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def windowed(
+        *,
+        step: int = ...,
+        buffer: int = ...,
+        mode: str = ...,
+        seam: int = ...,
+        core_extend: int = ...,
+        commit_weight_max: float = ...,
+        inner: decoders.DecoderSpec | None = ...,
+        sandwich_phase2: decoders.DecoderSpec | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def mwpf(
+        *,
+        solver: str = ...,
+        cluster_node_limit: int = ...,
+        timeout: float | None = ...,
+        only_solve_primal_once: bool = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def perturbed(
+        *, inner: decoders.DecoderSpec | None = ..., k: int = ..., sigma: float = ..., seed: int = ...
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def beamsearch(
+        *,
+        beam_width: int = ...,
+        sigma: float = ...,
+        seed: int = ...,
+        step: int = ...,
+        buffer: int = ...,
+        commit_weight_max: float = ...,
+        phase2: decoders.DecoderSpec | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def ensemble(*members: decoders.DecoderSpec) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def k_mwpm(*, k: int = ...) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def astar() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def astar_full() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def union_find() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def belief_find() -> decoders.DecoderSpec: ...
+    @staticmethod
+    def perturbed_fb_corr(*, k: int = ..., sigma: float = ..., seed: int = ...) -> decoders.DecoderSpec: ...
 
     class BpResult:
         """Result from belief propagation decoders.
@@ -2052,7 +2919,6 @@ class decoders:
         def converged(self) -> bool: ...
         @property
         def iterations(self) -> int: ...
-        def to_list(self) -> list[int]: ...
         def __repr__(self) -> str: ...
         def __len__(self) -> int: ...
         def __getitem__(self, idx: int) -> int: ...
@@ -2081,18 +2947,40 @@ class decoders:
         """Result from MWPM decoders."""
 
         @property
-        def correction(self) -> list[int]: ...
+        def observable_flips(self) -> ObservableFlips: ...
         def __repr__(self) -> str: ...
 
     class PyMatchingDecoder:
         """PyMatching MWPM decoder."""
 
-        def __init__(
+        def __init__(self, num_nodes: int, num_observables: int = ...) -> None: ...
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_probability: float | None = ...,
+        ) -> decoders.PyMatchingDecoder:
+            """Build from a detector error model.
+
+            Args:
+                dem: Detector error model text; its graph dimensions remain structural.
+                error_probability: Replaces every edge probability and its derived matching weight; better
+                    calibration can improve accuracy without changing asymptotic runtime or memory.
+            """
+            ...
+
+        @staticmethod
+        def from_dem_with_correlations(
+            dem: str,
+            enable_correlations: bool = ...,
+        ) -> decoders.PyMatchingDecoder: ...
+        @staticmethod
+        def from_check_matrix(check_matrix: decoders.CheckMatrix) -> decoders.PyMatchingDecoder: ...
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        def decode_batch(
             self,
-            check_matrix: decoders.CheckMatrix,
-            weights: list[float] | None = ...,
-        ) -> None: ...
-        def decode(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+            detection_events: list[list[int]],
+            num_shots: int,
+        ) -> list[list[int]]: ...
         def __repr__(self) -> str: ...
 
     class FusionBlossomDecoder:
@@ -2100,10 +2988,49 @@ class decoders:
 
         def __init__(
             self,
-            check_matrix: decoders.CheckMatrix,
-            weights: list[float] | None = ...,
+            num_nodes: int,
+            num_observables: int = ...,
+            solver: str = ...,
+            *,
+            max_tree_size: int | None = ...,
         ) -> None: ...
-        def decode(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        @staticmethod
+        def from_check_matrix(
+            check_matrix: list[list[int]],
+            weights: list[float] | None = ...,
+            num_observables: int | None = ...,
+            *,
+            max_tree_size: int | None = ...,
+        ) -> decoders.FusionBlossomDecoder: ...
+        @staticmethod
+        def from_standard_code(
+            code_type: str,
+            distance: int,
+            error_rate: float,
+            max_half_weight: int = ...,
+        ) -> decoders.FusionBlossomDecoder: ...
+        @staticmethod
+        def from_dem(
+            dem: str,
+            correlated: bool = ...,
+            solver_type: str | None = ...,
+        ) -> decoders.FusionBlossomDecoder:
+            """Build from a detector error model.
+
+            Args:
+                dem: Detector error model text; node and observable counts are always derived from it.
+                correlated: Preserves decomposed correlations for accuracy at additional construction/runtime cost.
+                solver_type: ``"serial"`` is generally faster; ``"legacy"`` supports more graph shapes.
+                    ``None`` preserves the serial default. Parallel requires an unavailable partition configuration.
+            """
+            ...
+
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.MwpmResult: ...
+        def decode_from_defects(
+            self,
+            defects: list[int],
+            erasures: list[int] | None = ...,
+        ) -> decoders.MwpmResult: ...
         def __repr__(self) -> str: ...
 
     class BpOsdBuilder:
@@ -2113,16 +3040,21 @@ class decoders:
 
         Args:
             pcm: Sparse parity check matrix.
-            error_rate: Channel error probability.
+            error_rate: Channel error probability: a single float applied to every column,
+                or one probability per column.
 
         Example:
             >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
             >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
             >>> decoder = BpOsdBuilder(H, error_rate=0.01).osd_method("osd_cs").osd_order(7).build()
-            >>> result = decoder.decode([0, 0, 0])
+            >>> result = decoder.decode_syndrome([0, 0, 0])
         """
 
-        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def __init__(
+            self,
+            pcm: decoders.SparseMatrix,
+            error_rate: float | Sequence[float],
+        ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpOsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
@@ -2155,7 +3087,31 @@ class decoders:
         Created via ``BpOsdBuilder(...).build()``.
         """
 
-        def decode(self, syndrome: list[int]) -> decoders.BpResult: ...
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int | None = ...,
+            bp_schedule: str | None = ...,
+            ms_scaling_factor: float | None = ...,
+            osd_order: int | None = ...,
+            random_schedule_seed: int | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build BP+OSD from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
+                ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
+                    accuracy at negligible runtime cost. ``None`` preserves product-sum BP.
+                osd_order: Combination-sweep order; larger values can improve accuracy at steep runtime cost.
+                random_schedule_seed: Makes randomized scheduling reproducible without changing its runtime bound.
+            """
+            ...
+
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.BpResult: ...
         def __repr__(self) -> str: ...
 
     class BpLsdBuilder:
@@ -2165,7 +3121,8 @@ class decoders:
 
         Args:
             pcm: Sparse parity check matrix.
-            error_rate: Channel error probability.
+            error_rate: Channel error probability: a single float applied to every column,
+                or one probability per column.
 
         Example:
             >>> from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
@@ -2174,7 +3131,11 @@ class decoders:
             >>> result = decoder.decode([0, 0, 0])
         """
 
-        def __init__(self, pcm: decoders.SparseMatrix, error_rate: float) -> None: ...
+        def __init__(
+            self,
+            pcm: decoders.SparseMatrix,
+            error_rate: float | Sequence[float],
+        ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpLsdBuilder:
             """Set maximum BP iterations (default: 100)."""
             ...
@@ -2191,6 +3152,11 @@ class decoders:
             """Set LSD order parameter (default: 0)."""
             ...
 
+        def bits_per_step(self, val: int) -> decoders.BpLsdBuilder:
+            """Set bits added per cluster-growth step (default: 0 = grow all
+            candidate bits each step)."""
+            ...
+
         def build(self) -> decoders.BpLsdDecoder:
             """Build the BP+LSD decoder."""
             ...
@@ -2202,6 +3168,28 @@ class decoders:
 
         Created via ``BpLsdBuilder(...).build()``.
         """
+
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int | None = ...,
+            bp_schedule: str | None = ...,
+            ms_scaling_factor: float | None = ...,
+            random_schedule_seed: int | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build BP+LSD from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
+                ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
+                    accuracy at negligible runtime cost. ``None`` preserves product-sum BP.
+                random_schedule_seed: Makes randomized scheduling reproducible without changing its runtime bound.
+            """
+            ...
 
         def decode(self, syndrome: list[int]) -> decoders.BpResult: ...
         def __repr__(self) -> str: ...
@@ -2218,7 +3206,7 @@ class decoders:
             >>> from pecos_rslib.decoders import UnionFindBuilder, SparseMatrix
             >>> H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
             >>> decoder = UnionFindBuilder(H).method("peeling").build()
-            >>> result = decoder.decode([0, 0, 0])
+            >>> result = decoder.decode_syndrome([0, 0, 0])
         """
 
         def __init__(self, pcm: decoders.SparseMatrix) -> None: ...
@@ -2238,7 +3226,20 @@ class decoders:
         Created via ``UnionFindBuilder(...).build()``.
         """
 
-        def decode(
+        @staticmethod
+        def from_dem(
+            dem: str,
+            method: str | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build Union-Find from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                method: ``"peeling"`` is faster on compatible LDPC matrices; ``"inversion"`` is more general.
+            """
+            ...
+
+        def decode_syndrome(
             self,
             syndrome: list[int],
             llrs: list[float] | None = ...,
@@ -2250,16 +3251,72 @@ class decoders:
         """Result from Tesseract decoder."""
 
         @property
-        def correction(self) -> list[int]: ...
+        def observable_flips(self) -> ObservableFlips: ...
         @property
-        def weight(self) -> float: ...
+        def cost(self) -> float: ...
+        @property
+        def low_confidence(self) -> bool: ...
         def __repr__(self) -> str: ...
 
     class TesseractDecoder:
         """Tesseract decoder."""
 
-        def __init__(self, dem_string: str) -> None: ...
-        def decode(self, syndrome: list[int]) -> decoders.TesseractResult: ...
+        @staticmethod
+        def from_dem(
+            dem: str,
+            preset: str = ...,
+            det_beam: int | None = ...,
+            beam_climbing: bool | None = ...,
+            verbose: bool | None = ...,
+            no_revisit_dets: bool | None = ...,
+            pqlimit: int | None = ...,
+            det_penalty: float | None = ...,
+        ) -> decoders.TesseractDecoder:
+            """Build Tesseract from a detector error model and optional preset overrides.
+
+            Args:
+                dem: Detector error model text; detector and observable counts are derived from it.
+                preset: Baseline accuracy/runtime profile: ``"default"``, ``"fast"``, or ``"accurate"``.
+                det_beam: Larger detector beams can improve accuracy at increased runtime and memory cost.
+                beam_climbing: Enables a faster search heuristic that can alter the accuracy/runtime balance.
+                verbose: Enables diagnostic output without changing accuracy or memory use.
+                no_revisit_dets: Avoids revisits for lower runtime, with a possible accuracy cost.
+                pqlimit: Priority-queue cap; smaller values bound memory at a possible accuracy cost.
+                det_penalty: Larger penalties prune search more aggressively for speed at possible accuracy cost.
+            """
+            ...
+
+        def decode_from_defects(self, detections: list[int]) -> decoders.TesseractResult: ...
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.TesseractResult: ...
+        def decode_batch(
+            self,
+            syndromes: list[list[int]],
+            num_workers: int | None = ...,
+        ) -> list[decoders.TesseractResult]: ...
+        def __repr__(self) -> str: ...
+
+    class DemAwareResult:
+        """Result from a DEM-aware decoder."""
+
+        @property
+        def observable_flips(self) -> ObservableFlips: ...
+        @property
+        def converged(self) -> bool: ...
+        @property
+        def iterations(self) -> int: ...
+        def __repr__(self) -> str: ...
+
+    class DemAwareDecoder:
+        """DEM-aware wrapper over a check-matrix decoder."""
+
+        @staticmethod
+        def from_dem(
+            dem: str,
+            decoder_type: str = ...,
+            error_rate: float | None = ...,
+            max_iter: int = ...,
+        ) -> decoders.DemAwareDecoder: ...
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.DemAwareResult: ...
         def __repr__(self) -> str: ...
 
     class RelayBpBuilder:
@@ -2292,7 +3349,12 @@ class decoders:
             ...
 
         def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Set initial damping factor (None = disabled)."""
+            """Enable memory-BP for the relay ensemble (default: 0.65).
+
+            The pre-relay leg uses this directly and relay legs draw per-leg strengths
+            only when it is set; None disables memory entirely and makes relay
+            ensembling ineffective.
+            """
             ...
 
         def pre_iter(self, val: int) -> decoders.RelayBpBuilder:
@@ -2308,7 +3370,12 @@ class decoders:
             ...
 
         def seed(self, val: int) -> decoders.RelayBpBuilder:
-            """Set random seed for relay parameter sampling (default: 0)."""
+            """Set the run-level random seed for relay strengths (default: 0).
+
+            The RNG advances across decodes, so reused-decoder outcomes depend on
+            decode history. Equal seeds reproduce only the same full shot sequence,
+            not an individual syndrome independently.
+            """
             ...
 
         def stopping(self, val: str) -> decoders.RelayBpBuilder:
@@ -2325,7 +3392,29 @@ class decoders:
         """Relay BP ensemble decoder for qLDPC codes.
 
         Created via ``RelayBpBuilder(...).build()``.
+        Its relay RNG advances across decodes, so a reused decoder's per-shot outcomes
+        depend on decode history. A seed reproduces the same full shot sequence, not
+        each syndrome independently.
         """
+
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int | None = ...,
+            alpha: float | None = ...,
+            seed: int | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build Relay BP from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
+                seed: Makes relay sampling reproducible without increasing its runtime bound.
+            """
+            ...
 
         def decode(self, syndrome: list[int]) -> decoders.BpResult:
             """Decode a syndrome vector.
@@ -2394,6 +3483,23 @@ class decoders:
 
         Created via ``MinSumBpBuilder(...).build()``.
         """
+
+        @staticmethod
+        def from_dem(
+            dem: str,
+            error_rate: float | None = ...,
+            max_iter: int | None = ...,
+            alpha: float | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build min-sum BP from a detector error model.
+
+            Args:
+                dem: Detector error model text; check-matrix dimensions are derived from it.
+                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
+            """
+            ...
 
         def decode(self, syndrome: list[int]) -> decoders.BpResult:
             """Decode a syndrome vector.

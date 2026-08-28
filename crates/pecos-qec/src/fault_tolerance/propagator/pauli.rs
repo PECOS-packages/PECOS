@@ -20,6 +20,7 @@ use pecos_core::gate_type::GateType;
 use pecos_core::{half_turn_decomposition, try_simplify_r1xy, try_simplify_rotation};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
+use smallvec::SmallVec;
 
 // ============================================================================
 // Direction and Unified Propagation
@@ -36,6 +37,29 @@ pub enum Direction {
     Backward,
 }
 
+/// Split a gate node's qubit list into its consecutive two-qubit pairs.
+///
+/// A `DagCircuit` node may carry several gate instances -- `DagCircuit::gate_count`
+/// counts them individually -- so a two-qubit gate must act on every pair, not
+/// just the first. `SXX`/`SYY`/`SZZ` and their adjoints previously took only
+/// `(qubits[0], qubits[1])` while `CX`/`CY`/`CZ`/`SWAP` took all pairs, which
+/// made backward propagation disagree with forward symbolic simulation on
+/// batched nodes.
+///
+/// Returns a `SmallVec` sized for the overwhelmingly common single-pair node,
+/// so routing the six non-self-adjoint arms through this helper does not put a
+/// heap allocation on the analyzer's traversal path.
+fn consecutive_pairs(
+    qubits: &[pecos_core::QubitId],
+) -> SmallVec<[(pecos_core::QubitId, pecos_core::QubitId); 1]> {
+    qubits
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| (pair[0], pair[1]))
+        .collect()
+}
+
 /// Applies a gate to a `PauliProp` in the specified direction.
 ///
 /// For forward propagation (P → G P G†), we apply the gate's transformation.
@@ -46,8 +70,10 @@ pub enum Direction {
 /// daggers), we swap the gate with its adjoint for backward propagation.
 ///
 /// Special handling:
-/// - **Prep gates**: No transformation in either direction (transparent to propagation)
-/// - **Measure gates**: No transformation in either direction (for propagation purposes)
+/// - **Prep gates**: No transformation in either direction (transparent to propagation;
+///   walkers that model resets clear at their own call sites)
+/// - **Measure gates**: collapse via [`cross_measurement`] -- the component that
+///   commutes with the measurement in the direction of travel is absorbed
 #[inline]
 pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Direction) {
     if apply_named_gate(prop, gate.gate_type, &gate.qubits, direction) {
@@ -85,6 +111,112 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
     }
 }
 
+/// The component operations `cross_measurement` needs, implemented by both
+/// Pauli-propagation representations so the collapse rule has exactly one
+/// implementation.
+pub trait PauliComponents {
+    fn contains_x(&self, qubit: usize) -> bool;
+    fn contains_z(&self, qubit: usize) -> bool;
+    fn toggle_x(&mut self, qubit: usize);
+    fn toggle_z(&mut self, qubit: usize);
+    fn clear_qubit(&mut self, qubit: usize);
+}
+
+impl PauliComponents for PauliProp {
+    fn contains_x(&self, qubit: usize) -> bool {
+        Self::contains_x(self, qubit)
+    }
+    fn contains_z(&self, qubit: usize) -> bool {
+        Self::contains_z(self, qubit)
+    }
+    fn toggle_x(&mut self, qubit: usize) {
+        self.track_x(&[qubit]);
+    }
+    fn toggle_z(&mut self, qubit: usize) {
+        self.track_z(&[qubit]);
+    }
+    fn clear_qubit(&mut self, qubit: usize) {
+        Self::clear_qubit(self, qubit);
+    }
+}
+
+impl PauliComponents for pecos_simulators::BitmaskPauliProp {
+    fn contains_x(&self, qubit: usize) -> bool {
+        Self::contains_x(self, qubit)
+    }
+    fn contains_z(&self, qubit: usize) -> bool {
+        Self::contains_z(self, qubit)
+    }
+    fn toggle_x(&mut self, qubit: usize) {
+        self.track_x(&[qubit]);
+    }
+    fn toggle_z(&mut self, qubit: usize) {
+        self.track_z(&[qubit]);
+    }
+    fn clear_qubit(&mut self, qubit: usize) {
+        Self::clear_qubit(self, qubit);
+    }
+}
+
+/// Cross a measurement site with a propagating Pauli.
+///
+/// Clearing follows whether the gate *discards* the qubit, not whether it
+/// measures. A non-destructive Z-collapse (`MZ`, `MeasureLeaked` -- executed
+/// as a plain `MZ` with no reset):
+///
+/// - Forward: `(x, z) -> (x, 0)`. The X component survives -- the faulty and
+///   ideal runs still differ by X after collapse, so later measurements keep
+///   flipping (Stim's `M`-versus-`MR` distinction) -- while the Z component
+///   is absorbed. This is Stim's frame algebra with the measurement gauge
+///   fixed to identity instead of randomized; the two choices differ only on
+///   individually non-deterministic measurements, where any detector is
+///   invalid input, and the difference cancels in every deterministic
+///   detector XOR.
+/// - Backward: the symplectic adjoint, `(x, z) -> (0, z)`, so the two
+///   directions agree by construction. A Z-type observable passes through; an
+///   X-type observable is dropped -- relative to the gauge, nothing before
+///   the collapse deterministically flips it.
+///
+/// `MeasureFree` discards the qubit: nothing crosses in either direction.
+pub fn cross_measurement<P: PauliComponents>(
+    prop: &mut P,
+    qubit: usize,
+    gate_type: GateType,
+    direction: Direction,
+) {
+    match gate_type {
+        GateType::MZ | GateType::MeasureLeaked => match direction {
+            Direction::Forward => {
+                if prop.contains_z(qubit) {
+                    prop.toggle_z(qubit);
+                }
+            }
+            Direction::Backward => {
+                if prop.contains_x(qubit) {
+                    prop.toggle_x(qubit);
+                }
+            }
+        },
+        GateType::MX => match direction {
+            Direction::Forward => {
+                if prop.contains_x(qubit) {
+                    prop.toggle_x(qubit);
+                }
+            }
+            Direction::Backward => {
+                if prop.contains_z(qubit) {
+                    prop.toggle_z(qubit);
+                }
+            }
+        },
+        // `MeasureFree` discards the qubit; `MPZ` resets it. Either way the
+        // record flip is taken by the walker before the crossing and nothing
+        // propagates across.
+        GateType::MeasureFree | GateType::MPZ => prop.clear_qubit(qubit),
+        _ => debug_assert!(false, "cross_measurement called on {gate_type:?}"),
+    }
+}
+
 #[inline]
 fn apply_named_gate(
     prop: &mut PauliProp,
@@ -93,6 +225,15 @@ fn apply_named_gate(
     direction: Direction,
 ) -> bool {
     match gate_type {
+        GateType::MX
+        | GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureLeaked
+        | GateType::MPZ => {
+            for qid in qubits {
+                cross_measurement(prop, qid.index(), gate_type, direction);
+            }
+        }
         // Self-adjoint single-qubit gates - same in both directions
         GateType::I => {
             prop.identity(qubits);
@@ -162,86 +303,60 @@ fn apply_named_gate(
 
         // Self-adjoint two-qubit gates - same in both directions
         GateType::CX => {
-            let pairs: Vec<_> = qubits
-                .chunks(2)
-                .filter(|c| c.len() == 2)
-                .map(|c| (c[0], c[1]))
-                .collect();
-            prop.cx(&pairs);
+            prop.cx(&consecutive_pairs(qubits));
         }
         GateType::CY => {
-            let pairs: Vec<_> = qubits
-                .chunks(2)
-                .filter(|c| c.len() == 2)
-                .map(|c| (c[0], c[1]))
-                .collect();
-            prop.cy(&pairs);
+            prop.cy(&consecutive_pairs(qubits));
         }
         GateType::CZ => {
-            let pairs: Vec<_> = qubits
-                .chunks(2)
-                .filter(|c| c.len() == 2)
-                .map(|c| (c[0], c[1]))
-                .collect();
-            prop.cz(&pairs);
+            prop.cz(&consecutive_pairs(qubits));
         }
         GateType::SWAP => {
-            let pairs: Vec<_> = qubits
-                .chunks(2)
-                .filter(|c| c.len() == 2)
-                .map(|c| (c[0], c[1]))
-                .collect();
-            prop.swap(&pairs);
+            prop.swap(&consecutive_pairs(qubits));
         }
 
         // Non-self-adjoint two-qubit Clifford gates - swap with adjoint for backward
         GateType::SXX => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.sxx(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.sxxdg(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.sxx(&pairs),
+                Direction::Backward => prop.sxxdg(&pairs),
+            };
         }
         GateType::SXXdg => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.sxxdg(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.sxx(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.sxxdg(&pairs),
+                Direction::Backward => prop.sxx(&pairs),
+            };
         }
         GateType::SYY => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.syy(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.syydg(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.syy(&pairs),
+                Direction::Backward => prop.syydg(&pairs),
+            };
         }
         GateType::SYYdg => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.syydg(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.syy(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.syydg(&pairs),
+                Direction::Backward => prop.syy(&pairs),
+            };
         }
         GateType::SZZ => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.szz(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.szzdg(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.szz(&pairs),
+                Direction::Backward => prop.szzdg(&pairs),
+            };
         }
         GateType::SZZdg => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.szzdg(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.szz(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.szzdg(&pairs),
+                Direction::Backward => prop.szz(&pairs),
+            };
         }
 
         _ => return false,
@@ -474,4 +589,177 @@ pub fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
         }
     }
     prop
+}
+
+#[cfg(test)]
+mod batched_pair_tests {
+    use super::{Direction, apply_gate};
+    use pecos_core::gates::Gate;
+    use pecos_quantum::GateType;
+    use pecos_simulators::PauliProp;
+
+    /// Seed the tracked Pauli on qubits 0 and 2, one per pair.
+    ///
+    /// The seed must ANTICOMMUTE with the gate on at least one pair, or the
+    /// comparison is vacuous: `Z` alone is fixed by `CX`/`CY`/`CZ`/`SZZ`/
+    /// `SZZdg`, and `X` alone is fixed by `SXX`. Sweeping X, Z and Y gives
+    /// every gate below at least one seed it actually moves.
+    fn seeded(seed: (bool, bool)) -> PauliProp {
+        let mut prop = PauliProp::new();
+        let (track_x, track_z) = seed;
+        if track_x {
+            prop.track_x(&[0, 2]);
+        }
+        if track_z {
+            prop.track_z(&[0, 2]);
+        }
+        prop
+    }
+
+    fn signature(prop: &PauliProp) -> Vec<(bool, bool)> {
+        (0..4)
+            .map(|q| (prop.contains_x(q), prop.contains_z(q)))
+            .collect()
+    }
+
+    /// A batched two-qubit node must propagate through every pair. `SXX`/`SYY`/
+    /// `SZZ` and their adjoints once took only `(qubits[0], qubits[1])` while
+    /// `CX`/`CY`/`CZ`/`SWAP` took all pairs, so backward propagation silently
+    /// disagreed with forward symbolic simulation on batched nodes.
+    #[test]
+    fn batched_two_qubit_gates_propagate_through_every_pair() {
+        const SEEDS: [(bool, bool); 3] = [(true, false), (false, true), (true, true)];
+        for gate_type in [
+            GateType::SXX,
+            GateType::SXXdg,
+            GateType::SYY,
+            GateType::SYYdg,
+            GateType::SZZ,
+            GateType::SZZdg,
+            GateType::CX,
+            GateType::CY,
+            GateType::CZ,
+            GateType::SWAP,
+        ] {
+            for direction in [Direction::Forward, Direction::Backward] {
+                for seed in SEEDS {
+                    let batched = {
+                        let mut prop = seeded(seed);
+                        let gate =
+                            Gate::simple(gate_type, vec![0.into(), 1.into(), 2.into(), 3.into()]);
+                        apply_gate(&mut prop, &gate, direction);
+                        signature(&prop)
+                    };
+                    let split = {
+                        let mut prop = seeded(seed);
+                        for pair in [[0usize, 1], [2, 3]] {
+                            let gate =
+                                Gate::simple(gate_type, vec![pair[0].into(), pair[1].into()]);
+                            apply_gate(&mut prop, &gate, direction);
+                        }
+                        signature(&prop)
+                    };
+                    assert_eq!(
+                        batched, split,
+                        "{gate_type:?} ({direction:?}, seed {seed:?}): a batched node must \
+                         propagate like the same pairs split across nodes"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Guards the guard: every gate above must be moved by at least one seed,
+    /// otherwise the comparison could pass while an arm drops the second pair.
+    #[test]
+    fn every_seed_sweep_actually_moves_each_gate() {
+        const SEEDS: [(bool, bool); 3] = [(true, false), (false, true), (true, true)];
+        for gate_type in [
+            GateType::SXX,
+            GateType::SXXdg,
+            GateType::SYY,
+            GateType::SYYdg,
+            GateType::SZZ,
+            GateType::SZZdg,
+            GateType::CX,
+            GateType::CY,
+            GateType::CZ,
+            GateType::SWAP,
+        ] {
+            let moves_second_pair = SEEDS.iter().any(|&seed| {
+                let mut prop = seeded(seed);
+                let before = signature(&prop);
+                let gate = Gate::simple(gate_type, vec![2.into(), 3.into()]);
+                apply_gate(&mut prop, &gate, Direction::Forward);
+                signature(&prop) != before
+            });
+            assert!(
+                moves_second_pair,
+                "{gate_type:?}: no seed changes the second pair, so the batched \
+                 comparison would be vacuous for this gate"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod collapse_tests {
+    use super::{Direction, cross_measurement};
+    use pecos_quantum::GateType;
+    use pecos_simulators::PauliProp;
+
+    /// Forward across a non-destructive measurement: X survives, Z is
+    /// absorbed. This is the StateVec-verified behavior (X; MZ -> 1; MZ -> 1)
+    /// and Stim's `M`.
+    #[test]
+    fn forward_nondestructive_keeps_x_drops_z() {
+        for gate_type in [GateType::MZ, GateType::MeasureLeaked] {
+            let mut prop = PauliProp::new();
+            prop.track_y(&[0]);
+            cross_measurement(&mut prop, 0, gate_type, Direction::Forward);
+            assert!(prop.contains_x(0), "{gate_type:?}: X must survive");
+            assert!(!prop.contains_z(0), "{gate_type:?}: Z must be absorbed");
+        }
+    }
+
+    /// Backward is the mirror: Z passes (errors before the measurement flip
+    /// both it and later measurements), X is dropped (an X-type observable
+    /// gains no deterministic dependence on anything before the collapse).
+    #[test]
+    fn backward_nondestructive_keeps_z_drops_x() {
+        for gate_type in [GateType::MZ, GateType::MeasureLeaked] {
+            let mut prop = PauliProp::new();
+            prop.track_y(&[0]);
+            cross_measurement(&mut prop, 0, gate_type, Direction::Backward);
+            assert!(!prop.contains_x(0), "{gate_type:?}: X must be dropped");
+            assert!(prop.contains_z(0), "{gate_type:?}: Z must pass");
+        }
+    }
+
+    /// A discarded (`MeasureFree`) or reset (`MPZ`) qubit carries nothing
+    /// across, in either direction.
+    #[test]
+    fn measure_free_and_mpz_clear_both_directions() {
+        for gate_type in [GateType::MeasureFree, GateType::MPZ] {
+            for direction in [Direction::Forward, Direction::Backward] {
+                let mut prop = PauliProp::new();
+                prop.track_y(&[0]);
+                cross_measurement(&mut prop, 0, gate_type, direction);
+                assert!(
+                    !prop.contains_x(0) && !prop.contains_z(0),
+                    "{gate_type:?} {direction:?}"
+                );
+            }
+        }
+    }
+
+    /// Untouched qubits are untouched.
+    #[test]
+    fn collapse_is_local_to_the_measured_qubit() {
+        let mut prop = PauliProp::new();
+        prop.track_y(&[0]);
+        prop.track_y(&[1]);
+        cross_measurement(&mut prop, 0, GateType::MZ, Direction::Forward);
+        assert!(prop.contains_x(1) && prop.contains_z(1));
+    }
 }

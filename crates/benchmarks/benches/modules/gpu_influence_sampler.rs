@@ -107,7 +107,7 @@ fn build_influence_maps(
 ) -> (DagFaultInfluenceMap, GpuInfluenceMapData) {
     let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
     let builder = InfluenceBuilder::new(circuit).with_z(&tracked_pauli_qubits);
-    let influence_map = builder.build();
+    let influence_map = builder.build().expect("circuit is replayable");
 
     let (
         num_loc,

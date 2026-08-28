@@ -40,6 +40,70 @@ use tket::hugr::{Hugr, HugrView, Node};
 use crate::engine::HugrEngine;
 
 impl HugrEngine {
+    /// Complete an active Call whose callee is a plain dataflow function.
+    pub(crate) fn check_plain_func_call_completion(&mut self, hugr: &Hugr, _processed_node: Node) {
+        let ready_calls: Vec<Node> = self
+            .active_calls
+            .iter()
+            .filter(|(_, info)| {
+                self.func_defns
+                    .get(&info.func_defn_node)
+                    .is_some_and(|func| func.cfg_node.is_none())
+                    && info.frame_ops.iter().all(|node| self.node_settled(*node))
+            })
+            .map(|(&call_node, _)| call_node)
+            .collect();
+
+        for call_node in ready_calls {
+            let Some(call_info) = self.active_calls.get(&call_node).cloned() else {
+                continue;
+            };
+            let Some(func_info) = self.func_defns.get(&call_info.func_defn_node).cloned() else {
+                continue;
+            };
+            let outputs: Vec<_> = (0..func_info.num_outputs)
+                .map(|port| {
+                    (
+                        self.get_input_qubit(hugr, func_info.output_node, port),
+                        self.get_input_value(hugr, func_info.output_node, port),
+                    )
+                })
+                .collect();
+            if outputs
+                .iter()
+                .any(|(qubit, value)| qubit.is_none() && value.is_none())
+            {
+                continue;
+            }
+            for (port, (qubit, value)) in outputs.into_iter().enumerate() {
+                if let Some(qubit_id) = qubit {
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((call_node, port), qubit_id);
+                }
+                if let Some(value) = value {
+                    self.wire_state
+                        .classical_values
+                        .insert((call_node, port), value);
+                }
+            }
+            self.processed.insert(call_node);
+            self.active_calls.remove(&call_node);
+            self.check_scan_frame_completion(hugr, call_node);
+            self.check_case_completion(hugr, call_node);
+            self.check_cfg_block_completion(hugr, call_node);
+            self.check_tailloop_body_completion(hugr, call_node);
+            self.queue_ready_successors(hugr, call_node);
+            self.retry_deferred_nodes();
+            if let Some(pending) = self.pending_func_calls.get_mut(&call_info.func_defn_node)
+                && let Some(next_call) = pending.pop_front()
+                && !self.work_queue.contains(next_call)
+            {
+                self.work_queue.push_front(next_call);
+            }
+        }
+    }
+
     /// Fill-only repair of active calls' argument ports.
     ///
     /// A Call launches as soon as it is dispatched; an argument that is a
@@ -145,102 +209,151 @@ impl HugrEngine {
     /// 2. Marks the Call as processed
     /// 3. Adds Call successors to the work queue
     /// 4. Starts any pending calls to the same `FuncDefn`
-    pub(crate) fn complete_func_call_if_needed(&mut self, hugr: &Hugr, cfg_node: tket::hugr::Node) {
+    pub(crate) fn complete_func_call_if_needed(
+        &mut self,
+        hugr: &Hugr,
+        cfg_node: Node,
+        final_block: Node,
+    ) {
         // A scan folding through this FuncDefn owns the frame: route the
         // completion to it (next element, or scan completion).
         if self.continue_scan_after_frame(hugr, cfg_node) {
             return;
         }
         // Find which active Call (if any) has a FuncDefn with this CFG
-        let call_to_complete: Option<(tket::hugr::Node, tket::hugr::Node)> = self
-            .active_calls
-            .iter()
-            .find_map(|(&call_node, call_info)| {
-                if let Some(func_info) = self.func_defns.get(&call_info.func_defn_node)
-                    && func_info.cfg_node == Some(cfg_node)
-                {
-                    return Some((call_node, call_info.func_defn_node));
-                }
-                None
-            });
-
-        if let Some((call_node, func_defn_node)) = call_to_complete {
-            debug!(
-                "Completing Call {call_node:?} after FuncDefn {func_defn_node:?} CFG {cfg_node:?} finished"
-            );
-
-            if let Some(func_info) = self.func_defns.get(&func_defn_node).cloned() {
-                // Propagate wires from FuncDefn Output node to Call output ports
-                // CFG outputs should already be mapped to FuncDefn Output inputs
-                // Now map FuncDefn Output inputs to Call outputs
-                for port in 0..func_info.num_outputs {
-                    // Check if we have a wire mapping for the FuncDefn Output input
-                    // FuncDefn Output receives from CFG outputs
-                    // Traced reads: a return value produced inside a
-                    // flattened DFG must resolve like any other read.
-                    let call_output_wire = (call_node, port);
-                    if let Some(qubit_id) = self.get_input_qubit(hugr, func_info.output_node, port)
+        let call_to_complete: Option<Node> =
+            self.active_calls
+                .iter()
+                .find_map(|(&call_node, call_info)| {
+                    if let Some(func_info) = self.func_defns.get(&call_info.func_defn_node)
+                        && func_info.cfg_node == Some(cfg_node)
                     {
-                        self.wire_state
-                            .wire_to_qubit
-                            .insert(call_output_wire, qubit_id);
-                        debug!(
-                            "Call {call_node:?}: mapped FuncDefn output {port} qubit {qubit_id:?} to Call output"
-                        );
+                        return Some(call_node);
                     }
-                    // Map classical values (including arrays)
-                    if let Some(value) = self.get_input_value(hugr, func_info.output_node, port) {
-                        debug!(
-                            "Call {call_node:?}: mapped FuncDefn output {port} classical value {value:?} to Call output"
-                        );
-                        self.wire_state
-                            .classical_values
-                            .insert(call_output_wire, value);
-                    }
-                }
+                    None
+                });
 
-                // Mark Call as processed FIRST so successors can be added correctly
-                self.processed.insert(call_node);
-                self.active_calls.remove(&call_node);
+        if let Some(call_node) = call_to_complete {
+            // The CFG itself is complete, but its data outputs can still be
+            // waiting for a measurement outcome. Keep the Call active and
+            // retain enough context to replay CFG-output propagation once the
+            // outcome arrives.
+            self.pending_call_returns
+                .insert(call_node, (cfg_node, final_block));
+            self.try_complete_pending_call_return(hugr, call_node);
+        }
+    }
 
-                // Check if this Call completion allows a parent Case to
-                // complete (a case whose FINAL completion event is the Call
-                // itself would otherwise stay active forever).
-                self.check_scan_frame_completion(hugr, call_node);
-                self.check_case_completion(hugr, call_node);
+    /// Retry every Call whose callee CFG completed with unresolved returns.
+    pub(crate) fn retry_pending_call_returns(&mut self, hugr: &Hugr) {
+        let pending: Vec<Node> = self.pending_call_returns.keys().copied().collect();
+        for call_node in pending {
+            self.try_complete_pending_call_return(hugr, call_node);
+        }
+    }
 
-                // Check if this Call completion allows a parent CFG block to complete
-                // This is critical for nested function calls
-                self.check_cfg_block_completion(hugr, call_node);
+    /// Copy a completed callee frame's returns and release its Call only when
+    /// every data port has a runtime representation.
+    fn try_complete_pending_call_return(&mut self, hugr: &Hugr, call_node: Node) {
+        let Some(&(cfg_node, final_block)) = self.pending_call_returns.get(&call_node) else {
+            return;
+        };
+        let Some(call_info) = self.active_calls.get(&call_node).cloned() else {
+            self.pending_call_returns.remove(&call_node);
+            return;
+        };
+        let func_defn_node = call_info.func_defn_node;
 
-                // Check if this Call completion allows a parent TailLoop to complete
-                // This is critical for function calls inside TailLoop bodies
-                self.check_tailloop_body_completion(hugr, call_node);
+        // The first propagation ran as the CFG completed, possibly before a
+        // measurement result existed. Replaying it is fill-only in effect:
+        // propagate_cfg_outputs only inserts values it can now resolve.
+        self.propagate_cfg_outputs(hugr, cfg_node, final_block);
 
-                // Add Call's successors to the work queue via the canonical
-                // readiness check. (A hand-rolled subset here used to omit
-                // classical and extension ops, so e.g. a MakeTuple consuming
-                // the Call's result never ran and the enclosing CFG block
-                // never completed.)
-                self.queue_ready_successors(hugr, call_node);
+        let Some(func_info) = self.func_defns.get(&func_defn_node).cloned() else {
+            return;
+        };
+        let outputs: Vec<_> = (0..func_info.num_outputs)
+            .map(|port| {
+                (
+                    self.get_input_qubit(hugr, func_info.output_node, port),
+                    self.get_input_value(hugr, func_info.output_node, port),
+                )
+            })
+            .collect();
+        if outputs
+            .iter()
+            .any(|(qubit, value)| qubit.is_none() && value.is_none())
+        {
+            debug!(
+                "Call {call_node:?}: CFG {cfg_node:?} complete but return ports unresolved; deferring completion"
+            );
+            return;
+        }
 
-                // A scan parked on this frame retries through the pending
-                // mechanism -- wake the parked set now that the frame freed.
-                self.retry_deferred_nodes();
+        debug!(
+            "Completing Call {call_node:?} after FuncDefn {func_defn_node:?} CFG {cfg_node:?} returns resolved"
+        );
 
-                // Check if there are pending calls to this FuncDefn
-                if let Some(pending) = self.pending_func_calls.get_mut(&func_defn_node)
-                    && let Some(next_call) = pending.pop_front()
-                {
-                    debug!(
-                        "FuncDefn {func_defn_node:?} free: starting next pending Call {next_call:?}"
-                    );
-                    // Add the pending call to the front of the work queue
-                    // so it gets processed next
-                    if !self.work_queue.contains(next_call) {
-                        self.work_queue.push_front(next_call);
-                    }
-                }
+        // All return ports are ready; publish them as one completion event.
+        for (port, (qubit, value)) in outputs.into_iter().enumerate() {
+            let call_output_wire = (call_node, port);
+            if let Some(qubit_id) = qubit {
+                self.wire_state
+                    .wire_to_qubit
+                    .insert(call_output_wire, qubit_id);
+                debug!(
+                    "Call {call_node:?}: mapped FuncDefn output {port} qubit {qubit_id:?} to Call output"
+                );
+            }
+            if let Some(value) = value {
+                debug!(
+                    "Call {call_node:?}: mapped FuncDefn output {port} classical value {value:?} to Call output"
+                );
+                self.wire_state
+                    .classical_values
+                    .insert(call_output_wire, value);
+            }
+        }
+
+        // Mark Call as processed FIRST so successors can be added correctly.
+        self.pending_call_returns.remove(&call_node);
+        self.processed.insert(call_node);
+        self.active_calls.remove(&call_node);
+
+        // Check if this Call completion allows a parent Case to
+        // complete (a case whose FINAL completion event is the Call
+        // itself would otherwise stay active forever).
+        self.check_scan_frame_completion(hugr, call_node);
+        self.check_case_completion(hugr, call_node);
+
+        // Check if this Call completion allows a parent CFG block to complete
+        // This is critical for nested function calls
+        self.check_cfg_block_completion(hugr, call_node);
+
+        // Check if this Call completion allows a parent TailLoop to complete
+        // This is critical for function calls inside TailLoop bodies
+        self.check_tailloop_body_completion(hugr, call_node);
+
+        // Add Call's successors to the work queue via the canonical
+        // readiness check. (A hand-rolled subset here used to omit
+        // classical and extension ops, so e.g. a MakeTuple consuming
+        // the Call's result never ran and the enclosing CFG block
+        // never completed.)
+        self.queue_ready_successors(hugr, call_node);
+
+        // A scan parked on this frame retries through the pending
+        // mechanism -- wake the parked set now that the frame freed.
+        self.retry_deferred_nodes();
+
+        // Check if there are pending calls to this FuncDefn
+        if let Some(pending) = self.pending_func_calls.get_mut(&func_defn_node)
+            && let Some(next_call) = pending.pop_front()
+        {
+            debug!("FuncDefn {func_defn_node:?} free: starting next pending Call {next_call:?}");
+            // Add the pending call to the front of the work queue
+            // so it gets processed next
+            if !self.work_queue.contains(next_call) {
+                self.work_queue.push_front(next_call);
             }
         }
     }

@@ -390,6 +390,11 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
     ///
     /// This executes the program normally (with random measurement outcomes)
     /// while recording which outcomes occurred.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit contains a gate the Clifford simulator cannot
+    /// execute.
     pub fn run_and_record(&mut self, commands: &CommandQueue) -> PathRecordedResult {
         self.simulator.reset();
         let mut outcomes = MeasurementOutcomes::new();
@@ -410,6 +415,11 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
     ///
     /// Returns the outcomes and the actual path taken (which may differ
     /// from the input if some measurements were deterministic).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit contains a gate the Clifford simulator cannot
+    /// execute.
     pub fn run_with_path(
         &mut self,
         commands: &CommandQueue,
@@ -560,56 +570,98 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
                 self.simulator.szdg(&qubits);
             }
             GateType::CX => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.cx(&pairs);
             }
             GateType::CY => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.cy(&pairs);
             }
             GateType::CZ => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.cz(&pairs);
             }
             GateType::SZZ => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.szz(&pairs);
             }
             GateType::SZZdg => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.szzdg(&pairs);
             }
             GateType::SXX => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.sxx(&pairs);
             }
             GateType::SXXdg => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.sxxdg(&pairs);
             }
             GateType::SYY => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.syy(&pairs);
             }
             GateType::SYYdg => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.syydg(&pairs);
             }
             GateType::SWAP => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.swap(&pairs);
             }
-            _ => {}
+            unsupported => panic!(
+                "PathExplorer cannot execute circuit gate {unsupported:?}; use a Clifford gate"
+            ),
         }
     }
 }
@@ -683,6 +735,20 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use pecos_simulators::SparseStab;
+
+    #[test]
+    #[should_panic(expected = "PathExplorer cannot execute circuit gate T")]
+    fn unsupported_gate_is_not_silently_dropped() {
+        let commands = CommandBuilder::new()
+            .gate(GateCommand::new(
+                GateType::T,
+                smallvec::smallvec![QubitId(0)],
+            ))
+            .build();
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42));
+
+        let _ = explorer.run_and_record(&commands);
+    }
 
     #[test]
     fn test_measurement_path_basic() {
@@ -761,7 +827,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42)).with_seed(42);
         let result = explorer.run_and_record(&commands);
 
         assert_eq!(result.path.len(), 1);
@@ -772,7 +838,7 @@ mod tests {
     fn test_path_explorer_replay() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(1));
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42));
 
         // Force outcome 0
         let path0 = EnumeratedPath { bits: 0, len: 1 };
@@ -794,7 +860,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(1)).with_seed(42);
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42)).with_seed(42);
         let result = explorer.run_and_record(&commands);
 
         assert!(!result.outcomes.get_bit(QubitId(0)).unwrap());
@@ -812,7 +878,7 @@ mod tests {
             .fdg(&[0])
             .mz(&[0])
             .build();
-        let mut explorer = PathExplorer::new(SparseStab::new(1));
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42));
         let forced_one = EnumeratedPath { bits: 1, len: 1 };
 
         let result = explorer.run_with_path(&commands, &forced_one);
@@ -827,7 +893,7 @@ mod tests {
         // Should have 50% probability of each outcome
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(1));
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(1, 42));
         let mut stats = PathStatistics::new();
 
         // Enumerate all paths (just 2 for 1 measurement)
@@ -866,7 +932,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut explorer = PathExplorer::new(SparseStab::new(2));
+        let mut explorer = PathExplorer::new(SparseStab::with_seed(2, 42));
 
         // The first measurement is non-deterministic (50/50)
         // The second is deterministic (correlated with first)

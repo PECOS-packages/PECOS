@@ -53,7 +53,7 @@ When using PECOS's `sim()` API, you wrap your program in one of these types:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
 
     results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).run(100)
@@ -508,12 +508,14 @@ TickCircuit can be converted to and from DagCircuit:
     ```rust
     use pecos::quantum::{DagCircuit, TickCircuit};
 
-    // TickCircuit -> DagCircuit
+    // TickCircuit -> DagCircuit. Fallible: a TickCircuit can hold
+    // measurement ids that DagCircuit refuses (duplicates), so the
+    // conversion reports that instead of panicking.
     let mut tick_circuit = TickCircuit::new();
     tick_circuit.tick().h(&[0, 1]);
     tick_circuit.tick().cx(&[(0, 1)]);
 
-    let dag_circuit = DagCircuit::from(tick_circuit);
+    let dag_circuit = DagCircuit::try_from(tick_circuit).expect("no duplicate measurement ids");
 
     // DagCircuit -> TickCircuit
     let tick_circuit2 = TickCircuit::from(dag_circuit);

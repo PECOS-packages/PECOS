@@ -1,7 +1,9 @@
 # Define rules, plugins, and configurations for the ruff linter.
 # For more details on rules see: https://docs.astral.sh/ruff/rules
 
-target-version = "py310"
+# Match the project-wide Python floor. PEP 695 conversion is intentionally
+# deferred because it is unrelated to dropping Python 3.10/3.11 support.
+target-version = "py312"
 line-length = 120
 # preview = true
 
@@ -16,6 +18,14 @@ split-on-trailing-comma = true
 
 [lint.flake8-tidy-imports]
 ban-relative-imports = "all"
+
+# PECOS owns its numeric primitives. NumPy is permitted in tests only, as an oracle to
+# compare against -- never as a runtime dependency of shipped code, examples, or scripts.
+# The replacement is the NumPy-compatible layer re-exported from `pecos` itself:
+# `array`, `zeros`, `ones`, `arange`, `array_equal`, `dtypes`, `any`, `all`, and friends.
+# Tests are exempted via per-file-ignores below. Tracking issue: #458.
+[lint.flake8-tidy-imports.banned-api]
+"numpy".msg = "PECOS owns its numerics -- use the NumPy-compatible layer from `pecos` (array, zeros, arange, dtypes, ...). NumPy is allowed in tests only, as an oracle. See issue #458."
 
 [lint.flake8-type-checking]
 strict = true
@@ -97,16 +107,37 @@ ignore = [
 
     # tryceratops
     "TRY002", # Custom exceptions
+
+    "UP040", # PEP 695 type aliases are deferred from the Python-floor migration
+    "UP046", # PEP 695 generic classes are deferred from the Python-floor migration
+    "UP047", # PEP 695 generic functions are deferred from the Python-floor migration
 ]
 
 [lint.per-file-ignores]
 "**/__init__.py" = ["F401"]  # imported but unused - Expected for __init__.py re-exports
 
+# NumPy is the oracle the test suite compares PECOS's own numerics against, so tests may
+# import it. Everything else must use the NumPy-compatible layer re-exported from `pecos`.
+"**/tests/**" = ["TID251"]
+"**/test_*.py" = ["TID251"]
+"**/conftest.py" = ["TID251"]
+
+# Pre-existing NumPy users, allowed only until #458 migrates them. This list must SHRINK.
+# Do not add to it: new non-test NumPy use is the thing the ban exists to stop.
+"python/quantum-pecos/src/pecos/qec/reliable_observables.py" = ["TID251"]
+"examples/measurement_throughput_benchmark.ipynb" = ["TID251"]
+"examples/surface_code_experiments.ipynb" = ["TID251"]
+"examples/surface_code_noisy_decoding.ipynb" = ["TID251"]
+"examples/surface_code_threshold.ipynb" = ["TID251"]
+"examples/surface_code_thresholds.ipynb" = ["TID251"]
+
 # Standalone offline oracle-fixture generators inside Rust crate test dirs -
-# scripts run via uv, not an importable package
-"crates/*/tests/fixtures/*.py" = [
+# scripts run via uv, not an importable package. Experimental crates live under
+# exp/ and carry the same kind of generator.
+"{crates,exp}/*/tests/fixtures/*.py" = [
     "INP001",   # Implicit namespace package - standalone scripts, not a package
     "S311",     # Standard pseudo-random - fixed-seed case sampling, not crypto
+    "TID251",   # NumPy allowed - these generate oracle fixtures for the test suite
 ]
 
 # Main pecos __init__.py - special case for module initialization
@@ -146,16 +177,16 @@ ignore = [
     "RUF022",   # __all__ not sorted - intentionally grouped by graph type
 ]
 # Guppy code generation - lazy imports for optional deps, __all__ grouped by code type
-"python/quantum-pecos/src/pecos/guppy/__init__.py" = [
+"python/quantum-pecos/src/pecos/guppy_gen/__init__.py" = [
     "RUF022",   # __all__ not sorted - grouped by code type (surface, color, transversal)
 ]
-"python/quantum-pecos/src/pecos/guppy/color.py" = [
+"python/quantum-pecos/src/pecos/guppy_gen/color.py" = [
     "PLC0415",  # Import inside function - lazy loading of qec.color
 ]
-"python/quantum-pecos/src/pecos/guppy/surface.py" = [
+"python/quantum-pecos/src/pecos/guppy_gen/surface.py" = [
     "PLC0415",  # Import inside function - lazy loading of qec.surface
 ]
-"python/quantum-pecos/src/pecos/guppy/transversal.py" = [
+"python/quantum-pecos/src/pecos/guppy_gen/transversal.py" = [
     "PLC0415",  # Import inside function - lazy loading of qec modules
 ]
 # QEC modules - __all__ grouped by category, lazy imports

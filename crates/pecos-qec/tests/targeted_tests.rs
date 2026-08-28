@@ -128,11 +128,14 @@ fn custom_p1_weights_affect_decoder() {
     dag.h(&[0]);
     dag.cx(&[(0, 1)]);
     let ms = dag.mz(&[0, 1]);
-    dag.observable(&[ms[0], ms[1]]);
+    dag.observable(&[ms[0], ms[1]])
+        .expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     // Uniform weights
     let noise_uniform = NoiseConfig::uniform(0.001);
@@ -205,8 +208,10 @@ fn prep_gate_stops_propagation() {
     dag.mz(&[0]);
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     // Find the H gate's after-location
     let mut h_has_influence = false;
@@ -273,7 +278,8 @@ fn detector_derives_pauli_from_measurements() {
     dag.pz(&[0, 1]);
     dag.cx(&[(0, 1)]);
     let ms = dag.mz(&[0, 1]);
-    dag.detector(&[ms[0], ms[1]]);
+    dag.detector(&[ms[0], ms[1]])
+        .expect("refs are from this circuit");
 
     let ann = &dag.annotations()[0];
     // Pauli should be Z on both measured qubits
@@ -308,11 +314,14 @@ fn probability_sums_to_one() {
     dag.h(&[0]);
     dag.cx(&[(0, 1)]);
     let ms = dag.mz(&[0, 1]);
-    dag.observable(&[ms[0], ms[1]]);
+    dag.observable(&[ms[0], ms[1]])
+        .expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations(&dag)
-        .build();
+        .with_circuit_annotations()
+        .expect("annotations resolve against the circuit")
+        .build()
+        .expect("circuit is replayable");
 
     let noise = NoiseConfig::uniform(0.001);
     let decoder = LookupDecoder::build(&map, &noise, 3);

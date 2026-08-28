@@ -31,6 +31,7 @@ use pecos_core::Gate;
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
 use pecos_qec::fault_tolerance::dem_builder::ParsedDem;
+use pecos_qec::fault_tolerance::dem_builder::record_offset_to_absolute_index;
 use pecos_qec::fault_tolerance::fault_sampler::{
     RawMeasurementPlan, StochasticNoiseParams, symbolic_measurement_history,
 };
@@ -53,6 +54,38 @@ pub struct CircuitMeasurementMeta {
 pub struct DemSimulationResult {
     /// Per-shot measurement bitstrings (same format as gate-by-gate simulators).
     pub measurements: Vec<Vec<u8>>,
+}
+/// Why a DEM simulation could not run.
+///
+/// Every variant carries the underlying diagnostic. This replaces an
+/// `Option`/`.ok()?` chain that erased the cause and an `expect` that turned
+/// any failure into a generic panic blaming the wrong layer.
+#[derive(Debug, Clone)]
+pub enum DemSimulationError {
+    /// The circuit cannot be expanded or its annotations resolved.
+    Eeg(crate::expand::EegBuildError),
+    /// The circuit cannot produce a record-aligned measurement history.
+    History(pecos_qec::fault_tolerance::fault_sampler::MeasurementHistoryError),
+    /// The fault table could not be built.
+    FaultTable(String),
+}
+
+impl std::fmt::Display for DemSimulationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Eeg(err) => write!(f, "DEM simulation: {err}"),
+            Self::History(err) => write!(f, "DEM simulation: {err}"),
+            Self::FaultTable(msg) => write!(f, "DEM simulation: fault table: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for DemSimulationError {}
+
+impl From<crate::expand::EegBuildError> for DemSimulationError {
+    fn from(err: crate::expand::EegBuildError) -> Self {
+        Self::Eeg(err)
+    }
 }
 
 /// Run DEM-based simulation: build DEM, sample, produce measurement bitstrings.
@@ -78,15 +111,14 @@ pub fn run_dem_simulation(
     generator: &dyn DemGenerator,
     shots: usize,
     seed: u64,
-) -> DemSimulationResult {
+) -> Result<DemSimulationResult, DemSimulationError> {
     // Coherent noise: use EEG path (Heisenberg walks handle idle_rz)
     if noise.idle_rz.abs() > 1e-15 {
         return run_eeg_path(gates, noise, meta, generator, shots, seed);
     }
 
     // Stochastic: use proper DemSampler with raw measurement output
-    try_stochastic_path(gates, noise, meta, shots, seed)
-        .expect("DEM simulation failed: could not build TickCircuit or DemSampler from circuit")
+    stochastic_path(gates, noise, meta, shots, seed)
 }
 
 /// Stochastic raw measurement path via RawMeasurementPlan.
@@ -97,26 +129,20 @@ pub fn run_dem_simulation(
 /// - Geometric/O(fired) fault sampling
 /// - Raw measurement output matching gate-by-gate simulators
 ///
-/// Returns None if idle_rz > 0 (needs EEG path for coherent noise).
-fn try_stochastic_path(
+fn stochastic_path(
     gates: &[Gate],
     noise: &UniformNoise,
     meta: &CircuitMeasurementMeta,
     shots: usize,
     seed: u64,
-) -> Option<DemSimulationResult> {
-    // Only use stochastic path when no coherent noise
-    if noise.idle_rz.abs() > 1e-15 {
-        return None;
-    }
-
+) -> Result<DemSimulationResult, DemSimulationError> {
     // Build TickCircuit using typed API (proper measurement record tracking)
-    let mut tc = build_tick_circuit(gates, meta);
+    let mut tc = build_tick_circuit(gates, meta)?;
 
     // Compact ticks to reduce DAG complexity (critical for performance)
     tc.compact_ticks();
 
-    let history = symbolic_measurement_history(&tc).ok()?;
+    let history = symbolic_measurement_history(&tc).map_err(DemSimulationError::History)?;
 
     let noise_params = StochasticNoiseParams {
         p1: noise.p1,
@@ -125,7 +151,8 @@ fn try_stochastic_path(
         p_prep: noise.p_prep,
     };
     let mechanisms =
-        pecos_qec::fault_tolerance::fault_sampler::build_fault_table(&tc, &noise_params).ok()?;
+        pecos_qec::fault_tolerance::fault_sampler::build_fault_table(&tc, &noise_params)
+            .map_err(|err| DemSimulationError::FaultTable(err.to_string()))?;
     let plan = RawMeasurementPlan::new(&history, mechanisms);
 
     // Sample raw measurements (columnar, then extract rows)
@@ -140,7 +167,7 @@ fn try_stochastic_path(
         measurements.push(meas);
     }
 
-    Some(DemSimulationResult { measurements })
+    Ok(DemSimulationResult { measurements })
 }
 
 /// Build a TickCircuit from flat gates + metadata using the typed API.
@@ -150,7 +177,31 @@ fn try_stochastic_path(
 /// After building all gates, creates detector/observable annotations using
 /// the stored measurement references. This ensures the DagCircuit conversion
 /// and DagFaultAnalyzer see proper structured annotations.
-fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> TickCircuit {
+/// Resolve one Stim-style record offset to its measurement ref, loudly.
+fn resolve_record_offset_ref(
+    offset: i32,
+    meta: &CircuitMeasurementMeta,
+    all_meas_refs: &[pecos_quantum::TickMeasRef],
+) -> Result<pecos_quantum::TickMeasRef, DemSimulationError> {
+    record_offset_to_absolute_index(meta.num_measurements, offset)
+        .and_then(|abs_idx| all_meas_refs.get(abs_idx).copied())
+        .ok_or_else(|| {
+            DemSimulationError::FaultTable(format!(
+                "record offset {offset} does not resolve against {} measurements",
+                meta.num_measurements
+            ))
+        })
+}
+
+/// # Errors
+///
+/// Returns [`DemSimulationError`] when a detector or observable record offset
+/// does not resolve against the circuit's measurements. Unresolvable offsets
+/// used to be silently dropped, thinning the annotation.
+fn build_tick_circuit(
+    gates: &[Gate],
+    meta: &CircuitMeasurementMeta,
+) -> Result<TickCircuit, DemSimulationError> {
     use pecos_quantum::{Attribute, TickMeasRef};
 
     let mut tc = TickCircuit::default();
@@ -175,31 +226,28 @@ fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> TickCirc
         }
     }
 
-    // Create detector annotations from record definitions
+    // Create detector annotations from record definitions. An offset that
+    // does not resolve is an error, not a silently thinner annotation.
     for records in &meta.detector_records {
-        let det_refs: Vec<TickMeasRef> = records
-            .iter()
-            .filter_map(|&rec| {
-                let abs_idx = (meta.num_measurements as i32 + rec) as usize;
-                all_meas_refs.get(abs_idx).copied()
-            })
-            .collect();
+        let mut det_refs: Vec<TickMeasRef> = Vec::with_capacity(records.len());
+        for &rec in records {
+            det_refs.push(resolve_record_offset_ref(rec, meta, &all_meas_refs)?);
+        }
         if !det_refs.is_empty() {
-            tc.detector(&det_refs);
+            tc.detector(&det_refs)
+                .expect("refs were just resolved from this circuit");
         }
     }
 
     // Create observable annotations from record definitions
     for records in &meta.observable_records {
-        let obs_refs: Vec<TickMeasRef> = records
-            .iter()
-            .filter_map(|&rec| {
-                let abs_idx = (meta.num_measurements as i32 + rec) as usize;
-                all_meas_refs.get(abs_idx).copied()
-            })
-            .collect();
+        let mut obs_refs: Vec<TickMeasRef> = Vec::with_capacity(records.len());
+        for &rec in records {
+            obs_refs.push(resolve_record_offset_ref(rec, meta, &all_meas_refs)?);
+        }
         if !obs_refs.is_empty() {
-            tc.observable(&obs_refs);
+            tc.observable(&obs_refs)
+                .expect("refs were just resolved from this circuit");
         }
     }
 
@@ -229,7 +277,7 @@ fn build_tick_circuit(gates: &[Gate], meta: &CircuitMeasurementMeta) -> TickCirc
         tc.set_meta("observables", Attribute::String(obs_json));
     }
 
-    tc
+    Ok(tc)
 }
 
 /// EEG path: DEM generation + ParsedDem sampling + measurement synthesis.
@@ -243,14 +291,14 @@ fn run_eeg_path(
     generator: &dyn DemGenerator,
     shots: usize,
     seed: u64,
-) -> DemSimulationResult {
+) -> Result<DemSimulationResult, DemSimulationError> {
     // Expand circuit for EEG analysis
-    let expanded = crate::expand::expand_circuit(gates);
+    let expanded = crate::expand::expand_circuit(gates)?;
     let gate_index = GateIndex::build(&expanded.gates, expanded.num_qubits);
 
     // Build detectors and observables from metadata
-    let detectors = build_detectors_from_meta(meta, &expanded);
-    let observables = build_observables_from_meta(meta, &expanded);
+    let detectors = build_detectors_from_meta(meta, &expanded)?;
+    let observables = build_observables_from_meta(meta, &expanded)?;
 
     // Generate DEM via trait
     let ctx = DemContext {
@@ -280,51 +328,56 @@ fn run_eeg_path(
         measurements.push(meas);
     }
 
-    DemSimulationResult { measurements }
+    Ok(DemSimulationResult { measurements })
 }
 
 /// Build EEG Detector structs from circuit metadata.
 fn build_detectors_from_meta(
     meta: &CircuitMeasurementMeta,
     expanded: &ExpandedCircuit,
-) -> Vec<crate::dem_mapping::Detector> {
-    meta.detector_records
-        .iter()
-        .enumerate()
-        .map(|(id, records)| {
-            let mut bm = crate::Bm::default();
-            for &rec in records {
-                let meas_idx = (meta.num_measurements as i32 + rec) as usize;
-                if meas_idx < expanded.measurement_qubit.len() {
-                    let q = expanded.measurement_qubit[meas_idx];
-                    bm.z_bits.set_bit(q);
-                }
-            }
-            crate::dem_mapping::Detector { id, stabilizer: bm }
-        })
-        .collect()
+) -> Result<Vec<crate::dem_mapping::Detector>, DemSimulationError> {
+    let mut detectors = Vec::with_capacity(meta.detector_records.len());
+    for (id, records) in meta.detector_records.iter().enumerate() {
+        let mut bm = crate::Bm::default();
+        for &rec in records {
+            let meas_idx =
+                record_offset_to_absolute_index(meta.num_measurements, rec).ok_or_else(|| {
+                    DemSimulationError::FaultTable(format!(
+                        "record offset {rec} does not resolve against {} measurements",
+                        meta.num_measurements
+                    ))
+                })?;
+            // Single resolver: out-of-range is an error, never a skip.
+            let q = expanded.aux_qubit_for_record(meas_idx)?;
+            bm.z_bits.set_bit(q);
+        }
+        detectors.push(crate::dem_mapping::Detector { id, stabilizer: bm });
+    }
+    Ok(detectors)
 }
 
 /// Build EEG Observable structs from circuit metadata.
 fn build_observables_from_meta(
     meta: &CircuitMeasurementMeta,
     expanded: &ExpandedCircuit,
-) -> Vec<crate::dem_mapping::Observable> {
-    meta.observable_records
-        .iter()
-        .enumerate()
-        .map(|(id, records)| {
-            let mut bm = crate::Bm::default();
-            for &rec in records {
-                let meas_idx = (meta.num_measurements as i32 + rec) as usize;
-                if meas_idx < expanded.measurement_qubit.len() {
-                    let q = expanded.measurement_qubit[meas_idx];
-                    bm.z_bits.set_bit(q);
-                }
-            }
-            crate::dem_mapping::Observable { id, pauli: bm }
-        })
-        .collect()
+) -> Result<Vec<crate::dem_mapping::Observable>, DemSimulationError> {
+    let mut observables = Vec::with_capacity(meta.observable_records.len());
+    for (id, records) in meta.observable_records.iter().enumerate() {
+        let mut bm = crate::Bm::default();
+        for &rec in records {
+            let meas_idx =
+                record_offset_to_absolute_index(meta.num_measurements, rec).ok_or_else(|| {
+                    DemSimulationError::FaultTable(format!(
+                        "record offset {rec} does not resolve against {} measurements",
+                        meta.num_measurements
+                    ))
+                })?;
+            let q = expanded.aux_qubit_for_record(meas_idx)?;
+            bm.z_bits.set_bit(q);
+        }
+        observables.push(crate::dem_mapping::Observable { id, pauli: bm });
+    }
+    Ok(observables)
 }
 
 /// Precomputed info for synthesizing measurements from detection events.

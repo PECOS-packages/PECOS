@@ -647,7 +647,7 @@ mod tests {
             gate(GateType::MZ, &[1]), // last round
             gate(GateType::MZ, &[0]),
         ];
-        let expanded = crate::expand::expand_circuit(&original_gates);
+        let expanded = crate::expand::expand_circuit(&original_gates).expect("MZ-only circuit");
 
         // Count PZ gates in expanded circuit (originals + expansion projections)
         let all_pz: Vec<_> = expanded
@@ -698,7 +698,7 @@ mod tests {
             gate(GateType::MZ, &[0]),
             gate(GateType::MZ, &[1]),
         ];
-        let expanded = crate::expand::expand_circuit(&gates);
+        let expanded = crate::expand::expand_circuit(&gates).expect("MZ-only circuit");
         let noise = NoiseModel::coherent_only(0.1);
         let result = analyze_expanded(&expanded.gates, &noise);
 

@@ -17,9 +17,9 @@ import argparse
 import json
 import time
 
-import numpy as np
 import pymatching
 import stim
+from pecos import dtypes, zeros
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
@@ -77,7 +77,7 @@ def extract_and_decode(result, tc, matching, shots):
     t0 = time.perf_counter()
 
     errors = 0
-    syndrome = np.zeros(num_dets, dtype=np.uint8)
+    syndrome = zeros(num_dets, dtype=dtypes.uint8)
 
     for shot_idx in range(shots):
         row = result[shot_idx]
@@ -119,12 +119,12 @@ def run_native_sampler(tc, noise_args, matching, shots, seed):
     num_dets = sampler.num_detectors
 
     t0 = time.perf_counter()
-    batch = sampler.generate_samples(shots, seed=seed)
+    batch = sampler.sample_batch(shots, seed=seed)
     t_sample = time.perf_counter() - t0
 
     t0 = time.perf_counter()
     errors = 0
-    syndrome = np.zeros(num_dets, dtype=np.uint8)
+    syndrome = zeros(num_dets, dtype=dtypes.uint8)
 
     for i in range(shots):
         syn = batch.get_syndrome(i)
@@ -133,7 +133,7 @@ def run_native_sampler(tc, noise_args, matching, shots, seed):
 
         predicted = matching.decode(syndrome)
         pred_mask = sum(int(v) << j for j, v in enumerate(predicted))
-        if pred_mask != batch.get_observable_mask(i):
+        if pred_mask != batch.get_observable_flips(i).mask:
             errors += 1
 
     t_decode = time.perf_counter() - t0
@@ -215,7 +215,7 @@ def main():
     print("  Circuit: Guppy surface code -> traced QIS -> lower_clifford_rotations()")
     print("  Decoder: PyMatching (stim DEM, decompose_errors=True)")
     print("  meas_sampling: geometric raw measurement DEM sampler + Python extraction")
-    print("  native_sampler: DemSampler.generate_samples (detector events directly)")
+    print("  native_sampler: DemSampler.sample_batch (detector events directly)")
     print("  LER differences from different RNG streams, not systematic bias.")
 
 

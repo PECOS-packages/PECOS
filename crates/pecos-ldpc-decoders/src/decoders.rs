@@ -39,6 +39,31 @@ fn prepare_channel_probs(
     }
 }
 
+fn validate_bp_tuning(
+    max_iter: usize,
+    adaptive_max_iter: usize,
+    ms_scaling_factor: f64,
+    order: usize,
+    order_parameter: &str,
+) -> Result<(i32, i32), LdpcError> {
+    if !ms_scaling_factor.is_finite() || ms_scaling_factor < 0.0 {
+        return Err(LdpcError::InvalidInput(
+            "ms_scaling_factor must be finite and non-negative".to_string(),
+        ));
+    }
+    let actual_max_iter = if max_iter == 0 {
+        adaptive_max_iter
+    } else {
+        max_iter
+    };
+    let actual_max_iter = i32::try_from(actual_max_iter)
+        .map_err(|_| LdpcError::InvalidInput("max_iter must not exceed 2147483647".to_string()))?;
+    let order = i32::try_from(order).map_err(|_| {
+        LdpcError::InvalidInput(format!("{order_parameter} must not exceed 2147483647"))
+    })?;
+    Ok((actual_max_iter, order))
+}
+
 /// BP+OSD Decoder
 pub struct BpOsdDecoder {
     inner: UniquePtr<ffi::BpOsdDecoder>,
@@ -96,15 +121,19 @@ impl BpOsdDecoder {
                 "OSD decoding requires syndrome input. Please use InputVectorType::Syndrome when OSD is enabled.".to_string()
             ));
         }
-
         // Prepare channel probabilities
         let channel_probs = prepare_channel_probs(pcm.cols, error_rate, error_channel)?;
 
         // Create sparse matrix representation for FFI
         let sparse_repr = pcm.to_ffi_repr();
 
-        // Handle adaptive iterations (0 means use n as max_iter)
-        let actual_max_iter = if max_iter == 0 { pcm.cols } else { max_iter };
+        let (actual_max_iter, osd_order) = validate_bp_tuning(
+            max_iter,
+            pcm.cols,
+            ms_scaling_factor,
+            osd_order,
+            "osd_order",
+        )?;
 
         // Default thread count to 1 if not specified
         let threads = omp_thread_count.unwrap_or(1);
@@ -118,12 +147,12 @@ impl BpOsdDecoder {
         let inner = ffi::create_bp_osd_decoder(
             &sparse_repr,
             &channel_probs,
-            i32::try_from(actual_max_iter).unwrap_or(i32::MAX),
+            actual_max_iter,
             bp_method.to_ffi(),
             bp_schedule.to_ffi(),
             ms_scaling_factor,
             osd_method.to_ffi(),
-            i32::try_from(osd_order).unwrap_or(0),
+            osd_order,
             input_vector_type.to_ffi(),
             i32::try_from(threads).unwrap_or(1),
             schedule_order,
@@ -337,14 +366,30 @@ impl BpLsdDecoder {
             ));
         }
 
+        // Honor the crate convention `0 = all` (see BeliefFindDecoder): LSD
+        // growth always ranks candidate bits by BP weights, and the C++ loop
+        // adds exactly `bits_per_step` bits per step — a literal zero means
+        // clusters can never grow, which corrupts the cluster state and
+        // segfaults in the on-the-fly elimination on large matrices.
+        let bits_per_step = if bits_per_step == 0 {
+            pcm.cols
+        } else {
+            bits_per_step
+        };
+
         // Prepare channel probabilities
         let channel_probs = prepare_channel_probs(pcm.cols, error_rate, error_channel)?;
 
         // Create sparse matrix representation for FFI
         let sparse_repr = pcm.to_ffi_repr();
 
-        // Handle adaptive iterations (0 means use n as max_iter)
-        let actual_max_iter = if max_iter == 0 { pcm.cols } else { max_iter };
+        let (actual_max_iter, lsd_order) = validate_bp_tuning(
+            max_iter,
+            pcm.cols,
+            ms_scaling_factor,
+            lsd_order,
+            "lsd_order",
+        )?;
 
         // Default thread count to 1 if not specified
         let threads = omp_thread_count.unwrap_or(1);
@@ -358,13 +403,15 @@ impl BpLsdDecoder {
         let inner = ffi::create_bp_lsd_decoder(
             &sparse_repr,
             &channel_probs,
-            i32::try_from(actual_max_iter).unwrap_or(i32::MAX),
+            actual_max_iter,
             bp_method.to_ffi(),
             bp_schedule.to_ffi(),
             ms_scaling_factor,
             lsd_method.to_ffi(),
-            i32::try_from(lsd_order).unwrap_or(0),
-            i32::try_from(bits_per_step).unwrap_or(0),
+            lsd_order,
+            // Saturate: a huge value means "all candidates per step", never the
+            // crash-prone literal zero.
+            i32::try_from(bits_per_step).unwrap_or(i32::MAX),
             input_vector_type.to_ffi(),
             i32::try_from(threads).unwrap_or(1),
             schedule_order,
@@ -853,6 +900,7 @@ impl FlipDecoder {
 /// Union Find Decoder
 pub struct UnionFindDecoder {
     inner: UniquePtr<ffi::UnionFindDecoder>,
+    uf_method: UfMethod,
 }
 
 /// Union Find method
@@ -890,7 +938,10 @@ impl UnionFindDecoder {
         let decoder = ffi::create_union_find_decoder(&pcm_repr, uf_method.to_ffi())
             .map_err(|e| LdpcError::Ldpc(e.what().to_string()))?;
 
-        Ok(Self { inner: decoder })
+        Ok(Self {
+            inner: decoder,
+            uf_method,
+        })
     }
 
     /// Decode a syndrome using Union Find
@@ -898,7 +949,8 @@ impl UnionFindDecoder {
     /// # Arguments
     /// * `syndrome` - The syndrome to decode
     /// * `llrs` - Log-likelihood ratios (optional, use empty slice if not available)
-    /// * `bits_per_step` - Number of bits to add per growth step (0 = all)
+    /// * `bits_per_step` - Number of bits to add per growth step (0 = all;
+    ///   safe with or without `llrs`)
     ///
     /// # Errors
     ///
@@ -926,12 +978,21 @@ impl UnionFindDecoder {
             )));
         }
 
+        // Honor the crate convention `0 = all`: with LLR weights supplied, the
+        // C++ growth loop adds exactly `bits_per_step` bits per step and a
+        // literal zero prevents cluster growth entirely (crash-prone on large
+        // matrices). Without weights the C++ side already grows all candidates.
+        let bits_per_step = if bits_per_step == 0 {
+            self.bit_count()
+        } else {
+            bits_per_step
+        };
         let syndrome_vec: Vec<u8> = syndrome.to_vec();
         let result = ffi::decode_union_find(
             self.inner.pin_mut(),
             &syndrome_vec,
             llrs,
-            i32::try_from(bits_per_step).unwrap_or(0),
+            i32::try_from(bits_per_step).unwrap_or(i32::MAX),
         )
         .map_err(|e| LdpcError::Ldpc(e.what().to_string()))?;
 
@@ -950,6 +1011,49 @@ impl UnionFindDecoder {
     #[must_use]
     pub fn bit_count(&self) -> usize {
         usize::try_from(ffi::get_bit_count_uf(&self.inner)).unwrap_or(0)
+    }
+
+    /// Get the configured Union-Find method.
+    #[must_use]
+    pub fn method(&self) -> UfMethod {
+        self.uf_method
+    }
+}
+
+/// DEM-aware weighted Union-Find adapter for the shared observable interface.
+pub struct WeightedUnionFindDecoder {
+    decoder: UnionFindDecoder,
+    dem: pecos_decoder_core::DemCheckMatrix,
+    llrs: Vec<f64>,
+}
+
+impl WeightedUnionFindDecoder {
+    /// Wrap a Union-Find decoder with DEM priors and observable mappings.
+    #[must_use]
+    pub fn new(
+        decoder: UnionFindDecoder,
+        dem: pecos_decoder_core::DemCheckMatrix,
+        llrs: Vec<f64>,
+    ) -> Self {
+        Self { decoder, dem, llrs }
+    }
+}
+
+impl pecos_decoder_core::ObservableDecoder for WeightedUnionFindDecoder {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
+        let syndrome = Array1::from_vec(syndrome.to_vec());
+        // Grow one bit at a time in LLR order. Zero means all candidates per
+        // step and is translated at the Rust boundary since the segfault fix.
+        let result = self
+            .decoder
+            .decode(&syndrome.view(), &self.llrs, 1)
+            .map_err(|error| pecos_decoder_core::DecoderError::DecodingFailed(error.to_string()))?;
+        Ok(self
+            .dem
+            .observables_obsmask_from_correction(result.decoding.as_slice().unwrap_or(&[])))
     }
 }
 

@@ -347,6 +347,11 @@ pub trait SimulatorFactory: Send + Sync {
         "custom backend"
     }
 
+    /// Whether runners created by this factory include a rotation executor.
+    fn has_rotation_support(&self) -> bool {
+        false
+    }
+
     /// Create a program runner for the given number of qubits.
     ///
     /// Called once during simulation startup. The returned runner handles
@@ -559,6 +564,10 @@ where
         + 'static,
     F: Fn(usize) -> S + Send + Sync,
 {
+    fn has_rotation_support(&self) -> bool {
+        true
+    }
+
     fn create_runner(
         &self,
         num_qubits: usize,
@@ -2604,6 +2613,33 @@ impl SimNeoBuilder {
             _ => {}
         }
 
+        if let Some(noise) = &self.noise {
+            let (runner, has_rotation_support) = match &sampling {
+                Sampling::ImportanceSampling { .. } => ("ImportanceSamplingRunner", false),
+                Sampling::SubsetSimulation { .. } => ("CircuitRunner", false),
+                Sampling::MonteCarlo { .. } => match &quantum_backend {
+                    QuantumBackend::SparseStab | QuantumBackend::Stabilizer => {
+                        ("CircuitRunner", false)
+                    }
+                    QuantumBackend::StateVec => ("CircuitRunner", true),
+                    QuantumBackend::Custom(factory) => {
+                        (factory.diagnostic_label(), factory.has_rotation_support())
+                    }
+                    QuantumBackend::AdaptedQuantumEngine(_) => {
+                        // Noise was rejected above for this backend.
+                        ("QuantumEngineBuilder backend", false)
+                    }
+                },
+                Sampling::PathEnumeration { .. } => {
+                    // Noise is rejected by path-enumeration validation below.
+                    ("PathExplorer", false)
+                }
+            };
+            noise
+                .validate_runner_gate_support(runner, has_rotation_support)
+                .unwrap_or_else(|message| panic!("{message}"));
+        }
+
         let parallel_plan = match &sampling {
             Sampling::MonteCarlo { workers, .. } if *workers > 1 => {
                 let plan = build_parallel_execution_plan(
@@ -2647,6 +2683,7 @@ impl SimNeoBuilder {
                     Some(StaticCircuitSpec {
                         circuit,
                         num_qubits,
+                        noise: self.noise.clone(),
                     })
                 } else {
                     None
@@ -2689,6 +2726,7 @@ impl SimNeoBuilder {
                 Some(StaticCircuitSpec {
                     circuit,
                     num_qubits,
+                    noise: None,
                 })
             }
             _ => None,
@@ -3447,10 +3485,14 @@ fn is_sim_startup(resources: &mut Resources) {
     // Consume QuantumBackendResource (IS always uses SparseStab internally)
     let _ = resources.remove::<QuantumBackendResource>();
 
-    // Also consume NoiseResource if present (IS uses its own boosted noise)
-    let _ = resources.try_remove::<NoiseResource>();
+    let noise = resources
+        .try_remove::<NoiseResource>()
+        .map(|resource| resource.0);
 
-    let runner = build_importance_runner(&is_config, num_qubits);
+    let mut runner = build_importance_runner(&is_config, num_qubits);
+    if let Some(noise) = noise {
+        runner = runner.with_noise(noise);
+    }
 
     resources.insert(ISShotState {
         runner,
@@ -3551,6 +3593,7 @@ struct SubsetRunSpec {
 struct StaticCircuitSpec {
     circuit: CommandQueue,
     num_qubits: usize,
+    noise: Option<ComposableNoiseModel>,
 }
 
 /// Native backend used by the internal parallel runner factory.
@@ -4015,6 +4058,9 @@ impl Simulation {
                 }
 
                 let mut runner = build_importance_runner(is_config, spec.num_qubits);
+                if let Some(noise) = spec.noise.clone() {
+                    runner = runner.with_noise(noise);
+                }
                 let start = start_indices[worker_id];
                 for shot_index in start..start + worker_shots {
                     if let Some(base_seed) = base_seed {
@@ -4296,10 +4342,45 @@ fn distribute_shots(num_shots: usize, num_workers: usize) -> Vec<usize> {
 #[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
-    use crate::command::CommandBuilder;
-    use crate::noise::{ComposableNoiseModel, SingleQubitChannel};
+    use crate::command::{CommandBuilder, GateCommand, GateType};
+    use crate::noise::{
+        ComposableNoiseModel, GeneralNoiseModelBuilder, NoiseChannel, NoiseContext, NoiseEvent,
+        NoiseResponse, SingleQubitChannel,
+    };
     use crate::program::ConditionalProgram;
     use pecos_core::QubitId;
+
+    #[derive(Clone)]
+    struct AfterPreparationHChannel;
+
+    impl NoiseChannel for AfterPreparationHChannel {
+        fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+            matches!(event, NoiseEvent::AfterPreparation { .. })
+        }
+
+        fn apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            let NoiseEvent::AfterPreparation { qubits } = event else {
+                return NoiseResponse::None;
+            };
+            NoiseResponse::inject_gate(GateCommand::new(
+                GateType::H,
+                smallvec::smallvec![qubits[0]],
+            ))
+        }
+
+        fn name(&self) -> &'static str {
+            "AfterPreparationHChannel"
+        }
+
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
 
     #[test]
     fn test_sim_neo_basic() {
@@ -6103,6 +6184,65 @@ mod tests {
     }
 
     #[test]
+    fn importance_sampling_keeps_configured_noise_in_sequential_and_parallel_runs() {
+        let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
+
+        for workers in [1, 2] {
+            let noise = ComposableNoiseModel::new().add_channel(AfterPreparationHChannel);
+            let results = sim_neo(circuit.clone())
+                .auto()
+                .noise(noise)
+                .sampling(
+                    importance_sampling(4)
+                        .with_uniform_error(0.0)
+                        .workers(workers),
+                )
+                .seed(42)
+                .run();
+
+            for outcomes in &results.outcomes {
+                let outcome = outcomes.get(QubitId(0)).unwrap();
+                assert!(!outcome.outcome);
+                assert!(
+                    outcome.is_deterministic,
+                    "configured H noise was lost with {workers} worker(s)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn coherent_idle_mismatch_fails_while_building_sim_neo() {
+        let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
+        let noise = GeneralNoiseModelBuilder::new()
+            .with_p_idle_quadratic(0.25)
+            .with_p_idle_coherent(true)
+            .build();
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = sim_neo(circuit)
+                .auto()
+                .noise(noise)
+                .sampling(importance_sampling(1))
+                .build();
+        }))
+        .expect_err("the noise/runner mismatch must fail during build");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic payload should be a string");
+
+        assert!(message.contains("with_p_idle_coherent(true)"), "{message}");
+        assert!(message.contains("ImportanceSamplingRunner"), "{message}");
+        assert!(message.contains("stochastic idle"), "{message}");
+        assert!(
+            message.contains("does not provide a rotation executor"),
+            "{message}"
+        );
+    }
+
+    #[test]
     fn test_sim_neo_importance_sampling_uniform() {
         // Test the convenience method for uniform error rates
         use super::importance_sampling;
@@ -6286,7 +6426,7 @@ mod tests {
             .build();
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
@@ -6319,7 +6459,7 @@ mod tests {
             .run();
 
         let custom_results = sim_neo(circuit)
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(50))
             .seed(42)
             .run();
@@ -6353,7 +6493,7 @@ mod tests {
         let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.5));
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .noise(noise)
             .sampling(monte_carlo(100))
             .seed(42)
@@ -6380,13 +6520,13 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let results1 = sim_neo(circuit.clone())
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(20))
             .seed(42)
             .run();
 
         let results2 = sim_neo(circuit)
-            .quantum(custom_backend(SparseStab::new))
+            .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(20))
             .seed(42)
             .run();
@@ -6407,7 +6547,7 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
         let run = |workers: usize| {
             sim_neo(circuit.clone())
-                .quantum(custom_backend(SparseStab::new))
+                .quantum(custom_backend(|n| SparseStab::with_seed(n, 7)))
                 .sampling(monte_carlo(50).workers(workers))
                 .seed(42)
                 .run()
@@ -6438,7 +6578,7 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).z(&[0]).mz(&[0]).build();
         let run = |workers: usize| {
             sim_neo(circuit.clone())
-                .quantum(custom_backend(SparseStab::new))
+                .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
                 .noise(SingleQubitChannel::depolarizing(0.3))
                 .sampling(monte_carlo(40).workers(workers))
                 .seed(7)
@@ -6468,7 +6608,7 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend(StateVec::new))
+            .quantum(custom_backend(|n| StateVec::with_seed(n, 42)))
             .sampling(monte_carlo(10))
             .seed(42)
             .run();
@@ -6793,7 +6933,9 @@ mod tests {
             .build();
 
         let results = sim_neo(circuit)
-            .quantum(custom_backend_with_rotations(StateVec::new))
+            .quantum(custom_backend_with_rotations(|n| {
+                StateVec::with_seed(n, 42)
+            }))
             .sampling(monte_carlo(10))
             .seed(42)
             .build()

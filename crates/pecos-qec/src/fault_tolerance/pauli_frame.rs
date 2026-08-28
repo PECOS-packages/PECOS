@@ -412,10 +412,11 @@ fn measurement_records_by_node(
         let Some(gate) = dag.gate(node) else {
             continue;
         };
-        if !matches!(
-            gate.gate_type,
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-        ) {
+        // `MeasureLeaked` consumes no measurement record. Including it here
+        // numbered it positionally while real measurements were numbered by
+        // their `MeasId`, so a leaked measurement and a real one could claim the
+        // same record.
+        if !gate.gate_type.consumes_measurement_record() {
             continue;
         }
         if !gate.meas_ids.is_empty() && gate.meas_ids.len() != gate.qubits.len() {
@@ -491,17 +492,37 @@ fn propagate_tracked_pauli_forward(
         };
         match gate.gate_type {
             GateType::TrackedPauliMeta => {}
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+            GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ => {
                 if let Some(entries) = measurement_records.get(&node) {
                     for &(qubit, record) in entries {
-                        if prop.contains_x(qubit) {
+                        let flips = if gate.gate_type == GateType::MX {
+                            prop.contains_z(qubit)
+                        } else {
+                            prop.contains_x(qubit)
+                        };
+                        if flips {
                             affected_measurements.insert(record);
                         }
-                        clear_qubit(&mut prop, qubit);
                     }
                 }
+                // Collapse, not reset: a non-destructive measurement absorbs
+                // only the Z component -- the X component keeps flipping later
+                // measurements on the same qubit. Only a discarded qubit
+                // (`MeasureFree`) clears fully.
+                for qubit in &gate.qubits {
+                    crate::fault_tolerance::propagator::cross_measurement(
+                        &mut prop,
+                        qubit.index(),
+                        gate.gate_type,
+                        Direction::Forward,
+                    );
+                }
             }
-            GateType::PZ | GateType::QAlloc => {
+            GateType::PX | GateType::PZ | GateType::QAlloc => {
                 for qubit in &gate.qubits {
                     clear_qubit(&mut prop, qubit.index());
                 }
@@ -553,5 +574,117 @@ fn clear_qubit(prop: &mut PauliProp, qubit: usize) {
     }
     if prop.contains_z(qubit) {
         prop.track_z(&[qubit]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pecos_quantum::Gate;
+
+    /// A `MeasureLeaked` must affect a propagating Pauli exactly as an `MZ`
+    /// does: both are non-destructive Z-collapses, executed identically by the
+    /// simulators.
+    #[test]
+    fn measure_leaked_affects_a_propagating_pauli_like_an_mz() {
+        fn later_measurement_flipped(leading: GateType) -> bool {
+            let mut dag = DagCircuit::new();
+            dag.pz(&[0]);
+            let start = dag.add_gate_auto_wire(Gate::simple(
+                GateType::TrackedPauliMeta,
+                vec![pecos_quantum::QubitId::from(0usize)],
+            ));
+            let leading_gate = match leading {
+                GateType::MeasureLeaked => Gate::measure_leaked(&[0usize]),
+                _ => Gate::mz(&[0usize]),
+            };
+            dag.add_gate_auto_wire(leading_gate);
+            let later = dag.add_gate_auto_wire(Gate::mz(&[0usize]));
+
+            let topo_order = dag.topological_order();
+            let start_pos = topo_order
+                .iter()
+                .position(|&n| n == start)
+                .expect("meta node is in the order");
+            let (records, _) = measurement_records_by_node(&dag).expect("mapping succeeds");
+            let affected = propagate_tracked_pauli_forward(
+                &dag,
+                &topo_order,
+                &records,
+                start_pos,
+                &PauliString::xs(&[0usize]),
+            );
+            // Only the *later* measurement matters: with a leading MZ the first
+            // one is legitimately flipped, so a bare "anything affected" check
+            // would compare different things.
+            let later_record = records
+                .get(&later)
+                .and_then(|entries| entries.first())
+                .map(|&(_, record)| record)
+                .expect("the later MZ holds a record");
+            affected.contains(&later_record)
+        }
+
+        assert_eq!(
+            later_measurement_flipped(GateType::MeasureLeaked),
+            later_measurement_flipped(GateType::MZ),
+            "the two non-destructive measurements must treat a Pauli identically"
+        );
+        // And the absolute: collapse projects, it does not reset, so the X
+        // survives the first measurement and flips the later one.
+        assert!(
+            later_measurement_flipped(GateType::MZ),
+            "an X before a non-destructive MZ keeps flipping later measurements"
+        );
+    }
+
+    /// `MeasureFree` does consume a record, so it must be numbered here.
+    #[test]
+    fn measure_free_claims_a_measurement_record() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let freed = dag.add_gate_auto_wire(Gate::mz_free(&[0usize]));
+        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        let (by_node, num_measurements) =
+            measurement_records_by_node(&dag).expect("mapping succeeds");
+
+        assert_eq!(
+            by_node.get(&freed).map(Vec::as_slice),
+            Some([(0usize, 0usize)].as_slice())
+        );
+        assert_eq!(
+            by_node.get(&measured).map(Vec::as_slice),
+            Some([(1usize, 1usize)].as_slice())
+        );
+        assert_eq!(num_measurements, 2);
+    }
+
+    /// `MeasureLeaked` must not consume a measurement record here.
+    ///
+    /// It used to, and because `DagCircuit` mints no id for it, it took the
+    /// positional branch and claimed record 0 -- the same record the first real
+    /// measurement holds by its `MeasId`. Two different measurements then mapped
+    /// to one record.
+    #[test]
+    fn measure_leaked_does_not_claim_a_measurement_record() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let leaked = dag.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
+        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        let (by_node, num_measurements) =
+            measurement_records_by_node(&dag).expect("mapping succeeds");
+
+        assert!(
+            !by_node.contains_key(&leaked),
+            "a leaked measurement holds no record"
+        );
+        assert_eq!(
+            by_node.get(&measured).map(Vec::as_slice),
+            Some([(1usize, 0usize)].as_slice()),
+            "the real measurement keeps record 0"
+        );
+        assert_eq!(num_measurements, 1);
     }
 }

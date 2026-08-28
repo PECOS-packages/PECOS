@@ -27,7 +27,7 @@ class TestSeleneBuildProcess:
         def simple_h() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Compile to HUGR
         hugr_bytes = compile_guppy_to_hugr(simple_h)
@@ -108,7 +108,7 @@ class TestSeleneBuildProcess:
             """Simple test function for QIS generation."""
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Compile to HUGR
         hugr_bytes = compile_guppy_to_hugr(test_qis_generation)
@@ -466,7 +466,7 @@ class TestSeleneBuildProcess:
             q2 = qubit()
             h(q1)
             cx(q1, q2)
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         # Compile to HUGR
         try:
@@ -597,7 +597,7 @@ class TestBuildOutputFormats:
         def simple_circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr_bytes = compile_guppy_to_hugr(simple_circuit)
         assert hugr_bytes is not None, "Should produce HUGR bytes"

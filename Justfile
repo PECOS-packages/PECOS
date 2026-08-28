@@ -20,6 +20,10 @@ default:
     @echo "  just security-check # Check dependency/security policy"
     @echo "  just doctor         # Diagnose environment problems"
     @echo ""
+    @echo "Recipe arguments are positional. Entries like 'build profile=\"debug\"' below are"
+    @echo "signatures (parameter name + default), so run 'just build release', not"
+    @echo "'just build profile=release' -- the latter passes the literal text 'profile=release'."
+    @echo ""
     @echo "All commands:"
     @just --list --list-heading ''
 
@@ -32,6 +36,12 @@ set shell := ["bash", "-cu"]
 
 # PECOS CLI - must be installed (run 'just install-cli' first)
 pecos := "cargo run --locked -p pecos-cli --"
+
+# uv version for lockfile generation, single-sourced from the CI pin.
+# Lockfiles must be written by this exact version: a different uv can
+# re-simplify dependency markers, polluting diffs and failing CI's
+# `uv lock --check`.
+uv-pin := `sed -n 's/^required-version = "==\(.*\)"$/\1/p' .github/uv.toml`
 
 # =============================================================================
 # Getting Started
@@ -165,6 +175,17 @@ doctor: _msvc-bootstrap
     fi
     echo ""
 
+    echo "Developer tooling:"
+    if RG_VER=$(rg --version 2>/dev/null | head -1); then
+        ok "ripgrep" "${RG_VER:-installed}"
+    else
+        fail "ripgrep" "not found (run: pecos install ripgrep)"
+        echo "       Manual install options: cargo install ripgrep --locked, brew install ripgrep,"
+        echo "       apt install ripgrep, or winget install BurntSushi.ripgrep"
+        echo "       https://github.com/BurntSushi/ripgrep#installation"
+    fi
+    echo ""
+
     if [ "$PROBLEMS" -eq 0 ]; then
         echo "No problems found."
     else
@@ -269,29 +290,31 @@ pytest *args:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{args}}" ]; then
-        uv run --frozen pytest {{args}}
+        uv run --frozen pytest -n auto {{args}}
     else
-        uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
-        uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-        uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
-        uv run --frozen pytest python/selene-plugins
+        uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+        uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+        uv run --frozen pytest -n auto python/selene-plugins
+        uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
     fi
 
 # Run the substantive PR Python lane after building the test-only native bindings it needs.
 [group('test')]
-python-ci-core profile="debug": (python-ci-build-test profile)
+python-ci-core profile="debug": (validate-profile "python-ci-core" profile) (python-ci-build-test profile)
     just pytest-ci-core
 
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
 [group('test')]
 pytest-ci-core:
-    uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
-    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-    uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
+    uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+    uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+    uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
 # Build and import the core Python packages on a target platform/interpreter.
 [group('test')]
-python-ci-smoke profile="debug": (python-ci-build profile)
+python-ci-smoke profile="debug": (validate-profile "python-ci-smoke" profile) (python-ci-build profile)
     uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
@@ -327,7 +350,7 @@ test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
 
 # Fix formatting and linting issues (or: just lint check)
 [group('lint')]
-lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-env python-workspace-check
+lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-env python-workspace-check rust-workspace-check julia-version-check
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$({{pecos}} env)"
@@ -411,6 +434,16 @@ check: _msvc-bootstrap ensure-local-build-env
 python-workspace-check:
     @uv run --frozen python scripts/check_python_workspace.py
 
+# Check Rust workspace crate versions
+[group('lint')]
+rust-workspace-check:
+    @uv run --frozen python scripts/check_rust_workspace.py
+
+# Check the Julia binding's version train
+[group('lint')]
+julia-version-check:
+    @uv run --frozen python scripts/check_julia_versions.py
+
 # Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]
 clippy: _msvc-bootstrap ensure-local-build-env
@@ -440,11 +473,20 @@ bench profile="release" features="" pattern="": _msvc-bootstrap (validate-bench-
     PROFILE="{{profile}}"
     FEATURES="{{features}}"
     PATTERN="{{pattern}}"
+    # A named-looking argument can land in any slot, so each slot rejects every
+    # parameter name -- otherwise 'just bench release pattern=foo' would reach
+    # cargo as '--features pattern=foo'.
     case "$FEATURES" in
         features=*)
             VALUE="${FEATURES#features=}"
             echo "Invalid features argument: $FEATURES"
-            echo "Just recipe parameters are positional. Use: just bench $PROFILE $VALUE"
+            echo "Just recipe parameters are positional. Use: just bench $PROFILE '$VALUE'"
+            exit 2
+            ;;
+        pattern=*)
+            VALUE="${FEATURES#pattern=}"
+            echo "Invalid features argument: $FEATURES"
+            echo "Just recipe parameters are positional. Use: just bench $PROFILE '' '$VALUE'"
             exit 2
             ;;
     esac
@@ -453,6 +495,12 @@ bench profile="release" features="" pattern="": _msvc-bootstrap (validate-bench-
             VALUE="${PATTERN#pattern=}"
             echo "Invalid pattern argument: $PATTERN"
             echo "Just recipe parameters are positional. Use: just bench $PROFILE '$FEATURES' '$VALUE'"
+            exit 2
+            ;;
+        features=*)
+            VALUE="${PATTERN#features=}"
+            echo "Invalid pattern argument: $PATTERN"
+            echo "Just recipe parameters are positional. Use: just bench $PROFILE '$VALUE'"
             exit 2
             ;;
     esac
@@ -594,7 +642,7 @@ docs-build:
 [group('docs')]
 docs-test:
     uv run --frozen python scripts/docs/generate_doc_tests.py
-    uv run --frozen pytest python/quantum-pecos/tests/docs/generated -v -k "not rust" -m "not slow"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests/docs/generated -v -k "not rust" -m "not slow"
 
 # =============================================================================
 # Deps Management (prefer `just setup` or `pecos install <target>`)
@@ -778,17 +826,17 @@ go-lint profile="release": (validate-profile "go-lint" profile) (go-build profil
 # Run performance tests with release build
 [group('test')]
 pytest-perf: build-release
-    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "performance" -v
+    uv run --frozen --group numpy-compat pytest -n 1 python/pecos-rslib/tests -m "performance" -v
 
 # Run tests for optional dependencies (only quantum-pecos carries the marker)
 [group('test')]
 pytest-dep:
-    uv run --frozen pytest python/quantum-pecos/tests -m "optional_dependency"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "optional_dependency"
 
 # Run the slower integration lane (excluded from the default fast lane)
 [group('test')]
 pytest-slow:
-    uv run --frozen pytest python/quantum-pecos/tests -m "slow and not optional_dependency"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "slow and not optional_dependency"
 
 
 
@@ -1134,11 +1182,39 @@ build-release: (build "release")
 [private]
 build-native: (build "native")
 
+# Move every Python distribution onto a new version, then relock and verify
+[group('setup')]
+bump-python-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --frozen python scripts/bump_python_version.py {{version}}
+    just lock
+    just python-workspace-check
+
+# Move the Julia binding onto a new version, then verify
+[group('setup')]
+bump-julia-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --frozen python scripts/bump_julia_version.py {{version}}
+    cargo update --offline --manifest-path Cargo.toml -p pecos-julia-ffi
+    just julia-version-check
+    just rust-workspace-check
+
+# Re-resolve uv lockfiles minimally (no dependency updates), e.g. after a version bump
+[group('setup')]
+lock:
+    uvx uv@{{uv-pin}} lock --project .
+    uvx uv@{{uv-pin}} lock --project exp/zlup
+    uvx uv@{{uv-pin}} lock --project exp/zluppy
+
 # Regenerate all lockfiles from scratch
 [group('setup')]
 updatelocks: _msvc-bootstrap
-    rm -f uv.lock Cargo.lock
-    uv lock --project .
+    rm -f uv.lock Cargo.lock exp/zlup/uv.lock exp/zluppy/uv.lock
+    uvx uv@{{uv-pin}} lock --project .
+    uvx uv@{{uv-pin}} lock --project exp/zlup
+    uvx uv@{{uv-pin}} lock --project exp/zluppy
     cargo generate-lockfile
 
 # Install CUDA Python packages (requires CUDA toolkit)

@@ -95,7 +95,7 @@ jobs:
         if: steps.detect.outputs.run == 'true'
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "0.11.14"
+          version-file: ".github/uv.toml"
           enable-cache: true
           save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -116,7 +116,7 @@ jobs:
 
       - name: Cache Rust
         if: steps.detect.outputs.run == 'true'
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
@@ -198,7 +198,7 @@ jobs:
         if: steps.detect.outputs.run == 'true'
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "0.11.14"
+          version-file: ".github/uv.toml"
           enable-cache: true
           save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -219,7 +219,7 @@ jobs:
 
       - name: Cache Rust
         if: steps.detect.outputs.run == 'true'
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin

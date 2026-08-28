@@ -20,7 +20,9 @@ use anyhow::{Result, anyhow, bail};
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_stab_tn::stab_mps::StabMps;
+use selene_core::error_model::BatchResult;
 use selene_core::export_simulator_plugin;
+use selene_core::operation::{BatchOperation, Operation};
 use selene_core::simulator::SimulatorInterface;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;
 use selene_core::utils::MetricValue;
@@ -39,11 +41,8 @@ impl StabMpsSimulator {
     }
 }
 
-impl SimulatorInterface for StabMpsSimulator {
-    fn exit(&mut self) -> Result<()> {
-        Ok(())
-    }
-
+#[allow(clippy::unnecessary_wraps, clippy::unused_self)]
+impl StabMpsSimulator {
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
         self.simulator = StabMps::builder(Self::to_usize(self.n_qubits))
             .seed(seed)
@@ -148,8 +147,8 @@ impl SimulatorInterface for StabMpsSimulator {
                 MetricValue::U64(self.simulator.max_bond_dim() as u64),
             ))),
             1 => Ok(Some((
-                "pragmatic_drift_count".to_string(),
-                MetricValue::U64(self.simulator.pragmatic_drift_count()),
+                "uncompensated_pre_reduction_count".to_string(),
+                MetricValue::U64(self.simulator.uncompensated_pre_reduction_count()),
             ))),
             _ => Ok(None),
         }
@@ -157,6 +156,72 @@ impl SimulatorInterface for StabMpsSimulator {
 
     fn dump_state(&mut self, _file: &std::path::Path, _qubits: &[u64]) -> Result<()> {
         Err(anyhow!("State dumping not supported for StabMps"))
+    }
+}
+
+impl SimulatorInterface for StabMpsSimulator {
+    fn exit(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn shot_start(&mut self, shot_id: u64, seed: u64) -> Result<()> {
+        Self::shot_start(self, shot_id, seed)
+    }
+
+    fn shot_end(&mut self) -> Result<()> {
+        Self::shot_end(self)
+    }
+
+    fn handle_operations(&mut self, operations: BatchOperation) -> Result<BatchResult> {
+        let mut results = BatchResult::default();
+        for operation in operations {
+            match operation {
+                Operation::RXYGate {
+                    qubit_id,
+                    theta,
+                    phi,
+                } => Self::rxy(self, qubit_id, theta, phi)?,
+                Operation::RZGate { qubit_id, theta } => Self::rz(self, qubit_id, theta)?,
+                Operation::RZZGate {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta,
+                } => {
+                    Self::rzz(self, qubit_id_1, qubit_id_2, theta)?;
+                }
+                Operation::Measure {
+                    qubit_id,
+                    result_id,
+                } => {
+                    results.set_bool_result(result_id, Self::measure(self, qubit_id)?);
+                }
+                Operation::MeasureLeaked {
+                    qubit_id,
+                    result_id,
+                } => {
+                    results.set_u64_result(result_id, u64::from(Self::measure(self, qubit_id)?));
+                }
+                Operation::Reset { qubit_id } => Self::reset(self, qubit_id)?,
+                Operation::RPPGate { .. } => {
+                    anyhow::bail!("RPP gates are not supported by StabMps")
+                }
+                Operation::Custom { .. } => {}
+                _ => anyhow::bail!("Unsupported Selene operation"),
+            }
+        }
+        Ok(results)
+    }
+
+    fn postselect(&mut self, qubit: u64, target_value: bool) -> Result<()> {
+        Self::postselect(self, qubit, target_value)
+    }
+
+    fn get_metric(&mut self, nth_metric: u8) -> Result<Option<(String, MetricValue)>> {
+        Self::get_metric(self, nth_metric)
+    }
+
+    fn dump_state(&mut self, file: &std::path::Path, qubits: &[u64]) -> Result<()> {
+        Self::dump_state(self, file, qubits)
     }
 }
 
@@ -196,7 +261,8 @@ export_simulator_plugin!(crate::StabMpsSimulatorFactory);
 
 #[cfg(test)]
 mod tests {
-    use super::StabMpsSimulatorFactory;
+    use super::{StabMpsSimulator, StabMpsSimulatorFactory};
+    use pecos_stab_tn::stab_mps::{MeasurementMode, StabMps};
     use selene_core::simulator::conformance_testing::run_basic_tests;
     use std::sync::Arc;
 
@@ -205,5 +271,22 @@ mod tests {
         let interface = Arc::new(StabMpsSimulatorFactory);
         let args: Vec<String> = vec![String::new()];
         run_basic_tests(interface, args);
+    }
+
+    #[test]
+    fn selene_keeps_for_qec_measurement_policy() {
+        let mut interface = StabMpsSimulator {
+            simulator: StabMps::builder(2).for_qec().build(),
+            n_qubits: 2,
+        };
+        assert_eq!(
+            interface.simulator.measurement_mode(),
+            MeasurementMode::Exact
+        );
+        interface.shot_start(0, 7).unwrap();
+        assert_eq!(
+            interface.simulator.measurement_mode(),
+            MeasurementMode::Exact
+        );
     }
 }

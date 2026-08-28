@@ -536,6 +536,33 @@ pub enum NoiseResponse {
     Multiple(Vec<NoiseResponse>),
 }
 
+/// A gate-execution capability required by a configured noise mechanism.
+///
+/// Noise channels use this metadata to let runners reject incompatible
+/// configurations before the first shot. The runtime gate dispatcher remains
+/// a defensive backstop for custom channels that do not declare a requirement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoiseGateRequirement {
+    /// Gate type the noise mechanism can inject.
+    pub gate_type: GateType,
+    /// Setter or constructor that enabled the mechanism.
+    pub configured_by: &'static str,
+    /// Concrete configuration change that makes the pairing valid.
+    pub fix: &'static str,
+}
+
+impl NoiseGateRequirement {
+    /// Create a gate-execution requirement for a noise mechanism.
+    #[must_use]
+    pub const fn new(gate_type: GateType, configured_by: &'static str, fix: &'static str) -> Self {
+        Self {
+            gate_type,
+            configured_by,
+            fix,
+        }
+    }
+}
+
 impl NoiseResponse {
     /// Create a response that injects a single gate.
     #[must_use]
@@ -659,6 +686,17 @@ pub trait NoiseChannel: Send + Sync {
     /// ensuring certain effects (like leakage checks) happen before others.
     fn priority(&self) -> i32 {
         0
+    }
+
+    /// Report injected gates whose runner support must be validated.
+    ///
+    /// The default is empty for channels that emit no gates or only gates every
+    /// target runner supports. Custom channels that can emit rotations or other
+    /// runner-dependent gates should override this so mismatches fail during
+    /// configuration; runtime dispatch will panic if an undeclared unsupported
+    /// gate is reached.
+    fn gate_requirements(&self) -> SmallVec<[NoiseGateRequirement; 2]> {
+        SmallVec::new()
     }
 
     /// Clone this channel into a boxed trait object.

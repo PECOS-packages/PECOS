@@ -1728,6 +1728,27 @@ fn u2q_to_matrix(
     &b0 * &b1 * &int * &a0 * &a1
 }
 
+/// The face gate `F`, the single source for both `F` and `Fdg`.
+///
+/// `F` applies `SX` then `SZ`, so as a matrix product it is `SZ * SX`, not
+/// `SX * SZ`. Getting that order backwards yields `F4` instead, which is a
+/// different (and separately implemented) face gate -- that was issue #379.
+/// With `SX = (1+i)/2 * [[1,-i],[-i,1]]` and `SZ = diag(1,i)`:
+///
+/// ```text
+/// F = (1+i)/2 * [[1, -i],
+///                [1,  i]]
+/// ```
+///
+/// conjugating `X -> Y -> Z -> X`. `Fdg` is this matrix's adjoint, which
+/// conjugates `X -> Z -> Y -> X`.
+fn face_gate_f() -> DMatrix<Complex64> {
+    let f = Complex64::new(0.5, 0.5);
+    let one = Complex64::new(1.0, 0.0);
+    let i = Complex64::new(0.0, 1.0);
+    DMatrix::from_row_slice(2, 2, &[f * one, f * -i, f * one, f * i])
+}
+
 /// Constructs a two-qubit Pauli tensor product matrix.
 fn two_qubit_pauli_matrix(
     p1: Pauli,
@@ -1814,21 +1835,11 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
             let gate = DMatrix::from_row_slice(2, 2, &[one, zero, zero, neg_i]);
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
-        GateType::F => {
-            // F = SX * SZ
-            // SX = (1+i)/2 * [[1,-i],[-i,1]], SZ = diag(1,i)
-            // F = (1+i)/2 * [[1,1],[-i,i]]
-            let f = Complex64::new(0.5, 0.5);
-            let gate = DMatrix::from_row_slice(2, 2, &[f * one, f * one, f * neg_i, f * i]);
-            embed_single_qubit_gate(&gate, qubits[0], num_qubits)
-        }
+        GateType::F => embed_single_qubit_gate(&face_gate_f(), qubits[0], num_qubits),
         GateType::Fdg => {
-            // Fdg = SZdg * SXdg
-            // SXdg = (1-i)/2 * [[1,i],[i,1]], SZdg = diag(1,-i)
-            // Fdg = (1-i)/2 * [[1,i],[i,-1]] ... let me compute properly:
-            // Fdg = F† = conjugate_transpose(F)
-            let f = Complex64::new(0.5, -0.5);
-            let gate = DMatrix::from_row_slice(2, 2, &[f * one, f * i, f * one, f * neg_i]);
+            // Derived as F's adjoint rather than hand-written, so the two can
+            // never disagree. Conjugates X->Z->Y->X.
+            let gate = face_gate_f().adjoint();
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         GateType::T => {
@@ -1934,9 +1945,12 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         }
 
         // Non-unitary operations
-        GateType::MZ
+        GateType::MX
+        | GateType::MZ
         | GateType::MeasureLeaked
         | GateType::MeasureFree
+        | GateType::MPZ
+        | GateType::PX
         | GateType::PZ
         | GateType::QAlloc
         | GateType::QFree => {

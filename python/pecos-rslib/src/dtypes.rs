@@ -270,8 +270,13 @@ impl DType {
     fn __call__<'py>(&self, py: Python<'py>, value: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         match self {
             DType::Bool => {
-                // Convert to bool and return as Python bool
-                let bool_val = value.extract::<bool>()?;
+                if let Ok(array) = value.extract::<PyRef<'_, crate::pecos_array::Array>>() {
+                    let bool_val = array.truth_value()?;
+                    return Ok(PyBool::new(py, bool_val).to_owned().into_any().unbind());
+                }
+
+                // Scalar-likes use normal Python truth-value testing.
+                let bool_val = value.is_truthy()?;
                 Ok(PyBool::new(py, bool_val).to_owned().into_any().unbind())
             }
             DType::F64 => {
@@ -467,6 +472,135 @@ impl DType {
         }
     }
 
+    /// Return the NumPy-style common dtype for comparing two numeric arrays.
+    ///
+    /// This follows NumPy's kind/width promotion rules for the dtypes supported
+    /// by `Array`. Custom Pauli dtypes deliberately have no numeric promotion.
+    pub(crate) fn comparison_dtype(self, other: Self) -> Option<Self> {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Kind {
+            Bool,
+            Signed,
+            Unsigned,
+            Float,
+            Complex,
+        }
+
+        fn kind_and_bits(dtype: DType) -> Option<(Kind, u8)> {
+            match dtype {
+                DType::Bool => Some((Kind::Bool, 1)),
+                DType::I8 => Some((Kind::Signed, 8)),
+                DType::I16 => Some((Kind::Signed, 16)),
+                DType::I32 => Some((Kind::Signed, 32)),
+                DType::I64 => Some((Kind::Signed, 64)),
+                DType::U8 => Some((Kind::Unsigned, 8)),
+                DType::U16 => Some((Kind::Unsigned, 16)),
+                DType::U32 => Some((Kind::Unsigned, 32)),
+                DType::U64 => Some((Kind::Unsigned, 64)),
+                DType::F32 => Some((Kind::Float, 32)),
+                DType::F64 => Some((Kind::Float, 64)),
+                // Complex widths track their real/imaginary component width.
+                DType::Complex64 => Some((Kind::Complex, 32)),
+                DType::Complex128 => Some((Kind::Complex, 64)),
+                DType::Pauli | DType::PauliString => None,
+            }
+        }
+
+        fn signed(bits: u8) -> DType {
+            match bits {
+                8 => DType::I8,
+                16 => DType::I16,
+                32 => DType::I32,
+                64 => DType::I64,
+                _ => unreachable!("unsupported signed integer width"),
+            }
+        }
+
+        fn unsigned(bits: u8) -> DType {
+            match bits {
+                8 => DType::U8,
+                16 => DType::U16,
+                32 => DType::U32,
+                64 => DType::U64,
+                _ => unreachable!("unsupported unsigned integer width"),
+            }
+        }
+
+        let (left_kind, left_bits) = kind_and_bits(self)?;
+        let (right_kind, right_bits) = kind_and_bits(other)?;
+
+        if left_kind == Kind::Bool {
+            return Some(other);
+        }
+        if right_kind == Kind::Bool {
+            return Some(self);
+        }
+
+        if left_kind == Kind::Complex || right_kind == Kind::Complex {
+            let component_bits = [(left_kind, left_bits), (right_kind, right_bits)]
+                .into_iter()
+                .map(|(kind, bits)| match kind {
+                    Kind::Bool => 1,
+                    Kind::Signed | Kind::Unsigned if bits <= 16 => 32,
+                    Kind::Signed | Kind::Unsigned => 64,
+                    Kind::Float | Kind::Complex => bits,
+                })
+                .max()
+                .expect("two comparison dtypes");
+            return Some(if component_bits <= 32 {
+                DType::Complex64
+            } else {
+                DType::Complex128
+            });
+        }
+
+        if left_kind == Kind::Float || right_kind == Kind::Float {
+            let float_bits = [(left_kind, left_bits), (right_kind, right_bits)]
+                .into_iter()
+                .map(|(kind, bits)| match kind {
+                    Kind::Bool => 1,
+                    Kind::Signed | Kind::Unsigned if bits <= 16 => 32,
+                    Kind::Signed | Kind::Unsigned => 64,
+                    Kind::Float => bits,
+                    Kind::Complex => unreachable!("complex promotion handled above"),
+                })
+                .max()
+                .expect("two comparison dtypes");
+            return Some(if float_bits <= 32 {
+                DType::F32
+            } else {
+                DType::F64
+            });
+        }
+
+        if left_kind == right_kind {
+            let bits = left_bits.max(right_bits);
+            return Some(match left_kind {
+                Kind::Signed => signed(bits),
+                Kind::Unsigned => unsigned(bits),
+                Kind::Bool | Kind::Float | Kind::Complex => {
+                    unreachable!("non-integer promotion handled above")
+                }
+            });
+        }
+
+        let (signed_bits, unsigned_bits) = if left_kind == Kind::Signed {
+            (left_bits, right_bits)
+        } else {
+            (right_bits, left_bits)
+        };
+        if signed_bits > unsigned_bits {
+            return Some(signed(signed_bits));
+        }
+        Some(match unsigned_bits {
+            8 => DType::I16,
+            16 => DType::I32,
+            32 => DType::I64,
+            64 => DType::F64,
+            _ => unreachable!("unsupported unsigned integer width"),
+        })
+    }
+
     /// Parse from a string (supports both Rust-style and NumPy-style names)
     pub fn from_str(s: &str) -> PyResult<Self> {
         match s.to_lowercase().as_str() {
@@ -492,7 +626,11 @@ impl DType {
             "paulistring" => Ok(DType::PauliString),
             // Common aliases
             "double" => Ok(DType::F64),
-            "float" => Ok(DType::F32),
+            // Python's builtin `float` is 64-bit, and the `dtypes.float` member is
+            // registered as F64; mapping the *name* to F32 here made
+            // `asarray(x, dtype=float)` and `dtype="float"` silently halve precision
+            // while `dtype=dtypes.float` did not. See #483.
+            "float" => Ok(DType::F64),
             "long" | "int" => Ok(DType::I64),
             _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "Unknown dtype: {s}"
@@ -4233,6 +4371,7 @@ pub fn register_dtypes_module(parent_module: &Bound<'_, PyModule>) -> PyResult<(
 
     // Create singleton instances for each dtype (Rust-based names)
     dtypes.add("bool", DType::Bool)?;
+    dtypes.add("bool_", DType::Bool)?;
     // Signed integers
     dtypes.add("i8", DType::I8)?;
     dtypes.add("i16", DType::I16)?;

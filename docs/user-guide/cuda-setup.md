@@ -27,6 +27,29 @@ Both approaches require:
 - CUDA Toolkit (system-level installation)
 - cuQuantum SDK (for Rust bindings) or Python packages (for Python bindings)
 
+## CUDA Simulators and Multiprocessing
+
+When a parent process has initialized CUDA, its children must use the multiprocessing
+`spawn` start method rather than `fork`. A forked child cannot use the parent's CUDA
+context because CUDA contexts do not survive fork. Depending on the backend, this
+fails with `cudaErrorInitializationError`, `CUDA_ERROR_NOT_INITIALIZED`, or a
+cuQuantum `Not initialized` error from a cuStateVec, cuStabilizer, cuTensorNet, or
+cuDensityMat handle.
+
+PECOS's built-in multiprocessing engine already uses `spawn`. Host programs that
+embed PECOS in their own process pools must also select `spawn` if the parent may
+initialize CUDA before creating workers. The Rust cuQuantum bindings load their CUDA
+libraries with local symbol visibility so they do not disturb other CUDA-using
+libraries in the same process. Availability checks only load those libraries; they
+do not create CUDA handles or contexts or initialize the CUDA driver.
+
+PECOS records when its CUDA simulator wrappers begin CUDA initialization. If one of
+those simulators is later constructed in a child forked from that process, PECOS
+fails fast with the spawn guidance above. PECOS cannot detect CUDA initialization by
+another library in the parent; those cases still surface the guided error from the
+CUDA or cuQuantum layer. When a marked parent forks, PECOS also emits a one-time
+`RuntimeWarning` with the same guidance before the fork.
+
 ## System Requirements
 
 ### Hardware Requirements
@@ -42,7 +65,7 @@ Both approaches require:
 
 - **Operating System**: Linux (Ubuntu 20.04+, Pop!_OS, or other distributions)
   - Windows users: Use WSL2 (Windows Subsystem for Linux)
-- **Python**: 3.10, 3.11, or 3.12
+- **Python**: 3.12, 3.13, or 3.14
 - **CUDA Toolkit**: Version 13.x (recommended) or 12.x
 
 ### Supported CUDA Versions
@@ -305,7 +328,7 @@ If you prefer using Conda instead of uv/pip, NVIDIA officially recommends it:
 
 ```bash
 # Create conda environment
-conda create -n pecos-cuda python=3.11
+conda create -n pecos-cuda python=3.12
 conda activate pecos-cuda
 
 # Install cuQuantum via conda-forge

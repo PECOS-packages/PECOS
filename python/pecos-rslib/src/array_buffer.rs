@@ -492,14 +492,14 @@ impl_complex_array_view!(Complex32ArrayView, Complex32, "<c8");
 // Uses Python's builtin getattr to work around PyO3's .getattr() not handling
 // data descriptors correctly in abi3 mode
 macro_rules! impl_extract_array {
-    ($fn_name:ident, $dtype:ty) => {
+    ($fn_name:ident, $dtype:ty, $swap_non_native:expr) => {
         /// Extract array from Python array-like object using `__array_interface__`
         #[allow(clippy::items_after_statements)] // use statement in unsafe block for clarity
         #[allow(clippy::cast_possible_wrap)] // Intentional casts for NumPy stride calculations
         #[allow(clippy::cast_sign_loss)] // Intentional casts for NumPy stride calculations
         #[allow(clippy::cast_precision_loss)] // Intentional u64/i64 to f64 for NumPy compatibility
         pub fn $fn_name(obj: &Bound<'_, PyAny>) -> PyResult<ArrayD<$dtype>> {
-            use ndarray::{ArrayView, IxDyn};
+            use ndarray::IxDyn;
             use pyo3::types::{PyDict, PyList};
 
             let py = obj.py();
@@ -599,12 +599,11 @@ macro_rules! impl_extract_array {
                 strides.reverse();
                 strides
             };
-
-            // Convert byte strides to element strides (as usize for ndarray)
-            let elem_strides: Vec<usize> = byte_strides
-                .iter()
-                .map(|&s| (s / std::mem::size_of::<$dtype>() as isize) as usize)
-                .collect();
+            if byte_strides.len() != shape.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "array strides must match the number of dimensions",
+                ));
+            }
 
             // Extract data pointer
             let data_tuple = interface.get_item("data")?.ok_or_else(|| {
@@ -619,32 +618,83 @@ macro_rules! impl_extract_array {
                 return Ok(ArrayD::default(IxDyn(&shape)));
             }
 
-            // Create ArrayView from raw parts
-            // SAFETY: __array_interface__ protocol guarantees data validity
-            // We immediately convert to owned array to avoid lifetime issues
-            use ndarray::ShapeBuilder;
-            unsafe {
-                let view =
-                    ArrayView::from_shape_ptr(IxDyn(&shape).strides(IxDyn(&elem_strides)), ptr);
-                Ok(view.to_owned())
+            let len = shape.iter().try_fold(1_usize, |len, &dimension| {
+                len.checked_mul(dimension).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err("array shape is too large")
+                })
+            })?;
+            let non_native_byte_order = (cfg!(target_endian = "little")
+                && typestr_value.starts_with('>'))
+                || (cfg!(target_endian = "big") && typestr_value.starts_with('<'));
+            let mut values = Vec::with_capacity(len);
+
+            for linear_index in 0..len {
+                let mut remainder = linear_index;
+                let mut byte_offset = 0_isize;
+                for (&dimension, &stride) in shape.iter().zip(&byte_strides).rev() {
+                    let coordinate = remainder % dimension;
+                    remainder /= dimension;
+                    let coordinate = isize::try_from(coordinate).map_err(|_| {
+                        pyo3::exceptions::PyValueError::new_err("array index is too large")
+                    })?;
+                    byte_offset = byte_offset
+                        .checked_add(stride.checked_mul(coordinate).ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err("array stride is too large")
+                        })?)
+                        .ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err("array offset is too large")
+                        })?;
+                }
+
+                // SAFETY: __array_interface__ guarantees that the pointer, shape, and strides
+                // describe readable elements. Reading each element into an owned Vec also
+                // handles negative strides without constructing an invalid ndarray view.
+                let value = unsafe {
+                    std::ptr::read_unaligned(ptr.cast::<u8>().offset(byte_offset).cast::<$dtype>())
+                };
+                values.push(if non_native_byte_order {
+                    ($swap_non_native)(value)
+                } else {
+                    value
+                });
             }
+
+            ArrayD::from_shape_vec(IxDyn(&shape), values).map_err(|error| {
+                pyo3::exceptions::PyValueError::new_err(format!("Shape error: {error}"))
+            })
         }
     };
 }
 
-impl_extract_array!(extract_f64_array, f64);
-impl_extract_array!(extract_f32_array, f32);
-impl_extract_array!(extract_i64_array, i64);
-impl_extract_array!(extract_i32_array, i32);
-impl_extract_array!(extract_i16_array, i16);
-impl_extract_array!(extract_i8_array, i8);
-impl_extract_array!(extract_u64_array, u64);
-impl_extract_array!(extract_u32_array, u32);
-impl_extract_array!(extract_u16_array, u16);
-impl_extract_array!(extract_u8_array, u8);
-impl_extract_array!(extract_bool_array, bool);
-impl_extract_array!(extract_complex64_array, Complex64);
-impl_extract_array!(extract_complex32_array, Complex32);
+fn swap_f64_bytes(value: f64) -> f64 {
+    f64::from_bits(value.to_bits().swap_bytes())
+}
+
+fn swap_f32_bytes(value: f32) -> f32 {
+    f32::from_bits(value.to_bits().swap_bytes())
+}
+
+fn swap_complex64_bytes(value: Complex64) -> Complex64 {
+    Complex64::new(swap_f64_bytes(value.re), swap_f64_bytes(value.im))
+}
+
+fn swap_complex32_bytes(value: Complex32) -> Complex32 {
+    Complex32::new(swap_f32_bytes(value.re), swap_f32_bytes(value.im))
+}
+
+impl_extract_array!(extract_f64_array, f64, swap_f64_bytes);
+impl_extract_array!(extract_f32_array, f32, swap_f32_bytes);
+impl_extract_array!(extract_i64_array, i64, i64::swap_bytes);
+impl_extract_array!(extract_i32_array, i32, i32::swap_bytes);
+impl_extract_array!(extract_i16_array, i16, i16::swap_bytes);
+impl_extract_array!(extract_i8_array, i8, |value| value);
+impl_extract_array!(extract_u64_array, u64, u64::swap_bytes);
+impl_extract_array!(extract_u32_array, u32, u32::swap_bytes);
+impl_extract_array!(extract_u16_array, u16, u16::swap_bytes);
+impl_extract_array!(extract_u8_array, u8, |value| value);
+impl_extract_array!(extract_bool_array, bool, |value| value);
+impl_extract_array!(extract_complex64_array, Complex64, swap_complex64_bytes);
+impl_extract_array!(extract_complex32_array, Complex32, swap_complex32_bytes);
 
 // ============================================================================
 // Smart conversion helpers for numeric functions

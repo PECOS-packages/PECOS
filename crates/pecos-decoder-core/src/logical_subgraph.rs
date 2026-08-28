@@ -155,10 +155,9 @@ pub struct LogicalSubgraph {
 ///
 /// # Errors
 ///
-/// Returns an error if the DEM is malformed, if a detector used in an error
+/// Returns an error if the DEM is malformed or if a detector used in an error
 /// mechanism has coordinates that match no stabilizer position in
-/// `stab_coords`, or if the DEM declares more than 64 observables (the u64
-/// observable mask cannot hold more).
+/// `stab_coords`.
 ///
 /// Extra time padding around each boundary edge.
 /// `None` = exact boundary edge times only (default, matches lomatching).
@@ -515,8 +514,7 @@ impl LogicalSubgraphDecoder {
     ///
     /// # Errors
     ///
-    /// Returns an error if the DEM is malformed, the membership has more than 64
-    /// entries, or the factory fails.
+    /// Returns an error if the DEM is malformed or the factory fails.
     pub fn from_membership<F>(
         dem: &str,
         membership: &[Vec<usize>],
@@ -627,8 +625,8 @@ impl LogicalSubgraphDecoder {
             // Batch decode this subgraph.
             let sub_masks = dec.decode_batch_to_observables(&flat, num_shots, n)?;
 
-            for (shot_idx, &sub_obs) in sub_masks.iter().enumerate() {
-                if sub_obs & 1 != 0 {
+            for (shot_idx, sub_obs) in sub_masks.iter().enumerate() {
+                if sub_obs.get(0) {
                     shot_obs[shot_idx].set(sg.observable_idx);
                 }
             }

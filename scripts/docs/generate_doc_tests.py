@@ -332,6 +332,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
 
     blocks = []
     preamble_parts: list[str] = []
+    chain_parts: list[str] = []
     setup_code = ""
     block_number = 0
 
@@ -378,19 +379,29 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
         # Regular visible block
         block_number += 1
 
+        # Each generated test runs in a fresh interpreter, so a continuation
+        # block carries state by re-executing the visible blocks before it. A
+        # block without the marker starts a new chain.
+        if attrs["is_continuation"] and chain_parts:
+            body = "\n\n".join([*chain_parts, cleaned_code])
+        else:
+            body = cleaned_code
+            chain_parts = []
+        chain_parts.append(cleaned_code)
+
         # Build full code with preamble
         if preamble_parts:
             preamble = "\n\n".join(preamble_parts)
             # Check for placeholder pattern: // CODE or /* CODE */
             if "// CODE" in preamble:
-                full_code = preamble.replace("// CODE", cleaned_code)
+                full_code = preamble.replace("// CODE", body)
             elif "/* CODE */" in preamble:
-                full_code = preamble.replace("/* CODE */", cleaned_code)
+                full_code = preamble.replace("/* CODE */", body)
             else:
                 # Default: append code after preamble
-                full_code = preamble + "\n\n" + cleaned_code
+                full_code = preamble + "\n\n" + body
         else:
-            full_code = cleaned_code
+            full_code = body
 
         # Add setup code if present
         if setup_code:
@@ -532,7 +543,12 @@ def _generate_guppy_body(block: CodeBlock) -> list[str]:
         '"""',
         "",
         "    # Guppy needs file-based execution for inspect.getsourcelines()",
-        "    # Run in temp directory to avoid polluting project root with generated files",
+        "    # Script lives in a temp dir (no project-root pollution), but runs with",
+        "    # cwd at the project root: Selene/QIS native-library discovery is",
+        "    # cwd-relative (target/{debug,release}/...).",
+        "    project_root = Path(__file__).resolve().parent",
+        '    while not (project_root / "mkdocs.yml").exists() and project_root != project_root.parent:',
+        "        project_root = project_root.parent",
         "    with tempfile.TemporaryDirectory() as tmpdir:",
         '        temp_path = Path(tmpdir) / "test_code.py"',
         "        temp_path.write_text(code)",
@@ -543,7 +559,7 @@ def _generate_guppy_body(block: CodeBlock) -> list[str]:
         "            text=True,",
         "            timeout=60,",
         "            check=False,",
-        "            cwd=tmpdir,",
+        "            cwd=project_root,",
         "        )",
         "        if result.returncode != 0:",
         '            pytest.fail(f"Guppy code failed:\\n{result.stderr}")',
@@ -571,6 +587,11 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
             '"""',
             f'    expected_pattern = r"{escaped_pattern}"',
             "",
+            "    # Script in temp dir, cwd at project root (cwd-relative Selene/QIS",
+            "    # native-library discovery).",
+            "    project_root = Path(__file__).resolve().parent",
+            '    while not (project_root / "mkdocs.yml").exists() and project_root != project_root.parent:',
+            "        project_root = project_root.parent",
             "    with tempfile.TemporaryDirectory() as tmpdir:",
             '        temp_path = Path(tmpdir) / "test_code.py"',
             "        temp_path.write_text(code)",
@@ -581,7 +602,7 @@ def _generate_expect_error_body(block: CodeBlock) -> list[str]:
             "            text=True,",
             "            timeout=60,",
             "            check=False,",
-            "            cwd=tmpdir,",
+            "            cwd=project_root,",
             "        )",
             '        assert result.returncode != 0, "Expected code to fail but it succeeded"',
             "        assert re.search(expected_pattern, result.stderr), \\",
@@ -749,6 +770,11 @@ def _generate_expect_output_body(block: CodeBlock) -> list[str]:
             '"""',
             f'    expected_output = "{escaped_output}"',
             "",
+            "    # Script in temp dir, cwd at project root (cwd-relative Selene/QIS",
+            "    # native-library discovery).",
+            "    project_root = Path(__file__).resolve().parent",
+            '    while not (project_root / "mkdocs.yml").exists() and project_root != project_root.parent:',
+            "        project_root = project_root.parent",
             "    with tempfile.TemporaryDirectory() as tmpdir:",
             '        temp_path = Path(tmpdir) / "test_code.py"',
             "        temp_path.write_text(code)",
@@ -759,7 +785,7 @@ def _generate_expect_output_body(block: CodeBlock) -> list[str]:
             "            text=True,",
             "            timeout=60,",
             "            check=False,",
-            "            cwd=tmpdir,",
+            "            cwd=project_root,",
             "        )",
             "        if result.returncode != 0:",
             '            pytest.fail(f"Code failed:\\n{result.stderr}")',

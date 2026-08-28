@@ -359,6 +359,15 @@ impl fmt::Display for PyMatchingDecoder {
 }
 
 impl PyMatchingDecoder {
+    fn validate_error_probability(error_probability: f64) -> Result<()> {
+        if !(0.0..1.0).contains(&error_probability) || error_probability == 0.0 {
+            return Err(PyMatchingError::Configuration(
+                "error_probability must be finite and strictly between 0 and 1".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Normalize edge parameters to their default values
     fn normalize_edge_params(
         weight: Option<f64>,
@@ -533,6 +542,36 @@ impl PyMatchingDecoder {
         };
 
         Ok(Self { graph, config })
+    }
+
+    /// Create a decoder from a DEM and override every graph edge's error probability.
+    ///
+    /// The graph structure is preserved. Each matching weight is recomputed
+    /// from the supplied probability, matching the builder's probability semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DEM is invalid, the probability is outside
+    /// `(0, 1)`, or an edge cannot be updated.
+    pub fn from_dem_with_error_probability(
+        dem_string: &str,
+        error_probability: f64,
+    ) -> Result<Self> {
+        let mut decoder = Self::from_dem(dem_string)?;
+        decoder.set_all_error_probabilities(error_probability)?;
+        Ok(decoder)
+    }
+
+    /// Replace the error probability and derived matching weight on every edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `error_probability` is outside `(0, 1)` or an edge
+    /// cannot be updated.
+    pub fn set_all_error_probabilities(&mut self, error_probability: f64) -> Result<()> {
+        Self::validate_error_probability(error_probability)?;
+        ffi::pymatching_set_all_error_probabilities(self.graph.pin_mut(), error_probability);
+        Ok(())
     }
 
     /// Create a decoder from a DEM string with correlation support
@@ -1771,6 +1810,37 @@ impl DecodingResultTrait for DecodingResult {
 #[cfg(test)]
 mod config_tests {
     use super::*;
+
+    #[test]
+    fn test_dem_error_probability_override_reaches_every_edge() {
+        let dem =
+            "error(0.1) D0\nerror(0.2) D1 L0\ndetector D0\ndetector D1\nlogical_observable L0";
+        let baseline = PyMatchingDecoder::from_dem(dem).unwrap().get_all_edges();
+        let overridden = PyMatchingDecoder::from_dem_with_error_probability(dem, 0.35)
+            .unwrap()
+            .get_all_edges();
+
+        assert_eq!(baseline.len(), overridden.len());
+        let expected_weight = ((1.0_f64 - 0.35) / 0.35).ln();
+        for after in &overridden {
+            assert!((after.weight - expected_weight).abs() < f64::EPSILON);
+            assert!((after.error_probability - 0.35).abs() < f64::EPSILON);
+        }
+
+        let error = PyMatchingDecoder::from_dem_with_error_probability(dem, f64::NAN)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("error_probability"));
+
+        for endpoint in [0.0, 1.0] {
+            let error = PyMatchingDecoder::from_dem_with_error_probability(dem, endpoint)
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(error.contains("error_probability"));
+        }
+    }
 
     #[test]
     fn test_check_matrix_config_api() {

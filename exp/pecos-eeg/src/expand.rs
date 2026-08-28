@@ -14,6 +14,76 @@ use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
 use pecos_core::{Gate, GateAngles, GateParams, QubitId};
 
 /// Result of circuit expansion.
+/// Why an EEG DEM could not be built from the circuit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EegBuildError {
+    /// The circuit contains a measurement type the EEG expansion does not
+    /// handle. Expansion is `MZ`-only; any other measurement would silently
+    /// vanish from the deferred-measurement circuit, taking its record with it.
+    UnsupportedMeasurement {
+        /// The offending gate type.
+        gate_type: pecos_core::gate_type::GateType,
+    },
+    /// An annotation references a measurement record the circuit does not have.
+    UnresolvableAnnotationRecord {
+        /// The out-of-range record index.
+        record_idx: usize,
+        /// How many measurement records the expansion produced.
+        num_measurements: usize,
+    },
+    /// Two measurements carry the same id, so id resolution would be
+    /// ambiguous. `TickCircuit` does not enforce uniqueness; this expansion
+    /// must, because it resolves annotations by id.
+    DuplicateMeasId {
+        /// The id held by more than one measurement.
+        meas_id: pecos_core::MeasId,
+    },
+    /// An annotation references a measurement id the expansion never recorded.
+    UnresolvableAnnotationId {
+        /// The unknown id.
+        meas_id: pecos_core::MeasId,
+        /// How many measurement records the expansion produced.
+        num_measurements: usize,
+    },
+}
+
+impl std::fmt::Display for EegBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedMeasurement { gate_type } => write!(
+                f,
+                "circuit contains {gate_type:?}, which the MZ-only EEG expansion cannot \
+                 represent; its measurement record would silently vanish"
+            ),
+            Self::UnresolvableAnnotationRecord {
+                record_idx,
+                num_measurements,
+            } => write!(
+                f,
+                "annotation references measurement record {record_idx}, but the expansion \
+                 produced only {num_measurements}"
+            ),
+            Self::DuplicateMeasId { meas_id } => write!(
+                f,
+                "two measurements carry MeasId({}); annotation resolution by id \
+                 requires each measurement to hold a unique id",
+                meas_id.index()
+            ),
+            Self::UnresolvableAnnotationId {
+                meas_id,
+                num_measurements,
+            } => write!(
+                f,
+                "annotation references MeasId({}), which the expansion never recorded \
+                 ({num_measurements} measurement records exist)",
+                meas_id.index()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EegBuildError {}
+
 pub struct ExpandedCircuit {
     /// The expanded gate sequence (purely Clifford, no mid-circuit measurements).
     pub gates: Vec<Gate>,
@@ -29,6 +99,21 @@ pub struct ExpandedCircuit {
     /// original_measured_qubit[k] = the qubit in the original circuit that
     /// the k-th MZ gate acted on.
     pub original_measured_qubit: Vec<usize>,
+    /// Expansion rank of each stamped measurement id.
+    ///
+    /// `meas_id_rank[&id] = k` means the measurement holding `id` is the k-th
+    /// one this expansion recorded -- an index into `measurement_qubit` and
+    /// `original_measured_qubit`.
+    ///
+    /// `MZ`, `MeasureFree`, and `MPZ` all appear -- `MeasureFree` lowers to `MZ` in
+    /// this expansion, since the free has no stabilizer effect and its record
+    /// is real. `MeasureLeaked` is refused at the entrance, so an absent id
+    /// here means unknown. Id-less legacy circuits yield an empty map.
+    ///
+    /// This is eeg's private ordinal. It is expansion order, not id-rank order
+    /// and not any other component's ordering; resolve ids through this map
+    /// rather than assuming an id's numeric value indexes anything.
+    pub meas_id_rank: std::collections::BTreeMap<pecos_core::MeasId, usize>,
 }
 
 /// Expand a circuit by deferring mid-circuit measurements.
@@ -40,7 +125,26 @@ pub struct ExpandedCircuit {
 /// All auxiliary qubits are measured at the end via MZ.
 /// Final data measurements (MZ not followed by PZ) are also deferred
 /// to auxiliary qubits for uniformity.
-pub fn expand_circuit(gates: &[Gate]) -> ExpandedCircuit {
+/// # Errors
+///
+/// Returns [`EegBuildError::UnsupportedMeasurement`] when the circuit contains
+/// a measurement type this MZ-only expansion cannot represent -- passing it
+/// through would silently delete its measurement record. This is THE checked
+/// entrance: every consumer (builder, simulator, bindings) routes through it,
+/// so the check cannot drift across copies.
+pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> {
+    for gate in gates {
+        // `MeasureFree` is record-bearing and lowers to `MZ` below -- the
+        // "free" is resource bookkeeping with no stabilizer effect, and a
+        // reused qubit reappears behind an explicit prep the expansion keeps.
+        // Only `MeasureLeaked` is refused: it consumes no record, so this
+        // record-aligned expansion cannot represent it.
+        if gate.gate_type == GateType::MeasureLeaked {
+            return Err(EegBuildError::UnsupportedMeasurement {
+                gate_type: gate.gate_type,
+            });
+        }
+    }
     // First pass: find the max qubit index to know where auxiliaries start
     let max_qubit = gates
         .iter()
@@ -52,6 +156,7 @@ pub fn expand_circuit(gates: &[Gate]) -> ExpandedCircuit {
     let mut next_aux = num_original;
 
     let mut expanded = Vec::with_capacity(gates.len() * 2);
+    let mut meas_id_rank = std::collections::BTreeMap::new();
     let mut measurement_qubit = Vec::new();
     let mut original_measured_qubit = Vec::new();
 
@@ -87,10 +192,17 @@ pub fn expand_circuit(gates: &[Gate]) -> ExpandedCircuit {
         let gate = &gates[i];
 
         match gate.gate_type {
-            GateType::MZ => {
+            GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                 // For each qubit in this MZ gate, create CX to auxiliary
-                for q in &gate.qubits {
+                for (position, q) in gate.qubits.iter().enumerate() {
                     let q_idx = q.index();
+                    if let Some(&id) = gate.meas_ids.get(position)
+                        && meas_id_rank.insert(id, measurement_qubit.len()).is_some()
+                    {
+                        // Last-wins would silently rebind every annotation
+                        // naming this id to the later measurement.
+                        return Err(EegBuildError::DuplicateMeasId { meas_id: id });
+                    }
                     let aux = next_aux;
                     next_aux += 1;
 
@@ -111,7 +223,9 @@ pub fn expand_circuit(gates: &[Gate]) -> ExpandedCircuit {
                     // Data readout MZ does NOT get PZ: data qubit Z components
                     // must persist for correct generator labels (Z errors are
                     // invisible to Z-basis readout and must not be cleared).
-                    if ancilla_qubits.contains(&q_idx) {
+                    // MPZ carries its own reset, so the projection PZ is
+                    // unconditional for it.
+                    if ancilla_qubits.contains(&q_idx) || gate.gate_type == GateType::MPZ {
                         expanded.push(make_gate(GateType::PZ, &[q_idx]));
                     }
 
@@ -138,13 +252,14 @@ pub fn expand_circuit(gates: &[Gate]) -> ExpandedCircuit {
         expanded.push(make_gate(GateType::MZ, &[aux]));
     }
 
-    ExpandedCircuit {
+    Ok(ExpandedCircuit {
         gates: expanded,
         num_qubits: next_aux,
         num_original_qubits: num_original,
         measurement_qubit,
         original_measured_qubit,
-    }
+        meas_id_rank,
+    })
 }
 
 impl ExpandedCircuit {
@@ -263,8 +378,84 @@ pub fn make_gate(gt: GateType, qubits: &[usize]) -> Gate {
     }
 }
 
+impl ExpandedCircuit {
+    /// The auxiliary qubit whose final Z-measurement carries `record_idx`.
+    ///
+    /// The one implementation of record resolution: an out-of-range record is
+    /// an error naming both sides of the mismatch, never a silent skip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EegBuildError::UnresolvableAnnotationRecord`] when the record
+    /// does not exist.
+    pub fn aux_qubit_for_record(&self, record_idx: usize) -> Result<usize, EegBuildError> {
+        self.measurement_qubit.get(record_idx).copied().ok_or(
+            EegBuildError::UnresolvableAnnotationRecord {
+                record_idx,
+                num_measurements: self.measurement_qubit.len(),
+            },
+        )
+    }
+
+    /// The auxiliary qubit whose final Z-measurement carries the measurement
+    /// named by `meas_id`.
+    ///
+    /// Resolution goes through `meas_id_rank`, so it is correct for external
+    /// (non-positional) ids -- an id's numeric value is never used as an index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EegBuildError::UnresolvableAnnotationId`] when the expansion
+    /// never recorded the id.
+    pub fn aux_qubit_for_id(&self, meas_id: pecos_core::MeasId) -> Result<usize, EegBuildError> {
+        let rank = self.meas_id_rank.get(&meas_id).copied().ok_or(
+            EegBuildError::UnresolvableAnnotationId {
+                meas_id,
+                num_measurements: self.measurement_qubit.len(),
+            },
+        )?;
+        self.aux_qubit_for_record(rank)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// `meas_id_rank` records expansion order, keyed by the id the gate holds.
+    ///
+    /// De-aliased: the ids arrive in descending order (9 before 3), so
+    /// expansion rank disagrees with numeric id order and with the id values
+    /// themselves -- ranking by anything except the walk fails.
+    #[test]
+    fn meas_id_rank_follows_expansion_order_not_id_order() {
+        use pecos_core::MeasId;
+        // One BATCHED MZ: two measurements inside a single gate, ids scrambled
+        // (9 then 3) so rank disagrees with id order, and id values (9, 3)
+        // coincide with no gate index (0..=1) or rank (0..=1). Ranking by the
+        // first id, by id value, or by anything except the per-position walk
+        // fails.
+        let mut batch = super::make_gate(super::GateType::MZ, &[0, 1]);
+        batch.meas_ids.push(MeasId::from_raw(9));
+        batch.meas_ids.push(MeasId::from_raw(3));
+        let gates = vec![
+            super::make_gate(super::GateType::PZ, &[0]),
+            super::make_gate(super::GateType::PZ, &[1]),
+            batch,
+        ];
+
+        let expanded = super::expand_circuit(&gates).expect("MZ-only circuit");
+        assert_eq!(
+            expanded.meas_id_rank.get(&MeasId::from_raw(9)),
+            Some(&0),
+            "first batch member is expansion rank 0"
+        );
+        assert_eq!(
+            expanded.meas_id_rank.get(&MeasId::from_raw(3)),
+            Some(&1),
+            "second batch member is rank 1 -- per-position, not first-id"
+        );
+        assert_eq!(expanded.meas_id_rank.len(), 2);
+    }
+
     use super::*;
 
     fn gate(gt: GateType, qubits: &[usize]) -> Gate {
@@ -284,7 +475,7 @@ mod tests {
             gate(GateType::MZ, &[0]), // → CX(0, aux1)
         ];
 
-        let expanded = expand_circuit(&gates);
+        let expanded = expand_circuit(&gates).expect("MZ-only circuit");
 
         // Should have 3 qubits: original 0, aux 1, aux 2
         assert_eq!(expanded.num_original_qubits, 1);
@@ -316,7 +507,7 @@ mod tests {
             gate(GateType::CX, &[0, 1]),
         ];
 
-        let expanded = expand_circuit(&gates);
+        let expanded = expand_circuit(&gates).expect("MZ-only circuit");
 
         // No measurements → no expansion needed
         assert_eq!(expanded.num_qubits, 2);
@@ -335,7 +526,7 @@ mod tests {
             gate(GateType::MZ, &[1]), // meas record 1 → aux 3
         ];
 
-        let expanded = expand_circuit(&gates);
+        let expanded = expand_circuit(&gates).expect("MZ-only circuit");
 
         assert_eq!(expanded.measurement_qubit, vec![2, 3]);
         assert_eq!(expanded.num_qubits, 4);
@@ -348,7 +539,7 @@ mod tests {
             gate(GateType::PZ, &[0]),
             gate(GateType::MZ, &[0]), // meas 0 → aux 1
         ];
-        let expanded = expand_circuit(&gates);
+        let expanded = expand_circuit(&gates).expect("MZ-only circuit");
 
         // X on aux 1 maps to X on original qubit 0
         let p = Bm::x(1); // aux qubit
@@ -360,7 +551,7 @@ mod tests {
     fn test_map_to_original_frame_z_on_aux_dropped() {
         // Z on auxiliary is dropped (measurement projection absorbs it)
         let gates = vec![gate(GateType::PZ, &[0]), gate(GateType::MZ, &[0])];
-        let expanded = expand_circuit(&gates);
+        let expanded = expand_circuit(&gates).expect("MZ-only circuit");
 
         let p = Bm::z(1); // Z on aux
         let mapped = expanded.map_to_original_frame(&p);
@@ -371,7 +562,7 @@ mod tests {
     fn test_map_to_original_frame_original_passthrough() {
         // Components on original qubits pass through unchanged
         let gates = vec![gate(GateType::PZ, &[0, 1]), gate(GateType::MZ, &[0])];
-        let expanded = expand_circuit(&gates);
+        let expanded = expand_circuit(&gates).expect("MZ-only circuit");
 
         let p = Bm::x(0).multiply(&Bm::z(1)); // X0 Z1
         let mapped = expanded.map_to_original_frame(&p);
@@ -386,7 +577,7 @@ mod tests {
             gate(GateType::H, &[0]),
             gate(GateType::MZ, &[0]),
         ];
-        let expanded = expand_circuit(&gates);
+        let expanded = expand_circuit(&gates).expect("MZ-only circuit");
 
         // Still creates one aux qubit for the final MZ
         assert_eq!(expanded.num_qubits, 2);
@@ -412,7 +603,7 @@ mod tests {
             gate(GateType::MZ, &[0]), // data readout
         ];
 
-        let expanded = expand_circuit(&gates);
+        let expanded = expand_circuit(&gates).expect("MZ-only circuit");
 
         // Count PZ/QAlloc gates on qubit 1 in the expanded circuit
         let resets_on_1: Vec<_> = expanded
@@ -460,7 +651,7 @@ mod tests {
             gate(GateType::PZ, &[0]),
             gate(GateType::MZ, &[0]),
         ];
-        let expanded = expand_circuit(&gates);
+        let expanded = expand_circuit(&gates).expect("MZ-only circuit");
 
         assert_eq!(expanded.measurement_qubit.len(), 2);
         assert_eq!(expanded.original_measured_qubit, vec![0, 0]);

@@ -152,8 +152,6 @@ impl HugrEngine {
 
     /// Try to resolve a constant boolean value by tracing through `LoadConstant` to Const.
     pub(crate) fn try_resolve_const_bool(hugr: &Hugr, node: Node) -> Option<bool> {
-        use tket::extension::bool::ConstBool;
-
         let op = hugr.get_optype(node);
         debug!(
             "[TRACE] try_resolve_const_bool: node {:?}, op type: {:?}",
@@ -176,23 +174,28 @@ impl HugrEngine {
                     // Try to extract bool value from the constant
                     let value = const_op.value();
                     debug!("[TRACE] Found Const, value type: {:?}", value.get_type());
-                    // The value is stored as a ConstBool for tket.bool
-                    if let Some(const_bool) = value.get_custom_value::<ConstBool>() {
-                        let bool_value = const_bool.value();
+                    if value == &tket::hugr::ops::Value::true_val() {
+                        let bool_value = true;
                         debug!("[TRACE] Found ConstBool: {bool_value}");
                         return Some(bool_value);
                     }
-                    debug!("[TRACE] Not a ConstBool, checking other patterns");
+                    if value == &tket::hugr::ops::Value::false_val() {
+                        debug!("[TRACE] Found ConstBool: false");
+                        return Some(false);
+                    }
+                    debug!("[TRACE] Not a boolean constant, checking other patterns");
                 }
             }
         }
 
         // Check if this is directly a Const node
         if let OpType::Const(const_op) = op {
-            use tket::extension::bool::ConstBool;
             let value = const_op.value();
-            if let Some(const_bool) = value.get_custom_value::<ConstBool>() {
-                return Some(const_bool.value());
+            if value == &tket::hugr::ops::Value::true_val() {
+                return Some(true);
+            }
+            if value == &tket::hugr::ops::Value::false_val() {
+                return Some(false);
             }
         }
 
@@ -518,8 +521,23 @@ impl HugrEngine {
                 // available; each loop iteration must re-run Calls). Policies:
                 // Calls and classical ops copy inputs at fire time, so they
                 // wait for readiness; the rest defer internally or are static.
+                let is_inside_nested_tailloop = |node: Node| {
+                    let mut parent = hugr.get_parent(node);
+                    while let Some(container) = parent {
+                        if container == cfg_node {
+                            return false;
+                        }
+                        if matches!(hugr.get_optype(container), OpType::TailLoop(_)) {
+                            return true;
+                        }
+                        parent = hugr.get_parent(container);
+                    }
+                    false
+                };
                 let submit = |act: &mut ContainerActivation, node: Node, policy: QueuePolicy| {
-                    if self.nodes_inside_tailloops.contains(&node) {
+                    if self.nodes_inside_tailloops.contains(&node)
+                        && is_inside_nested_tailloop(node)
+                    {
                         // Skip ops inside TailLoops - they'll be added when the
                         // loop expands
                         act.ungate_block_only(node);
@@ -683,21 +701,18 @@ impl HugrEngine {
 
         // The ENTRYPOINT's CFG completing means main returned: capture its
         // classical return values so pure-classical programs surface them.
-        // The entrypoint is taken from the HUGR itself when it names a
-        // FuncDefn; the not-called-not-scanned fallback covers graphs
-        // whose entrypoint is the module root.
+        // The entrypoint may be either the function itself or the module
+        // root, depending on the Guppy version. A CFG whose enclosing
+        // function is neither called nor scanned is therefore the program
+        // entrypoint in both representations.
         let parent_is_entry_func = hugr.get_parent(cfg_node).is_some_and(|fd| {
             matches!(hugr.get_optype(fd), OpType::FuncDefn(_))
-                && if matches!(hugr.get_optype(hugr.entrypoint()), OpType::FuncDefn(_)) {
-                    fd == hugr.entrypoint()
-                } else {
-                    hugr.get_parent(fd) == Some(hugr.module_root())
-                        && !self.call_targets.values().any(|&target| target == fd)
+                && (fd == hugr.entrypoint()
+                    || (!self.call_targets.values().any(|&target| target == fd)
                         && !self
                             .active_scans
                             .values()
-                            .any(|scan| scan.func_defn_node == fd)
-                }
+                            .any(|scan| scan.func_defn_node == fd)))
         });
         if parent_is_entry_func {
             // Positional capture: entry i holds port i's value or None.
@@ -724,7 +739,7 @@ impl HugrEngine {
         }
 
         // Check if this CFG is inside a FuncDefn that's being called
-        self.complete_func_call_if_needed(hugr, cfg_node);
+        self.complete_func_call_if_needed(hugr, cfg_node, final_block);
 
         // Add CFG successors to work queue
         let successors: Vec<_> = hugr.output_neighbours(cfg_node).collect();
@@ -766,10 +781,11 @@ impl HugrEngine {
             }
         }
 
-        // A nested CFG may be the last op of an enclosing case or loop
-        // body -- run the container completion hooks (mirrors
-        // complete_tailloop). Block completion needs no hook: blocks do
-        // not track nested CFG children.
+        // A nested CFG may be the last op of an enclosing block, case, or
+        // loop body -- run the container completion hooks (mirrors
+        // complete_tailloop). Guppy 1 lowers `for` loops to CFGs inside
+        // structural DFGs, so blocks now track these nested CFG children.
+        self.check_cfg_block_completion(hugr, cfg_node);
         self.check_scan_frame_completion(hugr, cfg_node);
         self.check_case_completion(hugr, cfg_node);
         self.check_tailloop_body_completion(hugr, cfg_node);
@@ -1031,18 +1047,15 @@ impl HugrEngine {
         // across empty-block hops. Edges stay recorded (fill-only is
         // idempotent); they are purged when their target re-activates or
         // their CFG completes.
-        // Only each CFG's LATEST cascade replays: older cascades' edges
-        // point at sources a later iteration may have rewritten, and
-        // fill-only stops overwrites but not wrong FILLS of legitimately
-        // missing ports.
-        let mut latest: std::collections::BTreeMap<Node, u64> = std::collections::BTreeMap::new();
-        for (cfg_node, _, _, cascade) in &self.pending_measurement_propagations {
-            let entry = latest.entry(*cfg_node).or_insert(*cascade);
-            *entry = (*entry).max(*cascade);
-        }
+        // Replay ALL retained cascades. A smaller cascade id does not imply
+        // stale data: consecutive non-empty blocks each start a new cascade,
+        // and an outcome may need to walk an earlier edge before it can walk
+        // the newest one. Superseded loop-generation edges are removed when
+        // their target block reactivates (at recording time above), which is
+        // the actual liveness distinction.
         let pending = self.pending_measurement_propagations.clone();
-        for (cfg_node, from_block, to_block, cascade) in pending {
-            if self.active_cfgs.contains_key(&cfg_node) && latest.get(&cfg_node) == Some(&cascade) {
+        for (cfg_node, from_block, to_block, _) in pending {
+            if self.active_cfgs.contains_key(&cfg_node) {
                 self.propagate_block_outputs(hugr, from_block, to_block, true);
             }
         }
@@ -1064,7 +1077,13 @@ impl HugrEngine {
         // data ports). The payload ARITY is type-level: CFG outputs minus
         // the final block's data ports (a bare-tag structural resolution
         // must not collapse the offset to zero).
-        let num_data_outputs = hugr.num_inputs(output_node).saturating_sub(1);
+        // `HugrView::num_inputs` includes the order edge. Count only the
+        // dataflow row so the order port is not mistaken for a data output
+        // and allowed to overwrite a payload return value.
+        let num_data_outputs = hugr
+            .get_optype(output_node)
+            .dataflow_signature()
+            .map_or(0, |signature| signature.input_count().saturating_sub(1));
         let expected_payload_len = hugr
             .get_optype(cfg_node)
             .dataflow_signature()
@@ -1173,31 +1192,26 @@ impl HugrEngine {
 
         // Map each CFG input to the corresponding entry block Input node output
         for port_idx in 0..num_cfg_inputs {
-            let cfg_in_port = IncomingPort::from(port_idx);
+            // Inputs can cross structural DFG wrappers (notably Guppy 1's
+            // array-loop lowering), so use the same recursive resolution as
+            // normal operation inputs rather than only reading the immediate
+            // source wire.
+            if let Some(qubit_id) = self.get_input_qubit(hugr, cfg_node, port_idx) {
+                self.wire_state
+                    .wire_to_qubit
+                    .insert((input_node, port_idx), qubit_id);
+                debug!(
+                    "CFG {cfg_node:?}: mapped input {port_idx} qubit {qubit_id:?} to entry Input {input_node:?}:{port_idx}"
+                );
+            }
 
-            if let Some((src_node, src_port)) = hugr.single_linked_output(cfg_node, cfg_in_port) {
-                let src_wire = (src_node, src_port.index());
-
-                // Check for qubit mapping
-                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                    // Map to entry block's Input node output
-                    self.wire_state
-                        .wire_to_qubit
-                        .insert((input_node, port_idx), qubit_id);
-                    debug!(
-                        "CFG {cfg_node:?}: mapped input {port_idx} qubit {qubit_id:?} to entry Input {input_node:?}:{port_idx}"
-                    );
-                }
-
-                // Also propagate classical values
-                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                    debug!(
-                        "CFG {cfg_node:?}: propagated classical value {value:?} to entry Input {input_node:?}:{port_idx}"
-                    );
-                    self.wire_state
-                        .classical_values
-                        .insert((input_node, port_idx), value);
-                }
+            if let Some(value) = self.get_input_value(hugr, cfg_node, port_idx) {
+                debug!(
+                    "CFG {cfg_node:?}: propagated classical value {value:?} to entry Input {input_node:?}:{port_idx}"
+                );
+                self.wire_state
+                    .classical_values
+                    .insert((input_node, port_idx), value);
             }
         }
     }

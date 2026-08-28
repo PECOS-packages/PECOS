@@ -52,7 +52,7 @@ Let's create a Bell state using Guppy. First, define a quantum function:
         cx(q0, q1)
 
         # Measure both qubits
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
 
     # Run simulation
@@ -113,7 +113,7 @@ The `sim(Guppy(...))` pattern returns a builder for configuration:
         """Quantum random bit."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
 
     # Simple simulation
@@ -150,7 +150,7 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
 
     # Compile and save to file
@@ -207,6 +207,15 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
     println!("Circuit uses {} qubits", engine.num_qubits());
     ```
 
+## Capturing the Runtime QIS Operation Trace
+
+PECOS can capture both the source operations and the runtime-scheduled,
+lowered operations produced while Guppy, HUGR, or QIS executes through a
+Selene-compatible runtime. See the
+[Runtime QIS Tracing tutorial](runtime-qis-tracing.md) for trace inspection,
+JSON persistence, replay into a `TickCircuit`, runtime-emitted idle gates, and
+the limitations of tracing a single execution path.
+
 ## Measurement-Based Control Flow
 
 One of HUGR's key advantages is native support for control flow based on measurement results. This is natural in Guppy:
@@ -230,13 +239,13 @@ One of HUGR's key advantages is native support for control flow based on measure
 
         # Put q0 in superposition and measure
         h(q0)
-        m0 = measure(q0)
+        m0 = measure(q0).read()
 
         # Conditionally apply X to q1
         if m0:
             x(q1)
 
-        m1 = measure(q1)
+        m1 = measure(q1).read()
         return m0, m1
 
 
@@ -266,14 +275,14 @@ One of HUGR's key advantages is native support for control flow based on measure
         q0 = qubit()
         q1 = qubit()
 
-        m0 = measure(q0)  # Always 0 (qubit starts in |0⟩)
+        m0 = measure(q0).read()  # Always 0 (qubit starts in |0⟩)
 
         if m0:
             x(q1)  # This branch won't execute
         else:
             h(q1)  # This branch will execute
 
-        m1 = measure(q1)
+        m1 = measure(q1).read()
         return m0, m1
 
 
@@ -299,7 +308,7 @@ One of HUGR's key advantages is native support for control flow based on measure
         while not result:
             q = qubit()
             h(q)
-            result = measure(q)
+            result = measure(q).read()
         return result
 
 
@@ -341,7 +350,7 @@ Guppy supports modular quantum programs with helper functions:
         """Use the helper function."""
         q = qubit()
         q = apply_h(q)
-        return measure(q)
+        return measure(q).read()
 
 
     results = sim(Guppy(use_helper)).qubits(1).quantum(state_vector()).run(100)
@@ -364,7 +373,7 @@ HUGR programs work with different quantum backends:
     def my_circuit() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
 
     # State vector - required for non-Clifford gates (T, rotations)
@@ -398,7 +407,7 @@ Add realistic noise to your Guppy simulations:
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
 
     # Simple depolarizing noise
@@ -414,11 +423,11 @@ Add realistic noise to your Guppy simulations:
     # Custom noise model
     noise = (
         GeneralNoiseModelBuilder()
-        .with_prep_probability(0.001)
-        .with_p1_probability(0.0001)
-        .with_p2_probability(0.01)
-        .with_meas_0_probability(0.02)
-        .with_meas_1_probability(0.03)
+        .with_p_prep(0.001)
+        .with_p1(0.0001)
+        .with_p2(0.01)
+        .with_p_meas_0(0.02)
+        .with_p_meas_1(0.03)
     )
 
     results = sim(Guppy(noisy_bell)).qubits(2).quantum(state_vector()).noise(noise).run(1000)
@@ -467,7 +476,7 @@ Results from Guppy simulations work the same as QASM:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
 
     results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).run(1000)
@@ -499,7 +508,7 @@ from guppylang.std.quantum import qubit, measure
 @guppy
 def my_circuit() -> bool:
     q = qubit()
-    return measure(q)
+    return measure(q).read()
 
 
 # Increase qubit pool for loops or dynamic allocation
@@ -549,7 +558,7 @@ from pecos_rslib import state_vector
 @guppy
 def good_example() -> bool:
     q = qubit()
-    return measure(q)  # q is consumed by measure
+    return measure(q).read()  # q is consumed by measure
 
 
 results = sim(Guppy(good_example)).qubits(1).quantum(state_vector()).run(1)

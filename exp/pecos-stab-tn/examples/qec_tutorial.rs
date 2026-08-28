@@ -40,14 +40,15 @@ fn main() {
     // 1. Builder + preset
     // ------------------------------------------------------------------
     //
-    // `StabMps::builder(n).for_qec().build()` sets:
+    // `for_qec()` keeps the general numerical defaults and selects exact
+    // measurement. The frozen Stage-B repetition-code benchmark measured a
+    // 1.497x geometric-mean slowdown (1.548x maximum) versus pragmatic.
     //   - max_bond_dim = 128 (enough for syndrome rounds without truncation)
     //   - max_truncation_error = 1e-8 (very tight)
     //   - merge_rz = true (batch same-qubit RZ noise)
     //
-    // For ion-trap-memory-noise or T-heavy workloads this is the right
-    // default. You can layer `pauli_frame_tracking(true)` on top for
-    // fast Pauli-noise injection.
+    // The general builder instead defaults to exact measurement. You can layer
+    // `pauli_frame_tracking(true)` on top for fast Pauli-noise injection.
     //
     // 3 data + 2 ancillas = 5 qubits total.
 

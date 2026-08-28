@@ -97,7 +97,6 @@ mod checker;
 pub mod dag;
 mod pauli;
 mod tick;
-mod tick_batched;
 pub mod types;
 
 // Re-export from submodules
@@ -107,13 +106,13 @@ pub use dag::{
     DemOutputKind, DemOutputMetadata, FaultCombo, FaultComponent, FaultEffect, FaultLocations,
     GateFaultLocation, InfluencesSoA, InfluencesSoAStats, SoARecorderBuilder,
 };
+pub(crate) use pauli::cross_measurement;
 pub use pauli::{
     Direction, apply_gate, init_pauli_prop_with_fault, propagate_backward_from_tick,
     propagate_fault_backward, propagate_observable_backward, propagate_through_circuit,
     propagate_tick_range,
 };
 pub use tick::TickFaultAnalyzer;
-pub use tick_batched::TickFaultAnalyzerBatched;
 pub use types::{
     DemOutputIdx, DetectorId, DetectorIdx, FaultInfluence, FaultInfluenceMap, LocationId,
     MeasurementId, NodeId, Pauli, TrackedPauliId, TrackedPauliIdx,
@@ -602,7 +601,10 @@ impl<'a> DagPropagator<'a> {
 
                 if touches_active {
                     // Handle prep gates specially - they kill the Pauli
-                    if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                    if matches!(
+                        gate.gate_type,
+                        GateType::PX | GateType::PZ | GateType::QAlloc
+                    ) {
                         for q in &gate.qubits {
                             let idx = q.index();
                             if prop.contains_x(idx) {
@@ -1208,9 +1210,28 @@ mod tests {
         assert_pauli_signature_after_gate(GateType::Fdg, [X, I], [Z, I]);
         assert_pauli_signature_after_gate(GateType::Fdg, [Y, I], [X, I]);
         assert_pauli_signature_after_gate(GateType::Fdg, [Z, I], [Y, I]);
+        // Each square-root gate fixes its own axis and swaps the other two.
+        // Unsigned propagation cannot see the adjoint's sign flip, so the
+        // dagger rows repeat the same permutation on purpose: they pin the
+        // dispatch of `SXdg`/`SYdg`/`SZdg`, which was otherwise unasserted.
+        assert_pauli_signature_after_gate(GateType::SX, [X, I], [X, I]);
+        assert_pauli_signature_after_gate(GateType::SX, [Y, I], [Z, I]);
         assert_pauli_signature_after_gate(GateType::SX, [Z, I], [Y, I]);
+        assert_pauli_signature_after_gate(GateType::SXdg, [X, I], [X, I]);
+        assert_pauli_signature_after_gate(GateType::SXdg, [Y, I], [Z, I]);
+        assert_pauli_signature_after_gate(GateType::SXdg, [Z, I], [Y, I]);
         assert_pauli_signature_after_gate(GateType::SY, [X, I], [Z, I]);
+        assert_pauli_signature_after_gate(GateType::SY, [Y, I], [Y, I]);
+        assert_pauli_signature_after_gate(GateType::SY, [Z, I], [X, I]);
+        assert_pauli_signature_after_gate(GateType::SYdg, [X, I], [Z, I]);
+        assert_pauli_signature_after_gate(GateType::SYdg, [Y, I], [Y, I]);
+        assert_pauli_signature_after_gate(GateType::SYdg, [Z, I], [X, I]);
         assert_pauli_signature_after_gate(GateType::SZ, [X, I], [Y, I]);
+        assert_pauli_signature_after_gate(GateType::SZ, [Y, I], [X, I]);
+        assert_pauli_signature_after_gate(GateType::SZ, [Z, I], [Z, I]);
+        assert_pauli_signature_after_gate(GateType::SZdg, [X, I], [Y, I]);
+        assert_pauli_signature_after_gate(GateType::SZdg, [Y, I], [X, I]);
+        assert_pauli_signature_after_gate(GateType::SZdg, [Z, I], [Z, I]);
 
         assert_pauli_signature_after_gate(GateType::CX, [X, I], [X, X]);
         assert_pauli_signature_after_gate(GateType::CX, [I, Z], [Z, Z]);

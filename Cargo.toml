@@ -52,7 +52,7 @@ clap_complete = "4.5"
 cargo_metadata = "0.23"
 
 # --- Python bindings ---
-# Note: `extension-module`/`abi3-py310`/`generate-import-lib` are intentionally
+# Note: `extension-module`/`abi3-py312`/`generate-import-lib` are intentionally
 # NOT enabled at the workspace level. They tell pyo3 to skip linking libpython
 # at build time, which is what we want when maturin builds the cdylib but is
 # fatal for plain `cargo test`. Each pecos-rslib* crate gates them behind its
@@ -71,8 +71,8 @@ libloading = "0.9"
 inkwell = { version = "0.9", features = ["llvm21-1-prefer-dynamic"] }
 
 # --- HUGR / tket ---
-tket = { version = "0.19", default-features = false }
-tket-qsystem = { version = "0.25", default-features = false }
+tket = { version = "0.21", default-features = false }
+tket-qsystem = { version = "0.27", default-features = false }
 
 # --- WebAssembly ---
 wasmtime = { version = "46", default-features = false, features = [
@@ -104,6 +104,7 @@ wide = "1"
 fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
+rand_distr = "0.6"
 rand_xoshiro = "0.8"
 rapidrand = { version = "0.1", features = ["rand"] }
 
@@ -112,6 +113,7 @@ bitflags = "2"
 bitvec = { version = "1", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 dyn-clone = "1"
+batsat = "0.5"
 smallvec = "1"
 
 # --- Concurrency ---
@@ -146,7 +148,6 @@ sha2 = "0.11"
 tar = "0.4"
 xz2 = "0.1"
 bzip2 = "0.6"
-sevenz-rust = "0.6"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 zstd = "0.13"
 
@@ -167,6 +168,7 @@ approx = "0.5"
 assert_cmd = "2"
 criterion = "0.8"
 paste = "1"
+rand_chacha = "0.9"
 random_tester = "0.1"
 proptest = "1"
 
@@ -202,6 +204,9 @@ pecos-eeg = { version = "0.2.0-dev.0", path = "exp/pecos-eeg" }
 pecos-stab-tn = { version = "0.2.0-dev.0", path = "exp/pecos-stab-tn" }
 pecos-experimental = { version = "0.2.0-dev.0", path = "exp/pecos-experimental" }
 pecos-foreign = { version = "0.2.0-dev.0", path = "crates/pecos-foreign" }
+pecos-bp-trellis = { version = "0.2.0-dev.0", path = "exp/pecos-bp-trellis" }
+pecos-frontier = { version = "0.2.0-dev.0", path = "exp/pecos-frontier" }
+pecos-trellis = { version = "0.2.0-dev.0", path = "exp/pecos-trellis" }
 pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
 pecos-gpu-sims = { version = "0.2.0-dev.0", path = "crates/pecos-gpu-sims" }
 pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }
@@ -209,6 +214,7 @@ pecos-hugr-qis = { version = "0.2.0-dev.0", path = "crates/pecos-hugr-qis" }
 pecos-ldpc-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-ldpc-decoders" }
 pecos-lindblad = { version = "0.2.0-dev.0", path = "exp/pecos-lindblad" }
 pecos-llvm = { version = "0.2.0-dev.0", path = "crates/pecos-llvm" }
+pecos-lp = { version = "0.2.0-dev.0", path = "crates/pecos-lp" }
 pecos-mwpf = { version = "0.2.0-dev.0", path = "crates/pecos-mwpf" }
 pecos-neo = { version = "0.2.0-dev.0", path = "exp/pecos-neo" }
 pecos-num = { version = "0.2.0-dev.0", path = "crates/pecos-num" }
@@ -273,11 +279,18 @@ style = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 # Dependency version conflicts we can't control
-multiple-crate-versions = "allow"
+multiple_crate_versions = "allow"
 # Physics/math code uses short, domain-standard variable names (sx/sz, x/z/r/s/p)
-similar-names = "allow"
-many-single-char-names = "allow"
-too-many-lines = "allow"         # ~114 hits across 11 crates -- sim algorithms, tests, benchmarks
+similar_names = "allow"
+many_single_char_names = "allow"
+too_many_lines = "allow"         # ~114 hits across 11 crates -- sim algorithms, tests, benchmarks
+# New Clippy lints in Rust nightly 1.99 flag established numeric and SIMD-heavy
+# implementations; defer broader, behavior-sensitive rewrites to a dedicated cleanup.
+drain_collect = "allow"
+manual_is_variant_and = "allow"
+manual_midpoint = "allow"
+manual_slice_fill = "allow"
+clone_on_copy = "allow" # `cxx::bridge` derives `Clone` for its generated FFI structs.
 
 # Simulation-heavy crates run at opt-level 2 even in dev/test builds:
 # statistical validation tests (e.g. the surface-code LER equivalence
@@ -301,3 +314,14 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package.fusion-blossom]
 opt-level = 2
+
+# batsat's solver core is tested and shipped by upstream with release arithmetic;
+# under this workspace's debug profile its internal activity/restart arithmetic
+# overflows on instances with thousands of variables. Run the dependency at its
+# supported semantics; PECOS code keeps full debug overflow checks.
+[profile.dev.package.batsat]
+overflow-checks = false
+
+# Replace mwpf's vendored HiGHS wrapper with a pure-Rust LP shim so the mwpf feature does not require cmake.
+[patch."https://github.com/yuewuo/mwpf"]
+highs = { path = "crates/pecos-highs-shim" }

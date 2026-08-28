@@ -53,7 +53,7 @@ fn bit_to_f64(value: usize) -> f64 {
 
 /// Run EEG on a gate list with a parity detector over all measurements.
 fn eeg_detection_prob(gates: &[Gate], theta: f64) -> f64 {
-    let expanded = expand::expand_circuit(gates);
+    let expanded = expand::expand_circuit(gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
     let result = analyze_expanded(&expanded.gates, &noise);
 
@@ -85,7 +85,7 @@ fn eeg_detection_prob(gates: &[Gate], theta: f64) -> f64 {
 
 /// Run EEG with per-round detectors, return per-detector probabilities.
 fn eeg_per_round_probs(gates: &[Gate], theta: f64, num_rounds: usize) -> Vec<f64> {
-    let expanded = expand::expand_circuit(gates);
+    let expanded = expand::expand_circuit(gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
     let result = analyze_expanded(&expanded.gates, &noise);
 
@@ -145,7 +145,7 @@ fn test_eeg_vs_statevec_bell_parity() {
         gate(GateType::MZ, &[1]),
     ];
 
-    let expanded = expand::expand_circuit(&gates);
+    let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
     let result = analyze_expanded(&expanded.gates, &noise);
 
@@ -236,7 +236,7 @@ fn test_eeg_vs_statevec_larger_angle() {
         gate(GateType::MZ, &[1]),
     ];
 
-    let expanded = expand::expand_circuit(&gates);
+    let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
     let result = analyze_expanded(&expanded.gates, &noise);
 
@@ -475,7 +475,7 @@ fn bench_z_basis_check() {
     ];
 
     for &theta in &[0.01, 0.05, 0.1, 0.2, 0.3] {
-        let expanded = expand::expand_circuit(&gates);
+        let expanded = expand::expand_circuit(&gates).expect("supported circuit");
         let noise = NoiseModel::coherent_only(theta);
         let result = analyze_expanded(&expanded.gates, &noise);
 
@@ -606,7 +606,7 @@ fn bench_repetition_code_comparison() {
             );
 
             // --- EEG forward ---
-            let expanded = expand::expand_circuit(&gates);
+            let expanded = expand::expand_circuit(&gates).expect("supported circuit");
             let noise_model = NoiseModel::coherent_only(theta);
             let noise_spec = UniformNoise::coherent_only(theta);
             let result = analyze_expanded(&expanded.gates, &noise_model);
@@ -668,7 +668,8 @@ fn bench_repetition_code_comparison() {
                         &noise_spec,
                         num_qubits,
                         1e-12,
-                    );
+                    )
+                    .expect("supported circuit");
                 }
             }
 
@@ -783,7 +784,7 @@ fn bench_expansion_equivalence() {
     ];
 
     // Expand the circuit
-    let expanded = expand::expand_circuit(&gates_orig);
+    let expanded = expand::expand_circuit(&gates_orig).expect("supported circuit");
     eprintln!(
         "Expanded: {} gates, {} qubits",
         expanded.gates.len(),
@@ -797,7 +798,8 @@ fn bench_expansion_equivalence() {
 
     // --- Heisenberg on expanded circuit ---
     let noise = UniformNoise::coherent_only(theta);
-    let h_p = heisenberg_detection_probability_from_circuit(&gates_orig, &[0, 1], &noise, 3, 0.0);
+    let h_p = heisenberg_detection_probability_from_circuit(&gates_orig, &[0, 1], &noise, 3, 0.0)
+        .expect("supported circuit");
 
     // --- StateVec on ORIGINAL circuit (with mid-circuit measurements) ---
     let mut orig_det = 0u64;
@@ -947,7 +949,7 @@ fn bench_matrix_heisenberg() {
         gate(GateType::H, &[2]),
         gate(GateType::MZ, &[2]),
     ];
-    let expanded = expand::expand_circuit(&gates_orig);
+    let expanded = expand::expand_circuit(&gates_orig).expect("supported circuit");
 
     // Build the detector matrix: Z_3 * Z_4
     // Z_q has eigenvalue +1 for |0> and -1 for |1>
@@ -1094,7 +1096,8 @@ fn bench_matrix_heisenberg() {
 
     // Heisenberg backward walk
     let noise = UniformNoise::coherent_only(theta);
-    let h_p = heisenberg_detection_probability_from_circuit(&gates_orig, &[0, 1], &noise, 3, 0.0);
+    let h_p = heisenberg_detection_probability_from_circuit(&gates_orig, &[0, 1], &noise, 3, 0.0)
+        .expect("supported circuit");
 
     // Exact analytical
     let exact = (2.0 - (6.0 * theta).cos() - (2.0 * theta).cos()) / 4.0;
@@ -1270,7 +1273,7 @@ fn bench_per_noise_attribution() {
         gate(GateType::H, &[2]),
         gate(GateType::MZ, &[2]),
     ];
-    let expanded = expand::expand_circuit(&gates_orig);
+    let expanded = expand::expand_circuit(&gates_orig).expect("supported circuit");
 
     // Noise source locations in expanded circuit:
     // Gate 4: CX(2,0) R1 → noise on q2 and q0
@@ -1379,7 +1382,8 @@ fn bench_per_noise_attribution() {
     let matrix_all = 0.5 * (1.0 - obs_re[0]);
     let noise = UniformNoise::coherent_only(theta);
     let walk_all =
-        heisenberg_detection_probability_from_circuit(&gates_orig, &[0, 1], &noise, 3, 0.0);
+        heisenberg_detection_probability_from_circuit(&gates_orig, &[0, 1], &noise, 3, 0.0)
+            .expect("supported circuit");
     eprintln!(
         "{:>25} {:>12.8} {:>12.8} {:>8.4}",
         "ALL",
@@ -1414,7 +1418,8 @@ fn bench_weight_isolation() {
             gate(GateType::MZ, &[2]),
         ];
         let noise = UniformNoise::coherent_only(theta);
-        let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0], &noise, 3, 0.0);
+        let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0], &noise, 3, 0.0)
+            .expect("supported circuit");
 
         let mut det = 0u64;
         let mut sim = StateVec::new(3);
@@ -1459,7 +1464,8 @@ fn bench_weight_isolation() {
             gate(GateType::MZ, &[2]),
         ];
         let noise = UniformNoise::coherent_only(theta);
-        let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise, 3, 0.0);
+        let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise, 3, 0.0)
+            .expect("supported circuit");
 
         let mut det = 0u64;
         let mut sim = StateVec::new(3);
@@ -1509,7 +1515,8 @@ fn bench_weight_isolation() {
             gate(GateType::MZ, &[4]),
         ];
         let noise = UniformNoise::coherent_only(theta);
-        let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0], &noise, 5, 0.0);
+        let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0], &noise, 5, 0.0)
+            .expect("supported circuit");
 
         let mut det = 0u64;
         let mut sim = StateVec::new(5);
@@ -1559,7 +1566,8 @@ fn bench_weight_isolation() {
             gate(GateType::MZ, &[4]),
         ];
         let noise = UniformNoise::coherent_only(theta);
-        let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise, 5, 0.0);
+        let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise, 5, 0.0)
+            .expect("supported circuit");
 
         let mut det = 0u64;
         let mut sim = StateVec::new(5);
@@ -1626,8 +1634,10 @@ fn bench_weight_isolation() {
             gate(GateType::MZ, &[4]),
         ];
         let noise = UniformNoise::coherent_only(theta);
-        let h_a0 = heisenberg_detection_probability_from_circuit(&gates, &[0, 2], &noise, 5, 0.0);
-        let h_a1 = heisenberg_detection_probability_from_circuit(&gates, &[1, 3], &noise, 5, 0.0);
+        let h_a0 = heisenberg_detection_probability_from_circuit(&gates, &[0, 2], &noise, 5, 0.0)
+            .expect("supported circuit");
+        let h_a1 = heisenberg_detection_probability_from_circuit(&gates, &[1, 3], &noise, 5, 0.0)
+            .expect("supported circuit");
 
         let mut a0 = 0u64;
         let mut a1 = 0u64;
@@ -1708,7 +1718,7 @@ fn bench_heisenberg_scaling() {
         let num_ancilla = d - 1;
         let num_detectors = num_ancilla; // rounds-1 == 1 comparison per ancilla
 
-        let expanded = expand::expand_circuit(&gates);
+        let expanded = expand::expand_circuit(&gates).expect("supported circuit");
         let noise = UniformNoise::coherent_only(theta);
 
         let mut max_prob = 0.0f64;
@@ -1730,7 +1740,8 @@ fn bench_heisenberg_scaling() {
                 &noise,
                 num_qubits,
                 0.0,
-            );
+            )
+            .expect("supported circuit");
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
             eprintln!("    {i:>6} {prob:>18.10} {elapsed_ms:>12.2}");
@@ -1768,7 +1779,7 @@ fn bench_heisenberg_scaling() {
         // Round comparison detectors: (num_rounds - 1) comparisons per ancilla
         let num_detectors = num_ancilla * (num_rounds - 1);
 
-        let expanded = expand::expand_circuit(&gates);
+        let expanded = expand::expand_circuit(&gates).expect("supported circuit");
         let noise = UniformNoise::coherent_only(theta);
 
         let mut max_prob = 0.0f64;
@@ -1790,7 +1801,8 @@ fn bench_heisenberg_scaling() {
                     &noise,
                     num_qubits,
                     0.0,
-                );
+                )
+                .expect("supported circuit");
                 let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
                 eprintln!("    R{round}A{i} {prob:>18.10} {elapsed_ms:>12.2}");
@@ -1862,11 +1874,13 @@ fn bench_combined_noise() {
         p_prep: 0.0,
     };
     // Detector = Z on meas[0] * Z on meas[1] (round comparison)
-    let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise, 3, 0.0);
+    let h_p = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise, 3, 0.0)
+        .expect("supported circuit");
 
     // ---- Also compute coherent-only and meas-only for decomposition ----
     let noise_coh = UniformNoise::coherent_only(idle_rz);
-    let h_coh = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise_coh, 3, 0.0);
+    let h_coh = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise_coh, 3, 0.0)
+        .expect("supported circuit");
 
     let noise_meas = UniformNoise {
         idle_rz: 0.0,
@@ -1876,7 +1890,8 @@ fn bench_combined_noise() {
         p_prep: 0.0,
     };
     let h_meas =
-        heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise_meas, 3, 0.0);
+        heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise_meas, 3, 0.0)
+            .expect("supported circuit");
 
     // ---- StateVec simulation with matching noise ----
     let mut rng = PecosRng::seed_from_u64(12345);
@@ -1937,7 +1952,8 @@ fn bench_combined_noise() {
             p_meas: pm,
             p_prep: 0.0,
         };
-        let hp = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &n, 3, 0.0);
+        let hp = heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &n, 3, 0.0)
+            .expect("supported circuit");
 
         let pm_threshold = rng.probability_threshold(pm);
         let mut d = 0u64;

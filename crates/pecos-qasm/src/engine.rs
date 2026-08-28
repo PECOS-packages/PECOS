@@ -668,16 +668,24 @@ impl QASMEngine {
             | GateType::R1XY
             | GateType::U => {
                 // Convert angles to radians for process_parameterized_gate
-                let angles_as_radians: Vec<f64> =
-                    gate.angles.iter().map(pecos_core::Angle::to_radians).collect();
+                let angles_as_radians: Vec<f64> = gate
+                    .angles
+                    .iter()
+                    .map(pecos_core::Angle::to_radians)
+                    .collect();
                 self.process_parameterized_gate(gate.gate_type, &qubits, &angles_as_radians)
             }
-            GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
-                Err(PecosError::Processing(
-                    "Measure, MeasureLeaked, and MeasureFree gates should be handled by MeasureWithMapping operation"
-                        .to_string(),
-                ))
-            }
+            GateType::MX
+            | GateType::MZ
+            | GateType::MeasureLeaked
+            | GateType::MeasureFree
+            | GateType::MPZ => Err(PecosError::Processing(
+                "measurement gates should be handled by MeasureWithMapping operation".to_string(),
+            )),
+            GateType::PX => Err(PecosError::Processing(format!(
+                "Gate type {:?} is not yet supported in the QASM engine",
+                gate.gate_type
+            ))),
         }
     }
 

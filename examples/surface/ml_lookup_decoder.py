@@ -30,7 +30,7 @@ def build_lookup_table(batch, num_detectors: int) -> dict[tuple[int, ...], int]:
 
     for i in range(batch.num_shots):
         syn = batch.get_syndrome(i)
-        obs = batch.get_observable_mask(i)
+        obs = batch.get_observable_flips(i).mask
 
         # Convert syndrome to tuple of fired detector indices
         fired = tuple(d for d in range(min(num_detectors, len(syn))) if syn[d])
@@ -50,7 +50,7 @@ def decode_with_lookup(batch, table: dict, num_detectors: int) -> tuple[int, int
     errors = 0
     for i in range(batch.num_shots):
         syn = batch.get_syndrome(i)
-        obs_true = batch.get_observable_mask(i)
+        obs_true = batch.get_observable_flips(i).mask
 
         fired = tuple(d for d in range(min(num_detectors, len(syn))) if syn[d])
         predicted = table.get(fired, 0)  # default: no correction
@@ -78,6 +78,7 @@ def main():
 
     import json
 
+    from pecos.decoders import pymatching
     from pecos.qec.surface import SurfacePatch
     from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
@@ -156,7 +157,7 @@ def main():
 
         sampler_params = {k: v for k, v in noise_params.items() if k in ("p1", "p2", "p_meas", "p_prep")}
         sampler = DemSampler.from_circuit(tc, **sampler_params)
-        train_batch = sampler.generate_samples(args.shots, seed=args.seed)
+        train_batch = sampler.sample_batch(args.shots, seed=args.seed)
 
     t_sample = time.perf_counter() - t0
     print(f"  Sampled in {t_sample:.2f}s")
@@ -198,17 +199,17 @@ def main():
             observable_masks2.append(obs_mask)
         test_batch = SampleBatch(detection_events2, observable_masks2)
     else:
-        test_batch = sampler.generate_samples(test_shots, seed=args.seed + 1000)
+        test_batch = sampler.sample_batch(test_shots, seed=args.seed + 1000)
 
     # Decode with lookup
     errors_lookup, n = decode_with_lookup(test_batch, table, num_dets)
     ler_lookup = errors_lookup / n
 
     # Compare with pymatching
-    from pecos.qec.surface import NoiseModel
+    from pecos.qec.surface import NoiseParameters
     from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
-    noise_obj = NoiseModel(
+    noise_obj = NoiseParameters(
         p1=noise_params["p1"],
         p2=noise_params["p2"],
         p_meas=noise_params["p_meas"],
@@ -223,7 +224,12 @@ def main():
         circuit_source="abstract",
     )
     dem_clean = "\n".join(line for line in dem_decomp.split("\n") if not line.startswith("logical_observable"))
-    stats_pm = test_batch.decode_stats(dem_clean, "pymatching")
+    result_pm = test_batch.decode(
+        dem_clean,
+        pymatching(correlated=True),
+        workers=1,
+        timing=True,
+    )
 
     # Compare with coherent_dem_decomposed if available
     try:
@@ -233,8 +239,13 @@ def main():
         coherent_clean = "\n".join(
             line for line in coherent_decomp.split("\n") if not line.startswith("logical_observable")
         )
-        stats_coherent = test_batch.decode_stats(coherent_clean, "pymatching")
-        ler_coherent = stats_coherent.logical_error_rate
+        result_coherent = test_batch.decode(
+            coherent_clean,
+            pymatching(correlated=True),
+            workers=1,
+            timing=True,
+        )
+        ler_coherent = result_coherent.logical_error_rate
     except Exception:
         ler_coherent = None
 
@@ -242,11 +253,11 @@ def main():
     print(f"Results (d={args.distance}, p2={args.p2}, irz={args.idle_rz}):")
     print(f"{'='*60}")
     print(f"  ML Lookup:                  LER = {ler_lookup:.6f}  ({errors_lookup}/{n})")
-    print(f"  PyMatching (from_circuit):  LER = {stats_pm.logical_error_rate:.6f}  ({stats_pm.num_errors}/{n})")
+    print(f"  PyMatching (from_circuit):  LER = {result_pm.logical_error_rate:.6f}  ({result_pm.num_errors}/{n})")
     if ler_coherent is not None:
         print(f"  PyMatching (coherent):      LER = {ler_coherent:.6f}")
-    if stats_pm.logical_error_rate > 0:
-        improvement = (stats_pm.logical_error_rate - ler_lookup) / stats_pm.logical_error_rate * 100
+    if result_pm.logical_error_rate > 0:
+        improvement = (result_pm.logical_error_rate - ler_lookup) / result_pm.logical_error_rate * 100
         print(f"\n  ML Lookup vs PyMatching:    {improvement:+.1f}%")
 
 

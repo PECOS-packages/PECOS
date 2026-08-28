@@ -1351,9 +1351,7 @@ impl AllocatorInfo {
 
     /// Prepare all slots.
     pub fn prepare_all(&mut self) {
-        for state in &mut self.slot_states {
-            *state = QubitState::Prepared;
-        }
+        self.slot_states.fill(QubitState::Prepared);
     }
 
     /// Measure a specific slot (transitions to unprepared).

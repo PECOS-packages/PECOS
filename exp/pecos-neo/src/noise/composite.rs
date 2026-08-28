@@ -336,7 +336,7 @@ mod tests {
         let noise = ComposableNoiseModel::new().add_channel(channel);
 
         // Run with noise
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -371,7 +371,7 @@ mod tests {
             .add_channel(flow_channel)
             .add_channel(meas_channel);
 
-        let mut state = SparseStab::new(1);
+        let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -563,7 +563,7 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(crosstalk);
 
-        let mut state = SparseStab::new(3);
+        let mut state = SparseStab::with_seed(3, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(42);
@@ -669,7 +669,7 @@ mod tests {
             );
             let traditional_noise = ComposableNoiseModel::new().add_channel(traditional_channel);
 
-            let mut state_trad = SparseStab::new(1);
+            let mut state_trad = SparseStab::with_seed(1, seed);
             let mut runner_trad = CircuitRunner::<SparseStab>::new()
                 .with_noise(traditional_noise)
                 .with_seed(seed);
@@ -685,7 +685,7 @@ mod tests {
             let flow_channel = CompositeChannelBuilder::single_qubit("flow_sq", flow_noise);
             let flow_noise_model = ComposableNoiseModel::new().add_channel(flow_channel);
 
-            let mut state_flow = SparseStab::new(1);
+            let mut state_flow = SparseStab::with_seed(1, seed);
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_noise_model)
                 .with_seed(seed);
@@ -731,7 +731,7 @@ mod tests {
             let traditional_channel = MeasurementChannel::symmetric(p_meas);
             let traditional_noise = ComposableNoiseModel::new().add_channel(traditional_channel);
 
-            let mut state_trad = SparseStab::new(1);
+            let mut state_trad = SparseStab::with_seed(1, seed);
             let mut runner_trad = CircuitRunner::<SparseStab>::new()
                 .with_noise(traditional_noise)
                 .with_seed(seed);
@@ -749,7 +749,7 @@ mod tests {
                 .with_filter(CompositeEventFilter::AfterMeasurement);
             let flow_noise_model = ComposableNoiseModel::new().add_channel(flow_channel);
 
-            let mut state_flow = SparseStab::new(1);
+            let mut state_flow = SparseStab::with_seed(1, seed);
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_noise_model)
                 .with_seed(seed);
@@ -810,7 +810,7 @@ mod tests {
                 .with_p_meas_symmetric(p_meas)
                 .build();
 
-            let mut state_trad = SparseStab::new(1);
+            let mut state_trad = SparseStab::with_seed(1, seed);
             let mut runner_trad = CircuitRunner::<SparseStab>::new()
                 .with_noise(traditional_model)
                 .with_seed(seed);
@@ -835,7 +835,7 @@ mod tests {
                 .add_channel(sq_channel)
                 .add_channel(meas_channel);
 
-            let mut state_flow = SparseStab::new(1);
+            let mut state_flow = SparseStab::with_seed(1, seed);
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
                 .with_noise(flow_model)
                 .with_seed(seed);

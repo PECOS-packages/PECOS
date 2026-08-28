@@ -14,6 +14,11 @@
 //! - `uf` - Syndrome-graph Union-Find decoder (pure Rust)
 //! - `all` - Enable all decoders
 
+pub mod batch;
+pub mod spec;
+
+pub use spec::{DecodeModel, DecoderSpec, ExecutionTraits};
+
 // Re-export core traits
 pub use pecos_decoder_core::{
     BatchDecoder, CssDecoder, Decoder, DecoderError, DecodingResultTrait, ObservableDecoder,
@@ -57,6 +62,7 @@ pub use pecos_ldpc_decoders::{
     UfMethod,
     UnionFindBuilder,
     UnionFindDecoder,
+    WeightedUnionFindDecoder,
 };
 
 // Re-export MWPF decoder when feature is enabled
@@ -108,6 +114,7 @@ pub use pecos_uf_decoder::{
 // Re-export Relay BP decoder when feature is enabled
 #[cfg(feature = "relay-bp")]
 pub use pecos_relay_bp::{
-    DecodingResult as RelayBpDecodingResult, MinSumBpBuilder, MinSumBpDecoder, MinSumConfig,
-    RelayBpBuilder, RelayBpDecoder, RelayBpError, RelayConfig, StoppingCriterion,
+    DEFAULT_GAMMA0 as RELAY_BP_DEFAULT_GAMMA0, DecodingResult as RelayBpDecodingResult,
+    MinSumBpBuilder, MinSumBpDecoder, MinSumConfig, RelayBpBuilder, RelayBpDecoder, RelayBpError,
+    RelayConfig, StoppingCriterion,
 };

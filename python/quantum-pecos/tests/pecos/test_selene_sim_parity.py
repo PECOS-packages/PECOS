@@ -23,9 +23,9 @@ from pathlib import Path
 
 import pytest
 from guppylang import guppy
-from guppylang.std.builtins import array, comptime, result
-from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
-from pecos.guppy import variant_scoped
+from guppylang.std.builtins import array, comptime, output
+from guppylang.std.quantum import collect_measurements, cx, h, measure, measure_array, qubit, x
+from pecos.guppy_gen import variant_scoped
 
 
 @guppy
@@ -36,8 +36,8 @@ def tagged_bits_named_array() -> None:
     q2 = qubit()
     x(q0)
     x(q2)
-    final = measure_array(array(q0, q1, q2))
-    result("final", final)
+    final = collect_measurements(measure_array(array(q0, q1, q2)))
+    output("final", final)
 
 
 def make_repeated_single_bit_results(num_rounds: int) -> object:
@@ -46,8 +46,8 @@ def make_repeated_single_bit_results(num_rounds: int) -> object:
     def repeated_single_bit_results() -> None:
         for _ in range(comptime(num_rounds)):
             q = qubit()
-            bit = measure(q)
-            result("synx", array(bit))
+            bit = measure(q).read()
+            output("synx", array(bit))
 
     return guppy(variant_scoped(repeated_single_bit_results, num_rounds))
 
@@ -64,12 +64,12 @@ def make_tiny_x_syndrome_memory(num_rounds: int) -> object:
             h(anc)
             cx(anc, data)
             h(anc)
-            bit = measure(anc)
-            result("synx", array(bit))
+            bit = measure(anc).read()
+            output("synx", array(bit))
 
         h(data)
-        final = measure_array(array(data))
-        result("final", final)
+        final = collect_measurements(measure_array(array(data)))
+        output("final", final)
 
     return guppy(variant_scoped(tiny_x_syndrome_memory, num_rounds))
 
@@ -90,10 +90,10 @@ def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
             h(anc)
             cx(anc, data)
             h(anc)
-            _ = measure(anc)
+            _ = measure(anc).read()
 
         h(data)
-        _ = measure(data)
+        _ = measure(data).read()
 
     return guppy(variant_scoped(tiny_x_syndrome_memory_raw, num_rounds))
 
@@ -103,12 +103,12 @@ def alloc_reuse_probe() -> None:
     """Measure |1>, then allocate again and verify the fresh qubit is |0>."""
     q = qubit()
     x(q)
-    b1 = measure(q)
-    result("m1", array(b1))
+    b1 = measure(q).read()
+    output("m1", array(b1))
 
     q2 = qubit()
-    b2 = measure(q2)
-    result("m2", array(b2))
+    b2 = measure(q2).read()
+    output("m2", array(b2))
 
 
 def _require_selene_runtime() -> object:
@@ -177,9 +177,9 @@ def test_capture_operation_trace_returns_in_memory_batches() -> None:
 
 
 def test_capture_operation_trace_includes_named_result_provenance() -> None:
-    """Trace capture must preserve result(...) -> measurement-id provenance."""
+    """Trace capture must preserve output(...) -> measurement-id provenance."""
     import pecos
-    from pecos.qec.surface.decode import named_result_traces_from_operation_trace
+    from pecos._qis_trace_replay import named_result_traces_from_operation_trace
 
     _require_selene_runtime()
 
@@ -198,6 +198,27 @@ def test_capture_operation_trace_includes_named_result_provenance() -> None:
     assert any(chunk.get("stage") == "named_results" for chunk in trace)
     for named_trace in named_traces:
         assert len(named_trace["result_ids"]) == len(named_trace["values"])
+
+
+def test_capture_operation_trace_includes_result_id_keyed_outcomes_per_shot() -> None:
+    """Aggregate-output provenance can correlate values with physical IDs."""
+    import pecos
+    import pecos_rslib
+
+    _require_selene_runtime()
+    trace = (
+        pecos.sim(make_tiny_x_syndrome_memory(1))
+        .classical(pecos.selene_engine())
+        .quantum(pecos_rslib.coin_toss())
+        .qubits(2)
+        .seed(321)
+        .capture_operation_trace(3)
+    )
+
+    terminal = [chunk for chunk in trace if chunk.get("stage") == "trace_complete"]
+    assert len(terminal) == 3
+    assert {chunk["shot_index"] for chunk in terminal} == {1, 2, 3}
+    assert all(set(chunk["measurement_results"]) == {"0", "1"} for chunk in terminal)
 
 
 def _collect_selene_named_results(
@@ -326,7 +347,7 @@ def _run_surface_memory_via_sim(
     seed: int,
 ) -> dict[str, list[list[int]]]:
     import pecos
-    from pecos.guppy import get_num_qubits, make_surface_code
+    from pecos.guppy_gen import get_num_qubits, make_surface_code
 
     _require_selene_runtime()
 
@@ -355,7 +376,7 @@ def _run_surface_memory_via_selene_sim(
     seed: int,
 ) -> dict[str, list[int] | list[list[int]]]:
     from pecos.compilation_pipeline import compile_guppy_to_hugr
-    from pecos.guppy import get_num_qubits, make_surface_code
+    from pecos.guppy_gen import get_num_qubits, make_surface_code
     from selene_sim import build
 
     _configure_selene_caches()
@@ -507,11 +528,7 @@ def test_tiny_syndrome_memory_p2_only_matches_between_selene_backends_statistica
         .quantum(pecos.stabilizer())
         .qubits(2)
         .noise(
-            pecos.depolarizing_noise()
-            .with_p1_probability(0.0)
-            .with_p2_probability(p2)
-            .with_meas_probability(0.0)
-            .with_prep_probability(0.0),
+            pecos.depolarizing_noise().with_p1(0.0).with_p2(p2).with_p_meas(0.0).with_p_prep(0.0),
         )
         .seed(123)
         .run(shots)
@@ -626,7 +643,7 @@ def test_divergent_classical_semantics_match_selene_reference() -> None:
     """
     import pecos
     from guppylang import guppy
-    from guppylang.std.builtins import result
+    from guppylang.std.builtins import output
 
     _require_selene_runtime()
     _configure_selene_caches()
@@ -635,10 +652,10 @@ def test_divergent_classical_semantics_match_selene_reference() -> None:
     def divergent_agrees() -> None:
         a = 7
         b = -3
-        result("div", (a // b) == 0)
-        result("mod", (a % b) == 7)
+        output("div", (a // b) == 0)
+        output("mod", (a % b) == 7)
         c = -8
-        result("shr", (c >> 1) == 9223372036854775804)
+        output("shr", (c >> 1) == 9223372036854775804)
 
     r = pecos.sim(pecos.Guppy(divergent_agrees)).qubits(1).classical(pecos.selene_engine()).seed(1).run(1).to_dict()
     assert [int(r["div"][0]), int(r["mod"][0]), int(r["shr"][0])] == [

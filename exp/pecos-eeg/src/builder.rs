@@ -12,6 +12,8 @@ use crate::stabilizer::StabilizerGroup;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
 use pecos_quantum::{AnnotationKind, TickCircuit};
 
+pub use crate::expand::EegBuildError;
+
 pub struct EegDemBuilder<'a> {
     tc: &'a TickCircuit,
     noise: NoiseModel,
@@ -55,16 +57,21 @@ impl<'a> EegDemBuilder<'a> {
         self
     }
 
-    #[must_use]
-    pub fn build(&self) -> Vec<DemEntry> {
+    /// # Errors
+    ///
+    /// Returns [`EegBuildError`] when the circuit contains a measurement type
+    /// the MZ-only expansion cannot represent, or when an annotation references
+    /// a measurement record the expansion did not produce. Both used to be
+    /// silent -- the measurement vanished, or the reference was skipped.
+    pub fn build(&self) -> Result<Vec<DemEntry>, EegBuildError> {
         let gates: Vec<pecos_core::Gate> = self
             .tc
             .iter_gate_batches()
             .map(|batch| batch.as_gate().clone())
             .collect();
-        let expanded = expand::expand_circuit(&gates);
+        let expanded = expand::expand_circuit(&gates)?;
         let result = circuit::analyze_expanded(&expanded.gates, &self.noise);
-        let (detectors, observables) = build_detectors(self.tc, &expanded);
+        let (detectors, observables) = build_detectors(self.tc, &expanded)?;
 
         // Compute stabilizer group from the EXPANDED circuit (pre-readout).
         // This includes auxiliary qubits, so beta function checks happen
@@ -73,30 +80,34 @@ impl<'a> EegDemBuilder<'a> {
         let expanded_pre_readout = exclude_final_mz(&expanded.gates);
         let stab_group = StabilizerGroup::from_circuit(&expanded_pre_readout, expanded.num_qubits);
 
-        dem_mapping::build_dem_configured(
+        Ok(dem_mapping::build_dem_configured(
             &result.generators,
             &detectors,
             &observables,
             Some(&stab_group),
             &self.config,
-        )
+        ))
     }
 
-    #[must_use]
-    pub fn build_dem_string(&self) -> String {
-        dem_mapping::format_dem(&self.build())
+    /// # Errors
+    ///
+    /// Same conditions as [`build`](Self::build).
+    pub fn build_dem_string(&self) -> Result<String, EegBuildError> {
+        Ok(dem_mapping::format_dem(&self.build()?))
     }
 
-    #[must_use]
-    pub fn summary(&self) -> EegSummary {
+    /// # Errors
+    ///
+    /// Same conditions as [`build`](Self::build).
+    pub fn summary(&self) -> Result<EegSummary, EegBuildError> {
         let gates: Vec<pecos_core::Gate> = self
             .tc
             .iter_gate_batches()
             .map(|batch| batch.as_gate().clone())
             .collect();
-        let expanded = expand::expand_circuit(&gates);
+        let expanded = expand::expand_circuit(&gates)?;
         let result = circuit::analyze_expanded(&expanded.gates, &self.noise);
-        let (detectors, observables) = build_detectors(self.tc, &expanded);
+        let (detectors, observables) = build_detectors(self.tc, &expanded)?;
 
         let expanded_pre = exclude_final_mz(&expanded.gates);
         let stab_group = StabilizerGroup::from_circuit(&expanded_pre, expanded.num_qubits);
@@ -119,7 +130,7 @@ impl<'a> EegDemBuilder<'a> {
             .filter(|g| g.eeg_type == crate::eeg::EegType::S)
             .count();
 
-        EegSummary {
+        Ok(EegSummary {
             num_original_gates: gates.len(),
             num_expanded_gates: expanded.gates.len(),
             num_expanded_qubits: expanded.num_qubits,
@@ -129,7 +140,7 @@ impl<'a> EegDemBuilder<'a> {
             num_observables: observables.len(),
             num_dem_events: entries.len(),
             generator_fidelity: result.generator_fidelity(),
-        }
+        })
     }
 }
 
@@ -174,40 +185,25 @@ fn exclude_final_mz(gates: &[pecos_core::Gate]) -> Vec<pecos_core::Gate> {
 fn build_detectors(
     tc: &TickCircuit,
     expanded: &expand::ExpandedCircuit,
-) -> (Vec<Detector>, Vec<Observable>) {
+) -> Result<(Vec<Detector>, Vec<Observable>), EegBuildError> {
     let mut detectors = Vec::new();
     let mut observables = Vec::new();
-    let num_meas = expanded.measurement_qubit.len();
 
     for annotation in tc.annotations() {
         match &annotation.kind {
             AnnotationKind::Detector {
-                measurement_nodes, ..
+                measurement_ids, ..
             } => {
-                // measurement_nodes are gate indices in the ORIGINAL circuit.
-                // We need to map these to measurement record indices, then
-                // to auxiliary qubits in the expanded circuit.
-                //
-                // The gate indices correspond to MZ gates. Each MZ gate can
-                // measure multiple qubits. We need to find which measurement
-                // record each gate index maps to.
-                //
-                // Strategy: the k-th measurement record corresponds to the
-                // k-th qubit measured across all MZ gates in order. Each
-                // measurement_node is a gate index — we find which measurement
-                // records that gate produced.
-                let bitmask =
-                    measurement_nodes_to_aux_bitmask(measurement_nodes, tc, expanded, num_meas);
+                let bitmask = measurement_ids_to_aux_bitmask(measurement_ids, expanded)?;
                 detectors.push(Detector {
                     id: detectors.len(),
                     stabilizer: bitmask,
                 });
             }
             AnnotationKind::Observable {
-                measurement_nodes, ..
+                measurement_ids, ..
             } => {
-                let bitmask =
-                    measurement_nodes_to_aux_bitmask(measurement_nodes, tc, expanded, num_meas);
+                let bitmask = measurement_ids_to_aux_bitmask(measurement_ids, expanded)?;
                 observables.push(Observable {
                     id: observables.len(),
                     pauli: bitmask,
@@ -217,35 +213,242 @@ fn build_detectors(
         }
     }
 
-    (detectors, observables)
+    Ok((detectors, observables))
 }
 
-/// Map measurement record indices to a Z bitmask on auxiliary qubits.
+/// Map measurement ids to a Z bitmask on auxiliary qubits.
 ///
-/// Each measurement_node is a measurement record index (counting all
-/// MZ qubits in circuit order). Maps directly to an auxiliary qubit
-/// in the expanded circuit via `expanded.measurement_qubit[record]`.
-fn measurement_nodes_to_aux_bitmask(
-    measurement_nodes: &[usize],
-    _tc: &TickCircuit,
+/// Each id resolves through the expansion's own id-rank map, so external
+/// (non-positional) ids land on the right auxiliary qubit. An unknown id is
+/// an error, never a skip.
+fn measurement_ids_to_aux_bitmask(
+    measurement_ids: &[pecos_core::MeasId],
     expanded: &expand::ExpandedCircuit,
-    num_meas: usize,
-) -> Bm {
+) -> Result<Bm, EegBuildError> {
     let mut bitmask = Bm::default();
-
-    for &record_idx in measurement_nodes {
-        if record_idx < num_meas {
-            let aux_qubit = expanded.measurement_qubit[record_idx];
-            bitmask.z_bits.xor_bit(aux_qubit);
-        }
+    for &meas_id in measurement_ids {
+        let aux_qubit = expanded.aux_qubit_for_id(meas_id)?;
+        bitmask.z_bits.xor_bit(aux_qubit);
     }
-
-    bitmask
+    Ok(bitmask)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn prep_free_noise() -> NoiseModel {
+        let mut noise = NoiseModel::depolarizing(0.01);
+        noise.p_prep = 0.0;
+        noise
+    }
+
+    /// `mpz` is the fused `mz; pz`: the two spellings of a measured-then-reset
+    /// ancilla must produce byte-identical DEMs.
+    #[test]
+    fn mpz_builds_the_same_dem_as_mz_then_pz() {
+        let build = |fused: bool| {
+            let mut tc = TickCircuit::new();
+            tc.tick().pz(&[0, 1, 2]);
+            tc.tick().cx(&[(0, 2)]);
+            tc.tick().cx(&[(1, 2)]);
+            let ancilla = if fused {
+                tc.tick().mpz(&[2])
+            } else {
+                let m = tc.tick().mz(&[2]);
+                tc.tick().pz(&[2]);
+                m
+            };
+            tc.tick().cx(&[(0, 2)]);
+            tc.tick().cx(&[(1, 2)]);
+            let ancilla2 = tc.tick().mz(&[2]);
+            tc.detector(&[ancilla[0]])
+                .expect("refs are from this circuit");
+            tc.detector(&[ancilla[0], ancilla2[0]])
+                .expect("refs are from this circuit");
+            EegDemBuilder::from_tick_circuit(&tc)
+                // p_prep = 0: the split spelling's explicit reset draws its
+                // own preparation noise, the fused gate's built-in reset does
+                // not (the measure-prepare noise channel is a separate,
+                // tracked addition). Propagation equivalence is what this
+                // pins.
+                .noise(prep_free_noise())
+                .build_dem_string()
+                .expect("both spellings are supported")
+        };
+        let fused = build(true);
+        let split = build(false);
+        assert!(
+            fused.contains("error("),
+            "the comparison is vacuous without error mechanisms:\n{fused}"
+        );
+        assert_eq!(fused, split);
+    }
+
+    /// Two measurements carrying the same supplied id would make id
+    /// resolution last-wins -- a silently wrong DEM. `TickCircuit` permits the
+    /// duplicate; the expansion must refuse it.
+    #[test]
+    fn duplicate_supplied_ids_are_refused() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        for qubit in [0usize, 1] {
+            let mut gate = pecos_core::Gate::mz(&[qubit]);
+            gate.meas_ids = smallvec::smallvec![pecos_core::MeasId::from_raw(5)];
+            tc.tick().try_add_gate(gate).expect("gate is valid");
+        }
+
+        let err = EegDemBuilder::from_tick_circuit(&tc)
+            .noise(NoiseModel::depolarizing(0.01))
+            .build()
+            .expect_err("two measurements hold id 5");
+        assert_eq!(
+            err,
+            EegBuildError::DuplicateMeasId {
+                meas_id: pecos_core::MeasId::from_raw(5),
+            }
+        );
+    }
+
+    /// A supplied id colliding with a later minted one is the same ambiguity
+    /// arriving through two different doors; the expansion refuses it too.
+    #[test]
+    fn a_supplied_id_colliding_with_a_minted_id_is_refused() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        let mut gate = pecos_core::Gate::mz(&[0usize]);
+        gate.meas_ids = smallvec::smallvec![pecos_core::MeasId::from_raw(0)];
+        tc.tick().try_add_gate(gate).expect("gate is valid");
+        // `try_add_gate` does not advance the mint counter, so this mints 0.
+        let minted = tc.tick().mz(&[1]);
+        assert_eq!(minted[0].meas_id, pecos_core::MeasId::from_raw(0));
+
+        let err = EegDemBuilder::from_tick_circuit(&tc)
+            .noise(NoiseModel::depolarizing(0.01))
+            .build()
+            .expect_err("supplied and minted ids collide on 0");
+        assert!(matches!(err, EegBuildError::DuplicateMeasId { .. }));
+    }
+
+    /// Scrambled (non-positional) annotation ids must produce a byte-identical
+    /// DEM to positional ids on the same physical circuit: eeg orders its
+    /// auxiliaries by expansion rank, which is invariant under id relabeling.
+    #[test]
+    fn scrambled_annotation_ids_build_a_byte_identical_dem() {
+        let build = |ids: [usize; 3]| {
+            let mut dag = pecos_quantum::DagCircuit::new();
+            dag.pz(&[0, 1, 2]);
+            dag.cx(&[(0, 2)]);
+            dag.cx(&[(1, 2)]);
+            for (qubit, id) in [(2usize, ids[0]), (0, ids[1]), (1, ids[2])] {
+                let mut gate = pecos_core::Gate::mz(&[qubit]);
+                gate.meas_ids = smallvec::smallvec![pecos_core::MeasId::from_raw(id)];
+                dag.try_add_gate_auto_wire(gate).expect("gate is valid");
+            }
+            let refs: Vec<_> = ids
+                .iter()
+                .map(|&id| {
+                    dag.find_measurement(pecos_core::MeasId::from_raw(id))
+                        .expect("the id was just supplied")
+                })
+                .collect();
+            dag.detector(&refs).expect("refs are from this circuit");
+            dag.observable(&[refs[1]])
+                .expect("refs are from this circuit");
+            let tc = TickCircuit::from(&dag);
+            EegDemBuilder::from_tick_circuit(&tc)
+                .noise(NoiseModel::depolarizing(0.01))
+                .build_dem_string()
+                .expect("the circuit is MZ-only and every id resolves")
+        };
+        let positional = build([0, 1, 2]);
+        let scrambled = build([9, 4, 7]);
+        assert!(
+            positional.contains("error("),
+            "the comparison is vacuous without error mechanisms:\n{positional}"
+        );
+        assert_eq!(positional, scrambled);
+    }
+
+    /// A `MeasureFree` used to pass through the expansion unchanged, silently
+    /// deleting its measurement record. It now lowers to `MZ`.
+    #[test]
+    fn a_measure_free_circuit_expands_with_its_record_intact() {
+        // Surface-code circuits read every ancilla with `mz_free`; refusing it
+        // was a regression, not a guard. It lowers to `MZ` -- the record is
+        // real, the free has no stabilizer effect.
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick().mz_free(&[0]);
+        tc.tick().mz(&[1]);
+
+        EegDemBuilder::from_tick_circuit(&tc)
+            .noise(NoiseModel::coherent_only(0.01))
+            .build()
+            .expect("MeasureFree lowers to MZ in the expansion");
+
+        let gates: Vec<pecos_core::Gate> = tc
+            .iter_gate_batches()
+            .map(|batch| batch.as_gate().clone())
+            .collect();
+        let expanded = crate::expand::expand_circuit(&gates).expect("supported");
+        assert_eq!(
+            expanded.measurement_qubit.len(),
+            2,
+            "both the MeasureFree and the MZ keep their measurement records"
+        );
+    }
+
+    /// `MeasureLeaked` stays refused: it consumes no record, so the
+    /// record-aligned expansion genuinely cannot represent it.
+    #[test]
+    fn a_measure_leaked_circuit_is_refused() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick()
+            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .expect("gate is valid");
+        tc.tick().mz(&[1]);
+
+        let err = EegDemBuilder::from_tick_circuit(&tc)
+            .noise(NoiseModel::coherent_only(0.01))
+            .build()
+            .expect_err("MeasureLeaked consumes no record");
+        assert!(matches!(err, EegBuildError::UnsupportedMeasurement { .. }));
+    }
+
+    /// An annotation referencing an id the expansion never recorded used to
+    /// be skipped, thinning the observable. It is now an error naming the id.
+    ///
+    /// Construction validation cannot catch this reference: it arrives
+    /// pre-built on a converted circuit, which is exactly how a stale
+    /// reference reaches eeg in practice.
+    #[test]
+    fn an_unknown_id_annotation_is_an_error() {
+        let mut dag = pecos_quantum::DagCircuit::new();
+        dag.pz(&[0]);
+        dag.mz(&[0]);
+        dag.add_annotation(pecos_quantum::PauliAnnotation {
+            pauli: pecos_core::PauliString::zs(&[0usize]),
+            kind: pecos_quantum::AnnotationKind::Observable {
+                measurement_ids: vec![pecos_core::MeasId::from_raw(7)],
+            },
+            label: None,
+        });
+        let tc = TickCircuit::from(&dag);
+
+        let err = EegDemBuilder::from_tick_circuit(&tc)
+            .noise(NoiseModel::coherent_only(0.01))
+            .build()
+            .expect_err("id 7 was never recorded by the expansion");
+        assert_eq!(
+            err,
+            EegBuildError::UnresolvableAnnotationId {
+                meas_id: pecos_core::MeasId::from_raw(7),
+                num_measurements: 1,
+            }
+        );
+    }
 
     #[test]
     fn test_empty_no_noise() {
@@ -254,7 +457,8 @@ mod tests {
         tc.tick().mz(&[0]);
         let entries = EegDemBuilder::from_tick_circuit(&tc)
             .noise(NoiseModel::coherent_only(0.0))
-            .build();
+            .build()
+            .expect("circuit is MZ-only with in-range records");
         assert!(entries.is_empty());
     }
 
@@ -267,7 +471,8 @@ mod tests {
         tc.tick().mz(&[0, 1]);
         let summary = EegDemBuilder::from_tick_circuit(&tc)
             .noise(NoiseModel::coherent_only(0.1))
-            .summary();
+            .summary()
+            .expect("circuit is MZ-only with in-range records");
         assert!(summary.num_h_generators > 0);
         assert_eq!(summary.num_s_generators, 0);
     }
@@ -286,20 +491,21 @@ mod tests {
         // Builder path
         let builder_entries = EegDemBuilder::from_tick_circuit(&tc)
             .noise(noise.clone())
-            .build();
+            .build()
+            .expect("circuit is MZ-only with in-range records");
 
         // Manual path
         let gates: Vec<pecos_core::Gate> = tc
             .iter_gate_batches()
             .map(|batch| batch.as_gate().clone())
             .collect();
-        let expanded = expand::expand_circuit(&gates);
+        let expanded = expand::expand_circuit(&gates).expect("MZ-only circuit");
         let result = circuit::analyze_expanded(&expanded.gates, &noise);
 
         let expanded_pre = exclude_final_mz(&expanded.gates);
         let stab_group = StabilizerGroup::from_circuit(&expanded_pre, expanded.num_qubits);
 
-        let (detectors, observables) = build_detectors(&tc, &expanded);
+        let (detectors, observables) = build_detectors(&tc, &expanded).expect("records in range");
         let manual_entries = dem_mapping::build_dem_with_stabilizers(
             &result.generators,
             &detectors,
@@ -337,7 +543,8 @@ mod tests {
 
         let entries = EegDemBuilder::from_tick_circuit(&tc)
             .noise(NoiseModel::depolarizing(0.01))
-            .build();
+            .build()
+            .expect("circuit is MZ-only with in-range records");
 
         assert!(
             entries.is_empty(),
@@ -363,14 +570,16 @@ mod tests {
         let m2 = tc.tick().mz(&[2]);
 
         // Detector: compare m1 and m2
-        tc.detector(&[m1[0], m2[0]]);
+        tc.detector(&[m1[0], m2[0]])
+            .expect("refs are from this circuit");
 
         // Final readout
         tc.tick().mz(&[0, 1]);
 
         let entries = EegDemBuilder::from_tick_circuit(&tc)
             .noise(NoiseModel::depolarizing(0.01))
-            .build();
+            .build()
+            .expect("circuit is MZ-only with in-range records");
 
         assert!(
             !entries.is_empty(),
@@ -392,7 +601,8 @@ mod tests {
 
         let summary = EegDemBuilder::from_tick_circuit(&tc)
             .noise(NoiseModel::depolarizing(0.01).with_idle_rz(0.05))
-            .summary();
+            .summary()
+            .expect("circuit is MZ-only with in-range records");
 
         assert!(
             summary.num_h_generators > 0,

@@ -57,17 +57,24 @@
 //! ```
 
 use super::pauli_prop_checker::{
-    CircuitIO, MeasurementRound, SyndromeClass, compute_stabilizer_syndromes,
-    extract_measurement_rounds, extract_output_error,
+    CircuitIO, MeasurementRound, SyndromeClass, apply_gate_flip_ledger,
+    compute_stabilizer_syndromes, extract_measurement_rounds, extract_output_error,
+    get_syndrome_flips,
 };
 use super::{
-    FaultCheckConfig, FaultConfiguration, PauliFaultIterator, SpacetimeLocation,
-    extract_spacetime_locations, propagate_faults,
+    FaultCheckConfig, FaultConfiguration, PauliFault, PauliFaultIterator, SpacetimeLocation,
+    extract_spacetime_locations,
 };
-use pecos_core::QubitId;
+use pecos_core::gate_type::GateType;
 use pecos_quantum::TickCircuit;
-use pecos_simulators::{CliffordGateable, PauliProp};
+use pecos_simulators::PauliProp;
 use std::collections::{BTreeSet, HashMap};
+
+/// Measurement readouts whose outcome flipped, as `(tick, qubit)` pairs.
+///
+/// Recorded at the crossing rather than read off the wire afterwards, and
+/// ordered so analyses stay reproducible.
+type MeasurementFlips = BTreeSet<(usize, usize)>;
 
 /// Accumulates decoder analysis results across fault combinations.
 struct DecoderAccumulator {
@@ -879,24 +886,13 @@ impl<'a> GadgetChecker<'a> {
         internal_faults: &FaultConfiguration,
         internal_weight: usize,
     ) -> GadgetFaultResult {
-        // Start with input faults
-        let mut prop = PauliProp::new();
-        for &(qubit, pauli) in input_faults {
-            match pauli {
-                1 => prop.track_x(&[qubit]),
-                2 => prop.track_y(&[qubit]),
-                3 => prop.track_z(&[qubit]),
-                _ => {}
-            }
-        }
+        let (prop, flips) = self.propagate(input_faults, internal_faults);
 
-        // Propagate through circuit with internal faults
-        // We need to merge the initial prop with internal fault injection
-        let prop = self.propagate_with_initial_error(prop, internal_faults);
-
-        // Extract syndrome
-        let z_syndrome_flips = Self::get_syndrome_flips(&prop, &self.config.z_ancillas);
-        let x_syndrome_flips = Self::get_syndrome_flips(&prop, &self.config.x_ancillas);
+        // Extract syndrome from the recorded readouts, not from the residual
+        // wire state: a measure-and-prepare or a re-prepared ancilla erases the
+        // evidence before the circuit ends.
+        let z_syndrome_flips = Self::flipped_ancillas(&flips, &self.config.z_ancillas);
+        let x_syndrome_flips = Self::flipped_ancillas(&flips, &self.config.x_ancillas);
 
         let has_syndrome = !z_syndrome_flips.is_empty() || !x_syndrome_flips.is_empty();
 
@@ -936,129 +932,103 @@ impl<'a> GadgetChecker<'a> {
         }
     }
 
-    /// Propagate through circuit with an initial error state and internal faults.
-    fn propagate_with_initial_error(
+    /// Propagate input and internal faults through the whole circuit, and
+    /// record every measurement outcome flip at the moment of its readout.
+    ///
+    /// Gates cross through the checker's shared end-read flip ledger, so this
+    /// walk, `propagate_faults`, and the fault-tolerance checker hold one
+    /// opinion about measurement and re-preparation crossings: a measurement
+    /// absorbs the component that commutes with its readout, and a preparation
+    /// clears the wire.
+    ///
+    /// Faults are injected at their own ticks rather than propagated separately
+    /// and merged: the ledger is linear, so the two agree, but interleaving is
+    /// the model the crossings describe and needs no reconciliation step.
+    fn propagate(
         &self,
-        initial: PauliProp,
+        input_faults: &[(usize, u8)],
         internal_faults: &FaultConfiguration,
-    ) -> PauliProp {
-        if internal_faults.is_empty() {
-            // Just propagate the initial error through the circuit
-            self.propagate_through_circuit(initial)
-        } else {
-            // Complex case: merge initial error propagation with fault injection
-            // For now, we propagate initial and then apply internal faults
-            // This is an approximation - proper handling requires interleaved injection
-            let mut prop = self.propagate_through_circuit(initial);
-
-            // Apply internal faults at the end (simplified)
-            // TODO: Proper interleaved fault injection
-            let internal_prop = propagate_faults(self.circuit, internal_faults);
-            Self::merge_pauli_props(&mut prop, &internal_prop);
-
-            prop
+    ) -> (PauliProp, MeasurementFlips) {
+        let mut prop = PauliProp::new();
+        for &(qubit, pauli) in input_faults {
+            Self::inject_pauli(&mut prop, qubit, pauli);
         }
-    }
 
-    /// Propagate a `PauliProp` through the circuit without additional faults.
-    fn propagate_through_circuit(&self, mut prop: PauliProp) -> PauliProp {
-        for tick in self.circuit.ticks() {
+        let mut flips = MeasurementFlips::new();
+        for (tick_idx, tick) in self.circuit.iter_ticks() {
+            for fault in &internal_faults.faults {
+                if fault.location.tick == tick_idx && fault.location.before {
+                    Self::inject_fault(&mut prop, fault);
+                }
+            }
+
             for gate in tick.iter_gate_batches() {
-                let qubits: Vec<QubitId> = gate.qubits.to_vec();
+                let gate = gate.as_gate();
+                Self::record_measurement_flips(&prop, gate, tick_idx, &mut flips);
+                apply_gate_flip_ledger(&mut prop, gate);
+            }
 
-                match gate.gate_type {
-                    pecos_core::gate_type::GateType::H => {
-                        prop.h(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::F => {
-                        prop.f(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::Fdg => {
-                        prop.fdg(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SX => {
-                        prop.sx(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SXdg => {
-                        prop.sxdg(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SY => {
-                        prop.sy(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SYdg => {
-                        prop.sydg(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SZ => {
-                        prop.sz(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SZdg => {
-                        prop.szdg(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::CX if qubits.len() >= 2 => {
-                        prop.cx(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::CY if qubits.len() >= 2 => {
-                        prop.cy(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::CZ if qubits.len() >= 2 => {
-                        prop.cz(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SXX if qubits.len() >= 2 => {
-                        prop.sxx(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SXXdg if qubits.len() >= 2 => {
-                        prop.sxxdg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SYY if qubits.len() >= 2 => {
-                        prop.syy(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SYYdg if qubits.len() >= 2 => {
-                        prop.syydg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SZZ if qubits.len() >= 2 => {
-                        prop.szz(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SZZdg if qubits.len() >= 2 => {
-                        prop.szzdg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SWAP if qubits.len() >= 2 => {
-                        prop.swap(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::X => {
-                        prop.x(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::Y => {
-                        prop.y(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::Z => {
-                        prop.z(&qubits);
-                    }
-                    // State prep and measurements don't affect Pauli propagation
-                    _ => {}
+            for fault in &internal_faults.faults {
+                if fault.location.tick == tick_idx && !fault.location.before {
+                    Self::inject_fault(&mut prop, fault);
                 }
             }
         }
 
-        prop
+        (prop, flips)
     }
 
-    /// Merge two `PauliProp` states (XOR the X and Z components).
-    fn merge_pauli_props(target: &mut PauliProp, source: &PauliProp) {
-        // XOR the X and Z bits from source into target
-        for q in source.get_x_qubits() {
-            target.track_x(&[q]);
-        }
-        for q in source.get_z_qubits() {
-            target.track_z(&[q]);
+    /// Record the outcome flips of one gate, sampled *before* the ledger
+    /// crossing consumes them.
+    ///
+    /// A fused `MPZ` hands back a cleared wire and a re-prepared ancilla is
+    /// cleared by its next preparation, so the flip has to be read here; the
+    /// residual wire state no longer carries it. The basis rule is the shared
+    /// one: a Z-basis readout is flipped by the X component, an X-basis readout
+    /// by the Z component.
+    fn record_measurement_flips(
+        prop: &PauliProp,
+        gate: &pecos_core::Gate,
+        tick: usize,
+        flips: &mut MeasurementFlips,
+    ) {
+        let qubits: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+        let (z_flips, x_flips) = match gate.gate_type {
+            GateType::MX => get_syndrome_flips(prop, &[], &qubits),
+            GateType::MZ | GateType::MeasureFree | GateType::MPZ | GateType::MeasureLeaked => {
+                get_syndrome_flips(prop, &qubits, &[])
+            }
+            _ => return,
+        };
+
+        for qubit in z_flips.into_iter().chain(x_flips) {
+            flips.insert((tick, qubit));
         }
     }
 
-    /// Get which syndrome qubits have flipped.
-    fn get_syndrome_flips(prop: &PauliProp, ancillas: &[usize]) -> Vec<usize> {
+    /// Inject a Pauli (1=X, 2=Y, 3=Z) onto a qubit; 0 and anything else is identity.
+    fn inject_pauli(prop: &mut PauliProp, qubit: usize, pauli: u8) {
+        match pauli {
+            1 => prop.track_x(&[qubit]),
+            2 => prop.track_y(&[qubit]),
+            3 => prop.track_z(&[qubit]),
+            _ => {}
+        }
+    }
+
+    /// Inject every Pauli of a fault at its location's qubits.
+    fn inject_fault(prop: &mut PauliProp, fault: &PauliFault) {
+        for (qubit, &pauli) in fault.location.qubits.iter().zip(&fault.paulis) {
+            Self::inject_pauli(prop, qubit.index(), pauli);
+        }
+    }
+
+    /// Which of `ancillas` had a flipped readout anywhere in the circuit.
+    fn flipped_ancillas(flips: &MeasurementFlips, ancillas: &[usize]) -> Vec<usize> {
         ancillas
             .iter()
-            .filter(|&&q| prop.contains_x(q))
             .copied()
+            .filter(|&ancilla| flips.iter().any(|&(_, qubit)| qubit == ancilla))
             .collect()
     }
 
@@ -1614,8 +1584,7 @@ impl<'a> GadgetChecker<'a> {
         never_detected_stabilizers: &mut usize,
     ) {
         // Compute syndrome history
-        let history =
-            self.compute_syndrome_history(input_faults, internal_faults, internal_weight, rounds);
+        let history = self.compute_syndrome_history(input_faults, internal_faults, rounds);
 
         // Check if any round had a syndrome
         let ever_detected = history
@@ -1646,193 +1615,29 @@ impl<'a> GadgetChecker<'a> {
     }
 
     /// Compute syndrome history for a fault configuration.
+    ///
+    /// One walk records every readout's flip at its own tick, so each round
+    /// reads the flips belonging to it rather than whatever survived on the
+    /// wire afterwards.
     fn compute_syndrome_history(
         &self,
         input_faults: &[(usize, u8)],
         internal_faults: &FaultConfiguration,
-        internal_weight: usize,
         rounds: &[MeasurementRound],
     ) -> Vec<Vec<u8>> {
-        let mut history = Vec::new();
+        let (_, flips) = self.propagate(input_faults, internal_faults);
 
-        // Find the earliest tick where a fault occurs
-        let earliest_fault_tick = if internal_weight > 0 {
-            internal_faults
-                .faults
-                .iter()
-                .map(|f| f.location.tick)
-                .min()
-                .unwrap_or(0)
-        } else {
-            0 // Input faults are at tick 0
-        };
-
-        for round in rounds {
-            // Skip rounds before the fault could affect them
-            if round.tick < earliest_fault_tick && input_faults.is_empty() {
-                history.push(vec![
-                    0;
-                    self.config.z_ancillas.len()
-                        + self.config.x_ancillas.len()
-                ]);
-                continue;
-            }
-
-            // Propagate up to this measurement round
-            let prop = self.propagate_up_to_tick(input_faults, internal_faults, round.tick);
-
-            // Build syndrome for this round
-            let z_flips = Self::get_syndrome_flips(&prop, &round.z_qubits);
-            let x_flips = Self::get_syndrome_flips(&prop, &round.x_qubits);
-
-            let mut round_syndrome = Vec::new();
-            for &q in &round.z_qubits {
-                round_syndrome.push(u8::from(z_flips.contains(&q)));
-            }
-            for &q in &round.x_qubits {
-                round_syndrome.push(u8::from(x_flips.contains(&q)));
-            }
-
-            history.push(round_syndrome);
-        }
-
-        history
-    }
-
-    /// Propagate faults up to a specific tick.
-    fn propagate_up_to_tick(
-        &self,
-        input_faults: &[(usize, u8)],
-        internal_faults: &FaultConfiguration,
-        max_tick: usize,
-    ) -> PauliProp {
-        let mut prop = PauliProp::new();
-
-        // Add input faults
-        for &(qubit, pauli) in input_faults {
-            match pauli {
-                1 => prop.track_x(&[qubit]),
-                2 => prop.track_y(&[qubit]),
-                3 => prop.track_z(&[qubit]),
-                _ => {}
-            }
-        }
-
-        // Propagate through circuit up to max_tick, injecting faults as we go
-        for (tick_idx, tick) in self.circuit.iter_ticks() {
-            if tick_idx > max_tick {
-                break;
-            }
-
-            // Inject faults before this tick
-            for fault in &internal_faults.faults {
-                if fault.location.tick == tick_idx && fault.location.before {
-                    for (i, &p) in fault.paulis.iter().enumerate() {
-                        if let Some(&qubit) = fault.location.qubits.get(i) {
-                            match p {
-                                1 => prop.track_x(&[qubit.0]),
-                                2 => prop.track_y(&[qubit.0]),
-                                3 => prop.track_z(&[qubit.0]),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Apply gates
-            for gate in tick.iter_gate_batches() {
-                let qubits: Vec<QubitId> = gate.qubits.to_vec();
-                match gate.gate_type {
-                    pecos_core::gate_type::GateType::H => {
-                        prop.h(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::F => {
-                        prop.f(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::Fdg => {
-                        prop.fdg(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SX => {
-                        prop.sx(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SXdg => {
-                        prop.sxdg(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SY => {
-                        prop.sy(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SYdg => {
-                        prop.sydg(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SZ => {
-                        prop.sz(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::SZdg => {
-                        prop.szdg(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::CX if qubits.len() >= 2 => {
-                        prop.cx(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::CY if qubits.len() >= 2 => {
-                        prop.cy(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::CZ if qubits.len() >= 2 => {
-                        prop.cz(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SXX if qubits.len() >= 2 => {
-                        prop.sxx(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SXXdg if qubits.len() >= 2 => {
-                        prop.sxxdg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SYY if qubits.len() >= 2 => {
-                        prop.syy(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SYYdg if qubits.len() >= 2 => {
-                        prop.syydg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SZZ if qubits.len() >= 2 => {
-                        prop.szz(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SZZdg if qubits.len() >= 2 => {
-                        prop.szzdg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::SWAP if qubits.len() >= 2 => {
-                        prop.swap(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_core::gate_type::GateType::X => {
-                        prop.x(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::Y => {
-                        prop.y(&qubits);
-                    }
-                    pecos_core::gate_type::GateType::Z => {
-                        prop.z(&qubits);
-                    }
-                    // State prep and measurements don't affect Pauli propagation
-                    _ => {}
-                }
-            }
-
-            // Inject faults after this tick
-            for fault in &internal_faults.faults {
-                if fault.location.tick == tick_idx && !fault.location.before {
-                    for (i, &p) in fault.paulis.iter().enumerate() {
-                        if let Some(&qubit) = fault.location.qubits.get(i) {
-                            match p {
-                                1 => prop.track_x(&[qubit.0]),
-                                2 => prop.track_y(&[qubit.0]),
-                                3 => prop.track_z(&[qubit.0]),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        prop
+        rounds
+            .iter()
+            .map(|round| {
+                round
+                    .z_qubits
+                    .iter()
+                    .chain(&round.x_qubits)
+                    .map(|&qubit| u8::from(flips.contains(&(round.tick, qubit))))
+                    .collect()
+            })
+            .collect()
     }
 
     /// Build history analysis from collected data.
@@ -2071,6 +1876,252 @@ mod tests {
         println!("  Harmless: {}", analysis.harmless);
         println!("  Correctable: {}", analysis.correctable);
         println!("  Undetected logical: {}", analysis.undetected_logical);
+    }
+
+    /// An X arriving on an ancilla wire before its preparation must be erased
+    /// by that preparation. The former per-gadget dispatch kept preps
+    /// transparent, so the stale X spread through the later CX onto the data
+    /// qubit as a phantom output error and read back as a phantom flip.
+    #[test]
+    fn a_preparation_clears_a_fault_arriving_before_it() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[1]);
+        circuit.tick().cx(&[(1, 0)]);
+        circuit.tick().mz(&[1]);
+        let checker = GadgetChecker::new(&circuit, GadgetConfig::new());
+
+        let (prop, _) = checker.propagate(&[(1, 1)], &FaultConfiguration::new());
+
+        assert!(
+            !prop.contains_x(0) && !prop.contains_z(0),
+            "phantom error spread onto the data qubit through the reset"
+        );
+        assert!(
+            !prop.contains_x(1) && !prop.contains_z(1),
+            "ancilla fault survived the ancilla's own preparation"
+        );
+    }
+
+    /// A Z on a wire about to be Z-measured commutes with the readout and is
+    /// absorbed by it. The former dispatch carried it through the measurement,
+    /// where a later H rotated it into X and a CX copied that X onto a second
+    /// wire -- two phantom flips from a harmless fault.
+    #[test]
+    fn a_measurement_absorbs_the_commuting_component() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().mz(&[0]);
+        circuit.tick().h(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        let checker = GadgetChecker::new(&circuit, GadgetConfig::new());
+
+        let (prop, _) = checker.propagate(&[(0, 3)], &FaultConfiguration::new());
+
+        for qubit in [0, 1] {
+            assert!(
+                !prop.contains_x(qubit) && !prop.contains_z(qubit),
+                "absorbed Z reappeared on qubit {qubit} after the measurement"
+            );
+        }
+    }
+
+    /// The component that anticommutes with the readout is the outcome flip;
+    /// it must stay readable on the wire in both bases, exactly as
+    /// `propagate_faults` keeps it.
+    #[test]
+    fn measurements_keep_the_anticommuting_flip_readable() {
+        let mut z_circuit = TickCircuit::new();
+        z_circuit.tick().mz(&[0]);
+        let checker = GadgetChecker::new(&z_circuit, GadgetConfig::new());
+        let (prop, flips) = checker.propagate(&[(0, 1)], &FaultConfiguration::new());
+        assert!(prop.contains_x(0), "MZ discarded its own outcome flip");
+        assert!(flips.contains(&(0, 0)), "MZ did not record its own flip");
+
+        let mut x_circuit = TickCircuit::new();
+        x_circuit.tick().mx(&[0]);
+        let checker = GadgetChecker::new(&x_circuit, GadgetConfig::new());
+        let (prop, flips) = checker.propagate(&[(0, 2)], &FaultConfiguration::new());
+        assert!(prop.contains_z(0), "MX discarded its own outcome flip");
+        assert!(!prop.contains_x(0), "MX kept the component it absorbs");
+        assert!(
+            flips.contains(&(0, 0)),
+            "a Y anticommutes with an X-basis readout and must be recorded"
+        );
+    }
+
+    /// Ancilla reuse across rounds: round-1 flip evidence must not leak into
+    /// round 2 (the re-preparation clears it), and a Z just before a Z-readout
+    /// is harmless in every round. The former dispatch kept both, and round
+    /// 2's H-CX-H sandwich turned the stale component into phantom flips.
+    #[test]
+    fn round_history_respects_measurement_and_reprep_crossings() {
+        use crate::fault_tolerance::PauliFault;
+        use pecos_core::QubitId;
+        use pecos_core::gate_type::GateType;
+
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[1]);
+        circuit.tick().h(&[1]);
+        circuit.tick().cx(&[(1, 0)]);
+        circuit.tick().h(&[1]);
+        circuit.tick().mz(&[1]); // round 1
+        circuit.tick().pz(&[1]); // re-prep for reuse
+        circuit.tick().h(&[1]);
+        circuit.tick().cx(&[(1, 0)]);
+        circuit.tick().h(&[1]);
+        circuit.tick().mz(&[1]); // round 2
+        let config = GadgetConfig::syndrome_extraction()
+            .with_input_qubits(&[0])
+            .with_output_qubits(&[0])
+            .with_ancilla_qubits(&[1])
+            .with_z_ancillas(&[1]);
+        let checker = GadgetChecker::new(&circuit, config);
+
+        let rounds = extract_measurement_rounds(&circuit);
+        assert_eq!(rounds.len(), 2, "two measurement rounds expected");
+
+        let fault_at_round_1 = |pauli: u8| {
+            FaultConfiguration::with_faults(vec![PauliFault::new(
+                SpacetimeLocation::new(4, vec![QubitId(1)], true, GateType::MZ, 0),
+                vec![pauli],
+            )])
+        };
+
+        // An X just before round 1's readout flips round 1 and only round 1.
+        let history = checker.compute_syndrome_history(&[], &fault_at_round_1(1), &rounds);
+        assert_eq!(
+            history,
+            vec![vec![1], vec![0]],
+            "round-1 flip must not leak past the re-preparation"
+        );
+
+        // A Z there commutes with the readout, so it flips nothing -- and the
+        // measurement absorbs it, so it cannot survive to be rotated into a
+        // phantom flip later either. Asserted on a circuit that reuses the
+        // ancilla WITHOUT a re-preparation, so absorption is the only thing
+        // standing between the Z and a phantom round-2 flip.
+        let mut reused = TickCircuit::new();
+        reused.tick().pz(&[1]);
+        reused.tick().mz(&[1]); // round 1
+        reused.tick().h(&[1]); // would rotate a surviving Z onto the X axis
+        reused.tick().mz(&[1]); // round 2
+        let reused_checker = GadgetChecker::new(
+            &reused,
+            GadgetConfig::syndrome_extraction()
+                .with_ancilla_qubits(&[1])
+                .with_z_ancillas(&[1]),
+        );
+        let reused_rounds = extract_measurement_rounds(&reused);
+        assert_eq!(reused_rounds.len(), 2, "two measurement rounds expected");
+        let z_before_round_1 = FaultConfiguration::with_faults(vec![PauliFault::new(
+            SpacetimeLocation::new(1, vec![QubitId(1)], true, GateType::MZ, 0),
+            vec![3],
+        )]);
+        let history =
+            reused_checker.compute_syndrome_history(&[], &z_before_round_1, &reused_rounds);
+        assert_eq!(
+            history,
+            vec![vec![0], vec![0]],
+            "an absorbed Z rotated into a phantom flip in a later round"
+        );
+    }
+
+    /// A fused measure-and-prepare hands back a cleared wire, so its own
+    /// outcome flip only exists at the crossing. Reading residual wire state
+    /// after the round reports every MPZ round as permanently clean, which
+    /// silently turns detected faults into undetected ones.
+    #[test]
+    fn a_fused_mpz_reports_its_own_round_flip() {
+        use pecos_core::QubitId;
+        use pecos_core::gate_type::GateType;
+
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[1]);
+        circuit.tick().mpz(&[1]);
+        let checker = GadgetChecker::new(
+            &circuit,
+            GadgetConfig::syndrome_extraction()
+                .with_ancilla_qubits(&[1])
+                .with_z_ancillas(&[1]),
+        );
+
+        let rounds = extract_measurement_rounds(&circuit);
+        assert_eq!(rounds.len(), 1, "the MPZ tick is a measurement round");
+
+        let x_before_readout = FaultConfiguration::with_faults(vec![PauliFault::new(
+            SpacetimeLocation::new(1, vec![QubitId(1)], true, GateType::MPZ, 0),
+            vec![1],
+        )]);
+
+        assert_eq!(
+            checker.compute_syndrome_history(&[], &x_before_readout, &rounds),
+            vec![vec![1]],
+            "the MPZ round did not report its own flip"
+        );
+
+        let (_, flips) = checker.propagate(&[], &x_before_readout);
+        assert_eq!(
+            GadgetChecker::flipped_ancillas(&flips, &[1]),
+            vec![1],
+            "the end-to-end syndrome lost the MPZ flip to its reset"
+        );
+    }
+
+    /// An X-basis readout is flipped by the Z component, not the X component.
+    /// Reading X for an x-ancilla both misses real flips and, once the ledger
+    /// absorbs X at every MX, reports the channel as permanently silent.
+    #[test]
+    fn x_basis_ancillas_are_read_in_their_own_basis() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().mx(&[1]);
+        let checker = GadgetChecker::new(
+            &circuit,
+            GadgetConfig::syndrome_extraction()
+                .with_ancilla_qubits(&[1])
+                .with_x_ancillas(&[1]),
+        );
+
+        // Z and Y anticommute with an X-basis readout; X commutes with it.
+        for (pauli, name, expected) in [(3, "Z", true), (2, "Y", true), (1, "X", false)] {
+            let (_, flips) = checker.propagate(&[(1, pauli)], &FaultConfiguration::new());
+            assert_eq!(
+                GadgetChecker::flipped_ancillas(&flips, &[1]),
+                if expected { vec![1] } else { Vec::new() },
+                "{name} on an X-basis ancilla was classified wrongly"
+            );
+        }
+    }
+
+    /// A tick stores one batch per gate type, so a batched two-qubit gate
+    /// carries every pair in a single entry. Applying only the first pair left
+    /// the checker blind to the rest of its own syndrome extraction.
+    #[test]
+    fn every_pair_of_a_batched_two_qubit_gate_propagates() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[2, 3]);
+        circuit.tick().cx(&[(0, 2), (1, 3)]);
+        circuit.tick().mz(&[2, 3]);
+        let checker = GadgetChecker::new(
+            &circuit,
+            GadgetConfig::syndrome_extraction()
+                .with_input_qubits(&[0, 1])
+                .with_ancilla_qubits(&[2, 3])
+                .with_z_ancillas(&[2, 3]),
+        );
+
+        // The second pair of the batch is the one a first-pair-only walk drops.
+        let (_, flips) = checker.propagate(&[(1, 1)], &FaultConfiguration::new());
+        assert_eq!(
+            GadgetChecker::flipped_ancillas(&flips, &[2, 3]),
+            vec![3],
+            "an X on the second pair's control did not reach its ancilla"
+        );
+
+        let (_, flips) = checker.propagate(&[(0, 1)], &FaultConfiguration::new());
+        assert_eq!(
+            GadgetChecker::flipped_ancillas(&flips, &[2, 3]),
+            vec![2],
+            "an X on the first pair's control did not reach its ancilla"
+        );
     }
 
     #[test]
@@ -2572,6 +2623,7 @@ mod tests {
         println!("  Total tested: {}", analysis.total_tested);
         println!("  Is FT: {}", analysis.is_fault_tolerant());
         println!("  Syndrome patterns: {}", analysis.num_syndrome_patterns());
+        assert!(analysis.is_fault_tolerant());
     }
 
     #[test]
@@ -2623,6 +2675,10 @@ mod tests {
             analysis.never_detected_logical_errors
         );
         println!("  Is FT: {}", analysis.is_fault_tolerant());
+        assert!(
+            !analysis.is_fault_tolerant(),
+            "the final extraction round still has undetectable post-CX data faults"
+        );
     }
 
     #[test]
@@ -2645,7 +2701,7 @@ mod tests {
         let analysis = checker.analyze_decoder_requirements(1);
 
         // Test helper methods
-        let _ = analysis.is_fault_tolerant();
+        assert!(!analysis.is_fault_tolerant());
         let _ = analysis.num_syndrome_patterns();
         let problematic = analysis.problematic_syndromes();
 

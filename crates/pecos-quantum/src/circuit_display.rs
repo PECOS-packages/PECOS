@@ -66,9 +66,12 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::RXXRYYRZZ => "RXXRYYRZZ",
         GateType::U2q => "U2q",
         GateType::CCX => "CCX",
+        GateType::MX => "MX",
         GateType::MZ => "MZ",
         GateType::MeasureLeaked => "ML",
         GateType::MeasureFree => "MF",
+        GateType::MPZ => "MPZ",
+        GateType::PX => "PX",
         GateType::PZ => "PZ",
         GateType::QAlloc => "QA",
         GateType::QFree => "QF",
@@ -179,7 +182,9 @@ fn full_gate_symbol(gate: &Gate, unit: AngleUnit) -> String {
 /// Map a `GateType` to its diagram color using the PECOS axis color algebra.
 fn gate_color(gate_type: GateType) -> CellColor {
     match gate_type {
-        GateType::X | GateType::RX | GateType::RXX => CellColor::XAxis,
+        GateType::X | GateType::RX | GateType::RXX | GateType::MX | GateType::PX => {
+            CellColor::XAxis
+        }
         GateType::Y | GateType::RY | GateType::RYY => CellColor::YAxis,
         GateType::Z
         | GateType::RZ
@@ -206,6 +211,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::I
         | GateType::MeasureLeaked
         | GateType::MeasureFree
+        | GateType::MPZ
         | GateType::QAlloc
         | GateType::QFree
         | GateType::Custom
@@ -233,7 +239,9 @@ fn gate_color(gate_type: GateType) -> CellColor {
 /// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_family(gate_type: GateType) -> GateFamily {
     match gate_type {
-        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => GateFamily::Measurement,
+        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ => {
+            GateFamily::Measurement
+        }
         GateType::PZ | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,
         _ => GateFamily::Default,
     }

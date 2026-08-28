@@ -37,9 +37,11 @@ mod bit_int_bindings;
 mod bit_uint_bindings;
 mod byte_message_bindings;
 mod clifford_rep_bindings;
+mod code_matrix_bindings;
 mod coin_toss_bindings;
 mod dag_circuit_bindings;
 mod decoder_bindings;
+mod decoder_spec_bindings;
 mod dtypes;
 mod engine_bindings;
 mod engine_builders;
@@ -50,6 +52,7 @@ mod gate_registry_bindings;
 mod graph_bindings;
 mod namespace_modules;
 mod num_bindings;
+mod observable_flips_bindings;
 mod pauli_bindings;
 mod pauli_prop_bindings;
 mod pauli_sequence_bindings;
@@ -71,6 +74,7 @@ mod sparse_stab_engine_bindings;
 mod stab_bindings;
 mod stab_vec_bindings;
 mod stabilizer_code_bindings;
+mod stabilizer_code_spec_bindings;
 mod stabilizer_group_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
@@ -302,7 +306,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register stabilizer group, Pauli sequence, and Clifford types
     stabilizer_group_bindings::register_stabilizer_group_types(m)?;
+    code_matrix_bindings::register_code_matrix_types(m)?;
     stabilizer_code_bindings::register_stabilizer_code_types(m)?;
+    stabilizer_code_spec_bindings::register_stabilizer_code_spec_types(m)?;
     pauli_sequence_bindings::register_pauli_sequence_types(m)?;
     clifford_rep_bindings::register_clifford_types(m)?;
 
@@ -445,6 +451,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("all", num.getattr("all")?)?;
     m.add("any", num.getattr("any")?)?;
     m.add("where", num.getattr("where_array")?)?;
+    m.add("nonzero", num.getattr("nonzero")?)?;
+    m.add("issubdtype", num.getattr("issubdtype")?)?;
 
     // Optimization functions
     m.add("brentq", num.getattr("brentq")?)?;
@@ -463,6 +471,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("arange", num.getattr("arange")?)?;
     m.add("zeros", num.getattr("zeros")?)?;
     m.add("ones", num.getattr("ones")?)?;
+    m.add("asarray", num.getattr("asarray")?)?;
+    m.add("zeros_like", num.getattr("zeros_like")?)?;
     m.add("delete", num.getattr("delete")?)?;
     m.add("kron", num.getattr("kron")?)?;
 
@@ -479,6 +489,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // These are convenience aliases for dtypes.i8.type
     // =========================================================================
     let dtypes = m.getattr("dtypes")?;
+    m.add("bool_", num.getattr("bool_")?)?;
+    m.add("integer", num.getattr("integer")?)?;
     m.add("i8", dtypes.getattr("i8")?.getattr("type")?)?;
     m.add("i16", dtypes.getattr("i16")?.getattr("type")?)?;
     m.add("i32", dtypes.getattr("i32")?.getattr("type")?)?;
@@ -497,8 +509,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // (pecos.typing module) as they are Python TypeAlias constructs, not Rust types.
     // The .pyi stub file provides type information for static type checkers.
 
-    // Add __version__ attribute
-    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // The Python distribution version from pyproject.toml, injected by build.rs. The crate
+    // version (CARGO_PKG_VERSION) is a different number -- it rides the Rust workspace train.
+    m.add("__version__", env!("PECOS_PYTHON_VERSION"))?;
 
     Ok(())
 }

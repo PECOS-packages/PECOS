@@ -24,21 +24,61 @@
     clippy::unused_self
 )]
 
-//! Python bindings for experimental PECOS simulators.
+//! Python bindings for experimental PECOS components.
 //!
-//! Exposes `StabMps` (stabilizer + MPS hybrid) and `Mast` (magic state
-//! injection) from `pecos-stab-tn` via `PyO3`.
+//! Exposes `StabMps` (stabilizer + MPS hybrid), `Mast` (magic state
+//! injection), and `StabMpsCompile` (compile-only tractability analysis)
+//! from `pecos-stab-tn`, plus the Frontier and BP-trellis decoders,
+//! via `PyO3`.
 
+mod bp_trellis_bindings;
 mod coherent_idle_channel;
+mod compile_bindings;
 mod eeg_bindings;
+mod frontier_bindings;
 mod mast_bindings;
 mod sim_neo_bindings;
 mod stab_mps_bindings;
 pub mod stabmps_builder;
 
 use pecos_core::Angle64;
+use pecos_stab_tn::stab_mps::{MeasurementMode, StabMpsStats};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+
+pub(crate) fn stab_mps_stats_to_dict(py: Python<'_>, stats: &StabMpsStats) -> PyResult<Py<PyDict>> {
+    let result = PyDict::new(py);
+    result.set_item("total_nonclifford", stats.total_nonclifford)?;
+    result.set_item("single_site", stats.single_site)?;
+    result.set_item("multi_disent", stats.multi_disent)?;
+    result.set_item("deferred_disent_bypass", stats.deferred_disent_bypass)?;
+    result.set_item("numerical_redetect", stats.numerical_redetect)?;
+    result.set_item("multi_std", stats.multi_std)?;
+    result.set_item("multi_std_add", stats.multi_std_add)?;
+    result.set_item("multi_std_cascade", stats.multi_std_cascade)?;
+    result.set_item(
+        "signed_eigenstate_candidates",
+        stats.signed_eigenstate_candidates,
+    )?;
+    result.set_item("stabilizer", stats.stabilizer)?;
+    result.set_item("ofd_in_span", stats.ofd_in_span)?;
+    result.set_item("ofd_new_dim", stats.ofd_new_dim)?;
+    result.set_item("ofd_in_span_std", stats.ofd_in_span_std)?;
+    result.set_item("ofd_in_span_single", stats.ofd_in_span_single)?;
+    result.set_item("ofd_in_span_disent", stats.ofd_in_span_disent)?;
+    Ok(result.unbind())
+}
+
+pub(crate) fn parse_measurement_mode(value: &str) -> PyResult<MeasurementMode> {
+    match value {
+        "exact" => Ok(MeasurementMode::Exact),
+        "pragmatic" => Ok(MeasurementMode::Pragmatic),
+        "lazy" => Ok(MeasurementMode::Lazy),
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "measurement must be one of: 'exact', 'pragmatic', 'lazy'",
+        )),
+    }
+}
 
 pub(crate) fn extract_angle(
     params: Option<&Bound<'_, PyDict>>,
@@ -64,8 +104,21 @@ pub(crate) fn extract_angle(
 
 #[pymodule]
 fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // The Python distribution version from pyproject.toml, injected by build.rs. The crate
+    // version (CARGO_PKG_VERSION) is a different number -- it rides the Rust workspace train.
+    m.add("__version__", env!("PECOS_PYTHON_VERSION"))?;
+
+    m.add_class::<bp_trellis_bindings::PyBpTrellisDecoder>()?;
+    m.add_class::<bp_trellis_bindings::PyBpTrellisResult>()?;
+    m.add_class::<bp_trellis_bindings::PyBpTrellisObservableFlips>()?;
+    m.add_class::<frontier_bindings::PyFrontierDecoder>()?;
+    m.add_class::<frontier_bindings::PyFrontierCommitteeDecoder>()?;
+    m.add_class::<frontier_bindings::PyFrontierResult>()?;
+    m.add_class::<frontier_bindings::PyFrontierCommitteeResult>()?;
+    m.add_class::<frontier_bindings::PyFrontierObservableFlips>()?;
     m.add_class::<stab_mps_bindings::PyStabMps>()?;
     m.add_class::<mast_bindings::PyMast>()?;
+    m.add_class::<compile_bindings::PyStabMpsCompile>()?;
     m.add_class::<sim_neo_bindings::PySimNeoBuilder>()?;
     m.add_class::<sim_neo_bindings::PyStabMpsBuilder>()?;
     m.add_class::<sim_neo_bindings::PyNoiseModelBuilder>()?;

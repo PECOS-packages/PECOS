@@ -12,8 +12,9 @@ These tests verify:
 
 import numpy as np
 import pytest
+from pecos.decoders import pymatching, tesseract
 from pecos.qec.surface import (
-    NoiseModel,
+    NoiseParameters,
     SurfaceDecoder,
     SurfacePatch,
     generate_dem_from_tick_circuit,
@@ -51,11 +52,11 @@ def _count_singleton_error_parts(dem: str) -> int:
 
 
 class TestNoiseModel:
-    """Tests for NoiseModel dataclass."""
+    """Tests for NoiseParameters dataclass."""
 
     def test_default_values(self) -> None:
         """Default noise model should have zero error rates."""
-        noise = NoiseModel()
+        noise = NoiseParameters()
         assert noise.p1 == 0.0
         assert noise.p2 == 0.0
         assert noise.p_meas == 0.0
@@ -63,15 +64,15 @@ class TestNoiseModel:
 
     def test_is_noiseless(self) -> None:
         """Test is_noiseless property."""
-        assert NoiseModel().is_noiseless
-        assert not NoiseModel(p1=0.01).is_noiseless
-        assert not NoiseModel(p2=0.01).is_noiseless
-        assert not NoiseModel(p_meas=0.01).is_noiseless
-        assert not NoiseModel(p_prep=0.01).is_noiseless
+        assert NoiseParameters().is_noiseless
+        assert not NoiseParameters(p1=0.01).is_noiseless
+        assert not NoiseParameters(p2=0.01).is_noiseless
+        assert not NoiseParameters(p_meas=0.01).is_noiseless
+        assert not NoiseParameters(p_prep=0.01).is_noiseless
 
     def test_physical_error_rate(self) -> None:
         """Test physical_error_rate property."""
-        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.005, p_prep=0.002)
+        noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.005, p_prep=0.002)
         assert noise.physical_error_rate == 0.01  # max of all rates
 
 
@@ -154,7 +155,7 @@ class TestSurfaceDecoder:
     def test_create_decoder_d3(self) -> None:
         """Create decoder for distance-3 patch."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         decoder = SurfaceDecoder(patch, num_rounds=1, noise=noise)
 
         assert decoder.patch == patch
@@ -164,7 +165,7 @@ class TestSurfaceDecoder:
     def test_create_decoder_d5(self) -> None:
         """Create decoder for distance-5 patch."""
         patch = SurfacePatch.create(distance=5)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         decoder = SurfaceDecoder(patch, num_rounds=3, noise=noise)
 
         assert decoder.patch == patch
@@ -173,7 +174,7 @@ class TestSurfaceDecoder:
     def test_decoder_types(self) -> None:
         """Test different decoder type options."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
 
         # PyMatching (default)
         d1 = SurfaceDecoder(patch, decoder_type="pymatching", noise=noise)
@@ -200,7 +201,7 @@ class TestSurfaceDecoder:
         import pecos.qec.surface.decode as decode_module
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         seen: dict[str, object] = {}
 
         def wrapped_generate(*_args: object, **_kwargs: object) -> str:
@@ -242,7 +243,7 @@ class TestSurfaceDecoder:
         import pecos.qec.surface.decode as decode_module
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         seen: dict[str, object] = {}
 
         def wrapped_generate(*_args: object, **_kwargs: object) -> str:
@@ -279,7 +280,7 @@ class TestSurfaceDecoder:
     def test_correlated_pymatching_requires_circuit_level_dem(self) -> None:
         """The correlated option needs DEM metadata and should fail without it."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         decoder = SurfaceDecoder(
             patch,
             decoder_type="pymatching_correlated",
@@ -293,7 +294,7 @@ class TestSurfaceDecoder:
     def test_correlated_pymatching_requires_decomposed_dem_mode(self) -> None:
         """The explicit correlated option needs decomposed DEM metadata."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         decoder = SurfaceDecoder(
             patch,
             decoder_type="pymatching_correlated",
@@ -311,11 +312,16 @@ class TestSurfaceDecoder:
         for decoder_type in ["pymatching", "pymatching_correlated", "pymatching_uncorrelated"]:
             assert decode_module._recommended_graphlike_decomposition_for_decoder(decoder_type) == "terminal_graphlike"
         assert decode_module._recommended_graphlike_decomposition_for_decoder("tesseract") == "source_graphlike"
+        assert (
+            decode_module._recommended_graphlike_decomposition_for_decoder(pymatching(correlated=True))
+            == "terminal_graphlike"
+        )
+        assert decode_module._recommended_graphlike_decomposition_for_decoder(tesseract()) == "source_graphlike"
 
     def test_get_dem(self) -> None:
         """Test DEM generation via decoder."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         decoder = SurfaceDecoder(patch, num_rounds=3, noise=noise)
 
         # Test circuit-level DEM (default)
@@ -337,7 +343,7 @@ class TestSurfaceDecoder:
         import pecos.qec.surface.decode as decode_module
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         decoder = SurfaceDecoder(
             patch,
             num_rounds=3,
@@ -366,7 +372,7 @@ class TestSurfaceDecoder:
         import pecos.qec.surface.decode as decode_module
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         seen: dict[str, object] = {}
 
         def wrapped_generate(*_args: object, **kwargs: object) -> str:
@@ -395,7 +401,7 @@ class TestSurfaceDecoder:
         import pecos.qec.surface.decode as decode_module
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         seen: dict[str, object] = {}
 
         def wrapped_generate(*_args: object, **kwargs: object) -> str:
@@ -421,7 +427,7 @@ class TestSurfaceDecoder:
     def test_decode_trivial_syndrome_z(self) -> None:
         """Decode trivial Z syndrome (no errors)."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         decoder = SurfaceDecoder(patch, num_rounds=1, noise=noise)
 
         # All-zero syndrome
@@ -446,7 +452,7 @@ class TestSurfaceDecoder:
     def test_decode_trivial_syndrome_x(self) -> None:
         """Decode trivial X syndrome (no errors)."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         decoder = SurfaceDecoder(patch, num_rounds=1, noise=noise)
 
         num_x_stab = len(patch.geometry.x_stabilizers)
@@ -536,7 +542,7 @@ class TestDemGeneration:
     def test_generate_surface_code_dem_z(self) -> None:
         """Generate Z-stabilizer DEM."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
 
         dem = generate_surface_code_dem(patch, num_rounds=3, noise=noise, stab_type="Z")
 
@@ -548,7 +554,7 @@ class TestDemGeneration:
     def test_generate_surface_code_dem_x(self) -> None:
         """Generate X-stabilizer DEM."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
 
         dem = generate_surface_code_dem(patch, num_rounds=3, noise=noise, stab_type="X")
 
@@ -560,7 +566,7 @@ class TestDemGeneration:
         from pecos.qec.surface.decode import generate_dem_from_patch
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
 
         full_dem = generate_dem_from_patch(patch, num_rounds=4, noise=noise, basis="X", decompose_errors=False)
         decomposed_dem = generate_dem_from_patch(patch, num_rounds=4, noise=noise, basis="X", decompose_errors=True)
@@ -586,7 +592,7 @@ class TestDemGeneration:
         from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         params = {"p1": noise.p1, "p2": noise.p2, "p_meas": noise.p_meas, "p_prep": noise.p_prep}
 
         full_tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
@@ -625,10 +631,10 @@ class TestDemGeneration:
         DEM built fresh from the corresponding TickCircuit, for both the
         ``abstract`` and ``traced_qis`` sources -- pinning that caching is
         sound for constrained budgets, not just unconstrained ones."""
+        from pecos._traced_circuit import normalize_traced_tick_circuit
         from pecos.qec.surface.circuit_builder import (
             generate_dem_from_tick_circuit,
             generate_tick_circuit_from_patch,
-            normalize_traced_qis_tick_circuit,
         )
         from pecos.qec.surface.decode import (
             _build_surface_tick_circuit_for_native_model,
@@ -636,7 +642,7 @@ class TestDemGeneration:
         )
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         params = {"p1": noise.p1, "p2": noise.p2, "p_meas": noise.p_meas, "p_prep": noise.p_prep}
 
         # abstract source
@@ -662,7 +668,7 @@ class TestDemGeneration:
         # The native topology path normalizes traced-QIS circuits (Clifford-rotation
         # lowering + single-qubit Clifford-chain simplification) before DEM
         # construction; the fresh comparison must apply the same normalization.
-        normalize_traced_qis_tick_circuit(traced_tc, context="constrained budget cache test")
+        normalize_traced_tick_circuit(traced_tc, context="constrained budget cache test")
         cached_traced = generate_circuit_level_dem_from_builder(
             patch,
             num_rounds=2,
@@ -682,7 +688,7 @@ class TestDemGeneration:
 
         patch = SurfacePatch.create(distance=3)
         total = len(patch.geometry.x_stabilizers) + len(patch.geometry.z_stabilizers)
-        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
 
         # Canonicalization: every unconstrained spelling -> None; a real
         # constraint passes through unchanged.
@@ -716,7 +722,7 @@ class TestDemGeneration:
         from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         abstract_tc = _build_surface_tick_circuit_for_native_model(
             patch,
             2,
@@ -767,12 +773,12 @@ class TestDemGeneration:
             sampler = ParsedDem.from_string(dem).to_dem_sampler()
 
             assert (
-                sampler.sample_decode_count(
+                sampler.decode(
                     dem,
                     16,
-                    decoder_type="pymatching",
+                    pymatching(correlated=True),
                     seed=1234,
-                )
+                ).num_errors
                 >= 0
             )
 
@@ -822,7 +828,7 @@ class TestDemGeneration:
     def test_guppy_module_cache_keys_on_full_patch_identity(self) -> None:
         """Rotated and non-rotated patches of the same dx/dz/budget must NOT
         share a cached Guppy module (they generate different circuits)."""
-        from pecos.guppy.surface import _load_guppy_module
+        from pecos.guppy_gen.surface import _load_guppy_module
 
         rotated = _load_guppy_module(SurfacePatch.create(distance=3, rotated=True), ancilla_budget=2)
         non_rotated = _load_guppy_module(SurfacePatch.create(distance=3, rotated=False), ancilla_budget=2)
@@ -832,7 +838,7 @@ class TestDemGeneration:
         """All distance-based Guppy entry points enforce the documented
         'odd >= 3' contract (previously make_surface_code/get_surface_code_module
         accepted even/<3 and get_num_qubits(0) returned -1)."""
-        from pecos.guppy.surface import (
+        from pecos.guppy_gen.surface import (
             generate_surface_code_module,
             get_num_qubits,
             get_surface_code_module,
@@ -851,7 +857,7 @@ class TestDemGeneration:
         assert get_num_qubits(3) == 2 * 9 - 1  # valid distance still works
 
     def test_get_num_qubits_requires_exactly_one_of_d_or_patch(self) -> None:
-        from pecos.guppy.surface import get_num_qubits
+        from pecos.guppy_gen.surface import get_num_qubits
 
         with pytest.raises(ValueError, match=r"exactly one of"):
             get_num_qubits()
@@ -864,7 +870,7 @@ class TestDemGeneration:
         from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
         patch = SurfacePatch.create(dx=3, dz=5)
-        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         params = {"p1": noise.p1, "p2": noise.p2, "p_meas": noise.p_meas, "p_prep": noise.p_prep}
 
         tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
@@ -884,7 +890,7 @@ class TestDemGeneration:
         from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
         patch = SurfacePatch.create(distance=3)
-        base_noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        base_noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         base_params = {
             "p1": base_noise.p1,
             "p2": base_noise.p2,
@@ -902,7 +908,7 @@ class TestDemGeneration:
             basis="X",
         )
 
-        idle_noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001, p_idle=0.002)
+        idle_noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001, p_idle=0.002)
         idle_tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
         idle_tc.fill_idle_gates()
         expected_idle_dem = generate_dem_from_tick_circuit(
@@ -929,7 +935,7 @@ class TestDemGeneration:
         _require_selene_runtime()
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+        noise = NoiseParameters(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
 
         dem = generate_circuit_level_dem_from_builder(
             patch,
@@ -1014,7 +1020,7 @@ class TestDemGeneration:
             return errors
 
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p1=0.003, p2=0.003, p_meas=0.003, p_prep=0.003)
+        noise = NoiseParameters(p1=0.003, p2=0.003, p_meas=0.003, p_prep=0.003)
 
         for basis in ("X", "Z"):
             tc = _build_surface_tick_circuit_for_native_model(
@@ -1069,8 +1075,8 @@ class TestDemGeneration:
         _require_selene_runtime()
 
         patch = SurfacePatch.create(distance=3)
-        noise_a = NoiseModel(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
-        noise_b = NoiseModel(p1=0.002, p2=0.002, p_meas=0.002, p_prep=0.002)
+        noise_a = NoiseParameters(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+        noise_b = NoiseParameters(p1=0.002, p2=0.002, p_meas=0.002, p_prep=0.002)
 
         _cached_surface_native_topology.cache_clear()
         _cached_surface_native_dem_string.cache_clear()
@@ -1136,7 +1142,7 @@ class TestDemGeneration:
     def test_dem_detector_count(self) -> None:
         """DEM should have correct number of detectors."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
         num_rounds = 3
 
         dem = generate_surface_code_dem(
@@ -1156,7 +1162,7 @@ class TestDemGeneration:
     def test_dem_single_round(self) -> None:
         """DEM with single round should have boundary measurement errors."""
         patch = SurfacePatch.create(distance=3)
-        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        noise = NoiseParameters(p2=0.01, p_meas=0.01)
 
         dem = generate_surface_code_dem(patch, num_rounds=1, noise=noise, stab_type="Z")
 
@@ -1202,7 +1208,7 @@ class TestNoisySimulation:
     def test_noiseless_simulation(self) -> None:
         """Noiseless simulation should have zero logical error rate."""
         from pecos.compilation_pipeline import compile_guppy_to_hugr
-        from pecos.guppy.surface import get_num_qubits, make_surface_code
+        from pecos.guppy_gen.surface import get_num_qubits, make_surface_code
         from pecos.qec.surface import SurfacePatch
         from selene_sim import IdealErrorModel, SimpleRuntime, Stim, build
 

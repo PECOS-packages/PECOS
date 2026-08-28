@@ -53,10 +53,21 @@ pub struct TesseractConfig {
     pub det_penalty: f64,
 }
 
+/// Upstream Tesseract's `DEFAULT_DET_BEAM`. An unbounded beam is a separate
+/// opt-in constant upstream (`INF_DET_BEAM`); using it by default saturates
+/// `pqlimit` on circuit-scale detector error models, which returns a truncated
+/// (wrong) answer slowly: measured on a 936-detector BB144 model, an unbounded
+/// beam took ~14 s/shot and failed 16 of 60 shots, versus ~0.29 s/shot and 2 of
+/// 1000 with this beam.
+const DEFAULT_DET_BEAM: u16 = 5;
+
+/// Upstream Tesseract's `INF_DET_BEAM`: search without a detector beam bound.
+const INFINITE_DET_BEAM: u16 = u16::MAX;
+
 impl Default for TesseractConfig {
     fn default() -> Self {
         Self {
-            det_beam: u16::MAX, // Infinite beam by default
+            det_beam: DEFAULT_DET_BEAM,
             beam_climbing: false,
             no_revisit_dets: true,
             verbose: false,
@@ -67,11 +78,36 @@ impl Default for TesseractConfig {
 }
 
 impl TesseractConfig {
+    /// Validate configuration values before passing them through FFI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TesseractError::InvalidConfig`] when a numeric tuning parameter
+    /// is outside its supported range.
+    pub fn validate(&self) -> Result<(), TesseractError> {
+        if self.det_beam == 0 {
+            return Err(TesseractError::InvalidConfig(
+                "det_beam must be greater than 0".to_string(),
+            ));
+        }
+        if self.pqlimit == 0 {
+            return Err(TesseractError::InvalidConfig(
+                "pqlimit must be greater than 0".to_string(),
+            ));
+        }
+        if !self.det_penalty.is_finite() || self.det_penalty < 0.0 {
+            return Err(TesseractError::InvalidConfig(
+                "det_penalty must be finite and non-negative".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Create a new configuration with optimized settings for performance
     #[must_use]
     pub fn fast() -> Self {
         Self {
-            det_beam: 5,
+            det_beam: DEFAULT_DET_BEAM,
             beam_climbing: true,
             no_revisit_dets: true,
             verbose: false,
@@ -84,7 +120,7 @@ impl TesseractConfig {
     #[must_use]
     pub fn accurate() -> Self {
         Self {
-            det_beam: u16::MAX,
+            det_beam: INFINITE_DET_BEAM,
             beam_climbing: false,
             no_revisit_dets: false,
             verbose: false,
@@ -176,6 +212,7 @@ impl TesseractDecoder {
     /// - The DEM contains unsupported error mechanisms
     /// - Memory allocation fails
     pub fn new(dem_string: &str, config: TesseractConfig) -> Result<Self, TesseractError> {
+        config.validate()?;
         let config_repr = config.to_ffi_repr();
 
         let inner = ffi::create_tesseract_decoder(dem_string, &config_repr)
@@ -428,7 +465,11 @@ mod tests {
     #[test]
     fn test_tesseract_config_default() {
         let config = TesseractConfig::default();
-        assert_eq!(config.det_beam, u16::MAX);
+        // Must match upstream Tesseract's DEFAULT_DET_BEAM. An unbounded beam
+        // here saturates pqlimit on circuit-scale models and returns a
+        // truncated answer slowly, so this value is load-bearing, not cosmetic.
+        assert_eq!(config.det_beam, DEFAULT_DET_BEAM);
+        assert_ne!(config.det_beam, INFINITE_DET_BEAM);
         assert!(!config.beam_climbing);
         assert!(!config.verbose);
     }
@@ -444,8 +485,69 @@ mod tests {
     #[test]
     fn test_tesseract_config_accurate() {
         let config = TesseractConfig::accurate();
-        assert_eq!(config.det_beam, u16::MAX);
+        assert_eq!(config.det_beam, INFINITE_DET_BEAM);
         assert!(!config.beam_climbing);
         assert!(!config.no_revisit_dets);
+    }
+
+    #[test]
+    fn test_tesseract_config_validation_names_invalid_parameter() {
+        let mut config = TesseractConfig {
+            det_beam: 0,
+            ..TesseractConfig::default()
+        };
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("det_beam")
+        );
+
+        config = TesseractConfig {
+            pqlimit: 0,
+            ..TesseractConfig::default()
+        };
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("pqlimit")
+        );
+
+        config = TesseractConfig {
+            det_penalty: f64::NAN,
+            ..TesseractConfig::default()
+        };
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("det_penalty")
+        );
+
+        config = TesseractConfig {
+            det_penalty: -0.1,
+            ..TesseractConfig::default()
+        };
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("det_penalty")
+        );
+
+        config = TesseractConfig {
+            pqlimit: 0,
+            ..TesseractConfig::default()
+        };
+        let error = TesseractDecoder::new("error(0.1) D0\ndetector D0", config)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("pqlimit"));
     }
 }

@@ -113,6 +113,10 @@ pub enum FaultSourceType {
 /// rendered DEM behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DirectSourceFamily {
+    /// Independent mechanism obtained from a categorical channel's flip signature.
+    /// No Pauli label is attached because signature aliases are merged first.
+    ExclusiveSignature,
+
     /// Single-location direct source without a Y Pauli label.
     SingleLocation,
 
@@ -162,6 +166,9 @@ pub struct FaultContribution {
     pub location_indices: SmallVec<[u32; 2]>,
 
     /// Original Pauli channel at each tracked location.
+    ///
+    /// This is empty for exclusive-signature mechanisms, which are defined only
+    /// after equal Pauli effects have been merged.
     pub paulis: SmallVec<[Pauli; 2]>,
 
     /// Gate type at each tracked source location.
@@ -317,7 +324,12 @@ impl FaultContribution {
         probability: f64,
         source: SourceMetadata<'_, u32>,
     ) -> Self {
-        debug_assert_eq!(source.location_indices.len(), source.paulis.len());
+        debug_assert!(
+            source.location_indices.len() == source.paulis.len()
+                || (source.paulis.is_empty()
+                    && source.direct_source_family_override
+                        == Some(DirectSourceFamily::ExclusiveSignature))
+        );
         debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
         debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
         Self {
@@ -2055,6 +2067,21 @@ impl DemOutput {
     }
 }
 
+/// Compare two Pauli strings ignoring global phase.
+///
+/// A DEM output flip is an anticommutation property, so global phase carries no
+/// meaning -- [`DemOutput::with_pauli`] strips it for exactly that reason. The
+/// `pauli` field is public and can be set without going through that
+/// constructor, so an equality check must not treat `-X` and `+X` as different
+/// observables.
+fn pauli_eq_ignoring_phase(left: &PauliString, right: &PauliString) -> bool {
+    let mut left = left.clone();
+    let mut right = right.clone();
+    left.set_phase(pecos_core::QuarterPhase::PlusOne);
+    right.set_phase(pecos_core::QuarterPhase::PlusOne);
+    left == right
+}
+
 fn merge_record_parity(existing: &mut SmallVec<[i32; 4]>, incoming: SmallVec<[i32; 4]>) {
     for record in incoming {
         toggle_dem_output_record(existing, record);
@@ -2433,6 +2460,27 @@ pub fn omitted_two_qubit_gate_pauli_twirl(
     Some(entries.iter().copied().collect())
 }
 
+/// Rate and per-Pauli weights for one dedicated idle-noise family.
+///
+/// `weights` may contain only `"X"`, `"Y"`, and `"Z"`. An empty map means
+/// equal unit weight on all three axes. A zero `rate` disables the family
+/// regardless of the map contents.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct IdleNoiseFamily {
+    /// Common family rate.
+    pub rate: f64,
+    /// Per-axis relative-rate weights.
+    pub weights: BTreeMap<String, f64>,
+}
+
+impl IdleNoiseFamily {
+    /// Creates an idle-noise family from a common rate and per-axis weights.
+    #[must_use]
+    pub fn new(rate: f64, weights: BTreeMap<String, f64>) -> Self {
+        Self { rate, weights }
+    }
+}
+
 /// Noise model configuration for circuit-level fault analysis.
 #[derive(Debug, Clone)]
 pub struct NoiseConfig {
@@ -2458,8 +2506,9 @@ pub struct NoiseConfig {
     pub p_prep: f64,
     /// Idle gate error rate per time unit.
     ///
-    /// The actual error probability for an idle gate is `p_idle * duration`
-    /// (clamped to [0, 1]), where `duration` is the gate's `TimeUnits` value.
+    /// The actual error probability for an idle gate is `p_idle * duration`,
+    /// where `duration` is the gate's `TimeUnits` value. Values outside the
+    /// probability range are rejected during model construction.
     /// Default is 0.0 (no idle noise).
     pub p_idle: f64,
     /// Optional T1 relaxation time (in the same time units as idle duration).
@@ -2491,42 +2540,21 @@ pub struct NoiseConfig {
     ///
     /// This is the EEG H-type noise model for idle gates. Default is 0.0.
     pub idle_rz: f64,
-    /// Stochastic Z-memory error rate linear in idle duration.
+    /// Categorical Pauli-memory family linear in idle duration.
     ///
-    /// This mirrors PECOS engine idle memory noise in a DEM-compatible Pauli
-    /// channel: each explicit `Idle(duration, q)` contributes an independent
-    /// Z fault with probability `p_idle_linear_rate * duration`.
+    /// Axis `P` has probability `rate * weights[P] * duration`. The family is
+    /// converted to independent DEM mechanisms only after equal propagated
+    /// signatures have been collected.
+    pub p_idle_linear: IdleNoiseFamily,
+    /// Independent Pauli-memory family quadratic in idle duration.
     ///
-    /// This is the legacy Z-axis alias for `p_idle_z_linear_rate`.
-    pub p_idle_linear_rate: f64,
-    /// Stochastic Z-memory error rate for the quadratic idle term.
+    /// The common rate has units of inverse time squared. Axis `P` has
+    /// probability `rate * weights[P] * duration^2`.
+    pub p_idle_quadratic: IdleNoiseFamily,
+    /// Independent sine-squared Pauli-memory family.
     ///
-    /// Each explicit `Idle(duration, q)` contributes a Z-fault probability
-    /// term `p_idle_quadratic_rate * duration^2`.
-    ///
-    /// This is the legacy Z-axis alias for `p_idle_z_quadratic_rate`.
-    pub p_idle_quadratic_rate: f64,
-    /// Stochastic Z-memory sine-law rate for the quadratic idle term.
-    ///
-    /// Each explicit `Idle(duration, q)` contributes a Z-fault probability
-    /// term `sin(p_idle_quadratic_sine_rate * duration)^2`. This preserves
-    /// the small-duration quadratic behavior of coherent dephasing models
-    /// without changing the coefficient-style `p_idle_quadratic_rate` API.
-    ///
-    /// This is the legacy Z-axis alias for `p_idle_z_quadratic_sine_rate`.
-    pub p_idle_quadratic_sine_rate: f64,
-    /// Stochastic X-memory error rate linear in idle duration.
-    pub p_idle_x_linear_rate: f64,
-    /// Stochastic Y-memory error rate linear in idle duration.
-    pub p_idle_y_linear_rate: f64,
-    /// Stochastic X-memory error rate quadratic in idle duration.
-    pub p_idle_x_quadratic_rate: f64,
-    /// Stochastic Y-memory error rate quadratic in idle duration.
-    pub p_idle_y_quadratic_rate: f64,
-    /// Stochastic X-memory sine-law rate for the quadratic idle term.
-    pub p_idle_x_quadratic_sine_rate: f64,
-    /// Stochastic Y-memory sine-law rate for the quadratic idle term.
-    pub p_idle_y_quadratic_sine_rate: f64,
+    /// Axis `P` has probability `sin(rate * weights[P] * duration)^2`.
+    pub p_idle_quadratic_sine: IdleNoiseFamily,
     /// Per-payload local measurement-crosstalk event rate.
     ///
     /// This rate is multiplied by the selected hidden-measurement transition
@@ -2627,7 +2655,7 @@ impl Default for MeasurementCrosstalkTransitionModel {
 }
 
 /// Per-Pauli error probabilities for a single qubit.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct PauliProbs {
     /// Probability of X error.
     pub px: f64,
@@ -2635,6 +2663,465 @@ pub struct PauliProbs {
     pub py: f64,
     /// Probability of Z error.
     pub pz: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct IdleChannelFamilies {
+    /// Categorical Pauli channels whose equal signatures must be summed.
+    pub(crate) exclusive: SmallVec<[PauliProbs; 2]>,
+    /// Independent per-axis mechanism triples.
+    pub(crate) independent: SmallVec<[PauliProbs; 2]>,
+}
+
+/// An invalid noise-channel configuration for DEM construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoiseChannelError {
+    message: String,
+}
+
+impl NoiseChannelError {
+    fn new(message: String) -> Self {
+        Self { message }
+    }
+}
+
+impl fmt::Display for NoiseChannelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NoiseChannelError {}
+
+/// Kind of categorical noise channel converted to independent DEM mechanisms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NoiseChannelKind {
+    /// Dedicated idle-gate noise.
+    Idle,
+    /// A single-qubit gate Pauli channel.
+    SingleQubitGate,
+    /// A two-qubit gate Pauli channel.
+    TwoQubitGate,
+}
+
+impl NoiseChannelKind {
+    /// Stable user-facing label used by residual diagnostics.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::SingleQubitGate => "one-qubit gate",
+            Self::TwoQubitGate => "two-qubit gate",
+        }
+    }
+}
+
+/// The non-negative boundary fit used for an infeasible signature channel.
+///
+/// `magnitude` is the total-variation distance between the categorical target
+/// channel and the emitted independent channel. For the two-dimensional
+/// boundary used by idle and gate channels, `effect` receives that same excess
+/// probability and identity has the matching deficit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoiseChannelResidual {
+    /// Fault-location index whose channel required approximation.
+    pub location_index: u32,
+    /// Kind of channel that required approximation.
+    pub channel_kind: NoiseChannelKind,
+    /// Flip signature with the largest non-identity discrepancy.
+    pub effect: FaultMechanism,
+    /// Total-variation distance from the requested categorical channel.
+    pub magnitude: f64,
+    /// Total non-identity probability of the requested categorical channel.
+    pub channel_weight: f64,
+}
+
+impl NoiseChannelResidual {
+    /// Returns the residual as a fraction of the requested channel's error weight.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `channel_weight` is not finite and positive. Such a channel
+    /// cannot produce a residual, so this indicates a broken construction invariant.
+    #[must_use]
+    pub fn relative_magnitude(&self) -> f64 {
+        assert!(
+            self.channel_weight.is_finite() && self.channel_weight > 0.0,
+            "noise-channel residual invariant violated: channel_weight must be finite and positive"
+        );
+        self.magnitude / self.channel_weight
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct IndependentSignatureFit<Signature> {
+    pub(crate) mechanisms: BTreeMap<Signature, f64>,
+    pub(crate) residual: Option<(Signature, f64)>,
+}
+
+pub(crate) fn validate_exclusive_probabilities(
+    probabilities: &[f64],
+    context: &str,
+) -> Result<(), NoiseChannelError> {
+    let total: f64 = probabilities.iter().sum();
+    if probabilities
+        .iter()
+        .any(|probability| !probability.is_finite() || !(0.0..=1.0).contains(probability))
+        || !total.is_finite()
+        || !(0.0..=1.0).contains(&total)
+    {
+        return Err(NoiseChannelError::new(format!(
+            "invalid {context} categorical probabilities {probabilities:?} with total {total}; every probability and their total must be finite and lie in [0, 1]"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_idle_probabilities(
+    probabilities: PauliProbs,
+    context: &str,
+) -> Result<(), NoiseChannelError> {
+    let identity = 1.0 - probabilities.total();
+    if !probabilities.px.is_finite()
+        || !probabilities.py.is_finite()
+        || !probabilities.pz.is_finite()
+        || !identity.is_finite()
+        || !(0.0..=1.0).contains(&probabilities.px)
+        || !(0.0..=1.0).contains(&probabilities.py)
+        || !(0.0..=1.0).contains(&probabilities.pz)
+        || !(0.0..=1.0).contains(&identity)
+    {
+        return Err(NoiseChannelError::new(format!(
+            "invalid {context} idle channel probabilities [I={identity}, X={}, Y={}, Z={}]; every probability must be finite and lie in [0, 1]",
+            probabilities.px, probabilities.py, probabilities.pz
+        )));
+    }
+    Ok(())
+}
+
+fn validate_independent_idle_probabilities(
+    probabilities: PauliProbs,
+    context: &str,
+) -> Result<(), NoiseChannelError> {
+    if [probabilities.px, probabilities.py, probabilities.pz]
+        .into_iter()
+        .any(|probability| !probability.is_finite() || !(0.0..=1.0).contains(&probability))
+    {
+        return Err(NoiseChannelError::new(format!(
+            "invalid {context} idle mechanism probabilities [X={}, Y={}, Z={}]; every probability must be finite and lie in [0, 1]",
+            probabilities.px, probabilities.py, probabilities.pz
+        )));
+    }
+    Ok(())
+}
+
+/// Fit one categorical channel over distinct non-empty XOR signatures with
+/// independent Bernoulli mechanisms.
+///
+/// With zero or one signature the categorical channel is already an exact DEM.
+/// The distinct signatures are assigned deterministic coordinates in their
+/// GF(2) span. The target channel's characters are transformed into independent
+/// mechanism rates with a Walsh-Hadamard solve. The original closed form is
+/// retained for dimension two so existing idle DEM numbers remain byte-exact.
+///
+/// # The boundary fit is not total-variation minimal, deliberately
+///
+/// When an exact rate comes out negative the channel is not representable by
+/// independent mechanisms. That mechanism is then dropped and the remaining two
+/// are solved so the two *retained* target probabilities are reproduced
+/// **exactly**; the mismatch lands on the omitted signature and on the identity,
+/// and is reported as the residual.
+///
+/// This is not the closest fit under total variation, and that is a choice, not
+/// an oversight. For `(pI, pX, pY, pZ) = (0.65, 0.15, 0, 0.20)` this fit gives
+/// `(0.60, 0.15, 0.05, 0.20)` at a TV distance of `0.05`, while the TV-minimal
+/// fit is roughly `(0.65, 0.1147, 0.0353, 0.20)` at `0.0353`. The TV-minimal fit
+/// is closer overall only by silently moving `pX` away from the 0.15 the caller
+/// asked for -- a 24% change in the requested X rate. Preserving the requested
+/// per-Pauli probabilities exactly is worth more here than a smaller aggregate
+/// distance, because those probabilities are the thing the user specified.
+///
+/// The reported residual is the true total-variation distance to the fit that is
+/// actually emitted. It is not a claim of minimality.
+pub(crate) fn fit_exclusive_signatures<Signature, Xor>(
+    exclusive: BTreeMap<Signature, f64>,
+    xor: Xor,
+    context: &str,
+) -> Result<IndependentSignatureFit<Signature>, NoiseChannelError>
+where
+    Signature: Clone + Ord,
+    Xor: Fn(&Signature, &Signature) -> Signature,
+{
+    let total: f64 = exclusive.values().sum();
+    if exclusive
+        .values()
+        .any(|probability| !probability.is_finite() || !(0.0..=1.0).contains(probability))
+        || !total.is_finite()
+        || !(0.0..=1.0).contains(&total)
+    {
+        return Err(NoiseChannelError::new(format!(
+            "invalid {context} signature probabilities with total {total}; every probability and their total must be finite and lie in [0, 1]"
+        )));
+    }
+
+    if exclusive.len() <= 1 {
+        return Ok(IndependentSignatureFit {
+            mechanisms: exclusive,
+            residual: None,
+        });
+    }
+
+    let mut coordinates = BTreeMap::<Signature, usize>::new();
+    let mut dimension = 0usize;
+    for signature in exclusive.keys() {
+        if coordinates.contains_key(signature) {
+            continue;
+        }
+        let coordinate = 1usize << dimension;
+        let additions = coordinates
+            .iter()
+            .map(|(held, &held_coordinate)| (xor(signature, held), coordinate | held_coordinate))
+            .collect::<Vec<_>>();
+        coordinates.insert(signature.clone(), coordinate);
+        coordinates.extend(additions);
+        dimension += 1;
+    }
+
+    if dimension == 2 {
+        return fit_exclusive_dimension_two(&exclusive, xor, context);
+    }
+
+    let size = 1usize << dimension;
+    debug_assert_eq!(coordinates.len(), size - 1);
+    let mut signatures = vec![None; size];
+    for (signature, coordinate) in &coordinates {
+        signatures[*coordinate] = Some(signature.clone());
+    }
+
+    let mut target = vec![0.0; size];
+    target[0] = 1.0 - total;
+    for (signature, probability) in &exclusive {
+        target[coordinates[signature]] = *probability;
+    }
+
+    let mut characters = vec![0.0; size];
+    for (dual, character) in characters.iter_mut().enumerate() {
+        *character = target
+            .iter()
+            .enumerate()
+            .map(|(coordinate, probability)| {
+                if (dual & coordinate).count_ones().is_multiple_of(2) {
+                    *probability
+                } else {
+                    -*probability
+                }
+            })
+            .sum();
+    }
+    if characters
+        .iter()
+        .any(|character| !character.is_finite() || *character <= 0.0)
+    {
+        return Err(NoiseChannelError::new(format!(
+            "invalid {context} signature channel: characters {characters:?} must all be positive"
+        )));
+    }
+
+    let log_characters = characters
+        .iter()
+        .map(|character| character.ln())
+        .collect::<Vec<_>>();
+    let size_f64 = f64::from(u32::try_from(size).expect("signature-space size must fit in u32"));
+    let inverse_scale = -2.0 / size_f64;
+    let mut probabilities = vec![0.0; size];
+    for (coordinate, probability) in probabilities.iter_mut().enumerate().skip(1) {
+        let transform: f64 = log_characters
+            .iter()
+            .enumerate()
+            .map(|(dual, log_character)| {
+                if (dual & coordinate).count_ones().is_multiple_of(2) {
+                    *log_character
+                } else {
+                    -*log_character
+                }
+            })
+            .sum();
+        let log_term = inverse_scale * transform;
+        *probability = (1.0 - log_term.exp()) / 2.0;
+    }
+
+    if probabilities[1..]
+        .iter()
+        .all(|probability| probability.is_finite() && (0.0..=0.5).contains(probability))
+    {
+        let mechanisms = (1..size)
+            .filter(|coordinate| probabilities[*coordinate] > 0.0)
+            .map(|coordinate| {
+                (
+                    signatures[coordinate]
+                        .clone()
+                        .expect("every nonzero span coordinate has a signature"),
+                    probabilities[coordinate],
+                )
+            })
+            .collect();
+        return Ok(IndependentSignatureFit {
+            mechanisms,
+            residual: None,
+        });
+    }
+
+    for probability in &mut probabilities[1..] {
+        *probability = if probability.is_finite() {
+            probability.clamp(0.0, 0.5)
+        } else if probability.is_sign_negative() {
+            0.0
+        } else {
+            0.5
+        };
+    }
+    let mut fitted = vec![0.0; size];
+    fitted[0] = 1.0;
+    for (coordinate, &probability) in probabilities.iter().enumerate().skip(1) {
+        if probability == 0.0 {
+            continue;
+        }
+        let previous = fitted.clone();
+        for effect in 0..size {
+            fitted[effect] = previous[effect] * (1.0 - probability)
+                + previous[effect ^ coordinate] * probability;
+        }
+    }
+    let magnitude = fitted
+        .iter()
+        .zip(&target)
+        .map(|(actual, expected)| (actual - expected).abs())
+        .sum::<f64>()
+        / 2.0;
+    let representative = (1..size)
+        .max_by(|left, right| {
+            (fitted[*left] - target[*left])
+                .abs()
+                .total_cmp(&(fitted[*right] - target[*right]).abs())
+        })
+        .expect("a nontrivial span has a nonzero coordinate");
+    let mechanisms = (1..size)
+        .filter(|coordinate| probabilities[*coordinate] > 0.0)
+        .map(|coordinate| {
+            (
+                signatures[coordinate]
+                    .clone()
+                    .expect("every nonzero span coordinate has a signature"),
+                probabilities[coordinate],
+            )
+        })
+        .collect();
+    Ok(IndependentSignatureFit {
+        mechanisms,
+        residual: Some((
+            signatures[representative]
+                .clone()
+                .expect("the representative coordinate has a signature"),
+            magnitude,
+        )),
+    })
+}
+
+fn fit_exclusive_dimension_two<Signature, Xor>(
+    exclusive: &BTreeMap<Signature, f64>,
+    xor: Xor,
+    context: &str,
+) -> Result<IndependentSignatureFit<Signature>, NoiseChannelError>
+where
+    Signature: Clone + Ord,
+    Xor: Fn(&Signature, &Signature) -> Signature,
+{
+    let total: f64 = exclusive.values().sum();
+    let mut signatures: Vec<Signature> = exclusive.keys().cloned().collect();
+    let mut target: Vec<f64> = exclusive.values().copied().collect();
+    if signatures.len() == 2 {
+        signatures.push(xor(&signatures[0], &signatures[1]));
+        target.push(0.0);
+    } else {
+        debug_assert!(xor(&signatures[0], &signatures[1]) == signatures[2]);
+    }
+
+    let identity = 1.0 - total;
+    let eigenvalues = [
+        identity + target[0] - target[1] - target[2],
+        identity - target[0] + target[1] - target[2],
+        identity - target[0] - target[1] + target[2],
+    ];
+    if eigenvalues
+        .iter()
+        .any(|eigenvalue| !eigenvalue.is_finite() || *eigenvalue <= 0.0)
+    {
+        return Err(NoiseChannelError::new(format!(
+            "invalid {context} signature channel: characters [{}, {}, {}] must all be positive",
+            eigenvalues[0], eigenvalues[1], eigenvalues[2]
+        )));
+    }
+
+    let exact = [
+        (1.0 - (eigenvalues[1] * eigenvalues[2] / eigenvalues[0]).sqrt()) / 2.0,
+        (1.0 - (eigenvalues[0] * eigenvalues[2] / eigenvalues[1]).sqrt()) / 2.0,
+        (1.0 - (eigenvalues[0] * eigenvalues[1] / eigenvalues[2]).sqrt()) / 2.0,
+    ];
+    let negative: Vec<usize> = exact
+        .iter()
+        .enumerate()
+        .filter_map(|(index, probability)| {
+            (!probability.is_finite() || *probability < 0.0).then_some(index)
+        })
+        .collect();
+    if negative.is_empty() {
+        let mechanisms = signatures
+            .into_iter()
+            .zip(exact)
+            .filter(|(_, probability)| *probability > 0.0)
+            .collect();
+        return Ok(IndependentSignatureFit {
+            mechanisms,
+            residual: None,
+        });
+    }
+
+    debug_assert_eq!(negative.len(), 1);
+    let omitted = negative[0];
+    let retained: Vec<usize> = (0..3).filter(|index| *index != omitted).collect();
+    let [first, second] = retained.as_slice() else {
+        unreachable!("one omitted signature leaves exactly two retained signatures")
+    };
+    let discriminant =
+        (1.0 - target[*first] - target[*second]).powi(2) - 4.0 * target[*first] * target[*second];
+    debug_assert!(discriminant >= 0.0);
+    let root = discriminant.sqrt();
+    let first_denominator = 1.0 + target[*first] - target[*second] + root;
+    let second_denominator = 1.0 + target[*second] - target[*first] + root;
+    let first_probability = if target[*first] == 0.0 {
+        0.0
+    } else {
+        2.0 * target[*first] / first_denominator
+    };
+    let second_probability = if target[*second] == 0.0 {
+        0.0
+    } else {
+        2.0 * target[*second] / second_denominator
+    };
+    let residual = first_probability * second_probability - target[omitted];
+    debug_assert!(residual > 0.0);
+
+    let mut mechanisms = BTreeMap::new();
+    if first_probability > 0.0 {
+        mechanisms.insert(signatures[*first].clone(), first_probability);
+    }
+    if second_probability > 0.0 {
+        mechanisms.insert(signatures[*second].clone(), second_probability);
+    }
+    Ok(IndependentSignatureFit {
+        mechanisms,
+        residual: Some((signatures[omitted].clone(), residual)),
+    })
 }
 
 impl PauliProbs {
@@ -2670,7 +3157,7 @@ impl PauliProbs {
 
         let px = gamma / 4.0;
         let py = gamma / 4.0;
-        let pz = (lambda_t2 / 2.0 - gamma / 4.0).max(0.0);
+        let pz = lambda_t2 / 2.0 - gamma / 4.0;
 
         Self { px, py, pz }
     }
@@ -2692,15 +3179,9 @@ impl Default for NoiseConfig {
             p2_weights: None,
             p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
-            p_idle_linear_rate: 0.0,
-            p_idle_quadratic_rate: 0.0,
-            p_idle_quadratic_sine_rate: 0.0,
-            p_idle_x_linear_rate: 0.0,
-            p_idle_y_linear_rate: 0.0,
-            p_idle_x_quadratic_rate: 0.0,
-            p_idle_y_quadratic_rate: 0.0,
-            p_idle_x_quadratic_sine_rate: 0.0,
-            p_idle_y_quadratic_sine_rate: 0.0,
+            p_idle_linear: IdleNoiseFamily::default(),
+            p_idle_quadratic: IdleNoiseFamily::default(),
+            p_idle_quadratic_sine: IdleNoiseFamily::default(),
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -2727,15 +3208,9 @@ impl NoiseConfig {
             p2_weights: None,
             p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
-            p_idle_linear_rate: 0.0,
-            p_idle_quadratic_rate: 0.0,
-            p_idle_quadratic_sine_rate: 0.0,
-            p_idle_x_linear_rate: 0.0,
-            p_idle_y_linear_rate: 0.0,
-            p_idle_x_quadratic_rate: 0.0,
-            p_idle_y_quadratic_rate: 0.0,
-            p_idle_x_quadratic_sine_rate: 0.0,
-            p_idle_y_quadratic_sine_rate: 0.0,
+            p_idle_linear: IdleNoiseFamily::default(),
+            p_idle_quadratic: IdleNoiseFamily::default(),
+            p_idle_quadratic_sine: IdleNoiseFamily::default(),
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -2760,15 +3235,9 @@ impl NoiseConfig {
             p2_weights: None,
             p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
-            p_idle_linear_rate: 0.0,
-            p_idle_quadratic_rate: 0.0,
-            p_idle_quadratic_sine_rate: 0.0,
-            p_idle_x_linear_rate: 0.0,
-            p_idle_y_linear_rate: 0.0,
-            p_idle_x_quadratic_rate: 0.0,
-            p_idle_y_quadratic_rate: 0.0,
-            p_idle_x_quadratic_sine_rate: 0.0,
-            p_idle_y_quadratic_sine_rate: 0.0,
+            p_idle_linear: IdleNoiseFamily::default(),
+            p_idle_quadratic: IdleNoiseFamily::default(),
+            p_idle_quadratic_sine: IdleNoiseFamily::default(),
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -2793,15 +3262,9 @@ impl NoiseConfig {
             p2_weights: None,
             p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
-            p_idle_linear_rate: 0.0,
-            p_idle_quadratic_rate: 0.0,
-            p_idle_quadratic_sine_rate: 0.0,
-            p_idle_x_linear_rate: 0.0,
-            p_idle_y_linear_rate: 0.0,
-            p_idle_x_quadratic_rate: 0.0,
-            p_idle_y_quadratic_rate: 0.0,
-            p_idle_x_quadratic_sine_rate: 0.0,
-            p_idle_y_quadratic_sine_rate: 0.0,
+            p_idle_linear: IdleNoiseFamily::default(),
+            p_idle_quadratic: IdleNoiseFamily::default(),
+            p_idle_quadratic_sine: IdleNoiseFamily::default(),
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -2816,61 +3279,24 @@ impl NoiseConfig {
         self
     }
 
-    /// Sets the linear stochastic Z-memory rate for explicit idle gates.
+    /// Sets the categorical linear idle-noise family.
     #[must_use]
-    pub fn set_idle_linear_rate(mut self, rate: f64) -> Self {
-        self.p_idle_linear_rate = rate.max(0.0);
+    pub fn set_idle_linear(mut self, family: IdleNoiseFamily) -> Self {
+        self.p_idle_linear = family;
         self
     }
 
-    /// Sets the quadratic stochastic Z-memory rate for explicit idle gates.
+    /// Sets the independent coefficient-quadratic idle-noise family.
     #[must_use]
-    pub fn set_idle_quadratic_rate(mut self, rate: f64) -> Self {
-        self.p_idle_quadratic_rate = rate.max(0.0);
+    pub fn set_idle_quadratic(mut self, family: IdleNoiseFamily) -> Self {
+        self.p_idle_quadratic = family;
         self
     }
 
-    /// Sets the sine-law quadratic stochastic Z-memory rate for explicit idle gates.
+    /// Sets the independent sine-squared idle-noise family.
     #[must_use]
-    pub fn set_idle_quadratic_sine_rate(mut self, rate: f64) -> Self {
-        self.p_idle_quadratic_sine_rate = rate.max(0.0);
-        self
-    }
-
-    /// Sets the linear stochastic Pauli-memory rates for explicit idle gates.
-    #[must_use]
-    pub fn set_idle_pauli_linear_rates(mut self, px_rate: f64, py_rate: f64, pz_rate: f64) -> Self {
-        self.p_idle_x_linear_rate = px_rate.max(0.0);
-        self.p_idle_y_linear_rate = py_rate.max(0.0);
-        self.p_idle_linear_rate = pz_rate.max(0.0);
-        self
-    }
-
-    /// Sets the quadratic stochastic Pauli-memory rates for explicit idle gates.
-    #[must_use]
-    pub fn set_idle_pauli_quadratic_rates(
-        mut self,
-        px_rate: f64,
-        py_rate: f64,
-        pz_rate: f64,
-    ) -> Self {
-        self.p_idle_x_quadratic_rate = px_rate.max(0.0);
-        self.p_idle_y_quadratic_rate = py_rate.max(0.0);
-        self.p_idle_quadratic_rate = pz_rate.max(0.0);
-        self
-    }
-
-    /// Sets the sine-law quadratic stochastic Pauli-memory rates for explicit idle gates.
-    #[must_use]
-    pub fn set_idle_pauli_quadratic_sine_rates(
-        mut self,
-        px_rate: f64,
-        py_rate: f64,
-        pz_rate: f64,
-    ) -> Self {
-        self.p_idle_x_quadratic_sine_rate = px_rate.max(0.0);
-        self.p_idle_y_quadratic_sine_rate = py_rate.max(0.0);
-        self.p_idle_quadratic_sine_rate = pz_rate.max(0.0);
+    pub fn set_idle_quadratic_sine(mut self, family: IdleNoiseFamily) -> Self {
+        self.p_idle_quadratic_sine = family;
         self
     }
 
@@ -3039,59 +3465,203 @@ impl NoiseConfig {
         self
     }
 
-    fn idle_memory_probability(
-        linear_rate: f64,
-        quadratic_rate: f64,
-        quadratic_sine_rate: f64,
-        duration: f64,
-    ) -> f64 {
-        let duration = duration.max(0.0);
-        let sine_angle = quadratic_sine_rate.max(0.0) * duration;
-        (linear_rate.max(0.0) * duration
-            + quadratic_rate.max(0.0) * duration * duration
-            + sine_angle.sin().powi(2))
-        .clamp(0.0, 1.0)
+    fn validate_idle_rates(family: &str, rates: PauliProbs) -> Result<(), NoiseChannelError> {
+        if !rates.px.is_finite()
+            || !rates.py.is_finite()
+            || !rates.pz.is_finite()
+            || rates.px < 0.0
+            || rates.py < 0.0
+            || rates.pz < 0.0
+        {
+            return Err(NoiseChannelError::new(format!(
+                "invalid {family} idle rate/model [X={}, Y={}, Z={}]; rates must be finite and non-negative",
+                rates.px, rates.py, rates.pz
+            )));
+        }
+        Ok(())
     }
 
-    /// Dedicated idle-memory Pauli probabilities for `Idle(duration, q)`.
+    fn idle_family_rates(
+        family_name: &str,
+        family: &IdleNoiseFamily,
+    ) -> Result<PauliProbs, NoiseChannelError> {
+        if family.rate == 0.0 {
+            return Ok(PauliProbs::default());
+        }
+
+        for key in family.weights.keys() {
+            if !matches!(key.as_str(), "X" | "Y" | "Z") {
+                return Err(NoiseChannelError::new(format!(
+                    "invalid {family_name} idle rate/model key {key:?}; weights must use only X, Y, and Z"
+                )));
+            }
+        }
+        let weights = if family.weights.is_empty() {
+            PauliProbs {
+                px: 1.0,
+                py: 1.0,
+                pz: 1.0,
+            }
+        } else {
+            PauliProbs {
+                px: family.weights.get("X").copied().unwrap_or(0.0),
+                py: family.weights.get("Y").copied().unwrap_or(0.0),
+                pz: family.weights.get("Z").copied().unwrap_or(0.0),
+            }
+        };
+        let weighted_rate = |weight: f64| {
+            if weight == 0.0 {
+                0.0
+            } else {
+                family.rate * weight
+            }
+        };
+        let rates = PauliProbs {
+            px: weighted_rate(weights.px),
+            py: weighted_rate(weights.py),
+            pz: weighted_rate(weights.pz),
+        };
+        if !family.rate.is_finite()
+            || family.rate < 0.0
+            || !weights.px.is_finite()
+            || weights.px < 0.0
+            || !weights.py.is_finite()
+            || weights.py < 0.0
+            || !weights.pz.is_finite()
+            || weights.pz < 0.0
+        {
+            return Err(NoiseChannelError::new(format!(
+                "invalid {family_name} idle rate/model [X={}, Y={}, Z={}]; rates must be finite and non-negative",
+                rates.px, rates.py, rates.pz
+            )));
+        }
+        Self::validate_idle_rates(family_name, rates)?;
+        Ok(rates)
+    }
+
+    fn base_idle_pauli_probs(&self, duration: f64) -> Result<PauliProbs, NoiseChannelError> {
+        if !duration.is_finite() || duration < 0.0 {
+            return Err(NoiseChannelError::new(format!(
+                "invalid idle duration {duration}; duration must be finite and non-negative"
+            )));
+        }
+        if !self.p_idle.is_finite() || self.p_idle < 0.0 {
+            return Err(NoiseChannelError::new(format!(
+                "invalid uniform idle rate {}; rates must be finite and non-negative",
+                self.p_idle
+            )));
+        }
+        let probabilities = if let (Some(t1), Some(t2)) = (self.t1, self.t2) {
+            if !t1.is_finite() || !t2.is_finite() || t1 <= 0.0 || t2 <= 0.0 || t2 > 2.0 * t1 {
+                return Err(NoiseChannelError::new(format!(
+                    "invalid idle T1/T2 values [T1={t1}, T2={t2}]; both must be finite and positive, with T2 <= 2*T1"
+                )));
+            }
+            PauliProbs::from_t1_t2(duration, t1, t2)
+        } else {
+            if self.t1.is_some() || self.t2.is_some() {
+                return Err(NoiseChannelError::new(
+                    "invalid idle T1/T2 configuration; T1 and T2 must be supplied together"
+                        .to_string(),
+                ));
+            }
+            PauliProbs::depolarizing(self.p_idle * duration)
+        };
+        validate_idle_probabilities(probabilities, "base")?;
+        Ok(probabilities)
+    }
+
+    pub(crate) fn try_idle_channel_families(
+        &self,
+        duration: f64,
+    ) -> Result<IdleChannelFamilies, NoiseChannelError> {
+        let base = self.base_idle_pauli_probs(duration)?;
+        let linear_rates = Self::idle_family_rates("linear", &self.p_idle_linear)?;
+        let quadratic_rates =
+            Self::idle_family_rates("coefficient-quadratic", &self.p_idle_quadratic)?;
+        let sine_rates = Self::idle_family_rates("sine-squared", &self.p_idle_quadratic_sine)?;
+
+        let duration_squared = duration * duration;
+        let linear = PauliProbs {
+            px: linear_rates.px * duration,
+            py: linear_rates.py * duration,
+            pz: linear_rates.pz * duration,
+        };
+        validate_idle_probabilities(linear, "linear")?;
+        let quadratic = PauliProbs {
+            px: quadratic_rates.px * duration_squared,
+            py: quadratic_rates.py * duration_squared,
+            pz: quadratic_rates.pz * duration_squared,
+        };
+        validate_independent_idle_probabilities(quadratic, "coefficient-quadratic")?;
+        let sine = PauliProbs {
+            px: (sine_rates.px * duration).sin().powi(2),
+            py: (sine_rates.py * duration).sin().powi(2),
+            pz: (sine_rates.pz * duration).sin().powi(2),
+        };
+        validate_independent_idle_probabilities(sine, "sine-squared")?;
+
+        let mut families = IdleChannelFamilies::default();
+        if base.total() > 0.0 {
+            families.exclusive.push(base);
+        }
+        if linear.total() > 0.0 {
+            families.exclusive.push(linear);
+        }
+        if quadratic.total() > 0.0 {
+            families.independent.push(quadratic);
+        }
+        if sine.total() > 0.0 {
+            families.independent.push(sine);
+        }
+        Ok(families)
+    }
+
+    /// Try to compute the effective Pauli channel of all dedicated
+    /// idle-memory terms.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a negative/non-finite rate or duration, or when a
+    /// configured family produces an out-of-range probability.
+    pub fn try_idle_memory_pauli_probs(
+        &self,
+        duration: f64,
+    ) -> Result<PauliProbs, NoiseChannelError> {
+        let families = self.try_idle_channel_families(duration)?;
+        let mut channel = PauliProbs::default();
+        let base_is_present = self.base_idle_pauli_probs(duration)?.total() > 0.0;
+        for exclusive in families
+            .exclusive
+            .into_iter()
+            .skip(usize::from(base_is_present))
+        {
+            channel = Self::compose_pauli_channel(channel, exclusive);
+        }
+        for independent in families.independent {
+            channel = Self::compose_independent_pauli_mechanisms(channel, independent);
+        }
+        Ok(channel)
+    }
+
+    /// Dedicated idle-memory effective Pauli channel for `Idle(duration, q)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an idle input is invalid or produces an out-of-range channel.
     #[must_use]
     pub fn idle_memory_pauli_probs(&self, duration: f64) -> PauliProbs {
-        let mut probs = PauliProbs {
-            px: Self::idle_memory_probability(
-                self.p_idle_x_linear_rate,
-                self.p_idle_x_quadratic_rate,
-                self.p_idle_x_quadratic_sine_rate,
-                duration,
-            ),
-            py: Self::idle_memory_probability(
-                self.p_idle_y_linear_rate,
-                self.p_idle_y_quadratic_rate,
-                self.p_idle_y_quadratic_sine_rate,
-                duration,
-            ),
-            pz: Self::idle_memory_probability(
-                self.p_idle_linear_rate,
-                self.p_idle_quadratic_rate,
-                self.p_idle_quadratic_sine_rate,
-                duration,
-            ),
-        };
-        let total = probs.total();
-        if total > 1.0 {
-            probs.px /= total;
-            probs.py /= total;
-            probs.pz /= total;
-        }
-        probs
+        self.try_idle_memory_pauli_probs(duration)
+            .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"))
     }
 
     fn compose_pauli_channel(probs: PauliProbs, channel: PauliProbs) -> PauliProbs {
-        if channel.total() <= f64::EPSILON {
+        if channel.total() == 0.0 {
             return probs;
         }
 
-        let p_identity = (1.0 - probs.total()).max(0.0);
-        let c_identity = (1.0 - channel.total()).max(0.0);
+        let p_identity = 1.0 - probs.total();
+        let c_identity = 1.0 - channel.total();
         PauliProbs {
             px: p_identity * channel.px
                 + probs.px * c_identity
@@ -3108,18 +3678,63 @@ impl NoiseConfig {
         }
     }
 
+    fn compose_independent_pauli_mechanisms(
+        mut channel: PauliProbs,
+        mechanisms: PauliProbs,
+    ) -> PauliProbs {
+        for mechanism in [
+            PauliProbs {
+                px: mechanisms.px,
+                py: 0.0,
+                pz: 0.0,
+            },
+            PauliProbs {
+                px: 0.0,
+                py: mechanisms.py,
+                pz: 0.0,
+            },
+            PauliProbs {
+                px: 0.0,
+                py: 0.0,
+                pz: mechanisms.pz,
+            },
+        ] {
+            channel = Self::compose_pauli_channel(channel, mechanism);
+        }
+        channel
+    }
+
     /// Compute per-Pauli idle noise probabilities for a given duration.
     ///
     /// If T1/T2 are set, uses the Pauli-twirled model (biased noise).
     /// Otherwise, uses uniform depolarizing with `p_idle * duration`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an idle input is invalid or produces an out-of-range channel.
     #[must_use]
     pub fn idle_pauli_probs(&self, duration: f64) -> PauliProbs {
-        let probs = if let (Some(t1), Some(t2)) = (self.t1, self.t2) {
-            PauliProbs::from_t1_t2(duration, t1, t2)
-        } else {
-            PauliProbs::depolarizing((self.p_idle * duration).min(1.0))
-        };
-        Self::compose_pauli_channel(probs, self.idle_memory_pauli_probs(duration))
+        self.try_idle_pauli_probs(duration)
+            .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"))
+    }
+
+    /// Try to compute the effective Pauli idle channel for a given duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a negative/non-finite rate or duration, an invalid
+    /// T1/T2 pair, or an out-of-range categorical probability.
+    pub fn try_idle_pauli_probs(&self, duration: f64) -> Result<PauliProbs, NoiseChannelError> {
+        let families = self.try_idle_channel_families(duration)?;
+        let mut channel = PauliProbs::default();
+        for exclusive in families.exclusive {
+            channel = Self::compose_pauli_channel(channel, exclusive);
+        }
+        for independent in families.independent {
+            channel = Self::compose_independent_pauli_mechanisms(channel, independent);
+        }
+        validate_idle_probabilities(channel, "composed")?;
+        Ok(channel)
     }
 
     /// Returns true when idle locations use the dedicated idle-noise model.
@@ -3127,17 +3742,12 @@ impl NoiseConfig {
     /// Otherwise `Idle` is a no-op for noise.
     #[must_use]
     pub fn uses_dedicated_idle_noise(&self) -> bool {
-        self.p_idle > 0.0
-            || matches!((self.t1, self.t2), (Some(_), Some(_)))
-            || self.p_idle_linear_rate > 0.0
-            || self.p_idle_quadratic_rate.abs() > f64::EPSILON
-            || self.p_idle_quadratic_sine_rate > 0.0
-            || self.p_idle_x_linear_rate > 0.0
-            || self.p_idle_y_linear_rate > 0.0
-            || self.p_idle_x_quadratic_rate > 0.0
-            || self.p_idle_y_quadratic_rate > 0.0
-            || self.p_idle_x_quadratic_sine_rate > 0.0
-            || self.p_idle_y_quadratic_sine_rate > 0.0
+        self.p_idle != 0.0
+            || self.t1.is_some()
+            || self.t2.is_some()
+            || self.p_idle_linear.rate != 0.0
+            || self.p_idle_quadratic.rate != 0.0
+            || self.p_idle_quadratic_sine.rate != 0.0
     }
 }
 
@@ -3884,6 +4494,19 @@ impl fmt::Debug for MeasurementMechanism {
     }
 }
 
+/// A quantified categorical-channel approximation in raw-measurement space.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasurementNoiseChannelResidual {
+    /// Fault-location index whose channel required approximation.
+    pub location_index: u32,
+    /// Kind of channel that required approximation.
+    pub channel_kind: NoiseChannelKind,
+    /// Raw-measurement flip signature with the largest discrepancy.
+    pub mechanism: MeasurementMechanism,
+    /// Total-variation distance from the requested categorical channel.
+    pub magnitude: f64,
+}
+
 /// A measurement noise model for fast approximate raw-measurement sampling.
 #[derive(Debug, Clone, Default)]
 pub struct MeasurementNoiseModel {
@@ -3893,6 +4516,8 @@ pub struct MeasurementNoiseModel {
     pub num_measurements: usize,
     /// Optional mapping from influence-map index to original circuit order.
     pub im_to_tc_order: Option<Vec<usize>>,
+    /// Quantified approximations introduced by categorical signature conversion.
+    pub idle_noise_residuals: Vec<MeasurementNoiseChannelResidual>,
 }
 
 impl MeasurementNoiseModel {
@@ -3903,6 +4528,7 @@ impl MeasurementNoiseModel {
             mechanisms: BTreeMap::new(),
             num_measurements,
             im_to_tc_order: None,
+            idle_noise_residuals: Vec::new(),
         }
     }
 
@@ -3935,6 +4561,10 @@ impl MeasurementNoiseModel {
             .entry(mechanism)
             .and_modify(|p| *p = combine_probabilities(*p, probability))
             .or_insert(probability);
+    }
+
+    pub(crate) fn add_idle_noise_residual(&mut self, residual: MeasurementNoiseChannelResidual) {
+        self.idle_noise_residuals.push(residual);
     }
 
     /// Samples measurement outcomes into a pre-sized buffer.
@@ -4117,6 +4747,8 @@ pub struct DetectorErrorModel {
     /// component effects are non-empty and graphlike (≤2 detectors).
     /// Used to determine output format: ≥2 → 3 forms, 1 → 2 forms, 0 → 1 form.
     graphlike_decomposable_counts: BTreeMap<(u32, u32), u32>,
+    /// Quantified approximations introduced by infeasible categorical signature channels.
+    idle_noise_residuals: Vec<NoiseChannelResidual>,
 }
 
 /// Structured DEM mechanism tuple: `(probability, detector_ids, observable_ids)`.
@@ -4135,6 +4767,7 @@ impl DetectorErrorModel {
             tracked_paulis: Vec::new(),
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
+            idle_noise_residuals: Vec::new(),
         }
     }
 
@@ -4147,6 +4780,7 @@ impl DetectorErrorModel {
             tracked_paulis: Vec::new(),
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
+            idle_noise_residuals: Vec::new(),
         }
     }
 
@@ -4230,6 +4864,22 @@ impl DetectorErrorModel {
     #[must_use]
     pub fn num_contributions(&self) -> usize {
         self.contributions.len()
+    }
+
+    /// Returns every quantified categorical-channel approximation made during build.
+    ///
+    /// Each record identifies the channel kind, a representative concrete flip
+    /// signature, the requested channel's total error weight, and the absolute
+    /// and relative total-variation residual magnitudes.
+    /// An empty slice means every categorical conversion was exact.
+    #[inline]
+    #[must_use]
+    pub fn idle_noise_residuals(&self) -> &[NoiseChannelResidual] {
+        &self.idle_noise_residuals
+    }
+
+    pub(crate) fn add_idle_noise_residual(&mut self, residual: NoiseChannelResidual) {
+        self.idle_noise_residuals.push(residual);
     }
 
     /// Exports PECOS-only metadata that is not representable in standard DEM syntax.
@@ -4664,6 +5314,7 @@ impl DetectorErrorModel {
 
         fn direct_source_family_label(family: DirectSourceFamily) -> &'static str {
             match family {
+                DirectSourceFamily::ExclusiveSignature => "ExclusiveSignature",
                 DirectSourceFamily::SingleLocation => "SingleLocation",
                 DirectSourceFamily::SingleLocationY => "SingleLocationY",
                 DirectSourceFamily::TwoLocationPlainY => "TwoLocationPlainY",
@@ -5085,32 +5736,56 @@ impl DetectorErrorModel {
         self.observables.push(observable);
     }
 
+    /// Merge a second definition of an already-declared observable.
+    ///
+    /// Records combine by parity, but the label and Pauli identify the
+    /// observable rather than accumulate, so two definitions disagreeing about
+    /// either describe different observables sharing an id. That is malformed
+    /// input -- typically metadata JSON and a circuit annotation contradicting
+    /// each other -- and there is no defensible way to pick a winner.
+    ///
+    /// These checks deliberately fire in every build. They were
+    /// `debug_assert_eq!`, which meant release builds silently kept whichever
+    /// definition arrived first and discarded the other, so a contradiction
+    /// produced a quietly wrong DEM rather than a diagnostic.
+    ///
+    /// Both are checked before anything is mutated, and the Pauli comparison
+    /// ignores global phase, which carries no DEM meaning.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `incoming` disagrees with `existing` about the label, or
+    /// about the Pauli up to global phase.
     fn merge_observable_definition(existing: &mut DemOutput, incoming: DemOutput) {
-        existing.kind = Some(DemOutputKind::Observable);
-        merge_record_parity(&mut existing.records, incoming.records);
-
-        if let Some(incoming_pauli) = incoming.pauli {
-            if let Some(existing_pauli) = &existing.pauli {
-                debug_assert_eq!(
-                    existing_pauli, &incoming_pauli,
-                    "conflicting Pauli metadata for observable L{}",
-                    existing.id
-                );
-            } else {
-                existing.pauli = Some(incoming_pauli);
-            }
+        // Validate before mutating anything: a caught panic must not leave a
+        // half-merged output behind.
+        if let (Some(existing_pauli), Some(incoming_pauli)) = (&existing.pauli, &incoming.pauli) {
+            assert!(
+                pauli_eq_ignoring_phase(existing_pauli, incoming_pauli),
+                "conflicting Pauli metadata for observable L{}: already declared as \
+                 {existing_pauli:?}, redeclared as {incoming_pauli:?}. Two definitions sharing \
+                 an observable id must agree; supply the Pauli from one source only, or give \
+                 them distinct ids",
+                existing.id
+            );
+        }
+        if let (Some(existing_label), Some(incoming_label)) = (&existing.label, &incoming.label) {
+            assert_eq!(
+                existing_label, incoming_label,
+                "conflicting labels for observable L{}: already labelled {existing_label:?}, \
+                 relabelled {incoming_label:?}. Two definitions sharing an observable id must \
+                 agree; supply the label from one source only, or give them distinct ids",
+                existing.id
+            );
         }
 
-        if let Some(incoming_label) = incoming.label {
-            if let Some(existing_label) = &existing.label {
-                debug_assert_eq!(
-                    existing_label, &incoming_label,
-                    "conflicting labels for observable L{}",
-                    existing.id
-                );
-            } else {
-                existing.label = Some(incoming_label);
-            }
+        existing.kind = Some(DemOutputKind::Observable);
+        merge_record_parity(&mut existing.records, incoming.records);
+        if existing.pauli.is_none() {
+            existing.pauli = incoming.pauli;
+        }
+        if existing.label.is_none() {
+            existing.label = incoming.label;
         }
     }
 
@@ -6368,6 +7043,134 @@ fn trim_trailing_zeros(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// The boundary fit trades total-variation distance for exact preservation of
+    /// the requested per-Pauli probabilities. Pin both halves of that trade so it
+    /// cannot be "optimized" into a TV-minimal fit without a deliberate decision.
+    ///
+    /// Channel: `(pI, pX, pY, pZ) = (0.65, 0.15, 0, 0.20)`, whose exact Y rate is
+    /// negative, so the fit takes the boundary path.
+    #[test]
+    fn boundary_fit_preserves_requested_rates_rather_than_minimizing_total_variation() {
+        // Emitted fit, from the closed form: aX = 0.20, aZ = 0.25, aY dropped.
+        let (a_x, a_z) = (0.20_f64, 0.25_f64);
+        // Y's signature is X xor Z, so both firing reads as Y.
+        let emitted = [
+            (1.0 - a_x) * (1.0 - a_z), // I
+            a_x * (1.0 - a_z),         // X
+            a_x * a_z,                 // Y
+            (1.0 - a_x) * a_z,         // Z
+        ];
+        let target = [0.65, 0.15, 0.0, 0.20];
+        let tv = |d: [f64; 4]| {
+            0.5 * d
+                .iter()
+                .zip(target)
+                .map(|(a, b)| (a - b).abs())
+                .sum::<f64>()
+        };
+
+        // The requested X and Z probabilities survive exactly. This is the point.
+        assert!((emitted[1] - target[1]).abs() < 1e-12);
+        assert!((emitted[3] - target[3]).abs() < 1e-12);
+
+        // And it is knowingly not the closest fit: the TV-minimal one sits nearer
+        // but only by moving pX off the requested 0.15.
+        let tv_minimal = [
+            0.65,
+            0.114_705_882_352_941_2,
+            0.035_294_117_647_058_82,
+            0.20,
+        ];
+        assert!(tv(tv_minimal) < tv(emitted));
+        assert!((tv_minimal[1] - target[1]).abs() > 0.03);
+    }
+
+    fn residual_with_channel_weight(channel_weight: f64) -> NoiseChannelResidual {
+        NoiseChannelResidual {
+            location_index: 0,
+            channel_kind: NoiseChannelKind::Idle,
+            effect: FaultMechanism::new(),
+            magnitude: 0.002,
+            channel_weight,
+        }
+    }
+
+    #[test]
+    fn noise_channel_residual_reports_relative_magnitude() {
+        assert_eq!(
+            residual_with_channel_weight(0.02)
+                .relative_magnitude()
+                .to_bits(),
+            0.1_f64.to_bits()
+        );
+    }
+
+    #[test]
+    fn noise_channel_residual_rejects_invalid_channel_weight() {
+        for channel_weight in [0.0, -0.01, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let result = std::panic::catch_unwind(|| {
+                residual_with_channel_weight(channel_weight).relative_magnitude()
+            });
+            assert!(
+                result.is_err(),
+                "channel weight {channel_weight:?} must violate the residual invariant"
+            );
+        }
+    }
+
+    /// The single-qubit gate channel needs conversion too, at its own scale.
+    ///
+    /// Three Paulis at `p1/3` with distinct signatures. The expected value was computed
+    /// independently from the Pauli-channel characters, not from this implementation.
+    #[test]
+    fn exclusive_fit_converts_the_single_qubit_gate_channel() {
+        let per_pauli = 0.002 / 3.0;
+        let mut exclusive = std::collections::BTreeMap::new();
+        exclusive.insert(1u8, per_pauli);
+        exclusive.insert(2u8, per_pauli);
+        exclusive.insert(3u8, per_pauli);
+
+        let fit = super::fit_exclusive_signatures(exclusive, |a: &u8, b: &u8| a ^ b, "test")
+            .expect("uniform three-signature channel is exactly representable");
+
+        assert!(fit.residual.is_none());
+        for probability in fit.mechanisms.values() {
+            assert!(
+                (probability - 6.671_117_046_932e-4).abs() < 1e-15,
+                "got {probability}, expected the converted 6.671117046932e-4 rather than \
+                 the unconverted {per_pauli}",
+            );
+        }
+    }
+
+    /// The exclusive->independent fit must convert, not pass probabilities through.
+    ///
+    /// Three distinct signatures each carrying `4 * p2/15 = 5.333e-3` (the twelve
+    /// detectable two-qubit Paulis merging four-to-one). Independent mechanisms also
+    /// fire together, so each must be raised to 5.362e-3 for the composed channel to
+    /// equal the requested one. The expected value was computed independently from the
+    /// Pauli-channel characters, not from this implementation.
+    #[test]
+    fn exclusive_fit_raises_probabilities_to_offset_joint_firing() {
+        let group = 4.0 * 0.02 / 15.0;
+        let mut exclusive = std::collections::BTreeMap::new();
+        exclusive.insert(1u8, group);
+        exclusive.insert(2u8, group);
+        exclusive.insert(3u8, group);
+
+        let fit = super::fit_exclusive_signatures(exclusive, |a: &u8, b: &u8| a ^ b, "test")
+            .expect("uniform three-signature channel is exactly representable");
+
+        assert!(fit.residual.is_none(), "channel is exactly representable");
+        for (signature, probability) in &fit.mechanisms {
+            assert!(
+                (probability - 5.362_085_292_012e-3).abs() < 1e-12,
+                "signature {signature} got {probability}, expected the converted 5.362085292012e-3 \
+                 rather than the unconverted {group}",
+            );
+        }
+    }
     use super::*;
 
     #[test]
@@ -6525,17 +7328,60 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "conflicting labels for observable L0")]
+    #[should_panic(expected = "already labelled \"first\", relabelled \"second\"")]
     fn test_duplicate_observable_definitions_reject_conflicting_labels() {
         let mut dem = DetectorErrorModel::new();
         dem.add_observable(DemOutput::new(0).with_label("first"));
         dem.add_observable(DemOutput::new(0).with_label("second"));
     }
 
+    /// Global phase carries no DEM meaning, so `-X` and `+X` describe the same
+    /// observable. `with_pauli` strips phase, but `pauli` is a public field and
+    /// can be set directly, so the conflict check must compare phase-free
+    /// rather than rejecting a legitimate redeclaration.
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "conflicting Pauli metadata for observable L0")]
+    fn duplicate_observable_definitions_ignore_global_phase() {
+        use pecos_core::pauli::X;
+
+        let mut plus = X(0);
+        plus.set_phase(pecos_core::QuarterPhase::PlusOne);
+        let mut minus = X(0);
+        minus.set_phase(pecos_core::QuarterPhase::MinusOne);
+
+        let mut dem = DetectorErrorModel::new();
+        let mut first = DemOutput::new(0);
+        first.pauli = Some(plus);
+        let mut second = DemOutput::new(0);
+        second.pauli = Some(minus);
+
+        dem.add_observable(first);
+        dem.add_observable(second); // must not panic
+        assert_eq!(dem.num_observables(), 1);
+    }
+
+    /// The merge must not mutate before it validates -- a caught panic should
+    /// leave the existing definition intact.
+    #[test]
+    fn conflicting_definitions_do_not_mutate_before_panicking() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("first"));
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dem.add_observable(DemOutput::new(0).with_records([-2]).with_label("second"));
+        }));
+        assert!(outcome.is_err(), "conflicting labels must panic");
+
+        let observable = dem.observables().next().expect("observable survives");
+        assert_eq!(observable.label.as_deref(), Some("first"));
+        assert_eq!(
+            observable.records.as_slice(),
+            &[-1],
+            "records must not have been merged before the conflict was detected"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "conflicting Pauli metadata for observable L0: already declared as")]
     fn test_duplicate_observable_definitions_reject_conflicting_paulis() {
         use pecos_core::pauli::{X, Z};
 

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from pecos.qec.surface import (
     GuppyRngMaskConfig,
-    NoiseModel,
+    NoiseParameters,
     SurfacePatch,
     TwirlConfig,
     build_memory_circuit,
@@ -28,6 +28,7 @@ from pecos.qec.surface.decode import (
     _extract_pauli_masks_from_results,
     generate_circuit_level_dem_from_builder,
 )
+from pecos_rslib.qec import SampleBatch
 
 
 def test_extract_pauli_masks_packs_bits_in_row_major_site_qubit_order() -> None:
@@ -112,6 +113,18 @@ def test_extract_pauli_masks_rejects_missing_or_misshaped_tags() -> None:
         )
 
 
+def test_extract_pauli_masks_rejects_malformed_bytes_instead_of_wrapping() -> None:
+    # The old NumPy packing silently accepted or wrapped malformed bytes. Raising
+    # loudly is deliberate because mask records are required to contain bits.
+    with pytest.raises(OverflowError, match="must contain only 0/1 bits"):
+        _extract_pauli_masks_from_results(
+            {pauli_mask_round_tag(0): [[200, 1]]},
+            num_rounds=2,
+            num_data=1,
+            num_shots=1,
+        )
+
+
 def test_extract_gate_local_pauli_masks_packs_operand_order() -> None:
     patch = SurfacePatch.create(distance=3)
     results = {
@@ -177,7 +190,7 @@ def test_demask_helper_cancels_known_pauli_frame_xor() -> None:
     sampler = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(),
     )
@@ -212,7 +225,7 @@ def test_native_sampler_accepts_harvested_uint8_pauli_masks() -> None:
     sampler = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(),
     )
@@ -228,26 +241,78 @@ def test_native_sampler_accepts_harvested_uint8_pauli_masks() -> None:
     assert decode_native_samples(sampler, 4, seed=123, pauli_masks=masks) == 0
 
 
+def test_sample_batch_with_pauli_masks_returns_sample_batch() -> None:
+    patch = SurfacePatch.create(distance=3)
+    sampler = build_native_sampler(
+        patch,
+        num_rounds=2,
+        noise=NoiseParameters(),
+        basis="Z",
+        twirl=TwirlConfig(),
+    )
+    assert sampler.pauli_frame_lookup is not None
+    zero_masks = np.zeros((4, sampler.num_pauli_sites), dtype=np.int64)
+
+    masks = zero_masks.copy()
+    expected_det_xor: list[list[bool]] | None = None
+    expected_obs_xor: list[list[bool]] | None = None
+    for site in range(sampler.num_pauli_sites):
+        for pauli in (1, 2, 3):
+            candidate = zero_masks.copy()
+            candidate[0, site] = pauli
+            det_xor, obs_xor = sampler.pauli_frame_lookup.compute_mask_xor(candidate)
+            if np.asarray(det_xor).any() or np.asarray(obs_xor).any():
+                masks = candidate
+                expected_det_xor = det_xor
+                expected_obs_xor = obs_xor
+                break
+        if expected_det_xor is not None:
+            break
+
+    assert expected_det_xor is not None
+    assert expected_obs_xor is not None
+
+    zero_batch = sampler.sampler.sample_batch_with_pauli_masks(
+        4,
+        sampler.pauli_frame_lookup,
+        zero_masks,
+        seed=123,
+    )
+    masked_batch = sampler.sampler.sample_batch_with_pauli_masks(
+        4,
+        sampler.pauli_frame_lookup,
+        masks,
+        seed=123,
+    )
+
+    actual_det_xor = np.asarray(zero_batch.detector_events()) ^ np.asarray(masked_batch.detector_events())
+    actual_obs_xor = np.asarray(zero_batch.observable_flips()) ^ np.asarray(masked_batch.observable_flips())
+
+    assert type(masked_batch) is SampleBatch
+    np.testing.assert_array_equal(actual_det_xor, expected_det_xor)
+    np.testing.assert_array_equal(actual_obs_xor, expected_obs_xor)
+
+
 def test_canonical_frame_output_reuses_raw_abstract_sampler_topology() -> None:
     patch = SurfacePatch.create(distance=3)
     raw = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(),
     )
     canonical = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(frame_output="canonical"),
     )
     scaled = build_native_sampler(
         patch,
         num_rounds=2,
-        noise=NoiseModel(),
+        noise=NoiseParameters(),
         basis="Z",
         twirl=TwirlConfig(twirl_probability=0.5),
     )
@@ -298,7 +363,7 @@ def test_abstract_twirl_builders_reject_unsupported_config(
         build_native_sampler(
             patch,
             num_rounds=2,
-            noise=NoiseModel(),
+            noise=NoiseParameters(),
             basis="Z",
             twirl=twirl,
         )
@@ -307,7 +372,7 @@ def test_abstract_twirl_builders_reject_unsupported_config(
         generate_circuit_level_dem_from_builder(
             patch,
             num_rounds=2,
-            noise=NoiseModel(),
+            noise=NoiseParameters(),
             basis="Z",
             twirl=twirl,
         )
@@ -315,7 +380,7 @@ def test_abstract_twirl_builders_reject_unsupported_config(
 
 def test_twirl_sine_law_idle_noise_builds_dem_and_sampler() -> None:
     patch = SurfacePatch.create(distance=3)
-    noise = NoiseModel(p_idle_x_quadratic_sine_rate=0.03)
+    noise = NoiseParameters().with_p_idle_sin_squared(0.03, {"X": 1.0})
     twirl = TwirlConfig()
 
     dem = generate_circuit_level_dem_from_builder(
@@ -345,17 +410,17 @@ def test_twirl_sine_law_idle_noise_builds_dem_and_sampler() -> None:
 @pytest.mark.parametrize(
     ("label", "noise"),
     [
-        ("depolarizing", NoiseModel(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)),
-        ("uniform_idle", NoiseModel(p_idle=0.002)),
-        ("t1_t2", NoiseModel(t1=1000.0, t2=800.0)),
-        ("linear_idle", NoiseModel(p_idle_linear_rate=0.001)),
-        ("quadratic_idle", NoiseModel(p_idle_quadratic_rate=0.01)),
-        ("sine_law_idle", NoiseModel(p_idle_x_quadratic_sine_rate=0.03)),
+        ("depolarizing", NoiseParameters(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)),
+        ("uniform_idle", NoiseParameters(p_idle=0.002)),
+        ("t1_t2", NoiseParameters(t1=1000.0, t2=800.0)),
+        ("linear_idle", NoiseParameters().with_p_idle_linear(0.001, {"Z": 1.0})),
+        ("z_sine_law_idle", NoiseParameters().with_p_idle_sin_squared(0.01, {"Z": 1.0})),
+        ("x_sine_law_idle", NoiseParameters().with_p_idle_sin_squared(0.03, {"X": 1.0})),
     ],
 )
 def test_twirling_does_not_change_canonical_dem(
     label: str,
-    noise: NoiseModel,
+    noise: NoiseParameters,
 ) -> None:
     del label
     patch = SurfacePatch.create(distance=3)
@@ -381,7 +446,7 @@ def test_twirling_does_not_change_canonical_dem(
 
 def test_gate_local_twirling_does_not_change_canonical_dem() -> None:
     patch = SurfacePatch.create(distance=3)
-    noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)
+    noise = NoiseParameters(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)
 
     untwirled = generate_circuit_level_dem_from_builder(
         patch,
@@ -484,8 +549,8 @@ def test_raw_twirled_guppy_trace_result_provenance_ignores_sideband_tags() -> No
     pytest.importorskip("guppylang")
     pytest.importorskip("selene_sim")
 
-    from pecos.guppy import get_num_qubits
-    from pecos.guppy.surface import generate_memory_experiment
+    from pecos.guppy_gen import get_num_qubits
+    from pecos.guppy_gen.surface import generate_memory_experiment
     from pecos.qec.surface.decode import (
         _index_surface_result_trace_ids,
         trace_guppy_into_tick_circuit_with_result_traces,

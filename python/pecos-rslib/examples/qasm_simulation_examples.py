@@ -42,13 +42,7 @@ def example_bell_state() -> None:
         print(f"  |{outcome:02b}⟩: {count} times")
 
     # Run with depolarizing noise
-    noise = (
-        depolarizing_noise()
-        .with_prep_probability(0.001)
-        .with_meas_probability(0.002)
-        .with_p1_probability(0.02)
-        .with_p2_probability(0.02)
-    )
+    noise = depolarizing_noise().with_p_prep(0.001).with_p_meas(0.002).with_p1(0.02).with_p2(0.02)
     results_noisy = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(noise).run(1000)
     results_noisy_dict = results_noisy.to_dict()
     counts_noisy = Counter(results_noisy_dict["c"])
@@ -76,10 +70,10 @@ def example_ghz_state() -> None:
     # Run with custom depolarizing noise
     noise = (
         depolarizing_noise()
-        .with_prep_probability(0.001)  # Low preparation error
-        .with_meas_probability(0.005)  # Moderate measurement error
-        .with_p1_probability(0.001)  # Low single-qubit gate error
-        .with_p2_probability(0.01)
+        .with_p_prep(0.001)  # Low preparation error
+        .with_p_meas(0.005)  # Moderate measurement error
+        .with_p1(0.001)  # Low single-qubit gate error
+        .with_p2(0.01)
     )  # Higher two-qubit gate error
 
     # Different ways to specify quantum engine:
@@ -127,14 +121,7 @@ def example_biased_depolarizing() -> None:
     ideal_counts = Counter(results_ideal_dict["c"])
 
     # Biased depolarizing noise
-    noise = (
-        biased_depolarizing_noise()
-        .with_prep_probability(0.1)
-        .with_meas_0_probability(0.1)
-        .with_meas_1_probability(0.1)
-        .with_p1_probability(0.1)
-        .with_p2_probability(0.1)
-    )
+    noise = biased_depolarizing_noise().with_p_prep(0.1).with_p_meas_0(0.1).with_p_meas_1(0.1).with_p1(0.1).with_p2(0.1)
 
     results_biased = qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42).noise(noise).run(1000)
     results_biased_dict = results_biased.to_dict()
@@ -203,13 +190,7 @@ def example_builder_pattern() -> None:
     """
 
     # Build once, run multiple times with different shot counts
-    noise = (
-        depolarizing_noise()
-        .with_prep_probability(0.01)
-        .with_meas_probability(0.01)
-        .with_p1_probability(0.01)
-        .with_p2_probability(0.01)
-    )
+    noise = depolarizing_noise().with_p_prep(0.01).with_p_meas(0.01).with_p1(0.01).with_p2(0.01)
 
     sim = (
         qasm_engine()
@@ -232,11 +213,11 @@ def example_builder_pattern() -> None:
     # Or run directly without building
     noise_biased = (
         biased_depolarizing_noise()
-        .with_prep_probability(0.005)
-        .with_meas_0_probability(0.005)
-        .with_meas_1_probability(0.005)
-        .with_p1_probability(0.005)
-        .with_p2_probability(0.005)
+        .with_p_prep(0.005)
+        .with_p_meas_0(0.005)
+        .with_p_meas_1(0.005)
+        .with_p1(0.005)
+        .with_p2(0.005)
     )
 
     results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().noise(noise_biased).run(500)
@@ -305,13 +286,7 @@ def example_parallel_execution() -> None:
     measure q -> c;
     """
 
-    noise = (
-        depolarizing_noise()
-        .with_prep_probability(0.001)
-        .with_meas_probability(0.001)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.001)
-    )
+    noise = depolarizing_noise().with_p_prep(0.001).with_p_meas(0.001).with_p1(0.001).with_p2(0.001)
 
     # Single worker
     start = time.time()

@@ -1,6 +1,6 @@
 # QEC with Guppy
 
-This guide covers PECOS's Guppy QEC code generation module (`pecos.guppy`), which generates executable Guppy quantum programs directly from QEC geometry.
+This guide covers PECOS's Guppy QEC code generation module (`pecos.guppy_gen`), which generates executable Guppy quantum programs directly from QEC geometry.
 
 ## What You'll Learn
 
@@ -12,10 +12,10 @@ This guide covers PECOS's Guppy QEC code generation module (`pecos.guppy`), whic
 
 ## Overview
 
-The `pecos.guppy` module provides **direct Guppy code generation** for QEC circuits, bypassing intermediate representations for faster compilation:
+The `pecos.guppy_gen` module provides **direct Guppy code generation** for QEC circuits, bypassing intermediate representations for faster compilation:
 
 ```python
-from pecos.guppy import (
+from pecos.guppy_gen import (
     # Surface codes
     make_surface_code,
     get_num_qubits,
@@ -36,7 +36,7 @@ A memory experiment initializes a logical state, performs syndrome extraction ro
 
 ```python
 from pecos import sim, state_vector
-from pecos.guppy import make_surface_code, get_num_qubits
+from pecos.guppy_gen import make_surface_code, get_num_qubits
 
 # Create a distance-3 Z-basis memory experiment with 3 rounds
 prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
@@ -53,7 +53,7 @@ print(results.to_dict())
 ### X-Basis vs Z-Basis
 
 ```python
-from pecos.guppy import make_surface_code
+from pecos.guppy_gen import make_surface_code
 
 # Z-basis: Initialize |0_L>, measure in Z basis
 z_prog = make_surface_code(distance=3, num_rounds=2, basis="Z")
@@ -73,9 +73,14 @@ The generated program produces these result keys:
 | `synz` | Z syndrome per round |
 | `final` | Final data qubit measurements |
 
+Generated surface programs also emit scalar `*:meas:*` sideband tags. These
+carry the same measurement bits with a generator-certified mapping to the
+canonical measurement stream for audited DEM shot conversion; most users
+should continue reading the aggregate keys above for ordinary analysis.
+
 ```python
 from pecos import sim, state_vector
-from pecos.guppy import make_surface_code
+from pecos.guppy_gen import make_surface_code
 
 prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
 results = sim(prog).qubits(17).quantum(state_vector()).run(10)
@@ -88,6 +93,154 @@ synz_rounds = data.get("synz", [])
 final_meas = data.get("final", [])
 ```
 
+## Building a DEM from Guppy
+
+Use `build_dem_from_guppy` when a runtime may schedule measurements in a
+different order from the Guppy program. It captures one runtime trace, builds
+the DEM from that exact circuit, and returns the measurement-identity ledger
+needed to convert simulation results into decoder inputs.
+
+Researchers can describe the same detector in either Stim-style record terms
+or with Guppy `result()` tags:
+
+```python
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import measure, qubit
+
+from pecos import selene_engine, sim, stabilizer
+from pecos.qec import (
+    Detector,
+    Observable,
+    build_dem_from_guppy,
+    rec,
+    result_ref,
+)
+
+
+@guppy
+def program() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    m0 = measure(q0).read()
+    m1 = measure(q1).read()
+    result("m0", m0)
+    result("m1", m1)
+
+
+# Relative to the canonical Guppy measurement stream, before runtime
+# scheduling. These have the same meaning as Stim rec[-k] references.
+stim_style = [
+    Detector(rec[-2], rec[-1]),
+]
+
+# Equivalent when the program emits result("m0", ...), etc.
+guppy_style = [
+    Detector(result_ref("m0"), result_ref("m1")),
+]
+
+build = build_dem_from_guppy(
+    program,
+    num_qubits=2,
+    detectors=stim_style,
+    observables=[Observable(result_ref("m1"))],
+    p1=0.001,
+    p2=0.005,
+    p_meas=0.001,
+    p_prep=0.001,
+)
+
+dem = build.dem
+print(build.schema_fingerprint)
+print(build.audit["runtime_measurement_order"])
+
+columns = (
+    sim(program).classical(selene_engine()).quantum(stabilizer()).qubits(2).seed(42).run(100).to_shot_map().to_dict()
+)
+evaluated = build.evaluate_result_columns(columns)
+
+from pecos.decoders import pymatching, tesseract
+from pecos_rslib.qec import SampleBatch
+
+detector_events = [events for events, _ in evaluated]
+observable_masks = [mask for _, mask in evaluated]
+batch = SampleBatch(detector_events, observable_masks)
+
+pymatching_errors = batch.decode(
+    dem.to_string_terminal_graphlike_decomposed(),
+    pymatching(correlated=True),
+).num_errors
+tesseract_errors = batch.decode(
+    dem.to_string_source_graphlike_decomposed(),
+    tesseract(preset="fast"),
+).num_errors
+```
+
+`rec[-k]` is deliberately **not** interpreted against the runtime's final gate
+order. PECOS first resolves it to the canonical Guppy result ID, then follows
+that identity through runtime lowering. `result_ref(...)` follows the compiled
+HUGR dataflow from `result()` back to its raw scalar measurement and resolves to
+the same `MeasId` representation. A runtime can therefore reorder measurements
+without changing detector meaning.
+
+### Converting shots for a decoder
+
+Use the returned build to evaluate every shot with the same detector and
+observable schema that produced the DEM, as the final lines of the complete
+example above demonstrate for both PyMatching and Tesseract.
+
+`evaluate_results(...)` accepts only direct scalar `result()` values whose
+measurement identity the Guppy compiler can certify. For a backend that returns
+raw measurements in runtime execution order, use
+`build.evaluate_runtime_record(values)` instead. Both methods produce the
+detector order and packed observable mask expected by the DEM.
+
+Built-in generators may supply a trusted, program-bound named-measurement layout
+certificate. `make_surface_code(...)` does this automatically, so its scalar
+sidebands work with `evaluate_results(...)` and
+`evaluate_result_columns(...)` even though its round loop is not statically
+unrolled in the HUGR. Use the public typed specification helper rather than
+reconstructing private surface metadata:
+
+```python
+from pecos.guppy_gen import get_num_qubits, make_surface_code
+from pecos.qec import build_dem_from_guppy, surface_memory_dem_spec
+
+surface_program = make_surface_code(3, 2, "Z")
+surface_detectors, surface_observables = surface_memory_dem_spec(3, 2, "Z")
+surface_build = build_dem_from_guppy(
+    surface_program,
+    num_qubits=get_num_qubits(3),
+    detectors=surface_detectors,
+    observables=surface_observables,
+    p1=0.001,
+    p2=0.005,
+    p_meas=0.001,
+    p_prep=0.001,
+)
+```
+
+### Current soundness boundary
+
+- DEM construction supports straight-line static schedules and trusted built-in
+  generator certificates. Generic branching and looping Guppy programs are
+  rejected because one trace cannot certify all quantum-operation paths.
+- Scalar `result(tag, measure(q).read())` provenance is the certified generic tag
+  path. Repeated tags use `occurrence=...`.
+- Generic scalar binding currently relies on the committed-test invariant that
+  Guppy HUGR measurement traversal and source QIS measurement emission use the
+  same ordinal order. A future compiler origin-ID ABI should replace this
+  cross-pipeline invariant directly.
+- Aggregate result arrays are not accepted as generic measurement provenance:
+  their public element order is not yet part of the compiler identity ABI. Emit
+  direct scalar sideband tags when decoder inputs must be reconstructed from
+  named results.
+- An audited runtime-lowered build must provide a complete lowered operation
+  stream and measurement result IDs. PECOS will not silently build from the raw
+  pre-lowering QIS stream.
+- `build.audit` exposes every canonical ID, runtime record position, result
+  reference, and the schema fingerprint. Persist it with simulation data.
+
 ## Color Code Memory Experiments
 
 The 4.8.8 triangular color code supports transversal Clifford gates.
@@ -95,7 +248,7 @@ The 4.8.8 triangular color code supports transversal Clifford gates.
 ### Quick Start
 
 ```python
-from pecos.guppy import make_color_code, get_num_qubits_color
+from pecos.guppy_gen import make_color_code, get_num_qubits_color
 
 # Create a distance-3 color code memory experiment
 prog = make_color_code(distance=3, num_rounds=2, basis="Z")
@@ -108,7 +261,7 @@ print(f"Color code d=3 uses {num_qubits} qubits")
 ### Comparing Surface and Color Codes
 
 ```python
-from pecos.guppy import (
+from pecos.guppy_gen import (
     make_surface_code,
     get_num_qubits,
     make_color_code,
@@ -138,7 +291,7 @@ Transversal CNOT applies `CX(ctrl[i], tgt[i])` for all data qubits between two c
 <!--mark.slow-->
 ```python
 from pecos import sim, state_vector
-from pecos.guppy import make_css_transversal_cnot, get_transversal_num_qubits
+from pecos.guppy_gen import make_css_transversal_cnot, get_transversal_num_qubits
 
 # Create transversal CNOT for color codes
 prog = make_css_transversal_cnot(
@@ -161,7 +314,7 @@ Test the logical CNOT by preparing `|1_L>|0_L>` and verifying it becomes `|1_L>|
 <!--mark.slow-->
 ```python
 from pecos import sim, state_vector
-from pecos.guppy import make_css_transversal_cnot_with_x, get_transversal_num_qubits
+from pecos.guppy_gen import make_css_transversal_cnot_with_x, get_transversal_num_qubits
 
 # |1_L>|0_L> -> |1_L>|1_L>
 prog = make_css_transversal_cnot_with_x(
@@ -185,7 +338,7 @@ For common cases, use the convenience functions:
 
 <!--mark.slow-->
 ```python
-from pecos.guppy import (
+from pecos.guppy_gen import (
     # Color code transversal CNOT
     make_color_transversal_cnot,
     make_color_transversal_cnot_with_x,
@@ -209,7 +362,7 @@ You can write QEC circuits directly in Guppy without using the factory functions
 ```python
 from guppylang import guppy
 from guppylang.std.builtins import array
-from guppylang.std.quantum import qubit, cx, measure, measure_array
+from guppylang.std.quantum import qubit, cx, collect_measurements, measure, measure_array
 
 
 @guppy.struct
@@ -233,8 +386,8 @@ def extract_rep_syndrome(data: array[qubit, 3]) -> RepSyndrome:
     cx(data[1], a1)
     cx(data[2], a1)
 
-    s0 = measure(a0)
-    s1 = measure(a1)
+    s0 = measure(a0).read()
+    s1 = measure(a1).read()
 
     return RepSyndrome(array(s0, s1))
 
@@ -244,7 +397,7 @@ def rep_code_experiment() -> tuple[array[bool, 3], RepSyndrome]:
     """Run one round of the 3-qubit repetition code."""
     data = array(qubit(), qubit(), qubit())
     syndrome = extract_rep_syndrome(data)
-    results = measure_array(data)
+    results = collect_measurements(measure_array(data))
     return results, syndrome
 
 
@@ -266,7 +419,7 @@ from guppylang.std.builtins import array
 from guppylang.std.quantum import qubit, cx, h, measure
 ```
 
-The `pecos.guppy` module generates Guppy source code with these components:
+The `pecos.guppy_gen` module generates Guppy source code with these components:
 
 ### Struct Definitions
 
@@ -296,7 +449,7 @@ def measure_x_stab_0(ax: qubit, data: array[qubit, 9]) -> bool:
     cx(ax, data[0])
     cx(ax, data[1])
     h(ax)
-    return measure(ax)
+    return measure(ax).read()
 
 
 @guppy
@@ -304,7 +457,7 @@ def measure_z_stab_0(az: qubit, data: array[qubit, 9]) -> bool:
     """Measure Z stabilizer 0 (boundary): [0, 3]."""
     cx(data[0], az)
     cx(data[3], az)
-    return measure(az)
+    return measure(az).read()
 ```
 
 ### Syndrome Extraction
@@ -312,7 +465,7 @@ def measure_z_stab_0(az: qubit, data: array[qubit, 9]) -> bool:
 The generated module includes a `syndrome_extraction` function that applies all stabilizer measurements in a parallelized CNOT schedule and returns the syndrome:
 
 ```python
-from pecos.guppy import generate_surface_code_module
+from pecos.guppy_gen import generate_surface_code_module
 
 source = generate_surface_code_module(d=3)
 
@@ -328,7 +481,7 @@ To see the full generated code, see [Viewing Generated Source](#viewing-generate
 To see the generated Guppy source code:
 
 ```python
-from pecos.guppy import generate_surface_code_module, generate_color_code_module
+from pecos.guppy_gen import generate_surface_code_module, generate_color_code_module
 
 # Surface code source
 source = generate_surface_code_module(d=3)
@@ -350,7 +503,7 @@ This is useful for:
 For more control, access the generated module directly:
 
 ```python
-from pecos.guppy import get_surface_code_module
+from pecos.guppy_gen import get_surface_code_module
 
 # Get the loaded module
 module = get_surface_code_module(d=3)
@@ -374,7 +527,7 @@ Add noise to QEC simulations:
 
 ```python,skip
 from pecos import sim, state_vector, depolarizing_noise
-from pecos.guppy import make_surface_code, get_num_qubits
+from pecos.guppy_gen import make_surface_code, get_num_qubits
 
 prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
 num_qubits = get_num_qubits(3)
@@ -396,7 +549,7 @@ Here's a complete example estimating the logical error rate:
 
 ```python
 from pecos import sim, state_vector, depolarizing_noise
-from pecos.guppy import make_surface_code, get_num_qubits
+from pecos.guppy_gen import make_surface_code, get_num_qubits
 from pecos.qec import logical_z_from_data
 
 
@@ -496,6 +649,7 @@ See the [SLR and QECLib Developer Guide](../development/slr-qeclib.md) for detai
 ## Next Steps
 
 - **[QEC Geometry](qec-geometry.md)** - Understand the underlying geometry
+- **[Detector Error Models from Guppy](dem-from-guppy.md)** - Build a DEM by tracing generated programs
 - **[Decoders](decoders.md)** - Decode syndromes to recover logical information
 - **[Noise Model Builders](noise-model-builders.md)** - Custom noise configurations
 - **[HUGR & Guppy Simulation](hugr-simulation.md)** - More Guppy features

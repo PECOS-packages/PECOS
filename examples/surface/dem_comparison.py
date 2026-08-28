@@ -92,7 +92,7 @@ def run(*, distance, rounds, basis, p, shots, seed, run_statevec):
     # 2. DemSampler.from_circuit
     t0 = time.perf_counter()
     sampler_fc = DemSampler.from_circuit(dag, p1=p, p2=p, p_meas=p, p_prep=p)
-    batch_fc = sampler_fc.generate_samples(num_shots=shots, seed=seed)
+    batch_fc = sampler_fc.sample_batch(num_shots=shots, seed=seed)
     dem_fc = [0.0] * num_dets
     for i in range(shots):
         syn = batch_fc.get_syndrome(i)

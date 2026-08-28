@@ -194,7 +194,7 @@ Similar to single-qubit, with additions:
 - Angle-dependent probability: `prob_fn(|gate| p2_angle_rate(gate.angle()))`
 - Skip if ANY qubit leaked
 - Two-qubit Pauli model
-- Optional idle noise after
+- Optional operand-local idle duration after the gate, owned by `IdleChannel`
 
 ```rust
 let tq_noise = seq([
@@ -208,10 +208,12 @@ let tq_noise = seq([
             ])
         )
     ),
-    // Idle noise always applies (regardless of fault)
-    prob(p2_idle, idle_pauli()),
 ]);
 ```
+
+Idle policy is not part of the two-qubit primitive. A separate `IdleChannel`
+subscribes to both explicit idle events and two-qubit `AfterGate` events, applying
+the same configured linear and quadratic mechanisms for the requested duration.
 
 ### Measurement Noise (Tricky Case #1)
 

@@ -19,6 +19,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.simulators._cuda_fork_guard import (
+    CUDA_FORK_ERROR_MESSAGE,
+    check_fork_poison,
+    mark_cuda_initialized,
+)
 from pecos.simulators.custatevec import bindings
 from pecos.simulators.custatevec._cuquantum_compat import (
     ComputeType,
@@ -29,18 +34,18 @@ from pecos.simulators.custatevec._cuquantum_compat import (
 )
 from pecos.simulators.sim_class_types import StateVector
 
+# cudaErrorInitializationError from the CUDA runtime API. CuPy exposes only the
+# numeric CUDA status through CUDARuntimeError.status, not the named enum constant.
+_CUDA_ERROR_INITIALIZATION = 3
+
+# CUDA_ERROR_NOT_INITIALIZED from the CUDA driver API. CuPy exposes the numeric
+# CUDA status through CUDADriverError.status.
+_CUDA_DRIVER_ERROR_NOT_INITIALIZED = 3
+
 if TYPE_CHECKING:
-    import sys
+    from typing import Self
 
     from pecos import Array
-
-    # Handle Python 3.10 compatibility for Self type
-    if sys.version_info >= (3, 11):
-        from typing import Self
-    else:
-        from typing import TypeVar
-
-        Self = TypeVar("Self", bound="CuStateVec")
 
 
 class CuStateVec(StateVector):
@@ -53,6 +58,7 @@ class CuStateVec(StateVector):
             num_qubits (int): Number of qubits being represented.
             _seed (int): Seed for randomness (kept for API compatibility, not used in GPU-based simulator).
         """
+        check_fork_poison()
         # Fail loudly (and only here, at construction) if CuPy / bindings-era cuQuantum
         # is unavailable -- importing pecos must stay non-fatal without CUDA installed.
         require_custatevec()
@@ -66,6 +72,21 @@ class CuStateVec(StateVector):
         self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
 
+        try:
+            self._initialize_cuda()
+        except (cp.cuda.runtime.CUDARuntimeError, cp.cuda.driver.CUDADriverError) as exc:
+            runtime_initialization_error = (
+                isinstance(exc, cp.cuda.runtime.CUDARuntimeError) and exc.status == _CUDA_ERROR_INITIALIZATION
+            )
+            driver_not_initialized_error = (
+                isinstance(exc, cp.cuda.driver.CUDADriverError) and exc.status == _CUDA_DRIVER_ERROR_NOT_INITIALIZED
+            )
+            if runtime_initialization_error or driver_not_initialized_error:
+                raise RuntimeError(CUDA_FORK_ERROR_MESSAGE) from exc
+            raise
+
+    def _initialize_cuda(self) -> None:
+        """Allocate the state vector and initialize its CUDA resources."""
         # Set data type as double precision complex numbers
         self.cp_type = cp.complex128
         self.cuda_type = cudaDataType.CUDA_C_64F  # == cp.complex128
@@ -73,6 +94,7 @@ class CuStateVec(StateVector):
 
         # Allocate the statevector in GPU and initialize it to |0>
         self.cupy_vector = None
+        mark_cuda_initialized()
         self.reset()
 
         ####################################################
@@ -103,6 +125,7 @@ class CuStateVec(StateVector):
         )
 
         # CuStateVec handle initialization
+        # Errors raised directly by cusv.create() stay uncaught so cuQuantum preserves their native type.
         self.libhandle = cusv.create()
         self.stream = cp.cuda.Stream()
         cusv.set_stream(self.libhandle, self.stream.ptr)
@@ -126,6 +149,7 @@ class CuStateVec(StateVector):
 
     def reset(self) -> Self:
         """Reset the quantum state for another run without reinitializing."""
+        check_fork_poison()
         # Initialize all qubits in the zero state
         if self.cupy_vector is not None:
             self.cupy_vector[:] = 0

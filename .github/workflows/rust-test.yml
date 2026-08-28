@@ -66,6 +66,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Harden apt against mirror flakiness
+        run: ./scripts/ci/harden-apt.sh
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
@@ -82,7 +85,7 @@ jobs:
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
@@ -91,6 +94,10 @@ jobs:
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         id: cuda-toolkit
+        # This step downloads from an external host and normally finishes in a couple of
+        # minutes. Without a bound, a stalled download hangs the job indefinitely -- one did
+        # so for four hours on 2026-08-18, and every dependent job waits behind it.
+        timeout-minutes: 15
         with:
           cuda: '12.6.3'
           method: 'network'
@@ -140,7 +147,7 @@ jobs:
           rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
@@ -176,7 +183,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "0.11.14"
+          version-file: ".github/uv.toml"
+      - name: Harden apt against mirror flakiness
+        run: ./scripts/ci/harden-apt.sh
+
       - name: Install integrity check tools
         run: |
           sudo apt-get update
@@ -204,6 +214,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+
+      - name: Harden apt against mirror flakiness
+        if: matrix.os == 'ubuntu-latest'
+        run: ./scripts/ci/harden-apt.sh
 
       - name: Free disk space (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -234,7 +248,7 @@ jobs:
 
       - name: Cache Rust
         if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
@@ -272,6 +286,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         id: cuda-toolkit-test
+        # This step downloads from an external host and normally finishes in a couple of
+        # minutes. Without a bound, a stalled download hangs the job indefinitely -- one did
+        # so for four hours on 2026-08-18, and every dependent job waits behind it.
+        timeout-minutes: 15
         with:
           cuda: '12.6.3'
           method: 'network'

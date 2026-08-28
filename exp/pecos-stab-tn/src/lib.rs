@@ -19,6 +19,32 @@
 //! - **STN**: Stabilizer Tensor Networks (tableau + MPS coefficients)
 //! - **MAST**: Magic state injection Augmented STN (deferred non-Clifford cost)
 //!
+//! # Default configuration
+//!
+//! `StabMps` defaults to a maximum bond dimension of 128, a maximum relative
+//! truncation error of `1e-8`, an SVD cutoff of `1e-12`, normalization after
+//! non-Clifford gates, merged same-qubit RZ rotations, and exact single-qubit
+//! measurement. Pragmatic and lazy measurement modes, Pauli-frame tracking,
+//! and numerical flag redetection remain opt-in. `sample_bitstrings` is the
+//! bitstring sampler and is always exact by construction; per-shot sampling
+//! through the selected measurement mode is an explicit `mz` loop on fresh
+//! simulators. To recover the former behavior explicitly, use `max_bond_dim(64)`,
+//! `max_truncation_error(0.0)`, and `merge_rz(false)` on the builder.
+//! `Mast` instead defaults `merge_rz` to false so every RZ immediately exposes
+//! its injection and ancilla-capacity cost; enable it explicitly when batching
+//! is desired.
+//!
+//! # Bitstring convention
+//!
+//! At the `StabMps`/`Mast` layer, public bitstrings use qubit-index order:
+//! `bits[q]` is the bit for qubit `q`. Consequently, converting a `StabMps`
+//! bitstring to the little-endian integer index used by
+//! [`stab_mps::StabMps::state_vector`] gives
+//! `index = sum(usize::from(bits[q]) << q)`. This convention applies equally
+//! to bitstrings accepted by probability and amplitude reads and to rows
+//! returned by the samplers. The lower-level [`mps::Mps::state_vector`] is an
+//! internal tensor-chain read and orders site 0 as the most-significant bit.
+//!
 //! # References
 //!
 //! - Masot-Llima, Garcia-Saez. "Stabilizer Tensor Networks: Universal Quantum Simulator
@@ -27,6 +53,7 @@
 //!   with Magic State Injection." PRL 134, 190602 (2025). arXiv:2411.12482.
 //! - Reference implementation: <https://github.com/bsc-quantic/stabilizer-TN>
 
+/// Errors returned by matrix-product-state operations.
 pub mod errors;
 pub mod mps;
 pub mod stab_mps;

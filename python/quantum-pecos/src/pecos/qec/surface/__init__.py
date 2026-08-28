@@ -17,6 +17,8 @@ Functions:
     parity_matrix_z: Generate Z parity check matrix
 """
 
+import warnings
+
 # Circuit generation from geometry (unified abstraction)
 from pecos.qec.surface._clifford_deformation import (
     LocalCliffordFrame,
@@ -58,10 +60,11 @@ from pecos.qec.surface.circuit_builder import (
     generate_dem_from_patch as generate_dem_from_patch_stim,
 )
 from pecos.qec.surface.decode import (
+    RUNTIME_IDLE_TIME_UNITS_PER_SECOND,
     DecoderType,
     DecodingResult,
     NativeSampler,
-    NoiseModel,
+    NoiseParameters,
     SimulationResult,
     SurfaceDecoder,
     build_memory_circuit,
@@ -123,6 +126,20 @@ from pecos.qec.surface.schedule import (
     get_stab_schedule,
 )
 
+
+def __getattr__(name: str) -> type[NoiseParameters]:
+    """Resolve deprecated surface-code attributes lazily."""
+    if name == "NoiseModel":
+        warnings.warn(
+            "NoiseModel is deprecated; use NoiseParameters instead (from pecos import NoiseParameters).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return NoiseParameters
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
 __all__ = [
     # Twirling config (Pauli-frame randomization)
     "GuppyRngMaskConfig",
@@ -169,6 +186,8 @@ __all__ = [
     "DecodingResult",
     "NativeSampler",
     "NoiseModel",
+    "NoiseParameters",
+    "RUNTIME_IDLE_TIME_UNITS_PER_SECOND",
     "SimulationResult",
     "SurfaceDecoder",
     "build_memory_circuit",

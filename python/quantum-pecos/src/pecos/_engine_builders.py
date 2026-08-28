@@ -17,6 +17,7 @@ Python program wrappers from pecos.programs.
 
 from __future__ import annotations
 
+from importlib import import_module
 from os import PathLike, fspath
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,8 +25,9 @@ from typing import TYPE_CHECKING
 import pecos_rslib
 
 if TYPE_CHECKING:
+    from typing import Self
+
     import pecos_rslib as prs
-    from typing_extensions import Self
 
     from pecos.programs import Hugr, PhirJson, Qasm, Qis
     from pecos.typing import CompiledPhirJson, CompiledQasm, CompiledQis
@@ -236,14 +238,57 @@ def _looks_like_library_path(value: str) -> bool:
     return path.exists() or "/" in value or "\\" in value or path.suffix in {".so", ".dylib", ".dll"}
 
 
+def _materialize_plugin_candidate(candidate: object) -> tuple[object | None, Exception | None]:
+    try:
+        plugin = candidate() if isinstance(candidate, type) else candidate
+        library_file = getattr(plugin, "library_file", None)
+    except (AssertionError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
+        return None, error
+    return (plugin, None) if library_file is not None else (None, None)
+
+
+def _plugin_object_from_module(module: object) -> object:
+    selection_failures = []
+    exported_candidates = [getattr(module, exported_name, None) for exported_name in getattr(module, "__all__", ())]
+    for candidate in [*exported_candidates, module]:
+        plugin, failure = _materialize_plugin_candidate(candidate)
+        if plugin is not None:
+            return plugin
+        if failure is not None:
+            selection_failures.append(failure)
+
+    error = TypeError("Selene plugin module exposes no usable no-argument runtime plugin with 'library_file'.")
+    if selection_failures:
+        raise error from selection_failures[-1]
+    raise error
+
+
 def _configure_selene_runtime(builder: object, runtime: object | None) -> object:
     if runtime is None:
-        return builder.selene_runtime()
+        # Issue #365: freshly built Cargo artifacts win for dev iteration; the
+        # installed plugin package is the stable cwd-independent fallback.
+        try:
+            return builder.selene_runtime()
+        except RuntimeError as original_error:
+            try:
+                plugin_module = import_module("selene_simple_runtime_plugin")
+                plugin = _plugin_object_from_module(plugin_module)
+                return _configure_selene_runtime(builder, plugin)
+            except Exception as fallback_error:
+                raise original_error from fallback_error
 
     if isinstance(runtime, str):
         if _looks_like_library_path(runtime):
             return builder.selene_runtime_plugin(runtime)
-        return builder.selene_runtime(runtime)
+        try:
+            return builder.selene_runtime(runtime)
+        except RuntimeError as original_error:
+            try:
+                plugin_module = import_module(f"{runtime}_plugin")
+                plugin = _plugin_object_from_module(plugin_module)
+                return _configure_selene_runtime(builder, plugin)
+            except Exception as fallback_error:
+                raise original_error from fallback_error
 
     if isinstance(runtime, PathLike):
         return builder.selene_runtime_plugin(fspath(runtime))

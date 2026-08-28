@@ -185,6 +185,15 @@ void PyMatchingGraph::add_boundary_edge(
     }
 }
 
+void PyMatchingGraph::set_all_error_probabilities(double error_probability) {
+    double weight = std::log((1 - error_probability) / error_probability);
+    for (auto& edge : pimpl_->user_graph_->edges) {
+        edge.weight = weight;
+        edge.error_probability = error_probability;
+    }
+    pimpl_->mwpm_.reset();
+}
+
 // ===== Graph Queries =====
 
 size_t PyMatchingGraph::get_num_nodes() const {
@@ -712,6 +721,11 @@ void add_boundary_edge(
     double error_probability,
     MergeStrategy merge_strategy) {
     graph.add_boundary_edge(node, observables, weight, error_probability, merge_strategy);
+}
+
+void pymatching_set_all_error_probabilities(
+    PyMatchingGraph& graph, double error_probability) {
+    graph.set_all_error_probabilities(error_probability);
 }
 
 size_t pymatching_get_num_nodes(const PyMatchingGraph& graph) {

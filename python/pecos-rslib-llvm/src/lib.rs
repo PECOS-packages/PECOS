@@ -23,6 +23,10 @@ use pyo3::prelude::*;
 /// LLVM IR generation Python bindings for PECOS (llvmlite-compatible API).
 #[pymodule]
 fn pecos_rslib_llvm(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // The Python distribution version from pyproject.toml, injected by build.rs. The crate
+    // version (CARGO_PKG_VERSION) is a different number -- it rides the Rust workspace train.
+    m.add("__version__", env!("PECOS_PYTHON_VERSION"))?;
+
     // Register LLVM IR module (pecos_rslib_llvm.ir)
     llvm_bindings::register_llvm_module(m)?;
 

@@ -3,7 +3,7 @@
 [![PyPI version](https://badge.fury.io/py/quantum-pecos.svg)](https://badge.fury.io/py/quantum-pecos)
 [![Crates.io](https://img.shields.io/crates/v/pecos.svg?color=brightgreen)](https://crates.io/crates/pecos)
 [![Documentation Status](https://readthedocs.org/projects/quantum-pecos/badge/?version=latest)](https://quantum-pecos.readthedocs.io/en/latest/?badge=latest)
-[![Python versions](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://img.shields.io/badge/python-3.10%2C%203.11%2C%203.12%2C%203.13%2C%203.14-blue.svg)
+[![Python versions](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://img.shields.io/badge/python-3.12%2C%203.13%2C%203.14-blue.svg)
 [![Supported by Quantinuum](https://img.shields.io/badge/supported_by-Quantinuum-blue)](https://www.quantinuum.com/)
 
 [Installation](#installation) · [Quick Example](#quick-example) · [Documentation](#documentation) · [Rust](#for-rust-users) · [Citing](#citing)
@@ -52,10 +52,10 @@ def repetition_code() -> None:
     cx(d2, s1)
 
     # Extract syndromes as an array
-    result("syndrome", array(measure(s0), measure(s1)))
+    result("syndrome", array(measure(s0).read(), measure(s1).read()))
 
     # Measure data qubits (required by Guppy)
-    _ = measure(d0), measure(d1), measure(d2)
+    _ = measure(d0).read(), measure(d1).read(), measure(d2).read()
 
 
 # Run 10 shots with 10% depolarizing noise

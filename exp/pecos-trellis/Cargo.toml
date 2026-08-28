@@ -1,0 +1,29 @@
+[package]
+name = "pecos-trellis"
+version.workspace = true
+edition.workspace = true
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Trellis dynamic-programming engine for coset-mass decoding in PECOS"
+publish = false
+
+[dependencies]
+pecos-decoder-core.workspace = true
+# Deterministic libm (musl-derived) so decode outputs are bit-identical across
+# platforms; the committed bitwise snapshot in pecos-frontier depends on this.
+libm.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+rand_xoshiro.workspace = true
+
+[lib]
+name = "pecos_trellis"
+
+[lints]
+workspace = true

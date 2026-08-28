@@ -194,7 +194,11 @@ pub fn extract_dataflow_block_info(
     let quantum_ops = find_quantum_ops_in_block(hugr, node);
 
     // Find all Call nodes inside this block
-    let call_nodes = find_call_nodes_in_block(hugr, node);
+    let mut call_nodes = find_call_nodes_in_block(hugr, node);
+    // Guppy 1 lowers `for` loops to nested CFGs wrapped in DFGs. CFGs run
+    // with the same input-readiness and completion semantics as Calls, so
+    // track them in this set until DataflowBlockInfo gains a dedicated field.
+    call_nodes.extend(find_cfg_nodes_in_block(hugr, node));
 
     // Find all Conditional nodes inside this block
     let conditional_nodes = find_conditional_nodes_in_block(hugr, node);
@@ -454,8 +458,13 @@ pub fn extract_func_defns(hugr: &Hugr) -> BTreeMap<Node, FuncDefnInfo> {
             }
 
             if let (Some(input_node), Some(output_node)) = (input_node, output_node) {
-                let num_inputs = hugr.num_outputs(input_node);
-                let num_outputs = hugr.num_inputs(output_node);
+                // Use the function signature's data ports. The portgraph
+                // counts on Input/Output include an order port, which never
+                // carries a runtime value and therefore cannot participate in
+                // Call argument or return readiness.
+                let signature = func_defn.signature().body();
+                let num_inputs = signature.input().len();
+                let num_outputs = signature.output().len();
 
                 debug!(
                     "Found FuncDefn {node:?} '{name}' with {num_inputs} inputs, {num_outputs} outputs, cfg={cfg_node:?}"
@@ -871,6 +880,32 @@ pub fn find_call_nodes_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Node> {
     calls
 }
 
+/// Find nested CFG containers that belong to a block's activation.
+///
+/// Plain DFG wrappers are structural, so recurse through them. Stop at a CFG
+/// once found: its interior belongs to the nested CFG's own activation.
+pub fn find_cfg_nodes_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Node> {
+    let mut cfgs = BTreeSet::new();
+    collect_cfg_nodes_recursive(hugr, block, &mut cfgs);
+    cfgs
+}
+
+fn collect_cfg_nodes_recursive(hugr: &Hugr, node: Node, cfgs: &mut BTreeSet<Node>) {
+    for child in hugr.children(node) {
+        let op = hugr.get_optype(child);
+        if matches!(op, OpType::CFG(_)) {
+            cfgs.insert(child);
+            continue;
+        }
+        if !matches!(
+            op,
+            OpType::FuncDefn(_) | OpType::Conditional(_) | OpType::TailLoop(_)
+        ) {
+            collect_cfg_nodes_recursive(hugr, child, cfgs);
+        }
+    }
+}
+
 /// Recursively collect Call nodes in a subtree.
 fn collect_call_nodes_recursive(hugr: &Hugr, node: Node, calls: &mut BTreeSet<Node>) {
     for child in hugr.children(node) {
@@ -878,12 +913,13 @@ fn collect_call_nodes_recursive(hugr: &Hugr, node: Node, calls: &mut BTreeSet<No
         if matches!(op, OpType::Call(_)) {
             calls.insert(child);
         }
-        // Recurse into nested containers, but not into FuncDefns or
-        // Conditionals: case-contained Calls belong to the case's own
-        // activation (expand_conditional tracks and queues them) --
-        // collecting them here lets the outer container queue or wait on
-        // unselected-branch work.
-        if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
+        // Nested containers own their interiors. Descending into them makes
+        // an enclosing CFG block wait for work belonging to an inactive Case,
+        // loop iteration, or child CFG.
+        if !matches!(
+            op,
+            OpType::FuncDefn(_) | OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_)
+        ) {
             collect_call_nodes_recursive(hugr, child, calls);
         }
     }
@@ -903,8 +939,12 @@ fn collect_conditional_nodes_recursive(hugr: &Hugr, node: Node, conditionals: &m
         if matches!(op, OpType::Conditional(_)) {
             conditionals.insert(child);
         }
-        // Recurse into nested containers (but not into FuncDefns or Conditionals)
-        if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
+        // Recurse through structural DFGs only; nested containers own their
+        // own Conditional operations.
+        if !matches!(
+            op,
+            OpType::FuncDefn(_) | OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_)
+        ) {
             collect_conditional_nodes_recursive(hugr, child, conditionals);
         }
     }
@@ -924,10 +964,10 @@ fn collect_tailloop_nodes_recursive(hugr: &Hugr, node: Node, tailloops: &mut BTr
         if matches!(op, OpType::TailLoop(_)) {
             tailloops.insert(child);
         }
-        // Recurse into nested containers (but not into FuncDefns, Conditionals, or TailLoops themselves)
+        // Recurse through structural DFGs, but not into a nested container.
         if !matches!(
             op,
-            OpType::FuncDefn(_) | OpType::Conditional(_) | OpType::TailLoop(_)
+            OpType::FuncDefn(_) | OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_)
         ) {
             collect_tailloop_nodes_recursive(hugr, child, tailloops);
         }
@@ -951,10 +991,11 @@ fn collect_bool_ops_recursive(hugr: &Hugr, node: Node, bool_ops: &mut BTreeSet<N
                 bool_ops.insert(child);
             }
         }
-        // Recurse into nested containers, but not into FuncDefns or
-        // Conditionals (case bools belong to the case's own activation --
-        // see collect_call_nodes_recursive).
-        if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
+        // Nested control-flow containers own their bool operations.
+        if !matches!(
+            op,
+            OpType::FuncDefn(_) | OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_)
+        ) {
             collect_bool_ops_recursive(hugr, child, bool_ops);
         }
     }
@@ -979,8 +1020,11 @@ fn collect_classical_ops_recursive(hugr: &Hugr, node: Node, classical_ops: &mut 
         if classify_classical_op(op).is_some() {
             classical_ops.insert(child);
         }
-        // Recurse into nested containers (but not into FuncDefns or Conditionals)
-        if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
+        // Nested control-flow containers own their classical operations.
+        if !matches!(
+            op,
+            OpType::FuncDefn(_) | OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_)
+        ) {
             collect_classical_ops_recursive(hugr, child, classical_ops);
         }
     }
@@ -1003,8 +1047,11 @@ fn collect_extension_ops_recursive(hugr: &Hugr, node: Node, extension_ops: &mut 
                 extension_ops.push(child);
             }
         }
-        // Recurse into nested containers (but not into FuncDefns or Conditionals)
-        if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
+        // Nested control-flow containers own their extension operations.
+        if !matches!(
+            op,
+            OpType::FuncDefn(_) | OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_)
+        ) {
             collect_extension_ops_recursive(hugr, child, extension_ops);
         }
     }

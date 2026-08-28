@@ -745,6 +745,24 @@ pub unsafe extern "C" fn ___lazy_measure(qubit: i64) -> i64 {
     })
 }
 
+/// Lazy leakage-aware measurement function (Selene/HUGR-LLVM style).
+///
+/// # Safety
+/// The same requirements as [`___lazy_measure`] apply.
+///
+/// # Panics
+/// Panics if the allocated result ID is too large to fit in i64.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
+    let qubit_id = i64_to_usize(qubit);
+    with_interface(|interface| {
+        let result_id = interface.allocate_result();
+        interface.queue_operation(Operation::AllocateResult { id: result_id });
+        interface.queue_operation(QuantumOp::MeasureLeaked(qubit_id, result_id).into());
+        i64::try_from(result_id).expect("Result ID too large for i64")
+    })
+}
+
 /// Read a future boolean value (Guppy/HUGR-LLVM style)
 ///
 /// This function retrieves a measurement result from a future/deferred measurement.
@@ -829,6 +847,38 @@ pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
         // Default: return false (allows first iterations of loops to proceed)
         false
     }
+}
+
+/// Read an integer-valued measurement future (Selene/HUGR-LLVM style).
+///
+/// Leakage-aware Guppy measurements use an unsigned future with outcomes 0, 1,
+/// or 2 (leaked).
+///
+/// # Safety
+/// The same requirements as [`___read_future_bool`] apply.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ___read_future_uint(future_id: i64) -> u64 {
+    log::debug!("___read_future_uint called with future_id={future_id}");
+    let result_id = i64_to_usize(future_id);
+
+    if crate::is_dynamic_mode_active() {
+        if let Some(result) = crate::get_measurement_outcome(result_id as u64) {
+            record_result_read(result_id);
+            return result;
+        }
+        if crate::wait_for_result_ready(result_id as u64, 30_000) {
+            let result = crate::get_measurement_outcome(result_id as u64);
+            if result.is_some() {
+                record_result_read(result_id);
+            }
+            return result.unwrap_or(0);
+        }
+    }
+
+    // Static collection cannot synthesize a leak. Reuse the Boolean collection
+    // behavior so bounded probing and repeat-until-success termination remain
+    // consistent with ordinary measurements.
+    u64::from(unsafe { ___read_future_bool(future_id) })
 }
 
 /// Reset the collection mode read counter.
@@ -1009,6 +1059,48 @@ pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value:
         log::warn!(
             "print_bool: NO EXECUTION CONTEXT on thread {thread_id:?} for '{name}' = {value}"
         );
+    }
+}
+
+/// Record an integer result whose value is in the detector-compatible 0/1 domain.
+///
+/// Guppy permits integer literals in ``result(...)`` calls. PECOS named results
+/// are currently Boolean, but cultivation programs use integer zero for a
+/// detector known to be satisfied. Preserve those 0/1 outputs and reject other
+/// integers instead of silently coercing arbitrary values.
+///
+/// # Safety
+/// `label_ptr` must reference a tket2 string with at least `label_len + 1`
+/// bytes, as for [`print_bool`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn print_int(label_ptr: *const u8, label_len: i64, value: i64) {
+    let Ok(label_len_usize) = usize::try_from(label_len) else {
+        log::error!("print_int: invalid label length {label_len}");
+        return;
+    };
+    let data_ptr = unsafe { label_ptr.add(1) };
+    let label_slice = unsafe { std::slice::from_raw_parts(data_ptr, label_len_usize) };
+    let Ok(label) = std::str::from_utf8(label_slice) else {
+        log::error!("print_int: invalid UTF-8 in label");
+        return;
+    };
+    let name = label.strip_prefix("USER:INT:").unwrap_or(label);
+    let value = match value {
+        0 => false,
+        1 => true,
+        _ => {
+            log::error!(
+                "print_int: named result '{name}' has value {value}; PECOS currently supports only Boolean 0/1 named results"
+            );
+            return;
+        }
+    };
+
+    if let Some(ctx) = crate::get_execution_context() {
+        // SAFETY: The registered context is valid for the execution duration.
+        unsafe { &*ctx }.store_named_bool(name, value);
+    } else {
+        log::warn!("print_int: no execution context for '{name}' = {value}");
     }
 }
 
@@ -1963,6 +2055,67 @@ mod tests {
     }
 
     #[test]
+    fn test_lazy_measure_leaked_uses_an_allocated_measurement_result() {
+        setup_test();
+        let result_id = unsafe { ___lazy_measure_leaked(0) };
+
+        assert_eq!(result_id, 0);
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 2);
+            assert_eq!(iface.operations[0], Operation::AllocateResult { id: 0 });
+            assert_eq!(
+                iface.operations[1],
+                Operation::Quantum(QuantumOp::MeasureLeaked(0, 0))
+            );
+        });
+    }
+
+    #[test]
+    fn test_read_future_uint_preserves_the_ideal_measurement_value() {
+        setup_test();
+        with_interface(|iface| iface.store_result(4, true));
+
+        assert_eq!(unsafe { ___read_future_uint(4) }, 1);
+    }
+
+    #[test]
+    fn test_read_future_uint_preserves_leakage_outcome() {
+        setup_test();
+        let ctx = crate::pecos_create_execution_context();
+        let context = unsafe { &*ctx };
+        context
+            .dynamic_mode_active
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        unsafe { crate::pecos_register_execution_context(ctx) };
+        crate::pecos_set_measurement_outcome(4, 2);
+
+        assert_eq!(unsafe { ___read_future_uint(4) }, 2);
+
+        unsafe {
+            crate::pecos_register_execution_context(std::ptr::null_mut());
+            crate::pecos_destroy_execution_context(ctx);
+        }
+    }
+
+    #[test]
+    fn test_print_int_records_boolean_detector_literals() {
+        let ctx = crate::pecos_create_execution_context();
+        unsafe { crate::pecos_register_execution_context(ctx) };
+        let label = b"\x08DETECTOR";
+
+        unsafe { print_int(label.as_ptr(), 8, 0) };
+        assert_eq!(
+            unsafe { &*ctx }.get_named_results()["DETECTOR"],
+            vec![false]
+        );
+
+        unsafe {
+            crate::pecos_register_execution_context(std::ptr::null_mut());
+            crate::pecos_destroy_execution_context(ctx);
+        }
+    }
+
+    #[test]
     fn test_read_future_bool_with_stored_result() {
         setup_test();
 
@@ -1993,6 +2146,24 @@ mod tests {
         assert_eq!(traces[1].name, "arr");
         assert_eq!(traces[1].values, vec![false, true]);
         assert_eq!(traces[1].result_ids, vec![8, 9]);
+    }
+
+    #[test]
+    fn test_named_result_trace_rejects_ambiguous_recorded_reads() {
+        let ctx = crate::ExecutionContext::new();
+
+        ctx.record_result_read(7);
+        ctx.record_result_read(8);
+        ctx.store_named_bool("computed", true);
+
+        let traces = ctx.get_named_result_traces();
+        assert_eq!(traces.len(), 1);
+        assert!(traces[0].result_ids.is_empty());
+
+        ctx.record_result_read(9);
+        ctx.store_named_bool("next", false);
+        let traces = ctx.get_named_result_traces();
+        assert_eq!(traces[1].result_ids, vec![9]);
     }
 
     #[test]

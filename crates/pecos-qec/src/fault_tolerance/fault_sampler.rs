@@ -39,7 +39,7 @@ use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::measurement_sampler::{MeasurementKind, SampleResult};
 use pecos_simulators::symbolic_sparse_stab::MeasurementHistory;
 use pecos_simulators::{BitmaskPauliProp, CliffordGateable};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 /// Error returned when `build_fault_table` encounters an unsupported gate.
@@ -111,13 +111,17 @@ fn is_standard_2q_clifford_gate(gate_type: GateType) -> bool {
 fn is_supported_measurement_gate(gate_type: GateType) -> bool {
     matches!(
         gate_type,
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+        GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ
     )
 }
 
 #[inline]
 fn is_supported_prep_gate(gate_type: GateType) -> bool {
-    matches!(gate_type, GateType::PZ | GateType::QAlloc)
+    matches!(gate_type, GateType::PX | GateType::PZ | GateType::QAlloc)
 }
 
 #[inline]
@@ -207,7 +211,9 @@ pub(crate) enum PauliType {
 /// - All single-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
 /// - All two-qubit Cliffords: Clifford conjugation via direct Pauli-basis updates
 /// - `PZ`, `QAlloc`: absorbs all Pauli components on the reset qubit
-/// - `MZ`: records `X`-component flip, then absorbs all components (state collapse)
+/// - `MZ`, `MeasureLeaked`: records `X`-component flip, then absorbs the Z
+///   component only -- collapse projects, it does not reset, so the X keeps
+///   propagating. `MeasureFree` absorbs everything: the qubit is discarded.
 ///
 /// **No-op** (pass through without noise or transformation):
 /// - `I`, `Idle`, `QFree`, `MeasCrosstalkGlobalPayload`,
@@ -271,7 +277,7 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
                 .iter()
                 .map(pecos_core::QubitId::index)
                 .collect();
-            if is_supported_measurement_gate(gate.gate_type()) {
+            if gate.gate_type().consumes_measurement_record() {
                 meas_positions.insert(gates.len(), meas_count);
                 meas_count += 1;
             }
@@ -515,21 +521,36 @@ fn propagate_forward(
                 let pair = [(QubitId(loc.qubits[0]), QubitId(loc.qubits[1]))];
                 prop.swap(&pair);
             }
-            // PZ/QAlloc absorbs propagating errors on the reset qubit
-            GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
+            // Preparation absorbs propagating errors on the reset qubit.
+            GateType::PX | GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
                 prop.clear_qubit(loc.qubits[0]);
             }
-            // MZ: X component flips the measurement, then qubit state collapses
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+            // The X component flips the measurement and then survives the
+            // collapse -- a non-destructive measurement absorbs only the Z
+            // component. A discarded (`MeasureFree`) or reset (`MPZ`) qubit
+            // clears fully.
+            GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ
                 if !loc.qubits.is_empty() =>
             {
                 let q = loc.qubits[0];
-                if prop.contains_x(q)
-                    && let Some(&meas_idx) = meas_positions.get(&loc_idx)
-                {
+                let flips_result = if loc.gate_type == GateType::MX {
+                    prop.contains_z(q)
+                } else {
+                    prop.contains_x(q)
+                };
+                if flips_result && let Some(&meas_idx) = meas_positions.get(&loc_idx) {
                     affected.insert(meas_idx);
                 }
-                prop.clear_qubit(q);
+                super::propagator::cross_measurement(
+                    prop,
+                    q,
+                    loc.gate_type,
+                    super::propagator::Direction::Forward,
+                );
             }
             _ => {}
         }
@@ -1207,10 +1228,15 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 });
             }
 
-            GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
+            GateType::PX | GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
                 let q = loc.qubits[0];
+                let prep_fault = if gate_type == GateType::PX {
+                    PauliType::Z
+                } else {
+                    PauliType::X
+                };
                 let effect = effect_cache.single(
-                    PauliType::X,
+                    prep_fault,
                     q,
                     loc_idx + 1,
                     &gates,
@@ -1241,7 +1267,11 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 });
             }
 
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+            GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ => {
                 if let Some(&meas_idx) = meas_positions.get(&loc_idx) {
                     let affected = vec![meas_idx];
                     let dets = record_effect_index.detectors_for_measurements(&affected);
@@ -1464,6 +1494,42 @@ fn toggle_sorted(values: &mut Vec<usize>, value: usize) {
     }
 }
 
+/// Why a circuit cannot be turned into a record-aligned measurement history.
+#[derive(Debug, Clone)]
+pub enum MeasurementHistoryError {
+    /// A gate outside the supported Clifford/prep/measurement/metadata set.
+    UnsupportedGate(UnsupportedGateError),
+    /// The circuit contains a `MeasureLeaked`.
+    ///
+    /// It collapses its qubit and later outcomes can depend on the result, but
+    /// it consumes no measurement record, so it has no column in a
+    /// record-aligned history and its dependencies cannot be expressed without
+    /// one.
+    LeakedMeasurementNotRepresentable { tick: usize, qubits: Vec<usize> },
+}
+
+impl fmt::Display for MeasurementHistoryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedGate(err) => write!(f, "{err}"),
+            Self::LeakedMeasurementNotRepresentable { tick, qubits } => write!(
+                f,
+                "MeasureLeaked at tick {tick} on qubits {qubits:?} consumes no measurement \
+                 record, so it cannot appear in a record-aligned measurement history; \
+                 remove it or use a path that does not require record alignment"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MeasurementHistoryError {}
+
+impl From<UnsupportedGateError> for MeasurementHistoryError {
+    fn from(err: UnsupportedGateError) -> Self {
+        Self::UnsupportedGate(err)
+    }
+}
+
 // ============================================================================
 // Shared symbolic simulation helper
 // ============================================================================
@@ -1475,16 +1541,20 @@ fn toggle_sorted(values: &mut Vec<usize>, value: usize) {
 /// Iterates tick-by-tick to match the `TickCircuit`'s measurement numbering
 /// (which detector/DEM-output record indices reference).
 ///
-/// Errors on unsupported gates with tick/gate/qubit context (same gate set
-/// as [`build_fault_table`]).
+/// One column per measurement *record*. `MeasureLeaked` collapses its qubit but
+/// consumes no record, so it gets no column and the remaining columns are
+/// renumbered around it.
 ///
 /// # Errors
 ///
-/// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
-/// the supported Clifford/prep/measurement/metadata set.
+/// Returns [`MeasurementHistoryError::UnsupportedGate`] for a gate outside the
+/// supported Clifford/prep/measurement/metadata set, and
+/// [`MeasurementHistoryError::LeakedMeasurementNotRepresentable`] when a
+/// recorded outcome depends on a `MeasureLeaked` result -- that dependency
+/// names a column this history has no way to express.
 pub fn symbolic_measurement_history(
     tc: &TickCircuit,
-) -> Result<MeasurementHistory, UnsupportedGateError> {
+) -> Result<MeasurementHistory, MeasurementHistoryError> {
     use pecos_simulators::SymbolicSparseStab;
 
     let num_qubits = tc
@@ -1495,6 +1565,10 @@ pub fn symbolic_measurement_history(
         .unwrap_or(0);
 
     let mut sim = SymbolicSparseStab::new(num_qubits);
+    // Simulator measurement index -> record column, for the measurements that
+    // consume a record; and the leaked ones, which consume none.
+    let mut column_of: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut leaked_sites: BTreeMap<usize, (usize, Vec<usize>)> = BTreeMap::new();
 
     for (tick_idx, tick) in tc.iter_ticks() {
         for gate in tick.iter_gate_batches() {
@@ -1502,9 +1576,12 @@ pub fn symbolic_measurement_history(
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 
             match gate.gate_type {
-                GateType::PZ | GateType::QAlloc => {
+                GateType::PX | GateType::PZ | GateType::QAlloc => {
                     for &q in &qs {
                         sim.pz(q);
+                        if gate.gate_type == GateType::PX {
+                            sim.h(&[q]);
+                        }
                     }
                 }
                 GateType::H => {
@@ -1576,8 +1653,39 @@ pub fn symbolic_measurement_history(
                 GateType::SWAP => {
                     sim.swap(&symbolic_pairs(&qs));
                 }
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
-                    sim.mz(&qs);
+                // `MeasureLeaked` consumes no measurement record, so it has no
+                // place in a record-aligned history -- but it does collapse its
+                // qubit, and later outcomes can depend on the result. A symbolic
+                // result carries its dependencies as indices into the
+                // simulator's own numbering, so dropping the column would strand
+                // every reference to it. Representing that needs a notion of a
+                // hidden random source this history does not have, so say so
+                // rather than return a history whose dependencies dangle.
+                GateType::MX
+                | GateType::MZ
+                | GateType::MeasureFree
+                | GateType::MeasureLeaked
+                | GateType::MPZ => {
+                    // Every measurement collapses its qubit, so all of them run.
+                    // Only the record-bearing ones earn a column.
+                    let records_a_result = gate.gate_type.consumes_measurement_record();
+                    if gate.gate_type == GateType::MX {
+                        sim.h(&qs);
+                    }
+                    for result in sim.mz(&qs) {
+                        if records_a_result {
+                            let column = column_of.len();
+                            column_of.insert(result.index, column);
+                        } else {
+                            leaked_sites.insert(result.index, (tick_idx, qs.clone()));
+                        }
+                    }
+                    // Measure-and-prepare resets after the readout.
+                    if gate.gate_type == GateType::MPZ {
+                        for &q in &qs {
+                            sim.pz(q);
+                        }
+                    }
                 }
                 GateType::I
                 | GateType::Idle
@@ -1586,18 +1694,69 @@ pub fn symbolic_measurement_history(
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::TrackedPauliMeta => {}
                 other => {
-                    return Err(UnsupportedGateError {
-                        gate_type: other,
-                        tick: tick_idx,
-                        gate_in_tick: gate_idx,
-                        qubits: qs,
-                    });
+                    return Err(MeasurementHistoryError::UnsupportedGate(
+                        UnsupportedGateError {
+                            gate_type: other,
+                            tick: tick_idx,
+                            gate_in_tick: gate_idx,
+                            qubits: qs,
+                        },
+                    ));
                 }
             }
         }
     }
 
-    Ok(sim.measurement_history().clone())
+    if leaked_sites.is_empty() {
+        return Ok(sim.measurement_history().clone());
+    }
+    remap_history_onto_records(sim.measurement_history(), &column_of, &leaked_sites)
+}
+
+/// Renumber a measurement history onto record columns, dropping the leaked
+/// measurements that hold no record.
+///
+/// A symbolic result names its dependencies by the simulator's own measurement
+/// index, so dropping a column means every surviving reference has to be
+/// rewritten. A dependency on a *leaked* measurement cannot be rewritten at all
+/// -- it names a random source with no column -- so that is where this gives up
+/// rather than emit a history whose dependencies dangle.
+fn remap_history_onto_records(
+    history: &MeasurementHistory,
+    column_of: &BTreeMap<usize, usize>,
+    leaked_sites: &BTreeMap<usize, (usize, Vec<usize>)>,
+) -> Result<MeasurementHistory, MeasurementHistoryError> {
+    let mut remapped = MeasurementHistory::new();
+    for result in history.iter() {
+        let Some(&column) = column_of.get(&result.index) else {
+            continue;
+        };
+        let mut outcome = pecos_core::BitSet::new();
+        for dependency in &result.outcome {
+            if let Some(&dependency_column) = column_of.get(&dependency) {
+                outcome.insert(dependency_column);
+            } else {
+                let (tick, qubits) = leaked_sites.get(&dependency).cloned().expect(
+                    "every simulator measurement index is either a record column or a \
+                     leaked site, so a dependency outside both means the two maps were \
+                     not built from the same walk",
+                );
+                return Err(MeasurementHistoryError::LeakedMeasurementNotRepresentable {
+                    tick,
+                    qubits,
+                });
+            }
+        }
+        remapped.push(
+            pecos_simulators::symbolic_sparse_stab::SymbolicMeasurementResult {
+                outcome,
+                flip: result.flip,
+                is_deterministic: result.is_deterministic,
+                index: column,
+            },
+        );
+    }
+    Ok(remapped)
 }
 
 fn symbolic_pairs(qs: &[usize]) -> Vec<(usize, usize)> {
@@ -2214,10 +2373,13 @@ mod tests {
         );
     }
 
+    /// Collapse projects; it does not reset. After the first measurement the
+    /// faulty and ideal states still differ by X, so the second measurement is
+    /// flipped too -- verified directly on `StateVec` (X; MZ -> 1; MZ -> 1)
+    /// and matching Stim's `M`-versus-`MR` distinction. Clearing here was the
+    /// defect: it predicted the second measurement unflipped.
     #[test]
-    fn test_propagate_x_absorbed_by_mz() {
-        // Circuit: MZ(0) MZ(0) — X on q0 should flip first MZ only
-        // (MZ collapses qubit, absorbing the error)
+    fn test_propagate_x_persists_through_nondestructive_mz() {
         let mut tc = TickCircuit::new();
         tc.tick().mz(&[QubitId(0)]);
         tc.tick().mz(&[QubitId(0)]);
@@ -2226,8 +2388,53 @@ mod tests {
         let affected = propagate_single(PauliType::X, 0, 0, &gates, &meas_pos);
         assert_eq!(
             affected,
+            BTreeSet::from([0, 1]),
+            "X before a non-destructive MZ flips it AND every later measurement \
+             on the qubit until a reset or free"
+        );
+    }
+
+    /// The Z component is what collapse absorbs: it commutes with the
+    /// measurement, and both branches land on the same eigenstate up to phase.
+    #[test]
+    fn test_propagate_z_component_absorbed_by_mz() {
+        // Z -> (via H) X flips the first MZ; the surviving component after the
+        // collapse is X only, so an H after the measurement rotates it to Z,
+        // which cannot flip the final MZ. If the Z component survived the
+        // collapse, the recombined Y would flip it.
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+        tc.tick().h(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+
+        let (gates, meas_pos) = flatten_tick_circuit(&tc);
+        let affected = propagate_single(PauliType::Y, 0, 0, &gates, &meas_pos);
+        assert_eq!(
+            affected,
             BTreeSet::from([0]),
-            "X should flip first MZ only, not second"
+            "the Y's X part flips MZ 0 (Y -> H -> Y anticommutes with Z); only \
+             X survives the collapse, and H turns it into Z, invisible to MZ 1"
+        );
+    }
+
+    /// `MeasureFree` discards the qubit, so it genuinely clears: an error
+    /// before it cannot reach anything after.
+    #[test]
+    fn test_propagate_x_cleared_by_measure_free() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .try_add_gate(pecos_core::Gate::mz_free(&[0usize]))
+            .expect("gate is valid");
+        tc.tick().pz(&[QubitId(0)]);
+        tc.tick().mz(&[QubitId(0)]);
+
+        let (gates, meas_pos) = flatten_tick_circuit(&tc);
+        let affected = propagate_single(PauliType::X, 0, 0, &gates, &meas_pos);
+        assert_eq!(
+            affected,
+            BTreeSet::from([0]),
+            "X flips the MeasureFree it precedes and nothing after the discard"
         );
     }
 
@@ -2399,6 +2606,101 @@ mod tests {
         assert_eq!(err.qubits, vec![0], "full original qubit list");
     }
 
+    /// The fault catalogue numbers measurements by record, so a `MeasureLeaked`
+    /// must not take a position. It used to, which put every later measurement's
+    /// faults one column off from the detector metadata.
+    #[test]
+    fn flatten_gives_no_record_position_to_measure_leaked() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick()
+            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .expect("gate is valid");
+        tc.tick().mz(&[1]);
+
+        let (gates, meas_positions) = flatten_tick_circuit(&tc);
+
+        assert_eq!(
+            meas_positions.len(),
+            1,
+            "only the MZ consumes a record position"
+        );
+        let (&loc_idx, &record) = meas_positions.iter().next().expect("one entry");
+        assert_eq!(record, 0, "the MZ holds record 0, not record 1");
+        assert_eq!(
+            gates[loc_idx].gate_type,
+            pecos_core::gate_type::GateType::MZ,
+            "the recorded position must belong to the MZ, not the leaked measurement"
+        );
+    }
+
+    /// A leaked measurement nothing depends on is simply renumbered around: it
+    /// holds no record, so the measurements that do keep contiguous columns.
+    #[test]
+    fn a_leaked_measurement_nothing_depends_on_is_renumbered_around() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick()
+            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .expect("gate is valid");
+        tc.tick().mz(&[1]);
+
+        let history = symbolic_measurement_history(&tc)
+            .expect("nothing records a dependency on the leaked result");
+        assert_eq!(history.len(), 1, "only the MZ holds a record");
+        assert_eq!(
+            history.get(0).expect("one column").index,
+            0,
+            "the surviving measurement takes column 0, not the simulator's index 1"
+        );
+    }
+
+    /// When a recorded outcome *does* depend on the leaked result, there is no
+    /// column to point at, so the circuit is refused rather than handed back
+    /// with a dependency naming a column that does not exist.
+    #[test]
+    fn a_recorded_outcome_depending_on_a_leaked_result_is_refused() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick().h(&[0]);
+        tc.tick().cx(&[(0, 1)]);
+        tc.tick()
+            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .expect("gate is valid");
+        tc.tick().mz(&[1]);
+
+        match symbolic_measurement_history(&tc)
+            .expect_err("the MZ outcome depends on the leaked measurement")
+        {
+            MeasurementHistoryError::LeakedMeasurementNotRepresentable { tick, qubits } => {
+                assert_eq!(tick, 3, "the error must name the leaked measurement's tick");
+                assert_eq!(qubits, vec![0], "and its qubit");
+            }
+            other @ MeasurementHistoryError::UnsupportedGate(_) => {
+                panic!("expected the leaked-dependency refusal, got: {other}")
+            }
+        }
+    }
+
+    /// `MeasureFree` consumes a record, so it keeps a column of its own. Nothing
+    /// else pinned that arm, so dropping it went unnoticed.
+    #[test]
+    fn measure_free_keeps_its_record_column() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick().h(&[0]);
+        tc.tick().cx(&[(0, 1)]);
+        tc.tick().mz_free(&[0]);
+        tc.tick().mz(&[1]);
+
+        let history = symbolic_measurement_history(&tc).expect("supported gates");
+        assert_eq!(
+            history.len(),
+            2,
+            "both the MeasureFree and the MZ consume a record"
+        );
+    }
+
     // ---- symbolic_measurement_history tests ----
 
     #[test]
@@ -2410,10 +2712,16 @@ mod tests {
 
         let result = symbolic_measurement_history(&tc);
         assert!(result.is_err(), "T should be rejected");
-        let err = result.unwrap_err();
-        assert_eq!(err.gate_type, GateType::T);
-        assert_eq!(err.tick, 1);
-        assert_eq!(err.qubits, vec![0]);
+        match result.unwrap_err() {
+            MeasurementHistoryError::UnsupportedGate(err) => {
+                assert_eq!(err.gate_type, GateType::T);
+                assert_eq!(err.tick, 1);
+                assert_eq!(err.qubits, vec![0]);
+            }
+            other @ MeasurementHistoryError::LeakedMeasurementNotRepresentable { .. } => {
+                panic!("expected an unsupported-gate error, got: {other}")
+            }
+        }
     }
 
     #[test]
@@ -2945,7 +3253,8 @@ mod tests {
             .unwrap();
         tc.tracked_pauli_labeled("tracked_z1", PauliString::z(1));
 
-        let round_tripped = TickCircuit::from(&pecos_quantum::DagCircuit::from(&tc));
+        let round_tripped =
+            TickCircuit::from(&pecos_quantum::DagCircuit::try_from(&tc).expect("valid circuit"));
         assert_eq!(round_tripped.annotations().len(), 1);
         assert!(matches!(
             round_tripped.annotations()[0].kind,

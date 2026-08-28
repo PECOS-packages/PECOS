@@ -68,7 +68,10 @@ pub struct MinSumConfig {
     pub alpha: Option<f64>,
     /// Per-iteration scaling factor for alpha (default: 1.0)
     pub alpha_iteration_scaling_factor: f64,
-    /// Memory BP strength (None = disabled)
+    /// Memory BP strength. `None` disables memory-BP for the entire relay
+    /// ensemble, which also renders `gamma_dist_interval`, `num_sets` and the
+    /// seed inert; prefer [`crate::DEFAULT_GAMMA0`] unless you specifically
+    /// want plain min-sum.
     pub gamma0: Option<f64>,
 }
 
@@ -83,6 +86,23 @@ impl MinSumConfig {
             alpha_iteration_scaling_factor: 1.0,
             gamma0: None,
         }
+    }
+
+    /// Validate min-sum tuning parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns a configuration error if a scaling value is not finite or is negative.
+    pub fn validate(&self) -> crate::errors::Result<()> {
+        if self
+            .alpha
+            .is_some_and(|alpha| !alpha.is_finite() || alpha < 0.0)
+        {
+            return Err(crate::errors::RelayBpError::Configuration(
+                "alpha must be finite and non-negative".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Convert to relay-bp's internal config type.

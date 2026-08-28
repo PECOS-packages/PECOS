@@ -222,7 +222,7 @@ def test_check_plan_and_interaction_basis_mismatch_fails_loudly() -> None:
 
 
 def test_guppy_surface_code_module_records_resolved_check_plan() -> None:
-    from pecos.guppy import get_surface_code_module
+    from pecos.guppy_gen import get_surface_code_module
 
     module = get_surface_code_module(3, check_plan="szz_current_v1")
 
@@ -233,7 +233,7 @@ def test_guppy_surface_code_module_records_resolved_check_plan() -> None:
 
 
 def test_guppy_surface_code_rejects_plan_basis_mismatch() -> None:
-    from pecos.guppy import make_surface_code
+    from pecos.guppy_gen import make_surface_code
 
     with pytest.raises(ValueError, match="conflicts with check_plan"):
         make_surface_code(
@@ -246,7 +246,7 @@ def test_guppy_surface_code_rejects_plan_basis_mismatch() -> None:
 
 
 def test_guppy_surface_code_accepts_check_plan_as_source_of_truth() -> None:
-    from pecos.guppy import make_surface_code
+    from pecos.guppy_gen import make_surface_code
 
     program = make_surface_code(
         distance=3,
@@ -269,7 +269,7 @@ def test_guppy_surface_code_accepts_check_plan_as_source_of_truth() -> None:
     ],
 )
 def test_guppy_surface_code_accepts_balanced_data_check_plans(check_plan: str) -> None:
-    from pecos.guppy import make_surface_code
+    from pecos.guppy_gen import make_surface_code
 
     program = make_surface_code(
         distance=3,
@@ -316,11 +316,11 @@ def test_surface_code_memory_rejects_plan_basis_mismatch() -> None:
 
 
 def test_check_plan_does_not_change_current_szz_dem() -> None:
-    from pecos.qec.surface import NoiseModel, SurfacePatch
+    from pecos.qec.surface import NoiseParameters, SurfacePatch
     from pecos.qec.surface.decode import generate_circuit_level_dem_from_builder
 
     patch = SurfacePatch.create(distance=3)
-    noise = NoiseModel(p2=0.001, p_meas=0.001, p_prep=0.001)
+    noise = NoiseParameters(p2=0.001, p_meas=0.001, p_prep=0.001)
 
     by_basis = generate_circuit_level_dem_from_builder(
         patch,
@@ -395,7 +395,7 @@ def test_direct_surface_renderers_accept_check_plan_as_source_of_truth() -> None
 
 
 def test_szz_guppy_source_can_disable_trace_metadata_for_execution() -> None:
-    from pecos.guppy.surface import generate_guppy_source
+    from pecos.guppy_gen.surface import generate_guppy_source
     from pecos.qec.surface import SurfacePatch
 
     patch = SurfacePatch.create(distance=3)
@@ -410,11 +410,11 @@ def test_szz_guppy_source_can_disable_trace_metadata_for_execution() -> None:
     assert "def pecos_qis_trace_metadata_qubit_hugr(" not in guppy_source
     assert "pecos_qis_trace_metadata_qubit_hugr(" not in guppy_source
     assert "zz_phase(" in guppy_source
-    assert "result(" in guppy_source
+    assert "output(" in guppy_source
 
 
 def test_szz_runtime_barrier_fences_data_prefix_before_host() -> None:
-    from pecos.guppy.surface import generate_guppy_source
+    from pecos.guppy_gen.surface import generate_guppy_source
     from pecos.qec.surface import SurfacePatch
 
     patch = SurfacePatch.create(distance=3)
@@ -438,7 +438,7 @@ def test_szz_runtime_barrier_fences_data_prefix_before_host() -> None:
 
 
 def test_szz_data_prefixes_emit_generic_hosted_metadata() -> None:
-    from pecos.guppy.surface import generate_guppy_source
+    from pecos.guppy_gen.surface import generate_guppy_source
     from pecos.qec.surface import SurfacePatch
 
     source = generate_guppy_source(
@@ -463,7 +463,7 @@ def test_szz_data_prefixes_emit_generic_hosted_metadata() -> None:
 
 
 def test_szz_hosted_metadata_labels_include_helper_scope() -> None:
-    from pecos.guppy.surface import generate_guppy_source
+    from pecos.guppy_gen.surface import generate_guppy_source
     from pecos.qec.surface import SurfacePatch
 
     source = generate_guppy_source(
@@ -477,7 +477,7 @@ def test_szz_hosted_metadata_labels_include_helper_scope() -> None:
 
 
 def test_plain_szz_memory_source_unrolls_hosted_metadata_by_counted_round() -> None:
-    from pecos.guppy.surface import generate_guppy_source
+    from pecos.guppy_gen.surface import generate_guppy_source
     from pecos.qec.surface import SurfacePatch
 
     source = generate_guppy_source(
@@ -496,7 +496,7 @@ def test_plain_szz_memory_source_unrolls_hosted_metadata_by_counted_round() -> N
 
 
 def test_plain_szz_memory_cache_key_includes_counted_rounds() -> None:
-    from pecos.guppy.surface import _guppy_module_cache_key
+    from pecos.guppy_gen.surface import _guppy_module_cache_key
     from pecos.qec.surface import SurfacePatch
 
     patch = SurfacePatch.create(distance=3)
@@ -599,7 +599,7 @@ def test_round_order_szz_check_plan_changes_host_order_not_metadata(
     round_order_plan: str,
     expected_hosts: list[str],
 ) -> None:
-    from pecos.guppy.surface import generate_guppy_source
+    from pecos.guppy_gen.surface import generate_guppy_source
     from pecos.qec.surface import SurfacePatch
     from pecos.qec.surface.circuit_builder import (
         OpType,
@@ -689,13 +689,13 @@ def test_direct_surface_renderers_reject_plan_basis_mismatch() -> None:
 
 
 def test_native_sampler_records_resolved_check_plan() -> None:
-    from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
+    from pecos.qec.surface import NoiseParameters, SurfacePatch, build_native_sampler
 
     patch = SurfacePatch.create(distance=3)
     sampler = build_native_sampler(
         patch,
         num_rounds=1,
-        noise=NoiseModel(p2=0.001),
+        noise=NoiseParameters(p2=0.001),
         check_plan="szz_current_v1",
         sampling_model="influence_dem",
     )

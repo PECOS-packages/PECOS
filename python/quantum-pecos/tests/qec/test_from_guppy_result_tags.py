@@ -30,7 +30,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import cx, h, measure, qubit
-from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 
 
@@ -56,9 +56,9 @@ def _scrambled_three_measurements() -> None:
     qc = qubit()
     h(qb)
     cx(qb, qc)
-    a = measure(qa)
-    b = measure(qb)
-    c = measure(qc)
+    a = measure(qa).read()
+    b = measure(qb).read()
+    c = measure(qc).read()
     result("tag_c", c)
     result("tag_a", a)
     result("tag_b", b)

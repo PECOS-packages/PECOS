@@ -1,6 +1,6 @@
 [project]
 name = "pecos-rslib-llvm"
-version = "0.9.0.dev1"
+version = "0.11.0.dev0"
 description = "LLVM IR generation Python bindings for PECOS (llvmlite-compatible API, Rust implementation)."
 authors = [
     {name = "The PECOS Developers"},
@@ -10,7 +10,7 @@ maintainers = [
 ]
 dependencies = []
 readme = "README.md"
-requires-python = ">= 3.10"
+requires-python = ">= 3.12"
 license = "Apache-2.0"
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -20,8 +20,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Physics",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -36,6 +34,9 @@ build-backend = "maturin"
 [tool.maturin]
 module-name = "pecos_rslib_llvm"
 features = ["extension-module"]
+include = [
+    {path = "pecos_rslib_llvm/licenses/LLVM-LICENSE.txt", format = "wheel"},
+]
 
 [dependency-groups]
 dev = []

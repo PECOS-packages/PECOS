@@ -44,7 +44,10 @@ fn repetition_code_circuit(num_rounds: usize) -> DagCircuit {
 fn build_influence_map(
     circuit: &DagCircuit,
 ) -> pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap {
-    InfluenceBuilder::new(circuit).with_z(&[0, 1, 2]).build()
+    InfluenceBuilder::new(circuit)
+        .with_z(&[0, 1, 2])
+        .build()
+        .expect("circuit is replayable")
 }
 
 // ============================================================================
@@ -429,7 +432,7 @@ fn circuit_annotation_dual_output() {
     let mut dag = DagCircuit::new();
 
     // 3 rounds for meaningful round-to-round detectors
-    let mut meas_nodes = Vec::new();
+    let mut meas_refs = Vec::new();
     for _ in 0..3 {
         dag.pz(&[3, 4]);
         dag.cx(&[(0, 3)]);
@@ -437,14 +440,14 @@ fn circuit_annotation_dual_output() {
         dag.cx(&[(1, 4)]);
         dag.cx(&[(2, 4)]);
         let ms = dag.mz(&[3, 4]);
-        meas_nodes.push((ms[0].node, ms[1].node));
+        meas_refs.push((ms[0], ms[1]));
     }
 
     // Annotate round-to-round detectors (rounds 1-2 and 2-3)
-    dag.detector(&[meas_nodes[0].0, meas_nodes[1].0]); // q3 r1↔r2
-    dag.detector(&[meas_nodes[0].1, meas_nodes[1].1]); // q4 r1↔r2
-    dag.detector(&[meas_nodes[1].0, meas_nodes[2].0]); // q3 r2↔r3
-    dag.detector(&[meas_nodes[1].1, meas_nodes[2].1]); // q4 r2↔r3
+    dag.detector(&[meas_refs[0].0, meas_refs[1].0]).unwrap(); // q3 r1↔r2
+    dag.detector(&[meas_refs[0].1, meas_refs[1].1]).unwrap(); // q4 r1↔r2
+    dag.detector(&[meas_refs[1].0, meas_refs[2].0]).unwrap(); // q3 r2↔r3
+    dag.detector(&[meas_refs[1].1, meas_refs[2].1]).unwrap(); // q4 r2↔r3
 
     // Build MEASUREMENT-LEVEL influence map (DagFaultAnalyzer, not InfluenceBuilder)
     // DagFaultAnalyzer creates one "detector" per raw measurement, so
@@ -457,6 +460,7 @@ fn circuit_annotation_dual_output() {
     let sampler = DemSamplerBuilder::new(&influence_map)
         .with_uniform_noise(0.05) // high noise for visible effect
         .with_circuit_annotations(&dag)
+        .expect("annotations resolve against the influence map")
         .build()
         .unwrap();
 

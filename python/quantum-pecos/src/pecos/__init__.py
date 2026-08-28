@@ -59,11 +59,13 @@ from pecos_rslib import (
     any,  # Any element true
     array,  # Array creation
     array_equal,  # Array equality
+    asarray,  # Array conversion without an unnecessary copy
     asin,  # Inverse sine
     asinh,  # Inverse hyperbolic sine
     atan,  # Inverse tangent
     atan2,  # Two-argument inverse tangent
     atanh,  # Inverse hyperbolic tangent
+    bool_,  # Boolean scalar dtype
     complex64,
     complex128,
     cos,  # Cosine
@@ -77,8 +79,10 @@ from pecos_rslib import (
     i32,
     i64,
     inf,  # Infinity
+    integer,  # Abstract integer dtype category
     isclose,  # Approximate equality (element-wise)
     isnan,  # Check for NaN
+    issubdtype,  # Dtype hierarchy test
     kron,  # Kronecker product
     ln,  # Natural logarithm
     log,  # Logarithm with base
@@ -86,6 +90,7 @@ from pecos_rslib import (
     mean,  # Mean/average
     min,  # Minimum value
     nan,  # Not a number
+    nonzero,  # Indices of non-zero elements
     num,
     power,  # Power function
     sin,  # Sine
@@ -100,6 +105,7 @@ from pecos_rslib import (
     u32,
     u64,
     where,  # Conditional selection
+    zeros_like,  # Zeros matching an existing array
 )
 
 # Note: Mathematical constants (pi, e, tau, frac_pi_2, sqrt_2, ln_2, etc.) are NOT imported
@@ -214,7 +220,7 @@ from pecos import (
     engines,
     exceptions,  # Exception classes
     graph,
-    guppy,  # Direct Guppy code generation for QEC - bypasses SLR
+    guppy_gen,  # Direct Guppy code generation for QEC - bypasses SLR
     noise,
     programs,
     protocols,
@@ -223,6 +229,7 @@ from pecos import (
     quantum,  # Quantum types (DagCircuit, Gate, Pauli, etc.)
     simulators,
     testing,  # Testing utilities (like numpy.testing)
+    tracing,  # Guppy/HUGR runtime operation tracing
 )
 
 # pecos.tools is deprecated (renamed to pecos.analysis).
@@ -236,6 +243,11 @@ def __getattr__(name: str):
         import importlib
 
         return importlib.import_module("pecos.tools")
+    if name == "guppy":
+        # Lazy import -- guppy/__init__.py emits the deprecation warning
+        import importlib
+
+        return importlib.import_module("pecos.guppy")
     if name == "misc":
         msg = (
             "pecos.misc has been removed. Its contents have been moved to:\n"
@@ -266,6 +278,11 @@ from pecos._engine_builders import (
 from pecos._sim import get_guppy_backends, sim
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.engines import circuit_runners
+from pecos.engines.cvm import (
+    ClassicalSemantics,
+    DefaultClassicalSemantics,
+    UnsignedClassicalSemantics,
+)
 from pecos.engines.hybrid_engine_old import HybridEngine
 
 # Import WasmError from pecos.exceptions (Python-defined, inherits from pecos_rslib.WasmError)
@@ -275,6 +292,12 @@ from pecos.exceptions import WasmError
 # Import program wrappers from programs submodule for convenience
 # These can also be accessed via pecos.programs.Qasm, etc.
 from pecos.programs import Guppy, Hugr, PhirJson, ProgramWrapper, Qasm, Qis, Wasm, Wat
+from pecos.qec.surface.decode import NoiseParameters
+from pecos.tracing import (
+    capture_qis_operation_trace,
+    qis_operation_trace_to_tick_circuit,
+    trace_program_to_tick_circuit,
+)
 
 # Re-export noise and quantum engine builders from pecos_rslib
 # These don't need wrappers since they don't take program types
@@ -308,7 +331,9 @@ __all__ = [
     "BinArray",
     "BitInt",
     "BitUInt",
+    "ClassicalSemantics",
     "Complex",
+    "DefaultClassicalSemantics",
     "DepolarizingNoiseModelBuilder",
     "Float",
     "GateRegistry",
@@ -320,6 +345,7 @@ __all__ = [
     "Inexact",
     "Integer",
     "Nanoseconds",
+    "NoiseParameters",
     "Numeric",
     "Pauli",
     "PauliString",
@@ -336,6 +362,7 @@ __all__ = [
     "ShotVec",
     "SignedInteger",
     "TimeUnits",
+    "UnsignedClassicalSemantics",
     "UnsignedInteger",
     "Wasm",
     "WasmError",
@@ -364,6 +391,7 @@ __all__ = [
     "benchmarks",
     "biased_depolarizing_noise",
     "brentq",
+    "capture_qis_operation_trace",
     "ceil",
     "circuit_converters",
     "circuit_runners",
@@ -389,7 +417,8 @@ __all__ = [
     "general_noise",
     "get_guppy_backends",
     "graph",
-    "guppy",
+    "guppy",  # Deprecated alias for guppy_gen, resolved lazily via __getattr__
+    "guppy_gen",
     "hugr_engine",
     "i8",
     "i16",
@@ -423,6 +452,7 @@ __all__ = [
     "qec",
     "qeccs",
     "qis_engine",
+    "qis_operation_trace_to_tick_circuit",
     "quantum",
     "random",
     "round",
@@ -443,6 +473,8 @@ __all__ = [
     "tanh",
     "testing",
     "tools",
+    "trace_program_to_tick_circuit",
+    "tracing",
     "typing",
     "u8",
     "u16",

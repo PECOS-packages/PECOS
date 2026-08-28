@@ -208,13 +208,23 @@ where
         match gate.gate_type {
             // No-op gates: identity, prep/alloc (qubits start in |0⟩), dealloc, idle, crosstalk
             GateType::I
-            | GateType::PZ
             | GateType::QAlloc
             | GateType::QFree
             | GateType::Idle
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::MeasCrosstalkLocalPayload
             | GateType::TrackedPauliMeta => {}
+
+            GateType::PZ => {
+                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
+                sim.pz(gate.qubits[0].index());
+            }
+            GateType::PX => {
+                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
+                let q = gate.qubits[0].index();
+                sim.pz(q);
+                sim.h(&[q]);
+            }
 
             // Single-qubit Clifford gates
             GateType::X => {
@@ -283,10 +293,24 @@ where
             }
 
             // Measurements (including leaked measurement, treated as regular)
+            GateType::MX => {
+                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
+                let q = gate.qubits[0].index();
+                sim.h(&[q]);
+                sim.mz(&[q]);
+            }
             GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
                 validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
                 let q = gate.qubits[0].index();
                 sim.mz(&[q]);
+            }
+            GateType::MPZ => {
+                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
+                let q = gate.qubits[0].index();
+                // Symbolic measure-and-prepare: the unconditional reset to |0>
+                // is equivalent to the outcome-conditioned X correction.
+                sim.mz(&[q]);
+                sim.pz(q);
             }
 
             // Unsupported gates (non-Clifford)

@@ -14,7 +14,7 @@ fn test_user_guide_fault_tolerance_rust_1() {
         .check(Zs([0, 1]))
         .check(Zs([1, 2]))
         .logical_z(Zs([0, 1, 2]))
-        .logical_x(Xs([0]))
+        .logical_x(Xs([0, 1, 2]))
         .build()
         .unwrap();
 
@@ -31,7 +31,7 @@ fn test_user_guide_fault_tolerance_rust_2() {
         .check(Zs([0, 1]))
         .check(Zs([1, 2]))
         .logical_z(Zs([0, 1, 2]))
-        .logical_x(Xs([0]))
+        .logical_x(Xs([0, 1, 2]))
         .build()
         .unwrap();
     let checker = StabilizerFlipChecker::new(&code);
@@ -55,7 +55,7 @@ fn test_user_guide_fault_tolerance_rust_3() -> Result<(), Box<dyn std::error::Er
     use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
     let code = StabilizerCodeSpec::builder(3)
         .check(Zs([0, 1])).check(Zs([1, 2]))
-        .logical_z(Zs([0, 1, 2])).logical_x(Xs([0]))
+        .logical_z(Zs([0, 1, 2])).logical_x(Xs([0, 1, 2]))
         .build().unwrap();
     let checker = StabilizerFlipChecker::new(&code);
 
@@ -75,7 +75,7 @@ fn test_user_guide_fault_tolerance_rust_4() -> Result<(), Box<dyn std::error::Er
     use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
     let code = StabilizerCodeSpec::builder(3)
         .check(Zs([0, 1])).check(Zs([1, 2]))
-        .logical_z(Zs([0, 1, 2])).logical_x(Xs([0]))
+        .logical_z(Zs([0, 1, 2])).logical_x(Xs([0, 1, 2]))
         .build().unwrap();
     let checker = StabilizerFlipChecker::new(&code);
 
@@ -101,7 +101,7 @@ fn test_user_guide_fault_tolerance_rust_5() {
     use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
     let code = StabilizerCodeSpec::builder(3)
         .check(Zs([0, 1])).check(Zs([1, 2]))
-        .logical_z(Zs([0, 1, 2])).logical_x(Xs([0]))
+        .logical_z(Zs([0, 1, 2])).logical_x(Xs([0, 1, 2]))
         .build().unwrap();
     let checker = StabilizerFlipChecker::new(&code);
 
@@ -235,17 +235,20 @@ let code = StabilizerCodeSpec::builder(7)
     .check(Zs([0, 2, 4, 6]))
     .check(Zs([1, 2, 5, 6]))
     .check(Zs([3, 4, 5, 6]))
-    .logical_z(Zs([0, 2, 4, 6]))
-    .logical_x(Xs([0, 2, 4, 6]))
+    .logical_z(Zs([0, 1, 2, 3, 4, 5, 6]))
+    .logical_x(Xs([0, 1, 2, 3, 4, 5, 6]))
     .build()
     .unwrap();
 
-// Basic distance calculation
-let result = calculate_distance(&code, &DistanceSearchConfig::default());
-if let Some(r) = result {
-    println!("Distance: {}", r.distance);
-    println!("Min-weight operator: {}", r.min_weight_operator);
-}
+// Basic distance calculation. The search validates the spec first: the supplied
+// logicals must be a genuine, complete logical basis (here the transversal
+// weight-7 Steane logicals), or the call returns an error instead of a wrong
+// distance.
+let result = calculate_distance(&code, &DistanceSearchConfig::default())
+    .unwrap()
+    .expect("Steane has a logical within the default budget");
+assert_eq!(result.distance, 3);
+println!("Min-weight operator: {}", result.min_weight_operator);
 
 // CSS-only search (faster for CSS codes)
 let result = calculate_distance(&code, &DistanceSearchConfig::css());
@@ -259,7 +262,7 @@ let result = calculate_distance(&code, &DistanceSearchConfig::with_max_weight(5)
 #[test]
 fn test_user_guide_fault_tolerance_rust_10() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::{Xs, Zs};
-    use pecos_qec::{DemBuilder, DistanceSearchConfig, StabilizerCodeSpec, find_min_weight_logicals_with_info};
+    use pecos_qec::{DemBuilder, DistanceSearchConfig, StabilizerCodeSpec, find_shortest_logicals};
     use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
     use pecos_quantum::DagCircuit;
     // Build a simple parity check circuit
@@ -285,12 +288,12 @@ let code = StabilizerCodeSpec::builder(7)
     .check(Zs([0, 2, 4, 6]))
     .check(Zs([1, 2, 5, 6]))
     .check(Zs([3, 4, 5, 6]))
-    .logical_z(Zs([0, 2, 4, 6]))
-    .logical_x(Xs([0, 2, 4, 6]))
+    .logical_z(Zs([0, 1, 2, 3, 4, 5, 6]))
+    .logical_x(Xs([0, 1, 2, 3, 4, 5, 6]))
     .build()
     .unwrap();
 
-let logicals = find_min_weight_logicals_with_info(&code, &DistanceSearchConfig::default());
+let logicals = find_shortest_logicals(&code, &DistanceSearchConfig::default(), 0).unwrap();
 for op in &logicals {
     println!("Weight {}: {} (equivalent to {})",
         op.weight, op.operator, op.equivalence_string());
@@ -370,7 +373,7 @@ let spec = StabilizerCodeSpec::from_stabilizer_code(&code).unwrap();
 spec.verify().unwrap();
 
 // 4. Compute distance
-let dist = calculate_distance(&spec, &DistanceSearchConfig::default());
+let dist = calculate_distance(&spec, &DistanceSearchConfig::default()).unwrap();
 println!("Distance: {:?}", dist.as_ref().map(|r| r.distance));
 
 // 5. Check fault tolerance at weight 1

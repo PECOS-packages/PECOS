@@ -75,7 +75,7 @@ def test_single_module_baseline() -> None:
         """Simple single-module function."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     pkg = single_hadamard.compile()
 
@@ -98,8 +98,8 @@ def test_multiple_functions_compilation() -> None:
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        m0 = measure(q0)
-        m1 = measure(q1)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
         return m0, m1
 
     @guppy
@@ -107,7 +107,7 @@ def test_multiple_functions_compilation() -> None:
         """Single qubit Hadamard test."""
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     # Compile each function separately
     bell_pkg = create_bell_pair.compile()
@@ -141,8 +141,8 @@ def test_compiler_comparison_simple() -> None:
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        m0 = measure(q0)
-        m1 = measure(q1)
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
         return m0, m1
 
     # Compile to HUGR
@@ -217,7 +217,7 @@ def test_hugr_structure_analysis() -> None:
     def test_func() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     hugr = test_func.compile()
     hugr_str = hugr.to_str() if hasattr(hugr, "to_str") else str(hugr)

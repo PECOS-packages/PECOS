@@ -202,8 +202,16 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     ///
     /// This noise model is used for structural noise effects (like leakage tracking).
     /// The error rates are overridden by the importance sampling configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics during configuration if the noise model declares a rotation-gate
+    /// emission, which this Clifford-only runner cannot execute.
     #[must_use]
     pub fn with_noise(mut self, noise: ComposableNoiseModel) -> Self {
+        noise
+            .validate_runner_gate_support("ImportanceSamplingRunner", false)
+            .unwrap_or_else(|message| panic!("{message}"));
         self.noise = Some(noise);
         self
     }
@@ -289,6 +297,12 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     /// Run a single shot with importance sampling.
     ///
     /// Returns the measurement outcomes along with the importance weight.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit or an injected noise response contains a gate
+    /// that `ImportanceSamplingRunner` cannot execute. Declared noise
+    /// requirements are validated by [`Self::with_noise`].
     pub fn run_shot(&mut self, commands: &CommandQueue) -> ImportanceSampledShot {
         // Reset for new shot
         self.weight = SampleWeight::one();
@@ -318,6 +332,10 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     ///
     /// **Performance**: Resets the simulator (8-12x faster than clone for large qubit counts)
     /// before running the circuit.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the same conditions as [`Self::run_shot`].
     pub fn run_shot_fresh(&mut self, commands: &CommandQueue) -> ImportanceSampledShot {
         // Reset simulator to |0⟩^n state (much faster than clone)
         self.simulator.reset();
@@ -364,7 +382,11 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
 
             // Gate execution with importance-weighted noise
             _ => {
-                self.execute_clifford_gate(command);
+                assert!(
+                    self.execute_clifford_gate(command),
+                    "ImportanceSamplingRunner cannot execute circuit gate {:?}",
+                    command.gate_type
+                );
                 self.apply_importance_sampled_gate_noise(command);
             }
         }
@@ -590,21 +612,27 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     }
 
     /// Execute a noise gate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the simulator cannot execute the injected gate. Configuration
+    /// validation should make this unreachable for declared noise mechanisms.
     fn execute_noise_gate(&mut self, gate: &GateCommand) {
-        let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-
-        match gate.gate_type {
-            GateType::X => {
-                self.simulator.x(&qubits);
-            }
-            GateType::Y => {
-                self.simulator.y(&qubits);
-            }
-            GateType::Z => {
-                self.simulator.z(&qubits);
-            }
-            _ => {}
-        }
+        let arity = gate.gate_type.quantum_arity();
+        assert!(
+            !gate.qubits.is_empty() && gate.qubits.len().is_multiple_of(arity),
+            "ImportanceSamplingRunner invariant violated: injected noise gate {:?} has {} \
+             target(s), which is not a nonzero multiple of its arity {arity}",
+            gate.gate_type,
+            gate.qubits.len()
+        );
+        assert!(
+            self.execute_clifford_gate(gate),
+            "ImportanceSamplingRunner invariant violated: injected noise gate {:?} could not be \
+             executed; configuration validation should have rejected the emitting noise \
+             mechanism",
+            gate.gate_type
+        );
     }
 
     /// Execute Clifford gates.
@@ -657,53 +685,93 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
 
             // Two-qubit gates
             GateType::CX => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.cx(&pairs);
             }
             GateType::CY => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.cy(&pairs);
             }
             GateType::CZ => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.cz(&pairs);
             }
             GateType::SZZ => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.szz(&pairs);
             }
             GateType::SZZdg => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.szzdg(&pairs);
             }
             GateType::SXX => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.sxx(&pairs);
             }
             GateType::SXXdg => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.sxxdg(&pairs);
             }
             GateType::SYY => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.syy(&pairs);
             }
             GateType::SYYdg => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.syydg(&pairs);
             }
             GateType::SWAP => {
-                let pairs: Vec<(QubitId, QubitId)> =
-                    qubits.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                let pairs: Vec<(QubitId, QubitId)> = qubits
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| (c[0], c[1]))
+                    .collect();
                 self.simulator.swap(&pairs);
             }
 
@@ -782,6 +850,11 @@ where
     /// 1. If deterministic (stabilizer eigenstate): return fixed outcome, no weight change
     /// 2. If non-deterministic (50/50): sample from biased proposal, force that outcome,
     ///    update weight by P(outcome)/Q(outcome) = `0.5/bias_prob`
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit or an injected noise response contains a gate
+    /// that `ImportanceSamplingRunner` cannot execute.
     pub fn run_shot_biased(&mut self, commands: &CommandQueue) -> ImportanceSampledShot {
         // Reset for new shot
         self.weight = SampleWeight::one();
@@ -843,7 +916,11 @@ where
 
             // Gate execution with importance-weighted noise (same as unbiased)
             _ => {
-                self.execute_clifford_gate(command);
+                assert!(
+                    self.execute_clifford_gate(command),
+                    "ImportanceSamplingRunner cannot execute circuit gate {:?}",
+                    command.gate_type
+                );
                 self.apply_importance_sampled_gate_noise(command);
             }
         }
@@ -885,14 +962,92 @@ where
 mod tests {
     use super::*;
     use crate::command::CommandBuilder;
+    use crate::noise::{NoiseChannel, NoiseContext};
     use crate::sampling::weight::WeightedStatistics;
     use pecos_simulators::SparseStab;
+
+    #[derive(Clone)]
+    struct AfterPreparationGateChannel(GateType);
+
+    impl NoiseChannel for AfterPreparationGateChannel {
+        fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+            matches!(event, NoiseEvent::AfterPreparation { .. })
+        }
+
+        fn apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            let NoiseEvent::AfterPreparation { qubits } = event else {
+                return NoiseResponse::None;
+            };
+            NoiseResponse::inject_gate(GateCommand::new(self.0, smallvec::smallvec![qubits[0]]))
+        }
+
+        fn name(&self) -> &'static str {
+            "AfterPreparationGateChannel"
+        }
+
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[derive(Clone)]
+    struct SeededPauliAfterPreparation;
+
+    impl NoiseChannel for SeededPauliAfterPreparation {
+        fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+            matches!(event, NoiseEvent::AfterPreparation { .. })
+        }
+
+        fn apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            let NoiseEvent::AfterPreparation { qubits } = event else {
+                return NoiseResponse::None;
+            };
+            let gate_type = match rng.random_range(0..3) {
+                0 => GateType::X,
+                1 => GateType::Y,
+                _ => GateType::Z,
+            };
+            NoiseResponse::inject_gate(GateCommand::new(gate_type, smallvec::smallvec![qubits[0]]))
+        }
+
+        fn name(&self) -> &'static str {
+            "SeededPauliAfterPreparation"
+        }
+
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+
+    fn outcome_bytes(outcomes: &MeasurementOutcomes) -> Vec<u8> {
+        outcomes
+            .iter()
+            .flat_map(|outcome| {
+                [
+                    u8::try_from(outcome.qubit.0).expect("test qubit fits in u8"),
+                    u8::from(outcome.outcome),
+                    u8::from(outcome.is_deterministic),
+                    u8::from(outcome.is_leaked),
+                ]
+            })
+            .collect()
+    }
 
     #[test]
     fn test_importance_runner_basic() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
         let result = runner.run_shot(&commands);
         assert_eq!(result.outcomes.len(), 1);
@@ -908,7 +1063,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_single_qubit_boost(0.001, 10.0)
             .with_seed(42);
 
@@ -927,7 +1082,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(42);
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
         let result = runner.run_shot(&commands);
 
         assert_eq!(result.outcomes.len(), 1);
@@ -935,6 +1090,115 @@ mod tests {
         assert!(!outcome.outcome);
         assert!(outcome.is_deterministic);
         assert!((result.weight.weight() - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn injected_h_reaches_importance_simulator() {
+        let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
+        let noise =
+            ComposableNoiseModel::new().add_channel(AfterPreparationGateChannel(GateType::H));
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
+            .with_noise(noise)
+            .with_seed(42);
+
+        let result = runner.run_shot(&commands);
+        let outcome = result.outcomes.get(QubitId(0)).unwrap();
+
+        assert!(!outcome.outcome);
+        assert!(
+            outcome.is_deterministic,
+            "injected H followed by circuit H must return the qubit to |0>"
+        );
+    }
+
+    #[test]
+    fn coherent_idle_is_rejected_by_importance_runner_during_configuration() {
+        let noise = crate::noise::GeneralNoiseModelBuilder::new()
+            .with_p_idle_quadratic(0.25)
+            .with_p_idle_coherent(true)
+            .build();
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_noise(noise);
+        }))
+        .expect_err("importance sampling cannot execute coherent idle rotations");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic payload should be a string");
+
+        assert!(message.contains("with_p_idle_coherent(true)"), "{message}");
+        assert!(message.contains("ImportanceSamplingRunner"), "{message}");
+        assert!(message.contains("stochastic idle"), "{message}");
+        assert!(
+            message.contains("does not provide a rotation executor"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn seeded_xyz_noise_output_is_byte_identical_on_both_runners() {
+        let qubits = [0, 1, 2, 3, 4, 5, 6, 7];
+        let commands = CommandBuilder::new().pz(&qubits).mz(&qubits).build();
+        let noise = || ComposableNoiseModel::new().add_channel(SeededPauliAfterPreparation);
+
+        let mut state = SparseStab::with_seed(qubits.len(), 42);
+        let mut circuit_runner = crate::runner::CircuitRunner::<SparseStab>::new()
+            .with_noise(noise())
+            .with_seed(0x436_437);
+        let circuit_bytes =
+            outcome_bytes(&circuit_runner.apply_circuit(&mut state, &commands).unwrap());
+
+        let mut importance_runner =
+            ImportanceSamplingRunner::new(SparseStab::with_seed(qubits.len(), 42))
+                .with_noise(noise())
+                .with_seed(0x436_437);
+        let importance_bytes = outcome_bytes(&importance_runner.run_shot(&commands).outcomes);
+
+        let baseline = vec![
+            0, 1, 1, 0, 1, 1, 1, 0, 2, 1, 1, 0, 3, 1, 1, 0, 4, 1, 1, 0, 5, 0, 1, 0, 6, 1, 1, 0, 7,
+            1, 1, 0,
+        ];
+        assert_eq!(circuit_bytes, baseline);
+        assert_eq!(importance_bytes, baseline);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "ImportanceSamplingRunner invariant violated: injected noise gate PZ"
+    )]
+    fn unsupported_noise_gate_panics_in_importance_runner() {
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42));
+        runner.execute_noise_gate(&GateCommand::pz(QubitId(0)));
+    }
+
+    #[test]
+    #[should_panic(expected = "ImportanceSamplingRunner cannot execute circuit gate T")]
+    fn unsupported_circuit_gate_panics_in_importance_runner() {
+        let commands = CommandBuilder::new().pz(&[0]).t(&[0]).build();
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42));
+        let _ = runner.run_shot(&commands);
+    }
+
+    #[test]
+    #[should_panic(expected = "ImportanceSamplingRunner cannot execute circuit gate T")]
+    fn unsupported_circuit_gate_panics_in_biased_importance_runner() {
+        let commands = CommandBuilder::new().pz(&[0]).t(&[0]).build();
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42));
+        let _ = runner.run_shot_biased(&commands);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "ImportanceSamplingRunner invariant violated: injected noise gate CX has 1"
+    )]
+    fn malformed_multi_qubit_noise_gate_panics_in_importance_runner() {
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42));
+        runner.execute_noise_gate(&GateCommand::new(
+            GateType::CX,
+            smallvec::smallvec![QubitId(0)],
+        ));
     }
 
     #[test]
@@ -947,7 +1211,7 @@ mod tests {
         let true_rate = 0.001;
         let boost = 100.0; // Very aggressive boost
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 12345))
             .with_single_qubit_boost(true_rate, boost)
             .with_seed(12345);
 
@@ -980,7 +1244,7 @@ mod tests {
             .mz(&[1])
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(2))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(2, 42))
             .with_two_qubit_boost(0.01, 5.0)
             .with_seed(42);
 
@@ -992,7 +1256,7 @@ mod tests {
     fn test_measurement_importance_sampling() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_measurement_boost(0.001, 100.0)
             .with_seed(42);
 
@@ -1074,7 +1338,8 @@ mod tests {
         // ========== Unbiased sampling ==========
         let mut unbiased_ones = 0;
         for seed in 0..num_shots {
-            let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1)).with_seed(seed);
+            let mut runner =
+                ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed)).with_seed(seed);
             let result = runner.run_shot(&commands);
             if result.outcomes.get_bit(QubitId(0)).unwrap_or(false) {
                 unbiased_ones += 1;
@@ -1088,7 +1353,7 @@ mod tests {
         let mut biased_total_weight = 0.0;
 
         for seed in 0..num_shots {
-            let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+            let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
                 .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
                 .with_seed(seed);
 
@@ -1132,7 +1397,7 @@ mod tests {
         // Bias heavily toward 1
         let mut ones = 0;
         for seed in 0..num_shots {
-            let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+            let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
                 .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.9))
                 .with_seed(seed);
 
@@ -1160,7 +1425,7 @@ mod tests {
             .mz(&[0]) // No H, so deterministic
             .build();
 
-        let mut runner = ImportanceSamplingRunner::new(SparseStab::new(1))
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.99))
             .with_seed(42);
 

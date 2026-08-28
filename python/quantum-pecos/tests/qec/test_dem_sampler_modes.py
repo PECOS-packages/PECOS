@@ -17,8 +17,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from pecos.decoders import pymatching
 from pecos.qec import DagFaultAnalyzer, DemSampler, DemSamplerBuilder
 from pecos_rslib import DagCircuit
+from pecos_rslib.qec import LogicalSubgraphDecoder
 
 if TYPE_CHECKING:
     from pecos.qec import DagFaultInfluenceMap
@@ -73,12 +75,28 @@ class TestDemSamplerRawMode:
         assert len(outputs) > 0
 
     def test_raw_sample_batch(self) -> None:
-        """Test that sample_batch returns the requested number of shots."""
+        """Raw batches expose measurements but reject decoder operations."""
         dag = _build_repetition_code_circuit(2)
         im = _build_influence_map(dag)
         sampler = DemSampler.raw_uniform(im, 0.01)
-        all_outputs, _all_obs = sampler.sample_batch(100, seed=42)
-        assert len(all_outputs) == 100
+        batch = sampler.sample_batch(100, seed=42)
+        assert len(batch.detector_events()) == 100
+        assert len(batch.get_syndrome(0)) == sampler.num_outputs
+        with pytest.raises(ValueError, match=r"raw-measurement.*measurements, not detector events"):
+            batch.decode("error(0.01) D0", pymatching(correlated=True))
+
+    def test_raw_sample_batch_rejected_by_decoder_objects(self) -> None:
+        """Decoder objects taking a SampleBatch reject raw-measurement batches too."""
+        dag = _build_repetition_code_circuit(2)
+        im = _build_influence_map(dag)
+        sampler = DemSampler.raw_uniform(im, 0.01)
+        batch = sampler.sample_batch(50, seed=42)
+        decoder = LogicalSubgraphDecoder.from_membership(
+            "error(0.1) D0 L0\nerror(0.1) D1 L0",
+            [[0, 1]],
+        )
+        with pytest.raises(ValueError, match=r"raw-measurement.*measurements, not detector events"):
+            decoder.decode_count(batch)
 
     def test_raw_zero_noise_statistics(self) -> None:
         """Test that zero noise produces no syndromes or logical errors."""

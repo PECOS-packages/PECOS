@@ -41,7 +41,7 @@ class TestSeleneHUGRCompilation:
             q2 = qubit()
             h(q1)
             cx(q1, q2)  # Proper entanglement
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         # The sim API handles HUGR compilation internally
         try:
@@ -79,7 +79,7 @@ class TestSeleneHUGRCompilation:
             """Simple H gate and measurement."""
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         # Compile to HUGR
         hugr_bytes = compile_guppy_to_hugr(simple_circuit)
@@ -115,9 +115,9 @@ class TestSeleneHUGRCompilation:
             h(q0)
 
             # Measure
-            m0 = measure(q0)
-            m1 = measure(q1)
-            m2 = measure(q2)
+            m0 = measure(q0).read()
+            m1 = measure(q1).read()
+            m2 = measure(q2).read()
 
             return m0, m1, m2
 
@@ -147,7 +147,7 @@ class TestSeleneHUGRCompilation:
             for _i in range(n):
                 q = qubit()
                 h(q)
-                if measure(q):
+                if measure(q).read():
                     count += 1
             return count
 
@@ -178,7 +178,7 @@ class TestLLVMGeneration:
             """Simple measurement circuit."""
             q = qubit()
             x(q)  # Put in |1⟩ state
-            return measure(q)
+            return measure(q).read()
 
         # First compile to HUGR
         hugr_bytes = compile_guppy_to_hugr(simple_measurement)
@@ -242,7 +242,7 @@ class TestHUGRVersionCompatibility:
         def version_test() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr_bytes = compile_guppy_to_hugr(version_test)
 
@@ -263,7 +263,7 @@ class TestHUGRVersionCompatibility:
             q1, q2 = qubit(), qubit()
             h(q1)
             cx(q1, q2)
-            return measure(q1), measure(q2)
+            return measure(q1).read(), measure(q2).read()
 
         hugr_bytes = compile_guppy_to_hugr(compatibility_test)
         assert hugr_bytes is not None, "Should produce HUGR bytes"
@@ -283,7 +283,7 @@ class TestHUGRVersionCompatibility:
             """Test function with potential metadata."""
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         hugr_bytes = compile_guppy_to_hugr(metadata_test)
         pkg = Package.from_bytes(hugr_bytes)
@@ -300,3 +300,53 @@ class TestHUGRVersionCompatibility:
         assert any(
             name.endswith("metadata_test") for name in func_names
         ), f"HUGR should preserve the function name, found {func_names}"
+
+
+def test_hugr_compilation_is_cached_per_definition_across_entry_points() -> None:
+    """Both compile entry points share one per-definition HUGR byte cache.
+
+    One DEM build compiles the same program several times (generator
+    certificate, preflight digest check, trace execution); the cache makes
+    every compile after the first free without changing any bytes.
+    """
+    from pecos._compilation import guppy_to_hugr
+
+    @guppy_decorator
+    def cached_prog() -> None:
+        q = qubit()
+        _ = measure(q).read()
+
+    first = compile_guppy_to_hugr(cached_prog)
+    assert guppy_to_hugr(cached_prog) is first
+    assert compile_guppy_to_hugr(cached_prog) is first
+
+    @guppy_decorator
+    def other_prog() -> None:
+        q = qubit()
+        h(q)
+        _ = measure(q).read()
+
+    assert compile_guppy_to_hugr(other_prog) is not first
+
+
+def test_parametric_definitions_never_share_cache_entries() -> None:
+    """The library-form compile_function() bytes must not leak into
+    guppy_to_hugr, whose contract is the entry-point compile() form."""
+    from pecos._compilation import guppy_to_hugr
+
+    @guppy_decorator
+    def parametric_prog(flip: bool) -> None:  # pragma: no cover - compiled, not run
+        q = qubit()
+        if flip:
+            h(q)
+        _ = measure(q).read()
+
+    first = compile_guppy_to_hugr(parametric_prog)
+    assert first.startswith(HUGR_ENVELOPE_MAGIC)
+    # Not cached: a second pipeline compile produces a fresh object.
+    assert compile_guppy_to_hugr(parametric_prog) is not first
+
+    # guppy_to_hugr must still reject the parametric definition rather than
+    # serving the pipeline's library-form bytes.
+    with pytest.raises(RuntimeError, match="Failed to compile Guppy to HUGR"):
+        guppy_to_hugr(parametric_prog)

@@ -261,7 +261,7 @@ impl UfDecoder {
 
         for (idx, me) in graph.edges.iter().enumerate() {
             let n1 = me.node1;
-            let n2 = me.node2.map_or(boundary_node, |n| n);
+            let n2 = me.node2.unwrap_or(boundary_node);
 
             let mut obs_mask = 0u64;
             for &o in &me.observables {

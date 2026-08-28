@@ -83,7 +83,7 @@ class TestParsedDemDecomposedSemantics:
         parsed = ParsedDem.from_string(dem_str)
 
         # Sample with naive sampler
-        dets, _ = parsed.sample_batch(10000, seed=42)
+        dets = parsed.sample_batch(10000, seed=42).detector_events()
         dets = np.array(dets)
 
         # D0 and D1 should always fire together
@@ -101,7 +101,7 @@ class TestParsedDemDecomposedSemantics:
         parsed = ParsedDem.from_string(dem_str)
 
         # Sample - D0 should never fire due to XOR cancellation
-        dets, _ = parsed.sample_batch(10000, seed=42)
+        dets = parsed.sample_batch(10000, seed=42).detector_events()
         d0_fires = sum(1 for d in dets if d and d[0])
 
         assert d0_fires == 0, "D0 should never fire due to XOR cancellation"
@@ -120,7 +120,7 @@ class TestParsedDemDecomposedSemantics:
 
         # PECOS
         parsed = ParsedDem.from_string(dem_str)
-        pecos_det, _ = parsed.sample_batch(10000, seed=42)
+        pecos_det = parsed.sample_batch(10000, seed=42).detector_events()
         pecos_det = np.array(pecos_det)
 
         # Compare statistics
@@ -186,7 +186,7 @@ error(0.02) D1
         sampler = parsed.to_dem_sampler()
 
         # Naive sampling
-        dets_naive, _ = parsed.sample_batch(50000, seed=42)
+        dets_naive = parsed.sample_batch(50000, seed=42).detector_events()
         naive_rate = sum(1 for d in dets_naive if any(d)) / len(dets_naive)
 
         # Optimized sampling

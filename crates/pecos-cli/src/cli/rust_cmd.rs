@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// FFI crates that need a non-Rust toolchain or external SDK to check /
-/// clippy / test.
+/// clippy / test, plus pecos-rslib, which is excluded for build time.
 ///
-/// - pecos-rslib needs cmake (for mwpf via highs-sys) under `--all-features`.
+/// - pecos-rslib is a large pyo3 cdylib that dominates workspace check /
+///   clippy time; it is covered when the caller opts in with `--include-ffi`.
 /// - pecos-rslib-cuda transitively depends on pecos-cuquantum, whose build.rs
 ///   calls `ensure_cutensor()` on Linux -- that will silently download cuTensor
 ///   over the network if it's not already cached in `~/.pecos/deps/`, which we
@@ -91,6 +92,12 @@ fn detect_cargo_llvm_link_mode() -> Option<(PathBuf, LlvmLinkMode)> {
 }
 
 fn reject_static_llvm_workspace_test() -> Result<()> {
+    // This guard inspects the installed LLVM's link mode (`llvm-config --shared-mode`),
+    // not the cargo feature selection: it protects the development workspace test path,
+    // which links many LLVM-using test binaries, from a static-only LLVM install.
+    // Linux release wheels intentionally build static via a release-lane manifest patch
+    // (Windows is always static on MSVC; macOS wheels stay shared) and are not visible
+    // to (or blocked by) this check.
     let Some((llvm_path, link_mode)) = detect_cargo_llvm_link_mode() else {
         return Ok(());
     };
@@ -270,8 +277,8 @@ fn is_tool_available(tool: &str) -> bool {
 /// Run a cargo command and return success status.
 ///
 /// Applies the PECOS build environment (`CMAKE`, `LLVM_SYS_211_PREFIX`,
-/// `SDKROOT`, etc.) so build scripts like highs-sys's cmake-rs invocation
-/// find the PECOS-managed cmake without further plumbing.
+/// `SDKROOT`, etc.) so build scripts that need external tools find the
+/// PECOS-managed installs without further plumbing.
 fn run_cargo_command(args: &[&str]) -> bool {
     run_cargo_command_with_rustflags(args, None)
 }

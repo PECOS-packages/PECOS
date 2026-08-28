@@ -51,7 +51,7 @@ Example:
     ... def my_circuit():
     ...     q = qubit()
     ...     h(q)
-    ...     return measure(q)
+    ...     return measure(q).read()
     ...
     >>>
     >>> results = sim(Guppy(my_circuit)).run(1000)
@@ -114,7 +114,7 @@ class Guppy:
         ...     q0, q1 = qubit(), qubit()
         ...     h(q0)
         ...     cx(q0, q1)
-        ...     return measure(q0), measure(q1)
+        ...     return measure(q0).read(), measure(q1).read()
         ...
         >>>
         >>> from pecos import sim, Guppy
@@ -126,12 +126,17 @@ class Guppy:
         self._func = func
         self._program = None
 
+    @property
+    def wrapped_function(self) -> GuppyFunction:
+        """The wrapped ``@guppy`` definition (for compilation/certification)."""
+        return self._func
+
     def _to_program(self) -> "CompiledHugr":
         """Convert to the underlying Rust program type."""
         if self._program is None:
             hugr_package = self._func.compile()
             # Use the BINARY HUGR envelope (Model format). The Selene/QIS engine's
-            # HUGR reader does not accept hugr-py 0.16's S-expression *text* envelope
+            # HUGR reader does not accept the S-expression *text* envelope
             # (`to_str`) -- loading it fails with "Failed to read HUGR" -- whereas the
             # binary Model form round-trips cleanly, including CFG loops (while
             # statements). (The `Hugr.from_bytes` sim loader is more permissive and
@@ -160,6 +165,11 @@ class Hugr:
         """Initialize with HUGR bytes."""
         self._data = data
         self._program = None
+
+    @property
+    def hugr_bytes(self) -> bytes:
+        """The HUGR envelope bytes this program wraps."""
+        return self._data
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Hugr":

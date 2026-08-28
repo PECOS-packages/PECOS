@@ -63,11 +63,11 @@
 //!
 //! // Using the builder with explicit error rates
 //! let noise_model = GeneralNoiseModel::builder()
-//!     .with_prep_probability(0.01)
-//!     .with_meas_0_probability(0.02)
-//!     .with_meas_1_probability(0.03)
-//!     .with_p1_probability(0.04)
-//!     .with_p2_probability(0.05)
+//!     .with_p_prep(0.01)
+//!     .with_p_meas_0(0.02)
+//!     .with_p_meas_1(0.03)
+//!     .with_p1(0.04)
+//!     .with_p2(0.05)
 //!     .with_seed(42)
 //!     .build();
 //! ```
@@ -94,7 +94,7 @@ use pecos_core::errors::PecosError;
 use pecos_core::{Angle64, QubitId};
 use pecos_random::PecosRng;
 use std::any::Any;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// General noise model with parameterized error channels.
 ///
@@ -120,15 +120,6 @@ pub struct GeneralNoiseModel {
     /// 1.0 means all leakage events remain leakage events.
     leakage_scale: f64,
 
-    /// Whether to use coherent dephasing vs incoherent (stochastic) dephasing
-    ///
-    /// If true, dephasing is modeled as coherent phase rotations using RZ gates.
-    /// If false, dephasing is modeled as stochastic Z errors with quadratic scaling.
-    ///
-    /// In physical systems, coherent dephasing represents systematic phase evolution
-    /// such as frequency offsets.
-    p_idle_coherent: bool,
-
     /// The idle noise rate for linear dependency on time (seconds).
     ///
     /// This always applies stochastic noise
@@ -142,23 +133,17 @@ pub struct GeneralNoiseModel {
     /// the input.
     p_idle_linear_model: SingleQubitWeightedSampler,
 
-    /// The idle noise rate for quadratic dependency on time (seconds).
-    ///
-    /// This will be a coherent noise channel unless `p_idle_coherent` is set to false. If it is
-    /// false it will apply Z to each qubit quadratic dependency on time
-    p_idle_quadratic_rate: f64,
+    /// DEM-style stochastic sine-squared idle rate in radians per time unit.
+    p_idle_sin_squared_rate: f64,
 
-    /// Scaling factor to convert coherent dephasing rates to incoherent rates
-    ///
-    /// When using incoherent (stochastic) dephasing, this factor adjusts the dephasing rate. This
-    /// is a fudge factor used to artificially increase the dephasing rate when modeling the
-    /// quadratic dephasing stochastically since such modeling does not account for coherent
-    /// effects.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the factor is not positive (less than or equal to 0.0).
-    p_idle_coherent_to_incoherent_factor: f64,
+    /// Unnormalized per-axis relative multipliers for the sine-squared idle family.
+    p_idle_sin_squared_model: BTreeMap<String, f64>,
+
+    /// DEM-style coherent idle rate in radians per time unit.
+    p_idle_coherent_rate: f64,
+
+    /// Unnormalized RX/RY/RZ relative multipliers for the coherent idle family.
+    p_idle_coherent_model: BTreeMap<String, f64>,
 
     /// Probability of applying a fault during preparation (initialization)
     ///
@@ -282,11 +267,13 @@ pub struct GeneralNoiseModel {
     /// The distribution is stored as pre-computed, cached sampler instead of the `HashMap` that is the input.
     p2_pauli_model: TwoQubitWeightedSampler,
 
-    /// Idle noise after each two-qubit gate where noise will be applied stochastically based on
-    /// `p2_idle`.
+    /// Duration of the idle-noise site applied to each qubit after a two-qubit gate.
     ///
-    /// This may be useful for memory sweeping.
-    p2_idle: f64,
+    /// A value of `0.0` disables these sites. For a nonzero duration, the sites receive the same
+    /// configured idle families as a real [`GateType::Idle`] operation: linear stochastic noise,
+    /// independent per-axis sine-squared noise, and coherent rotations. The duration is not itself
+    /// an error probability.
+    idle_after_2q: f64,
 
     /// Probability of flipping a 0 measurement to 1
     ///
@@ -454,9 +441,9 @@ impl GeneralNoiseModel {
 
     /// Create a new noise model with the specified error parameters
     ///
-    /// Creates a `GeneralNoiseModel` with the specified error probabilities while using default values
-    /// for all other parameters. This is a convenience method for cases where you only need to customize
-    /// the basic error rates.
+    /// Creates a `GeneralNoiseModel` with the specified error probabilities while using no-effect
+    /// defaults for all other parameters. This is a convenience method for cases where you only need
+    /// to customize the basic error rates.
     ///
     /// * `p_prep` - Preparation (initialization) error probability
     /// * `p_meas_0` - Probability of measuring 1 when the state is |0⟩
@@ -465,7 +452,7 @@ impl GeneralNoiseModel {
     /// * `p2` - Two-qubit gate error probability (average error rate)
     ///
     /// For more extensive customization, use the builder pattern with `GeneralNoiseModel::builder()`.
-    /// For default parameters, use `GeneralNoiseModel::default()`.
+    /// For a noiseless model, use `GeneralNoiseModel::default()`.
     ///
     /// # Example
     /// ```
@@ -562,7 +549,10 @@ impl GeneralNoiseModel {
 
         for gate in gates {
             // Track which qubits are being measured for leakage handling
-            if matches!(gate.gate_type, GateType::MZ | GateType::MeasureLeaked) {
+            if matches!(
+                gate.gate_type,
+                GateType::MZ | GateType::MeasureLeaked | GateType::MPZ
+            ) {
                 self.measured_qubits.extend(
                     gate.qubits
                         .iter()
@@ -583,12 +573,7 @@ impl GeneralNoiseModel {
             // decide whether to add the original gate based on error models
             match gate.gate_type {
                 GateType::Idle => {
-                    self.apply_idle_faults(
-                        &gate,
-                        self.p_idle_linear_rate,
-                        self.p_idle_quadratic_rate,
-                        &mut builder,
-                    );
+                    self.apply_idle_faults(&gate, self.p_idle_linear_rate, &mut builder);
                 }
                 GateType::PZ => {
                     for &q in &gate.qubits {
@@ -600,6 +585,16 @@ impl GeneralNoiseModel {
                 GateType::MZ | GateType::MeasureLeaked => {
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
+                    builder.add_gate_command(&gate);
+                }
+                GateType::MPZ => {
+                    // Measurement noise is applied post-engine like MZ; the
+                    // built-in preparation marks the qubits prepared but draws
+                    // no preparation fault (measurement-half only, like every
+                    // other noise path).
+                    for &q in &gate.qubits {
+                        self.prepared_qubits.insert(usize::from(q));
+                    }
                     builder.add_gate_command(&gate);
                 }
                 GateType::MeasCrosstalkGlobalPayload => {
@@ -758,7 +753,7 @@ impl GeneralNoiseModel {
                     }
                     outcomes.push(val);
                 }
-                GateType::MZ => {
+                GateType::MZ | GateType::MPZ => {
                     // Apply biased measurement noise to each outcome
                     // Check if we have leaked qubits that were measured
                     let mut val = outcome as usize;
@@ -804,28 +799,29 @@ impl GeneralNoiseModel {
         &mut self,
         gate: &Gate,
         linear_rate: f64,
-        quadratic_rate: f64,
+        builder: &mut ByteMessageBuilder,
+    ) {
+        let qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
+        self.apply_idle_faults_for_duration(linear_rate, gate.idle_duration(), &qubits, builder);
+    }
+
+    fn apply_idle_faults_for_duration(
+        &mut self,
+        linear_rate: f64,
+        duration: f64,
+        qubits: &[usize],
         builder: &mut ByteMessageBuilder,
     ) {
         if linear_rate > f64::EPSILON {
-            let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
-            self.apply_idle_linear_stochastic_noise(
-                linear_rate,
-                gate.idle_duration(),
-                &qubits_usize,
-                builder,
-            );
+            self.apply_idle_linear_stochastic_noise(linear_rate, duration, qubits, builder);
         }
 
-        if quadratic_rate.abs() > f64::EPSILON {
-            // TODO: add test
-            let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
-            self.apply_idle_quadratic_dephasing(
-                quadratic_rate,
-                gate.idle_duration(),
-                &qubits_usize,
-                builder,
-            );
+        if self.p_idle_sin_squared_rate > f64::EPSILON && duration.abs() > f64::EPSILON {
+            self.apply_idle_sin_squared(duration, qubits, builder);
+        }
+
+        if self.p_idle_coherent_rate > f64::EPSILON && duration.abs() > f64::EPSILON {
+            self.apply_idle_coherent(duration, qubits, builder);
         }
     }
 
@@ -854,52 +850,101 @@ impl GeneralNoiseModel {
         }
     }
 
-    /// Apply coherent dephasing noise to a gate
-    ///
-    /// This method implements coherent phase rotation (systematic Z-rotation) noise
-    /// that occurs during idle periods or during gates with a specified duration.
-    ///
-    /// In physical systems, coherent dephasing represents:
-    /// - Systematic phase errors due to energy level shifts
-    /// - Frequency offsets in control fields
-    /// - AC Stark shifts
-    /// - Other systematic Z-rotation errors
-    ///
-    /// # Parameters
-    /// * `builder` - The `ByteMessageBuilder` to add gate operations to
-    /// * `angle` - The time duration over which idling occurs times the rate per time
-    /// * `qubits` - The qubits that are potentially affected by the idling noise
-    fn apply_idle_quadratic_dephasing(
+    /// Apply the DEM-style stochastic sine-squared family independently per axis.
+    fn apply_idle_sin_squared(
         &mut self,
-        rate: f64,
         duration: f64,
         qubits: &[usize],
         builder: &mut ByteMessageBuilder,
     ) {
-        let mut angle = rate * duration;
-
-        angle = if self.p_idle_coherent {
-            angle
-        } else {
-            angle.sin().powi(2)
-        };
-
-        if angle.abs() > f64::EPSILON {
-            let mut noisy_qubits = vec![];
-
-            for qubit in qubits {
-                if !self.is_leaked(*qubit) && (self.p_idle_coherent || self.rng.occurs(angle)) {
-                    noisy_qubits.push(*qubit);
-                }
+        for axis in ["X", "Y", "Z", "L"] {
+            let Some(multiplier) = self.p_idle_sin_squared_model.get(axis).copied() else {
+                continue;
+            };
+            let probability =
+                Self::sin_squared_probability(self.p_idle_sin_squared_rate, multiplier, duration);
+            if probability <= f64::EPSILON {
+                continue;
             }
-            if !noisy_qubits.is_empty() {
-                if self.p_idle_coherent {
-                    builder.rz(Angle64::from_radians(angle), &noisy_qubits);
-                } else {
-                    builder.z(&noisy_qubits);
+
+            let affected = qubits
+                .iter()
+                .copied()
+                .filter(|qubit| !self.is_leaked(*qubit) && self.rng.occurs(probability))
+                .collect::<Vec<_>>();
+            if affected.is_empty() {
+                continue;
+            }
+
+            match axis {
+                "X" => {
+                    builder.x(&affected);
                 }
+                "Y" => {
+                    builder.y(&affected);
+                }
+                "Z" => {
+                    builder.z(&affected);
+                }
+                "L" => {
+                    for qubit in affected {
+                        if let Some(gate) = self.leak(qubit) {
+                            builder.add_gate_command(&gate);
+                        }
+                    }
+                }
+                _ => unreachable!("sine-family model was validated by the builder"),
             }
         }
+    }
+
+    fn sin_squared_probability(rate: f64, multiplier: f64, duration: f64) -> f64 {
+        (rate * multiplier * duration).sin().powi(2)
+    }
+
+    /// Apply deterministic coherent idle rotations in RX/RY/RZ order.
+    fn apply_idle_coherent(
+        &self,
+        duration: f64,
+        qubits: &[usize],
+        builder: &mut ByteMessageBuilder,
+    ) {
+        let affected = qubits
+            .iter()
+            .copied()
+            .filter(|qubit| !self.is_leaked(*qubit))
+            .collect::<Vec<_>>();
+        if affected.is_empty() {
+            return;
+        }
+
+        for axis in ["RX", "RY", "RZ"] {
+            let Some(multiplier) = self.p_idle_coherent_model.get(axis).copied() else {
+                continue;
+            };
+            let angle =
+                Self::coherent_rotation_angle(self.p_idle_coherent_rate, multiplier, duration);
+            if angle <= f64::EPSILON {
+                continue;
+            }
+
+            match axis {
+                "RX" => {
+                    builder.rx(Angle64::from_radians(angle), &affected);
+                }
+                "RY" => {
+                    builder.ry(Angle64::from_radians(angle), &affected);
+                }
+                "RZ" => {
+                    builder.rz(Angle64::from_radians(angle), &affected);
+                }
+                _ => unreachable!("coherent-family model was validated by the builder"),
+            }
+        }
+    }
+
+    fn coherent_rotation_angle(rate: f64, multiplier: f64, duration: f64) -> f64 {
+        rate * multiplier * duration
     }
 
     /// Apply preparation (initialization) noise
@@ -1135,7 +1180,7 @@ impl GeneralNoiseModel {
         let mut removed_gates = false;
         let mut original_gate_qubits: Vec<usize> = Vec::new();
 
-        for qubits in gate.qubits.chunks_exact(2) {
+        for qubits in gate.qubits.as_chunks::<2>().0 {
             let mut add_original_gate = true;
 
             // Check if the gate is acting on a leaked qubit in a way to
@@ -1230,11 +1275,16 @@ impl GeneralNoiseModel {
 
         builder.add_gate_commands(&noise);
 
-        if self.p2_idle > f64::EPSILON {
-            self.apply_idle_linear_stochastic_noise(
-                self.p2_idle,
-                1.0,
-                &original_gate_qubits,
+        if self.idle_after_2q > f64::EPSILON {
+            let gate_qubits = gate
+                .qubits
+                .iter()
+                .map(|q| usize::from(*q))
+                .collect::<Vec<_>>();
+            self.apply_idle_faults_for_duration(
+                self.p_idle_linear_rate,
+                self.idle_after_2q,
+                &gate_qubits,
                 builder,
             );
         }
@@ -1467,63 +1517,94 @@ mod tests {
     use crate::byte_message::GateType;
     use pecos_core::Angle64;
 
+    fn assert_float_eq(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < f64::EPSILON,
+            "expected {expected}, got {actual}"
+        );
+    }
+
     #[test]
     fn test_default() {
-        // Create a noise model with the default settings
         let model = GeneralNoiseModel::default();
 
-        // Check the default values
-        assert!(
-            (model.p_prep - 0.01).abs() < f64::EPSILON,
-            "Default p_prep should be 0.01"
+        assert_float_eq(model.p_prep, 0.0);
+        assert_float_eq(model.p_meas_0, 0.0);
+        assert_float_eq(model.p_meas_1, 0.0);
+        assert_float_eq(model.p1, 0.0);
+        assert_float_eq(model.p2, 0.0);
+        assert_float_eq(model.p_idle_linear_rate, 0.0);
+        assert_float_eq(model.p_idle_sin_squared_rate, 0.0);
+        assert_float_eq(model.p_idle_coherent_rate, 0.0);
+        assert_eq!(
+            model.p_idle_coherent_model,
+            BTreeMap::from([
+                ("RX".to_string(), 1.0),
+                ("RY".to_string(), 1.0),
+                ("RZ".to_string(), 1.0),
+            ])
         );
-        assert!(
-            (model.p_meas_0 - 0.01).abs() < f64::EPSILON,
-            "Default p_meas_0 should be 0.01"
+        assert!(model.p_idle_sin_squared_model.is_empty());
+        assert_float_eq(model.p1_emission_ratio, 0.0);
+        assert_float_eq(model.p_prep_leak_ratio, 0.0);
+        assert_float_eq(model.p2_emission_ratio, 0.0);
+        assert_float_eq(model.p1_seepage_prob, 0.0);
+        assert_float_eq(model.p2_seepage_prob, 0.0);
+        assert_float_eq(model.idle_after_2q, 0.0);
+        assert_float_eq(model.p_meas_crosstalk_global, 0.0);
+        assert_float_eq(model.p_meas_crosstalk_local, 0.0);
+        assert_float_eq(model.p_prep_crosstalk, 0.0);
+        assert_float_eq(model.p2_angle_a, 0.0);
+        assert_float_eq(model.p2_angle_b, 1.0);
+        assert_float_eq(model.p2_angle_c, 0.0);
+        assert_float_eq(model.p2_angle_d, 1.0);
+        assert_float_eq(model.p2_angle_power, 1.0);
+        assert_float_eq(model.leakage_scale, 1.0);
+        assert_eq!(
+            model.p_meas_crosstalk_model.get_weighted_map(0),
+            &BTreeMap::from([("0->0".to_string(), 1.0)])
         );
-        assert!(
-            (model.p_meas_1 - 0.01).abs() < f64::EPSILON,
-            "Default p_meas_1 should be 0.01"
+        assert_eq!(
+            model.p_meas_crosstalk_model.get_weighted_map(1),
+            &BTreeMap::from([("1->1".to_string(), 1.0)])
         );
-        assert!(
-            (model.p1 - 0.001).abs() < f64::EPSILON,
-            "Default p1 should be 0.001"
-        );
-        assert!(
-            (model.p2 - 0.01).abs() < f64::EPSILON,
-            "Default p2 should be 0.01"
-        );
-        assert!(
-            (model.p1_emission_ratio - 0.5).abs() < f64::EPSILON,
-            "Default p1_emission_ratio should be 0.5"
-        );
-        assert!(
-            (model.p_prep_leak_ratio - 0.5).abs() < f64::EPSILON,
-            "Default p_prep_leak_ratio should be 0.5"
-        );
-        assert!(
-            (model.p2_emission_ratio - 0.5).abs() < f64::EPSILON,
-            "Default p2_emission_ratio should be 0.5"
-        );
-        assert!(
-            (model.p1_seepage_prob - 0.5).abs() < f64::EPSILON,
-            "Default seepage_prob should be 0.5"
-        );
-        assert!(
-            (model.p2_seepage_prob - 0.5).abs() < f64::EPSILON,
-            "Default seepage_prob should be 0.5"
-        );
+    }
+
+    #[test]
+    fn default_model_emits_no_noise_gates_for_full_circuit() {
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.pz(&[0, 1]);
+        input_builder.h(&[0]);
+        input_builder.cx(&[(0, 1)]);
+        input_builder.idle(2.0, &[0, 1]);
+        input_builder.mz(&[0, 1]);
+        let input = input_builder.build();
+        let expected = input
+            .quantum_ops()
+            .unwrap()
+            .into_iter()
+            .filter(|gate| gate.gate_type != GateType::Idle)
+            .collect::<Vec<_>>();
+
+        let mut model = GeneralNoiseModel::default();
+        let emitted = model
+            .apply_noise_on_start(&input)
+            .unwrap()
+            .quantum_ops()
+            .unwrap();
+
+        assert_eq!(emitted, expected);
     }
 
     #[test]
     fn test_builder() {
         // Create a noise model with the builder
         let noise = GeneralNoiseModel::builder()
-            .with_prep_probability(0.1)
-            .with_meas_0_probability(0.2)
-            .with_meas_1_probability(0.3)
-            .with_average_p1_probability(0.4)
-            .with_average_p2_probability(0.5)
+            .with_p_prep(0.1)
+            .with_p_meas_0(0.2)
+            .with_p_meas_1(0.3)
+            .with_average_p1(0.4)
+            .with_average_p2(0.5)
             .with_prep_leak_ratio(0.6)
             .build();
 
@@ -1573,22 +1654,15 @@ mod tests {
 
         assert!((p_prep_leak_ratio - 0.6).abs() < f64::EPSILON);
 
-        // Test the builder with no parameters (should use defaults)
+        // Test the builder with no parameters (should use no-effect defaults)
         let default_noise = GeneralNoiseModel::builder().build();
         let default_ref = default_noise
             .as_any()
             .downcast_ref::<GeneralNoiseModel>()
             .unwrap();
 
-        // Verify a few key default values
-        assert!(
-            (default_ref.p1 - 0.001).abs() < 1e-6,
-            "Default p1 should be 0.001"
-        );
-        assert!(
-            (default_ref.p2 - 0.01).abs() < 1e-6,
-            "Default p2 should be 0.01"
-        );
+        assert_float_eq(default_ref.p1, 0.0);
+        assert_float_eq(default_ref.p2, 0.0);
     }
 
     /// Helper function to invoke a measurement request from the user to the noise
@@ -1678,7 +1752,7 @@ mod tests {
         // Create a noise model with 100% prep error probability and 100% leakage ratio
         // using the builder pattern
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(1.0)
+            .with_p_prep(1.0)
             .with_prep_leak_ratio(1.0)
             .build();
         let noise = model
@@ -1708,7 +1782,7 @@ mod tests {
 
         // Now, create a noise model with 100% prep error probability but 0% leakage ratio
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(1.0)
+            .with_p_prep(1.0)
             .with_prep_leak_ratio(0.0)
             .build();
         let noise = model
@@ -1731,11 +1805,11 @@ mod tests {
 
         // Test builder configuration
         let noise = GeneralNoiseModel::builder()
-            .with_prep_probability(0.1)
-            .with_meas_0_probability(0.1)
-            .with_meas_1_probability(0.1)
-            .with_p1_probability(0.1)
-            .with_p2_probability(0.1)
+            .with_p_prep(0.1)
+            .with_p_meas_0(0.1)
+            .with_p_meas_1(0.1)
+            .with_p1(0.1)
+            .with_p2(0.1)
             .with_prep_leak_ratio(0.7)
             .build();
 
@@ -1752,11 +1826,11 @@ mod tests {
     fn test_leaked_qubit_measurement_behavior() {
         // Create a noise model with no spontaneous errors
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         // Manually mark qubit 0 as leaked
@@ -1787,11 +1861,11 @@ mod tests {
     fn test_repeated_measurement_of_leaked_qubit() {
         // Create a noise model with no spontaneous errors
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         // Manually mark qubit 0 as leaked
@@ -1834,11 +1908,11 @@ mod tests {
 
         // Create a noise model with no spontaneous errors
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
         let noise = model
             .as_any_mut()
@@ -1901,8 +1975,8 @@ mod tests {
 
         // Create a noise model with biased measurement probabilities
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.3) // 30% chance of flipping 0 to 1
-            .with_meas_1_probability(0.2) // 20% chance of flipping 1 to 0
+            .with_p_meas_0(0.3) // 30% chance of flipping 0 to 1
+            .with_p_meas_1(0.2) // 20% chance of flipping 1 to 0
             .with_seed(42) // Use fixed seed for deterministic test
             .build();
         let noise = model
@@ -1969,8 +2043,8 @@ mod tests {
 
         // Create a noise model with no measurement errors
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
             .build();
         let noise = model
             .as_any_mut()
@@ -2028,8 +2102,8 @@ mod tests {
         // Create a noise model with strong asymmetric bias
         // 80% chance of flipping 0->1, only 10% chance of flipping 1->0
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.8) // Strong bias: 0 -> 1
-            .with_meas_1_probability(0.1) // Weak bias: 1 -> 0
+            .with_p_meas_0(0.8) // Strong bias: 0 -> 1
+            .with_p_meas_1(0.1) // Weak bias: 1 -> 0
             .with_seed(12345) // Fixed seed for reproducibility
             .build();
         let noise = model
@@ -2122,8 +2196,8 @@ mod tests {
         // Test with extreme biases to make the effect very clear
         // Case 1: Always flip 0->1, never flip 1->0
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(1.0) // Always flip 0->1
-            .with_meas_1_probability(0.0) // Never flip 1->0
+            .with_p_meas_0(1.0) // Always flip 0->1
+            .with_p_meas_1(0.0) // Never flip 1->0
             .build();
         let noise = model
             .as_any_mut()
@@ -2159,8 +2233,8 @@ mod tests {
 
         // Case 2: Never flip 0->1, always flip 1->0
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.0) // Never flip 0->1
-            .with_meas_1_probability(1.0) // Always flip 1->0
+            .with_p_meas_0(0.0) // Never flip 0->1
+            .with_p_meas_1(1.0) // Always flip 1->0
             .build();
         let noise = model
             .as_any_mut()
@@ -2203,11 +2277,11 @@ mod tests {
 
         // Create a noise model with no errors (deterministic)
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         let noise = model
@@ -2270,11 +2344,11 @@ mod tests {
 
         // Create a noise model with no measurement errors (deterministic)
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         let noise = model
@@ -2323,11 +2397,11 @@ mod tests {
 
         // Create a noise model with no measurement errors (deterministic)
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.0)
-            .with_meas_0_probability(0.0)
-            .with_meas_1_probability(0.0)
-            .with_p1_probability(0.0)
-            .with_p2_probability(0.0)
+            .with_p_prep(0.0)
+            .with_p_meas_0(0.0)
+            .with_p_meas_1(0.0)
+            .with_p1(0.0)
+            .with_p2(0.0)
             .build();
 
         let noise = model
@@ -2383,8 +2457,8 @@ mod tests {
 
         // Test that leaked qubits are forced to 1, then bias is applied
         let mut model = GeneralNoiseModel::builder()
-            .with_meas_0_probability(0.0) // No 0->1 flips
-            .with_meas_1_probability(0.5) // 50% chance to flip 1->0
+            .with_p_meas_0(0.0) // No 0->1 flips
+            .with_p_meas_1(0.5) // 50% chance to flip 1->0
             .with_seed(42)
             .build();
         let noise = model
@@ -2599,16 +2673,17 @@ mod tests {
     fn test_parameter_scaling() {
         // Test that scaling factors are applied correctly - use builder pattern
         let mut model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.01)
-            .with_meas_0_probability(0.01)
-            .with_meas_1_probability(0.01)
-            .with_average_p1_probability(0.01)
-            .with_average_p2_probability(0.01)
+            .with_p_prep(0.01)
+            .with_p_meas_0(0.01)
+            .with_p_meas_1(0.01)
+            .with_average_p1(0.01)
+            .with_average_p2(0.01)
             .with_scale(2.0)
             .with_p1_scale(3.0)
             .with_p2_scale(4.0)
             .with_prep_scale(5.0)
             .with_meas_scale(6.0)
+            .with_prep_leak_ratio(0.5)
             .with_leakage_scale(0.25)
             .build();
         let noise = model
@@ -2625,8 +2700,7 @@ mod tests {
         let expected_p1 = 0.01 * 3.0 * 2.0 * (3.0 / 2.0); // Base * p1_scale * overall scale * avg->total
         let expected_p2 = 0.01 * 4.0 * 2.0 * (5.0 / 4.0); // Base * p2_scale * overall scale * avg->total
 
-        // Initial value in constructor is 0.5
-        // and we scale it by overall scale (2.0)
+        // The configured ratio is scaled by the overall scale (2.0).
         let expected_leak_ratio = 0.5 * 2.0; // Base * overall scale, capped at 1.0
 
         println!(
@@ -2673,11 +2747,11 @@ mod tests {
     fn test_builder_with_scaling() {
         // Test that builder applies scaling factors correctly
         let noise = GeneralNoiseModel::builder()
-            .with_prep_probability(0.01)
-            .with_meas_0_probability(0.01)
-            .with_meas_1_probability(0.01)
-            .with_average_p1_probability(0.01)
-            .with_average_p2_probability(0.01)
+            .with_p_prep(0.01)
+            .with_p_meas_0(0.01)
+            .with_p_meas_1(0.01)
+            .with_average_p1(0.01)
+            .with_average_p2(0.01)
             .with_prep_leak_ratio(0.01)
             .with_scale(2.0)
             .with_p1_scale(3.0)
@@ -2746,8 +2820,9 @@ mod tests {
     #[test]
     fn test_emission_ratio_scaling() {
         // Test that emission ratios are properly scaled and capped at a maximum of 1.0
-        // Default emission ratios are 0.5
         let mut model = GeneralNoiseModel::builder()
+            .with_p1_emission_ratio(0.5)
+            .with_p2_emission_ratio(0.5)
             .with_scale(3.0)
             .with_emission_scale(4.0)
             .build();
@@ -2756,7 +2831,7 @@ mod tests {
             .downcast_mut::<GeneralNoiseModel>()
             .unwrap();
 
-        // Verify both ratios are 0.5 after scaling
+        // Verify both configured ratios are capped after scaling.
         // When scaled: 0.5 * 3.0 (scale) * 4.0 (emission_scale) = 6.0
         // But capped at 1.0
         assert!(
@@ -2785,15 +2860,714 @@ mod tests {
         assert!((noise.p2_emission_ratio - 0.6).abs() < 1e-6);
     }
 
+    fn after_2q_outputs(
+        duration: f64,
+        linear_rate: f64,
+        coherent_rate: f64,
+        seed: u64,
+        shots: usize,
+    ) -> Vec<Vec<Gate>> {
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.cx(&[(0, 1)]);
+        let input = input_builder.build();
+        let linear_model = BTreeMap::from([
+            ("X".to_string(), 1.0 / 3.0),
+            ("Y".to_string(), 1.0 / 3.0),
+            ("Z".to_string(), 1.0 / 3.0),
+        ]);
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
+
+        let mut model = GeneralNoiseModel::builder()
+            .with_p2(0.0)
+            .with_p_idle_linear(linear_rate, &linear_model)
+            .with_p_idle_coherent(coherent_rate, &coherent_model)
+            .with_idle_after_2q(duration)
+            .with_seed(seed)
+            .build();
+
+        (0..shots)
+            .map(|_| {
+                model
+                    .apply_noise_on_start(&input)
+                    .unwrap()
+                    .quantum_ops()
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    fn emitted_after_2q_noise_count(outputs: &[Vec<Gate>]) -> usize {
+        outputs
+            .iter()
+            .flatten()
+            .filter(|gate| gate.gate_type != GateType::CX)
+            .count()
+    }
+
     #[test]
-    fn test_p_idle_coherent() {
+    fn idle_after_2q_duration_scales_linear_noise() {
+        let smaller = after_2q_outputs(0.1, 1.0, 0.0, 42, 1_000);
+        let larger = after_2q_outputs(1.0, 1.0, 0.0, 42, 1_000);
+
+        assert!(
+            emitted_after_2q_noise_count(&larger) > emitted_after_2q_noise_count(&smaller),
+            "a larger after-2q idle duration should emit strictly more idle-noise gates"
+        );
+    }
+
+    #[test]
+    fn idle_after_2q_applies_coherent_family() {
+        let outputs = after_2q_outputs(0.5, 0.0, 0.25, 42, 1);
+        let rz_gate = outputs
+            .iter()
+            .flatten()
+            .find(|gate| gate.gate_type == GateType::RZ)
+            .expect("the coherent idle family should emit an RZ gate");
+
+        assert_eq!(rz_gate.qubits.len(), 2);
+        assert!(rz_gate.qubits.contains(&QubitId(0)));
+        assert!(rz_gate.qubits.contains(&QubitId(1)));
+    }
+
+    #[test]
+    fn zero_idle_after_2q_duration_emits_no_idle_noise() {
+        let outputs = after_2q_outputs(0.0, 1.0, 0.0, 42, 100);
+
+        assert_eq!(emitted_after_2q_noise_count(&outputs), 0);
+    }
+
+    #[test]
+    fn zero_idle_rates_emit_no_after_2q_idle_noise() {
+        let outputs = after_2q_outputs(1.0, 0.0, 0.0, 42, 100);
+
+        assert_eq!(emitted_after_2q_noise_count(&outputs), 0);
+    }
+
+    #[test]
+    fn idle_after_2q_is_deterministic_for_same_seed() {
+        let first = after_2q_outputs(0.5, 0.4, 0.0, 42, 100);
+        let second = after_2q_outputs(0.5, 0.4, 0.0, 42, 100);
+
+        assert_eq!(first, second);
+    }
+
+    /// The documented `r * PI` migration is exact in the probability, not just in
+    /// sampled bytes.
+    ///
+    /// The byte-comparison sibling test only resolves conversion errors of a few
+    /// percent, because a seeded stochastic run can leave every draw on the same side
+    /// of its threshold. This compares the analytic probability instead, so a wrong
+    /// constant fails at machine precision rather than at 5%.
+    #[test]
+    fn quadratic_migration_r_times_pi_is_exact_in_probability() {
+        let legacy_rate = 0.2_f64;
+        let duration = 0.75_f64;
+
+        // What the legacy path produced: the builder scaled the cycles-per-time rate by
+        // factor/2 * 2*PI, with the factor at its final default of 1.0.
+        let legacy_effective_rate = legacy_rate * std::f64::consts::PI;
+        let legacy_probability = (legacy_effective_rate * duration).sin().powi(2);
+
+        // What the documented migration produces through the family entry point.
+        let migrated_probability = GeneralNoiseModel::sin_squared_probability(
+            legacy_rate * std::f64::consts::PI,
+            1.0,
+            duration,
+        );
+
+        assert!(
+            (migrated_probability - legacy_probability).abs() < 1e-15,
+            "migration must be exact: got {migrated_probability}, expected {legacy_probability}",
+        );
+
+        // And it is genuinely sensitive: a 0.1% error in the constant is caught here.
+        let perturbed = GeneralNoiseModel::sin_squared_probability(
+            legacy_rate * std::f64::consts::PI * 1.001,
+            1.0,
+            duration,
+        );
+        assert!(
+            (perturbed - legacy_probability).abs() > 1e-9,
+            "a perturbed constant must be distinguishable",
+        );
+    }
+
+    #[test]
+    fn quadratic_migration_r_times_pi_keeps_captured_legacy_bytes() {
+        let legacy_rate = 0.2;
+        let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_sin_squared(legacy_rate * std::f64::consts::PI, &z_model)
+            .build();
+
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        for _ in 0..8 {
+            input_builder.idle(0.75, &[0, 1, 2, 3]);
+        }
+        let output = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .into_bytes();
+        let captured_legacy_bytes = vec![
+            83, 67, 69, 80, 1, 0, 0, 0, 5, 0, 0, 0, 100, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
+            0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0,
+            0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0,
+            10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0,
+        ];
+
+        assert_eq!(output, captured_legacy_bytes);
+    }
+
+    #[test]
+    fn default_angle_scaling_is_identity_for_p2_only_model() {
+        let model = GeneralNoiseModel::builder().with_p2(0.37).build();
+
+        assert_float_eq(
+            model.p2_angle_error_rate(-std::f64::consts::FRAC_PI_3),
+            0.37,
+        );
+        assert_float_eq(model.p2_angle_error_rate(0.0), 0.37);
+        assert_float_eq(model.p2_angle_error_rate(std::f64::consts::FRAC_PI_3), 0.37);
+    }
+
+    #[test]
+    fn same_seed_and_configuration_emit_identical_noise() {
+        let linear_model = BTreeMap::from([
+            ("X".to_string(), 1.0 / 3.0),
+            ("Y".to_string(), 1.0 / 3.0),
+            ("Z".to_string(), 1.0 / 3.0),
+        ]);
+        let make_model = || {
+            GeneralNoiseModel::builder()
+                .with_seed(4_242)
+                .with_p_prep(0.4)
+                .with_p1(0.4)
+                .with_p2(0.4)
+                .with_p_idle_linear(0.4, &linear_model)
+                .with_p1_emission_ratio(0.5)
+                .with_p2_emission_ratio(0.5)
+                .with_prep_leak_ratio(0.5)
+                .build()
+        };
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.pz(&[0, 1]);
+        input_builder.h(&[0]);
+        input_builder.cx(&[(0, 1)]);
+        input_builder.idle(0.5, &[0, 1]);
+        let input = input_builder.build();
+        let collect = |model: &mut GeneralNoiseModel| {
+            (0..64)
+                .map(|_| model.apply_noise_on_start(&input).unwrap().into_bytes())
+                .collect::<Vec<_>>()
+        };
+
+        let first = collect(&mut make_model());
+        let second = collect(&mut make_model());
+
+        assert_eq!(first, second);
+        assert!(first.iter().any(|output| output.len() > 16));
+    }
+
+    #[test]
+    fn x_weighted_sine_model_emits_x_not_z() {
+        let x_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &x_model)
+            .build();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(1.0, &[0]);
+
+        let gates = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::X);
+    }
+
+    fn coherent_idle_gates(
+        rate: f64,
+        coherent_model: &BTreeMap<String, f64>,
+        duration: f64,
+        seed: u64,
+    ) -> Vec<Gate> {
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(seed)
+            .with_p_idle_coherent(rate, coherent_model)
+            .build();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(duration, &[0]);
+        model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap()
+    }
+
+    #[test]
+    fn coherent_idle_angle_is_rate_times_multiplier_times_duration() {
+        let rate = 0.25;
+        let multiplier = 1.4;
+        let duration = 0.6;
+        let expected_angle = 0.21;
+        let model = BTreeMap::from([("RY".to_string(), multiplier)]);
+
+        assert!(
+            (GeneralNoiseModel::coherent_rotation_angle(rate, multiplier, duration)
+                - expected_angle)
+                .abs()
+                < f64::EPSILON
+        );
+        let gates = coherent_idle_gates(rate, &model, duration, 424);
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::RY);
+        assert_eq!(
+            gates[0].angles,
+            [Angle64::from_radians(expected_angle)].into()
+        );
+    }
+
+    #[test]
+    fn coherent_idle_emits_selected_generators_in_deterministic_order() {
+        let rx_only = BTreeMap::from([("RX".to_string(), 1.0)]);
+        let gates = coherent_idle_gates(0.2, &rx_only, 0.5, 424);
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::RX);
+        assert!(!gates.iter().any(|gate| gate.gate_type == GateType::RZ));
+
+        let all_axes = BTreeMap::from([
+            ("RZ".to_string(), 3.0),
+            ("RX".to_string(), 1.0),
+            ("RY".to_string(), 2.0),
+        ]);
+        let gates = coherent_idle_gates(0.2, &all_axes, 0.5, 424);
+        assert_eq!(
+            gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
+            [GateType::RX, GateType::RY, GateType::RZ]
+        );
+        assert_eq!(gates[0].angles, [Angle64::from_radians(0.1)].into());
+        assert_eq!(gates[1].angles, [Angle64::from_radians(0.2)].into());
+        assert_eq!(
+            gates[2].angles,
+            [Angle64::from_radians(
+                GeneralNoiseModel::coherent_rotation_angle(0.2, 3.0, 0.5),
+            )]
+            .into()
+        );
+    }
+
+    #[test]
+    fn coherent_idle_multipliers_are_not_normalized() {
+        let model = BTreeMap::from([("RX".to_string(), 1.0), ("RZ".to_string(), 1.0)]);
+        let gates = coherent_idle_gates(0.2, &model, 0.5, 424);
+
+        assert_eq!(gates.len(), 2);
+        assert_eq!(gates[0].angles, [Angle64::from_radians(0.1)].into());
+        assert_eq!(gates[1].angles, [Angle64::from_radians(0.1)].into());
+    }
+
+    #[test]
+    fn coherent_idle_is_seed_independent_and_consumes_no_rng_draws() {
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
+        let first = coherent_idle_gates(0.3, &coherent_model, 0.7, 1);
+        let second = coherent_idle_gates(0.3, &coherent_model, 0.7, 999);
+        assert_eq!(first, second);
+
+        let linear_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let make_model = |with_coherent| {
+            let builder = GeneralNoiseModel::builder()
+                .with_seed(424)
+                .with_p_idle_linear(0.35, &linear_model);
+            if with_coherent {
+                builder.with_p_idle_coherent(0.3, &coherent_model)
+            } else {
+                builder
+            }
+            .build()
+        };
+        let mut without_coherent = make_model(false);
+        let mut with_coherent = make_model(true);
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(0.7, &[0, 1, 2, 3]);
+        let input = input_builder.build();
+        for _ in 0..128 {
+            let baseline = without_coherent
+                .apply_noise_on_start(&input)
+                .unwrap()
+                .quantum_ops()
+                .unwrap();
+            let composed = with_coherent
+                .apply_noise_on_start(&input)
+                .unwrap()
+                .quantum_ops()
+                .unwrap()
+                .into_iter()
+                .filter(|gate| gate.gate_type != GateType::RZ)
+                .collect::<Vec<_>>();
+            assert_eq!(composed, baseline);
+        }
+    }
+
+    #[test]
+    fn coherent_idle_reaches_after_2q_sites() {
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 2.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_p2(0.0)
+            .with_p_idle_coherent(0.25, &coherent_model)
+            .with_idle_after_2q(0.6)
+            .build();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.cx(&[(0, 1)]);
+
+        let gates = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap();
+        assert_eq!(gates.len(), 2);
+        assert_eq!(gates[0].gate_type, GateType::CX);
+        assert_eq!(gates[1].gate_type, GateType::RZ);
+        assert_eq!(gates[1].qubits, [QubitId(0), QubitId(1)].into());
+        assert_eq!(gates[1].angles, [Angle64::from_radians(0.3)].into());
+    }
+
+    #[test]
+    fn coherent_sine_squared_and_linear_idle_families_compose() {
+        let linear_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let sine_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+        let coherent_model = BTreeMap::from([("RY".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_idle_linear(1.0, &linear_model)
+            .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &sine_model)
+            .with_p_idle_coherent(0.25, &coherent_model)
+            .build();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(1.0, &[0]);
+
+        let gates = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap();
+        assert_eq!(
+            gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
+            [GateType::X, GateType::Z, GateType::RY]
+        );
+        assert_eq!(gates[2].angles, [Angle64::from_radians(0.25)].into());
+    }
+
+    #[test]
+    fn family_only_configuration_keeps_captured_pre_removal_bytes() {
+        let linear_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+        let sine_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 2.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear(1.0, &linear_model)
+            .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &sine_model)
+            .with_p_idle_coherent(0.25, &coherent_model)
+            .build();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(1.0, &[0, 1]);
+
+        let output = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .into_bytes();
+        let captured_pre_removal_bytes = vec![
+            83, 67, 69, 80, 1, 0, 0, 0, 4, 0, 0, 0, 96, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
+            0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0,
+            0, 1, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 20, 0, 0, 0, 32, 2, 1, 0, 0, 0, 0,
+            0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 224, 63,
+        ];
+
+        assert_eq!(output, captured_pre_removal_bytes);
+    }
+
+    #[test]
+    fn coherent_idle_skips_leaked_qubits() {
+        let coherent_model = BTreeMap::from([("RX".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_idle_coherent(0.25, &coherent_model)
+            .build();
+        model.leaked_qubits.insert(0);
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(1.0, &[0, 1]);
+
+        let gates = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].qubits, [QubitId(1)].into());
+    }
+
+    #[test]
+    fn sine_model_axes_are_independent_unnormalized_multipliers() {
+        let model_map = BTreeMap::from([
+            ("X".to_string(), 1.0),
+            ("Y".to_string(), 1.0),
+            ("Z".to_string(), 1.0),
+            ("L".to_string(), 1.0),
+        ]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &model_map)
+            .build();
+
+        assert_eq!(model.p_idle_sin_squared_model, model_map);
+        for multiplier in model.p_idle_sin_squared_model.values() {
+            assert!((*multiplier - 1.0).abs() < f64::EPSILON);
+        }
+
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(1.0, &[0]);
+        let gate_types = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap()
+            .into_iter()
+            .map(|gate| gate.gate_type)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            gate_types,
+            vec![GateType::X, GateType::Y, GateType::Z, GateType::PZ]
+        );
+    }
+
+    #[test]
+    fn linear_family_rejects_unnormalized_model() {
+        let model = BTreeMap::from([("X".to_string(), 1.0), ("Z".to_string(), 1.0)]);
+        let panic = std::panic::catch_unwind(|| {
+            let _ = GeneralNoiseModel::builder().with_p_idle_linear(0.1, &model);
+        });
+        assert!(
+            panic.is_err(),
+            "an unnormalized linear model must be rejected"
+        );
+    }
+
+    #[test]
+    fn sine_family_rejects_invalid_rates_axes_and_multipliers() {
+        let cases = [
+            (f64::INFINITY, BTreeMap::from([("X".to_string(), 1.0)])),
+            (0.1, BTreeMap::from([("A".to_string(), 1.0)])),
+            (0.1, BTreeMap::from([("X".to_string(), -1.0)])),
+        ];
+        for (rate, model) in cases {
+            assert!(
+                std::panic::catch_unwind(|| {
+                    let _ = GeneralNoiseModel::builder().with_p_idle_sin_squared(rate, &model);
+                })
+                .is_err(),
+                "invalid sine rate/model must be rejected: rate={rate}, model={model:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn coherent_family_rejects_invalid_rates_axes_and_multipliers() {
+        let cases = [
+            (f64::INFINITY, BTreeMap::from([("RX".to_string(), 1.0)])),
+            (0.1, BTreeMap::from([("L".to_string(), 1.0)])),
+            (0.1, BTreeMap::from([("A".to_string(), 1.0)])),
+            (0.1, BTreeMap::from([("RX".to_string(), -1.0)])),
+        ];
+        for (rate, model) in cases {
+            assert!(
+                std::panic::catch_unwind(|| {
+                    let _ = GeneralNoiseModel::builder().with_p_idle_coherent(rate, &model);
+                })
+                .is_err(),
+                "invalid coherent rate/model must be rejected: rate={rate}, model={model:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_sine_rate_and_zero_idle_duration_emit_nothing() {
+        assert!(GeneralNoiseModel::sin_squared_probability(0.0, 1.0, 1.0) < f64::EPSILON);
+        assert!(
+            GeneralNoiseModel::sin_squared_probability(std::f64::consts::FRAC_PI_2, 1.0, 0.0)
+                < f64::EPSILON
+        );
+        let x_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let mut zero_rate = GeneralNoiseModel::builder()
+            .with_p_idle_sin_squared(0.0, &x_model)
+            .build();
+        let mut nonzero_rate = GeneralNoiseModel::builder()
+            .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &x_model)
+            .build();
+        let mut duration_one = ByteMessage::quantum_operations_builder();
+        duration_one.idle(1.0, &[0]);
+        let mut duration_zero = ByteMessage::quantum_operations_builder();
+        duration_zero.idle(0.0, &[0]);
+
+        assert!(
+            zero_rate
+                .apply_noise_on_start(&duration_one.build())
+                .unwrap()
+                .quantum_ops()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            nonzero_rate
+                .apply_noise_on_start(&duration_zero.build())
+                .unwrap()
+                .quantum_ops()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn zero_coherent_rate_and_zero_idle_duration_emit_nothing() {
+        let coherent_model = BTreeMap::from([("RX".to_string(), 1.0)]);
+        let mut zero_rate = GeneralNoiseModel::builder()
+            .with_p_idle_coherent(0.0, &coherent_model)
+            .build();
+        let mut nonzero_rate = GeneralNoiseModel::builder()
+            .with_p_idle_coherent(0.25, &coherent_model)
+            .build();
+        let mut duration_one = ByteMessage::quantum_operations_builder();
+        duration_one.idle(1.0, &[0]);
+        let mut duration_zero = ByteMessage::quantum_operations_builder();
+        duration_zero.idle(0.0, &[0]);
+
+        assert!(
+            zero_rate
+                .apply_noise_on_start(&duration_one.build())
+                .unwrap()
+                .quantum_ops()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            nonzero_rate
+                .apply_noise_on_start(&duration_zero.build())
+                .unwrap()
+                .quantum_ops()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn sine_family_is_deterministic_for_same_seed() {
+        let sine_model = BTreeMap::from([
+            ("X".to_string(), 0.5),
+            ("Y".to_string(), 0.75),
+            ("Z".to_string(), 1.0),
+        ]);
+        let make_model = || {
+            GeneralNoiseModel::builder()
+                .with_seed(424)
+                .with_p_idle_sin_squared(0.6, &sine_model)
+                .build()
+        };
+        let mut first = make_model();
+        let mut second = make_model();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(0.7, &[0, 1, 2, 3]);
+        let input = input_builder.build();
+        let first_outputs = (0..128)
+            .map(|_| first.apply_noise_on_start(&input).unwrap().into_bytes())
+            .collect::<Vec<_>>();
+        let second_outputs = (0..128)
+            .map(|_| second.apply_noise_on_start(&input).unwrap().into_bytes())
+            .collect::<Vec<_>>();
+
+        assert_eq!(first_outputs, second_outputs);
+        assert!(first_outputs.iter().any(|output| output.len() > 16));
+    }
+
+    #[test]
+    fn linear_and_sine_families_keep_their_pre_removal_bytes() {
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        for _ in 0..8 {
+            input_builder.idle(0.75, &[0, 1, 2, 3]);
+        }
+        let input = input_builder.build();
+        let linear_model = BTreeMap::from([
+            ("X".to_string(), 1.0 / 3.0),
+            ("Y".to_string(), 1.0 / 3.0),
+            ("Z".to_string(), 1.0 / 3.0),
+        ]);
+        let sine_model = BTreeMap::from([("Z".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear(0.35, &linear_model)
+            .with_p_idle_sin_squared(0.07 * 1.5 * std::f64::consts::PI, &sine_model)
+            .build();
+
+        let output = model.apply_noise_on_start(&input).unwrap().into_bytes();
+        let expected = vec![
+            83, 67, 69, 80, 1, 0, 0, 0, 10, 0, 0, 0, 176, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1,
+            0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 8, 0,
+            0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 3, 0, 0, 0, 10, 0,
+            0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0,
+            0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0,
+            0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0,
+            0, 2, 1, 0, 0, 1, 0, 0, 0,
+        ];
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn linear_and_coherent_families_keep_their_pre_removal_bytes() {
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        for _ in 0..8 {
+            input_builder.idle(0.75, &[0, 1, 2, 3]);
+        }
+        let input = input_builder.build();
+        let linear_model = BTreeMap::from([
+            ("X".to_string(), 1.0 / 3.0),
+            ("Y".to_string(), 1.0 / 3.0),
+            ("Z".to_string(), 1.0 / 3.0),
+        ]);
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear(0.35, &linear_model)
+            .with_p_idle_coherent(0.07 * 2.0 * std::f64::consts::PI, &coherent_model)
+            .build();
+
+        let output = model.apply_noise_on_start(&input).unwrap().into_bytes();
+        let expected = vec![
+            83, 67, 69, 80, 1, 0, 0, 0, 16, 0, 0, 0, 176, 1, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4,
+            1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 82, 99, 190, 111, 139, 28, 213,
+            63, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0,
+            0, 82, 99, 190, 111, 139, 28, 213, 63, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1, 0, 0, 1, 0, 0, 0,
+            10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0,
+            0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 82, 99, 190, 111, 139, 28, 213, 63, 10,
+            0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0,
+            0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 82, 99, 190, 111, 139, 28, 213, 63, 10, 0,
+            0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0,
+            0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 82, 99, 190, 111, 139, 28, 213, 63, 10, 0, 0,
+            0, 8, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 3, 0, 0, 0,
+            10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0,
+            82, 99, 190, 111, 139, 28, 213, 63, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1, 0, 0, 3, 0, 0, 0,
+            10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0,
+            82, 99, 190, 111, 139, 28, 213, 63, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0,
+            10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0,
+            82, 99, 190, 111, 139, 28, 213, 63,
+        ];
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_coherent_and_sine_squared_idle_families() {
         // Create a circuit builder
         let mut builder = ByteMessage::quantum_operations_builder();
 
-        // Create a noise model with coherent dephasing
+        // Create a noise model with coherent dephasing.
+        let coherent_model = BTreeMap::from([("RZ".to_string(), 1.0)]);
         let mut model = GeneralNoiseModel::builder()
-            .with_p_idle_coherent(true)
-            .with_p_idle_quadratic_rate(0.2)
+            .with_p_idle_coherent(0.2, &coherent_model)
             .build();
 
         // Create an idle gate
@@ -2807,7 +3581,7 @@ mod tests {
         };
 
         // Apply idle faults - should use coherent dephasing (RZ gates)
-        model.apply_idle_faults(&gate, 0.0, model.p_idle_quadratic_rate, &mut builder);
+        model.apply_idle_faults(&gate, 0.0, &mut builder);
 
         // Get the message and verify it contains RZ gates
         let message = builder.build();
@@ -2831,12 +3605,7 @@ mod tests {
             channel: None,
         };
 
-        model.apply_idle_faults(
-            &multi_qubit_gate,
-            0.0,
-            model.p_idle_quadratic_rate,
-            &mut builder,
-        );
+        model.apply_idle_faults(&multi_qubit_gate, 0.0, &mut builder);
 
         let message = builder.build();
         let gates = message.quantum_ops().unwrap();
@@ -2875,16 +3644,17 @@ mod tests {
             "RZ gates should affect qubits 0, 1, 2"
         );
 
-        // Now test with incoherent dephasing
+        // Now test with stochastic sine-squared dephasing.
         let mut builder = ByteMessage::quantum_operations_builder();
 
+        let sine_model = BTreeMap::from([("Z".to_string(), 1.0)]);
         let mut model = GeneralNoiseModel::builder()
-            .with_p_idle_coherent(false)
+            .with_p_idle_sin_squared(0.2, &sine_model)
             .with_seed(42)
             .build();
 
-        // Apply idle faults with incoherent dephasing
-        model.apply_idle_faults(&gate, 0.0, model.p_idle_quadratic_rate, &mut builder);
+        // Apply idle faults with incoherent dephasing.
+        model.apply_idle_faults(&gate, 0.0, &mut builder);
 
         // The message may contain Z gates or be empty depending on random outcomes
         let message = builder.build();
@@ -2897,7 +3667,7 @@ mod tests {
     #[allow(clippy::unreadable_literal)]
     fn test_rzz_error_rate() {
         let mut model = GeneralNoiseModel::builder()
-            .with_average_p2_probability(0.1)
+            .with_average_p2(0.1)
             .with_p2_angle_params(0.1, 0.0, 0.25, 0.0)
             .with_p2_angle_power(1.0)
             .build();
@@ -2926,7 +3696,7 @@ mod tests {
 
         // Test quadratic scaling
         let mut model = GeneralNoiseModel::builder()
-            .with_average_p2_probability(0.1)
+            .with_average_p2(0.1)
             .with_p2_angle_params(0.1, 0.0, 0.25, 0.0)
             .with_p2_angle_power(2.0)
             .build();
@@ -2947,7 +3717,7 @@ mod tests {
     fn test_noiseless_gates() {
         // Create a noise model and mark RZ as a noiseless gate
         let mut model = GeneralNoiseModel::builder()
-            .with_p1_probability(0.5) // Use a moderate valid probability
+            .with_p1(0.5) // Use a moderate valid probability
             .with_noiseless_gate(GateType::RZ)
             .build();
         let noise = model
@@ -3052,7 +3822,7 @@ mod tests {
     #[test]
     fn test_rzz_error_rate_debug() {
         let mut model = GeneralNoiseModel::builder()
-            .with_average_p2_probability(0.1)
+            .with_average_p2(0.1)
             .with_p2_angle_params(0.1, 0.0, 0.25, 0.0)
             .build();
         let noise = model
@@ -3077,7 +3847,7 @@ mod tests {
 
         // Check scaled przz error rate
         let mut model = GeneralNoiseModel::builder()
-            .with_average_p2_probability(0.1)
+            .with_average_p2(0.1)
             .with_p2_angle_params(0.1, 0.0, 0.25, 0.0)
             .with_scale(2.0)
             .build();
@@ -3127,11 +3897,11 @@ mod tests {
 
         // Create a noise model with custom Pauli and emission models using the builder
         let model = GeneralNoiseModel::builder()
-            .with_prep_probability(0.01)
-            .with_meas_0_probability(0.01)
-            .with_meas_1_probability(0.01)
-            .with_p1_probability(0.1)
-            .with_p2_probability(0.2)
+            .with_p_prep(0.01)
+            .with_p_meas_0(0.01)
+            .with_p_meas_1(0.01)
+            .with_p1(0.1)
+            .with_p2(0.2)
             .with_p1_pauli_model(&custom_p1_pauli)
             .with_p1_emission_model(&custom_p1_emission)
             .with_p2_pauli_model(&custom_p2_pauli)

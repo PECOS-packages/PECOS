@@ -4,11 +4,12 @@
 
 **Full development** (Python + Rust, recommended):
 
-- [Python 3.10+](https://www.python.org/downloads/)
+- [Python 3.12+](https://www.python.org/downloads/)
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) - Python package manager
 - [just](https://github.com/casey/just) - Command runner
 - [pecos](https://crates.io/crates/pecos) - PECOS dev tools CLI
+- [ripgrep](https://github.com/BurntSushi/ripgrep#installation) - Required by the dependency integrity checks run by `just lint` and `just security-check`. Install it with `pecos install ripgrep`, or manually with `cargo install ripgrep --locked`, `brew install ripgrep`, `apt install ripgrep`, or `winget install BurntSushi.ripgrep`.
 - **Windows**: [Git for Windows](https://git-scm.com/download/win) (provides Git Bash, required by Justfile recipes) or WSL
 
 **Pure Rust development** (Rust crates only):
@@ -131,6 +132,102 @@ just check-all
 ```
 
 Note: For the Rust side of the project, you can use `cargo` to run tests, benchmarks, formatting, etc.
+
+## Native Numeric Migration Pattern
+
+Runtime code imports numeric primitives from the public `pecos` surface. NumPy remains in tests as an oracle.
+
+```python
+from pecos import Array, array, asarray, dtypes, sum as array_sum, zeros
+```
+
+Map the dtype used by the migrated code as follows:
+
+| NumPy dtype | PECOS dtype |
+|-------------|-------------|
+| `np.uint8`  | `dtypes.uint8` |
+| `np.float64` or `float` | `dtypes.float64` |
+
+Use `Array` in annotations and enter the native layer with `asarray()` when an external API returns an array-like
+object. Constructors and casts take PECOS dtypes, for example `zeros(size, dtype=dtypes.uint8)` and
+`array(values, dtype=dtypes.uint8)`.
+
+`Array.flatten()` preserves row-major order and returns an independent copy:
+
+```python
+from pecos import array, dtypes
+
+values = array([[1, 0], [0, 1]], dtype=dtypes.uint8)
+flat = values.flatten().tolist()
+assert flat == [1, 0, 0, 1]
+```
+
+`Array` deliberately differs from NumPy at three boundaries:
+
+- `ravel()` and `reshape()` always return copies. NumPy may return views, but `Array` owns its
+  buffer and has no view representation, so an honest copy is preferred over a silently-copying
+  "view".
+- `reshape()` infers a dimension only from the literal `-1`. Other negative dimensions are
+  rejected, even though NumPy treats any single negative dimension as inferred.
+- `fill()` does not coerce values by truthiness or parse numeric strings. Convert values
+  explicitly instead of relying on behavior such as a non-empty string becoming `True`.
+
+Two more migration boundaries currently need local workarounds:
+
+- Elementwise `Array ^ Array` is not available yet (#458). For arrays already known to contain only
+  binary values, elementwise inequality has the same result; do not use that substitution for general integers.
+- Bit shifts, unsigned arithmetic, and bitwise boolean operators are not available on `Array` (#458).
+  For binary values, cast to `int64` and double instead of shifting; use `where()` for boolean
+  selection. `Array * Array` is matrix multiplication, so use `elemwise_mul()` when the intended
+  operation is elementwise.
+- Spell NumPy's `dtype=float` as `dtype=dtypes.float64`, especially with `asarray()`, to preserve
+  NumPy's 64-bit width explicitly.
+
+The decoder-side bit packing and boolean-selection patterns remain explicit and exact:
+
+```python
+from pecos import any as array_any, array, dtypes, sum as array_sum, where
+
+low = array([1, 0], dtype=dtypes.uint8).astype(dtypes.int64)
+high = array([0, 1], dtype=dtypes.uint8).astype(dtypes.int64)
+packed = (low + high * 2).astype(dtypes.uint8)
+assert packed.tolist() == [1, 2]
+
+observable_bits = array([[1, 0], [1, 1]], dtype=dtypes.int64)
+weights = array([1, 2], dtype=dtypes.int64)
+observable_masks = array_sum(observable_bits.elemwise_mul(weights), axis=1)
+assert list(observable_masks) == [1, 3]
+
+active = array([True, False], dtype=dtypes.bool_)
+values = array([0, 2], dtype=dtypes.uint8)
+assert array_any(where(active, False, values != 0))
+```
+
+Elementwise comparison returns a boolean `Array`, and `array_sum()` accepts it directly -- counting
+mismatches needs no cast:
+
+```python
+from pecos import array, dtypes, sum as array_sum
+
+predicted = array([1, 0, 1], dtype=dtypes.uint8)
+expected = array([1, 1, 1], dtype=dtypes.uint8)
+logical_errors = int(array_sum(predicted != expected))
+assert logical_errors == 1
+```
+
+Seed `pecos.random` immediately before a reproducible draw. Its stream deliberately differs from
+NumPy's for the same seed, so migrate statistical tests by re-baselining pinned samples and retaining
+distributional invariants instead of asserting cross-library sample equality:
+
+```python
+from pecos import random
+
+random.seed(458)
+first = random.binomial(20, 0.25, size=8)
+random.seed(458)
+repeated = random.binomial(20, 0.25, size=8)
+assert first.tolist() == repeated.tolist()
+```
 
 ## Dependency and Security Checks
 

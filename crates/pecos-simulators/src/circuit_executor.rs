@@ -49,7 +49,9 @@ use smallvec::SmallVec;
 /// Convert a flat qubit slice `[c0, t0, c1, t1, ...]` to a vec of pairs.
 fn flat_to_pairs(qubits: &[QubitId]) -> SmallVec<[(QubitId, QubitId); 4]> {
     qubits
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0], pair[1]))
         .collect()
 }
@@ -188,11 +190,22 @@ fn execute_gate_command<S: CliffordGateable>(
             let pairs = flat_to_pairs(qubits);
             sim.swap(&pairs);
         }
+        GateType::PX => {
+            sim.pz(qubits);
+            sim.h(qubits);
+        }
         GateType::PZ | GateType::QAlloc => {
             sim.pz(qubits);
         }
+        GateType::MX => {
+            sim.h(qubits);
+            measurements.extend(sim.mz(qubits));
+        }
         GateType::MZ | GateType::MeasureFree => {
             measurements.extend(sim.mz(qubits));
+        }
+        GateType::MPZ => {
+            measurements.extend(sim.mpz(qubits));
         }
         GateType::Idle => {}
         other => {

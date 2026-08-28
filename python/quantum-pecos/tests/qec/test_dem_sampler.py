@@ -72,7 +72,9 @@ def test_dem_sampler_sampling() -> None:
     assert len(obs_flips) == 1
 
     # Batch sample
-    det_batch, obs_batch = sampler.sample_batch(100, seed=42)
+    batch = sampler.sample_batch(100, seed=42)
+    det_batch = batch.detector_events()
+    obs_batch = batch.observable_flips()
     assert len(det_batch) == 100
     assert len(obs_batch) == 100
 
@@ -97,11 +99,11 @@ def test_dem_sampler_determinism() -> None:
     sampler = builder.build()
 
     # Same seed should produce same results
-    det1, obs1 = sampler.sample_batch(50, seed=12345)
-    det2, obs2 = sampler.sample_batch(50, seed=12345)
+    batch1 = sampler.sample_batch(50, seed=12345)
+    batch2 = sampler.sample_batch(50, seed=12345)
 
-    assert det1 == det2
-    assert obs1 == obs2
+    assert batch1.detector_events() == batch2.detector_events()
+    assert batch1.observable_flips() == batch2.observable_flips()
 
 
 def test_dem_sampler_statistics() -> None:
@@ -255,8 +257,9 @@ def test_dem_events_split_observables_and_tracked_paulis() -> None:
     assert tracked_hits == set()
 
 
-def test_sample_decode_count_ignores_tracked_paulis() -> None:
+def test_fused_decode_ignores_tracked_paulis() -> None:
     """Decoder error counting uses observables, not tracked Paulis."""
+    from pecos.decoders import pymatching
     from pecos_rslib import DagCircuit, PauliString
     from pecos_rslib.qec import DemSampler, DetectorErrorModel
 
@@ -291,7 +294,12 @@ def test_sample_decode_count_ignores_tracked_paulis() -> None:
     assert "logical_observable L0" in dem.to_string()
     assert "logical_observable L1" not in dem.to_string()
 
-    errors = sampler.sample_decode_count(dem.to_string(), 2000, seed=17)
+    errors = sampler.decode(
+        dem.to_string(),
+        2000,
+        pymatching(correlated=True),
+        seed=17,
+    ).num_errors
     assert errors == 0
 
 

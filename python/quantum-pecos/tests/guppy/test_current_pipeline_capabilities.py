@@ -30,7 +30,7 @@ def test_pipeline_capabilities() -> None:
     def test_hadamard() -> bool:
         q = qubit()
         h(q)
-        return measure(q)
+        return measure(q).read()
 
     test_cases.append(("Hadamard Gate", test_hadamard))
 
@@ -39,7 +39,7 @@ def test_pipeline_capabilities() -> None:
     def test_pauli_x() -> bool:
         q = qubit()
         x(q)
-        return measure(q)
+        return measure(q).read()
 
     test_cases.append(("Pauli X Gate", test_pauli_x))
 
@@ -49,7 +49,7 @@ def test_pipeline_capabilities() -> None:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     test_cases.append(("Bell State", test_bell_state))
 

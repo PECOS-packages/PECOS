@@ -31,7 +31,7 @@ Example::
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0), measure(q1)
+        return measure(q0).read(), measure(q1).read()
 
     package = bell.compile()
     dag = hugr_to_dag(package.modules[0])
@@ -373,7 +373,7 @@ def hugr_to_dag(
         ... def simple() -> bool:
         ...     q = qubit()
         ...     q = h(q)
-        ...     return measure(q)
+        ...     return measure(q).read()
         ...
         >>> dag = hugr_to_dag(simple.compile().modules[0])
         >>> len(dag)  # Number of nodes
@@ -462,7 +462,7 @@ def guppy_to_dag(
         def simple() -> bool:
             q = qubit()
             h(q)
-            return measure(q)
+            return measure(q).read()
 
         dag = guppy_to_dag(simple)
         len(dag)  # Number of nodes: 3

@@ -13,12 +13,12 @@
 //! `StabMps` backend for `sim_neo`.
 //!
 //! Provides a `SimulatorFactory` implementation that creates `StabMps` simulators
-//! with configurable parameters (`lazy_measure`, `max_bond_dim`, etc.).
+//! with configurable parameters (`measurement`, `max_bond_dim`, etc.).
 
 use pecos_neo::noise::ComposableNoiseModel;
 use pecos_neo::program::{DynProgramRunner, ProgramRunner};
 use pecos_neo::tool::SimulatorFactory;
-use pecos_stab_tn::stab_mps::StabMps;
+use pecos_stab_tn::stab_mps::{MeasurementMode, StabMps};
 
 /// Configuration for the `StabMps` backend.
 ///
@@ -26,12 +26,12 @@ use pecos_stab_tn::stab_mps::StabMps;
 /// Implements `SimulatorFactory` so it can be used with `custom_backend()`.
 #[derive(Debug, Clone)]
 pub struct StabMpsBuilder {
-    /// Use lazy measurement (correct for non-Clifford, slower).
-    pub lazy_measure: bool,
+    /// Single-qubit measurement policy.
+    pub measurement: MeasurementMode,
     /// Maximum MPS bond dimension.
     pub max_bond_dim: usize,
     /// Maximum truncation error for MPS compression.
-    /// None = disabled (library default, use fixed bond dim cap only).
+    /// Zero disables adaptive truncation while preserving cutoff and cap truncation.
     pub max_truncation_error: Option<f64>,
     /// Merge consecutive RZ on same qubit before decomposition.
     pub merge_rz: bool,
@@ -40,10 +40,10 @@ pub struct StabMpsBuilder {
 impl Default for StabMpsBuilder {
     fn default() -> Self {
         Self {
-            lazy_measure: false,
-            max_bond_dim: 64,
-            max_truncation_error: None,
-            merge_rz: false,
+            measurement: MeasurementMode::default(),
+            max_bond_dim: 128,
+            max_truncation_error: Some(1e-8),
+            merge_rz: true,
         }
     }
 }
@@ -55,10 +55,10 @@ impl StabMpsBuilder {
         Self::default()
     }
 
-    /// Enable lazy measurement (correct for non-Clifford states).
+    /// Select the single-qubit measurement policy.
     #[must_use]
-    pub fn with_lazy_measure(mut self, lazy: bool) -> Self {
-        self.lazy_measure = lazy;
+    pub fn with_measurement(mut self, measurement: MeasurementMode) -> Self {
+        self.measurement = measurement;
         self
     }
 
@@ -70,8 +70,16 @@ impl StabMpsBuilder {
     }
 
     /// Set maximum truncation error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `err` is negative, NaN, or infinite.
     #[must_use]
     pub fn with_max_truncation_error(mut self, err: f64) -> Self {
+        assert!(
+            err.is_finite() && err >= 0.0,
+            "max_truncation_error must be finite and non-negative"
+        );
         self.max_truncation_error = Some(err);
         self
     }
@@ -92,16 +100,12 @@ impl SimulatorFactory for StabMpsBuilder {
         seed: Option<u64>,
     ) -> Box<dyn DynProgramRunner> {
         let mut builder = StabMps::builder(num_qubits);
-        if self.lazy_measure {
-            builder = builder.lazy_measure(true);
-        }
+        builder = builder.measurement(self.measurement);
         builder = builder.max_bond_dim(self.max_bond_dim);
         if let Some(err) = self.max_truncation_error {
             builder = builder.max_truncation_error(err);
         }
-        if self.merge_rz {
-            builder = builder.merge_rz(true);
-        }
+        builder = builder.merge_rz(self.merge_rz);
         if let Some(s) = seed {
             builder = builder.seed(s);
         }
@@ -115,5 +119,20 @@ impl SimulatorFactory for StabMpsBuilder {
             runner = runner.with_seed(s);
         }
         Box::new(runner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sim_neo_measurement_mode_defaults_and_selection() {
+        let default = StabMpsBuilder::default();
+        assert_eq!(default.measurement, MeasurementMode::Exact);
+        let pragmatic = default.with_measurement(MeasurementMode::Pragmatic);
+        assert_eq!(pragmatic.measurement, MeasurementMode::Pragmatic);
+        let lazy = pragmatic.with_measurement(MeasurementMode::Lazy);
+        assert_eq!(lazy.measurement, MeasurementMode::Lazy);
     }
 }

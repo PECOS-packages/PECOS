@@ -21,21 +21,14 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib_cuda import CuStateVec as CuStateVecRs
 
+from pecos.simulators._cuda_fork_guard import check_fork_poison, mark_cuda_initialized
 from pecos.simulators.cuda_statevec import bindings
 from pecos.simulators.sim_class_types import StateVector
 
 if TYPE_CHECKING:
-    import sys
+    from typing import Self
 
     from pecos.typing import SimulatorGateParams
-
-    # Handle Python 3.10 compatibility for Self type
-    if sys.version_info >= (3, 11):
-        from typing import Self
-    else:
-        from typing import TypeVar
-
-        Self = TypeVar("Self", bound="CudaStateVec")
 
 
 class CudaStateVec(StateVector):
@@ -63,6 +56,7 @@ class CudaStateVec(StateVector):
             num_qubits: Number of qubits to simulate.
             seed: Optional random seed for reproducibility.
         """
+        check_fork_poison()
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."
             raise TypeError(msg)
@@ -73,6 +67,7 @@ class CudaStateVec(StateVector):
         self.num_qubits = num_qubits
 
         # Create the Rust backend
+        mark_cuda_initialized()
         if seed is not None:
             self.backend = CuStateVecRs.with_seed(num_qubits, seed)
         else:
@@ -80,6 +75,7 @@ class CudaStateVec(StateVector):
 
     def reset(self) -> Self:
         """Reset the quantum state to |0...0>."""
+        check_fork_poison()
         self.backend.reset()
         return self
 

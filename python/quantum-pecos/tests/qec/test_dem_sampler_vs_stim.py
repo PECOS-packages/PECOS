@@ -329,7 +329,7 @@ class TestDemSamplerVsStim:
         seed = 123
 
         # PECOS: get per-detector counts
-        pecos_det_batch, _ = pecos_sampler.sample_batch(num_shots, seed=seed)
+        pecos_det_batch = pecos_sampler.sample_batch(num_shots, seed=seed).detector_events()
         pecos_det_array = np.array(pecos_det_batch)
         pecos_det_rates = pecos_det_array.mean(axis=0)
 
@@ -888,3 +888,65 @@ class TestDemEquivalenceComprehensive:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestRepeatedMeasurementCollapse:
+    """Collapse projects; it does not reset.
+
+    A propagating X before the first of two measurements on one qubit flips
+    BOTH -- Stim's ``M`` (measure without reset) is the ground truth, and the
+    surface-code fixtures cannot exercise this because every ancilla is
+    re-prepared between rounds.
+    """
+
+    def test_error_persistence_through_repeated_mz_matches_stim(self) -> None:
+        from pecos.qec.surface.circuit_builder import (
+            generate_dem_from_tick_circuit,
+            generate_dem_from_tick_circuit_via_stim,
+        )
+        from pecos.quantum import TickCircuit
+
+        tc = TickCircuit()
+        tc.tick().pz([0])
+        tc.tick().x([0])  # noise carrier between prep and first measurement
+        m1 = tc.tick().mz([0])
+        m2 = tc.tick().mz([0])
+        tc.detector(m1, label="D0")
+        tc.detector(m2, label="D1")
+        tc.set_meta("num_measurements", "2")
+        tc.set_meta(
+            "detectors",
+            '[{"id": 0, "coords": [0, 0, 0], "records": [-2]}, {"id": 1, "coords": [0, 0, 1], "records": [-1]}]',
+        )
+        tc.set_meta("observables", "[]")
+
+        kwargs = {
+            "p1": 0.01,
+            "p2": 0.0,
+            "p_meas": 0.02,
+            "p_prep": 0.0,
+            "decompose_errors": False,
+        }
+        pecos_dem = generate_dem_from_tick_circuit(tc, **kwargs)
+        stim_dem = generate_dem_from_tick_circuit_via_stim(tc, **kwargs)
+
+        pecos_errors = parse_dem_string(pecos_dem)
+        stim_errors = parse_dem_string(stim_dem)
+
+        # Both PECOS and the Stim reference model p_meas as a PHYSICAL X
+        # before the measurement (X_ERROR then M), so on a repeated
+        # measurement it joins the propagating joint mechanism rather than
+        # flipping one record classically. The last measurement's p_meas has
+        # nothing after it, so it stays alone -- guarding against over-joining.
+        assert ((0, 1), ()) in pecos_errors, f"missing joint mechanism:\n{pecos_dem}"
+        assert ((1,), ()) in pecos_errors, f"missing final p_meas mechanism:\n{pecos_dem}"
+        assert (
+            (0,),
+            (),
+        ) not in pecos_errors, f"a D0-only mechanism means an error was absorbed at the first measurement:\n{pecos_dem}"
+        assert set(pecos_errors) == set(stim_errors), f"mechanism sets differ.\nPECOS:\n{pecos_dem}\nStim:\n{stim_dem}"
+        for key, p_pecos in pecos_errors.items():
+            # The two DEM strings print at different precisions.
+            assert (
+                abs(p_pecos - stim_errors[key]) < 1e-5
+            ), f"probability mismatch at {key}: {p_pecos} vs {stim_errors[key]}"

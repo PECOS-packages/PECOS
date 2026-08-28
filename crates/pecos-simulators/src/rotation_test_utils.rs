@@ -233,19 +233,20 @@ pub fn verify_two_qubit_rotation_inverse<S: ArbitraryRotationGateable>(sim: &mut
 
 // --- T Gate Tests ---
 
-/// Verify the conventional T gate has `T^8 = I` exactly (using measurements).
+/// Verify `T^8` is projectively equivalent to identity using measurements.
 ///
-/// `T = diag(1, exp(i*pi/4)) = exp(i*pi/8) RZ(pi/4)`, so its eighth power is
-/// `diag(1, exp(i*2*pi)) = I`.
-pub fn verify_t_eighth_power<S: ArbitraryRotationGateable>(sim: &mut S) {
-    // On |0>: T^8|0> = |0>, measures 0
+/// Measurements cannot distinguish the conventional `T^8 = I` from the old
+/// rotation convention's `RZ(pi/4)^8 = -I`. Amplitude-sensitive coverage of
+/// the exact identity lives in the state-vector test suite.
+pub fn verify_t_eighth_power_projectively<S: ArbitraryRotationGateable>(sim: &mut S) {
+    // On |0>: T^8|0> is projectively |0>, so it measures 0.
     sim.reset();
     for _ in 0..8 {
         sim.t(&qid(0));
     }
     assert_mz(sim, 0, false, "T^8|0>");
 
-    // On |+>: T^8|+> = |+>, measures 0 in X
+    // On |+>: T^8|+> is projectively |+>, so it measures 0 in X.
     sim.reset();
     sim.h(&qid(0));
     for _ in 0..8 {
@@ -1114,7 +1115,7 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
     verify_rotation_inverse(sim);
 
     // -- T gate --
-    verify_t_eighth_power(sim);
+    verify_t_eighth_power_projectively(sim);
     verify_t_adjoint(sim);
 
     // -- Rotation composition --

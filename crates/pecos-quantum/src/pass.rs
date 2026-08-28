@@ -212,8 +212,6 @@ impl CircuitPass for PassPipeline {
 /// | RZ | pi   | Z   |
 /// | RZ | pi/2 | SZ  |
 /// | RZ | 3pi/2 | `SZdg` |
-/// | RZ | pi/4 | T   |
-/// | RZ | 7pi/4 | `Tdg` |
 /// | RX | pi   | X   |
 /// | RX | pi/2 | SX  |
 /// | RX | 3pi/2 | `SXdg` |
@@ -1627,20 +1625,20 @@ mod tests {
     }
 
     #[test]
-    fn simplify_rz_eighth_turn_to_t() {
+    fn does_not_simplify_rz_eighth_turn_to_t() {
         let eighth = Angle64::from_turn_ratio(1, 8);
         assert_eq!(
             pecos_core::try_simplify_rotation(GateType::RZ, eighth),
-            Some(GateType::T)
+            None
         );
     }
 
     #[test]
-    fn simplify_rz_seven_eighths_to_tdg() {
+    fn does_not_simplify_rz_seven_eighths_to_tdg() {
         let seven_eighths = Angle64::from_turn_ratio(7, 8);
         assert_eq!(
             pecos_core::try_simplify_rotation(GateType::RZ, seven_eighths),
-            Some(GateType::Tdg)
+            None
         );
     }
 
@@ -1870,13 +1868,13 @@ mod tests {
     }
 
     #[test]
-    fn tick_simplify_eighth_turn_to_t() {
+    fn tick_preserves_eighth_turn_rz() {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);
         SimplifyRotations.apply_tick(&mut tc);
         let gate = &tc.ticks()[0].gate_batches()[0];
-        assert_eq!(gate.gate_type, GateType::T);
-        assert!(gate.angles.is_empty());
+        assert_eq!(gate.gate_type, GateType::RZ);
+        assert_eq!(gate.angles.as_slice(), &[Angle64::from_turn_ratio(1, 8)]);
     }
 
     // ==================== DagCircuit pass tests ====================
@@ -1983,22 +1981,6 @@ mod tests {
         assert!(unitaries_equiv(
             &unitary_rep::RZ(Angle64::THREE_QUARTERS_TURN, 0),
             &unitary_rep::SZ(0).dg(),
-        ));
-    }
-
-    #[test]
-    fn matrix_rz_eighth_equiv_t() {
-        assert!(unitaries_equiv(
-            &unitary_rep::RZ(Angle64::from_turn_ratio(1, 8), 0),
-            &unitary_rep::T(0),
-        ));
-    }
-
-    #[test]
-    fn matrix_rz_seven_eighths_equiv_tdg() {
-        assert!(unitaries_equiv(
-            &unitary_rep::RZ(Angle64::from_turn_ratio(7, 8), 0),
-            &unitary_rep::T(0).dg(),
         ));
     }
 
@@ -2343,7 +2325,7 @@ mod tests {
 
     #[test]
     fn circuit_equiv_all_single_qubit_simplifications() {
-        // One gate for every single-qubit entry in the mapping table.
+        // Every mapped single-qubit rotation plus the non-rewritable T angles.
         let seventh_eighth = Angle64::from_turn_ratio(7, 8);
         let eighth = Angle64::from_turn_ratio(1, 8);
         let mut original = TickCircuit::new();
@@ -2352,10 +2334,10 @@ mod tests {
             .rz(Angle64::HALF_TURN, &[0]) // -> Z
             .rz(Angle64::QUARTER_TURN, &[1]) // -> SZ
             .rz(Angle64::THREE_QUARTERS_TURN, &[2]) // -> SZdg
-            .rz(eighth, &[3]); // -> T
+            .rz(eighth, &[3]); // preserved: not exact T
         original
             .tick()
-            .rz(seventh_eighth, &[0]) // -> Tdg
+            .rz(seventh_eighth, &[0]) // preserved: not exact Tdg
             .rx(Angle64::HALF_TURN, &[1]) // -> X
             .rx(Angle64::QUARTER_TURN, &[2]) // -> SX
             .rx(Angle64::THREE_QUARTERS_TURN, &[3]); // -> SXdg
@@ -3059,7 +3041,8 @@ mod tests {
             .rz(Angle64::QUARTER_TURN, &[0])
             .rz(Angle64::from_turn_ratio(3, 8), &[1]);
         // Merge: RZ(pi/2)+RZ(pi/2)->RZ(pi) on q0, RZ(1/8)+RZ(1/8)->RZ(1/4) on q1
-        // Simplify up to global phase: RZ(pi)->Z, RZ(pi/4)->T, etc.
+        // Simplify up to global phase: RZ(pi)->Z. RZ(pi/4) remains a
+        // rotation because conventional T carries a different scalar.
         // After CX: same pattern again
         let (b2, a2) = pipeline_stats(&mut c2);
 

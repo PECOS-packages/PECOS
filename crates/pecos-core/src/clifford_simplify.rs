@@ -1,6 +1,6 @@
 //! Rotation-to-Clifford simplification using `Angle64` fixed-point comparison.
 //!
-//! When a rotation gate is applied at a special angle (multiples of pi/4 or pi/2),
+//! When a rotation gate is applied at a special Clifford angle,
 //! it is equivalent up to global phase to a named gate. This module provides a single source
 //! of truth for those simplifications so that both PHIR-level passes and engine-level
 //! dispatch can reuse the same logic.
@@ -15,16 +15,6 @@ type A64 = Angle<u64>;
 /// units away from canonical Clifford quarter-turns. Snap only within a tiny
 /// tolerance so genuine non-Clifford rotations still fail loudly.
 const R1XY_CLIFFORD_EPSILON_TURNS: f64 = 1e-9;
-
-/// Eighth-turn (pi/4): `QUARTER_TURN` / 2.
-fn eighth_turn() -> A64 {
-    A64::QUARTER_TURN / 2u64
-}
-
-/// Negative eighth-turn (7*pi/4): -`QUARTER_TURN` / 2.
-fn neg_eighth_turn() -> A64 {
-    -(A64::QUARTER_TURN / 2u64)
-}
 
 /// Try to simplify a single-angle rotation gate to a named Clifford gate.
 ///
@@ -42,8 +32,6 @@ fn neg_eighth_turn() -> A64 {
 /// | RZ(pi)   | HALF_TURN   | Z              |
 /// | RZ(pi/2) | QUARTER_TURN| SZ             |
 /// | RZ(-pi/2)| 3/4 TURN    | SZdg           |
-/// | RZ(pi/4) | EIGHTH_TURN | T              |
-/// | RZ(-pi/4)| NEG_EIGHTH  | Tdg            |
 /// | RX(0)    | 0           | I              |
 /// | RX(pi)   | HALF_TURN   | X              |
 /// | RX(pi/2) | QUARTER_TURN| SX             |
@@ -143,10 +131,6 @@ fn simplify_rz(angle: A64) -> Option<GateType> {
         Some(GateType::SZ)
     } else if angle == A64::THREE_QUARTERS_TURN || angle == neg(A64::QUARTER_TURN) {
         Some(GateType::SZdg)
-    } else if angle == eighth_turn() {
-        Some(GateType::T)
-    } else if angle == neg_eighth_turn() {
-        Some(GateType::Tdg)
     } else {
         None
     }
@@ -277,14 +261,11 @@ mod tests {
             try_simplify_rotation(GateType::RZ, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SZdg)
         );
-        assert_eq!(
-            try_simplify_rotation(GateType::RZ, eighth_turn()),
-            Some(GateType::T)
-        );
-        assert_eq!(
-            try_simplify_rotation(GateType::RZ, neg_eighth_turn()),
-            Some(GateType::Tdg)
-        );
+        // T/Tdg use the conventional phase-fixed matrices, so symmetric
+        // RZ(+/-pi/4) rotations cannot be replaced by those named gates.
+        let eighth_turn = Angle64::QUARTER_TURN / 2u64;
+        assert_eq!(try_simplify_rotation(GateType::RZ, eighth_turn), None);
+        assert_eq!(try_simplify_rotation(GateType::RZ, -eighth_turn), None);
         // Non-Clifford angle
         assert_eq!(
             try_simplify_rotation(GateType::RZ, Angle64::from_radians(0.123)),
@@ -545,10 +526,7 @@ mod tests {
         );
 
         let neg_quarter_pi = Angle64::from_radians(-std::f64::consts::FRAC_PI_4);
-        assert_eq!(
-            try_simplify_rotation(GateType::RZ, neg_quarter_pi),
-            Some(GateType::Tdg)
-        );
+        assert_eq!(try_simplify_rotation(GateType::RZ, neg_quarter_pi), None);
     }
 
     #[test]

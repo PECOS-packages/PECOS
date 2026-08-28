@@ -169,7 +169,7 @@ Each also has an adjoint variant (Fdg, F2dg, F3dg, F4dg) that performs the inver
 | H | Hadamard | Creates superposition, exchanges X↔Z |
 | F | Face | Cyclic permutation X→Y→Z→X |
 | G | G gate | Symmetric two-qubit Clifford |
-| T | T gate | π/8 phase gate (= RZ(π/4)) |
+| T | T gate | π/8 phase gate (= exp(iπ/8) RZ(π/4)) |
 | U | Universal | General single-qubit unitary U(θ,φ,λ) |
 | SWAP | Swap | Exchange two qubit states |
 | iSWAP | iSwap | Swap with i phase |
@@ -196,19 +196,19 @@ Some gate names in PECOS come from historical conventions in quantum computing l
 
 The T gate is historically named but fits into the root hierarchy:
 
-| Gate | Rotation | Relation |
-|------|----------|----------|
-| Z | RZ(π) | Base gate |
-| SZ (S) | RZ(π/2) | Square root: SZ² = Z |
-| T | RZ(π/4) | Fourth root: T² = SZ, T⁴ = Z |
+| Gate | Symmetric rotation | Exact relation |
+|------|--------------------|----------------|
+| Z | RZ(π) | Z = i RZ(π) |
+| SZ (S) | RZ(π/2) | SZ = exp(iπ/4) RZ(π/2), SZ² = Z |
+| T | RZ(π/4) | T = exp(iπ/8) RZ(π/4), T² = SZ, T⁴ = Z |
 
 Under a fully systematic scheme, T might be named `QZ` (quarter/fourth root of Z) or `FRZ` (fourth root of Z), but `T` is universally recognized in quantum computing and QASM.
 
-**Equivalences** (up to global phase):
+**Exact relationships** (including global phase):
 ```
-T = RZ(π/4)
-T² = SZ = S = RZ(π/2)
-T⁴ = Z = RZ(π)
+T = exp(iπ/8) RZ(π/4)
+T² = SZ = S = exp(iπ/4) RZ(π/2)
+T⁴ = Z = i RZ(π)
 ```
 
 ### Gate Aliases

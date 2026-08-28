@@ -942,7 +942,7 @@ impl GateAdaptor for StandardAdaptor {
     ) -> Vec<Gate> {
         match gate_id {
             gates::T => {
-                // T = RZ(1/8 turn)
+                // T equals RZ(1/8 turn) up to global phase.
                 vec![Gate::rz(Angle64::from_turns(0.125), qubits)]
             }
             gates::RX => {

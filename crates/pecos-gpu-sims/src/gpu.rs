@@ -1993,7 +1993,7 @@ mod tests {
         sim.ry(Angle64::from_radians(std::f64::consts::PI), &qid(0));
         assert!(sim.mz(&qid(0))[0].outcome, "RY(pi) should flip |0> to |1>");
 
-        // Test T gate (derived from RZ)
+        // Test the conventional T gate (projectively equivalent to RZ(pi/4))
         sim.reset();
         sim.t(&qid(0)); // T gate is just a phase, shouldn't change measurement
         assert!(

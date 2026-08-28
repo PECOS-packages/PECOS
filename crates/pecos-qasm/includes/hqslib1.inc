@@ -38,22 +38,22 @@ gate h() a {
 
 // S gate (sqrt(Z))
 gate s() a {
-  RZ(pi/2) a;
+  S a;
 }
 
 // S-dagger gate (conjugate of sqrt(Z))
 gate sdg() a {
-  RZ(-pi/2) a;
+  SDG a;
 }
 
 // T gate (sqrt(S))
 gate t() a {
-  RZ(pi/4) a;
+  T a;
 }
 
 // T-dagger gate (conjugate of sqrt(S))
 gate tdg() a {
-  RZ(-pi/4) a;
+  TDG a;
 }
 
 // === Rotation Gates ===
@@ -157,11 +157,11 @@ gate swap() a,b {
 
 // sqrt(X) gates
 gate sx() a {
-  R1XY(pi/2, 0) a;
+  SX a;
 }
 
 gate sxdg a {
-  R1XY(-pi/2, 0) a;
+  SXDG a;
 }
 
 // Identity gate (no-op)
@@ -173,9 +173,7 @@ gate id a {
 
 // Only define aliases that don't conflict with native gates
 gate CNOT a,b { CX a,b; }
-gate S a { s a; }
-gate Sdg a { sdg a; }
-gate T a { t a; }
-gate Tdg a { tdg a; }
+gate Sdg a { SDG a; }
+gate Tdg a { TDG a; }
 gate RX(theta) a { rx(theta) a; }
 gate RY(theta) a { ry(theta) a; }

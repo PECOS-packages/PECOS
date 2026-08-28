@@ -130,7 +130,27 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
             .rz(phi - Angle64::QUARTER_TURN, qubits)
     }
 
-    /// Applies the T gate (pi/8 rotation around Z-axis).
+    /// Applies the scalar `exp(i * phase)` once for every target qubit.
+    ///
+    /// The default is a no-op, which is correct for representations where global
+    /// phase is unobservable, such as density matrices, measurement-only mocks,
+    /// foreign interfaces without a global-phase operation, and compile-only
+    /// resource analyzers. Amplitude-exposing simulators must override this hook.
+    ///
+    /// # Parameters
+    /// - `phase`: The phase angle for one scalar application.
+    /// - `qubits`: The targets whose gate applications each contribute the scalar.
+    ///
+    /// # Returns
+    /// A mutable reference to `Self` for method chaining.
+    #[inline]
+    fn apply_global_phase(&mut self, _phase: Angle64, _qubits: &[QubitId]) -> &mut Self {
+        self
+    }
+
+    /// Applies the conventional T gate, `diag(1, exp(i*pi/4))`.
+    ///
+    /// This differs from `RZ(pi/4)` by the global phase `exp(i*pi/8)`.
     ///
     /// # Parameters
     /// - `qubits`: The target qubit indices.
@@ -140,9 +160,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     #[inline]
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.rz(Angle64::QUARTER_TURN / 2u64, qubits)
+            .apply_global_phase(Angle64::QUARTER_TURN / 4u64, qubits)
     }
 
-    /// Applies the T^dagger (T-dagger) gate (-pi/8 rotation around Z-axis).
+    /// Applies the conventional T-dagger gate, `diag(1, exp(-i*pi/4))`.
+    ///
+    /// This differs from `RZ(-pi/4)` by the global phase `exp(-i*pi/8)`.
     ///
     /// # Parameters
     /// - `qubits`: The target qubit indices.
@@ -152,6 +175,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     #[inline]
     fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 4u64), qubits)
     }
 
     /// Applies a two-qubit XX rotation gate.
@@ -356,5 +380,84 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
             self.u(before[1][0], before[1][1], before[1][2], q1s);
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MeasurementResult, QuantumSimulator};
+
+    #[derive(Default)]
+    struct RecordingSimulator {
+        rz_calls: Vec<(Angle64, Vec<QubitId>)>,
+    }
+
+    impl QuantumSimulator for RecordingSimulator {
+        fn reset(&mut self) -> &mut Self {
+            self
+        }
+
+        fn num_qubits(&self) -> usize {
+            3
+        }
+    }
+
+    impl CliffordGateable for RecordingSimulator {
+        fn sz(&mut self, _qubits: &[QubitId]) -> &mut Self {
+            self
+        }
+
+        fn h(&mut self, _qubits: &[QubitId]) -> &mut Self {
+            self
+        }
+
+        fn cx(&mut self, _pairs: &[(QubitId, QubitId)]) -> &mut Self {
+            self
+        }
+
+        fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+            qubits
+                .iter()
+                .map(|_| MeasurementResult {
+                    outcome: false,
+                    is_deterministic: true,
+                })
+                .collect()
+        }
+    }
+
+    impl ArbitraryRotationGateable for RecordingSimulator {
+        fn rx(&mut self, _theta: Angle64, _qubits: &[QubitId]) -> &mut Self {
+            self
+        }
+
+        fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+            self.rz_calls.push((theta, qubits.to_vec()));
+            self
+        }
+
+        fn rzz(&mut self, _theta: Angle64, _pairs: &[(QubitId, QubitId)]) -> &mut Self {
+            self
+        }
+    }
+
+    #[test]
+    fn default_t_and_tdg_each_emit_one_rz_call() {
+        let targets = [QubitId(0), QubitId(2)];
+        let mut recorder = RecordingSimulator::default();
+
+        recorder.t(&targets);
+        assert_eq!(
+            recorder.rz_calls,
+            vec![(Angle64::QUARTER_TURN / 2u64, targets.to_vec())]
+        );
+
+        recorder.rz_calls.clear();
+        recorder.tdg(&targets);
+        assert_eq!(
+            recorder.rz_calls,
+            vec![(-(Angle64::QUARTER_TURN / 2u64), targets.to_vec())]
+        );
     }
 }

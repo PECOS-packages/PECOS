@@ -1358,6 +1358,44 @@ where
         self
     }
 
+    fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let c = std::f32::consts::FRAC_1_SQRT_2;
+        let matrix = Complex2x2_32 {
+            a_re: 1.0,
+            a_im: 0.0,
+            b_re: 0.0,
+            b_im: 0.0,
+            c_re: 0.0,
+            c_im: 0.0,
+            d_re: c,
+            d_im: c,
+        };
+
+        for &q in qubits {
+            self.queue_gate(q.index(), &matrix);
+        }
+        self
+    }
+
+    fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let c = std::f32::consts::FRAC_1_SQRT_2;
+        let matrix = Complex2x2_32 {
+            a_re: 1.0,
+            a_im: 0.0,
+            b_re: 0.0,
+            b_im: 0.0,
+            c_re: 0.0,
+            c_im: 0.0,
+            d_re: c,
+            d_im: -c,
+        };
+
+        for &q in qubits {
+            self.queue_gate(q.index(), &matrix);
+        }
+        self
+    }
+
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // RXX = exp(-i * theta/2 * XX)
         // Decompose: H-H, CX, RZ, CX, H-H

@@ -34,7 +34,8 @@ use pecos_neo::prelude::CircuitRunner;
 /// - Decompose everything else (X, Y, Z, SWAP, T, RXX, RYY, etc.) into the above
 ///
 /// The decomposition uses pecos-neo's `GateDefinitions` which provides standard
-/// decomposition rules (e.g., SWAP -> 3 CX gates, T -> RZ(pi/4), X -> H SZ SZ H).
+/// decomposition rules (e.g., SWAP -> 3 CX gates, T -> RZ(pi/4) up to phase,
+/// X -> H SZ SZ H).
 #[must_use]
 pub fn configure_runner_for_foreign(sim: &ForeignSimulator) -> CircuitRunner<ForeignSimulator> {
     if sim.supports_rotations() {

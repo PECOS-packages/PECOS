@@ -306,7 +306,7 @@ fn test_canonicalize_rz_half_turn() {
 fn test_canonicalize_t_gate() {
     let canon = GateCanonicalizer::standard();
 
-    // RZ(π/4) = T
+    // RZ(π/4) equals T up to global phase.
     let result = canon.canonicalize(gates::RZ, &[Angle64::HALF_TURN / 4]);
     assert_eq!(result, Some(gates::T));
 }
@@ -744,7 +744,7 @@ fn test_standard_adaptor_decomposes_t() {
 
     let decomposed = adaptor.adapt(gates::T, &[QubitId(0)], &[], &[]);
 
-    // T = RZ(π/4)
+    // T equals RZ(π/4) up to global phase.
     assert_eq!(decomposed.len(), 1);
     assert_eq!(decomposed[0].gate_id, gates::RZ);
     assert_eq!(decomposed[0].angles[0], Angle64::HALF_TURN / 4);

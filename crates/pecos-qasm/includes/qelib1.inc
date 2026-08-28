@@ -19,12 +19,12 @@ gate id a { rz(0) a; }
 gate rz(lambda) a { RZ(lambda) a; }
 
 // S and S-dagger gates (sqrt(Z) and its conjugate)
-gate s a { rz(pi/2) a; }
-gate sdg a { rz(-pi/2) a; }
+gate s a { S a; }
+gate sdg a { SDG a; }
 
 // T and T-dagger gates (sqrt(S) and its conjugate)
-gate t a { rz(pi/4) a; }
-gate tdg a { rz(-pi/4) a; }
+gate t a { T a; }
+gate tdg a { TDG a; }
 
 // X-axis rotation using decomposition
 // Note: H · RZ(θ) · H = RX(θ)
@@ -41,19 +41,9 @@ gate ry(theta) a {
   rx(pi/2) a;
 }
 
-// sqrt(X) gate - decomposed
-gate sx a {
-  sdg a;
-  h a;
-  sdg a;
-}
-
-// inverse sqrt(X) - decomposed
-gate sxdg a {
-  s a;
-  h a;
-  s a;
-}
+// sqrt(X) gates (native)
+gate sx a { SX a; }
+gate sxdg a { SXDG a; }
 
 // --- Two-qubit gates ---
 

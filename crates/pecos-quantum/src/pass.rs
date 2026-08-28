@@ -3059,7 +3059,7 @@ mod tests {
             .rz(Angle64::QUARTER_TURN, &[0])
             .rz(Angle64::from_turn_ratio(3, 8), &[1]);
         // Merge: RZ(pi/2)+RZ(pi/2)->RZ(pi) on q0, RZ(1/8)+RZ(1/8)->RZ(1/4) on q1
-        // Simplify: RZ(pi)->Z, RZ(pi/4)->T, etc.
+        // Simplify up to global phase: RZ(pi)->Z, RZ(pi/4)->T, etc.
         // After CX: same pattern again
         let (b2, a2) = pipeline_stats(&mut c2);
 
@@ -3855,7 +3855,7 @@ mod tests {
 
     #[test]
     fn pipeline_applies_passes_in_order() {
-        // RZ(pi/4) RZ(pi/4) -> merge to RZ(pi/2) -> simplify to SZ
+        // RZ(pi/4) RZ(pi/4) -> merge to RZ(pi/2) -> simplify to SZ up to phase
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);
         tc.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);

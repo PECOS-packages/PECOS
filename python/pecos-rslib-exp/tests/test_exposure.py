@@ -17,6 +17,9 @@ STATS_KEYS = {
     "deferred_disent_bypass",
     "numerical_redetect",
     "multi_std",
+    "multi_std_add",
+    "multi_std_cascade",
+    "signed_eigenstate_candidates",
     "stabilizer",
     "ofd_in_span",
     "ofd_new_dim",
@@ -66,6 +69,9 @@ def test_stab_mps_measurement_selection_precedence_and_reset_retention():
 
 
 def test_stab_mps_analysis_and_noise_exposure():
+    telemetry_enabled = exp.StabMps(1, saturation_telemetry=True)
+    assert telemetry_enabled.stats()["signed_eigenstate_candidates"] == 0
+
     bell = exp.StabMps(2, seed=7)
     bell.run_1q_gate("H", 0)
     bell.run_2q_gate("CX", (0, 1))

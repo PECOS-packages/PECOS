@@ -49,6 +49,7 @@ use pecos_random::PecosRng;
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, SparseStabY,
 };
+use std::time::Instant;
 
 fn initial_tableau_and_rng(num_qubits: usize, seed: Option<u64>) -> (SparseStabY, PecosRng) {
     if let Some(seed) = seed {
@@ -414,6 +415,7 @@ impl StabMpsFlags {
     const MERGE_RZ: u8 = 1 << 1;
     const PAULI_FRAME_TRACKING: u8 = 1 << 2;
     const NUMERICAL_FLAG_REDETECTION: u8 = 1 << 3;
+    const SATURATION_TELEMETRY: u8 = 1 << 4;
 
     /// Default flags: normalization and RZ merging enabled, everything else off.
     #[must_use]
@@ -468,6 +470,15 @@ impl StabMpsFlags {
     /// Set whether product-site eigenstate flags are recovered numerically.
     pub fn set_numerical_flag_redetection(&mut self, v: bool) {
         self.set(Self::NUMERICAL_FLAG_REDETECTION, v);
+    }
+    #[must_use]
+    /// Return whether saturated-regime event telemetry is collected.
+    pub fn saturation_telemetry(self) -> bool {
+        self.get(Self::SATURATION_TELEMETRY)
+    }
+    /// Set whether saturated-regime event telemetry is collected.
+    pub fn set_saturation_telemetry(&mut self, v: bool) {
+        self.set(Self::SATURATION_TELEMETRY, v);
     }
 }
 
@@ -671,6 +682,16 @@ impl StabMpsBuilder {
         self
     }
 
+    /// Collect detailed saturated-regime profiling data.
+    ///
+    /// This records per-event timing and live bond profiles and performs the
+    /// diagnostic signed-Pauli eigenstate test. It is disabled by default.
+    #[must_use]
+    pub fn saturation_telemetry(mut self, enable: bool) -> Self {
+        self.flags.set_saturation_telemetry(enable);
+        self
+    }
+
     /// QEC-style preset retained for source compatibility.
     ///
     /// This selects exact measurement. The frozen Stage-B recipe in
@@ -740,6 +761,7 @@ impl StabMpsBuilder {
             gf2_matrix: ofd::Gf2FlipMatrix::new(self.num_qubits),
             rng,
             stats: StabMpsStats::default(),
+            saturation_telemetry: SaturationTelemetry::default(),
             deferred_ops: Vec::new(),
             uncompensated_pre_reduction_count: 0,
             pending_rz: vec![None; self.num_qubits],
@@ -818,6 +840,8 @@ pub struct StabMps {
     rng: PecosRng,
     /// Diagnostic counters. Updated by `non_clifford::apply_rz_stab_mps`.
     pub stats: StabMpsStats,
+    /// Detailed saturated-regime diagnostics, populated only when enabled.
+    saturation_telemetry: SaturationTelemetry,
     /// Deferred virtual-frame Clifford V (see `measure::DeferredOp`).
     deferred_ops: Vec<measure::DeferredOp>,
     /// Count of pragmatic measurements whose pre-reduction was uncompensated.
@@ -858,6 +882,15 @@ pub struct StabMpsStats {
     pub numerical_redetect: u64,
     /// Non-Cliffords that fell through to the std multi-site CNOT cascade path.
     pub multi_std: u64,
+    /// Standard multi-site rotations implemented by clone/add/compress.
+    pub multi_std_add: u64,
+    /// Standard multi-site rotations implemented by a long-range CNOT cascade.
+    pub multi_std_cascade: u64,
+    /// Non-`+Z` product-site opportunities rejected by the current detector
+    /// that a signed X/Y/Z Pauli-eigenstate detector could accept. Populated
+    /// only when saturated-regime telemetry is enabled; branch denominators
+    /// and axis/sign counts live in [`SaturationTelemetry::signed_eigenstates`].
+    pub signed_eigenstate_candidates: u64,
     /// Non-Cliffords that hit the Stabilizer branch (scalar or diagonal).
     pub stabilizer: u64,
     /// OFD diagnostic: non-Cliffords whose flip pattern is in the span of
@@ -874,6 +907,274 @@ pub struct StabMpsStats {
     pub ofd_in_span_single: u64,
     /// Cross-tab: OFD `in_span` gates that the heuristic routed through disent path.
     pub ofd_in_span_disent: u64,
+}
+
+/// Standard multi-site implementation selected for one non-Clifford event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MultiStdSubtype {
+    /// Clone/add followed by full compression.
+    Add,
+    /// Forward/reverse long-range CNOT cascade.
+    Cascade,
+}
+
+/// Detailed record for one standard multi-site rotation.
+#[derive(Clone, Debug)]
+pub struct MultiStdEventTelemetry {
+    /// Implementation selected for this event.
+    pub subtype: MultiStdSubtype,
+    /// Inclusive support span, `max_site - min_site`.
+    pub span: usize,
+    /// Live internal bond dimensions across the support span before the event.
+    pub bond_profile: Vec<usize>,
+    /// Whether the flip pattern was already in the OFD span.
+    pub ofd_in_span: bool,
+    /// Wall time spent in this event's implementation.
+    pub wall_time_seconds: f64,
+}
+
+/// Detailed record for one exact multi-site disentangling event.
+#[derive(Clone, Debug)]
+pub struct MultiDisentEventTelemetry {
+    /// Inclusive support span, `max_site - min_site`.
+    pub span: usize,
+    /// Live internal bond dimensions across the support span before the event.
+    pub bond_profile: Vec<usize>,
+    /// Wall time spent in the disentangling implementation.
+    pub wall_time_seconds: f64,
+}
+
+/// Actual multi-site branch whose signed-eigenstate opportunities were tested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignedEigenstateBranch {
+    /// Exact tableau-right-composing disentangling branch.
+    MultiDisent,
+    /// Standard clone/add/compress branch.
+    MultiStdAdd,
+    /// Standard long-range CNOT-cascade branch.
+    MultiStdCascade,
+}
+
+/// Candidate counts separated by detected Pauli axis and eigenvalue sign.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SignedEigenstateBreakdown {
+    /// `|+>` candidates.
+    pub x_plus: u64,
+    /// `|->` candidates.
+    pub x_minus: u64,
+    /// `|+i>` candidates.
+    pub y_plus: u64,
+    /// `|-i>` candidates.
+    pub y_minus: u64,
+    /// `|1>` candidates. `|0>` is deliberately excluded.
+    pub z_minus: u64,
+}
+
+impl SignedEigenstateBreakdown {
+    /// Total candidates across every non-`+Z` axis/sign bucket.
+    #[must_use]
+    pub const fn total(self) -> u64 {
+        self.x_plus + self.x_minus + self.y_plus + self.y_minus + self.z_minus
+    }
+
+    pub(super) fn record(&mut self, eigenstate: SiteEigenstate) {
+        match eigenstate {
+            SiteEigenstate::X(false) => self.x_plus += 1,
+            SiteEigenstate::X(true) => self.x_minus += 1,
+            SiteEigenstate::Y(false) => self.y_plus += 1,
+            SiteEigenstate::Y(true) => self.y_minus += 1,
+            SiteEigenstate::Z(true) => self.z_minus += 1,
+            // +Z is the current criterion, not a signed candidate; the sole
+            // call site excludes it. Skip rather than panic: a data-dependent
+            // release panic on a diagnostic path would be worse than a
+            // miscount in telemetry that changes no result.
+            SiteEigenstate::Z(false) => debug_assert!(
+                false,
+                "+Z reached the signed-candidate breakdown despite its exclusion"
+            ),
+        }
+    }
+}
+
+/// Signed-eigenstate candidate numerator and denominators for one actual branch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SignedEigenstateBranchTelemetry {
+    /// Number of multi-site events routed through this branch and inspected.
+    pub events: u64,
+    /// Number of local Pauli-support sites tested across those events.
+    pub sites_tested: u64,
+    /// Candidate numerator by detected axis and sign.
+    pub candidates: SignedEigenstateBreakdown,
+}
+
+/// Signed-eigenstate diagnostics separated by the branch actually taken.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SignedEigenstateTelemetry {
+    /// Exact multi-site disentangling events.
+    pub multi_disent: SignedEigenstateBranchTelemetry,
+    /// Standard clone/add/compress events.
+    pub multi_std_add: SignedEigenstateBranchTelemetry,
+    /// Standard long-range CNOT-cascade events.
+    pub multi_std_cascade: SignedEigenstateBranchTelemetry,
+}
+
+impl SignedEigenstateTelemetry {
+    pub(super) fn branch_mut(
+        &mut self,
+        branch: SignedEigenstateBranch,
+    ) -> &mut SignedEigenstateBranchTelemetry {
+        match branch {
+            SignedEigenstateBranch::MultiDisent => &mut self.multi_disent,
+            SignedEigenstateBranch::MultiStdAdd => &mut self.multi_std_add,
+            SignedEigenstateBranch::MultiStdCascade => &mut self.multi_std_cascade,
+        }
+    }
+}
+
+/// Runtime-gated saturated-regime event details.
+#[derive(Clone, Debug, Default)]
+pub struct SaturationTelemetry {
+    /// One entry for every standard multi-site rotation.
+    pub multi_std_events: Vec<MultiStdEventTelemetry>,
+    /// One entry for every exact multi-site disentangling rotation.
+    pub multi_disent_events: Vec<MultiDisentEventTelemetry>,
+    /// Gauge-independent signed-eigenstate candidates and branch denominators.
+    pub signed_eigenstates: SignedEigenstateTelemetry,
+}
+
+/// Operation counts and wall time for one query phase at one trie depth.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QueryPhaseTelemetry {
+    /// Number of times the phase ran.
+    pub calls: u64,
+    /// Actual SVD operations performed within the phase.
+    pub svd_operations: u64,
+    /// SVD operations for which `max_bond_dim` was binding.
+    pub capped_svd_operations: u64,
+    /// Accumulated phase wall time.
+    pub wall_time_seconds: f64,
+}
+
+/// Query profiling buckets for one `prob_bitstrings` trie depth.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QueryDepthTelemetry {
+    /// Z-expectation and probability evaluation.
+    pub expectation: QueryPhaseTelemetry,
+    /// Compensated tableau-generator pre-reduction.
+    pub pre_reduction: QueryPhaseTelemetry,
+    /// Stabilizer/destabilizer decomposition after any pre-reduction.
+    pub decomposition: QueryPhaseTelemetry,
+    /// Projection construction and tableau update.
+    pub projection: QueryPhaseTelemetry,
+    /// Exact post-projection right-canonical QR sweep.
+    pub post_projection_qr: QueryPhaseTelemetry,
+    /// Post-projection configured SVD compression.
+    pub post_projection_svd: QueryPhaseTelemetry,
+    /// Projection survival-ratio contraction.
+    pub survival: QueryPhaseTelemetry,
+    /// Conditional post-projection normalization.
+    pub normalization: QueryPhaseTelemetry,
+    /// Path selection and returned modified-site bookkeeping.
+    pub bookkeeping: QueryPhaseTelemetry,
+    phase_active: bool,
+}
+
+/// Depth-bucketed profile returned by [`StabMps::prob_bitstrings_profiled`].
+#[derive(Clone, Debug, Default)]
+pub struct ProbabilityQueryTelemetry {
+    /// Entry `d` contains work performed for trie projections at depth `d`.
+    pub by_depth: Vec<QueryDepthTelemetry>,
+    /// Wall time of the complete `prob_bitstrings` call, including trie walks
+    /// and state cloning outside forced projection.
+    pub whole_call_wall_time_seconds: f64,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum QueryPhase {
+    Expectation,
+    PreReduction,
+    Decomposition,
+    Projection,
+    PostProjectionQr,
+    PostProjectionSvd,
+    Survival,
+    Normalization,
+    Bookkeeping,
+}
+
+impl QueryDepthTelemetry {
+    pub(super) fn begin_phase(&mut self) {
+        assert!(
+            !self.phase_active,
+            "query telemetry phase scopes must be disjoint"
+        );
+        self.phase_active = true;
+    }
+
+    pub(super) fn record(
+        &mut self,
+        phase: QueryPhase,
+        svd_operations: u64,
+        capped_svd_operations: u64,
+        wall_time_seconds: f64,
+    ) {
+        assert!(self.phase_active, "query telemetry phase was not started");
+        self.phase_active = false;
+        let target = match phase {
+            QueryPhase::Expectation => &mut self.expectation,
+            QueryPhase::PreReduction => &mut self.pre_reduction,
+            QueryPhase::Decomposition => &mut self.decomposition,
+            QueryPhase::Projection => &mut self.projection,
+            QueryPhase::PostProjectionQr => &mut self.post_projection_qr,
+            QueryPhase::PostProjectionSvd => &mut self.post_projection_svd,
+            QueryPhase::Survival => &mut self.survival,
+            QueryPhase::Normalization => &mut self.normalization,
+            QueryPhase::Bookkeeping => &mut self.bookkeeping,
+        };
+        target.calls += 1;
+        target.svd_operations += svd_operations;
+        target.capped_svd_operations += capped_svd_operations;
+        target.wall_time_seconds += wall_time_seconds;
+    }
+
+    /// Sum of every disjoint phase bucket at this trie depth.
+    #[must_use]
+    pub fn attributed_wall_time_seconds(&self) -> f64 {
+        self.expectation.wall_time_seconds
+            + self.pre_reduction.wall_time_seconds
+            + self.decomposition.wall_time_seconds
+            + self.projection.wall_time_seconds
+            + self.post_projection_qr.wall_time_seconds
+            + self.post_projection_svd.wall_time_seconds
+            + self.survival.wall_time_seconds
+            + self.normalization.wall_time_seconds
+            + self.bookkeeping.wall_time_seconds
+    }
+
+    /// Return whether every phase scope at this depth closed without overlap.
+    #[must_use]
+    pub const fn phase_scopes_disjoint(&self) -> bool {
+        !self.phase_active
+    }
+}
+
+impl ProbabilityQueryTelemetry {
+    /// Sum of all depth-bucketed phase wall times.
+    #[must_use]
+    pub fn attributed_wall_time_seconds(&self) -> f64 {
+        self.by_depth
+            .iter()
+            .map(QueryDepthTelemetry::attributed_wall_time_seconds)
+            .sum()
+    }
+
+    /// Return whether all depth-local timing scopes completed without nesting.
+    #[must_use]
+    pub fn phase_scopes_disjoint(&self) -> bool {
+        self.by_depth
+            .iter()
+            .all(QueryDepthTelemetry::phase_scopes_disjoint)
+    }
 }
 
 struct PrefixSamplingContext<'a> {
@@ -894,8 +1195,22 @@ struct PrefixProjectionState {
 }
 
 impl PrefixProjectionState {
-    fn project_z(&mut self, qubit: usize, outcome: bool) -> Result<f64, MpsError> {
-        measure::project_forced_z(&mut self.tableau, &mut self.mps, qubit, outcome)
+    fn project_z(
+        &mut self,
+        qubit: usize,
+        outcome: bool,
+        telemetry: Option<&mut QueryDepthTelemetry>,
+    ) -> Result<f64, MpsError> {
+        match telemetry {
+            Some(telemetry) => measure::project_forced_z_profiled(
+                &mut self.tableau,
+                &mut self.mps,
+                qubit,
+                outcome,
+                telemetry,
+            ),
+            None => measure::project_forced_z(&mut self.tableau, &mut self.mps, qubit, outcome),
+        }
     }
 }
 
@@ -961,6 +1276,12 @@ impl StabMps {
     #[must_use]
     pub fn max_bond_dim(&self) -> usize {
         self.mps.max_bond_dim()
+    }
+
+    /// Return detailed saturated-regime event telemetry collected so far.
+    #[must_use]
+    pub fn saturation_profile(&self) -> &SaturationTelemetry {
+        &self.saturation_telemetry
     }
 
     /// Theoretical minimum bond dimension from GF(2) OFD analysis.
@@ -1426,6 +1747,31 @@ impl StabMps {
     /// projection encounters an unrecoverable numerical MPS state.
     #[must_use]
     pub fn prob_bitstrings<B: AsRef<[bool]>>(&self, bitstrings: &[B]) -> Vec<f64> {
+        self.prob_bitstrings_impl(bitstrings, None)
+    }
+
+    /// Profiled [`Self::prob_bitstrings`] with phase operation counts and wall
+    /// time bucketed by trie depth.
+    #[must_use]
+    pub fn prob_bitstrings_profiled<B: AsRef<[bool]>>(
+        &self,
+        bitstrings: &[B],
+    ) -> (Vec<f64>, ProbabilityQueryTelemetry) {
+        let mut telemetry = ProbabilityQueryTelemetry {
+            by_depth: vec![QueryDepthTelemetry::default(); self.num_qubits],
+            whole_call_wall_time_seconds: 0.0,
+        };
+        let started = Instant::now();
+        let probabilities = self.prob_bitstrings_impl(bitstrings, Some(&mut telemetry));
+        telemetry.whole_call_wall_time_seconds = started.elapsed().as_secs_f64();
+        (probabilities, telemetry)
+    }
+
+    fn prob_bitstrings_impl<B: AsRef<[bool]>>(
+        &self,
+        bitstrings: &[B],
+        telemetry: Option<&mut ProbabilityQueryTelemetry>,
+    ) -> Vec<f64> {
         let mut trie = ProbabilityQueryTrieNode::default();
         for (query_index, bitstring) in bitstrings.iter().enumerate() {
             let bitstring = bitstring.as_ref();
@@ -1453,6 +1799,7 @@ impl StabMps {
                 0,
                 1.0,
                 &mut probabilities,
+                telemetry,
             ),
             "StabMps::prob_bitstrings forced projection",
         );
@@ -1466,6 +1813,7 @@ impl StabMps {
         qubit: usize,
         total_probability: f64,
         probabilities: &mut [f64],
+        mut telemetry: Option<&mut ProbabilityQueryTelemetry>,
     ) -> Result<(), MpsError> {
         if qubit == num_qubits {
             let probability = total_probability.clamp(0.0, 1.0);
@@ -1478,7 +1826,14 @@ impl StabMps {
         match (&node.children[0], &node.children[1]) {
             (Some(zero), Some(one)) => {
                 let mut zero_state = state.clone();
-                let zero_probability = total_probability * zero_state.project_z(qubit, false)?;
+                let zero_probability = total_probability
+                    * zero_state.project_z(
+                        qubit,
+                        false,
+                        telemetry
+                            .as_deref_mut()
+                            .map(|profile| &mut profile.by_depth[qubit]),
+                    )?;
                 // NaN must follow the singular walk (which keeps projecting on
                 // NaN) rather than being silently pruned to zero.
                 if zero_probability.is_nan() || zero_probability >= QUERY_ZERO_PROBABILITY_FLOOR {
@@ -1489,10 +1844,18 @@ impl StabMps {
                         qubit + 1,
                         zero_probability,
                         probabilities,
+                        telemetry.as_deref_mut(),
                     )?;
                 }
 
-                let one_probability = total_probability * state.project_z(qubit, true)?;
+                let one_probability = total_probability
+                    * state.project_z(
+                        qubit,
+                        true,
+                        telemetry
+                            .as_deref_mut()
+                            .map(|profile| &mut profile.by_depth[qubit]),
+                    )?;
                 if one_probability.is_nan() || one_probability >= QUERY_ZERO_PROBABILITY_FLOOR {
                     Self::probability_query_prefix_tree(
                         one,
@@ -1501,12 +1864,20 @@ impl StabMps {
                         qubit + 1,
                         one_probability,
                         probabilities,
+                        telemetry.as_deref_mut(),
                     )?;
                 }
             }
             (Some(child), None) | (None, Some(child)) => {
                 let outcome = node.children[1].is_some();
-                let child_probability = total_probability * state.project_z(qubit, outcome)?;
+                let child_probability = total_probability
+                    * state.project_z(
+                        qubit,
+                        outcome,
+                        telemetry
+                            .as_deref_mut()
+                            .map(|profile| &mut profile.by_depth[qubit]),
+                    )?;
                 if child_probability.is_nan() || child_probability >= QUERY_ZERO_PROBABILITY_FLOOR {
                     Self::probability_query_prefix_tree(
                         child,
@@ -1515,6 +1886,7 @@ impl StabMps {
                         qubit + 1,
                         child_probability,
                         probabilities,
+                        telemetry,
                     )?;
                 }
             }
@@ -2019,7 +2391,9 @@ impl StabMps {
         // the trivial fast path instead of completing the in-progress general
         // projection as `prob_bitstring` does.
         let mut zero_state = state.clone();
-        let probability_zero = zero_state.project_z(q, context.frame_x[q])?.clamp(0.0, 1.0);
+        let probability_zero = zero_state
+            .project_z(q, context.frame_x[q], None)?
+            .clamp(0.0, 1.0);
         let probability_one = 1.0 - probability_zero;
         let num_zero = if probability_zero == 0.0 {
             0
@@ -2039,7 +2413,7 @@ impl StabMps {
         }
 
         if num_one > 0 {
-            let projected_probability = state.project_z(q, !context.frame_x[q])?;
+            let projected_probability = state.project_z(q, !context.frame_x[q], None)?;
             // Invariant: `probability_zero` and this forced-projection
             // probability deterministically recompute the same expectation on
             // identical parent states. A positive one-branch probability
@@ -2648,6 +3022,10 @@ impl StabMps {
                         && self.deferred_ops.is_empty(),
                     gf2_matrix: &mut self.gf2_matrix,
                     stats: &mut self.stats,
+                    saturation_telemetry: self
+                        .flags
+                        .saturation_telemetry()
+                        .then_some(&mut self.saturation_telemetry),
                 },
             ),
             "StabMps::rz non-Clifford update",
@@ -2735,6 +3113,7 @@ impl QuantumSimulator for StabMps {
         self.disent_flags = vec![Some(SiteEigenstate::Z(false)); self.num_qubits];
         self.gf2_matrix.reset();
         self.stats = StabMpsStats::default();
+        self.saturation_telemetry = SaturationTelemetry::default();
         self.deferred_ops.clear();
         self.uncompensated_pre_reduction_count = 0;
         self.last_truncation_error = 0.0;

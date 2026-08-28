@@ -181,21 +181,34 @@ fn normalize_factor(factor: &Factor) -> NormalizedFactor {
         return NormalizedFactor::Forced(outcomes.into_iter().next().unwrap());
     }
     if outcomes.len() == 2 && outcomes.iter().any(Outcome::is_empty) {
-        // When both outcomes are empty, outcome 1 is the deterministic toggle
-        // choice. This pins normalization even though either choice is
-        // mathematically equivalent.
-        let toggle_index = usize::from(outcomes[0].is_empty());
+        // When exactly one outcome is empty the toggle is the non-empty one,
+        // whatever its position. When BOTH are empty, position must not
+        // decide (the gate divides by the baseline, so a position-dependent
+        // choice made classification depend on listing order): take the
+        // larger probability as the baseline, which is order-independent
+        // (an exact tie is symmetric, so either choice yields identical
+        // arithmetic).
+        let toggle_index = if outcomes[0].is_empty() && outcomes[1].is_empty() {
+            usize::from(outcomes[0].probability >= outcomes[1].probability)
+        } else {
+            usize::from(outcomes[0].is_empty())
+        };
         let baseline_index = 1 - toggle_index;
         let complement = 1.0 - outcomes[toggle_index].probability;
         let baseline = outcomes[baseline_index].probability;
         // Delegation substitutes fl(1 - p) for the stored baseline, changing
-        // its log mass by approximately |q - fl(1 - p)| / q. Accept exactly
-        // when that induced error is within the engine's 1e-9 acceptance bar:
-        // representation-noise pairs delegate in either listing order, while
-        // deliberate drift stays faithful on the N-ary kernel. Below roughly
-        // 2e-7, even an exact-sum pair may not delegate because ulp(1)-scale
-        // subtraction noise alone can exceed the bar; N-ary evaluation is then
-        // the faithful result, not a missed optimization.
+        // that factor's log mass by approximately |q - fl(1 - p)| / q. The
+        // gate bounds this PER-FACTOR error at 1e-9; the worst-case model
+        // total scales with the number of delegated factors. In practice
+        // representation-noise pairs sit at ~1e-16 relative, so realistic
+        // accumulation is far below any test bar, while a model built from
+        // many maximally-drifted-yet-passing pairs is deliberate
+        // parameterization at scale, not noise. Pairs delegate in either
+        // listing order; deliberate drift stays faithful on the N-ary
+        // kernel. Below roughly 2e-7, even an exact-sum pair may not
+        // delegate because ulp(1)-scale subtraction noise alone can exceed
+        // the per-factor bound; N-ary evaluation is then the faithful
+        // result, not a missed optimization.
         if (baseline - complement).abs() <= BINARY_COMPLEMENT_RELATIVE_TOLERANCE * baseline {
             let toggle = outcomes[toggle_index].clone();
             return NormalizedFactor::Binary { outcomes, toggle };

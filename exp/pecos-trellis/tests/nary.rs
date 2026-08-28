@@ -742,3 +742,40 @@ fn sparse_dem_conversion_rejects_duplicate_indices_before_factor_ordering() {
             .contains("factor 0 outcome 1 repeats detector index 0")
     );
 }
+
+#[test]
+fn both_empty_two_outcome_factors_classify_and_decode_order_independently() {
+    // The degenerate pair toggles nothing, so listing order must not change
+    // classification or a single bit of the decode. The drifted pair below
+    // was the executed counterexample against position-based toggle choice:
+    // p_a = 1e-3, p_b = 0.999 - 5e-12 (sum residual -5e-12, valid).
+    let p_a = 1e-3_f64;
+    let p_b = 0.999_f64 - 5e-12;
+    for (first, second) in [(p_a, p_b), (p_b, p_a)] {
+        let build = |x: f64, y: f64| {
+            FactorModel::new(
+                vec![
+                    Factor {
+                        outcomes: vec![outcome(x, &[], &[]), outcome(y, &[], &[])],
+                    },
+                    Factor {
+                        outcomes: vec![outcome(0.8, &[], &[]), outcome(0.2, &[0], &[0])],
+                    },
+                ],
+                1,
+                1,
+            )
+            .unwrap()
+        };
+        let mut forward =
+            TrellisDecoder::from_factor_model(&build(first, second), exact_config()).unwrap();
+        let mut reversed =
+            TrellisDecoder::from_factor_model(&build(second, first), exact_config()).unwrap();
+        for syndrome_mask in 0..2_usize {
+            let observed = syndrome(syndrome_mask, 1);
+            let forward_result = forward.decode(&observed).unwrap();
+            let reversed_result = reversed.decode(&observed).unwrap();
+            assert_result_masses_bitwise_equal(&forward_result, &reversed_result);
+        }
+    }
+}

@@ -1585,3 +1585,31 @@ fn non_finite_bp_posteriors_are_an_engine_fault_not_a_no_path() {
         }
     }
 }
+
+#[test]
+fn maxlog_rejects_score_alpha_that_quantizes_to_zero() {
+    // score_alpha 0.4 at scale 1 quantizes to 0 and would silently disable
+    // suffix scoring; the config must fail loud instead. Explicit 0.0 and a
+    // scale that preserves the weight both construct.
+    let dem = "error(0.4) D0\nerror(0.1) D0 L0\n";
+    let build = |score_alpha: f64, scale: i32| {
+        TrellisDecoder::from_dem_str(
+            dem,
+            TrellisConfig {
+                metric_mode: MetricMode::MaxLogInt,
+                int_metric_scale: scale,
+                score_alpha,
+                ..TrellisConfig::default()
+            },
+        )
+    };
+    let error = build(0.4, 1).expect_err("quantized-to-zero alpha must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("quantizes to zero at int_metric_scale 1"),
+        "unexpected error: {error}"
+    );
+    build(0.0, 1).expect("explicit zero alpha is a deliberate off-switch");
+    build(0.4, 1024).expect("a preserving scale accepts the same alpha");
+}

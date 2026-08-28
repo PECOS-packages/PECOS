@@ -1584,6 +1584,15 @@ fn validate_config(config: &TrellisConfig, mechanism_count: usize) -> Result<(),
             "TrellisConfig.int_metric_scale must be positive".into(),
         ));
     }
+    if config.metric_mode == MetricMode::MaxLogInt
+        && config.score_alpha > 0.0
+        && quantize_metric(config.score_alpha, config.int_metric_scale) == 0
+    {
+        return Err(DecoderError::InvalidConfiguration(format!(
+            "score_alpha {} quantizes to zero at int_metric_scale {} and would silently disable suffix scoring; pass score_alpha 0.0 to disable it explicitly or use a larger scale",
+            config.score_alpha, config.int_metric_scale
+        )));
+    }
     if !config.score_alpha.is_finite() || config.score_alpha < 0.0 {
         return Err(DecoderError::InvalidConfiguration(format!(
             "TrellisConfig.score_alpha must be finite and non-negative, got {}",
@@ -1958,6 +1967,12 @@ fn prune_maxlog(
     let mut candidates: Vec<ScoredIntCandidate> = frontier
         .into_iter()
         .map(|(key, log_mass)| {
+            // alpha_int == 0 must skip suffix scoring entirely, not multiply
+            // it away: fixed_mul_round* return the NEG_INF sentinel for a
+            // sentinel parity BEFORE checking multiplier == 0 (upstream-
+            // faithful order), so "0 times an ln(0) suffix row" would poison
+            // a feasible state's score and prune it. Mirrors the float
+            // path's score_alpha == 0.0 short-circuit.
             let score = if alpha_int == 0 {
                 log_mass
             } else {
@@ -2400,10 +2415,16 @@ mod tests {
         for non_finite in [f64::NEG_INFINITY, f64::NAN] {
             assert_eq!(quantize_metric(non_finite, 1024), INT_METRIC_NEG_INF);
         }
+        #[cfg(debug_assertions)]
         assert!(
             std::panic::catch_unwind(|| quantize_metric(f64::INFINITY, 1024)).is_err(),
             "positive infinity must trip the debug-only caller-contract assertion"
         );
+        // Release builds compile the caller-contract assertion out; the
+        // upstream-faithful fallback (saturate to the negative sentinel)
+        // must hold there.
+        #[cfg(not(debug_assertions))]
+        assert_eq!(quantize_metric(f64::INFINITY, 1024), INT_METRIC_NEG_INF);
         assert_eq!(quantize_metric(f64::MIN, 1024), INT_METRIC_NEG_INF);
         assert_eq!(quantize_metric(f64::MAX, 1024), INT_METRIC_MAX);
         assert_eq!(quantize_metric(-3e18, 1), INT_METRIC_NEG_INF);

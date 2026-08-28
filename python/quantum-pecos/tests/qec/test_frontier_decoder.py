@@ -204,7 +204,7 @@ def test_metric_and_factor_model_error_paths() -> None:
         )
     with pytest.raises(
         RuntimeError,
-        match="num_detectors 1000000000000000 exceeds the u32 detector-index range",
+        match="num_detectors 1000000000000000 exceeds the u32 index-addressable width 4294967296",
     ):
         FrontierDecoder.from_factors(
             [[(0.5, [], []), (0.5, [0], [])]],

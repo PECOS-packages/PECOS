@@ -76,14 +76,16 @@ impl FactorModel {
     ) -> Result<Self, DecoderError> {
         // Indices are u32, so the largest addressable width is u32::MAX + 1
         // (index u32::MAX exists) -- the same contract as the DEM parser,
-        // which accepts `D4294967295` and reports that width.
-        const MAX_WIDTH: usize = u32::MAX as usize + 1;
-        if num_detectors > MAX_WIDTH {
+        // which accepts `D4294967295` and reports that width. Compare in
+        // u64: on a 32-bit target `u32::MAX as usize + 1` would be a
+        // const-eval overflow, while every usize is representable in u64.
+        const MAX_WIDTH: u64 = u32::MAX as u64 + 1;
+        if num_detectors as u64 > MAX_WIDTH {
             return Err(DecoderError::InvalidConfiguration(format!(
                 "num_detectors {num_detectors} exceeds the u32 index-addressable width {MAX_WIDTH}"
             )));
         }
-        if num_observables > MAX_WIDTH {
+        if num_observables as u64 > MAX_WIDTH {
             return Err(DecoderError::InvalidConfiguration(format!(
                 "num_observables {num_observables} exceeds the u32 index-addressable width {MAX_WIDTH}"
             )));

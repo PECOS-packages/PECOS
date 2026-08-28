@@ -465,7 +465,7 @@ impl MonteCarloEngine {
         })
     }
 
-    /// Runs by specifying a set of fault histories. There should be on
+    /// Runs by specifying a set of fault histories. There should be one
     /// fault history per shot.
     ///
     /// # Errors

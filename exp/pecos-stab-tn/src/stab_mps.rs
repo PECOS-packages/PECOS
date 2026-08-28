@@ -1055,25 +1055,20 @@ pub struct QueryPhaseTelemetry {
     pub wall_time_seconds: f64,
 }
 
-/// First operation that removed the projection path's tracked center.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProjectionCenterLossCause {
-    /// A verified center remained available at the post-projection QR consult.
-    CenterRemainedValid,
-    /// No center was available when the forced projection began.
-    InvalidAtProjectionEntry,
-    /// Compensated tableau pre-reduction removed the center claim.
-    PreReduction,
-    /// The projection's owner-mediated physical-block replacement removed it.
-    ProjectionBlockWrite,
-    /// The Pauli projector's MPS direct sum removed it.
-    DirectSumAdd,
-    /// Collapse or post-measurement Pauli-gauge compensation removed it.
-    ProjectionCompensation,
-    /// A tracked claim was present but failed the diagnostic Gram validation.
-    StaleCenterClaim,
-    /// The loss did not match one of the projection path's named operations.
-    Other,
+/// Tensor construction used by one exact forced projection.
+///
+/// This labels the projection algorithm, not the operation that invalidated
+/// an orthogonality-center claim. Projection telemetry observes the combined
+/// scale/write/add/compensation phase only at its end, so it cannot attribute
+/// center loss among those individual mutations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProjectionConstruction {
+    /// Scale the existing branch because the Pauli support is empty.
+    ScalarScale,
+    /// Replace physical blocks for a single-flip projection.
+    LocalBlockWrite,
+    /// Add the original and Pauli-transformed branches as an MPS direct sum.
+    DirectSum,
 }
 
 /// Runtime-gated locality details for one exact post-projection QR consult.
@@ -1081,38 +1076,53 @@ pub enum ProjectionCenterLossCause {
 pub struct ProjectionQrLocalityTelemetry {
     /// Number of MPS sites in the projected chain.
     pub chain_length: usize,
-    /// Center claim at entry to the complete forced-projection operation.
-    pub center_at_projection_entry: Option<usize>,
-    /// Center claim immediately before the projection tensor update.
+    /// Center claim after pre-reduction and before the projection tensor update.
     pub center_before_projection_write: Option<usize>,
+    /// Whether the pre-write center claim passed a Gram check.
+    pub center_before_projection_write_is_valid: bool,
     /// Center claim immediately before the post-projection QR consult.
     pub center_before_qr: Option<usize>,
     /// Whether the optional claim immediately before QR passed a Gram check.
     pub center_before_qr_is_valid: bool,
-    /// First operation responsible for an unavailable or stale center.
-    pub center_loss_cause: ProjectionCenterLossCause,
-    /// Smallest semantically modified site reported by projection/compensation.
+    /// Projection tensor construction; this does not attribute center loss.
+    pub construction: ProjectionConstruction,
+    /// Smallest site reported by pre-reduction, projection, or compensation.
     pub touched_site_min: Option<usize>,
-    /// Largest semantically modified site reported by projection/compensation.
+    /// Largest site reported by pre-reduction, projection, or compensation.
     pub touched_site_max: Option<usize>,
-    /// Number of distinct semantically modified sites.
+    /// Number of distinct reported sites. This is a conservative superset of
+    /// the projector support.
     pub touched_sites: usize,
-    /// Smallest tensor that differs bit-for-bit from projection entry.
+    /// Smallest tensor that differs bit-for-bit from the post-pre-reduction
+    /// snapshot.
     pub changed_tensor_min: Option<usize>,
-    /// Largest tensor that differs bit-for-bit from projection entry.
+    /// Largest tensor that differs bit-for-bit from the post-pre-reduction
+    /// snapshot.
     pub changed_tensor_max: Option<usize>,
-    /// Number of tensors that differ bit-for-bit from projection entry.
+    /// Number of tensors that differ bit-for-bit from the post-pre-reduction
+    /// snapshot. This is representation churn, not a locality metric: the
+    /// current direct-sum implementation changes every tensor's shape.
     pub changed_tensors: usize,
-    /// Smallest internal bond dimension that differs from projection entry.
+    /// Smallest internal bond dimension that differs from the
+    /// post-pre-reduction snapshot.
     pub changed_bond_min: Option<usize>,
-    /// Largest internal bond dimension that differs from projection entry.
+    /// Largest internal bond dimension that differs from the
+    /// post-pre-reduction snapshot.
     pub changed_bond_max: Option<usize>,
-    /// Number of internal bond dimensions that differ from projection entry.
+    /// Number of internal bond dimensions that differ from the
+    /// post-pre-reduction snapshot.
     pub changed_bonds: usize,
     /// Number of one-site QR factorizations selected by `canonicalize_at(0)`.
     pub qr_sites: usize,
-    /// QR factorizations whose site lies outside the changed-tensor span.
-    pub qr_sites_outside_changed_span: usize,
+    /// Additional QR factorizations a support-aware projection could skip.
+    ///
+    /// When projection loses a valid pre-write center, sites strictly above
+    /// `max(center_before_projection_write, touched_site_max)` retain their
+    /// right-isometric gauge. Sites below the old center are left-isometric
+    /// and still need the direction-reversing QR sweep. Events that retain a
+    /// valid center already reuse its isometries and therefore have no
+    /// additional headroom here.
+    pub qr_sites_skippable_by_locality: usize,
     /// Whether the following normalization retained its pre-normalization center.
     /// `None` means the event has not yet reached its normalization phase.
     pub normalization_preserved_center: Option<bool>,

@@ -18,8 +18,8 @@ use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimul
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
 use pecos_stab_tn::stab_mps::{
-    MeasurementMode, MultiStdSubtype, PauliKind, ProjectionCenterLossCause,
-    SignedEigenstateTelemetry, StabMps,
+    MeasurementMode, MultiStdSubtype, PauliKind, ProjectionConstruction, SignedEigenstateTelemetry,
+    StabMps,
 };
 use rayon::prelude::*;
 
@@ -2671,32 +2671,37 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         Some(true),
                         "normalization invalidated or failed to validate the post-projection center"
                     );
-                    let expected_outside = (1..=event.qr_sites)
-                        .filter(|site| {
-                            event
-                                .changed_tensor_min
-                                .zip(event.changed_tensor_max)
-                                .is_none_or(|(min, max)| *site < min || *site > max)
-                        })
-                        .count();
+                    let expected_skippable = if event.center_before_qr_is_valid
+                        || !event.center_before_projection_write_is_valid
+                    {
+                        0
+                    } else {
+                        let center = event
+                            .center_before_projection_write
+                            .expect("a valid pre-write center must have a site");
+                        let frontier = event
+                            .touched_site_max
+                            .map_or(center, |site| center.max(site));
+                        (event.chain_length - 1).saturating_sub(frontier)
+                    };
                     assert_eq!(
-                        event.qr_sites_outside_changed_span, expected_outside,
-                        "QR locality headroom does not match the changed-tensor span"
+                        event.qr_sites_skippable_by_locality, expected_skippable,
+                        "QR locality headroom does not match the gauge frontier"
                     );
-                    match event.center_loss_cause {
-                        ProjectionCenterLossCause::DirectSumAdd => {
+                    assert!(event.qr_sites_skippable_by_locality <= event.qr_sites);
+                    match event.construction {
+                        ProjectionConstruction::DirectSum => {
                             locality_direct_sum_events += 1;
-                            assert_eq!(event.changed_tensor_min, Some(0));
-                            assert_eq!(event.changed_tensor_max, Some(event.chain_length - 1));
-                            assert_eq!(event.changed_tensors, event.chain_length);
-                            assert_eq!(event.qr_sites, event.chain_length - 1);
-                            assert_eq!(event.qr_sites_outside_changed_span, 0);
                         }
-                        ProjectionCenterLossCause::ProjectionBlockWrite => {
+                        ProjectionConstruction::LocalBlockWrite => {
                             locality_block_write_events += 1;
                         }
-                        _ => {}
+                        ProjectionConstruction::ScalarScale => {}
                     }
+                    // Do not turn the current full-chain bitwise span of a
+                    // direct sum into a contract. `Mps::add` changes every
+                    // tensor's shape today, which makes that span degenerate;
+                    // a support-aware implementation must be free to narrow it.
                 }
                 assert!(
                     profile
@@ -2815,11 +2820,11 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     );
     assert!(
         locality_direct_sum_events > 0,
-        "locality mutation guard never exercised direct-sum invalidation"
+        "locality diagnostics never exercised direct-sum construction"
     );
     assert!(
         locality_block_write_events > 0,
-        "locality mutation guard never exercised block-write invalidation"
+        "locality diagnostics never exercised block-write construction"
     );
 
     // Every false-q0 query is an endpoint-zero subtree. It must be pruned to

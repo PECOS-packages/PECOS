@@ -15,7 +15,7 @@
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_stab_tn::stab_mps::{
-    MultiStdSubtype, ProbabilityQueryTelemetry, ProjectionCenterLossCause, SaturationTelemetry,
+    MultiStdSubtype, ProbabilityQueryTelemetry, ProjectionConstruction, SaturationTelemetry,
     SignedEigenstateBranchTelemetry, SignedEigenstateTelemetry, StabMps, StabMpsStats,
 };
 use std::collections::{BTreeMap, HashSet};
@@ -388,16 +388,11 @@ fn query_totals(profile: &ProbabilityQueryTelemetry) -> QueryTotals {
     totals
 }
 
-fn center_loss_label(cause: ProjectionCenterLossCause) -> &'static str {
-    match cause {
-        ProjectionCenterLossCause::CenterRemainedValid => "valid",
-        ProjectionCenterLossCause::InvalidAtProjectionEntry => "entry",
-        ProjectionCenterLossCause::PreReduction => "pre_reduction",
-        ProjectionCenterLossCause::ProjectionBlockWrite => "block_write",
-        ProjectionCenterLossCause::DirectSumAdd => "direct_sum",
-        ProjectionCenterLossCause::ProjectionCompensation => "compensation",
-        ProjectionCenterLossCause::StaleCenterClaim => "stale",
-        ProjectionCenterLossCause::Other => "other",
+fn projection_construction_label(construction: ProjectionConstruction) -> &'static str {
+    match construction {
+        ProjectionConstruction::ScalarScale => "scalar_scale",
+        ProjectionConstruction::LocalBlockWrite => "block_write",
+        ProjectionConstruction::DirectSum => "direct_sum",
     }
 }
 
@@ -442,19 +437,19 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
             let option = |value: Option<usize>| {
                 value.map_or_else(|| "none".to_owned(), |value| value.to_string())
             };
-            let cause = center_loss_label(event.center_loss_cause);
+            let construction = projection_construction_label(event.construction);
             println!(
-                "LOCALITY cell={} run={} depth={} event={} n={} center_entry={} center_pre_write={} center_qr={} center_valid={} cause={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_outside={} normalization_preserved={}",
+                "LOCALITY cell={} run={} depth={} event={} n={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} construction={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} normalization_preserved={}",
                 cell.name,
                 run,
                 depth,
                 event_index,
                 event.chain_length,
-                option(event.center_at_projection_entry),
                 option(event.center_before_projection_write),
+                event.center_before_projection_write_is_valid,
                 option(event.center_before_qr),
                 event.center_before_qr_is_valid,
-                cause,
+                construction,
                 option(event.touched_site_min),
                 option(event.touched_site_max),
                 event.touched_sites,
@@ -465,82 +460,101 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                 option(event.changed_bond_max),
                 event.changed_bonds,
                 event.qr_sites,
-                event.qr_sites_outside_changed_span,
+                event.qr_sites_skippable_by_locality,
                 event
                     .normalization_preserved_center
                     .is_some_and(|preserved| preserved),
             );
         }
         if !bucket.projection_qr_locality.is_empty() {
-            let mut causes = BTreeMap::<&str, usize>::new();
+            let mut constructions = BTreeMap::<&str, usize>::new();
             let mut distributions = BTreeMap::<_, usize>::new();
             let mut qr_sites = 0;
-            let mut qr_outside = 0;
+            let mut qr_skippable = 0;
             let mut normalization_losses = 0;
             for event in &bucket.projection_qr_locality {
-                *causes
-                    .entry(center_loss_label(event.center_loss_cause))
+                *constructions
+                    .entry(projection_construction_label(event.construction))
                     .or_default() += 1;
                 *distributions
                     .entry((
-                        event.touched_site_min,
-                        event.touched_site_max,
-                        event.touched_sites,
-                        event.changed_tensor_min,
-                        event.changed_tensor_max,
-                        event.changed_tensors,
-                        event.changed_bond_min,
-                        event.changed_bond_max,
-                        event.changed_bonds,
-                        event.qr_sites,
-                        event.qr_sites_outside_changed_span,
+                        event.construction,
+                        event.center_before_projection_write,
+                        event.center_before_projection_write_is_valid,
+                        event.center_before_qr,
+                        event.center_before_qr_is_valid,
+                        (
+                            event.touched_site_min,
+                            event.touched_site_max,
+                            event.touched_sites,
+                            event.changed_tensor_min,
+                            event.changed_tensor_max,
+                            event.changed_tensors,
+                            event.changed_bond_min,
+                            event.changed_bond_max,
+                            event.changed_bonds,
+                            event.qr_sites,
+                            event.qr_sites_skippable_by_locality,
+                        ),
                     ))
                     .or_default() += 1;
                 qr_sites += event.qr_sites;
-                qr_outside += event.qr_sites_outside_changed_span;
+                qr_skippable += event.qr_sites_skippable_by_locality;
                 normalization_losses +=
                     usize::from(event.normalization_preserved_center == Some(false));
             }
-            let cause_counts = causes
+            let construction_counts = constructions
                 .iter()
-                .map(|(cause, count)| format!("{cause}:{count}"))
+                .map(|(construction, count)| format!("{construction}:{count}"))
                 .collect::<Vec<_>>()
                 .join(",");
             println!(
-                "LOCALITY_DEPTH cell={} run={} depth={} events={} causes={} qr_sites={} qr_outside={} outside_fraction={:.9} normalization_losses={}",
+                "LOCALITY_DEPTH cell={} run={} depth={} events={} constructions={} qr_sites={} qr_skippable={} headroom_fraction={:.9} normalization_losses={}",
                 cell.name,
                 run,
                 depth,
                 bucket.projection_qr_locality.len(),
-                cause_counts,
+                construction_counts,
                 qr_sites,
-                qr_outside,
-                qr_outside as f64 / qr_sites as f64,
+                qr_skippable,
+                qr_skippable as f64 / qr_sites as f64,
                 normalization_losses,
             );
             for (distribution, count) in distributions {
                 let (
-                    touched_min,
-                    touched_max,
-                    touched_sites,
-                    changed_min,
-                    changed_max,
-                    changed_tensors,
-                    changed_bond_min,
-                    changed_bond_max,
-                    changed_bonds,
-                    event_qr_sites,
-                    event_qr_outside,
+                    construction,
+                    center_pre_write,
+                    center_pre_write_valid,
+                    center_qr,
+                    center_qr_valid,
+                    (
+                        touched_min,
+                        touched_max,
+                        touched_sites,
+                        changed_min,
+                        changed_max,
+                        changed_tensors,
+                        changed_bond_min,
+                        changed_bond_max,
+                        changed_bonds,
+                        event_qr_sites,
+                        event_qr_skippable,
+                    ),
                 ) = distribution;
                 let option = |value: Option<usize>| {
                     value.map_or_else(|| "none".to_owned(), |value| value.to_string())
                 };
                 println!(
-                    "LOCALITY_DIST cell={} run={} depth={} count={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_outside={}",
+                    "LOCALITY_DIST cell={} run={} depth={} count={} construction={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={}",
                     cell.name,
                     run,
                     depth,
                     count,
+                    projection_construction_label(construction),
+                    option(center_pre_write),
+                    center_pre_write_valid,
+                    option(center_qr),
+                    center_qr_valid,
                     option(touched_min),
                     option(touched_max),
                     touched_sites,
@@ -551,7 +565,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                     option(changed_bond_max),
                     changed_bonds,
                     event_qr_sites,
-                    event_qr_outside,
+                    event_qr_skippable,
                 );
             }
         }
@@ -567,32 +581,32 @@ fn print_locality_total(cell: Cell, run: usize, profile: &ProbabilityQueryTeleme
     if events.is_empty() {
         return;
     }
-    let mut causes = BTreeMap::<&str, usize>::new();
+    let mut constructions = BTreeMap::<&str, usize>::new();
     let mut qr_sites = 0;
-    let mut qr_outside = 0;
+    let mut qr_skippable = 0;
     let mut normalization_losses = 0;
     for event in &events {
-        *causes
-            .entry(center_loss_label(event.center_loss_cause))
+        *constructions
+            .entry(projection_construction_label(event.construction))
             .or_default() += 1;
         qr_sites += event.qr_sites;
-        qr_outside += event.qr_sites_outside_changed_span;
+        qr_skippable += event.qr_sites_skippable_by_locality;
         normalization_losses += usize::from(event.normalization_preserved_center == Some(false));
     }
-    let cause_counts = causes
+    let construction_counts = constructions
         .iter()
-        .map(|(cause, count)| format!("{cause}:{count}"))
+        .map(|(construction, count)| format!("{construction}:{count}"))
         .collect::<Vec<_>>()
         .join(",");
     println!(
-        "LOCALITY_TOTAL cell={} run={} events={} causes={} qr_sites={} qr_outside={} outside_fraction={:.9} normalization_losses={}",
+        "LOCALITY_TOTAL cell={} run={} events={} constructions={} qr_sites={} qr_skippable={} headroom_fraction={:.9} normalization_losses={}",
         cell.name,
         run,
         events.len(),
-        cause_counts,
+        construction_counts,
         qr_sites,
-        qr_outside,
-        qr_outside as f64 / qr_sites as f64,
+        qr_skippable,
+        qr_skippable as f64 / qr_sites as f64,
         normalization_losses,
     );
 }

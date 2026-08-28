@@ -1076,6 +1076,11 @@ impl Mps {
     /// Add two MPS of the same structure (direct sum of bond spaces).
     ///
     /// The result has bond dimension `chi_self + chi_other` at each internal bond.
+    /// Internal tensor blocks are block diagonal, so matching isometries are
+    /// preserved there. The fixed dimension-one boundary bonds cannot also be
+    /// direct-summed: the row blocks overlap at site zero and the column blocks
+    /// overlap at the final site. Those endpoint joins prevent retaining a
+    /// general mixed-canonical center claim for the sum.
     /// Should be followed by SVD truncation (e.g. via `left_canonicalize` + truncate).
     ///
     /// # Panics
@@ -1136,6 +1141,9 @@ impl Mps {
             num_sites: n,
             phys_dim: d,
             tensors: new_tensors,
+            // The internal block-diagonal tensors do not destroy matching
+            // isometries. The unavoidable endpoint joins above are enough to
+            // make a general center claim unavailable, however.
             center: None,
             bond_dims: new_bond_dims,
             config: self.config.clone(),

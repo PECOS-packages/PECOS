@@ -178,6 +178,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Global-phase convention
+    ///
+    /// The default `Z`-then-`X` decomposition evaluates to `X * Z = -i Y`,
+    /// so it implements `Y` only projectively. This is intentional for
+    /// representations such as tableaus. Any simulator that preserves complex
+    /// amplitudes and global phase must override this method with the
+    /// phase-fixed Pauli matrix.
     #[inline]
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.z(qubits).x(qubits)
@@ -212,8 +220,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of X (SX) gate to the specified qubits.
     ///
-    /// The SX gate is equivalent to a rotation by π/2 radians around the X axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SX = exp(i*pi/4) RX(pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -240,8 +248,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint (inverse) of the square root of X gate.
     ///
-    /// The SX† gate is equivalent to a rotation by -π/2 radians around the X axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SX† = exp(-i*pi/4) RX(-pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -268,8 +276,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of Y (SY) gate to the specified qubits.
     ///
-    /// The SY gate is equivalent to a rotation by π/2 radians around the Y axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SY = exp(i*pi/4) RY(pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -283,12 +291,20 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SY = 1/√2 [[1,  -1],
-    ///            [1,   1]]
+    /// SY = 1/2 [[1+i, -1-i],
+    ///           [1+i,  1+i]]
     /// ```
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Global-phase convention
+    ///
+    /// The default `Z`-then-`H` decomposition evaluates to `RY(pi/2)`, so it
+    /// implements `SY` only up to the global phase `exp(-i*pi/4)`. This is
+    /// intentional for projective representations such as tableaus. Any
+    /// simulator that preserves complex amplitudes and global phase must
+    /// override this method with the conventional phase-fixed matrix.
     #[inline]
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.z(qubits).h(qubits)
@@ -296,8 +312,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint (inverse) of the square root of Y gate.
     ///
-    /// The SY† gate is equivalent to a rotation by -π/2 radians around the Y axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SY† = exp(-i*pi/4) RY(-pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -311,12 +327,20 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SY† = 1/√2 [[ 1,  1],
-    ///            [-1,  1]]
+    /// SY† = 1/2 [[ 1-i, 1-i],
+    ///            [-1+i, 1-i]]
     /// ```
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Global-phase convention
+    ///
+    /// The default `H`-then-`Z` decomposition evaluates to `RY(-pi/2)`, so it
+    /// implements `SY†` only up to the global phase `exp(i*pi/4)`. This is
+    /// intentional for projective representations such as tableaus. Any
+    /// simulator that preserves complex amplitudes and global phase must
+    /// override this method with the conventional phase-fixed matrix.
     #[inline]
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.h(qubits).z(qubits)
@@ -324,8 +348,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of Z (SZ) gate to the specified qubits.
     ///
-    /// The SZ gate (also known as the S gate) is equivalent to a rotation by π/2 radians
-    /// around the Z axis of the Bloch sphere.
+    /// The conventional phase-fixed named gate (also known as S) is
+    /// `SZ = exp(i*pi/4) RZ(pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -349,8 +373,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint (inverse) of the square root of Z gate.
     ///
-    /// The SZ† gate is equivalent to a rotation by -π/2 radians around the Z axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SZ† = exp(-i*pi/4) RZ(-pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -417,8 +441,11 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Matrix Representation
     /// ```text
     /// H2 = 1/√2 [[ 1, -1],
-    ///            [-1,  1]]
+    ///            [-1, -1]]
     /// ```
+    /// Equivalently, `H2 = exp(-i*pi/4) * Z * SY`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -443,9 +470,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// H3 = 1/√2 [[1,  i],
-    ///            [i,  1]]
+    /// H3 = [[0, (1-i)/√2],
+    ///       [(1+i)/√2, 0]]
     /// ```
+    /// Equivalently, `H3 = exp(-i*pi/4) * Y * SZ`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -470,9 +500,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// H4 = 1/√2 [[ 1, -i],
-    ///            [-i,  1]]
+    /// H4 = [[0, (1+i)/√2],
+    ///       [(1-i)/√2, 0]]
     /// ```
+    /// Equivalently, `H4 = exp(-i*pi/4) * X * SZ`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -497,9 +530,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// H5 = 1/√2 [[-1,  1],
-    ///            [ 1,  1]]
+    /// H5 = 1/√2 [[ 1, -i],
+    ///            [ i, -1]]
     /// ```
+    /// Equivalently, `H5 = exp(-i*pi/4) * Z * SX`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -524,9 +560,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// H6 = 1/√2 [[-1, -1],
-    ///            [-1,  1]]
+    /// H6 = 1/√2 [[-1, -i],
+    ///            [ i,  1]]
     /// ```
+    /// Equivalently, `H6 = exp(-i*pi/4) * Y * SX`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -551,9 +590,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F = 1/√2 [[1,  -i],
-    ///           [i,   1]]
+    /// F = 1/2 [[-1+i,  1+i],
+    ///          [-1+i, -1-i]]
     /// ```
+    /// Equivalently, `F = i * SZ * SX`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -578,9 +620,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F† = 1/√2 [[1,   i],
-    ///            [-i,  1]]
+    /// F† = 1/2 [[-1-i, -1-i],
+    ///           [ 1-i, -1+i]]
     /// ```
+    /// Equivalently, `Fdg = -i * SXdg * SZdg`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -605,9 +650,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F2 = 1/√2 [[-1,  -i],
-    ///            [-i,   1]]
+    /// F2 = 1/2 [[-1+i,  1-i],
+    ///           [-1-i, -1-i]]
     /// ```
+    /// Equivalently, `F2 = -SY * SXdg`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -632,9 +680,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F2† = 1/√2 [[-1,   i],
-    ///            [ i,   1]]
+    /// F2† = 1/2 [[-1-i, -1+i],
+    ///           [ 1+i, -1+i]]
     /// ```
+    /// Equivalently, `F2dg = -SX * SYdg`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -659,9 +710,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F3 = 1/√2 [[ 1,  -i],
-    ///            [-i,  -1]]
+    /// F3 = 1/2 [[-1+i, -1-i],
+    ///           [ 1-i, -1-i]]
     /// ```
+    /// Equivalently, `F3 = -SZ * SXdg`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -686,9 +740,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F3† = 1/√2 [[ 1,   i],
-    ///            [ i,  -1]]
+    /// F3† = 1/2 [[-1-i,  1+i],
+    ///           [-1+i, -1+i]]
     /// ```
+    /// Equivalently, `F3dg = -SX * SZdg`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -713,9 +770,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F4 = 1/√2 [[-i,  -1],
-    ///            [ 1,  -i]]
+    /// F4 = 1/2 [[-1+i, -1+i],
+    ///           [ 1+i, -1-i]]
     /// ```
+    /// Equivalently, `F4 = i * SX * SZ`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -740,9 +800,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F4† = 1/√2 [[ i,   1],
-    ///            [-1,   i]]
+    /// F4† = 1/2 [[-1-i,  1-i],
+    ///           [-1-i, -1+i]]
     /// ```
+    /// Equivalently, `F4dg = -i * SZdg * SXdg`.
+    /// The default decomposition omits that global phase and is exact only
+    /// projectively; phase-carrying implementations must override it.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.

@@ -1005,7 +1005,7 @@ fn cx_qubit_order_matters() {
     );
 }
 
-// --- Face gate cycle: F^3 = I (up to phase) ---
+// --- Face gate cycle: F^3 = I exactly ---
 
 #[test]
 fn face_gates_have_order_3() {
@@ -1022,9 +1022,10 @@ fn face_gates_have_order_3() {
     ] {
         let mat = cliff.to_matrix();
         let cubed = &(&mat * &mat) * &mat;
+        let diff = (&cubed - &identity).norm();
         assert!(
-            cubed.equiv_up_to_phase(&identity),
-            "{cliff:?}^3 should be identity up to phase"
+            diff < 1e-10,
+            "{cliff:?}^3 should be identity, diff = {diff}"
         );
     }
 }
@@ -1090,9 +1091,10 @@ fn s_gates_have_order_4() {
         let mat = cliff.to_matrix();
         let sq = &mat * &mat;
         let fourth = &sq * &sq;
+        let diff = (&fourth - &identity).norm();
         assert!(
-            fourth.equiv_up_to_phase(&identity),
-            "{cliff:?}^4 should be identity up to phase"
+            diff < 1e-10,
+            "{cliff:?}^4 should be identity, diff = {diff}"
         );
     }
 }
@@ -1106,16 +1108,14 @@ fn t_gate_has_order_8() {
         let sq = &mat * &mat;
         let fourth = &sq * &sq;
         let eighth = &fourth * &fourth;
-        assert!(
-            eighth.equiv_up_to_phase(&identity),
-            "{gt:?}^8 should be identity up to phase"
-        );
+        let diff = (&eighth - &identity).norm();
+        assert!(diff < 1e-10, "{gt:?}^8 should be identity, diff = {diff}");
     }
 }
 
 #[test]
 fn s_gate_squared_is_pauli() {
-    // SX^2 = X, SY^2 = Y, SZ^2 = Z (up to phase)
+    // SX^2 = X, SY^2 = Y, SZ^2 = Z exactly.
     let pairs = [
         (Clifford::SX, Pauli::X),
         (Clifford::SY, Pauli::Y),
@@ -1125,9 +1125,10 @@ fn s_gate_squared_is_pauli() {
         let mat = s_gate.to_matrix();
         let sq = &mat * &mat;
         let pauli_mat = pauli.to_matrix();
+        let diff = (&sq - &pauli_mat).norm();
         assert!(
-            sq.equiv_up_to_phase(&pauli_mat),
-            "{s_gate:?}^2 should equal {pauli:?} up to phase"
+            diff < 1e-10,
+            "{s_gate:?}^2 should equal {pauli:?}, diff = {diff}"
         );
     }
 }
@@ -1140,9 +1141,11 @@ fn all_1q_clifford_adjoint_matches_inverse_matrix() {
         let mat = cliff.to_matrix();
         let mat_adj = mat.adjoint();
         let inv_mat = cliff.inverse().to_matrix();
+        let diff = (&mat_adj - &inv_mat).norm();
         assert!(
-            mat_adj.equiv_up_to_phase(&inv_mat),
-            "Clifford::{cliff:?}.to_matrix().adjoint() should match {cliff:?}.inverse().to_matrix()"
+            diff < 1e-10,
+            "Clifford::{cliff:?}.to_matrix().adjoint() should match \
+             {cliff:?}.inverse().to_matrix(), diff = {diff}"
         );
     }
 }

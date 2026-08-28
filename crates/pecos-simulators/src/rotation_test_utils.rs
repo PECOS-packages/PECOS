@@ -233,19 +233,20 @@ pub fn verify_two_qubit_rotation_inverse<S: ArbitraryRotationGateable>(sim: &mut
 
 // --- T Gate Tests ---
 
-/// Verify T^8 = I (up to global phase, invisible to measurement).
+/// Verify `T^8` is projectively equivalent to identity using measurements.
 ///
-/// T = RZ(pi/4), so T^8 = RZ(2*pi) = e^{-i*pi}*I = -I.
-/// Global phase is invisible to measurement.
-pub fn verify_t_eighth_power<S: ArbitraryRotationGateable>(sim: &mut S) {
-    // On |0>: T^8|0> = -|0>, measures 0
+/// Measurements cannot distinguish the conventional `T^8 = I` from the old
+/// rotation convention's `RZ(pi/4)^8 = -I`. Amplitude-sensitive coverage of
+/// the exact identity lives in the state-vector test suite.
+pub fn verify_t_eighth_power_projectively<S: ArbitraryRotationGateable>(sim: &mut S) {
+    // On |0>: T^8|0> is projectively |0>, so it measures 0.
     sim.reset();
     for _ in 0..8 {
         sim.t(&qid(0));
     }
     assert_mz(sim, 0, false, "T^8|0>");
 
-    // On |+>: T^8|+> = -|+>, measures 0 in X
+    // On |+>: T^8|+> is projectively |+>, so it measures 0 in X.
     sim.reset();
     sim.h(&qid(0));
     for _ in 0..8 {
@@ -1071,9 +1072,9 @@ pub fn verify_ry_half_pi_is_sy<S: ArbitraryRotationGateable>(sim: &mut S) {
     assert_mz(sim, 0, true, "RY(pi/2)^2|0> = Y|0> = |1>");
 }
 
-/// Verify RZ(pi/4) = T (up to global phase).
+/// Verify `RZ(pi/4) = exp(-i*pi/8) T` up to global phase.
 pub fn verify_rz_quarter_pi_is_t<S: ArbitraryRotationGateable>(sim: &mut S) {
-    // T^8 = I, so RZ(pi/4)^8 should also be identity
+    // RZ(pi/4)^8 = -I, which is indistinguishable from T^8 = I by measurement.
     sim.reset();
     sim.h(&qid(0)); // |+>
     for _ in 0..8 {
@@ -1081,7 +1082,7 @@ pub fn verify_rz_quarter_pi_is_t<S: ArbitraryRotationGateable>(sim: &mut S) {
     }
     assert_mx(sim, 0, false, "RZ(pi/4)^8|+> = |+>");
 
-    // RZ(pi/4) * RZ(-pi/4) = I, same as T * Tdg = I
+    // RZ(pi/4) followed by Tdg is identity up to the known global phase.
     sim.reset();
     sim.h(&qid(0));
     sim.rz(Angle64::from_radians(FRAC_PI_4), &qid(0));
@@ -1114,7 +1115,7 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
     verify_rotation_inverse(sim);
 
     // -- T gate --
-    verify_t_eighth_power(sim);
+    verify_t_eighth_power_projectively(sim);
     verify_t_adjoint(sim);
 
     // -- Rotation composition --

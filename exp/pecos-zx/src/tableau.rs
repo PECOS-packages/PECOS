@@ -1027,7 +1027,7 @@ mod tests {
 
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
-        dag.rz(Angle64::from_turns(0.125), &[0]); // T gate equivalent, non-Clifford
+        dag.rz(Angle64::from_turns(0.125), &[0]); // T up to global phase, non-Clifford
         dag.mz(&[0]);
 
         let result = CliffordTableau::from_dag(&dag);

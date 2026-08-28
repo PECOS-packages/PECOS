@@ -329,6 +329,8 @@ fn gate_name_to_quantum_op(name: &str, params: &[f64]) -> Result<QuantumOp> {
         "sdg" => Ok(QuantumOp::Sdg),
         "t" => Ok(QuantumOp::T),
         "tdg" => Ok(QuantumOp::Tdg),
+        "sx" => Ok(QuantumOp::SX),
+        "sxdg" => Ok(QuantumOp::SXdg),
         "cx" | "cnot" => Ok(QuantumOp::CX),
         "cz" => Ok(QuantumOp::CZ),
         "swap" => Ok(QuantumOp::SWAP),
@@ -363,6 +365,8 @@ fn gate_type_to_quantum_op(gate_type: GateType, params: &[f64]) -> Result<Quantu
         GateType::SZdg => Ok(QuantumOp::Sdg),
         GateType::T => Ok(QuantumOp::T),
         GateType::Tdg => Ok(QuantumOp::Tdg),
+        GateType::SX => Ok(QuantumOp::SX),
+        GateType::SXdg => Ok(QuantumOp::SXdg),
         GateType::CX => Ok(QuantumOp::CX),
         GateType::CZ => Ok(QuantumOp::CZ),
         GateType::RX => Ok(QuantumOp::RX(angle_param(params, 0))),
@@ -490,6 +494,43 @@ mod tests {
             .iter()
             .any(|i| matches!(&i.operation, Operation::Quantum(QuantumOp::RZ(_))));
         assert!(has_rz, "should contain RZ gate");
+    }
+
+    #[test]
+    fn named_phase_sensitive_gates_remain_named() {
+        let qasm = r#"
+            OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            s q[0];
+            sdg q[0];
+            t q[0];
+            tdg q[0];
+            sx q[0];
+            sxdg q[0];
+        "#;
+        let module = parse_and_convert(qasm);
+        let block = get_main_block(&module);
+        let quantum_ops: Vec<_> = block
+            .operations
+            .iter()
+            .filter_map(|instruction| match &instruction.operation {
+                Operation::Quantum(op) => Some(op.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            quantum_ops,
+            [
+                QuantumOp::S,
+                QuantumOp::Sdg,
+                QuantumOp::T,
+                QuantumOp::Tdg,
+                QuantumOp::SX,
+                QuantumOp::SXdg,
+            ]
+        );
     }
 
     #[test]

@@ -658,10 +658,10 @@ class QASMGenerator(Generator):
                     op_str = self.qgate_sq_qasm(op, "reset")
 
                 case "T":
-                    op_str = self.qgate_sq_qasm(op, "rz(pi/4)")
+                    op_str = self.qgate_sq_qasm(op, "t")
 
                 case "Tdg":
-                    op_str = self.qgate_sq_qasm(op, "rz(-pi/4)")
+                    op_str = self.qgate_sq_qasm(op, "tdg")
 
                 case "SX":
                     op_str = self.qgate_sq_qasm(op, "rx(pi/2)")

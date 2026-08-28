@@ -31,14 +31,17 @@ use pecos_neo::prelude::CircuitRunner;
 /// The runner will:
 /// - Execute `SZ`, `H`, `CX`, `MZ` natively (always supported)
 /// - Execute `RX`, `RZ`, `RZZ` natively if the simulator supports rotations
-/// - Decompose everything else (X, Y, Z, SWAP, T, RXX, RYY, etc.) into the above
+/// - Decompose projectively safe gates (X, Y, Z, SWAP, RXX, RYY, etc.) into the above
+/// - Reject exact T/Tdg execution because the foreign protocol has neither native
+///   callbacks for those gates nor a global-phase operation
 ///
 /// The decomposition uses pecos-neo's `GateDefinitions` which provides standard
-/// decomposition rules (e.g., SWAP -> 3 CX gates, T -> RZ(pi/4), X -> H SZ SZ H).
+/// decomposition rules (e.g., SWAP -> 3 CX gates and X -> H SZ SZ H).
 #[must_use]
 pub fn configure_runner_for_foreign(sim: &ForeignSimulator) -> CircuitRunner<ForeignSimulator> {
     if sim.supports_rotations() {
-        // Use the rotations constructor which enables RX, RZ, RZZ, T, Tdg, etc.
+        // Use the rotations constructor for RX, RZ, RZZ, etc. ForeignSimulator
+        // itself rejects exact T/Tdg before invoking a phase-inexact rotation.
         CircuitRunner::<ForeignSimulator>::rotations()
     } else {
         // Clifford-only: SZ, H, CX, MZ + decompositions for X, Y, Z, SWAP, etc.

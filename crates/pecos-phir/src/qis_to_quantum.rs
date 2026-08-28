@@ -5,6 +5,7 @@ Lowers QIS dialect `CustomOps` to standard PHIR `QuantumOps`:
 - `qis.qalloc` -> `QuantumOp::Alloc`
 - `qis.qfree` -> `QuantumOp::Dealloc`
 - `qis.reset` -> `QuantumOp::Reset`
+- named `qis.h/x/y/z/s/sdg/t/tdg/cx` operations remain named `QuantumOp`s
 - `qis.rxy` -> `QuantumOp::R1XY(theta, phi)`
 - `qis.rz` -> `QuantumOp::RZ(angle)`
 - `qis.rzz` -> `QuantumOp::RZZ(angle)`
@@ -109,6 +110,40 @@ fn convert_qis_op(
         "reset" => Ok(Some(Instruction {
             results: vec![],
             operation: Operation::Quantum(QuantumOp::Reset),
+            operands: instr.operands.clone(),
+            result_types: vec![],
+            regions: vec![],
+            attributes: BTreeMap::new(),
+            location: instr.location.clone(),
+        })),
+
+        "h" | "x" | "y" | "z" | "s" | "sdg" | "t" | "tdg" | "sx" | "sxdg" => {
+            Ok(Some(Instruction {
+                results: vec![],
+                operation: Operation::Quantum(match custom.name() {
+                    "h" => QuantumOp::H,
+                    "x" => QuantumOp::X,
+                    "y" => QuantumOp::Y,
+                    "z" => QuantumOp::Z,
+                    "s" => QuantumOp::S,
+                    "sdg" => QuantumOp::Sdg,
+                    "t" => QuantumOp::T,
+                    "tdg" => QuantumOp::Tdg,
+                    "sx" => QuantumOp::SX,
+                    "sxdg" => QuantumOp::SXdg,
+                    _ => unreachable!(),
+                }),
+                operands: instr.operands.clone(),
+                result_types: vec![],
+                regions: vec![],
+                attributes: BTreeMap::new(),
+                location: instr.location.clone(),
+            }))
+        }
+
+        "cx" => Ok(Some(Instruction {
+            results: vec![],
+            operation: Operation::Quantum(QuantumOp::CX),
             operands: instr.operands.clone(),
             result_types: vec![],
             regions: vec![],
@@ -356,6 +391,53 @@ mod tests {
             quantum_ops[0].operation,
             Operation::Quantum(QuantumOp::RZ(v)) if v == Angle64::from_radians(FRAC_PI_2)
         ));
+    }
+
+    #[test]
+    fn test_named_gate_conversion() {
+        let q0 = SSAValue::new(0);
+        let q1 = SSAValue::new(1);
+        let mut instructions: Vec<_> = ["h", "x", "y", "z", "s", "sdg", "t", "tdg", "sx", "sxdg"]
+            .into_iter()
+            .map(|name| Instruction {
+                results: vec![],
+                operation: Operation::Custom(CustomOp::new("qis", name, vec![], BTreeMap::new())),
+                operands: vec![q0],
+                result_types: vec![],
+                regions: vec![],
+                attributes: BTreeMap::new(),
+                location: None,
+            })
+            .collect();
+        instructions.push(Instruction {
+            results: vec![],
+            operation: Operation::Custom(CustomOp::new("qis", "cx", vec![], BTreeMap::new())),
+            operands: vec![q0, q1],
+            result_types: vec![],
+            regions: vec![],
+            attributes: BTreeMap::new(),
+            location: None,
+        });
+        let mut module = make_module(instructions);
+
+        convert_qis_to_quantum(&mut module).unwrap();
+
+        let expected = [
+            QuantumOp::H,
+            QuantumOp::X,
+            QuantumOp::Y,
+            QuantumOp::Z,
+            QuantumOp::S,
+            QuantumOp::Sdg,
+            QuantumOp::T,
+            QuantumOp::Tdg,
+            QuantumOp::SX,
+            QuantumOp::SXdg,
+            QuantumOp::CX,
+        ];
+        for (instruction, expected) in module.body.blocks[0].operations.iter().zip(expected) {
+            assert_eq!(instruction.operation, Operation::Quantum(expected));
+        }
     }
 
     #[test]

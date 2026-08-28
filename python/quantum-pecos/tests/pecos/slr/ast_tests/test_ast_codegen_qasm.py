@@ -15,6 +15,7 @@ import pytest
 from pecos.slr import Barrier, CReg, If, Main, QReg, Repeat
 from pecos.slr.ast import AstToQasm, ast_to_qasm, slr_to_ast
 from pecos.slr.qeclib import qubit as qb
+from pecos_rslib import qasm_to_phir_json_py
 
 
 class TestAstToQasmBasic:
@@ -337,9 +338,15 @@ class TestAstToQasmFullPipeline:
         ast = slr_to_ast(prog)
         code = ast_to_qasm(ast)
 
-        # T is rz(pi/4), Tdg is rz(-pi/4)
-        assert "rz(pi/4) q[0];" in code
-        assert "rz(-pi/4) q[0];" in code
+        assert "t q[0];" in code
+        assert "tdg q[0];" in code
+        assert "rz(pi/4) q[0];" not in code
+        assert "rz(-pi/4) q[0];" not in code
+
+        # Reparse through the production QASM-to-PHIR lowering. Named gates
+        # must remain named instead of silently becoming symmetric rotations.
+        phir = qasm_to_phir_json_py(code)
+        assert [op["qop"] for op in phir["ops"] if "qop" in op] == ["T", "Tdg"]
 
     def test_barrier_operation(self) -> None:
         """Test barrier generation."""

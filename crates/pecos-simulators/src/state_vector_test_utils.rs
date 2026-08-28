@@ -2704,7 +2704,9 @@ pub fn run_full_state_vector_test_suite<S: StateVectorSimulator + ArbitraryRotat
 
 // --- Trait Implementations ---
 
-use crate::{SparseStateVecAoS, SparseStateVecSoA, StateVecAoS, StateVecSoA};
+use crate::{
+    SparseStateVecAoS, SparseStateVecSoA, StabVec, StateVecAoS, StateVecSoA, StateVecSoA32,
+};
 
 impl StateVectorSimulator for StateVecAoS {
     fn with_seed(num_qubits: usize, seed: u64) -> Self {
@@ -2745,6 +2747,27 @@ impl StateVectorSimulator for SparseStateVecSoA {
 
     fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
         SparseStateVecSoA::get_amplitude(self, basis_state)
+    }
+}
+
+impl StateVectorSimulator for StateVecSoA32 {
+    fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        StateVecSoA32::with_seed(num_qubits, seed)
+    }
+
+    fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
+        let amplitude = StateVecSoA32::get_amplitude(self, basis_state);
+        Complex64::new(f64::from(amplitude.re), f64::from(amplitude.im))
+    }
+}
+
+impl StateVectorSimulator for StabVec {
+    fn with_seed(num_qubits: usize, seed: u64) -> Self {
+        StabVec::new_with_seed(num_qubits, seed)
+    }
+
+    fn get_amplitude(&mut self, basis_state: usize) -> Complex64 {
+        self.state_vector()[basis_state]
     }
 }
 

@@ -260,8 +260,172 @@ mod quantum_states {
 
 mod gate_sequences {
     use crate::helpers::assert_states_equal;
+    use num_complex::Complex64;
     use pecos_core::QubitId;
-    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
+    use pecos_simulators::state_vector_test_utils::StateVectorSimulator;
+    use pecos_simulators::{
+        ArbitraryRotationGateable, CliffordGateable, SparseStateVecAoS, StabVec, StateVec,
+        StateVecAoS, StateVecSoA, StateVecSoA32, qid,
+    };
+
+    type SimulatorIdentityCheck = (&'static str, fn(f64), f64);
+
+    fn assert_conventional_t_amplitudes(state: &[Complex64]) {
+        let expected = [
+            Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+            Complex64::new(0.5, 0.5),
+        ];
+        for (index, (actual, expected)) in state.iter().zip(expected).enumerate() {
+            assert!(
+                (actual - expected).norm() < 1e-10,
+                "amplitude {index} differs: actual={actual}, expected={expected}"
+            );
+        }
+    }
+
+    fn assert_state_slices_componentwise_equal(
+        lhs: &[Complex64],
+        rhs: &[Complex64],
+        context: &str,
+    ) {
+        assert_eq!(lhs.len(), rhs.len());
+        for (index, (lhs, rhs)) in lhs.iter().zip(rhs).enumerate() {
+            assert!(
+                (lhs - rhs).norm() < 1e-10,
+                "{context}, basis {index}: lhs={lhs}, rhs={rhs}"
+            );
+        }
+    }
+
+    fn assert_amplitudes_componentwise_equal<S: StateVectorSimulator>(
+        lhs: &mut S,
+        rhs: &mut S,
+        num_qubits: usize,
+        tolerance: f64,
+        context: &str,
+    ) {
+        for basis_state in 0..(1 << num_qubits) {
+            let lhs_amplitude = lhs.get_amplitude(basis_state);
+            let rhs_amplitude = rhs.get_amplitude(basis_state);
+            assert!(
+                (lhs_amplitude - rhs_amplitude).norm() < tolerance,
+                "{context}, basis {basis_state}: lhs={lhs_amplitude}, rhs={rhs_amplitude}"
+            );
+        }
+    }
+
+    fn verify_exact_t_identities<S: StateVectorSimulator + ArbitraryRotationGateable>(
+        tolerance: f64,
+    ) {
+        const NUM_QUBITS: usize = 2;
+        let q0 = qid(0);
+        let q1 = qid(1);
+        let both = [QubitId(0), QubitId(1)];
+
+        let prepare = |sim: &mut S| {
+            sim.h(&both).sz(&q1).cx(&[(QubitId(0), QubitId(1))]);
+        };
+
+        let mut t_squared = S::with_seed(NUM_QUBITS, 41);
+        let mut sz = S::with_seed(NUM_QUBITS, 41);
+        prepare(&mut t_squared);
+        prepare(&mut sz);
+        t_squared.t(&q0).t(&q0);
+        sz.sz(&q0);
+        assert_amplitudes_componentwise_equal(
+            &mut t_squared,
+            &mut sz,
+            NUM_QUBITS,
+            tolerance,
+            "T^2 must equal SZ without quotienting global phase",
+        );
+
+        let mut t_eighth = S::with_seed(NUM_QUBITS, 42);
+        let mut identity = S::with_seed(NUM_QUBITS, 42);
+        prepare(&mut t_eighth);
+        prepare(&mut identity);
+        for _ in 0..8 {
+            t_eighth.t(&q0);
+        }
+        assert_amplitudes_componentwise_equal(
+            &mut t_eighth,
+            &mut identity,
+            NUM_QUBITS,
+            tolerance,
+            "T^8 must equal I without quotienting global phase",
+        );
+
+        let mut batched = S::with_seed(NUM_QUBITS, 43);
+        let mut separate = S::with_seed(NUM_QUBITS, 43);
+        prepare(&mut batched);
+        prepare(&mut separate);
+        batched.t(&both);
+        separate.t(&q0).t(&q1);
+        assert_amplitudes_componentwise_equal(
+            &mut batched,
+            &mut separate,
+            NUM_QUBITS,
+            tolerance,
+            "batched T must accumulate its global phase once per target",
+        );
+
+        let mut odd_tdg = S::with_seed(1, 44);
+        odd_tdg.h(&q0).tdg(&q0);
+        let expected = [
+            Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+            Complex64::new(0.5, -0.5),
+        ];
+        for (basis_state, expected) in expected.into_iter().enumerate() {
+            let actual = odd_tdg.get_amplitude(basis_state);
+            assert!(
+                (actual - expected).norm() < tolerance,
+                "odd Tdg, basis {basis_state}: actual={actual}, expected={expected}"
+            );
+        }
+
+        let mut tdg_squared = S::with_seed(NUM_QUBITS, 45);
+        let mut szdg = S::with_seed(NUM_QUBITS, 45);
+        prepare(&mut tdg_squared);
+        prepare(&mut szdg);
+        tdg_squared.tdg(&q0).tdg(&q0);
+        szdg.szdg(&q0);
+        assert_amplitudes_componentwise_equal(
+            &mut tdg_squared,
+            &mut szdg,
+            NUM_QUBITS,
+            tolerance,
+            "Tdg^2 must equal SZdg without quotienting global phase",
+        );
+
+        let mut tdg_eighth = S::with_seed(NUM_QUBITS, 46);
+        let mut identity = S::with_seed(NUM_QUBITS, 46);
+        prepare(&mut tdg_eighth);
+        prepare(&mut identity);
+        for _ in 0..8 {
+            tdg_eighth.tdg(&q0);
+        }
+        assert_amplitudes_componentwise_equal(
+            &mut tdg_eighth,
+            &mut identity,
+            NUM_QUBITS,
+            tolerance,
+            "Tdg^8 must equal I without quotienting global phase",
+        );
+
+        let mut batched_tdg = S::with_seed(NUM_QUBITS, 47);
+        let mut separate_tdg = S::with_seed(NUM_QUBITS, 47);
+        prepare(&mut batched_tdg);
+        prepare(&mut separate_tdg);
+        batched_tdg.tdg(&both);
+        separate_tdg.tdg(&q0).tdg(&q1);
+        assert_amplitudes_componentwise_equal(
+            &mut batched_tdg,
+            &mut separate_tdg,
+            NUM_QUBITS,
+            tolerance,
+            "batched Tdg must accumulate its global phase once per target",
+        );
+    }
 
     #[test]
     fn test_operation_chains() {
@@ -309,7 +473,92 @@ mod gate_sequences {
         q1.sz(&qid(0)); // S gate
         q2.t(&qid(0)).t(&qid(0)); // Two T gates
 
-        assert_states_equal(q1.state(), q2.state());
+        assert_state_slices_componentwise_equal(
+            &q1.state(),
+            &q2.state(),
+            "T^2 must equal SZ exactly",
+        );
+    }
+
+    #[test]
+    fn test_odd_t_absolute_amplitudes_match_across_cpu_simulators() {
+        let mut sparse_soa = StateVec::new(1);
+        sparse_soa.h(&qid(0)).t(&qid(0));
+        assert_conventional_t_amplitudes(&sparse_soa.state());
+
+        let mut dense_aos = StateVecAoS::new(1);
+        dense_aos.h(&qid(0)).t(&qid(0));
+        assert_conventional_t_amplitudes(dense_aos.state());
+
+        let mut dense_soa = StateVecSoA::new(1);
+        dense_soa.h(&qid(0)).t(&qid(0));
+        assert_conventional_t_amplitudes(&dense_soa.state());
+
+        let mut sparse_aos = SparseStateVecAoS::new(1);
+        sparse_aos.h(&qid(0)).t(&qid(0));
+        let sparse_aos_state = [sparse_aos.get_amplitude(0), sparse_aos.get_amplitude(1)];
+        assert_conventional_t_amplitudes(&sparse_aos_state);
+
+        let mut dense_soa32 = StateVecSoA32::new(1);
+        dense_soa32.h(&qid(0)).t(&qid(0));
+        let dense_soa32_state = [0, 1].map(|index| {
+            let amplitude = dense_soa32.get_amplitude(index);
+            Complex64::new(f64::from(amplitude.re), f64::from(amplitude.im))
+        });
+        for (index, (actual, expected)) in dense_soa32_state
+            .iter()
+            .zip([
+                Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+                Complex64::new(0.5, 0.5),
+            ])
+            .enumerate()
+        {
+            assert!(
+                (actual - expected).norm() < 1e-6,
+                "f32 amplitude {index} differs: actual={actual}, expected={expected}"
+            );
+        }
+
+        let mut stab_vec = StabVec::new(1);
+        stab_vec.h(&qid(0)).t(&qid(0));
+        assert_conventional_t_amplitudes(&stab_vec.state_vector());
+    }
+
+    #[test]
+    fn test_exact_t_identities_across_amplitude_exposing_cpu_simulators() {
+        let simulators: &[SimulatorIdentityCheck] = &[
+            (
+                "SparseStateVecSoA",
+                verify_exact_t_identities::<StateVec>,
+                1e-10,
+            ),
+            (
+                "StateVecAoS",
+                verify_exact_t_identities::<StateVecAoS>,
+                1e-10,
+            ),
+            (
+                "StateVecSoA",
+                verify_exact_t_identities::<StateVecSoA>,
+                1e-10,
+            ),
+            (
+                "SparseStateVecAoS",
+                verify_exact_t_identities::<SparseStateVecAoS>,
+                1e-10,
+            ),
+            (
+                "StateVecSoA32",
+                verify_exact_t_identities::<StateVecSoA32>,
+                1e-5,
+            ),
+            ("StabVec", verify_exact_t_identities::<StabVec>, 1e-10),
+        ];
+
+        for &(name, verify, tolerance) in simulators {
+            eprintln!("checking {name}");
+            verify(tolerance);
+        }
     }
     #[test]
     fn test_gate_decompositions() {
@@ -1155,7 +1404,14 @@ mod detailed_sq_gate_cases {
         let mut q2 = q.clone();
         q2.sz(&qid(0));
 
-        assert_states_equal(q1.state(), q2.state());
+        let state1 = q1.state();
+        let state2 = q2.state();
+        for (index, (actual, expected)) in state1.iter().zip(state2).enumerate() {
+            assert!(
+                (*actual - expected).norm() < 1e-10,
+                "T^2 must equal SZ exactly, basis {index}: actual={actual}, expected={expected}"
+            );
+        }
     }
 
     #[test]

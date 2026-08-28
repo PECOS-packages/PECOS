@@ -189,7 +189,7 @@ fn mast_scenario(num_qubits: usize, num_t_gates: usize, seed: u64) -> (f64, usiz
 
 fn main() {
     // Magic-state-distillation-like: T gates per round (non-Clifford-heavy).
-    let t_angle = Angle64::QUARTER_TURN / 2u64; // T = RZ(π/4)
+    let t_angle = Angle64::QUARTER_TURN / 2u64; // RZ(π/4) equals T up to phase.
     let num_data = 8;
     let num_rounds = 20;
     let seed = 42;

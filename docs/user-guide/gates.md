@@ -854,7 +854,8 @@ RZ(θ) = [[e^(-iθ/2),     0     ],
 
 #### T Gate (π/8 Gate)
 
-The T gate is a π/4 rotation around the Z-axis (equivalent to RZ(π/4)).
+The T gate is the conventional phase gate `diag(1, exp(iπ/4))`. Its exact
+relationship to the symmetric rotation family is T = exp(iπ/8) RZ(π/4).
 
 **Matrix:**
 ```

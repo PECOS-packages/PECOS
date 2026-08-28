@@ -306,9 +306,10 @@ fn test_canonicalize_rz_half_turn() {
 fn test_canonicalize_t_gate() {
     let canon = GateCanonicalizer::standard();
 
-    // RZ(π/4) equals T up to global phase.
+    // RZ(π/4) differs from conventional T by a global scalar, so an
+    // exact canonicalizer must leave it as a rotation.
     let result = canon.canonicalize(gates::RZ, &[Angle64::HALF_TURN / 4]);
-    assert_eq!(result, Some(gates::T));
+    assert_eq!(result, None);
 }
 
 #[test]
@@ -737,17 +738,12 @@ fn test_program_serialization_roundtrip() {
 
 ```rust
 #[test]
-fn test_standard_adaptor_decomposes_t() {
+fn test_standard_adaptor_rejects_phase_inexact_t_decomposition() {
     let adaptor = StandardAdaptor::stab_vec();
 
-    assert!(adaptor.can_adapt(gates::T));
-
-    let decomposed = adaptor.adapt(gates::T, &[QubitId(0)], &[], &[]);
-
-    // T equals RZ(π/4) up to global phase.
-    assert_eq!(decomposed.len(), 1);
-    assert_eq!(decomposed[0].gate_id, gates::RZ);
-    assert_eq!(decomposed[0].angles[0], Angle64::HALF_TURN / 4);
+    // This target has no global-phase operation, so it cannot produce a
+    // sequence exactly equivalent to conventional T.
+    assert!(!adaptor.can_adapt(gates::T));
 }
 
 #[test]

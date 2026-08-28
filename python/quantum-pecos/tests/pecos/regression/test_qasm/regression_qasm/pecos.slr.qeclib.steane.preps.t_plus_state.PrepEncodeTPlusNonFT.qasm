@@ -4,7 +4,7 @@ include "hqslib1.inc";
 // =============================
 reset q_test[6];
 h q_test[6];
-rz(pi/4) q_test[6];
+t q_test[6];
 //
 // Encoding circuit
 // ---------------

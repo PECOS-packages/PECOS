@@ -15,10 +15,10 @@
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_stab_tn::stab_mps::{
-    MultiStdSubtype, ProbabilityQueryTelemetry, SaturationTelemetry,
+    MultiStdSubtype, ProbabilityQueryTelemetry, ProjectionCenterLossCause, SaturationTelemetry,
     SignedEigenstateBranchTelemetry, SignedEigenstateTelemetry, StabMps, StabMpsStats,
 };
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 
 const QUERY_COUNT: usize = 16;
@@ -388,6 +388,19 @@ fn query_totals(profile: &ProbabilityQueryTelemetry) -> QueryTotals {
     totals
 }
 
+fn center_loss_label(cause: ProjectionCenterLossCause) -> &'static str {
+    match cause {
+        ProjectionCenterLossCause::CenterRemainedValid => "valid",
+        ProjectionCenterLossCause::InvalidAtProjectionEntry => "entry",
+        ProjectionCenterLossCause::PreReduction => "pre_reduction",
+        ProjectionCenterLossCause::ProjectionBlockWrite => "block_write",
+        ProjectionCenterLossCause::DirectSumAdd => "direct_sum",
+        ProjectionCenterLossCause::ProjectionCompensation => "compensation",
+        ProjectionCenterLossCause::StaleCenterClaim => "stale",
+        ProjectionCenterLossCause::Other => "other",
+    }
+}
+
 fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetry) {
     for (depth, bucket) in profile.by_depth.iter().enumerate() {
         println!(
@@ -425,7 +438,163 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
             bucket.bookkeeping.capped_svd_operations,
             bucket.attributed_wall_time_seconds(),
         );
+        for (event_index, event) in bucket.projection_qr_locality.iter().enumerate() {
+            let option = |value: Option<usize>| {
+                value.map_or_else(|| "none".to_owned(), |value| value.to_string())
+            };
+            let cause = center_loss_label(event.center_loss_cause);
+            println!(
+                "LOCALITY cell={} run={} depth={} event={} n={} center_entry={} center_pre_write={} center_qr={} center_valid={} cause={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_outside={} normalization_preserved={}",
+                cell.name,
+                run,
+                depth,
+                event_index,
+                event.chain_length,
+                option(event.center_at_projection_entry),
+                option(event.center_before_projection_write),
+                option(event.center_before_qr),
+                event.center_before_qr_is_valid,
+                cause,
+                option(event.touched_site_min),
+                option(event.touched_site_max),
+                event.touched_sites,
+                option(event.changed_tensor_min),
+                option(event.changed_tensor_max),
+                event.changed_tensors,
+                option(event.changed_bond_min),
+                option(event.changed_bond_max),
+                event.changed_bonds,
+                event.qr_sites,
+                event.qr_sites_outside_changed_span,
+                event
+                    .normalization_preserved_center
+                    .is_some_and(|preserved| preserved),
+            );
+        }
+        if !bucket.projection_qr_locality.is_empty() {
+            let mut causes = BTreeMap::<&str, usize>::new();
+            let mut distributions = BTreeMap::<_, usize>::new();
+            let mut qr_sites = 0;
+            let mut qr_outside = 0;
+            let mut normalization_losses = 0;
+            for event in &bucket.projection_qr_locality {
+                *causes
+                    .entry(center_loss_label(event.center_loss_cause))
+                    .or_default() += 1;
+                *distributions
+                    .entry((
+                        event.touched_site_min,
+                        event.touched_site_max,
+                        event.touched_sites,
+                        event.changed_tensor_min,
+                        event.changed_tensor_max,
+                        event.changed_tensors,
+                        event.changed_bond_min,
+                        event.changed_bond_max,
+                        event.changed_bonds,
+                        event.qr_sites,
+                        event.qr_sites_outside_changed_span,
+                    ))
+                    .or_default() += 1;
+                qr_sites += event.qr_sites;
+                qr_outside += event.qr_sites_outside_changed_span;
+                normalization_losses +=
+                    usize::from(event.normalization_preserved_center == Some(false));
+            }
+            let cause_counts = causes
+                .iter()
+                .map(|(cause, count)| format!("{cause}:{count}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!(
+                "LOCALITY_DEPTH cell={} run={} depth={} events={} causes={} qr_sites={} qr_outside={} outside_fraction={:.9} normalization_losses={}",
+                cell.name,
+                run,
+                depth,
+                bucket.projection_qr_locality.len(),
+                cause_counts,
+                qr_sites,
+                qr_outside,
+                qr_outside as f64 / qr_sites as f64,
+                normalization_losses,
+            );
+            for (distribution, count) in distributions {
+                let (
+                    touched_min,
+                    touched_max,
+                    touched_sites,
+                    changed_min,
+                    changed_max,
+                    changed_tensors,
+                    changed_bond_min,
+                    changed_bond_max,
+                    changed_bonds,
+                    event_qr_sites,
+                    event_qr_outside,
+                ) = distribution;
+                let option = |value: Option<usize>| {
+                    value.map_or_else(|| "none".to_owned(), |value| value.to_string())
+                };
+                println!(
+                    "LOCALITY_DIST cell={} run={} depth={} count={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_outside={}",
+                    cell.name,
+                    run,
+                    depth,
+                    count,
+                    option(touched_min),
+                    option(touched_max),
+                    touched_sites,
+                    option(changed_min),
+                    option(changed_max),
+                    changed_tensors,
+                    option(changed_bond_min),
+                    option(changed_bond_max),
+                    changed_bonds,
+                    event_qr_sites,
+                    event_qr_outside,
+                );
+            }
+        }
     }
+}
+
+fn print_locality_total(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetry) {
+    let events = profile
+        .by_depth
+        .iter()
+        .flat_map(|depth| &depth.projection_qr_locality)
+        .collect::<Vec<_>>();
+    if events.is_empty() {
+        return;
+    }
+    let mut causes = BTreeMap::<&str, usize>::new();
+    let mut qr_sites = 0;
+    let mut qr_outside = 0;
+    let mut normalization_losses = 0;
+    for event in &events {
+        *causes
+            .entry(center_loss_label(event.center_loss_cause))
+            .or_default() += 1;
+        qr_sites += event.qr_sites;
+        qr_outside += event.qr_sites_outside_changed_span;
+        normalization_losses += usize::from(event.normalization_preserved_center == Some(false));
+    }
+    let cause_counts = causes
+        .iter()
+        .map(|(cause, count)| format!("{cause}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    println!(
+        "LOCALITY_TOTAL cell={} run={} events={} causes={} qr_sites={} qr_outside={} outside_fraction={:.9} normalization_losses={}",
+        cell.name,
+        run,
+        events.len(),
+        cause_counts,
+        qr_sites,
+        qr_outside,
+        qr_outside as f64 / qr_sites as f64,
+        normalization_losses,
+    );
 }
 
 fn print_candidate_branch(
@@ -548,7 +717,13 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
         ..RunSummary::default()
     };
     let query_set = queries(cell.n, cell.seed);
-    let (probabilities, profile) = simulator.prob_bitstrings_profiled(&query_set);
+    let projection_locality =
+        std::env::var("SATURATION_PROJECTION_LOCALITY").is_ok_and(|value| value != "0");
+    let (probabilities, profile) = if projection_locality {
+        simulator.prob_bitstrings_profiled_with_projection_locality(&query_set)
+    } else {
+        simulator.prob_bitstrings_profiled(&query_set)
+    };
     assert!(profile.phase_scopes_disjoint());
     let attributed_seconds = profile.attributed_wall_time_seconds();
     assert!(
@@ -565,7 +740,7 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
     // because a microsecond-scale call spends ~100 ns per phase scope in
     // `Instant`, which is a large percentage of a small call and none of a
     // real one.
-    if profile.whole_call_wall_time_seconds > 0.1 {
+    if !projection_locality && profile.whole_call_wall_time_seconds > 0.1 {
         assert!(
             attributed_seconds >= 0.99 * profile.whole_call_wall_time_seconds,
             "attribution lost {:.2}% of a {:.3} s query; a phase scope is missing",
@@ -587,6 +762,7 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
     summary.normalization_seconds = totals.normalization;
     summary.bookkeeping_seconds = totals.bookkeeping;
     print_query_depths(cell, run, &profile);
+    print_locality_total(cell, run, &profile);
     println!(
         "QUERY_OPS cell={} run={} svds={} capped_svds={} attributed_s={:.9} whole_call_s={:.9} trie_clone_residual_s={:.9}",
         cell.name,

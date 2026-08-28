@@ -1055,8 +1055,71 @@ pub struct QueryPhaseTelemetry {
     pub wall_time_seconds: f64,
 }
 
+/// First operation that removed the projection path's tracked center.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectionCenterLossCause {
+    /// A verified center remained available at the post-projection QR consult.
+    CenterRemainedValid,
+    /// No center was available when the forced projection began.
+    InvalidAtProjectionEntry,
+    /// Compensated tableau pre-reduction removed the center claim.
+    PreReduction,
+    /// The projection's owner-mediated physical-block replacement removed it.
+    ProjectionBlockWrite,
+    /// The Pauli projector's MPS direct sum removed it.
+    DirectSumAdd,
+    /// Collapse or post-measurement Pauli-gauge compensation removed it.
+    ProjectionCompensation,
+    /// A tracked claim was present but failed the diagnostic Gram validation.
+    StaleCenterClaim,
+    /// The loss did not match one of the projection path's named operations.
+    Other,
+}
+
+/// Runtime-gated locality details for one exact post-projection QR consult.
+#[derive(Clone, Debug)]
+pub struct ProjectionQrLocalityTelemetry {
+    /// Number of MPS sites in the projected chain.
+    pub chain_length: usize,
+    /// Center claim at entry to the complete forced-projection operation.
+    pub center_at_projection_entry: Option<usize>,
+    /// Center claim immediately before the projection tensor update.
+    pub center_before_projection_write: Option<usize>,
+    /// Center claim immediately before the post-projection QR consult.
+    pub center_before_qr: Option<usize>,
+    /// Whether the optional claim immediately before QR passed a Gram check.
+    pub center_before_qr_is_valid: bool,
+    /// First operation responsible for an unavailable or stale center.
+    pub center_loss_cause: ProjectionCenterLossCause,
+    /// Smallest semantically modified site reported by projection/compensation.
+    pub touched_site_min: Option<usize>,
+    /// Largest semantically modified site reported by projection/compensation.
+    pub touched_site_max: Option<usize>,
+    /// Number of distinct semantically modified sites.
+    pub touched_sites: usize,
+    /// Smallest tensor that differs bit-for-bit from projection entry.
+    pub changed_tensor_min: Option<usize>,
+    /// Largest tensor that differs bit-for-bit from projection entry.
+    pub changed_tensor_max: Option<usize>,
+    /// Number of tensors that differ bit-for-bit from projection entry.
+    pub changed_tensors: usize,
+    /// Smallest internal bond dimension that differs from projection entry.
+    pub changed_bond_min: Option<usize>,
+    /// Largest internal bond dimension that differs from projection entry.
+    pub changed_bond_max: Option<usize>,
+    /// Number of internal bond dimensions that differ from projection entry.
+    pub changed_bonds: usize,
+    /// Number of one-site QR factorizations selected by `canonicalize_at(0)`.
+    pub qr_sites: usize,
+    /// QR factorizations whose site lies outside the changed-tensor span.
+    pub qr_sites_outside_changed_span: usize,
+    /// Whether the following normalization retained its pre-normalization center.
+    /// `None` means the event has not yet reached its normalization phase.
+    pub normalization_preserved_center: Option<bool>,
+}
+
 /// Query profiling buckets for one `prob_bitstrings` trie depth.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct QueryDepthTelemetry {
     /// Z-expectation and probability evaluation.
     pub expectation: QueryPhaseTelemetry,
@@ -1076,7 +1139,10 @@ pub struct QueryDepthTelemetry {
     pub normalization: QueryPhaseTelemetry,
     /// Path selection and returned modified-site bookkeeping.
     pub bookkeeping: QueryPhaseTelemetry,
+    /// Opt-in event details for every nontrivial projection at this depth.
+    pub projection_qr_locality: Vec<ProjectionQrLocalityTelemetry>,
     phase_active: bool,
+    projection_locality_active: bool,
 }
 
 /// Depth-bucketed profile returned by [`StabMps::prob_bitstrings_profiled`].
@@ -1103,6 +1169,30 @@ pub(super) enum QueryPhase {
 }
 
 impl QueryDepthTelemetry {
+    pub(super) fn projection_locality_active(&self) -> bool {
+        self.projection_locality_active
+    }
+
+    pub(super) fn record_projection_qr_locality(&mut self, event: ProjectionQrLocalityTelemetry) {
+        assert!(
+            self.projection_locality_active,
+            "projection locality telemetry was not enabled"
+        );
+        self.projection_qr_locality.push(event);
+    }
+
+    pub(super) fn record_projection_normalization(&mut self, preserved_center: bool) {
+        let event = self
+            .projection_qr_locality
+            .last_mut()
+            .expect("post-projection normalization must follow a QR locality event");
+        assert!(
+            event.normalization_preserved_center.is_none(),
+            "projection normalization was recorded twice"
+        );
+        event.normalization_preserved_center = Some(preserved_center);
+    }
+
     pub(super) fn begin_phase(&mut self) {
         assert!(
             !self.phase_active,
@@ -1757,8 +1847,34 @@ impl StabMps {
         &self,
         bitstrings: &[B],
     ) -> (Vec<f64>, ProbabilityQueryTelemetry) {
+        self.prob_bitstrings_profiled_impl(bitstrings, false)
+    }
+
+    /// Profiled [`Self::prob_bitstrings`] with opt-in projection-locality events.
+    ///
+    /// This diagnostic sibling clones the entry tensors and performs exact
+    /// comparisons before every post-projection QR. Use it for diagnosis, not
+    /// timing; the ordinary profiled method has no such overhead.
+    #[must_use]
+    pub fn prob_bitstrings_profiled_with_projection_locality<B: AsRef<[bool]>>(
+        &self,
+        bitstrings: &[B],
+    ) -> (Vec<f64>, ProbabilityQueryTelemetry) {
+        self.prob_bitstrings_profiled_impl(bitstrings, true)
+    }
+
+    fn prob_bitstrings_profiled_impl<B: AsRef<[bool]>>(
+        &self,
+        bitstrings: &[B],
+        projection_locality_active: bool,
+    ) -> (Vec<f64>, ProbabilityQueryTelemetry) {
         let mut telemetry = ProbabilityQueryTelemetry {
-            by_depth: vec![QueryDepthTelemetry::default(); self.num_qubits],
+            by_depth: (0..self.num_qubits)
+                .map(|_| QueryDepthTelemetry {
+                    projection_locality_active,
+                    ..QueryDepthTelemetry::default()
+                })
+                .collect(),
             whole_call_wall_time_seconds: 0.0,
         };
         let started = Instant::now();

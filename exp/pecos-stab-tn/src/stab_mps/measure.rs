@@ -1198,12 +1198,143 @@ fn reduce_exact_projection_bonds(mps: &mut Mps) -> Result<(), MpsError> {
     mps.compress_from_right_canonical()
 }
 
+struct ProjectionLocalityContext {
+    entry_tensors: Vec<DMatrix<Complex64>>,
+    entry_bond_dims: Vec<usize>,
+    center_at_projection_entry: Option<usize>,
+    center_before_projection_write: Option<usize>,
+    center_loss_cause: Option<super::ProjectionCenterLossCause>,
+    touched_sites: Vec<usize>,
+}
+
+impl ProjectionLocalityContext {
+    fn new(mps: &Mps) -> Self {
+        let (center, center_is_valid) = mps.projection_diagnostic_center();
+        let center_loss_cause = if center.is_none() {
+            Some(super::ProjectionCenterLossCause::InvalidAtProjectionEntry)
+        } else if center_is_valid {
+            None
+        } else {
+            Some(super::ProjectionCenterLossCause::StaleCenterClaim)
+        };
+        Self {
+            entry_tensors: mps.tensors().to_vec(),
+            entry_bond_dims: mps.bond_dims().to_vec(),
+            center_at_projection_entry: center,
+            center_before_projection_write: center,
+            center_loss_cause,
+            touched_sites: Vec::new(),
+        }
+    }
+
+    fn observe_after_pre_reduction(&mut self, mps: &Mps) {
+        let (center, center_is_valid) = mps.projection_diagnostic_center();
+        if self.center_loss_cause.is_none() {
+            if center.is_none() {
+                self.center_loss_cause = Some(super::ProjectionCenterLossCause::PreReduction);
+            } else if !center_is_valid {
+                self.center_loss_cause = Some(super::ProjectionCenterLossCause::StaleCenterClaim);
+            }
+        }
+        self.center_before_projection_write = center;
+    }
+
+    fn observe_projection_mutation(&mut self, mps: &Mps, cause: super::ProjectionCenterLossCause) {
+        let (center, center_is_valid) = mps.projection_diagnostic_center();
+        if self.center_loss_cause.is_none() {
+            if center.is_none() {
+                self.center_loss_cause = Some(cause);
+            } else if !center_is_valid {
+                self.center_loss_cause = Some(super::ProjectionCenterLossCause::StaleCenterClaim);
+            }
+        }
+    }
+
+    fn set_touched_sites(&mut self, mut touched_sites: Vec<usize>) {
+        touched_sites.sort_unstable();
+        touched_sites.dedup();
+        self.touched_sites = touched_sites;
+    }
+
+    fn into_event(self, mps: &Mps) -> super::ProjectionQrLocalityTelemetry {
+        fn span(indices: &[usize]) -> (Option<usize>, Option<usize>) {
+            (indices.first().copied(), indices.last().copied())
+        }
+
+        let changed_tensors = self
+            .entry_tensors
+            .iter()
+            .zip(mps.tensors())
+            .enumerate()
+            .filter_map(|(site, (before, after))| (before != after).then_some(site))
+            .collect::<Vec<_>>();
+        let changed_bonds = self
+            .entry_bond_dims
+            .iter()
+            .zip(mps.bond_dims())
+            .enumerate()
+            .skip(1)
+            .take(mps.num_sites().saturating_sub(1))
+            .filter_map(|(bond, (before, after))| (before != after).then_some(bond))
+            .collect::<Vec<_>>();
+        let (center_before_qr, center_before_qr_is_valid) = mps.projection_diagnostic_center();
+        let qr_sites = center_before_qr.unwrap_or_else(|| mps.num_sites().saturating_sub(1));
+        let (changed_tensor_min, changed_tensor_max) = span(&changed_tensors);
+        let qr_sites_outside_changed_span = (1..=qr_sites)
+            .filter(|site| {
+                changed_tensor_min
+                    .zip(changed_tensor_max)
+                    .is_none_or(|(min, max)| *site < min || *site > max)
+            })
+            .count();
+        let (touched_site_min, touched_site_max) = span(&self.touched_sites);
+        let (changed_bond_min, changed_bond_max) = span(&changed_bonds);
+        let center_loss_cause = if center_before_qr_is_valid {
+            super::ProjectionCenterLossCause::CenterRemainedValid
+        } else if center_before_qr.is_some() {
+            super::ProjectionCenterLossCause::StaleCenterClaim
+        } else {
+            self.center_loss_cause
+                .unwrap_or(super::ProjectionCenterLossCause::Other)
+        };
+
+        super::ProjectionQrLocalityTelemetry {
+            chain_length: mps.num_sites(),
+            center_at_projection_entry: self.center_at_projection_entry,
+            center_before_projection_write: self.center_before_projection_write,
+            center_before_qr,
+            center_before_qr_is_valid,
+            center_loss_cause,
+            touched_site_min,
+            touched_site_max,
+            touched_sites: self.touched_sites.len(),
+            changed_tensor_min,
+            changed_tensor_max,
+            changed_tensors: changed_tensors.len(),
+            changed_bond_min,
+            changed_bond_max,
+            changed_bonds: changed_bonds.len(),
+            qr_sites,
+            qr_sites_outside_changed_span,
+            normalization_preserved_center: None,
+        }
+    }
+}
+
 fn reduce_exact_projection_bonds_profiled(
     mps: &mut Mps,
     telemetry: &mut Option<&mut super::QueryDepthTelemetry>,
+    locality: Option<ProjectionLocalityContext>,
 ) -> Result<(), MpsError> {
     if telemetry.is_none() {
         return reduce_exact_projection_bonds(mps);
+    }
+    if let Some(locality) = locality {
+        let event = locality.into_event(mps);
+        telemetry
+            .as_deref_mut()
+            .expect("profiled reduction requires query telemetry")
+            .record_projection_qr_locality(event);
     }
     profile_query_phase(
         mps,
@@ -1228,6 +1359,11 @@ fn project_forced_z_with_update_impl(
     mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
     mut telemetry: Option<&mut super::QueryDepthTelemetry>,
 ) -> Result<ForcedProjectionResult, MpsError> {
+    let projection_locality_active = telemetry
+        .as_deref()
+        .is_some_and(super::QueryDepthTelemetry::projection_locality_active);
+    let mut projection_locality =
+        projection_locality_active.then(|| ProjectionLocalityContext::new(mps));
     let (pre_projection_norm_squared, probability) =
         profile_query_phase(mps, &mut telemetry, super::QueryPhase::Expectation, |mps| {
             let norm_squared = mps.norm_squared();
@@ -1324,6 +1460,9 @@ fn project_forced_z_with_update_impl(
         super::QueryPhase::PreReduction,
         |mps| pre_reduce_for_measurement(tableau, mps, q_idx, true),
     )?;
+    if let Some(locality) = projection_locality.as_mut() {
+        locality.observe_after_pre_reduction(mps);
+    }
     let decomposition = profile_query_phase(
         mps,
         &mut telemetry,
@@ -1370,15 +1509,34 @@ fn project_forced_z_with_update_impl(
                     probability,
                 );
             });
+            if let Some(locality) = projection_locality.as_mut() {
+                locality.observe_projection_mutation(
+                    mps,
+                    if sign_sites.is_empty() {
+                        super::ProjectionCenterLossCause::Other
+                    } else {
+                        super::ProjectionCenterLossCause::DirectSumAdd
+                    },
+                );
+                let mut touched_sites = modified_sites.clone();
+                touched_sites.extend(sign_sites.iter().copied());
+                locality.set_touched_sites(touched_sites);
+            }
             // The physical observable was already in the stabilizer span, so
             // mz_forced performs no Clifford-basis change. The projected
             // stabilizer-sign superposition remains encoded in the MPS.
-            reduce_exact_projection_bonds_profiled(mps, &mut telemetry)?;
+            reduce_exact_projection_bonds_profiled(
+                mps,
+                &mut telemetry,
+                projection_locality.take(),
+            )?;
             let survival_ratio =
                 profile_query_phase(mps, &mut telemetry, super::QueryPhase::Survival, |mps| {
                     inject_projection_vanish_if_requested(mps);
                     projection_survival_ratio(mps, pre_projection_norm_squared)
                 });
+            let normalization_center_before =
+                projection_locality_active.then(|| mps.projection_diagnostic_center());
             profile_query_phase(
                 mps,
                 &mut telemetry,
@@ -1389,6 +1547,15 @@ fn project_forced_z_with_update_impl(
                     }
                 },
             );
+            if let Some((center_before, valid_before)) = normalization_center_before {
+                let (center_after, valid_after) = mps.projection_diagnostic_center();
+                telemetry
+                    .as_deref_mut()
+                    .expect("locality diagnostics require query telemetry")
+                    .record_projection_normalization(
+                        valid_before && valid_after && center_before == center_after,
+                    );
+            }
             profile_query_phase(mps, &mut telemetry, super::QueryPhase::Bookkeeping, |_| {
                 modified_sites.extend(sign_sites);
                 modified_sites.sort_unstable();
@@ -1442,10 +1609,10 @@ fn project_forced_z_with_update_impl(
                     },
                 );
             }
+            let is_local_projection = sign_sites.is_empty();
             let gauge_sites =
                 profile_query_phase(mps, &mut telemetry, super::QueryPhase::Projection, |mps| {
                     let sign_f = if outcome { -1.0 } else { 1.0 };
-                    let is_local_projection = sign_sites.is_empty();
                     if is_local_projection {
                         project_single_flip_without_sign(
                             mps,
@@ -1485,17 +1652,38 @@ fn project_forced_z_with_update_impl(
                     debug_assert_eq!(result.outcome, outcome);
                     compensate_measurement_pauli_gauge(mps, &predicted_tableau, tableau)
                 });
+            if let Some(locality) = projection_locality.as_mut() {
+                locality.observe_projection_mutation(
+                    mps,
+                    if is_local_projection {
+                        super::ProjectionCenterLossCause::ProjectionBlockWrite
+                    } else {
+                        super::ProjectionCenterLossCause::DirectSumAdd
+                    },
+                );
+                let mut touched_sites = modified_sites.clone();
+                touched_sites.extend(flip_sites.iter().copied());
+                touched_sites.extend(sign_sites.iter().copied());
+                touched_sites.extend(gauge_sites.iter().copied());
+                locality.set_touched_sites(touched_sites);
+            }
             // `mz_forced` produces the same projected stabilizer group as the
             // predicted basis rotation; compensation changes only the
             // destabilizer gauge. Therefore the post-H canonical ket cached
             // by the phase tracker remains valid for the measured tableau and
             // can be the before-ket of the next scalar site.
-            reduce_exact_projection_bonds_profiled(mps, &mut telemetry)?;
+            reduce_exact_projection_bonds_profiled(
+                mps,
+                &mut telemetry,
+                projection_locality.take(),
+            )?;
             let survival_ratio =
                 profile_query_phase(mps, &mut telemetry, super::QueryPhase::Survival, |mps| {
                     inject_projection_vanish_if_requested(mps);
                     projection_survival_ratio(mps, pre_projection_norm_squared)
                 });
+            let normalization_center_before =
+                projection_locality_active.then(|| mps.projection_diagnostic_center());
             profile_query_phase(
                 mps,
                 &mut telemetry,
@@ -1506,6 +1694,15 @@ fn project_forced_z_with_update_impl(
                     }
                 },
             );
+            if let Some((center_before, valid_before)) = normalization_center_before {
+                let (center_after, valid_after) = mps.projection_diagnostic_center();
+                telemetry
+                    .as_deref_mut()
+                    .expect("locality diagnostics require query telemetry")
+                    .record_projection_normalization(
+                        valid_before && valid_after && center_before == center_after,
+                    );
+            }
             profile_query_phase(mps, &mut telemetry, super::QueryPhase::Bookkeeping, |_| {
                 modified_sites.extend(flip_sites.iter().copied());
                 modified_sites.extend(sign_sites);

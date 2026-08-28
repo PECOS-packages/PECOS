@@ -18,7 +18,8 @@ use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimul
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
 use pecos_stab_tn::stab_mps::{
-    MeasurementMode, MultiStdSubtype, PauliKind, SignedEigenstateTelemetry, StabMps,
+    MeasurementMode, MultiStdSubtype, PauliKind, ProjectionCenterLossCause,
+    SignedEigenstateTelemetry, StabMps,
 };
 use rayon::prelude::*;
 
@@ -2583,6 +2584,8 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     }
 
     let mut truncating_circuits_with_discarded_weight = 0;
+    let mut locality_direct_sum_events = 0;
+    let mut locality_block_write_events = 0;
     for truncating in [false, true] {
         for num_qubits in 3..=6 {
             for seed_family in 0..4_u64 {
@@ -2616,6 +2619,8 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                     .collect::<Vec<_>>();
                 let batched = stn.prob_bitstrings(&queries);
                 let (profiled, profile) = stn.prob_bitstrings_profiled(&queries);
+                let (locality_profiled, locality_profile) =
+                    stn.prob_bitstrings_profiled_with_projection_locality(&queries);
                 assert_eq!(batched.len(), queries.len());
                 assert_eq!(
                     profiled
@@ -2628,6 +2633,71 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         .collect::<Vec<_>>(),
                     "profiled query changed outputs for truncating={truncating} n={num_qubits} seed={circuit_seed}"
                 );
+                assert_eq!(
+                    locality_profiled
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    batched
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    "locality diagnostics changed outputs for truncating={truncating} n={num_qubits} seed={circuit_seed}"
+                );
+                assert!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .all(|depth| depth.projection_qr_locality.is_empty()),
+                    "ordinary query profiling unexpectedly collected locality snapshots"
+                );
+                let locality_events = locality_profile
+                    .by_depth
+                    .iter()
+                    .flat_map(|depth| &depth.projection_qr_locality)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    locality_events.len() as u64,
+                    locality_profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.post_projection_qr.calls)
+                        .sum::<u64>(),
+                    "every post-projection QR must have one locality event"
+                );
+                for event in locality_events {
+                    assert_eq!(
+                        event.normalization_preserved_center,
+                        Some(true),
+                        "normalization invalidated or failed to validate the post-projection center"
+                    );
+                    let expected_outside = (1..=event.qr_sites)
+                        .filter(|site| {
+                            event
+                                .changed_tensor_min
+                                .zip(event.changed_tensor_max)
+                                .is_none_or(|(min, max)| *site < min || *site > max)
+                        })
+                        .count();
+                    assert_eq!(
+                        event.qr_sites_outside_changed_span, expected_outside,
+                        "QR locality headroom does not match the changed-tensor span"
+                    );
+                    match event.center_loss_cause {
+                        ProjectionCenterLossCause::DirectSumAdd => {
+                            locality_direct_sum_events += 1;
+                            assert_eq!(event.changed_tensor_min, Some(0));
+                            assert_eq!(event.changed_tensor_max, Some(event.chain_length - 1));
+                            assert_eq!(event.changed_tensors, event.chain_length);
+                            assert_eq!(event.qr_sites, event.chain_length - 1);
+                            assert_eq!(event.qr_sites_outside_changed_span, 0);
+                        }
+                        ProjectionCenterLossCause::ProjectionBlockWrite => {
+                            locality_block_write_events += 1;
+                        }
+                        _ => {}
+                    }
+                }
                 assert!(
                     profile
                         .by_depth
@@ -2742,6 +2812,14 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     assert!(
         truncating_circuits_with_discarded_weight > 0,
         "truncating agreement arm never exercised a discarded-weight state"
+    );
+    assert!(
+        locality_direct_sum_events > 0,
+        "locality mutation guard never exercised direct-sum invalidation"
+    );
+    assert!(
+        locality_block_write_events > 0,
+        "locality mutation guard never exercised block-write invalidation"
     );
 
     // Every false-q0 query is an endpoint-zero subtree. It must be pruned to

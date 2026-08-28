@@ -1186,6 +1186,16 @@ impl Mps {
         self.center
     }
 
+    /// Return the tracked center and validate its Gram environments for
+    /// runtime-gated projection-locality telemetry.
+    pub(crate) fn projection_diagnostic_center(&self) -> (Option<usize>, bool) {
+        (
+            self.center,
+            self.center
+                .is_some_and(|center| self.claimed_center_is_valid(center)),
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn set_tracked_center_for_test(&mut self, center: Option<usize>) {
         self.center = center;
@@ -1303,10 +1313,8 @@ impl Mps {
     }
 
     /// Validate a tracked center to an absolute max-entry Gram tolerance of
-    /// `1e-9`. This is compiled only when debug assertions are enabled and is
-    /// called only before a canonicalization sweep trusts the claim to skip
-    /// work.
-    #[cfg(debug_assertions)]
+    /// `1e-9`. Canonicalization and normalization call this only under debug
+    /// assertions; runtime-gated projection telemetry may call it in release.
     fn claimed_center_is_valid(&self, center: usize) -> bool {
         const TOLERANCE: f64 = 1e-9;
 

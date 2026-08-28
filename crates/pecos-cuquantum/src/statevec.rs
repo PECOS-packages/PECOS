@@ -682,6 +682,15 @@ impl ArbitraryRotationGateable for CuStateVec {
         self
     }
 
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let (sin, cos) = phase.to_radians_signed().sin_cos();
+        let matrix = [[cos, sin], [0.0, 0.0], [0.0, 0.0], [cos, sin]];
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
         // RZZ(theta) = diag(e^(-i*theta/2), e^(i*theta/2), e^(i*theta/2), e^(-i*theta/2))

@@ -72,12 +72,12 @@ fn test_hqslib1_phase_gates() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse phase gates");
 
-    // Named phase gates stay named; only the arbitrary phase gate is an RZ.
+    // Named phase gates stay named; the arbitrary phase gate is phase-exact U.
     assert_eq!(count_gate(&program.operations, "SZ"), 1);
     assert_eq!(count_gate(&program.operations, "SZdg"), 1);
     assert_eq!(count_gate(&program.operations, "T"), 1);
     assert_eq!(count_gate(&program.operations, "Tdg"), 1);
-    assert_eq!(count_gate(&program.operations, "RZ"), 1);
+    assert_eq!(count_gate(&program.operations, "U"), 1);
 }
 
 #[test]
@@ -122,10 +122,9 @@ fn test_hqslib1_universal_gates() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse universal gates");
 
-    // U gates decompose to RZ + R1XY + RZ
-    // U1q is directly R1XY
+    // U/u stay native and phase-exact; U1q is directly R1XY.
     let gate_names = get_gate_names(&program.operations);
-    assert!(gate_names.contains(&"RZ".to_string()));
+    assert_eq!(count_gate(&program.operations, "U"), 2);
     assert!(gate_names.contains(&"R1XY".to_string()));
 }
 

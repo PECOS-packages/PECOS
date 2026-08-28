@@ -1444,6 +1444,71 @@ pub fn verify_rotation_identities<S: StateVectorSimulator + ArbitraryRotationGat
 /// U(θ, φ, λ) = [[cos(θ/2), -e^(iλ)sin(θ/2)],
 ///               [e^(iφ)sin(θ/2), e^(i(φ+λ))cos(θ/2)]]
 pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
+    // Pin the phase-fixed diagonal family exactly, not merely up to global
+    // phase. This exercises direct U kernels as well as inherited defaults.
+    for (lambda, expected_high, label) in [
+        (Angle64::ZERO, Complex64::new(1.0, 0.0), "I"),
+        (
+            Angle64::QUARTER_TURN / 2u64,
+            Complex64::new(FRAC_1_SQRT_2, FRAC_1_SQRT_2),
+            "T",
+        ),
+        (Angle64::QUARTER_TURN, Complex64::new(0.0, 1.0), "SZ"),
+        (Angle64::HALF_TURN, Complex64::new(-1.0, 0.0), "Z"),
+    ] {
+        sim.reset();
+        sim.u(Angle64::ZERO, Angle64::ZERO, lambda, &qid(0));
+        assert_amplitude_eq(
+            sim.get_amplitude(0),
+            Complex64::new(1.0, 0.0),
+            &format!("U(0,0,{lambda})|0> = {label}|0>"),
+        );
+        assert_amplitude_near_zero(sim.get_amplitude(1), &format!("U(0,0,{lambda})|0>: |1>"));
+
+        sim.reset();
+        sim.x(&qid(0));
+        sim.u(Angle64::ZERO, Angle64::ZERO, lambda, &qid(0));
+        assert_amplitude_near_zero(sim.get_amplitude(0), &format!("U(0,0,{lambda})|1>: |0>"));
+        assert_amplitude_eq(
+            sim.get_amplitude(1),
+            expected_high,
+            &format!("U(0,0,{lambda})|1> = {label}|1>"),
+        );
+    }
+
+    let theta = Angle64::from_radians(0.73);
+    let phi = Angle64::from_radians(-0.41);
+    let lambda = Angle64::from_radians(1.17);
+    let theta_rad = theta.to_radians_signed();
+    let phi_rad = phi.to_radians_signed();
+    let lambda_rad = lambda.to_radians_signed();
+    let cos = (theta_rad / 2.0).cos();
+    let sin = (theta_rad / 2.0).sin();
+    let expected_columns = [
+        [
+            Complex64::new(cos, 0.0),
+            Complex64::from_polar(sin, phi_rad),
+        ],
+        [
+            -Complex64::from_polar(sin, lambda_rad),
+            Complex64::from_polar(cos, phi_rad + lambda_rad),
+        ],
+    ];
+    for (basis, expected) in expected_columns.iter().enumerate() {
+        sim.reset();
+        if basis == 1 {
+            sim.x(&qid(0));
+        }
+        sim.u(theta, phi, lambda, &qid(0));
+        for (row, &expected_amplitude) in expected.iter().enumerate() {
+            assert_amplitude_eq(
+                sim.get_amplitude(row),
+                expected_amplitude,
+                &format!("documented U matrix column={basis}, row={row}"),
+            );
+        }
+    }
+
     // U(π, 0, π) = X (Pauli X gate)
     sim.reset();
     sim.u(
@@ -2775,7 +2840,7 @@ impl StateVectorSimulator for StabVec {
 
 #[cfg(test)]
 mod tests {
-    use crate::{SparseStateVecAoS, SparseStateVecSoA, StateVecAoS, StateVecSoA};
+    use crate::{SparseStateVecAoS, SparseStateVecSoA, StabVec, StateVecAoS, StateVecSoA};
 
     // Dense simulators with rotation gate support
     full_state_vector_test_suite!(StateVecAoS, 4);
@@ -2784,4 +2849,10 @@ mod tests {
     // Sparse simulators (now with rotation gate support)
     full_state_vector_test_suite!(SparseStateVecAoS, 4);
     full_state_vector_test_suite!(SparseStateVecSoA, 4);
+
+    #[test]
+    fn stab_vec_u_gate_is_phase_exact() {
+        let mut sim = StabVec::new_with_seed(1, 42);
+        super::verify_u_gate(&mut sim);
+    }
 }

@@ -15,7 +15,7 @@ gate z a { Z a; }
 // Identity gate - implemented as no-op
 gate id a { rz(0) a; }
 
-// Phase gate (native rotation)
+// Symmetric Z rotation (native), not the phase-fixed p gate below
 gate rz(lambda) a { RZ(lambda) a; }
 
 // S and S-dagger gates (sqrt(Z) and its conjugate)
@@ -109,11 +109,11 @@ gate cry(theta) a,b {
 
 // Controlled phase
 gate cphase(theta) a,b {
-  rz(theta/2) a;
+  p(theta/2) a;
   cx a,b;
-  rz(-theta/2) b;
+  p(-theta/2) b;
   cx a,b;
-  rz(theta/2) b;
+  p(theta/2) b;
 }
 
 // Toffoli gate (controlled-controlled-X)
@@ -140,20 +140,18 @@ gate ccx a,b,c {
 
 // --- Utility gates ---
 
-// Phase gate with arbitrary angle
-gate phase(lambda) q { rz(lambda) q; }
+// Phase-gate family: diag(1, exp(i*lambda)). These differ from the symmetric
+// rotation by RZ(lambda) = exp(-i*lambda/2) * p(lambda).
+gate phase(lambda) q { U(0, 0, lambda) q; }
 
-// Standard phase gate (equivalent to rz)
-gate p(lambda) q { rz(lambda) q; }
+// Standard phase gate (equivalent to u1, but not phase-exactly to rz)
+gate p(lambda) q { U(0, 0, lambda) q; }
 
-// Universal single-qubit gate (simplified version using rz gates)
-// u(theta, phi, lambda) = rz(phi) * rx(theta) * rz(lambda)
-// For the identity case u(0,0,0), this simplifies to doing nothing
 // PECOS native U gate (arbitrary single-qubit rotation)
 gate u(theta, phi, lambda) q { U(theta, phi, lambda) q; }
 
 // Single-parameter phase gate (alias)
-gate u1(lambda) a { rz(lambda) a; }
+gate u1(lambda) a { U(0, 0, lambda) a; }
 
 // Two-parameter rotation
 gate u2(phi, lambda) a {

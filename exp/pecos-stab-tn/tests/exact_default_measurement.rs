@@ -165,6 +165,7 @@ fn exact_mps_config() -> MpsConfig {
         svd_cutoff: 0.0,
         max_truncation_error: Some(0.0),
         parallel: false,
+        direction_alternating_compression: true,
     }
 }
 
@@ -185,6 +186,7 @@ fn build_stn_with_mode_and_merge(
         .max_bond_dim(64)
         .svd_cutoff(0.0)
         .max_truncation_error(0.0)
+        .direction_alternating_compression(true)
         .build()
 }
 
@@ -195,6 +197,7 @@ fn build_stn(num_qubits: usize, seed: u64) -> StabMps {
         .max_bond_dim(64)
         .svd_cutoff(0.0)
         .max_truncation_error(0.0)
+        .direction_alternating_compression(true)
         .build()
 }
 

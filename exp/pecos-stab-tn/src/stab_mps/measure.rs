@@ -46,8 +46,15 @@ fn profile_query_phase<T>(
     let started = Instant::now();
     let result = operation(mps);
     let elapsed = started.elapsed().as_secs_f64();
-    let (svd_operations, capped_svd_operations) = mps.take_phase_svd_operations();
-    telemetry.record(phase, svd_operations, capped_svd_operations, elapsed);
+    let (svd_operations, capped_svd_operations, summed_discarded_weight) =
+        mps.take_phase_svd_operations();
+    telemetry.record(
+        phase,
+        svd_operations,
+        capped_svd_operations,
+        summed_discarded_weight,
+        elapsed,
+    );
     result
 }
 
@@ -1194,8 +1201,8 @@ fn project_single_flip_without_sign(
 /// redundancy and numerical dust, while any nonzero truncation remains the
 /// caller-approved cutoff/cap behavior and is recorded by MPS telemetry.
 fn reduce_exact_projection_bonds(mps: &mut Mps) -> Result<(), MpsError> {
-    mps.right_canonicalize();
-    mps.compress_from_right_canonical()
+    mps.canonicalize_for_projection_compression();
+    mps.compress_projection_bonds()
 }
 
 struct ProjectionLocalityContext {
@@ -1253,7 +1260,11 @@ impl ProjectionLocalityContext {
             .filter_map(|(bond, (before, after))| (before != after).then_some(bond))
             .collect::<Vec<_>>();
         let (center_before_qr, center_before_qr_is_valid) = mps.projection_diagnostic_center();
-        let qr_sites = center_before_qr.unwrap_or_else(|| mps.num_sites().saturating_sub(1));
+        let qr_target = mps.projection_compression_target().unwrap_or(0);
+        let qr_sites = center_before_qr.map_or_else(
+            || mps.num_sites().saturating_sub(1),
+            |center| center.abs_diff(qr_target),
+        );
         let (changed_tensor_min, changed_tensor_max) = span(&changed_tensors);
         let (touched_site_min, touched_site_max) = span(&self.touched_sites);
         let (changed_bond_min, changed_bond_max) = span(&changed_bonds);
@@ -1270,27 +1281,31 @@ impl ProjectionLocalityContext {
                 "non-direct-sum projection changed tensor {changed_tensor_max:?} beyond reported touched-site frontier {touched_site_max:?}"
             );
         }
-        let qr_sites_skippable_by_center_ceiling =
-            if center_before_qr_is_valid || !self.center_before_projection_write_is_valid {
-                0
-            } else {
-                let center = self
-                    .center_before_projection_write
-                    .expect("a valid pre-write center must have a site");
-                mps.num_sites().saturating_sub(1).saturating_sub(center)
-            };
-        let qr_sites_skippable_by_locality =
-            if center_before_qr_is_valid || !self.center_before_projection_write_is_valid {
-                0
-            } else {
-                let center = self
-                    .center_before_projection_write
-                    .expect("a valid pre-write center must have a site");
-                let locality_frontier = touched_site_max.map_or(center, |site| center.max(site));
-                mps.num_sites()
-                    .saturating_sub(1)
-                    .saturating_sub(locality_frontier)
-            };
+        let qr_sites_skippable_by_center_ceiling = if qr_target != 0
+            || center_before_qr_is_valid
+            || !self.center_before_projection_write_is_valid
+        {
+            0
+        } else {
+            let center = self
+                .center_before_projection_write
+                .expect("a valid pre-write center must have a site");
+            mps.num_sites().saturating_sub(1).saturating_sub(center)
+        };
+        let qr_sites_skippable_by_locality = if qr_target != 0
+            || center_before_qr_is_valid
+            || !self.center_before_projection_write_is_valid
+        {
+            0
+        } else {
+            let center = self
+                .center_before_projection_write
+                .expect("a valid pre-write center must have a site");
+            let locality_frontier = touched_site_max.map_or(center, |site| center.max(site));
+            mps.num_sites()
+                .saturating_sub(1)
+                .saturating_sub(locality_frontier)
+        };
         debug_assert!(qr_sites_skippable_by_locality <= qr_sites);
         debug_assert!(qr_sites_skippable_by_locality <= qr_sites_skippable_by_center_ceiling);
         debug_assert!(qr_sites_skippable_by_center_ceiling <= qr_sites);
@@ -1301,6 +1316,7 @@ impl ProjectionLocalityContext {
             center_before_projection_write_is_valid: self.center_before_projection_write_is_valid,
             center_before_qr,
             center_before_qr_is_valid,
+            qr_target,
             construction,
             touched_site_min,
             touched_site_max,
@@ -1338,13 +1354,13 @@ fn reduce_exact_projection_bonds_profiled(
         mps,
         telemetry,
         super::QueryPhase::PostProjectionQr,
-        Mps::right_canonicalize,
+        Mps::canonicalize_for_projection_compression,
     );
     profile_query_phase(
         mps,
         telemetry,
         super::QueryPhase::PostProjectionSvd,
-        Mps::compress_from_right_canonical,
+        Mps::compress_projection_bonds,
     )
 }
 

@@ -48,8 +48,17 @@ enum GateMix {
     CliffT,
 }
 
-fn fuzz_circuit(num_qubits: usize, num_gates: usize, seed: u64, mix: GateMix) -> StabMps {
-    let mut stn = StabMps::with_seed(num_qubits, seed);
+fn fuzz_circuit(
+    num_qubits: usize,
+    num_gates: usize,
+    seed: u64,
+    mix: GateMix,
+    direction_alternating_compression: bool,
+) -> StabMps {
+    let mut stn = StabMps::builder(num_qubits)
+        .seed(seed)
+        .direction_alternating_compression(direction_alternating_compression)
+        .build();
     // xorshift state 0 stays 0 forever — skip seed 0 by adding offset.
     let mut rng_state = seed.wrapping_add(1);
 
@@ -196,7 +205,7 @@ fn run_scenario(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix:
     let mut ofd_wins = 0u64; // in_span gates heuristic sent through std path
 
     for seed in 0..n_seeds {
-        let stn = fuzz_circuit(n_qubits, n_gates, seed, mix);
+        let stn = fuzz_circuit(n_qubits, n_gates, seed, mix, false);
         theoretical_bond_sum += stn.gf2_matrix().theoretical_min_bond_dim() as u64;
         ofd_in_span += stn.stats.ofd_in_span;
         ofd_wins += stn.stats.ofd_in_span_std;
@@ -239,7 +248,7 @@ fn run_scenario(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix:
 }
 
 fn exercise_stability_circuit(num_qubits: usize, num_gates: usize, seed: u64, mix: GateMix) {
-    let mut stn = fuzz_circuit(num_qubits, num_gates, seed, mix);
+    let mut stn = fuzz_circuit(num_qubits, num_gates, seed, mix, true);
     stn.flush();
 
     let state = stn.state_vector();

@@ -2320,6 +2320,7 @@ fn exact_mps_config() -> MpsConfig {
         svd_cutoff: 0.0,
         max_truncation_error: Some(0.0),
         parallel: false,
+        direction_alternating_compression: true,
     }
 }
 
@@ -2449,6 +2450,7 @@ fn assert_honest_clifford_t_readouts_match_dense(
                     .seed(circuit_seed)
                     .merge_rz(false)
                     .max_truncation_error(max_truncation_error)
+                    .direction_alternating_compression(true)
                     .build();
                 apply_seeded_clifford_t_to_stn(&mut stn, &gates);
                 stn.flush();
@@ -2472,6 +2474,7 @@ fn assert_honest_clifford_t_readouts_match_dense(
                         .seed(circuit_seed)
                         .merge_rz(false)
                         .max_truncation_error(0.0)
+                        .direction_alternating_compression(true)
                         .build();
                     apply_seeded_clifford_t_to_stn(&mut oracle, &gates);
                     oracle.flush();
@@ -2671,7 +2674,8 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         Some(true),
                         "normalization invalidated or failed to validate the post-projection center"
                     );
-                    let expected_skippable = if event.center_before_qr_is_valid
+                    let expected_skippable = if event.qr_target != 0
+                        || event.center_before_qr_is_valid
                         || !event.center_before_projection_write_is_valid
                     {
                         0
@@ -2688,7 +2692,8 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         event.qr_sites_skippable_by_locality, expected_skippable,
                         "QR locality headroom does not match the gauge frontier"
                     );
-                    let expected_center_ceiling = if event.center_before_qr_is_valid
+                    let expected_center_ceiling = if event.qr_target != 0
+                        || event.center_before_qr_is_valid
                         || !event.center_before_projection_write_is_valid
                     {
                         0
@@ -2882,6 +2887,41 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     assert!(endpoint.prob_bitstrings(&empty).is_empty());
 }
 
+#[test]
+fn test_direction_alternating_prob_bitstrings_matches_singular_bit_for_bit() {
+    const NUM_QUBITS: usize = 5;
+    const CIRCUIT_SEED: u64 = 0xd1ce_c710_0055;
+    let gates = seeded_clifford_t_circuit(NUM_QUBITS, 7, CIRCUIT_SEED);
+    let mut stn = StabMps::builder(NUM_QUBITS)
+        .seed(CIRCUIT_SEED)
+        .merge_rz(false)
+        .max_bond_dim(64)
+        .svd_cutoff(0.0)
+        .max_truncation_error(0.0)
+        .direction_alternating_compression(true)
+        .build();
+    apply_seeded_clifford_t_to_stn(&mut stn, &gates);
+    stn.flush();
+
+    let queries = (0..1 << NUM_QUBITS)
+        .map(|outcome| {
+            (0..NUM_QUBITS)
+                .map(|q| (outcome >> q) & 1 != 0)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let singular = queries
+        .iter()
+        .map(|bits| stn.prob_bitstring(bits).to_bits())
+        .collect::<Vec<_>>();
+    let batched = stn
+        .prob_bitstrings(&queries)
+        .into_iter()
+        .map(f64::to_bits)
+        .collect::<Vec<_>>();
+    assert_eq!(batched, singular);
+}
+
 fn apply_weak_branch_readout_fixture(stn: &mut StabMps) {
     let t = Angle64::QUARTER_TURN / 2u64;
     for q in 0..4 {
@@ -2917,11 +2957,13 @@ fn test_prob_bitstring_adaptive_truncation_respects_recorded_weight_bound() {
         .merge_rz(false)
         .svd_cutoff(0.0)
         .max_truncation_error(0.0)
+        .direction_alternating_compression(true)
         .build();
     let mut adaptive = StabMps::builder(NUM_QUBITS)
         .merge_rz(false)
         .svd_cutoff(0.0)
         .max_truncation_error(1e-8)
+        .direction_alternating_compression(true)
         .build();
     apply_weak_branch_readout_fixture(&mut oracle);
     apply_weak_branch_readout_fixture(&mut adaptive);

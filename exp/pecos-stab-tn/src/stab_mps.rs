@@ -496,6 +496,7 @@ pub struct StabMpsBuilder {
     svd_cutoff: f64,
     max_truncation_error: Option<f64>,
     parallel: bool,
+    direction_alternating_compression: bool,
     auto_grow_bond_dim: Option<f64>,
     auto_grow_max_bond_dim: usize,
     measurement_mode: MeasurementMode,
@@ -585,6 +586,15 @@ impl StabMpsBuilder {
     #[must_use]
     pub fn parallel(mut self, parallel: bool) -> Self {
         self.parallel = parallel;
+        self
+    }
+
+    /// Alternate exact post-projection compression between left-to-right and
+    /// right-to-left sweeps. This experimental query-path mode is disabled by
+    /// default because changing SVD order can change truncation trajectories.
+    #[must_use]
+    pub fn direction_alternating_compression(mut self, enable: bool) -> Self {
+        self.direction_alternating_compression = enable;
         self
     }
 
@@ -748,6 +758,7 @@ impl StabMpsBuilder {
             svd_cutoff: self.svd_cutoff,
             max_truncation_error: self.max_truncation_error,
             parallel: self.parallel,
+            direction_alternating_compression: self.direction_alternating_compression,
         };
         let (tableau, rng) = initial_tableau_and_rng(self.num_qubits, self.seed);
         StabMps {
@@ -1051,6 +1062,8 @@ pub struct QueryPhaseTelemetry {
     pub svd_operations: u64,
     /// SVD operations for which `max_bond_dim` was binding.
     pub capped_svd_operations: u64,
+    /// Sum of the relative singular-value weight discarded in this phase.
+    pub summed_discarded_weight: f64,
     /// Accumulated phase wall time.
     pub wall_time_seconds: f64,
 }
@@ -1089,6 +1102,8 @@ pub struct ProjectionQrLocalityTelemetry {
     pub center_before_qr: Option<usize>,
     /// Whether the optional claim immediately before QR passed a Gram check.
     pub center_before_qr_is_valid: bool,
+    /// Site targeted by the configured post-projection QR sweep.
+    pub qr_target: usize,
     /// Projection tensor construction; this does not attribute center loss.
     pub construction: ProjectionConstruction,
     /// Smallest site reported by pre-reduction, projection, or compensation;
@@ -1119,7 +1134,8 @@ pub struct ProjectionQrLocalityTelemetry {
     /// Number of internal bond dimensions that differ from the
     /// post-pre-reduction snapshot.
     pub changed_bonds: usize,
-    /// Number of one-site QR factorizations selected by `canonicalize_at(0)`.
+    /// Number of one-site QR factorizations selected by the configured
+    /// post-projection canonicalization target.
     pub qr_sites: usize,
     /// Additional QR factorizations a support-aware projection could skip.
     ///
@@ -1155,7 +1171,7 @@ pub struct QueryDepthTelemetry {
     pub decomposition: QueryPhaseTelemetry,
     /// Projection construction and tableau update.
     pub projection: QueryPhaseTelemetry,
-    /// Exact post-projection right-canonical QR sweep.
+    /// Exact post-projection QR sweep into the next compression's input gauge.
     pub post_projection_qr: QueryPhaseTelemetry,
     /// Post-projection configured SVD compression.
     pub post_projection_svd: QueryPhaseTelemetry,
@@ -1232,6 +1248,7 @@ impl QueryDepthTelemetry {
         phase: QueryPhase,
         svd_operations: u64,
         capped_svd_operations: u64,
+        summed_discarded_weight: f64,
         wall_time_seconds: f64,
     ) {
         assert!(self.phase_active, "query telemetry phase was not started");
@@ -1250,6 +1267,7 @@ impl QueryDepthTelemetry {
         target.calls += 1;
         target.svd_operations += svd_operations;
         target.capped_svd_operations += capped_svd_operations;
+        target.summed_discarded_weight += summed_discarded_weight;
         target.wall_time_seconds += wall_time_seconds;
     }
 
@@ -1357,6 +1375,7 @@ impl StabMps {
             svd_cutoff: 1e-12,
             max_truncation_error: Some(1e-8),
             parallel: false,
+            direction_alternating_compression: false,
             auto_grow_bond_dim: None,
             auto_grow_max_bond_dim: 4096,
             measurement_mode: MeasurementMode::default(),
@@ -5592,6 +5611,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: None,
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut mps = Mps::new(2, cfg);
         // CNOT: 4x4 matrix. Start from |++⟩ by rotating each site; then CNOT creates
@@ -5635,6 +5655,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: None,
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut mps = Mps::new(2, cfg);
         // Seed with bond-2 Bell entangled tensors, then compress.
@@ -8652,6 +8673,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: Some(0.0),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut plus = Mps::new(3, config.clone());
         let mut minus = Mps::new(3, config);

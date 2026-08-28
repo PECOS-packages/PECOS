@@ -62,6 +62,12 @@ pub struct MpsConfig {
     pub max_truncation_error: Option<f64>,
     /// Use rayon for parallelizing independent MPS operations.
     pub parallel: bool,
+    /// Alternate the post-projection compression sweep direction.
+    ///
+    /// This experimental query-path mode lets each compression finish in the
+    /// canonical gauge required by the next compression. It is disabled by
+    /// default so existing simulations retain their exact SVD order.
+    pub direction_alternating_compression: bool,
 }
 
 impl Default for MpsConfig {
@@ -71,6 +77,22 @@ impl Default for MpsConfig {
             svd_cutoff: 1e-12,
             max_truncation_error: Some(1e-8),
             parallel: false,
+            direction_alternating_compression: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompressionDirection {
+    LeftToRight,
+    RightToLeft,
+}
+
+impl CompressionDirection {
+    const fn opposite(self) -> Self {
+        match self {
+            Self::LeftToRight => Self::RightToLeft,
+            Self::RightToLeft => Self::LeftToRight,
         }
     }
 }
@@ -104,6 +126,8 @@ pub struct Mps {
     phase_svd_operations: u64,
     /// Phase-local subset of `phase_svd_operations` at which the bond cap bound.
     phase_capped_svd_operations: u64,
+    /// Phase-local sum of the relative weight discarded by SVD operations.
+    phase_summed_discarded_weight: f64,
     /// True sum of every relative singular-value weight discarded by an SVD.
     summed_discarded_weight: f64,
     /// Largest bond dimension held by this MPS during its lifetime.
@@ -118,6 +142,8 @@ pub struct Mps {
     /// Number of canonicalization routes that reused a tracked orthogonality
     /// center instead of starting from a cold full-chain sweep.
     center_reuse_count: u64,
+    /// Direction of the next experimental post-projection compression sweep.
+    next_projection_compression_direction: CompressionDirection,
 }
 
 /// Pass-scoped left and right identity environments for selected MPS sites.
@@ -280,12 +306,14 @@ impl Mps {
             bond_cap_hits: 0,
             phase_svd_operations: 0,
             phase_capped_svd_operations: 0,
+            phase_summed_discarded_weight: 0.0,
             summed_discarded_weight: 0.0,
             lifetime_peak_bond: 1,
             branch_vanish_retry_count: 0,
             deferred_branch_lost_count: 0,
             full_canonical_sweep_count: 0,
             center_reuse_count: 0,
+            next_projection_compression_direction: CompressionDirection::LeftToRight,
         }
     }
 
@@ -355,6 +383,7 @@ impl Mps {
         self.bond_cap_hits = 0;
         self.phase_svd_operations = 0;
         self.phase_capped_svd_operations = 0;
+        self.phase_summed_discarded_weight = 0.0;
         self.summed_discarded_weight = 0.0;
         self.branch_vanish_retry_count = 0;
         self.deferred_branch_lost_count = 0;
@@ -369,6 +398,7 @@ impl Mps {
         if discarded_weight > 0.0 {
             self.truncation_error += (1.0 - self.truncation_error) * discarded_weight;
             self.summed_discarded_weight += discarded_weight;
+            self.phase_summed_discarded_weight += discarded_weight;
         }
         if hit_cap {
             self.bond_cap_hits += 1;
@@ -383,8 +413,12 @@ impl Mps {
     }
 
     /// Take and clear the operation counters used by query-phase profiling.
-    pub(crate) fn take_phase_svd_operations(&mut self) -> (u64, u64) {
-        let result = (self.phase_svd_operations, self.phase_capped_svd_operations);
+    pub(crate) fn take_phase_svd_operations(&mut self) -> (u64, u64, f64) {
+        let result = (
+            self.phase_svd_operations,
+            self.phase_capped_svd_operations,
+            self.phase_summed_discarded_weight,
+        );
         self.reset_phase_svd_operations();
         result
     }
@@ -1157,6 +1191,9 @@ impl Mps {
             phase_capped_svd_operations: self
                 .phase_capped_svd_operations
                 .max(other.phase_capped_svd_operations),
+            phase_summed_discarded_weight: self
+                .phase_summed_discarded_weight
+                .max(other.phase_summed_discarded_weight),
             summed_discarded_weight: self
                 .summed_discarded_weight
                 .max(other.summed_discarded_weight),
@@ -1174,6 +1211,7 @@ impl Mps {
                 .full_canonical_sweep_count
                 .max(other.full_canonical_sweep_count),
             center_reuse_count: self.center_reuse_count.max(other.center_reuse_count),
+            next_projection_compression_direction: self.next_projection_compression_direction,
         }
     }
 
@@ -1379,6 +1417,32 @@ impl Mps {
         // Left-canonicalize
         self.left_canonicalize();
 
+        self.compress_from_left_canonical()?;
+
+        // Preserve the established post-compression left-canonical contract
+        // for downstream projection code. This exact QR sweep happens only
+        // after every truncation has been evaluated in the right-to-left
+        // mixed-canonical gauge above.
+        self.left_canonicalize();
+        self.record_current_peak_bond();
+        Ok(())
+    }
+
+    /// Compress from an established left-canonical gauge.
+    ///
+    /// The orthogonality center starts at the final site and follows this
+    /// right-to-left SVD sweep, finishing at site zero. This is the existing
+    /// truncating sweep used by [`Self::compress`], exposed separately so the
+    /// direction-alternating query path can retain its terminal gauge.
+    pub(crate) fn compress_from_left_canonical(&mut self) -> Result<(), MpsError> {
+        if self.num_sites <= 1 {
+            self.center = (self.num_sites == 1).then_some(0);
+            return Ok(());
+        }
+        debug_assert_eq!(self.center, Some(self.num_sites - 1));
+        #[cfg(debug_assertions)]
+        debug_assert!(self.claimed_center_is_valid(self.num_sites - 1));
+
         // Sweep right to left: retain Vt at site q so it is right-canonical,
         // and absorb U*S into q-1 so the orthogonality center follows the
         // sweep. The singular values at every subsequent bond are therefore
@@ -1421,12 +1485,6 @@ impl Mps {
             self.tensors[q - 1] = new_prev;
             self.center = Some(q - 1);
         }
-
-        // Preserve the established post-compression left-canonical contract
-        // for downstream projection code. This exact QR sweep happens only
-        // after every truncation has been evaluated in the right-to-left
-        // mixed-canonical gauge above.
-        self.left_canonicalize();
         self.record_current_peak_bond();
         Ok(())
     }
@@ -1470,6 +1528,50 @@ impl Mps {
         self.record_current_peak_bond();
         Ok(())
     }
+
+    /// Establish the gauge required by the configured post-projection sweep.
+    pub(crate) fn canonicalize_for_projection_compression(&mut self) {
+        if !self.config.direction_alternating_compression
+            || self.next_projection_compression_direction == CompressionDirection::LeftToRight
+        {
+            self.right_canonicalize();
+        } else if self.num_sites > 0 {
+            self.canonicalize_at(self.num_sites - 1);
+        }
+    }
+
+    /// Site targeted by the next configured post-projection canonicalization.
+    pub(crate) fn projection_compression_target(&self) -> Option<usize> {
+        if self.num_sites == 0 {
+            return None;
+        }
+        if self.config.direction_alternating_compression
+            && self.next_projection_compression_direction == CompressionDirection::RightToLeft
+        {
+            Some(self.num_sites - 1)
+        } else {
+            Some(0)
+        }
+    }
+
+    /// Compress a projected MPS in the configured direction.
+    ///
+    /// The disabled branch is the original left-to-right query path. The
+    /// enabled branch alternates only after a successful complete sweep, so a
+    /// failed factorization cannot advance the direction state.
+    pub(crate) fn compress_projection_bonds(&mut self) -> Result<(), MpsError> {
+        if !self.config.direction_alternating_compression {
+            return self.compress_from_right_canonical();
+        }
+
+        let direction = self.next_projection_compression_direction;
+        match direction {
+            CompressionDirection::LeftToRight => self.compress_from_right_canonical()?,
+            CompressionDirection::RightToLeft => self.compress_from_left_canonical()?,
+        }
+        self.next_projection_compression_direction = direction.opposite();
+        Ok(())
+    }
 }
 
 impl Clone for Mps {
@@ -1485,12 +1587,14 @@ impl Clone for Mps {
             bond_cap_hits: self.bond_cap_hits,
             phase_svd_operations: self.phase_svd_operations,
             phase_capped_svd_operations: self.phase_capped_svd_operations,
+            phase_summed_discarded_weight: self.phase_summed_discarded_weight,
             summed_discarded_weight: self.summed_discarded_weight,
             lifetime_peak_bond: self.lifetime_peak_bond,
             branch_vanish_retry_count: self.branch_vanish_retry_count,
             deferred_branch_lost_count: self.deferred_branch_lost_count,
             full_canonical_sweep_count: self.full_canonical_sweep_count,
             center_reuse_count: self.center_reuse_count,
+            next_projection_compression_direction: self.next_projection_compression_direction,
         }
     }
 }
@@ -1519,6 +1623,11 @@ mod tests {
         assert!((mps.truncation_error() - 0.28).abs() < 1e-15);
         assert!((mps.summed_discarded_weight() - 0.3).abs() < 1e-15);
         assert_eq!(mps.bond_cap_hits(), 1);
+        let (operations, capped_operations, phase_discarded_weight) =
+            mps.take_phase_svd_operations();
+        assert_eq!(operations, 2);
+        assert_eq!(capped_operations, 1);
+        assert!((phase_discarded_weight - 0.3).abs() < 1e-15);
 
         let doubled = mps.add(&mps);
         assert_eq!(doubled.max_bond_dim(), 2);
@@ -1576,6 +1685,51 @@ mod tests {
         let inverse_norm = mps.norm_squared().sqrt().recip();
         mps.scale(Complex64::new(inverse_norm, 0.0));
         mps
+    }
+
+    fn reduce_projected_sum(mut mps: Mps) -> Mps {
+        let branch = mps.clone();
+        mps = mps.add(&branch);
+        mps.canonicalize_for_projection_compression();
+        mps.compress_projection_bonds().unwrap();
+        mps
+    }
+
+    #[test]
+    fn projection_compression_default_preserves_the_original_direction() {
+        let config = MpsConfig {
+            max_bond_dim: 64,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+            ..MpsConfig::default()
+        };
+        assert!(!config.direction_alternating_compression);
+        let mps = seeded_random_mps(5, 4, 0xd1ce_c710_0000_0001, config);
+
+        let once = reduce_projected_sum(mps);
+        assert_eq!(once.tracked_center_for_test(), Some(4));
+        let twice = reduce_projected_sum(once);
+        assert_eq!(twice.tracked_center_for_test(), Some(4));
+    }
+
+    #[test]
+    fn projection_compression_alternates_direction_across_direct_sums() {
+        let config = MpsConfig {
+            max_bond_dim: 64,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+            direction_alternating_compression: true,
+        };
+        let mps = seeded_random_mps(5, 4, 0xd1ce_c710_0000_0002, config);
+
+        let once = reduce_projected_sum(mps);
+        assert_eq!(once.tracked_center_for_test(), Some(4));
+        let twice = reduce_projected_sum(once);
+        assert_eq!(twice.tracked_center_for_test(), Some(0));
+        let thrice = reduce_projected_sum(twice);
+        assert_eq!(thrice.tracked_center_for_test(), Some(4));
     }
 
     fn legacy_off_center_compress(mps: &mut Mps) {
@@ -1785,6 +1939,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: Some(0.0),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut mps = seeded_random_mps(5, 4, 0x5ca1_e000_0000_0001, config);
         mps.canonicalize_around_bond(2);
@@ -1834,6 +1989,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: Some(0.0),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut first = seeded_random_mps(5, 4, 0xadd0_0001, config.clone());
         let mut second = seeded_random_mps(5, 4, 0xadd0_0002, config);
@@ -1852,6 +2008,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: Some(0.0),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut mps = seeded_random_mps(5, 4, 0xd1ec_7001, config);
         mps.left_canonicalize();
@@ -1869,6 +2026,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: Some(0.0),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut poisoned = seeded_random_mps(6, 8, 0x57a1_e000_0000_0001, config);
         poisoned.canonicalize_around_bond(2);
@@ -1946,6 +2104,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: Some(0.0),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut improved = 0;
         let mut worst_fixed = 1.0_f64;
@@ -1983,6 +2142,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: Some(0.0),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let zero = Complex64::new(0.0, 0.0);
         let one = Complex64::new(1.0, 0.0);
@@ -2049,6 +2209,7 @@ mod tests {
             svd_cutoff: 0.0,
             max_truncation_error: Some(0.0),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let zero = Complex64::new(0.0, 0.0);
         let one = Complex64::new(1.0, 0.0);
@@ -2121,6 +2282,7 @@ mod tests {
             svd_cutoff: 1e-12,
             max_truncation_error: Some(0.0),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let dominant = Mps::new(6, config.clone());
         let mut small_branch = Mps::new(6, config);

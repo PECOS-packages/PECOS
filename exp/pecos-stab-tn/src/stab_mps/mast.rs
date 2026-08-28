@@ -1034,6 +1034,7 @@ mod tests {
                 svd_cutoff: 0.0,
                 max_truncation_error: Some(0.0),
                 parallel: false,
+                direction_alternating_compression: false,
             }
         }
 
@@ -1909,6 +1910,7 @@ mod tests {
             svd_cutoff: 1e-7,
             max_truncation_error: Some(1e-4),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut mast = Mast::with_seed(1, 1, 17).with_mps_config(configured.clone());
         mast.h(&[QubitId(0)]);
@@ -1938,6 +1940,7 @@ mod tests {
             svd_cutoff: 1e-7,
             max_truncation_error: Some(1e-4),
             parallel: false,
+            direction_alternating_compression: false,
         };
         let mut mast = Mast::with_seed(1, 1, 23).with_mps_config(configured);
         mast.h(&[QubitId(0)]);

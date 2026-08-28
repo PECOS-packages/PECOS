@@ -11,6 +11,8 @@
 //!
 //! Select one cell with `SATURATION_CELL` and control the campaign protocol
 //! with `SATURATION_WARMUPS` (default 1) and `SATURATION_REPETITIONS` (default 5).
+//! Set `SATURATION_DIRECTION_ALTERNATING_COMPRESSION=1` to enable the Stage-3
+//! post-projection compression experiment.
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
@@ -289,6 +291,8 @@ fn apply_gate(simulator: &mut StabMps, gate: Gate) {
 }
 
 fn simulate(cell: Cell, collect_telemetry: bool) -> (StabMps, f64) {
+    let direction_alternating_compression =
+        env_flag("SATURATION_DIRECTION_ALTERNATING_COMPRESSION");
     let started = Instant::now();
     let mut simulator = StabMps::builder(cell.n)
         .seed(cell.seed)
@@ -298,6 +302,7 @@ fn simulate(cell: Cell, collect_telemetry: bool) -> (StabMps, f64) {
         .merge_rz(true)
         .numerical_flag_redetection(true)
         .saturation_telemetry(collect_telemetry)
+        .direction_alternating_compression(direction_alternating_compression)
         .build();
     for gate in gates(cell) {
         apply_gate(&mut simulator, gate);
@@ -340,6 +345,7 @@ struct RunSummary {
     ofd_avoidable_seconds: f64,
     stats: StabMpsStats,
     signed_eigenstates: SignedEigenstateTelemetry,
+    summed_discarded_weight: f64,
     output_hash: u64,
 }
 
@@ -356,6 +362,7 @@ struct QueryTotals {
     bookkeeping: f64,
     svds: u64,
     capped_svds: u64,
+    summed_discarded_weight: f64,
 }
 
 fn query_totals(profile: &ProbabilityQueryTelemetry) -> QueryTotals {
@@ -383,6 +390,7 @@ fn query_totals(profile: &ProbabilityQueryTelemetry) -> QueryTotals {
         ] {
             totals.svds += phase.svd_operations;
             totals.capped_svds += phase.capped_svd_operations;
+            totals.summed_discarded_weight += phase.summed_discarded_weight;
         }
     }
     totals
@@ -439,7 +447,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
             };
             let construction = projection_construction_label(event.construction);
             println!(
-                "LOCALITY cell={} run={} depth={} event={} n={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} construction={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} qr_skippable_center_ceiling={} normalization_preserved={}",
+                "LOCALITY cell={} run={} depth={} event={} n={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} qr_target={} construction={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} qr_skippable_center_ceiling={} normalization_preserved={}",
                 cell.name,
                 run,
                 depth,
@@ -449,6 +457,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                 event.center_before_projection_write_is_valid,
                 option(event.center_before_qr),
                 event.center_before_qr_is_valid,
+                event.qr_target,
                 construction,
                 option(event.touched_site_min),
                 option(event.touched_site_max),
@@ -485,6 +494,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                         event.center_before_projection_write_is_valid,
                         event.center_before_qr,
                         event.center_before_qr_is_valid,
+                        event.qr_target,
                         (
                             event.touched_site_min,
                             event.touched_site_max,
@@ -533,6 +543,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                     center_pre_write_valid,
                     center_qr,
                     center_qr_valid,
+                    qr_target,
                     (
                         touched_min,
                         touched_max,
@@ -552,7 +563,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                     value.map_or_else(|| "none".to_owned(), |value| value.to_string())
                 };
                 println!(
-                    "LOCALITY_DIST cell={} run={} depth={} count={} construction={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} qr_skippable_center_ceiling={}",
+                    "LOCALITY_DIST cell={} run={} depth={} count={} construction={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} qr_target={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} qr_skippable_center_ceiling={}",
                     cell.name,
                     run,
                     depth,
@@ -562,6 +573,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                     center_pre_write_valid,
                     option(center_qr),
                     center_qr_valid,
+                    qr_target,
                     option(touched_min),
                     option(touched_max),
                     touched_sites,
@@ -787,20 +799,22 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
     summary.survival_seconds = totals.survival;
     summary.normalization_seconds = totals.normalization;
     summary.bookkeeping_seconds = totals.bookkeeping;
+    summary.summed_discarded_weight = totals.summed_discarded_weight;
     print_query_depths(cell, run, &profile);
     print_locality_total(cell, run, &profile);
     println!(
-        "QUERY_OPS cell={} run={} svds={} capped_svds={} attributed_s={:.9} whole_call_s={:.9} trie_clone_residual_s={:.9}",
+        "QUERY_OPS cell={} run={} svds={} capped_svds={} summed_discarded_weight={:.16e} attributed_s={:.9} whole_call_s={:.9} trie_clone_residual_s={:.9}",
         cell.name,
         run,
         totals.svds,
         totals.capped_svds,
+        totals.summed_discarded_weight,
         attributed_seconds,
         profile.whole_call_wall_time_seconds,
         summary.query_residual_seconds,
     );
     println!(
-        "RUN cell={} run={} sim_s={:.9} profiled_sim_s={:.9} telemetry_on_overhead_s={:.9} query_s={:.9} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} expectation_s={:.9} pre_s={:.9} decomposition_s={:.9} projection_s={:.9} qr_s={:.9} svd_s={:.9} survival_s={:.9} normalization_s={:.9} bookkeeping_s={:.9} trie_clone_residual_s={:.9} cascade_s={:.9} add_s={:.9} disent_s={:.9} ofd_avoidable_s={:.9} output_hash={:016x}",
+        "RUN cell={} run={} sim_s={:.9} profiled_sim_s={:.9} telemetry_on_overhead_s={:.9} query_s={:.9} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} expectation_s={:.9} pre_s={:.9} decomposition_s={:.9} projection_s={:.9} qr_s={:.9} svd_s={:.9} survival_s={:.9} normalization_s={:.9} bookkeeping_s={:.9} trie_clone_residual_s={:.9} query_summed_discarded_weight={:.16e} cascade_s={:.9} add_s={:.9} disent_s={:.9} ofd_avoidable_s={:.9} output_hash={:016x}",
         cell.name,
         run,
         summary.sim_seconds,
@@ -823,6 +837,7 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
         summary.normalization_seconds,
         summary.bookkeeping_seconds,
         summary.query_residual_seconds,
+        summary.summed_discarded_weight,
         summary.cascade_seconds,
         summary.add_seconds,
         summary.disent_seconds,
@@ -843,13 +858,19 @@ fn print_summary(cell: Cell, runs: &[RunSummary]) {
     let (query_run_index, query_run) = median_run_by(runs, |run| run.query_seconds);
     let first = &runs[0];
     assert!(runs.iter().all(|run| run.output_hash == first.output_hash));
+    if !env_flag("SATURATION_DIRECTION_ALTERNATING_COMPRESSION") && cell.name == "sparse-n32-tn" {
+        assert_eq!(
+            first.output_hash, 0xf285_6a19_1d28_ffdd,
+            "flag-off sparse-n32-tn campaign hash drifted"
+        );
+    }
     assert!(
         runs.iter()
             .all(|run| run.signed_eigenstates == first.signed_eigenstates),
         "candidate populations must be deterministic"
     );
     println!(
-        "SUMMARY cell={} repetitions={} sim_median_run={} query_median_run={} sim_median_s={:.9} profiled_sim_s={:.9} telemetry_on_overhead_s={:.9} query_median_s={:.9} expectation_s={:.9} pre_s={:.9} decomposition_s={:.9} projection_s={:.9} qr_s={:.9} svd_s={:.9} survival_s={:.9} normalization_s={:.9} bookkeeping_s={:.9} trie_clone_residual_s={:.9} cascade_s={:.9} add_s={:.9} disent_s={:.9} ofd_avoidable_s={:.9} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} output_hash={:016x}",
+        "SUMMARY cell={} repetitions={} sim_median_run={} query_median_run={} sim_median_s={:.9} profiled_sim_s={:.9} telemetry_on_overhead_s={:.9} query_median_s={:.9} expectation_s={:.9} pre_s={:.9} decomposition_s={:.9} projection_s={:.9} qr_s={:.9} svd_s={:.9} survival_s={:.9} normalization_s={:.9} bookkeeping_s={:.9} trie_clone_residual_s={:.9} query_summed_discarded_weight={:.16e} cascade_s={:.9} add_s={:.9} disent_s={:.9} ofd_avoidable_s={:.9} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} output_hash={:016x}",
         cell.name,
         runs.len(),
         sim_run_index,
@@ -868,6 +889,7 @@ fn print_summary(cell: Cell, runs: &[RunSummary]) {
         query_run.normalization_seconds,
         query_run.bookkeeping_seconds,
         query_run.query_residual_seconds,
+        query_run.summed_discarded_weight,
         sim_run.cascade_seconds,
         sim_run.add_seconds,
         sim_run.disent_seconds,
@@ -903,6 +925,10 @@ fn env_count(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+fn env_flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| value != "0")
+}
+
 fn main() {
     // Stable anchors from CPython 3.13's random.Random. These fail before a
     // campaign run if the ported generator ever drifts.
@@ -920,8 +946,13 @@ fn main() {
     for cell in selected_cells() {
         let gate_count = gates(cell).len();
         println!(
-            "CELL cell={} n={} seed={} gates={} campaign_content_hash={} query_status=available",
-            cell.name, cell.n, cell.seed, gate_count, cell.campaign_content_hash,
+            "CELL cell={} n={} seed={} gates={} campaign_content_hash={} direction_alternating_compression={} query_status=available",
+            cell.name,
+            cell.n,
+            cell.seed,
+            gate_count,
+            cell.campaign_content_hash,
+            env_flag("SATURATION_DIRECTION_ALTERNATING_COMPRESSION"),
         );
         for warmup in 0..warmups {
             let (simulator, sim_seconds) = simulate(cell, false);

@@ -99,6 +99,11 @@ pub struct Mps {
     /// Number of SVDs that were capped by `max_bond_dim` (rank-limited rather
     /// than cutoff-limited). If > 0 the caller may want to raise `max_bond_dim`.
     bond_cap_hits: u64,
+    /// Phase-local count of SVD operations. Profiling code clears this before
+    /// each measured phase, so clone/add history cannot masquerade as work.
+    phase_svd_operations: u64,
+    /// Phase-local subset of `phase_svd_operations` at which the bond cap bound.
+    phase_capped_svd_operations: u64,
     /// True sum of every relative singular-value weight discarded by an SVD.
     summed_discarded_weight: f64,
     /// Largest bond dimension held by this MPS during its lifetime.
@@ -172,6 +177,55 @@ impl MpsEnvironmentCache<'_> {
             .sum();
         weight.re / self.norm_squared
     }
+
+    /// Evaluate the normalized Bloch vector of one qubit from its cached
+    /// one-site reduced density matrix.
+    ///
+    /// Unlike inspecting a local tensor, this contraction is independent of
+    /// the MPS gauge and remains valid when either adjacent bond is larger
+    /// than one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the site was not included when the cache was built, if the
+    /// MPS physical dimension is not two, or if the cached MPS has numerically
+    /// zero norm.
+    #[must_use]
+    pub fn one_site_bloch_vector(&self, site: usize) -> [f64; 3] {
+        let candidate = self
+            .sites
+            .binary_search(&site)
+            .expect("MPS site was not cached");
+        assert_eq!(
+            self.mps.phys_dim, 2,
+            "Bloch vectors require physical dimension two"
+        );
+        assert!(
+            self.norm_squared > 1e-20,
+            "cannot evaluate a normalized marginal of a zero-norm MPS"
+        );
+
+        let chi_r = self.mps.bond_dims[site + 1];
+        let block_zero = phys_block(&self.mps.tensors[site], 0, chi_r);
+        let block_one = phys_block(&self.mps.tensors[site], 1, chi_r);
+        let local_matrix_element =
+            |bra: &DMatrix<Complex64>, ket: &DMatrix<Complex64>| -> Complex64 {
+                let local_transfer = bra.conjugate().transpose() * &self.left[candidate] * ket;
+                local_transfer
+                    .component_mul(&self.right[candidate])
+                    .iter()
+                    .sum::<Complex64>()
+                    / self.norm_squared
+            };
+        let probability_zero = local_matrix_element(&block_zero, &block_zero).re;
+        let probability_one = local_matrix_element(&block_one, &block_one).re;
+        let coherence = local_matrix_element(&block_zero, &block_one);
+        [
+            2.0 * coherence.re,
+            2.0 * coherence.im,
+            probability_zero - probability_one,
+        ]
+    }
 }
 
 fn advance_left_identity_environment(
@@ -224,6 +278,8 @@ impl Mps {
             config,
             truncation_error: 0.0,
             bond_cap_hits: 0,
+            phase_svd_operations: 0,
+            phase_capped_svd_operations: 0,
             summed_discarded_weight: 0.0,
             lifetime_peak_bond: 1,
             branch_vanish_retry_count: 0,
@@ -297,6 +353,8 @@ impl Mps {
     pub fn reset_truncation_stats(&mut self) {
         self.truncation_error = 0.0;
         self.bond_cap_hits = 0;
+        self.phase_svd_operations = 0;
+        self.phase_capped_svd_operations = 0;
         self.summed_discarded_weight = 0.0;
         self.branch_vanish_retry_count = 0;
         self.deferred_branch_lost_count = 0;
@@ -307,13 +365,28 @@ impl Mps {
 
     /// Record the outcome of one truncated SVD for telemetry.
     pub(crate) fn record_truncation(&mut self, discarded_weight: f64, hit_cap: bool) {
+        self.phase_svd_operations += 1;
         if discarded_weight > 0.0 {
             self.truncation_error += (1.0 - self.truncation_error) * discarded_weight;
             self.summed_discarded_weight += discarded_weight;
         }
         if hit_cap {
             self.bond_cap_hits += 1;
+            self.phase_capped_svd_operations += 1;
         }
+    }
+
+    /// Clear the operation counters used by query-phase profiling.
+    pub(crate) fn reset_phase_svd_operations(&mut self) {
+        self.phase_svd_operations = 0;
+        self.phase_capped_svd_operations = 0;
+    }
+
+    /// Take and clear the operation counters used by query-phase profiling.
+    pub(crate) fn take_phase_svd_operations(&mut self) -> (u64, u64) {
+        let result = (self.phase_svd_operations, self.phase_capped_svd_operations);
+        self.reset_phase_svd_operations();
+        result
     }
 
     pub(crate) fn record_branch_vanish_retry(&mut self) {
@@ -1068,6 +1141,14 @@ impl Mps {
             config: self.config.clone(),
             truncation_error: self.truncation_error.max(other.truncation_error),
             bond_cap_hits: self.bond_cap_hits + other.bond_cap_hits,
+            // Both operands may carry the same history after cloning. Keep a
+            // conservative lineage maximum instead of counting that history
+            // twice; phase-local work after this direct sum is still recorded
+            // normally on the result.
+            phase_svd_operations: self.phase_svd_operations.max(other.phase_svd_operations),
+            phase_capped_svd_operations: self
+                .phase_capped_svd_operations
+                .max(other.phase_capped_svd_operations),
             summed_discarded_weight: self
                 .summed_discarded_weight
                 .max(other.summed_discarded_weight),
@@ -1386,6 +1467,8 @@ impl Clone for Mps {
             config: self.config.clone(),
             truncation_error: self.truncation_error,
             bond_cap_hits: self.bond_cap_hits,
+            phase_svd_operations: self.phase_svd_operations,
+            phase_capped_svd_operations: self.phase_capped_svd_operations,
             summed_discarded_weight: self.summed_discarded_weight,
             lifetime_peak_bond: self.lifetime_peak_bond,
             branch_vanish_retry_count: self.branch_vanish_retry_count,
@@ -2130,6 +2213,32 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_cached_bloch_vector_is_gauge_independent_at_large_adjacent_bonds() {
+        let mut plus = Mps::new(3, MpsConfig::default());
+        let inverse_sqrt_two = std::f64::consts::FRAC_1_SQRT_2;
+        let hadamard = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(inverse_sqrt_two, 0.0),
+                Complex64::new(inverse_sqrt_two, 0.0),
+                Complex64::new(inverse_sqrt_two, 0.0),
+                Complex64::new(-inverse_sqrt_two, 0.0),
+            ],
+        );
+        plus.apply_one_site_gate(1, &hadamard).unwrap();
+        let expanded = plus.add(&plus);
+        assert_eq!(expanded.bond_dim(1), 2);
+        assert_eq!(expanded.bond_dim(2), 2);
+
+        let environments = expanded.environment_cache(&[1]);
+        let [x, y, z] = environments.one_site_bloch_vector(1);
+        assert_relative_eq!(x, 1.0, epsilon = 1e-14);
+        assert_relative_eq!(y, 0.0, epsilon = 1e-14);
+        assert_relative_eq!(z, 0.0, epsilon = 1e-14);
     }
 
     #[test]

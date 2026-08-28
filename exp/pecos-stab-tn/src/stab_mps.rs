@@ -1072,6 +1072,11 @@ pub enum ProjectionConstruction {
 }
 
 /// Runtime-gated locality details for one exact post-projection QR consult.
+///
+/// The touched-site span includes pre-reduction bookkeeping even though the
+/// changed-tensor snapshot is taken after pre-reduction; the former is
+/// therefore a conservative superset measured from an earlier reference
+/// point and can only reduce the reported locality headroom.
 #[derive(Clone, Debug)]
 pub struct ProjectionQrLocalityTelemetry {
     /// Number of MPS sites in the projected chain.
@@ -1086,12 +1091,14 @@ pub struct ProjectionQrLocalityTelemetry {
     pub center_before_qr_is_valid: bool,
     /// Projection tensor construction; this does not attribute center loss.
     pub construction: ProjectionConstruction,
-    /// Smallest site reported by pre-reduction, projection, or compensation.
+    /// Smallest site reported by pre-reduction, projection, or compensation;
+    /// unlike `changed_tensor_min`, this includes pre-snapshot pre-reduction.
     pub touched_site_min: Option<usize>,
-    /// Largest site reported by pre-reduction, projection, or compensation.
+    /// Largest site reported by pre-reduction, projection, or compensation;
+    /// unlike `changed_tensor_max`, this includes pre-snapshot pre-reduction.
     pub touched_site_max: Option<usize>,
     /// Number of distinct reported sites. This is a conservative superset of
-    /// the projector support.
+    /// the projector support and includes pre-snapshot pre-reduction sites.
     pub touched_sites: usize,
     /// Smallest tensor that differs bit-for-bit from the post-pre-reduction
     /// snapshot.
@@ -1122,7 +1129,16 @@ pub struct ProjectionQrLocalityTelemetry {
     /// and still need the direction-reversing QR sweep. Events that retain a
     /// valid center already reuse its isometries and therefore have no
     /// additional headroom here.
+    ///
+    /// Dividing this site count by `qr_sites` overstates wall-time headroom
+    /// because the skippable suffix has tapered bonds and cheaper QR work.
     pub qr_sites_skippable_by_locality: usize,
+    /// Upper bound with the locality frontier set to the pre-write center alone.
+    ///
+    /// This ignores `touched_site_max`, equivalently assuming a perfectly
+    /// local projector with empty support, so it remains valid even if the
+    /// reported touched-site footprint is wrong.
+    pub qr_sites_skippable_by_center_ceiling: usize,
     /// Whether the following normalization retained its pre-normalization center.
     /// `None` means the event has not yet reached its normalization phase.
     pub normalization_preserved_center: Option<bool>,

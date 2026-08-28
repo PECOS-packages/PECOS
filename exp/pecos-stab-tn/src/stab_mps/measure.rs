@@ -1257,6 +1257,28 @@ impl ProjectionLocalityContext {
         let (changed_tensor_min, changed_tensor_max) = span(&changed_tensors);
         let (touched_site_min, touched_site_max) = span(&self.touched_sites);
         let (changed_bond_min, changed_bond_max) = span(&changed_bonds);
+        let construction = self
+            .construction
+            .expect("projection construction must precede QR telemetry");
+        // `Mps::add` changes every tensor's shape, so its bitwise footprint is
+        // uninformative and cannot validate the direct-sum support report. For
+        // the local construction paths, every changed tensor must be covered
+        // by the conservative touched-site frontier.
+        if construction != super::ProjectionConstruction::DirectSum {
+            assert!(
+                changed_tensor_max <= touched_site_max,
+                "non-direct-sum projection changed tensor {changed_tensor_max:?} beyond reported touched-site frontier {touched_site_max:?}"
+            );
+        }
+        let qr_sites_skippable_by_center_ceiling =
+            if center_before_qr_is_valid || !self.center_before_projection_write_is_valid {
+                0
+            } else {
+                let center = self
+                    .center_before_projection_write
+                    .expect("a valid pre-write center must have a site");
+                mps.num_sites().saturating_sub(1).saturating_sub(center)
+            };
         let qr_sites_skippable_by_locality =
             if center_before_qr_is_valid || !self.center_before_projection_write_is_valid {
                 0
@@ -1270,6 +1292,8 @@ impl ProjectionLocalityContext {
                     .saturating_sub(locality_frontier)
             };
         debug_assert!(qr_sites_skippable_by_locality <= qr_sites);
+        debug_assert!(qr_sites_skippable_by_locality <= qr_sites_skippable_by_center_ceiling);
+        debug_assert!(qr_sites_skippable_by_center_ceiling <= qr_sites);
 
         super::ProjectionQrLocalityTelemetry {
             chain_length: mps.num_sites(),
@@ -1277,9 +1301,7 @@ impl ProjectionLocalityContext {
             center_before_projection_write_is_valid: self.center_before_projection_write_is_valid,
             center_before_qr,
             center_before_qr_is_valid,
-            construction: self
-                .construction
-                .expect("projection construction must precede QR telemetry"),
+            construction,
             touched_site_min,
             touched_site_max,
             touched_sites: self.touched_sites.len(),
@@ -1291,6 +1313,7 @@ impl ProjectionLocalityContext {
             changed_bonds: changed_bonds.len(),
             qr_sites,
             qr_sites_skippable_by_locality,
+            qr_sites_skippable_by_center_ceiling,
             normalization_preserved_center: None,
         }
     }

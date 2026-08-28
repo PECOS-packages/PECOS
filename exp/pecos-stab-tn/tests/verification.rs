@@ -2688,20 +2688,41 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         event.qr_sites_skippable_by_locality, expected_skippable,
                         "QR locality headroom does not match the gauge frontier"
                     );
+                    let expected_center_ceiling = if event.center_before_qr_is_valid
+                        || !event.center_before_projection_write_is_valid
+                    {
+                        0
+                    } else {
+                        let center = event
+                            .center_before_projection_write
+                            .expect("a valid pre-write center must have a site");
+                        (event.chain_length - 1).saturating_sub(center)
+                    };
+                    assert_eq!(
+                        event.qr_sites_skippable_by_center_ceiling, expected_center_ceiling,
+                        "QR center-only ceiling does not match the pre-write center frontier"
+                    );
                     assert!(event.qr_sites_skippable_by_locality <= event.qr_sites);
+                    assert!(
+                        event.qr_sites_skippable_by_locality
+                            <= event.qr_sites_skippable_by_center_ceiling
+                    );
+                    assert!(event.qr_sites_skippable_by_center_ceiling <= event.qr_sites);
                     match event.construction {
                         ProjectionConstruction::DirectSum => {
                             locality_direct_sum_events += 1;
+                            // `Mps::add` currently changes every tensor's
+                            // shape, so its bitwise footprint is uninformative
+                            // and is explicitly exempt from the support guard.
                         }
                         ProjectionConstruction::LocalBlockWrite => {
                             locality_block_write_events += 1;
+                            assert!(event.changed_tensor_max <= event.touched_site_max);
                         }
-                        ProjectionConstruction::ScalarScale => {}
+                        ProjectionConstruction::ScalarScale => {
+                            assert!(event.changed_tensor_max <= event.touched_site_max);
+                        }
                     }
-                    // Do not turn the current full-chain bitwise span of a
-                    // direct sum into a contract. `Mps::add` changes every
-                    // tensor's shape today, which makes that span degenerate;
-                    // a support-aware implementation must be free to narrow it.
                 }
                 assert!(
                     profile

@@ -439,7 +439,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
             };
             let construction = projection_construction_label(event.construction);
             println!(
-                "LOCALITY cell={} run={} depth={} event={} n={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} construction={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} normalization_preserved={}",
+                "LOCALITY cell={} run={} depth={} event={} n={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} construction={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} qr_skippable_center_ceiling={} normalization_preserved={}",
                 cell.name,
                 run,
                 depth,
@@ -461,6 +461,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                 event.changed_bonds,
                 event.qr_sites,
                 event.qr_sites_skippable_by_locality,
+                event.qr_sites_skippable_by_center_ceiling,
                 event
                     .normalization_preserved_center
                     .is_some_and(|preserved| preserved),
@@ -471,6 +472,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
             let mut distributions = BTreeMap::<_, usize>::new();
             let mut qr_sites = 0;
             let mut qr_skippable = 0;
+            let mut qr_skippable_center_ceiling = 0;
             let mut normalization_losses = 0;
             for event in &bucket.projection_qr_locality {
                 *constructions
@@ -495,11 +497,13 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                             event.changed_bonds,
                             event.qr_sites,
                             event.qr_sites_skippable_by_locality,
+                            event.qr_sites_skippable_by_center_ceiling,
                         ),
                     ))
                     .or_default() += 1;
                 qr_sites += event.qr_sites;
                 qr_skippable += event.qr_sites_skippable_by_locality;
+                qr_skippable_center_ceiling += event.qr_sites_skippable_by_center_ceiling;
                 normalization_losses +=
                     usize::from(event.normalization_preserved_center == Some(false));
             }
@@ -509,7 +513,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                 .collect::<Vec<_>>()
                 .join(",");
             println!(
-                "LOCALITY_DEPTH cell={} run={} depth={} events={} constructions={} qr_sites={} qr_skippable={} headroom_fraction={:.9} normalization_losses={}",
+                "LOCALITY_DEPTH cell={} run={} depth={} events={} constructions={} qr_sites={} qr_skippable={} headroom_fraction={:.9} qr_skippable_center_ceiling={} headroom_fraction_center_ceiling={:.9} normalization_losses={}",
                 cell.name,
                 run,
                 depth,
@@ -518,6 +522,8 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                 qr_sites,
                 qr_skippable,
                 qr_skippable as f64 / qr_sites as f64,
+                qr_skippable_center_ceiling,
+                qr_skippable_center_ceiling as f64 / qr_sites as f64,
                 normalization_losses,
             );
             for (distribution, count) in distributions {
@@ -539,13 +545,14 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                         changed_bonds,
                         event_qr_sites,
                         event_qr_skippable,
+                        event_qr_skippable_center_ceiling,
                     ),
                 ) = distribution;
                 let option = |value: Option<usize>| {
                     value.map_or_else(|| "none".to_owned(), |value| value.to_string())
                 };
                 println!(
-                    "LOCALITY_DIST cell={} run={} depth={} count={} construction={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={}",
+                    "LOCALITY_DIST cell={} run={} depth={} count={} construction={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} qr_skippable_center_ceiling={}",
                     cell.name,
                     run,
                     depth,
@@ -566,6 +573,7 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                     changed_bonds,
                     event_qr_sites,
                     event_qr_skippable,
+                    event_qr_skippable_center_ceiling,
                 );
             }
         }
@@ -584,6 +592,7 @@ fn print_locality_total(cell: Cell, run: usize, profile: &ProbabilityQueryTeleme
     let mut constructions = BTreeMap::<&str, usize>::new();
     let mut qr_sites = 0;
     let mut qr_skippable = 0;
+    let mut qr_skippable_center_ceiling = 0;
     let mut normalization_losses = 0;
     for event in &events {
         *constructions
@@ -591,6 +600,7 @@ fn print_locality_total(cell: Cell, run: usize, profile: &ProbabilityQueryTeleme
             .or_default() += 1;
         qr_sites += event.qr_sites;
         qr_skippable += event.qr_sites_skippable_by_locality;
+        qr_skippable_center_ceiling += event.qr_sites_skippable_by_center_ceiling;
         normalization_losses += usize::from(event.normalization_preserved_center == Some(false));
     }
     let construction_counts = constructions
@@ -599,7 +609,7 @@ fn print_locality_total(cell: Cell, run: usize, profile: &ProbabilityQueryTeleme
         .collect::<Vec<_>>()
         .join(",");
     println!(
-        "LOCALITY_TOTAL cell={} run={} events={} constructions={} qr_sites={} qr_skippable={} headroom_fraction={:.9} normalization_losses={}",
+        "LOCALITY_TOTAL cell={} run={} events={} constructions={} qr_sites={} qr_skippable={} headroom_fraction={:.9} qr_skippable_center_ceiling={} headroom_fraction_center_ceiling={:.9} normalization_losses={}",
         cell.name,
         run,
         events.len(),
@@ -607,6 +617,8 @@ fn print_locality_total(cell: Cell, run: usize, profile: &ProbabilityQueryTeleme
         qr_sites,
         qr_skippable,
         qr_skippable as f64 / qr_sites as f64,
+        qr_skippable_center_ceiling,
+        qr_skippable_center_ceiling as f64 / qr_sites as f64,
         normalization_losses,
     );
 }

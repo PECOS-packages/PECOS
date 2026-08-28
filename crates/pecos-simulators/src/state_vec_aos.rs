@@ -838,7 +838,7 @@ where
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // Create superposition and add phase
-    /// state.h(&[QubitId(0)]).rz(Angle64::from_radians(FRAC_PI_4), &[QubitId(0)]);  // T gate equivalent
+    /// state.h(&[QubitId(0)]).rz(Angle64::from_radians(FRAC_PI_4), &[QubitId(0)]);  // T up to global phase
     /// ```
     ///
     /// # Safety
@@ -858,6 +858,18 @@ where
                 Complex64::new(0.0, 0.0),
                 e_neg,
             );
+        }
+        self
+    }
+
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        for amplitude in &mut self.state {
+            *amplitude *= global_phase;
         }
         self
     }

@@ -18,6 +18,39 @@ fn test_new_density_matrix() {
     assert!(dm.is_pure());
 }
 
+fn assert_density_matrices_equal(lhs: &mut DensityMatrix, rhs: &mut DensityMatrix, context: &str) {
+    for (index, (lhs, rhs)) in lhs
+        .get_flattened_density_matrix()
+        .iter()
+        .zip(rhs.get_flattened_density_matrix())
+        .enumerate()
+    {
+        assert!(
+            (*lhs - rhs).norm() < 1e-10,
+            "{context}, element {index}: lhs={lhs}, rhs={rhs}"
+        );
+    }
+}
+
+#[test]
+fn test_t_identities_are_exact_as_density_channels() {
+    let q0 = qid(0);
+    let mut t_squared = DensityMatrix::new(1);
+    let mut sz = DensityMatrix::new(1);
+    t_squared.h(&q0).t(&q0).t(&q0);
+    sz.h(&q0).sz(&q0);
+    assert_density_matrices_equal(&mut t_squared, &mut sz, "T^2 channel must equal SZ");
+
+    let mut t_eighth = DensityMatrix::new(1);
+    let mut identity = DensityMatrix::new(1);
+    t_eighth.h(&q0);
+    identity.h(&q0);
+    for _ in 0..8 {
+        t_eighth.t(&q0);
+    }
+    assert_density_matrices_equal(&mut t_eighth, &mut identity, "T^8 channel must equal I");
+}
+
 #[test]
 fn test_prepare_computational_basis() {
     // Test preparing different computational basis states

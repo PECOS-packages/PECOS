@@ -337,7 +337,7 @@ class TestAstToQasmFullPipeline:
         ast = slr_to_ast(prog)
         code = ast_to_qasm(ast)
 
-        # T is rz(pi/4), Tdg is rz(-pi/4)
+        # The QASM lowering uses RZ forms equivalent up to global phase.
         assert "rz(pi/4) q[0];" in code
         assert "rz(-pi/4) q[0];" in code
 

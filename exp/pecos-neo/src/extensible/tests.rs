@@ -668,7 +668,7 @@ fn test_canonicalize_rz_half_turn() {
 fn test_canonicalize_rz_t_gate() {
     let canon = GateCanonicalizer::standard();
 
-    // RZ(π/4) = T
+    // RZ(π/4) canonicalizes to T up to global phase.
     let t_angle = Angle64::HALF_TURN / 4;
     let result = canon.canonicalize(gates::RZ, &[t_angle]);
     assert_eq!(result, Some(gates::T));
@@ -1605,7 +1605,7 @@ fn test_standard_adaptor_t_gate() {
 
     let result = adaptor.adapt(gates::T, &[QubitId(0)], &[]);
 
-    // T = RZ(π/4)
+    // The adaptor lowers T to the projectively equivalent RZ(π/4).
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].gate_id, gates::RZ);
     assert_eq!(result[0].qubits[0], QubitId(0));
@@ -1618,7 +1618,7 @@ fn test_standard_adaptor_tdg_gate() {
 
     let result = adaptor.adapt(gates::Tdg, &[QubitId(0)], &[]);
 
-    // Tdg = RZ(-π/4)
+    // The adaptor lowers Tdg to the projectively equivalent RZ(-π/4).
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].gate_id, gates::RZ);
     let expected_angle = Angle64::ZERO - Angle64::HALF_TURN / 4;

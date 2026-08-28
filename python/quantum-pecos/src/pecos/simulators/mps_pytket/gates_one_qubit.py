@@ -324,7 +324,9 @@ def T(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(pc.f64.frac_pi_4,))
+    phase = cmath.exp(1j * pc.f64.frac_pi_4)
+    matrix = cp.asarray([[1, 0], [0, phase]], dtype=state.dtype)
+    _apply_one_qubit_matrix(state, qubit, matrix)
 
 
 def Tdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -334,7 +336,9 @@ def Tdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(-pc.f64.frac_pi_4,))
+    phase = cmath.exp(-1j * pc.f64.frac_pi_4)
+    matrix = cp.asarray([[1, 0], [0, phase]], dtype=state.dtype)
+    _apply_one_qubit_matrix(state, qubit, matrix)
 
 
 def H2(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:

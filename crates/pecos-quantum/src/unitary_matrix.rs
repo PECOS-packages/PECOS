@@ -2121,7 +2121,7 @@ mod tests {
     fn test_t_gate_matrix() {
         let t = T(0);
         let mat = to_matrix(&t);
-        // T = RZ(π/4) = diag(e^{-iπ/8}, e^{iπ/8})
+        // UnitaryRep::T is projective: RZ(π/4) = e^{-iπ/8} diag(1, e^{iπ/4}).
         let exp_neg = Complex64::from_polar(1.0, -PI / 8.0);
         let exp_pos = Complex64::from_polar(1.0, PI / 8.0);
         assert!((mat[(0, 0)] - exp_neg).norm() < 1e-10);

@@ -129,23 +129,32 @@ pub mod gates {
     /// S-dagger gate
     pub const SDG: [f32; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0];
 
-    // T gate = RZ(π/4) to match PECOS convention
-    // RZ(θ) = [[e^(-iθ/2), 0], [0, e^(iθ/2)]]
-    // RZ(π/4) = [[e^(-iπ/8), 0], [0, e^(iπ/8)]]
-    // cos(π/8) ≈ 0.9238795, sin(π/8) ≈ 0.3826834
-    const COS_PI_8: f32 = 0.923_879_5;
-    const SIN_PI_8: f32 = 0.382_683_43;
-
-    /// T gate (π/4 rotation around Z-axis, equivalent to `RZ(π/4)`)
+    /// Conventional T gate, `diag(1, exp(i*pi/4))`.
+    ///
+    /// This is `exp(i*pi/8) RZ(pi/4)`.
     pub const T: [f32; 8] = [
-        COS_PI_8, -SIN_PI_8, // e^(-iπ/8)
-        0.0, 0.0, 0.0, 0.0, COS_PI_8, SIN_PI_8, // e^(iπ/8)
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        FRAC_1_SQRT_2 as f32,
+        FRAC_1_SQRT_2 as f32,
     ];
 
-    /// T-dagger gate (-π/4 rotation around Z-axis, equivalent to `RZ(-π/4)`)
+    /// Conventional T-dagger gate, `diag(1, exp(-i*pi/4))`.
+    ///
+    /// This is `exp(-i*pi/8) RZ(-pi/4)`.
     pub const TDG: [f32; 8] = [
-        COS_PI_8, SIN_PI_8, // e^(iπ/8)
-        0.0, 0.0, 0.0, 0.0, COS_PI_8, -SIN_PI_8, // e^(-iπ/8)
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        FRAC_1_SQRT_2 as f32,
+        -(FRAC_1_SQRT_2 as f32),
     ];
 
     /// SX gate (sqrt(X))

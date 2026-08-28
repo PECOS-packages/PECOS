@@ -174,10 +174,11 @@ fn parse_rz_x_hugr() {
     let block = get_main_block(&module);
     let names = op_names(block);
 
-    // Rz(pi) should be simplified to Z (Clifford gate)
+    // Explicit Rz(pi) retains its symmetric rotation matrix rather than
+    // becoming the phase-sensitive named Z gate.
     assert!(
-        names.iter().any(|n| n == "quantum.z"),
-        "Rz(pi) should simplify to Z: {names:?}"
+        count_quantum_ops(block, |q| matches!(q, QuantumOp::RZ(_))) >= 1,
+        "Rz(pi) should remain RZ: {names:?}"
     );
 
     // Should contain an X gate

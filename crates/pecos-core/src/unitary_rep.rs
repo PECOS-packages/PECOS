@@ -3201,14 +3201,17 @@ pub fn SZs(qubits: impl Into<Qubits>) -> UnitaryRep {
     qubits.into().apply(|q| RZ(Angle64::QUARTER_TURN, q))
 }
 
-/// T gate: RZ(π/4)
+/// Projective T representation: `RZ(π/4) = exp(-iπ/8) T`.
+///
+/// `UnitaryRep` intentionally discards this global phase so `Angle64` rotation
+/// arithmetic retains the `T^2`, `T^4`, and `T^8` simplification chain.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn T(qubit: impl Into<QubitId>) -> UnitaryRep {
     RZ(Angle64::HALF_TURN / 4, qubit.into().0)
 }
 
-/// T gates on multiple qubits.
+/// Projective T representations on multiple qubits (each up to global phase).
 #[must_use]
 #[allow(non_snake_case)]
 pub fn Ts(qubits: impl Into<Qubits>) -> UnitaryRep {
@@ -4911,7 +4914,7 @@ mod tests {
 
     #[test]
     fn test_pow_eight_t_simplify() {
-        // T^8 = I (RZ(π/4)^8 = RZ(2π) = I) after simplification
+        // Projectively, T^8 = I: Angle64 wraps RZ(2π) to RZ(0).
         let t = T(0);
         let result = t.pow(8).simplify();
         assert!(result.is_identity());

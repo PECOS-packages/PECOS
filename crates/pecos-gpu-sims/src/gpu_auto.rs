@@ -105,6 +105,12 @@ impl ArbitraryRotationGateable for GpuStateVecAuto {
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, rz(theta, qubits))
     }
+    fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, t(qubits))
+    }
+    fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, tdg(qubits))
+    }
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         dispatch_mut!(self, rzz(theta, pairs))
     }

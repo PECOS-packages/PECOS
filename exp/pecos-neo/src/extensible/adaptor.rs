@@ -120,13 +120,13 @@ impl GateAdaptor for StandardAdaptor {
     fn adapt(&self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> Vec<AdaptedGate> {
         match gate_id {
             id if id == gates::T => {
-                // T = RZ(π/4)
+                // T = exp(iπ/8) RZ(π/4); this adaptor discards global phase.
                 let angle = Angle64::HALF_TURN / 4;
                 vec![AdaptedGate::rotation(gates::RZ, qubits[0], angle)]
             }
 
             id if id == gates::Tdg => {
-                // Tdg = RZ(-π/4)
+                // Tdg = exp(-iπ/8) RZ(-π/4); this adaptor discards global phase.
                 let angle = Angle64::ZERO - Angle64::HALF_TURN / 4;
                 vec![AdaptedGate::rotation(gates::RZ, qubits[0], angle)]
             }

@@ -1,7 +1,7 @@
 //! Rotation-to-Clifford simplification using `Angle64` fixed-point comparison.
 //!
 //! When a rotation gate is applied at a special angle (multiples of pi/4 or pi/2),
-//! it is equivalent to a named Clifford gate. This module provides a single source
+//! it is equivalent up to global phase to a named gate. This module provides a single source
 //! of truth for those simplifications so that both PHIR-level passes and engine-level
 //! dispatch can reuse the same logic.
 
@@ -36,7 +36,7 @@ fn neg_eighth_turn() -> A64 {
 ///
 /// # Special cases
 ///
-/// | Rotation | Angle        | Simplifies to  |
+/// | Rotation | Angle        | Simplifies to (up to global phase) |
 /// |----------|-------------|----------------|
 /// | RZ(0)    | 0           | I              |
 /// | RZ(pi)   | HALF_TURN   | Z              |

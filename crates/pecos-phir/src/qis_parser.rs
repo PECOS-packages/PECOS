@@ -7,18 +7,15 @@ Supports two calling conventions:
 - Selene style: `___rxy`, `___rz`, `___rzz`, `___qalloc`, etc.
 - QIR style: `__quantum__qis__h__body`, `__quantum__qis__cnot__body`, etc.
 
-QIR-style gates that are not hardware-native are decomposed into QIS
-hardware-native ops (rxy, rz, rzz) using the same decomposition helpers
-from `hugr_to_qis`.
+Named QIR gates remain named QIS operations so amplitude-exposing execution
+paths retain their exact matrices. Explicit rotations remain QIS rotations.
 
 Supports multi-block control flow: branches, conditional branches, switch
 statements, and phi nodes (converted to MLIR-style block arguments).
 */
 
 use crate::error::{PhirError, Result};
-use crate::hugr_to_qis::{
-    decompose_cx, decompose_h, emit_const_float, emit_qis_rxy, emit_qis_rz, emit_qis_rzz,
-};
+use crate::hugr_to_qis::{emit_const_float, emit_qis_rxy, emit_qis_rz, emit_qis_rzz};
 use crate::ops::{ClassicalOp, CustomOp, Operation};
 use crate::phir::{
     Block, BlockArgument, BlockRef, Instruction, Module, Region, SSAValue, Terminator,
@@ -952,63 +949,30 @@ impl QisIrParser {
                 });
             }
 
-            // ---- QIR gates: decompose to hardware-native QIS ----
-            "h" => {
+            // ---- Named QIR gates: preserve exact named matrices ----
+            "h" | "x" | "y" | "z" | "s" | "t" | "sx" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
-                decompose_h(qubit, &mut out, &mut || self.fresh_value());
-            }
-
-            "x" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let pi_val = self.fresh_value();
-                out.push(emit_const_float(pi_val, std::f64::consts::PI));
-                let zero = self.fresh_value();
-                out.push(emit_const_float(zero, 0.0));
-                out.push(emit_qis_rxy(qubit, pi_val, zero));
-            }
-
-            "y" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let pi_val = self.fresh_value();
-                out.push(emit_const_float(pi_val, std::f64::consts::PI));
-                let half_pi = self.fresh_value();
-                out.push(emit_const_float(half_pi, std::f64::consts::FRAC_PI_2));
-                out.push(emit_qis_rxy(qubit, pi_val, half_pi));
-            }
-
-            "z" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let pi_val = self.fresh_value();
-                out.push(emit_const_float(pi_val, std::f64::consts::PI));
-                out.push(emit_qis_rz(qubit, pi_val));
-            }
-
-            "s" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, std::f64::consts::FRAC_PI_2));
-                out.push(emit_qis_rz(qubit, v));
+                out.push(make_custom_op(
+                    "qis",
+                    qis_name.as_str(),
+                    vec![qubit],
+                    vec![],
+                ));
             }
 
             "sdg" | "s_adj" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, -std::f64::consts::FRAC_PI_2));
-                out.push(emit_qis_rz(qubit, v));
-            }
-
-            "t" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, std::f64::consts::FRAC_PI_4));
-                out.push(emit_qis_rz(qubit, v));
+                out.push(make_custom_op("qis", "sdg", vec![qubit], vec![]));
             }
 
             "tdg" | "t_adj" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, -std::f64::consts::FRAC_PI_4));
-                out.push(emit_qis_rz(qubit, v));
+                out.push(make_custom_op("qis", "tdg", vec![qubit], vec![]));
+            }
+
+            "sxdg" | "sx_adj" => {
+                let qubit = self.arg_to_ssa(&args[0], &mut out);
+                out.push(make_custom_op("qis", "sxdg", vec![qubit], vec![]));
             }
 
             "rx" => {
@@ -1030,7 +994,7 @@ impl QisIrParser {
             "cx" | "cnot" => {
                 let control = self.arg_to_ssa(&args[0], &mut out);
                 let target = self.arg_to_ssa(&args[1], &mut out);
-                decompose_cx(control, target, &mut out, &mut || self.fresh_value());
+                out.push(make_custom_op("qis", "cx", vec![control, target], vec![]));
             }
 
             "cz" => {
@@ -1463,13 +1427,19 @@ entry:
     }
 
     #[test]
-    fn test_parse_qir_style_h_gate() {
+    fn test_parse_qir_style_fixed_gates_preserve_named_ops() {
         let ir = r"
 declare void @__quantum__qis__h__body(%Qubit*)
+declare void @__quantum__qis__x__body(%Qubit*)
+declare void @__quantum__qis__y__body(%Qubit*)
+declare void @__quantum__qis__z__body(%Qubit*)
 
 define void @main() {
 entry:
   call void @__quantum__qis__h__body(%Qubit* null)
+  call void @__quantum__qis__x__body(%Qubit* null)
+  call void @__quantum__qis__y__body(%Qubit* null)
+  call void @__quantum__qis__z__body(%Qubit* null)
   ret void
 }
 ";
@@ -1485,7 +1455,44 @@ entry:
                 }
             })
             .collect();
-        assert_eq!(qis_ops, vec!["qis.rz", "qis.rxy", "qis.rz"]);
+        assert_eq!(qis_ops, vec!["qis.h", "qis.x", "qis.y", "qis.z"]);
+    }
+
+    #[test]
+    fn test_parse_qir_style_phase_gates_preserves_named_ops() {
+        let ir = r"
+declare void @__quantum__qis__s__body(%Qubit*)
+declare void @__quantum__qis__sdg__body(%Qubit*)
+declare void @__quantum__qis__t__body(%Qubit*)
+declare void @__quantum__qis__tdg__body(%Qubit*)
+declare void @__quantum__qis__sx__body(%Qubit*)
+declare void @__quantum__qis__sx__adj(%Qubit*)
+
+define void @main() {
+entry:
+  call void @__quantum__qis__s__body(%Qubit* null)
+  call void @__quantum__qis__sdg__body(%Qubit* null)
+  call void @__quantum__qis__t__body(%Qubit* null)
+  call void @__quantum__qis__tdg__body(%Qubit* null)
+  call void @__quantum__qis__sx__body(%Qubit* null)
+  call void @__quantum__qis__sx__adj(%Qubit* null)
+  ret void
+}
+";
+        let module = parse_qis_llvm_ir(ir).unwrap();
+        let qis_ops: Vec<String> = module.body.blocks[0]
+            .operations
+            .iter()
+            .filter_map(|instruction| match &instruction.operation {
+                Operation::Custom(op) => Some(format!("{}.{}", op.dialect(), op.name())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            qis_ops,
+            vec!["qis.s", "qis.sdg", "qis.t", "qis.tdg", "qis.sx", "qis.sxdg",]
+        );
     }
 
     #[test]
@@ -1511,7 +1518,7 @@ entry:
                 }
             })
             .collect();
-        assert_eq!(qis_ops, vec!["rxy", "rzz", "rz", "rxy"]);
+        assert_eq!(qis_ops, vec!["cx"]);
     }
 
     // ---- Control flow tests ----
@@ -1825,8 +1832,7 @@ entry:
             .iter()
             .map(|i| i.operation.name())
             .collect();
-        // x is decomposed to RXY
-        assert!(ops.contains(&"qis.rxy".to_string()));
+        assert!(ops.contains(&"qis.x".to_string()));
         // mz maps to measure
         assert!(ops.contains(&"qis.measure".to_string()));
         // reset
@@ -1913,12 +1919,10 @@ entry:
             .iter()
             .map(|i| i.operation.name())
             .collect();
-        // Should have: 2x qalloc, H decomposed (rz+rxy+rz), CX decomposed, result_allocate, measure
-        // result_record_output should be elided
+        // Named H/CX remain named; result_record_output is elided.
         assert!(ops.contains(&"qis.qalloc".to_string()));
-        assert!(ops.contains(&"qis.rz".to_string()));
-        assert!(ops.contains(&"qis.rxy".to_string()));
-        assert!(ops.contains(&"qis.rzz".to_string()));
+        assert!(ops.contains(&"qis.h".to_string()));
+        assert!(ops.contains(&"qis.cx".to_string()));
         assert!(ops.contains(&"qis.measure".to_string()));
         // No runtime record ops
         assert!(!ops.contains(&"rt_elide".to_string()));

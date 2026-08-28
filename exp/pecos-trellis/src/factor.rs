@@ -74,14 +74,18 @@ impl FactorModel {
         num_detectors: usize,
         num_observables: usize,
     ) -> Result<Self, DecoderError> {
-        if num_detectors > u32::MAX as usize {
+        // Indices are u32, so the largest addressable width is u32::MAX + 1
+        // (index u32::MAX exists) -- the same contract as the DEM parser,
+        // which accepts `D4294967295` and reports that width.
+        const MAX_WIDTH: usize = u32::MAX as usize + 1;
+        if num_detectors > MAX_WIDTH {
             return Err(DecoderError::InvalidConfiguration(format!(
-                "num_detectors {num_detectors} exceeds the u32 detector-index range"
+                "num_detectors {num_detectors} exceeds the u32 index-addressable width {MAX_WIDTH}"
             )));
         }
-        if num_observables > u32::MAX as usize {
+        if num_observables > MAX_WIDTH {
             return Err(DecoderError::InvalidConfiguration(format!(
-                "num_observables {num_observables} exceeds the u32 observable-index range"
+                "num_observables {num_observables} exceeds the u32 index-addressable width {MAX_WIDTH}"
             )));
         }
 
@@ -258,16 +262,32 @@ mod tests {
 
     #[cfg(target_pointer_width = "64")]
     #[test]
-    fn factor_model_widths_are_bounded_by_the_u32_index_range() {
-        let max_width = u32::MAX as usize;
+    fn factor_model_widths_are_bounded_by_the_u32_addressable_width() {
+        // Index u32::MAX exists, so width u32::MAX + 1 is addressable -- the
+        // DEM parser accepts `D4294967295` and reports exactly this width, and
+        // TryFrom<&SparseDem> must not reject a DEM the parser accepts.
+        let max_width = u32::MAX as usize + 1;
         FactorModel::new(Vec::new(), max_width, max_width).unwrap();
+        let outcome = Outcome {
+            probability: 1.0,
+            detectors: vec![u32::MAX],
+            observables: Vec::new(),
+        };
+        FactorModel::new(
+            vec![Factor {
+                outcomes: vec![outcome],
+            }],
+            max_width,
+            0,
+        )
+        .unwrap();
 
         let too_wide = max_width + 1;
         let detector_error = FactorModel::new(Vec::new(), too_wide, 0).unwrap_err();
         assert_eq!(
             detector_error.to_string(),
             format!(
-                "Invalid configuration: num_detectors {too_wide} exceeds the u32 detector-index range"
+                "Invalid configuration: num_detectors {too_wide} exceeds the u32 index-addressable width {max_width}"
             )
         );
 
@@ -275,7 +295,7 @@ mod tests {
         assert_eq!(
             observable_error.to_string(),
             format!(
-                "Invalid configuration: num_observables {too_wide} exceeds the u32 observable-index range"
+                "Invalid configuration: num_observables {too_wide} exceeds the u32 index-addressable width {max_width}"
             )
         );
     }

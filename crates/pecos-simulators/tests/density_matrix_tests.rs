@@ -33,7 +33,7 @@ fn assert_density_matrices_equal(lhs: &mut DensityMatrix, rhs: &mut DensityMatri
 }
 
 #[test]
-fn test_t_identities_are_exact_as_density_channels() {
+fn test_t_identities_projectively_as_density_channels() {
     let q0 = qid(0);
     let mut t_squared = DensityMatrix::new(1);
     let mut sz = DensityMatrix::new(1);

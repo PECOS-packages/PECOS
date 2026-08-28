@@ -80,8 +80,8 @@ GATE_TO_QASM: dict[GateKind, str] = {
     # Hadamard
     GateKind.H: "h",
     # Phase gates
-    GateKind.T: "rz(pi/4)",  # Equivalent to T up to OpenQASM global phase
-    GateKind.Tdg: "rz(-pi/4)",  # Equivalent to Tdg up to OpenQASM global phase
+    GateKind.T: "t",
+    GateKind.Tdg: "tdg",
     # Square root gates
     GateKind.SX: "rx(pi/2)",
     GateKind.SY: "ry(pi/2)",

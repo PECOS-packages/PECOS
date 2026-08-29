@@ -10,9 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::dtypes::AngleParam;
 use crate::prelude::*;
-use pecos_simulators::StabVec;
+use crate::simulator_utils::{extract_angle, extract_angles};
+use pecos_simulators::{ArbitraryRotationGateable, StabVec};
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
@@ -203,6 +203,16 @@ impl PyStabVec {
                 self.inner.rz(angle, q);
                 Ok(None)
             }
+            "R1XY" => {
+                let angles = extract_angles(params, "R1XY", 2)?;
+                self.inner.r1xy(angles[0], angles[1], q);
+                Ok(None)
+            }
+            "U" => {
+                let angles = extract_angles(params, "U", 3)?;
+                self.inner.u(angles[0], angles[1], angles[2], q);
+                Ok(None)
+            }
 
             // Preparations
             "PZ" | "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
@@ -325,6 +335,16 @@ impl PyStabVec {
             "RZZ" => {
                 let angle = extract_angle(params, "RZZ")?;
                 self.inner.rzz(angle, pair);
+                Ok(None)
+            }
+            "CRZ" => {
+                let angle = extract_angle(params, "CRZ")?;
+                self.inner.crz(angle, pair);
+                Ok(None)
+            }
+            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
+                let angles = extract_angles(params, "RXXRYYRZZ", 3)?;
+                self.inner.rxxryyrzz(angles[0], angles[1], angles[2], pair);
                 Ok(None)
             }
 
@@ -467,24 +487,4 @@ impl PyStabVec {
         let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
         Ok(crate::simulator_utils::GateBindingsDict::new(sim_obj))
     }
-}
-
-/// Extract an angle from params dict under the "angle" key.
-fn extract_angle(params: Option<&Bound<'_, PyDict>>, gate_name: &str) -> PyResult<Angle64> {
-    let params = params.ok_or_else(|| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "{gate_name} requires params with 'angle'"
-        ))
-    })?;
-    let py_any = params.get_item("angle")?.ok_or_else(|| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "{gate_name} requires an 'angle' parameter"
-        ))
-    })?;
-    let angle: AngleParam = py_any.extract().map_err(|_| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Expected a valid angle parameter for {gate_name}"
-        ))
-    })?;
-    Ok(angle.0)
 }

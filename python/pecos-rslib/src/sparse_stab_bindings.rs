@@ -1,6 +1,8 @@
 // Copyright 2024 The PECOS Developers
 use crate::prelude::*;
+use crate::simulator_utils::{extract_angle, extract_angles};
 use pecos_core::BitSet;
+use pecos_simulators::clifford_rotation::CliffordRotation;
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -217,6 +219,41 @@ impl PySparseStab {
                 self.inner.szdg(q);
                 Ok(None)
             }
+            "RX" => {
+                let angle = extract_angle(params, "RX")?;
+                self.inner
+                    .try_rx(angle, q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RY" => {
+                let angle = extract_angle(params, "RY")?;
+                self.inner
+                    .try_ry(angle, q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RZ" => {
+                let angle = extract_angle(params, "RZ")?;
+                self.inner
+                    .try_rz(angle, q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "R1XY" => {
+                let angles = extract_angles(params, "R1XY", 2)?;
+                self.inner
+                    .try_r1xy(angles[0], angles[1], q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "U" => {
+                let angles = extract_angles(params, "U", 3)?;
+                self.inner
+                    .try_u(angles[0], angles[1], angles[2], q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
             // Initialization aliases
             "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
                 // Check if forced_outcome parameter is provided
@@ -305,12 +342,12 @@ impl PySparseStab {
         }
     }
 
-    #[pyo3(signature = (symbol, location, _params))]
+    #[pyo3(signature = (symbol, location, params))]
     fn run_2q_gate(
         &mut self,
         symbol: &str,
         location: &Bound<'_, PyTuple>,
-        _params: Option<&Bound<'_, PyDict>>,
+        params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
         if location.len() != 2 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -365,6 +402,41 @@ impl PySparseStab {
             }
             "G2" | "G" => {
                 self.inner.g(pair);
+                Ok(None)
+            }
+            "RXX" => {
+                let angle = extract_angle(params, "RXX")?;
+                self.inner
+                    .try_rxx(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RYY" => {
+                let angle = extract_angle(params, "RYY")?;
+                self.inner
+                    .try_ryy(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RZZ" => {
+                let angle = extract_angle(params, "RZZ")?;
+                self.inner
+                    .try_rzz(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "CRZ" => {
+                let angle = extract_angle(params, "CRZ")?;
+                self.inner
+                    .try_crz(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
+                let angles = extract_angles(params, "RXXRYYRZZ", 3)?;
+                self.inner
+                    .try_rxxryyrzz(angles[0], angles[1], angles[2], pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 Ok(None)
             }
             // Two-qubit gate aliases

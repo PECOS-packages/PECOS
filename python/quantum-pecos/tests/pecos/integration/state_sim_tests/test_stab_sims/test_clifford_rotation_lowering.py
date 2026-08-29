@@ -1,0 +1,348 @@
+# Copyright 2026 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License.You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+"""Clifford-angle rotation lowering across simulator entry points."""
+
+from __future__ import annotations
+
+import math
+from typing import Any
+
+import pytest
+from pecos.circuits import QuantumCircuit
+from pecos.engines.hybrid_engine_old import HybridEngine
+from pecos.exceptions import NotSupportedGateError
+from pecos.simulators import SparseStab, SparseStabPy, Stabilizer, StabVec
+from pecos_rslib import angle64, lower_clifford_rotation
+
+SIMULATORS = (SparseStab, Stabilizer, SparseStabPy, StabVec)
+CLIFFORD_ONLY_SIMULATORS = (SparseStab, Stabilizer, SparseStabPy)
+ONE_QUBIT_GATES = {
+    "RZ": ("SZ", "Z", "SZdg"),
+    "RX": ("SX", "X", "SXdg"),
+    "RY": ("SY", "Y", "SYdg"),
+}
+TWO_QUBIT_GATES = {
+    "RZZ": ("SZZ", "Z", "SZZdg"),
+    "RXX": ("SXX", "X", "SXXdg"),
+    "RYY": ("SYY", "Y", "SYYdg"),
+}
+ROTATION_GATES = [*ONE_QUBIT_GATES.items(), *TWO_QUBIT_GATES.items()]
+ANGLE_CASES = [
+    (math.pi / 2, "sqrt"),
+    (-math.pi / 2, "dg"),
+    (1.5 * math.pi, "dg"),
+    (math.pi, "pauli"),
+    (2 * math.pi, "identity"),
+    (2.5 * math.pi, "sqrt"),
+    (3.5 * math.pi, "dg"),
+    (4.71238898038469, "dg"),
+    (1.5 * math.pi + 1e-10, "dg"),
+]
+PREPARATIONS = ("bell", "plus_zero")
+
+
+def _prepare_state(state: Any, preparation: str) -> None:
+    state.bindings["H"](state, 0)
+    if preparation == "bell":
+        state.bindings["CX"](state, (0, 1))
+
+
+def _snapshot(state: Any) -> Any:
+    if isinstance(state, StabVec):
+        return state.state_vector()
+    if hasattr(state, "stab_tableau"):
+        return state.stab_tableau(), state.destab_tableau()
+    return (
+        state.stabs.print_tableau(verbose=False),
+        state.destabs.print_tableau(verbose=False),
+    )
+
+
+def _states_are_equivalent(left: Any, right: Any) -> bool:
+    if isinstance(left, StabVec):
+        actual = [complex(*amplitude) for amplitude in left.state_vector()]
+        expected = [complex(*amplitude) for amplitude in right.state_vector()]
+        pivot = next(index for index, amplitude in enumerate(expected) if abs(amplitude) > 1e-12)
+        if abs(actual[pivot]) <= 1e-12:
+            return False
+        global_phase = actual[pivot] / expected[pivot]
+        assert abs(abs(global_phase) - 1) < 1e-9
+        return actual == pytest.approx(
+            [global_phase * amplitude for amplitude in expected],
+            abs=1e-9,
+        )
+    return _snapshot(left) == _snapshot(right)
+
+
+def _assert_equivalent_state(rotated: Any, reference: Any) -> None:
+    assert _states_are_equivalent(rotated, reference)
+
+
+def _apply_reference(
+    state: Any,
+    location: int | tuple[int, int],
+    named_gates: tuple[str, str, str],
+    expected: str,
+) -> None:
+    sqrt_gate, pauli_gate, dagger_gate = named_gates
+    if expected == "identity":
+        return
+    if expected == "sqrt":
+        state.bindings[sqrt_gate](state, location)
+        return
+    if expected == "dg":
+        state.bindings[dagger_gate](state, location)
+        return
+    if isinstance(location, tuple):
+        for qubit in location:
+            state.bindings[pauli_gate](state, qubit)
+    else:
+        state.bindings[pauli_gate](state, location)
+
+
+@pytest.mark.parametrize("simulator", SIMULATORS)
+@pytest.mark.parametrize(("symbol", "named_gates"), ROTATION_GATES)
+@pytest.mark.parametrize(("angle", "expected"), ANGLE_CASES)
+@pytest.mark.parametrize("preparation", PREPARATIONS)
+def test_rotation_matches_named_clifford(
+    simulator: type,
+    symbol: str,
+    named_gates: tuple[str, str, str],
+    angle: float,
+    expected: str,
+    preparation: str,
+) -> None:
+    """Python float rotations match the named-gate reference."""
+    location = 0 if symbol in ONE_QUBIT_GATES else (0, 1)
+    rotated = simulator(2)
+    reference = simulator(2)
+    _prepare_state(rotated, preparation)
+    _prepare_state(reference, preparation)
+
+    rotated.bindings[symbol](rotated, location, angle=angle)
+    _apply_reference(reference, location, named_gates, expected)
+
+    _assert_equivalent_state(rotated, reference)
+
+
+@pytest.mark.parametrize("simulator", SIMULATORS)
+@pytest.mark.parametrize(("symbol", "named_gates"), ROTATION_GATES)
+def test_sqrt_and_dagger_references_are_distinguishable(
+    simulator: type,
+    symbol: str,
+    named_gates: tuple[str, str, str],
+) -> None:
+    """At least one preparation distinguishes each sqrt gate from its dagger."""
+    location = 0 if symbol in ONE_QUBIT_GATES else (0, 1)
+    sqrt_gate, _, dagger_gate = named_gates
+    distinguishable = []
+    for preparation in PREPARATIONS:
+        sqrt_state = simulator(2)
+        dagger_state = simulator(2)
+        _prepare_state(sqrt_state, preparation)
+        _prepare_state(dagger_state, preparation)
+        sqrt_state.bindings[sqrt_gate](sqrt_state, location)
+        dagger_state.bindings[dagger_gate](dagger_state, location)
+        distinguishable.append(not _states_are_equivalent(sqrt_state, dagger_state))
+    assert any(distinguishable)
+
+
+@pytest.mark.parametrize("simulator", CLIFFORD_ONLY_SIMULATORS)
+@pytest.mark.parametrize("symbol", [*ONE_QUBIT_GATES, *TWO_QUBIT_GATES])
+def test_non_clifford_rotation_fails(simulator: type, symbol: str) -> None:
+    """Every Clifford-only stabilizer binding rejects a non-Clifford float angle."""
+    state = simulator(2)
+    location = 0 if symbol in ONE_QUBIT_GATES else (0, 1)
+    with pytest.raises(ValueError, match="is not a Clifford rotation"):
+        state.bindings[symbol](state, location, angle=0.5)
+
+
+@pytest.mark.parametrize("symbol", [*ONE_QUBIT_GATES, *TWO_QUBIT_GATES])
+def test_stab_vec_accepts_non_clifford_one_angle_rotations(symbol: str) -> None:
+    """StabVec preserves arbitrary-angle support on all one-angle rotations."""
+    state = StabVec(2)
+    location = 0 if symbol in ONE_QUBIT_GATES else (0, 1)
+    state.bindings[symbol](state, location, angle=0.5)
+
+
+@pytest.mark.parametrize("simulator", [SparseStab, Stabilizer, StabVec])
+def test_pyo3_rotation_parameters_are_required_and_exact(simulator: type) -> None:
+    """Pyo3 rotation entry points reject absent, malformed, or extra angles."""
+    state = simulator(2)
+    with pytest.raises(ValueError, match="requires params with 'angle'"):
+        state.bindings["RZ"](state, 0)
+    with pytest.raises(ValueError, match="Expected a valid angle parameter"):
+        state.bindings["RZ"](state, 0, angle="invalid")
+    with pytest.raises(ValueError, match="requires 2 angle parameters"):
+        state.bindings["R1XY"](state, 0, angles=(0.0, 0.0, 0.0))
+
+
+@pytest.mark.parametrize("simulator", [SparseStab, Stabilizer])
+def test_multi_angle_pyo3_rotation_arms(simulator: type) -> None:
+    """The additional Clifford-only pyo3 arms reach CliffordRotation."""
+    cases = (
+        ("R1XY", 0, {"angles": (-math.pi / 2, 0.0)}, (("SXdg", 0),)),
+        ("U", 0, {"angles": (0.0, 0.0, -math.pi / 2)}, (("SZdg", 0),)),
+        (
+            "CRZ",
+            (0, 1),
+            {"angle": math.pi},
+            (("SZ", 1), ("CX", (0, 1)), ("SZdg", 1), ("CX", (0, 1))),
+        ),
+        (
+            "RXXRYYRZZ",
+            (0, 1),
+            {"angles": (-math.pi / 2, 0.0, 0.0)},
+            (("SXXdg", (0, 1)),),
+        ),
+        (
+            "RZZRYYRXX",
+            (0, 1),
+            {"angles": (-math.pi / 2, 0.0, 0.0)},
+            (("SXXdg", (0, 1)),),
+        ),
+        (
+            "R2XXYYZZ",
+            (0, 1),
+            {"angles": (-math.pi / 2, 0.0, 0.0)},
+            (("SXXdg", (0, 1)),),
+        ),
+        (
+            "RXXYYZZ",
+            (0, 1),
+            {"angles": (-math.pi / 2, 0.0, 0.0)},
+            (("SXXdg", (0, 1)),),
+        ),
+    )
+    for symbol, location, params, reference_gates in cases:
+        rotated = simulator(2)
+        reference = simulator(2)
+        _prepare_state(rotated, "plus_zero")
+        _prepare_state(reference, "plus_zero")
+        rotated.bindings[symbol](rotated, location, **params)
+        for named, named_location in reference_gates:
+            reference.bindings[named](reference, named_location)
+        assert _snapshot(rotated) == _snapshot(reference)
+
+
+def test_stab_vec_multi_angle_rotation_arms_accept_non_clifford_values() -> None:
+    """StabVec routes new multi-angle symbols through arbitrary rotations."""
+    cases = (
+        (
+            "R1XY",
+            0,
+            {"angles": (0.5, 0.25)},
+            {"angles": (-math.pi / 2, 0.0)},
+            (("SXdg", 0),),
+        ),
+        (
+            "U",
+            0,
+            {"angles": (0.5, 0.25, 0.125)},
+            {"angles": (0.0, 0.0, -math.pi / 2)},
+            (("SZdg", 0),),
+        ),
+        (
+            "CRZ",
+            (0, 1),
+            {"angle": 0.5},
+            {"angle": math.pi},
+            (("SZ", 1), ("CX", (0, 1)), ("SZdg", 1), ("CX", (0, 1))),
+        ),
+        (
+            "RXXRYYRZZ",
+            (0, 1),
+            {"angles": (0.5, 0.25, 0.125)},
+            {"angles": (-math.pi / 2, 0.0, 0.0)},
+            (("SXXdg", (0, 1)),),
+        ),
+    )
+    for symbol, location, arbitrary_params, clifford_params, reference_gates in cases:
+        arbitrary_state = StabVec(2)
+        _prepare_state(arbitrary_state, "plus_zero")
+        arbitrary_state.bindings[symbol](arbitrary_state, location, **arbitrary_params)
+
+        rotated = StabVec(2)
+        reference = StabVec(2)
+        _prepare_state(rotated, "plus_zero")
+        _prepare_state(reference, "plus_zero")
+        rotated.bindings[symbol](rotated, location, **clifford_params)
+        for named, named_location in reference_gates:
+            reference.bindings[named](reference, named_location)
+        _assert_equivalent_state(rotated, reference)
+
+
+@pytest.mark.parametrize("simulator", [SparseStab, Stabilizer, SparseStabPy])
+def test_legacy_engine_rzz_matches_szz_dagger(simulator: type) -> None:
+    """The reported legacy-engine RZZ scenario lowers end to end."""
+    rotation = QuantumCircuit()
+    rotation.append({"H": {0}})
+    rotation.append({"RZZ": {(0, 1)}}, angle=1.5 * math.pi)
+    named = QuantumCircuit()
+    named.append({"H": {0}})
+    named.append({"SZZdg": {(0, 1)}})
+    rotated_state = simulator(2)
+    named_state = simulator(2)
+
+    HybridEngine().run(rotated_state, rotation, shot_id=0)
+    HybridEngine().run(named_state, named, shot_id=0)
+
+    assert _snapshot(rotated_state) == _snapshot(named_state)
+
+
+def test_lowering_uses_per_instance_named_gate_override() -> None:
+    """Lowered gates resolve through the simulator instance bindings."""
+    state = SparseStabPy(1)
+    calls = []
+    state.bindings["SZ"] = lambda _state, location, **_params: calls.append(location)
+
+    state.bindings["RZ"](state, 0, angle=math.pi / 2)
+
+    assert calls == [0]
+
+
+def test_lowering_reports_named_gate_missing_from_instance() -> None:
+    """A missing per-instance named gate uses the simulator's existing error."""
+    state = SparseStabPy(2)
+    del state.bindings["SZZ"]
+    with pytest.raises(NotSupportedGateError, match='gate "SZZ" is not available'):
+        state.bindings["RZZ"](state, (0, 1), angle=math.pi / 2)
+
+
+def test_lower_clifford_rotation_examples() -> None:
+    """The Python helper exposes the shared Rust lowering table."""
+    assert lower_clifford_rotation("RZZ", [1.5 * math.pi]) == [("SZZdg", (0, 1))]
+    assert lower_clifford_rotation("RZZ", [math.pi]) == [("Z", (0,)), ("Z", (1,))]
+    assert lower_clifford_rotation("RZ", [0.0]) == [("I", (0,))]
+    assert lower_clifford_rotation("R1XY", [math.pi / 2, 0.0]) == [("SX", (0,))]
+    assert lower_clifford_rotation("RZ", [angle64.from_radians(math.pi / 2)]) == [
+        ("SZ", (0,)),
+    ]
+
+
+@pytest.mark.parametrize("symbol", ["U", "CRZ", "RXXRYYRZZ"])
+def test_lower_clifford_rotation_rejects_unsupported_symbols(symbol: str) -> None:
+    """Decomposition-only symbols are outside the table helper."""
+    with pytest.raises(ValueError, match=rf"^{symbol} is unsupported"):
+        lower_clifford_rotation(symbol, [0.0])
+
+
+def test_lower_clifford_rotation_rejects_non_clifford_angle() -> None:
+    """The helper preserves the CliffordRotation error shape."""
+    with pytest.raises(ValueError, match=r"RZZ.*is not a Clifford rotation"):
+        lower_clifford_rotation("RZZ", [0.5])
+
+
+def test_lower_clifford_rotation_rejects_wrong_angle_count() -> None:
+    """The table helper requires the exact arity for its rotation symbol."""
+    with pytest.raises(ValueError, match="R1XY requires 2 angle parameters"):
+        lower_clifford_rotation("R1XY", [0.0])

@@ -2132,8 +2132,8 @@ mod tests {
             GateType::SYdg => Some(unitary_rep::SY(q0).dg()),
             GateType::SZ => Some(unitary_rep::SZ(q0)),
             GateType::SZdg => Some(unitary_rep::SZ(q0).dg()),
-            GateType::F => Some(unitary_rep::SZ(q0) * unitary_rep::SX(q0)),
-            GateType::Fdg => Some(unitary_rep::SX(q0).dg() * unitary_rep::SZ(q0).dg()),
+            GateType::F => Some(Clifford::F.to_unitary_rep_on_qubit(q0)),
+            GateType::Fdg => Some(Clifford::Fdg.to_unitary_rep_on_qubit(q0)),
             GateType::T => Some(unitary_rep::T(q0)),
             GateType::Tdg => Some(unitary_rep::T(q0).dg()),
             GateType::RX => {

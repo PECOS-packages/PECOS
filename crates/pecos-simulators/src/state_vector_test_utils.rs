@@ -2262,34 +2262,19 @@ pub fn verify_face_gates<S: StateVectorSimulator>(sim: &mut S) {
         );
     }
 
-    // F^3 = I (up to global phase): F cycles X->Y->Z->X, so 3 applications = identity
+    // The phase-fixed F/F1 representative has exact order three.
     sim.reset();
     sim.h(&qid(0));
     let before: Vec<_> = (0..n).map(|i| sim.get_amplitude(i)).collect();
     sim.f(&qid(0));
     sim.f(&qid(0));
     sim.f(&qid(0));
-    // Check global phase equivalence
-    let mut phase_ratio = None;
     for (i, &bef) in before.iter().enumerate() {
         let after = sim.get_amplitude(i);
-        if bef.norm() < TOLERANCE && after.norm() < TOLERANCE {
-            continue;
-        }
         assert!(
-            bef.norm() > TOLERANCE && after.norm() > TOLERANCE,
-            "F^3: index {i} zero mismatch"
+            (after - bef).norm() < TOLERANCE,
+            "F^3 = I: amplitude {i} differs phase-exactly: after={after:?}, before={bef:?}"
         );
-        let ratio = after / bef;
-        match phase_ratio {
-            None => phase_ratio = Some(ratio),
-            Some(expected) => {
-                assert!(
-                    (ratio - expected).norm() < TOLERANCE,
-                    "F^3: inconsistent phase at index {i}: {ratio:?} vs {expected:?}"
-                );
-            }
-        }
     }
 }
 

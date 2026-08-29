@@ -13,7 +13,8 @@
 use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
-use pecos_core::{Angle64, QubitId, RngManageable};
+use pecos_core::gate_type::GateType;
+use pecos_core::{Angle64, Clifford, QubitId, RngManageable};
 use pecos_random::{PecosRng, Rng, RngProbabilityExt, SeedableRng};
 
 use core::fmt::Debug;
@@ -340,6 +341,38 @@ where
         self
     }
 
+    fn apply_canonical_single_qubit_gate(
+        &mut self,
+        gate: GateType,
+        qubits: &[QubitId],
+    ) -> &mut Self {
+        let matrix = gate
+            .canonical_1q_matrix()
+            .expect("named single-qubit gate must have a canonical matrix");
+        let u00 = Complex64::new(matrix[0], matrix[1]);
+        let u01 = Complex64::new(matrix[2], matrix[3]);
+        let u10 = Complex64::new(matrix[4], matrix[5]);
+        let u11 = Complex64::new(matrix[6], matrix[7]);
+        for &q in qubits {
+            self.single_qubit_rotation(q.index(), u00, u01, u10, u11);
+        }
+        self
+    }
+
+    fn apply_canonical_clifford(&mut self, gate: Clifford, qubits: &[QubitId]) -> &mut Self {
+        let matrix = gate
+            .canonical_1q_matrix()
+            .expect("single-qubit Clifford must have a canonical matrix");
+        let u00 = Complex64::new(matrix[0], matrix[1]);
+        let u01 = Complex64::new(matrix[2], matrix[3]);
+        let u10 = Complex64::new(matrix[4], matrix[5]);
+        let u11 = Complex64::new(matrix[6], matrix[7]);
+        for &q in qubits {
+            self.single_qubit_rotation(q.index(), u00, u01, u10, u11);
+        }
+        self
+    }
+
     /// Apply a general two-qubit unitary given by a 4x4 complex matrix
     /// U = [[u00, u01, u02, u03],
     ///      [u10, u11, u12, u13],
@@ -574,6 +607,66 @@ where
             }
         }
         self
+    }
+
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H2, qubits)
+    }
+
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H3, qubits)
+    }
+
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H4, qubits)
+    }
+
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H5, qubits)
+    }
+
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H6, qubits)
+    }
+
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_single_qubit_gate(GateType::SY, qubits)
+    }
+
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_single_qubit_gate(GateType::SYdg, qubits)
+    }
+
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F, qubits)
+    }
+
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::Fdg, qubits)
+    }
+
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F2, qubits)
+    }
+
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F2dg, qubits)
+    }
+
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F3, qubits)
+    }
+
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F3dg, qubits)
+    }
+
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F4, qubits)
+    }
+
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F4dg, qubits)
     }
 
     /// Implementation of controlled-X (CNOT) gate for state vectors.

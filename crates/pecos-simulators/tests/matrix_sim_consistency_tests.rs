@@ -22,7 +22,9 @@ use num_complex::Complex64;
 use pecos_core::Angle64;
 use pecos_core::clifford::Clifford;
 use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QubitId, StateVec, qid};
+use pecos_simulators::{
+    ArbitraryRotationGateable, CliffordGateable, QubitId, StateVec, StateVecSoA32, qid,
+};
 
 type GateAction = (Clifford, Box<dyn Fn(&mut StateVec)>);
 type NamedAction = (&'static str, Box<dyn Fn(&mut StateVec)>);
@@ -86,10 +88,42 @@ fn sim_matches_matrix_1q_cliffords() {
             matches,
             "Simulator disagrees with matrix for 1q gate {cliff}"
         );
+
+        let mut sim32 = StateVecSoA32::new(1);
+        apply_1q_clifford(&mut sim32, cliff);
+        let actual32: Vec<Complex64> = (0..2)
+            .map(|basis| {
+                let amplitude = sim32.get_amplitude(basis);
+                Complex64::new(f64::from(amplitude.re), f64::from(amplitude.im))
+            })
+            .collect();
+        let tolerance = 1e-6;
+        let matches32 = if actual32[0].norm() < tolerance && expected[0].norm() < tolerance {
+            actual32
+                .iter()
+                .zip(expected.iter())
+                .all(|(a, b)| (a.norm() - b.norm()).abs() < tolerance)
+        } else if let Some((a, b)) = actual32
+            .iter()
+            .zip(expected.iter())
+            .find(|(a, b)| a.norm() > tolerance && b.norm() > tolerance)
+        {
+            let ratio = b / a;
+            actual32
+                .iter()
+                .zip(expected.iter())
+                .all(|(a, b)| (a * ratio - b).norm() < tolerance)
+        } else {
+            false
+        };
+        assert!(
+            matches32,
+            "StateVecSoA32 disagrees with matrix for 1q gate {cliff}"
+        );
     }
 }
 
-fn apply_1q_clifford(sim: &mut StateVec, cliff: Clifford) {
+fn apply_1q_clifford<S: CliffordGateable>(sim: &mut S, cliff: Clifford) {
     match cliff {
         Clifford::I => {}
         Clifford::X => {

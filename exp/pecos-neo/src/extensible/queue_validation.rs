@@ -270,7 +270,7 @@ mod tests {
     fn test_rz_at_non_clifford_angle() {
         let commands = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::HALF_TURN / 4) // RZ(pi/4) = T, not Clifford
+            .rz(&[0], Angle64::HALF_TURN / 4) // RZ(pi/4) is projectively T, not Clifford.
             .mz(&[0])
             .build();
 

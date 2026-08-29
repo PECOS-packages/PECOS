@@ -1882,3 +1882,85 @@ pub fn new_stabilizer_engine(num_qubits: usize) -> Box<dyn QuantumEngine> {
 pub fn new_stabilizer_engine_with_seed(num_qubits: usize, seed: u64) -> Box<dyn QuantumEngine> {
     Box::new(SparseStabEngine::with_seed(num_qubits, seed))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::byte_message::ByteMessageBuilder;
+    use std::f64::consts::FRAC_1_SQRT_2;
+
+    #[test]
+    fn byte_message_engine_executes_conventional_t_amplitudes() {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.h(&[0]).t(&[0]);
+
+        let mut engine = DenseStateVecEngine::new(1);
+        engine.process(builder.build()).unwrap();
+        let state = engine.simulator.state();
+        let expected = [(FRAC_1_SQRT_2, 0.0), (0.5, 0.5)];
+
+        for (actual, (expected_re, expected_im)) in state.iter().zip(expected) {
+            assert!(
+                (actual.re - expected_re).abs() < 1e-14 && (actual.im - expected_im).abs() < 1e-14,
+                "actual {actual:?}, expected ({expected_re}, {expected_im})"
+            );
+        }
+    }
+
+    fn state_after_phase_gates(gates: impl FnOnce(&mut ByteMessageBuilder)) -> Vec<(f64, f64)> {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.h(&[0]);
+        gates(&mut builder);
+
+        let mut engine = DenseStateVecEngine::new(1);
+        engine.process(builder.build()).unwrap();
+        engine
+            .simulator
+            .state()
+            .iter()
+            .map(|amplitude| (amplitude.re, amplitude.im))
+            .collect()
+    }
+
+    fn assert_amplitudes_equal(actual: &[(f64, f64)], expected: &[(f64, f64)], context: &str) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            assert!(
+                (actual.0 - expected.0).abs() < 1e-14 && (actual.1 - expected.1).abs() < 1e-14,
+                "{context}, basis {index}: actual={actual:?}, expected={expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn byte_message_engine_executes_t_squared_as_exact_s() {
+        let t_squared = state_after_phase_gates(|builder| {
+            builder.t(&[0]).t(&[0]);
+        });
+        let s = state_after_phase_gates(|builder| {
+            builder.sz(&[0]);
+        });
+        let expected = [(FRAC_1_SQRT_2, 0.0), (0.0, FRAC_1_SQRT_2)];
+
+        assert_amplitudes_equal(&t_squared, &expected, "T^2 literal amplitudes");
+        assert_amplitudes_equal(&s, &expected, "S literal amplitudes");
+        assert_amplitudes_equal(&t_squared, &s, "T^2 == S");
+    }
+
+    #[test]
+    fn byte_message_engine_executes_tdg_squared_as_exact_sdg() {
+        let tdg_squared = state_after_phase_gates(|builder| {
+            builder.tdg(&[0]).tdg(&[0]);
+        });
+        let sdg = state_after_phase_gates(|builder| {
+            builder.szdg(&[0]);
+        });
+        let expected = [(FRAC_1_SQRT_2, 0.0), (0.0, -FRAC_1_SQRT_2)];
+
+        assert_amplitudes_equal(&tdg_squared, &expected, "Tdg^2 literal amplitudes");
+        assert_amplitudes_equal(&sdg, &expected, "Sdg literal amplitudes");
+        assert_amplitudes_equal(&tdg_squared, &sdg, "Tdg^2 == Sdg");
+    }
+}

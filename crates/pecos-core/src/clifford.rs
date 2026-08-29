@@ -28,7 +28,7 @@
 //! assert_eq!(p, pecos_core::Pauli::Z);
 //! ```
 
-use crate::gate_type::GateType;
+use crate::gate_type::{GateType, SingleQubitGateMatrix, multiply_2x2, scale_2x2};
 use crate::unitary_rep::UnitaryRep;
 use crate::{Angle64, Pauli, QubitId, Sign};
 use std::fmt;
@@ -225,6 +225,13 @@ const IMAGES_1Q: [(bool, Pauli, bool, Pauli); 24] = [
     (true, Pauli::Y, false, Pauli::X),  // 23: F4dg
 ];
 
+const fn gate_type_matrix(gate: GateType) -> SingleQubitGateMatrix {
+    let Some(matrix) = gate.canonical_1q_matrix() else {
+        panic!("gate has no canonical single-qubit matrix");
+    };
+    matrix
+}
+
 impl Clifford {
     /// Returns all 38 Clifford gate variants (24 single-qubit + 14 two-qubit).
     #[must_use]
@@ -260,6 +267,126 @@ impl Clifford {
     #[must_use]
     pub fn is_2q(self) -> bool {
         self.num_qubits() == 2
+    }
+
+    /// Returns the canonical phase-fixed matrix for a single-qubit Clifford.
+    ///
+    /// Each representative has its exact Clifford-group order: H is H1 and
+    /// all H1-H6 matrices have order two; F is F1 and all F1-F4 matrices and
+    /// their daggers have order three. Matrices for variants without a
+    /// [`GateType`] are const products of canonical named-gate matrices with
+    /// the explicit phase required by that convention.
+    ///
+    /// Returns `None` for two-qubit Clifford gates.
+    #[must_use]
+    pub const fn canonical_1q_matrix(self) -> Option<SingleQubitGateMatrix> {
+        let h_phase_re = std::f64::consts::FRAC_1_SQRT_2;
+        let h_phase_im = -std::f64::consts::FRAC_1_SQRT_2;
+
+        match self {
+            Self::I => Some(gate_type_matrix(GateType::I)),
+            Self::X => Some(gate_type_matrix(GateType::X)),
+            Self::Y => Some(gate_type_matrix(GateType::Y)),
+            Self::Z => Some(gate_type_matrix(GateType::Z)),
+            Self::H => Some(gate_type_matrix(GateType::H)),
+            Self::SX => Some(gate_type_matrix(GateType::SX)),
+            Self::SXdg => Some(gate_type_matrix(GateType::SXdg)),
+            Self::SY => Some(gate_type_matrix(GateType::SY)),
+            Self::SYdg => Some(gate_type_matrix(GateType::SYdg)),
+            Self::SZ => Some(gate_type_matrix(GateType::SZ)),
+            Self::SZdg => Some(gate_type_matrix(GateType::SZdg)),
+            Self::H2 => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::Z),
+                    gate_type_matrix(GateType::SY),
+                ),
+                h_phase_re,
+                h_phase_im,
+            )),
+            Self::H3 => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::Y),
+                    gate_type_matrix(GateType::SZ),
+                ),
+                h_phase_re,
+                h_phase_im,
+            )),
+            Self::H4 => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::X),
+                    gate_type_matrix(GateType::SZ),
+                ),
+                h_phase_re,
+                h_phase_im,
+            )),
+            Self::H5 => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::Z),
+                    gate_type_matrix(GateType::SX),
+                ),
+                h_phase_re,
+                h_phase_im,
+            )),
+            Self::H6 => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::Y),
+                    gate_type_matrix(GateType::SX),
+                ),
+                h_phase_re,
+                h_phase_im,
+            )),
+            Self::F => Some(gate_type_matrix(GateType::F)),
+            Self::Fdg => Some(gate_type_matrix(GateType::Fdg)),
+            Self::F2 => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::SY),
+                    gate_type_matrix(GateType::SXdg),
+                ),
+                -1.0,
+                0.0,
+            )),
+            Self::F2dg => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::SX),
+                    gate_type_matrix(GateType::SYdg),
+                ),
+                -1.0,
+                0.0,
+            )),
+            Self::F3 => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::SZ),
+                    gate_type_matrix(GateType::SXdg),
+                ),
+                -1.0,
+                0.0,
+            )),
+            Self::F3dg => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::SX),
+                    gate_type_matrix(GateType::SZdg),
+                ),
+                -1.0,
+                0.0,
+            )),
+            Self::F4 => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::SX),
+                    gate_type_matrix(GateType::SZ),
+                ),
+                0.0,
+                1.0,
+            )),
+            Self::F4dg => Some(scale_2x2(
+                multiply_2x2(
+                    gate_type_matrix(GateType::SZdg),
+                    gate_type_matrix(GateType::SXdg),
+                ),
+                0.0,
+                -1.0,
+            )),
+            _ => None,
+        }
     }
 
     /// Returns the corresponding `GateType` for this Clifford gate, if one exists.
@@ -477,6 +604,9 @@ impl Clifford {
             "to_unitary_rep_on_qubit called on two-qubit gate {self}"
         );
         let q = q.into();
+        // Divide before modular negation: negating the fixed-point angle first
+        // wraps to 3/4 turn, and halving that would produce 3*pi/4.
+        let minus_pi_over_four = -(Angle64::QUARTER_TURN / 2u64);
         match self {
             // Paulis and identity
             Clifford::I => unitary_rep::I(q),
@@ -492,20 +622,54 @@ impl Clifford {
             Clifford::SZ => unitary_rep::SZ(q),
             Clifford::SZdg => unitary_rep::SZ(q).dg(),
             // Hadamard variants (A * B means "apply B first, then A")
-            Clifford::H2 => unitary_rep::Z(q) * unitary_rep::SY(q),
-            Clifford::H3 => unitary_rep::Y(q) * unitary_rep::SZ(q),
-            Clifford::H4 => unitary_rep::X(q) * unitary_rep::SZ(q),
-            Clifford::H5 => unitary_rep::Z(q) * unitary_rep::SX(q),
-            Clifford::H6 => unitary_rep::Y(q) * unitary_rep::SX(q),
+            Clifford::H2 => {
+                unitary_rep::phase(minus_pi_over_four) * (unitary_rep::Z(q) * unitary_rep::SY(q))
+            }
+            Clifford::H3 => {
+                unitary_rep::phase(minus_pi_over_four) * (unitary_rep::Y(q) * unitary_rep::SZ(q))
+            }
+            Clifford::H4 => {
+                unitary_rep::phase(minus_pi_over_four) * (unitary_rep::X(q) * unitary_rep::SZ(q))
+            }
+            Clifford::H5 => {
+                unitary_rep::phase(minus_pi_over_four) * (unitary_rep::Z(q) * unitary_rep::SX(q))
+            }
+            Clifford::H6 => {
+                unitary_rep::phase(minus_pi_over_four) * (unitary_rep::Y(q) * unitary_rep::SX(q))
+            }
             // Face gates
-            Clifford::F => unitary_rep::SZ(q) * unitary_rep::SX(q),
-            Clifford::Fdg => unitary_rep::SX(q).dg() * unitary_rep::SZ(q).dg(),
-            Clifford::F2 => unitary_rep::SY(q) * unitary_rep::SX(q).dg(),
-            Clifford::F2dg => unitary_rep::SX(q) * unitary_rep::SY(q).dg(),
-            Clifford::F3 => unitary_rep::SZ(q) * unitary_rep::SX(q).dg(),
-            Clifford::F3dg => unitary_rep::SX(q) * unitary_rep::SZ(q).dg(),
-            Clifford::F4 => unitary_rep::SX(q) * unitary_rep::SZ(q),
-            Clifford::F4dg => unitary_rep::SZ(q).dg() * unitary_rep::SX(q).dg(),
+            Clifford::F => {
+                unitary_rep::phase(Angle64::QUARTER_TURN)
+                    * (unitary_rep::SZ(q) * unitary_rep::SX(q))
+            }
+            Clifford::Fdg => {
+                unitary_rep::phase(-Angle64::QUARTER_TURN)
+                    * (unitary_rep::SX(q).dg() * unitary_rep::SZ(q).dg())
+            }
+            Clifford::F2 => {
+                unitary_rep::phase(Angle64::HALF_TURN)
+                    * (unitary_rep::SY(q) * unitary_rep::SX(q).dg())
+            }
+            Clifford::F2dg => {
+                unitary_rep::phase(Angle64::HALF_TURN)
+                    * (unitary_rep::SX(q) * unitary_rep::SY(q).dg())
+            }
+            Clifford::F3 => {
+                unitary_rep::phase(Angle64::HALF_TURN)
+                    * (unitary_rep::SZ(q) * unitary_rep::SX(q).dg())
+            }
+            Clifford::F3dg => {
+                unitary_rep::phase(Angle64::HALF_TURN)
+                    * (unitary_rep::SX(q) * unitary_rep::SZ(q).dg())
+            }
+            Clifford::F4 => {
+                unitary_rep::phase(Angle64::QUARTER_TURN)
+                    * (unitary_rep::SX(q) * unitary_rep::SZ(q))
+            }
+            Clifford::F4dg => {
+                unitary_rep::phase(-Angle64::QUARTER_TURN)
+                    * (unitary_rep::SZ(q).dg() * unitary_rep::SX(q).dg())
+            }
             _ => unreachable!(),
         }
     }
@@ -777,6 +941,104 @@ impl fmt::Display for Clifford {
 mod tests {
     use super::*;
 
+    const MATRIX_TOLERANCE: f64 = 1e-14;
+
+    fn matrix_power(matrix: SingleQubitGateMatrix, exponent: usize) -> SingleQubitGateMatrix {
+        let identity = gate_type_matrix(GateType::I);
+        (0..exponent).fold(identity, |product, _| multiply_2x2(product, matrix))
+    }
+
+    fn adjoint(matrix: SingleQubitGateMatrix) -> SingleQubitGateMatrix {
+        [
+            matrix[0], -matrix[1], matrix[4], -matrix[5], matrix[2], -matrix[3], matrix[6],
+            -matrix[7],
+        ]
+    }
+
+    fn max_matrix_error(lhs: SingleQubitGateMatrix, rhs: SingleQubitGateMatrix) -> f64 {
+        lhs.into_iter()
+            .zip(rhs)
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0, f64::max)
+    }
+
+    fn matrix_contract_holds(table: &[SingleQubitGateMatrix; 24]) -> bool {
+        let identity = table[Clifford::I as usize];
+        for &gate in Clifford::all_1q() {
+            let order = match gate {
+                Clifford::I => 1,
+                Clifford::X
+                | Clifford::Y
+                | Clifford::Z
+                | Clifford::H
+                | Clifford::H2
+                | Clifford::H3
+                | Clifford::H4
+                | Clifford::H5
+                | Clifford::H6 => 2,
+                Clifford::SX
+                | Clifford::SXdg
+                | Clifford::SY
+                | Clifford::SYdg
+                | Clifford::SZ
+                | Clifford::SZdg => 4,
+                Clifford::F
+                | Clifford::Fdg
+                | Clifford::F2
+                | Clifford::F2dg
+                | Clifford::F3
+                | Clifford::F3dg
+                | Clifford::F4
+                | Clifford::F4dg => 3,
+                _ => unreachable!(),
+            };
+            if max_matrix_error(matrix_power(table[gate as usize], order), identity)
+                > MATRIX_TOLERANCE
+            {
+                return false;
+            }
+        }
+
+        for &gate in &[
+            Clifford::H,
+            Clifford::H2,
+            Clifford::H3,
+            Clifford::H4,
+            Clifford::H5,
+            Clifford::H6,
+        ] {
+            if max_matrix_error(table[gate as usize], adjoint(table[gate as usize]))
+                > MATRIX_TOLERANCE
+            {
+                return false;
+            }
+        }
+
+        for (gate, dagger) in [
+            (Clifford::SX, Clifford::SXdg),
+            (Clifford::SY, Clifford::SYdg),
+            (Clifford::SZ, Clifford::SZdg),
+            (Clifford::F, Clifford::Fdg),
+            (Clifford::F2, Clifford::F2dg),
+            (Clifford::F3, Clifford::F3dg),
+            (Clifford::F4, Clifford::F4dg),
+        ] {
+            if max_matrix_error(table[dagger as usize], adjoint(table[gate as usize]))
+                > MATRIX_TOLERANCE
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn canonical_matrix_table() -> [SingleQubitGateMatrix; 24] {
+        Clifford::all_1q().map(|gate| {
+            gate.canonical_1q_matrix()
+                .expect("single-qubit Clifford must have a canonical matrix")
+        })
+    }
+
     // ====== Collection tests ======
 
     #[test]
@@ -854,6 +1116,167 @@ mod tests {
         for &a in Clifford::all_1q() {
             for &b in Clifford::all_1q() {
                 let _ = a.compose(b);
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_matrices_have_exact_group_orders_hermiticity_and_adjoints() {
+        let table = canonical_matrix_table();
+        assert!(matrix_contract_holds(&table));
+    }
+
+    #[test]
+    fn derived_h_and_f_families_match_the_phase_fixed_oracle() {
+        let r = std::f64::consts::FRAC_1_SQRT_2;
+        let oracle = [
+            (Clifford::H2, [r, 0.0, -r, 0.0, -r, 0.0, -r, 0.0]),
+            (Clifford::H3, [0.0, 0.0, r, -r, r, r, 0.0, 0.0]),
+            (Clifford::H4, [0.0, 0.0, r, r, r, -r, 0.0, 0.0]),
+            (Clifford::H5, [r, 0.0, 0.0, -r, 0.0, r, -r, 0.0]),
+            (Clifford::H6, [-r, 0.0, 0.0, -r, 0.0, r, r, 0.0]),
+            (Clifford::F, [-0.5, 0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5]),
+            (
+                Clifford::Fdg,
+                [-0.5, -0.5, -0.5, -0.5, 0.5, -0.5, -0.5, 0.5],
+            ),
+            (Clifford::F2, [-0.5, 0.5, 0.5, -0.5, -0.5, -0.5, -0.5, -0.5]),
+            (Clifford::F2dg, [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5, -0.5, 0.5]),
+            (Clifford::F3, [-0.5, 0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5]),
+            (Clifford::F3dg, [-0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5]),
+            (Clifford::F4, [-0.5, 0.5, -0.5, 0.5, 0.5, 0.5, -0.5, -0.5]),
+            (
+                Clifford::F4dg,
+                [-0.5, -0.5, 0.5, -0.5, -0.5, -0.5, -0.5, 0.5],
+            ),
+        ];
+
+        for (gate, expected) in oracle {
+            let actual = gate.canonical_1q_matrix().unwrap();
+            let error = max_matrix_error(actual, expected);
+            assert!(
+                error <= MATRIX_TOLERANCE,
+                "{gate}: derived matrix differs from oracle by {error:e}; actual={actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_clifford_guard_rejects_each_global_phase_mutation() {
+        let table = canonical_matrix_table();
+        let phase = std::f64::consts::FRAC_1_SQRT_2;
+        for &gate in Clifford::all_1q() {
+            let mut mutant = table;
+            mutant[gate as usize] = scale_2x2(mutant[gate as usize], phase, phase);
+            assert!(
+                !matrix_contract_holds(&mutant),
+                "exp(i*pi/4) phase mutation of {gate} escaped the order/adjoint guards"
+            );
+        }
+    }
+
+    #[test]
+    fn documented_h_and_f_pauli_actions_match_the_canonical_matrices() {
+        let actions = [
+            (
+                Clifford::H,
+                [(false, Pauli::Z), (true, Pauli::Y), (false, Pauli::X)],
+            ),
+            (
+                Clifford::H2,
+                [(true, Pauli::Z), (true, Pauli::Y), (true, Pauli::X)],
+            ),
+            (
+                Clifford::H3,
+                [(false, Pauli::Y), (false, Pauli::X), (true, Pauli::Z)],
+            ),
+            (
+                Clifford::H4,
+                [(true, Pauli::Y), (true, Pauli::X), (true, Pauli::Z)],
+            ),
+            (
+                Clifford::H5,
+                [(true, Pauli::X), (false, Pauli::Z), (false, Pauli::Y)],
+            ),
+            (
+                Clifford::H6,
+                [(true, Pauli::X), (true, Pauli::Z), (true, Pauli::Y)],
+            ),
+            (
+                Clifford::F,
+                [(false, Pauli::Y), (false, Pauli::Z), (false, Pauli::X)],
+            ),
+            (
+                Clifford::Fdg,
+                [(false, Pauli::Z), (false, Pauli::X), (false, Pauli::Y)],
+            ),
+            (
+                Clifford::F2,
+                [(true, Pauli::Z), (true, Pauli::X), (false, Pauli::Y)],
+            ),
+            (
+                Clifford::F2dg,
+                [(true, Pauli::Y), (false, Pauli::Z), (true, Pauli::X)],
+            ),
+            (
+                Clifford::F3,
+                [(false, Pauli::Y), (true, Pauli::Z), (true, Pauli::X)],
+            ),
+            (
+                Clifford::F3dg,
+                [(true, Pauli::Z), (false, Pauli::X), (true, Pauli::Y)],
+            ),
+            (
+                Clifford::F4,
+                [(false, Pauli::Z), (true, Pauli::X), (true, Pauli::Y)],
+            ),
+            (
+                Clifford::F4dg,
+                [(true, Pauli::Y), (true, Pauli::Z), (false, Pauli::X)],
+            ),
+        ];
+
+        for (gate, expected) in actions {
+            for (pauli, (negated, image)) in
+                [Pauli::X, Pauli::Y, Pauli::Z].into_iter().zip(expected)
+            {
+                let expected_sign = if negated {
+                    Sign::MinusOne
+                } else {
+                    Sign::PlusOne
+                };
+                assert_eq!(
+                    gate.conjugate(pauli),
+                    (expected_sign, image),
+                    "{gate}: {pauli:?}"
+                );
+
+                let pauli_gate = match pauli {
+                    Pauli::X => GateType::X,
+                    Pauli::Y => GateType::Y,
+                    Pauli::Z => GateType::Z,
+                    Pauli::I => unreachable!(),
+                };
+                let image_gate = match image {
+                    Pauli::X => GateType::X,
+                    Pauli::Y => GateType::Y,
+                    Pauli::Z => GateType::Z,
+                    Pauli::I => unreachable!(),
+                };
+                let unitary = gate.canonical_1q_matrix().unwrap();
+                let actual = multiply_2x2(
+                    multiply_2x2(unitary, gate_type_matrix(pauli_gate)),
+                    adjoint(unitary),
+                );
+                let expected_matrix = scale_2x2(
+                    gate_type_matrix(image_gate),
+                    if negated { -1.0 } else { 1.0 },
+                    0.0,
+                );
+                assert!(
+                    max_matrix_error(actual, expected_matrix) <= MATRIX_TOLERANCE,
+                    "{gate}: canonical matrix has wrong {pauli:?} conjugation"
+                );
             }
         }
     }

@@ -56,6 +56,10 @@ pub enum QuantumOp {
     T,
     /// T† gate
     Tdg,
+    /// Square-root-of-X gate
+    SX,
+    /// Adjoint square-root-of-X gate
+    SXdg,
 
     // Parameterized single-qubit rotations
     /// X-axis rotation
@@ -520,6 +524,8 @@ impl QuantumOp {
             QuantumOp::Sdg => "sdg",
             QuantumOp::T => "t",
             QuantumOp::Tdg => "tdg",
+            QuantumOp::SX => "sx",
+            QuantumOp::SXdg => "sxdg",
             QuantumOp::RX(_) => "rx",
             QuantumOp::RY(_) => "ry",
             QuantumOp::RZ(_) => "rz",
@@ -562,6 +568,8 @@ impl QuantumOp {
             | QuantumOp::Sdg
             | QuantumOp::T
             | QuantumOp::Tdg
+            | QuantumOp::SX
+            | QuantumOp::SXdg
             | QuantumOp::RX(_)
             | QuantumOp::RY(_)
             | QuantumOp::RZ(_)

@@ -56,7 +56,7 @@
 use crate::clifford_rep::CliffordRep;
 use crate::qubit_support::{assert_distinct_qubits, overlapping_qubits};
 use crate::unitary_rep::{PhaseValue, UnitaryRep};
-use crate::{Angle64, PauliString, QubitId};
+use crate::{Angle64, Clifford, PauliString, QubitId};
 use std::fmt;
 use std::ops::{BitAnd, Mul, Neg};
 
@@ -1022,146 +1022,143 @@ pub fn SZdg(qubit: impl Into<QubitId>) -> Op {
     cliff(CliffordRep::szdg(q.0), crate::unitary_rep::SZ(q).dg())
 }
 
-/// H2 gate (SY * Z decomposition).
+/// H2 gate: `exp(-i*pi/4) * Z * SY`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn H2(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h2(q.0),
-        crate::unitary_rep::Z(q) * crate::unitary_rep::SY(q),
+        Clifford::H2.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// H3 gate (SZ * Y decomposition).
+/// H3 gate: `exp(-i*pi/4) * Y * SZ`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn H3(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h3(q.0),
-        crate::unitary_rep::Y(q) * crate::unitary_rep::SZ(q),
+        Clifford::H3.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// H4 gate (SZ * X decomposition).
+/// H4 gate: `exp(-i*pi/4) * X * SZ`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn H4(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h4(q.0),
-        crate::unitary_rep::X(q) * crate::unitary_rep::SZ(q),
+        Clifford::H4.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// H5 gate (SX * Z decomposition).
+/// H5 gate: `exp(-i*pi/4) * Z * SX`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn H5(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h5(q.0),
-        crate::unitary_rep::Z(q) * crate::unitary_rep::SX(q),
+        Clifford::H5.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// H6 gate (SX * Y decomposition).
+/// H6 gate: `exp(-i*pi/4) * Y * SX`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn H6(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::h6(q.0),
-        crate::unitary_rep::Y(q) * crate::unitary_rep::SX(q),
+        Clifford::H6.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// Face gate F (SX * SZ decomposition).
+/// Face gate F/F1: `i * SZ * SX`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
-    cliff(
-        CliffordRep::f(q.0),
-        crate::unitary_rep::SZ(q) * crate::unitary_rep::SX(q),
-    )
+    cliff(CliffordRep::f(q.0), Clifford::F.to_unitary_rep_on_qubit(q))
 }
 
-/// Face gate F-dagger (`SZdg` * `SXdg` decomposition).
+/// Face gate F-dagger/F1-dagger: `-i * SXdg * SZdg`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn Fdg(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::fdg(q.0),
-        crate::unitary_rep::SX(q).dg() * crate::unitary_rep::SZ(q).dg(),
+        Clifford::Fdg.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// F2 gate (`SXdg` * SY decomposition).
+/// F2 gate: `-SY * SXdg`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F2(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f2(q.0),
-        crate::unitary_rep::SY(q) * crate::unitary_rep::SX(q).dg(),
+        Clifford::F2.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// F2-dagger gate (`SYdg` * SX decomposition).
+/// F2-dagger gate: `-SX * SYdg`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F2dg(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f2dg(q.0),
-        crate::unitary_rep::SX(q) * crate::unitary_rep::SY(q).dg(),
+        Clifford::F2dg.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// F3 gate (`SXdg` * SZ decomposition).
+/// F3 gate: `-SZ * SXdg`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F3(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f3(q.0),
-        crate::unitary_rep::SZ(q) * crate::unitary_rep::SX(q).dg(),
+        Clifford::F3.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// F3-dagger gate (SX * `SZdg` decomposition).
+/// F3-dagger gate: `-SX * SZdg`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F3dg(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f3dg(q.0),
-        crate::unitary_rep::SX(q) * crate::unitary_rep::SZ(q).dg(),
+        Clifford::F3dg.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// F4 gate (SX * SZ decomposition).
+/// F4 gate: `i * SX * SZ`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F4(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f4(q.0),
-        crate::unitary_rep::SX(q) * crate::unitary_rep::SZ(q),
+        Clifford::F4.to_unitary_rep_on_qubit(q),
     )
 }
 
-/// F4-dagger gate (`SZdg` * `SXdg` decomposition).
+/// F4-dagger gate: `-i * SZdg * SXdg`.
 #[allow(non_snake_case)]
 #[must_use]
 pub fn F4dg(qubit: impl Into<QubitId>) -> Op {
     let q = qubit.into();
     cliff(
         CliffordRep::f4dg(q.0),
-        crate::unitary_rep::SZ(q).dg() * crate::unitary_rep::SX(q).dg(),
+        Clifford::F4dg.to_unitary_rep_on_qubit(q),
     )
 }
 

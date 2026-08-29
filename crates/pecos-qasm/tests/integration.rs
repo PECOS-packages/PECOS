@@ -40,3 +40,6 @@ pub mod pecos_inc_comprehensive_test;
 
 #[path = "integration/clifford_rotation_simulation_test.rs"]
 pub mod clifford_rotation_simulation_test;
+
+#[path = "integration/phase_exactness_test.rs"]
+pub mod phase_exactness_test;

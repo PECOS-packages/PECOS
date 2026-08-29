@@ -300,10 +300,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.rz(
-            Angle64::from_radians(std::f64::consts::PI / 2.0),
-            &[qubits[0]],
-        );
+        engine.message_builder.sz(&[qubits[0]]);
         Ok(())
     }
 
@@ -313,10 +310,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.rz(
-            Angle64::from_radians(-std::f64::consts::PI / 2.0),
-            &[qubits[0]],
-        );
+        engine.message_builder.szdg(&[qubits[0]]);
         Ok(())
     }
 
@@ -326,10 +320,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.rz(
-            Angle64::from_radians(std::f64::consts::PI / 4.0),
-            &[qubits[0]],
-        );
+        engine.message_builder.t(&[qubits[0]]);
         Ok(())
     }
 
@@ -339,10 +330,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.rz(
-            Angle64::from_radians(-std::f64::consts::PI / 4.0),
-            &[qubits[0]],
-        );
+        engine.message_builder.tdg(&[qubits[0]]);
         Ok(())
     }
 
@@ -491,6 +479,14 @@ impl QASMEngine {
                 GateType::Y => self.message_builder.y(&[qubit]),
                 GateType::Z => self.message_builder.z(&[qubit]),
                 GateType::H => self.message_builder.h(&[qubit]),
+                GateType::SZ => self.message_builder.sz(&[qubit]),
+                GateType::SZdg => self.message_builder.szdg(&[qubit]),
+                GateType::T => self.message_builder.t(&[qubit]),
+                GateType::Tdg => self.message_builder.tdg(&[qubit]),
+                GateType::SX => self.message_builder.sx(&[qubit]),
+                GateType::SXdg => self.message_builder.sxdg(&[qubit]),
+                GateType::SY => self.message_builder.sy(&[qubit]),
+                GateType::SYdg => self.message_builder.sydg(&[qubit]),
                 GateType::PZ => self.message_builder.pz(&[qubit]),
                 _ => {
                     return Err(PecosError::Processing(format!(

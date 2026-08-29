@@ -606,26 +606,34 @@ impl ByteMessageBuilder {
 
     /// Add an SZ (S) gate
     pub fn sz(&mut self, qubits: &[usize]) -> &mut Self {
-        // S gate is RZ(π/2)
-        self.rz(Angle64::QUARTER_TURN, qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::SZ, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::SZ, qubits, &[], &[])
     }
 
     /// Add an `SZdg` (S†) gate
     pub fn szdg(&mut self, qubits: &[usize]) -> &mut Self {
-        // S† gate is RZ(-π/2)
-        self.rz(-Angle64::QUARTER_TURN, qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::SZdg, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::SZdg, qubits, &[], &[])
     }
 
     /// Add a T gate
     pub fn t(&mut self, qubits: &[usize]) -> &mut Self {
-        // T gate is RZ(π/4)
-        self.rz(Angle64::QUARTER_TURN / 2u64, qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::T, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::T, qubits, &[], &[])
     }
 
     /// Add a Tdg (T†) gate
     pub fn tdg(&mut self, qubits: &[usize]) -> &mut Self {
-        // T† gate is RZ(-π/4)
-        self.rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::Tdg, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::Tdg, qubits, &[], &[])
     }
 
     /// Add an RX gate
@@ -1031,6 +1039,30 @@ mod tests {
         assert_eq!(commands[1].qubits.as_slice(), &[QubitId(0), QubitId(1)]);
         assert_eq!(commands[2].gate_type, GateType::MZ);
         assert_eq!(commands[2].qubits.as_slice(), &[QubitId(2)]);
+    }
+
+    #[test]
+    fn test_phase_gate_tokens_survive_byte_message_round_trip() {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.sz(&[1]);
+        builder.szdg(&[0, 2]);
+        builder.t(&[0, 2]);
+        builder.tdg(&[1]);
+
+        let commands = builder.build().quantum_ops().unwrap();
+        assert_eq!(commands.len(), 4);
+        let expected = [
+            (GateType::SZ, &[QubitId(1)][..]),
+            (GateType::SZdg, &[QubitId(0), QubitId(2)][..]),
+            (GateType::T, &[QubitId(0), QubitId(2)][..]),
+            (GateType::Tdg, &[QubitId(1)][..]),
+        ];
+        for (command, (gate_type, qubits)) in commands.iter().zip(expected) {
+            assert_eq!(command.gate_type, gate_type);
+            assert_eq!(command.qubits.as_slice(), qubits);
+            assert!(command.angles.is_empty());
+        }
     }
 
     #[test]

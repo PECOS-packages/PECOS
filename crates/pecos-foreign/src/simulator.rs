@@ -25,6 +25,12 @@
 //! - `rz` -- Z rotation
 //! - `rzz` -- ZZ rotation
 //!
+//! The protocol has no operation for a global scalar. Consequently,
+//! [`ForeignSimulator`] is suitable only for projective or measurement-only
+//! simulators, and exact named T/Tdg execution is rejected. In particular,
+//! those gates are never silently lowered to the phase-inexact RZ(+/-pi/4)
+//! rotations. A future protocol version can add native T/Tdg callbacks.
+//!
 //! **Lifecycle:**
 //! - `reset` -- reset to initial state
 //! - `destroy` -- free the simulator
@@ -113,6 +119,11 @@ pub struct ForeignSimulatorVTable {
 unsafe impl Send for ForeignSimulator {}
 
 /// A quantum simulator implemented in a foreign language via C ABI.
+///
+/// This interface cannot represent a global scalar and is therefore restricted
+/// to projective or measurement-only foreign simulators. Calls to exact named
+/// T/Tdg gates panic before mutating the foreign simulator; callers that need
+/// those matrices must use an interface with native T/Tdg support.
 pub struct ForeignSimulator {
     handle: *mut (),
     vtable: ForeignSimulatorVTable,
@@ -290,6 +301,27 @@ impl ArbitraryRotationGateable for ForeignSimulator {
         } else {
             panic!("foreign simulator does not support rotation gates (rzz is null)")
         }
+    }
+
+    fn apply_global_phase(&mut self, _phase: Angle64, _qubits: &[QubitId]) -> &mut Self {
+        panic!(
+            "foreign simulator protocol cannot apply a global phase; \
+             use it only for projective or measurement-only simulation"
+        )
+    }
+
+    fn t(&mut self, _qubits: &[QubitId]) -> &mut Self {
+        panic!(
+            "foreign simulator protocol cannot apply exact T: it has no native T \
+             or global-phase operation"
+        )
+    }
+
+    fn tdg(&mut self, _qubits: &[QubitId]) -> &mut Self {
+        panic!(
+            "foreign simulator protocol cannot apply exact Tdg: it has no native Tdg \
+             or global-phase operation"
+        )
     }
 }
 

@@ -24,7 +24,7 @@
 
 use super::pauli_decomp::{ZDecomposition, decompose_z};
 use crate::errors::MpsError;
-use crate::mps::{Mps, MpsPreReductionTiming};
+use crate::mps::{BondCompressionTelemetry, Mps, MpsPreReductionTiming};
 use nalgebra::DMatrix;
 use num_complex::Complex64;
 use pecos_core::BitSet;
@@ -38,8 +38,17 @@ fn profile_query_phase<T>(
     phase: super::QueryPhase,
     operation: impl FnOnce(&mut Mps) -> T,
 ) -> T {
+    profile_query_phase_with_elapsed(mps, telemetry, phase, operation).0
+}
+
+fn profile_query_phase_with_elapsed<T>(
+    mps: &mut Mps,
+    telemetry: &mut Option<&mut super::QueryDepthTelemetry>,
+    phase: super::QueryPhase,
+    operation: impl FnOnce(&mut Mps) -> T,
+) -> (T, f64) {
     let Some(telemetry) = telemetry.as_deref_mut() else {
-        return operation(mps);
+        return (operation(mps), 0.0);
     };
     telemetry.begin_phase();
     mps.reset_phase_svd_operations();
@@ -48,7 +57,7 @@ fn profile_query_phase<T>(
     let elapsed = started.elapsed().as_secs_f64();
     let (svd_operations, capped_svd_operations) = mps.take_phase_svd_operations();
     telemetry.record(phase, svd_operations, capped_svd_operations, elapsed);
-    result
+    (result, elapsed)
 }
 
 fn mix_pre_reduction_fingerprint(hash: &mut u64, value: usize) {
@@ -1636,9 +1645,15 @@ fn reduce_exact_projection_bonds(mps: &mut Mps) -> Result<(), MpsError> {
 struct ProjectionLocalityContext {
     pre_write_tensors: Vec<DMatrix<Complex64>>,
     pre_write_bond_dims: Vec<usize>,
+    center_before_positioning: Option<usize>,
+    center_before_positioning_is_valid: bool,
     center_before_projection_write: Option<usize>,
     center_before_projection_write_is_valid: bool,
     construction: Option<super::ProjectionConstruction>,
+    projector_flip_sites: Vec<usize>,
+    projector_sign_sites: Vec<usize>,
+    projector_sites: Vec<usize>,
+    gauge_compensation_sites: Vec<usize>,
     touched_sites: Vec<usize>,
 }
 
@@ -1648,21 +1663,69 @@ impl ProjectionLocalityContext {
         Self {
             pre_write_tensors: mps.tensors().to_vec(),
             pre_write_bond_dims: mps.bond_dims().to_vec(),
-            center_before_projection_write: center,
-            center_before_projection_write_is_valid: center_is_valid,
+            center_before_positioning: center,
+            center_before_positioning_is_valid: center_is_valid,
+            center_before_projection_write: None,
+            center_before_projection_write_is_valid: false,
             construction: None,
+            projector_flip_sites: Vec::new(),
+            projector_sign_sites: Vec::new(),
+            projector_sites: Vec::new(),
+            gauge_compensation_sites: Vec::new(),
             touched_sites: Vec::new(),
         }
     }
 
-    fn record_projection(
+    fn record_projection_write(
         &mut self,
+        mps: &Mps,
         construction: super::ProjectionConstruction,
+        flip_sites: &[usize],
+        sign_sites: &[usize],
+    ) {
+        assert!(
+            self.construction.is_none(),
+            "projection write recorded twice"
+        );
+        let (center, center_is_valid) = mps.projection_diagnostic_center();
+        self.center_before_projection_write = center;
+        self.center_before_projection_write_is_valid = center_is_valid;
+        self.construction = Some(construction);
+        self.projector_flip_sites = flip_sites.to_vec();
+        self.projector_flip_sites.sort_unstable();
+        self.projector_flip_sites.dedup();
+        self.projector_sign_sites = sign_sites.to_vec();
+        self.projector_sign_sites.sort_unstable();
+        self.projector_sign_sites.dedup();
+        self.projector_sites = self.projector_flip_sites.clone();
+        self.projector_sites
+            .extend(self.projector_sign_sites.iter().copied());
+        self.projector_sites.sort_unstable();
+        self.projector_sites.dedup();
+        match construction {
+            super::ProjectionConstruction::ScalarScale => {
+                assert!(self.projector_sites.is_empty());
+            }
+            super::ProjectionConstruction::LocalBlockWrite => {
+                assert_eq!(self.projector_flip_sites.len(), 1);
+                assert!(self.projector_sign_sites.is_empty());
+            }
+            super::ProjectionConstruction::DirectSum => {
+                assert!(!self.projector_sites.is_empty());
+            }
+        }
+    }
+
+    fn record_gauge_and_touched_sites(
+        &mut self,
+        gauge_compensation_sites: &[usize],
         mut touched_sites: Vec<usize>,
     ) {
+        self.gauge_compensation_sites = gauge_compensation_sites.to_vec();
+        self.gauge_compensation_sites.sort_unstable();
+        self.gauge_compensation_sites.dedup();
         touched_sites.sort_unstable();
         touched_sites.dedup();
-        self.construction = Some(construction);
         self.touched_sites = touched_sites;
     }
 
@@ -1692,6 +1755,10 @@ impl ProjectionLocalityContext {
         let (changed_tensor_min, changed_tensor_max) = span(&changed_tensors);
         let (touched_site_min, touched_site_max) = span(&self.touched_sites);
         let (changed_bond_min, changed_bond_max) = span(&changed_bonds);
+        let (projector_site_min, projector_site_max) = span(&self.projector_sites);
+        let projector_span = projector_site_min
+            .zip(projector_site_max)
+            .map_or(0, |(minimum, maximum)| maximum - minimum);
         let construction = self
             .construction
             .expect("projection construction must precede QR telemetry");
@@ -1732,11 +1799,27 @@ impl ProjectionLocalityContext {
 
         super::ProjectionQrLocalityTelemetry {
             chain_length: mps.num_sites(),
+            center_before_positioning: self.center_before_positioning,
+            center_before_positioning_is_valid: self.center_before_positioning_is_valid,
             center_before_projection_write: self.center_before_projection_write,
             center_before_projection_write_is_valid: self.center_before_projection_write_is_valid,
+            projection_entry_bond_profile: self
+                .pre_write_bond_dims
+                .iter()
+                .copied()
+                .skip(1)
+                .take(mps.num_sites().saturating_sub(1))
+                .collect(),
             center_before_qr,
             center_before_qr_is_valid,
             construction,
+            projector_flip_sites: self.projector_flip_sites,
+            projector_sign_sites: self.projector_sign_sites,
+            projector_sites: self.projector_sites,
+            projector_site_min,
+            projector_site_max,
+            projector_span,
+            gauge_compensation_sites: self.gauge_compensation_sites,
             touched_site_min,
             touched_site_max,
             touched_sites: self.touched_sites.len(),
@@ -1749,9 +1832,55 @@ impl ProjectionLocalityContext {
             qr_sites,
             qr_sites_skippable_by_locality,
             qr_sites_skippable_by_center_ceiling,
+            post_projection_qr_wall_time_seconds: 0.0,
+            compression_bonds_observed: 0,
+            external_bonds: Vec::new(),
+            external_discarded_weight: 0.0,
             normalization_preserved_center: None,
         }
     }
+}
+
+fn finish_projection_compression_telemetry(
+    event: &mut super::ProjectionQrLocalityTelemetry,
+    compression: &[BondCompressionTelemetry],
+) {
+    assert_eq!(
+        compression.len(),
+        event.chain_length.saturating_sub(1),
+        "post-projection compression must report every internal bond"
+    );
+    event.compression_bonds_observed = compression.len();
+    if event.construction != super::ProjectionConstruction::DirectSum {
+        return;
+    }
+
+    let support_min = event
+        .projector_site_min
+        .expect("direct-sum projector must have support");
+    let support_max = event
+        .projector_site_max
+        .expect("direct-sum projector must have support");
+    for observed in compression {
+        let pre_projection_rank = event.projection_entry_bond_profile[observed.bond - 1];
+        let is_window_internal = support_min < observed.bond && observed.bond <= support_max;
+        if !is_window_internal {
+            event
+                .external_bonds
+                .push(super::ExternalProjectionBondTelemetry {
+                    bond: observed.bond,
+                    pre_projection_rank,
+                    compression_input_rank: observed.input_rank,
+                    post_compression_rank: observed.output_rank,
+                    retained_rank_changed: observed.output_rank != pre_projection_rank,
+                    discarded_weight: observed.discarded_weight,
+                });
+            event.external_discarded_weight += observed.discarded_weight;
+        }
+    }
+    // Preserve the public telemetry convention that an empty/numerically-zero
+    // discarded-weight sum is positive zero.
+    event.external_discarded_weight += 0.0;
 }
 
 fn reduce_exact_projection_bonds_profiled(
@@ -1762,25 +1891,39 @@ fn reduce_exact_projection_bonds_profiled(
     if telemetry.is_none() {
         return reduce_exact_projection_bonds(mps);
     }
-    if let Some(locality) = locality {
-        let event = locality.into_event(mps);
-        telemetry
-            .as_deref_mut()
-            .expect("profiled reduction requires query telemetry")
-            .record_projection_qr_locality(event);
-    }
-    profile_query_phase(
+    let mut event = locality.map(|locality| locality.into_event(mps));
+    let ((), qr_wall_time_seconds) = profile_query_phase_with_elapsed(
         mps,
         telemetry,
         super::QueryPhase::PostProjectionQr,
         Mps::right_canonicalize,
     );
-    profile_query_phase(
-        mps,
-        telemetry,
-        super::QueryPhase::PostProjectionSvd,
-        Mps::compress_from_right_canonical,
-    )
+    let mut compression = Vec::new();
+    let result = if event.is_some() {
+        profile_query_phase(
+            mps,
+            telemetry,
+            super::QueryPhase::PostProjectionSvd,
+            |mps| mps.compress_from_right_canonical_profiled(&mut compression),
+        )
+    } else {
+        profile_query_phase(
+            mps,
+            telemetry,
+            super::QueryPhase::PostProjectionSvd,
+            Mps::compress_from_right_canonical,
+        )
+    };
+    result?;
+    if let Some(mut event) = event.take() {
+        event.post_projection_qr_wall_time_seconds = qr_wall_time_seconds;
+        finish_projection_compression_telemetry(&mut event, &compression);
+        telemetry
+            .as_deref_mut()
+            .expect("profiled reduction requires query telemetry")
+            .record_projection_qr_locality(event);
+    }
+    Ok(())
 }
 
 /// Shared implementation for tracked and phase-insensitive forced projection.
@@ -1950,6 +2093,14 @@ fn project_forced_z_with_update_impl(
                     },
                 );
             }
+            let construction = if sign_sites.is_empty() {
+                super::ProjectionConstruction::ScalarScale
+            } else {
+                super::ProjectionConstruction::DirectSum
+            };
+            if let Some(locality) = projection_locality.as_mut() {
+                locality.record_projection_write(mps, construction, &[], &sign_sites);
+            }
             profile_query_phase(mps, &mut telemetry, super::QueryPhase::Projection, |mps| {
                 apply_pauli_projection(
                     mps,
@@ -1963,12 +2114,7 @@ fn project_forced_z_with_update_impl(
             if let Some(locality) = projection_locality.as_mut() {
                 let mut touched_sites = modified_sites.clone();
                 touched_sites.extend(sign_sites.iter().copied());
-                let construction = if sign_sites.is_empty() {
-                    super::ProjectionConstruction::ScalarScale
-                } else {
-                    super::ProjectionConstruction::DirectSum
-                };
-                locality.record_projection(construction, touched_sites);
+                locality.record_gauge_and_touched_sites(&[], touched_sites);
             }
             // The physical observable was already in the stabilizer span, so
             // mz_forced performs no Clifford-basis change. The projected
@@ -2058,6 +2204,14 @@ fn project_forced_z_with_update_impl(
                 );
             }
             let is_local_projection = sign_sites.is_empty();
+            let construction = if is_local_projection {
+                super::ProjectionConstruction::LocalBlockWrite
+            } else {
+                super::ProjectionConstruction::DirectSum
+            };
+            if let Some(locality) = projection_locality.as_mut() {
+                locality.record_projection_write(mps, construction, &flip_sites, &sign_sites);
+            }
             let gauge_sites =
                 profile_query_phase(mps, &mut telemetry, super::QueryPhase::Projection, |mps| {
                     let sign_f = if outcome { -1.0 } else { 1.0 };
@@ -2105,12 +2259,7 @@ fn project_forced_z_with_update_impl(
                 touched_sites.extend(flip_sites.iter().copied());
                 touched_sites.extend(sign_sites.iter().copied());
                 touched_sites.extend(gauge_sites.iter().copied());
-                let construction = if is_local_projection {
-                    super::ProjectionConstruction::LocalBlockWrite
-                } else {
-                    super::ProjectionConstruction::DirectSum
-                };
-                locality.record_projection(construction, touched_sites);
+                locality.record_gauge_and_touched_sites(&gauge_sites, touched_sites);
             }
             // `mz_forced` produces the same projected stabilizer group as the
             // predicted basis rotation; compensation changes only the

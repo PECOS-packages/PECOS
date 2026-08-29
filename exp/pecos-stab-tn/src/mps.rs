@@ -133,6 +133,23 @@ pub(crate) struct MpsPreReductionTiming {
     pub(crate) svd_steps: Vec<crate::stab_mps::PreReductionSvdTelemetry>,
 }
 
+/// One bond split observed during opt-in post-projection compression.
+///
+/// This is diagnostic data only. The owning projection layer supplies the
+/// pre-projection rank and decides whether the bond is external to the
+/// projector span.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BondCompressionTelemetry {
+    /// Internal bond index, between sites `bond - 1` and `bond`.
+    pub(crate) bond: usize,
+    /// Rank entering this compression split, after direct-sum construction.
+    pub(crate) input_rank: usize,
+    /// Rank retained by the configured compression policy.
+    pub(crate) output_rank: usize,
+    /// Relative singular-value weight discarded at this bond.
+    pub(crate) discarded_weight: f64,
+}
+
 fn time_pre_reduction_work<const DIAGNOSTICS: bool, T>(
     seconds: &mut f64,
     operation: impl FnOnce() -> T,
@@ -1524,6 +1541,26 @@ impl Mps {
     /// [`Self::compress`]. The configured cutoff, cap, and adaptive error
     /// budget are applied unchanged.
     pub(crate) fn compress_from_right_canonical(&mut self) -> Result<(), MpsError> {
+        self.compress_from_right_canonical_impl(None)
+    }
+
+    /// Compress from right-canonical form while recording every bond result.
+    ///
+    /// The caller invokes this only under the existing expensive projection-
+    /// locality flag. Keeping the observation here makes the rank and discarded-
+    /// weight record come from the layer that owns the SVD decision.
+    pub(crate) fn compress_from_right_canonical_profiled(
+        &mut self,
+        bonds: &mut Vec<BondCompressionTelemetry>,
+    ) -> Result<(), MpsError> {
+        assert!(bonds.is_empty(), "compression telemetry must start empty");
+        self.compress_from_right_canonical_impl(Some(bonds))
+    }
+
+    fn compress_from_right_canonical_impl(
+        &mut self,
+        mut bonds: Option<&mut Vec<BondCompressionTelemetry>>,
+    ) -> Result<(), MpsError> {
         if self.num_sites <= 1 {
             self.center = (self.num_sites == 1).then_some(0);
             return Ok(());
@@ -1551,6 +1588,14 @@ impl Mps {
             self.tensors[q + 1] = &svt * &self.tensors[q + 1];
             self.bond_dims[q + 1] = new_chi;
             self.center = Some(q + 1);
+            if let Some(bonds) = bonds.as_deref_mut() {
+                bonds.push(BondCompressionTelemetry {
+                    bond: q + 1,
+                    input_rank: chi_r,
+                    output_rank: new_chi,
+                    discarded_weight: disc,
+                });
+            }
         }
         self.record_current_peak_bond();
         Ok(())
@@ -1661,6 +1706,309 @@ mod tests {
         let inverse_norm = mps.norm_squared().sqrt().recip();
         mps.scale(Complex64::new(inverse_norm, 0.0));
         mps
+    }
+
+    /// TEST ONLY: direct-sum two MPS only on `[support_min, support_max]`.
+    ///
+    /// The operands must have identical tensors outside the window. Internal
+    /// window bonds are direct-summed, while both join bonds and every external
+    /// tensor/bond remain unchanged. This is deliberately not a production API:
+    /// the tests below establish representation facts without selecting a
+    /// compression or rank-retention policy.
+    fn windowed_add_for_test(
+        first: &Mps,
+        second: &Mps,
+        support_min: usize,
+        support_max: usize,
+    ) -> Mps {
+        assert_eq!(first.num_sites, second.num_sites);
+        assert_eq!(first.phys_dim, second.phys_dim);
+        assert!(support_min <= support_max);
+        assert!(support_max < first.num_sites);
+        assert_eq!(first.bond_dims, second.bond_dims);
+        for site in 0..first.num_sites {
+            if !(support_min..=support_max).contains(&site) {
+                assert_eq!(
+                    first.tensors[site], second.tensors[site],
+                    "windowed add requires bit-identical exterior tensors"
+                );
+            }
+        }
+
+        let mut result = first.clone();
+        for bond in support_min + 1..=support_max {
+            result.bond_dims[bond] = first.bond_dims[bond] + second.bond_dims[bond];
+        }
+        let d = first.phys_dim;
+        for site in support_min..=support_max {
+            let first_left = first.bond_dims[site];
+            let first_right = first.bond_dims[site + 1];
+            let second_left = second.bond_dims[site];
+            let second_right = second.bond_dims[site + 1];
+            let output_left = result.bond_dims[site];
+            let output_right = result.bond_dims[site + 1];
+            let mut tensor = DMatrix::zeros(output_left, d * output_right);
+            for physical in 0..d {
+                let first_block = tensor::phys_block(&first.tensors[site], physical, first_right);
+                let second_block =
+                    tensor::phys_block(&second.tensors[site], physical, second_right);
+                let second_row_offset = if site == support_min { 0 } else { first_left };
+                let second_column_offset = if site == support_max { 0 } else { first_right };
+                for row in 0..first_left {
+                    for column in 0..first_right {
+                        tensor[(row, physical * output_right + column)] =
+                            first_block[(row, column)];
+                    }
+                }
+                for row in 0..second_left {
+                    for column in 0..second_right {
+                        tensor[(
+                            second_row_offset + row,
+                            physical * output_right + second_column_offset + column,
+                        )] += second_block[(row, column)];
+                    }
+                }
+            }
+            result.tensors[site] = tensor;
+        }
+        // A one-site sum changes only an existing center tensor and therefore
+        // retains that claim when both operands were centered there. A wider
+        // raw window has two joins; no one-site-center claim is made until a
+        // test (or a future production repair) proves and establishes one.
+        result.center = (support_min == support_max
+            && first.center == Some(support_min)
+            && second.center == Some(support_min))
+        .then_some(support_min);
+        result.record_current_peak_bond();
+        result
+    }
+
+    fn pauli_phase(overlap: usize) -> Complex64 {
+        match overlap % 4 {
+            0 => Complex64::new(1.0, 0.0),
+            1 => Complex64::new(0.0, 1.0),
+            2 => Complex64::new(-1.0, 0.0),
+            3 => Complex64::new(0.0, -1.0),
+            _ => unreachable!(),
+        }
+    }
+
+    fn dense_pauli_action(
+        state: &[Complex64],
+        num_sites: usize,
+        flip_sites: &[usize],
+        sign_sites: &[usize],
+        phase: Complex64,
+    ) -> Vec<Complex64> {
+        let mut result = vec![Complex64::new(0.0, 0.0); state.len()];
+        for (input, &amplitude) in state.iter().enumerate() {
+            let mut output = input;
+            let mut sign = 1.0;
+            for &site in sign_sites {
+                if input >> (num_sites - 1 - site) & 1 != 0 {
+                    sign = -sign;
+                }
+            }
+            for &site in flip_sites {
+                output ^= 1 << (num_sites - 1 - site);
+            }
+            result[output] += Complex64::new(sign, 0.0) * phase * amplitude;
+        }
+        result
+    }
+
+    fn assert_window_join_blocks(
+        sum: &Mps,
+        first: &Mps,
+        second: &Mps,
+        support_min: usize,
+        support_max: usize,
+    ) {
+        if support_min == support_max {
+            assert_eq!(
+                sum.tensors[support_min],
+                &first.tensors[support_min] + &second.tensors[support_min]
+            );
+            return;
+        }
+        let d = first.phys_dim;
+        let first_right = first.bond_dims[support_min + 1];
+        let second_right = second.bond_dims[support_min + 1];
+        let sum_right = sum.bond_dims[support_min + 1];
+        for physical in 0..d {
+            let block = tensor::phys_block(&sum.tensors[support_min], physical, sum_right);
+            assert_eq!(
+                block.columns(0, first_right),
+                tensor::phys_block(&first.tensors[support_min], physical, first_right)
+            );
+            assert_eq!(
+                block.columns(first_right, second_right),
+                tensor::phys_block(&second.tensors[support_min], physical, second_right)
+            );
+        }
+
+        let first_left = first.bond_dims[support_max];
+        let second_left = second.bond_dims[support_max];
+        let sum_right = sum.bond_dims[support_max + 1];
+        for physical in 0..d {
+            let block = tensor::phys_block(&sum.tensors[support_max], physical, sum_right);
+            assert_eq!(
+                block.rows(0, first_left),
+                tensor::phys_block(&first.tensors[support_max], physical, sum_right)
+            );
+            assert_eq!(
+                block.rows(first_left, second_left),
+                tensor::phys_block(&second.tensors[support_max], physical, sum_right)
+            );
+        }
+    }
+
+    #[test]
+    fn test_only_windowed_add_matches_dense_pauli_sum_and_preserves_exterior() {
+        let config = MpsConfig {
+            max_bond_dim: 64,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let x = DMatrix::from_row_slice(
+            2,
+            2,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        );
+        let z = [Complex64::new(1.0, 0.0), Complex64::new(-1.0, 0.0)];
+        let spans = [
+            (0, 1),
+            (1, 4),
+            (4, 5),
+            (0, 5),
+            (2, 2),
+            (0, 0),
+            (5, 5),
+            (2, 4),
+        ];
+        let mut multi_site_events = 0;
+        let mut multi_site_prior_center_invalidated = 0;
+        let mut multi_site_with_any_valid_center = 0;
+        let mut single_site_valid_centers = 0;
+
+        for seed in 0..32_u64 {
+            let (support_min, support_max) = spans[seed as usize % spans.len()];
+            let canonical_center = if support_min == support_max {
+                support_min
+            } else {
+                (seed as usize * 5 + 1) % 6
+            };
+            let mut first = seeded_random_mps(6, 4, 0x51a5_0000_0000_0001 ^ seed, config.clone());
+            first.canonicalize_at(canonical_center);
+            assert!(first.claimed_center_is_valid(canonical_center));
+
+            let mut random = 0xa11c_e000_0000_0001_u64 ^ seed;
+            let mut flip_sites = Vec::new();
+            let mut sign_sites = Vec::new();
+            for site in support_min..=support_max {
+                random ^= random << 13;
+                random ^= random >> 7;
+                random ^= random << 17;
+                if random & 1 != 0 {
+                    flip_sites.push(site);
+                }
+                if random & 2 != 0 {
+                    sign_sites.push(site);
+                }
+            }
+            if !flip_sites.contains(&support_min) && !sign_sites.contains(&support_min) {
+                flip_sites.push(support_min);
+            }
+            if !flip_sites.contains(&support_max) && !sign_sites.contains(&support_max) {
+                sign_sites.push(support_max);
+            }
+            flip_sites.sort_unstable();
+            flip_sites.dedup();
+            sign_sites.sort_unstable();
+            sign_sites.dedup();
+
+            let overlap = flip_sites
+                .iter()
+                .filter(|site| sign_sites.contains(site))
+                .count();
+            let projector_phase = pauli_phase(overlap);
+            let branch_sign = if seed & 1 == 0 { 1.0 } else { -1.0 };
+            let branch_coefficient = Complex64::new(branch_sign, 0.0) * projector_phase;
+            let before = first.state_vector();
+            let pauli_dense =
+                dense_pauli_action(&before, 6, &flip_sites, &sign_sites, branch_coefficient);
+            let dense_oracle = before
+                .iter()
+                .zip(pauli_dense)
+                .map(|(&identity, pauli)| identity + pauli)
+                .collect::<Vec<_>>();
+
+            let mut second = first.clone();
+            for &site in &sign_sites {
+                second.apply_diagonal_one_site(site, &z).unwrap();
+            }
+            for &site in &flip_sites {
+                second.apply_one_site_gate(site, &x).unwrap();
+            }
+            // Keep the branch coefficient inside the window; absorbing it at
+            // site zero would defeat the bit-identical exterior contract.
+            second.scale_tensor(support_min, branch_coefficient);
+            let sum = windowed_add_for_test(&first, &second, support_min, support_max);
+
+            for (index, (&actual, &expected)) in
+                sum.state_vector().iter().zip(&dense_oracle).enumerate()
+            {
+                assert!(
+                    (actual - expected).norm() < 5e-12,
+                    "seed={seed}, span={support_min}..={support_max}, index={index}: actual={actual:?}, expected={expected:?}"
+                );
+            }
+            for site in 0..6 {
+                if !(support_min..=support_max).contains(&site) {
+                    assert_eq!(sum.tensors[site], first.tensors[site]);
+                }
+            }
+            for bond in 1..6 {
+                if support_min < bond && bond <= support_max {
+                    assert_eq!(sum.bond_dims[bond], 2 * first.bond_dims[bond]);
+                } else {
+                    assert_eq!(sum.bond_dims[bond], first.bond_dims[bond]);
+                }
+            }
+            assert_window_join_blocks(&sum, &first, &second, support_min, support_max);
+
+            if support_min == support_max {
+                assert_eq!(sum.center, Some(support_min));
+                assert!(sum.claimed_center_is_valid(support_min));
+                single_site_valid_centers += 1;
+            } else {
+                multi_site_events += 1;
+                assert_eq!(sum.center, None);
+                let mut prior_claim = sum.clone();
+                prior_claim.center = Some(canonical_center);
+                multi_site_prior_center_invalidated +=
+                    usize::from(!prior_claim.claimed_center_is_valid(canonical_center));
+                let any_valid_center = (0..6).any(|candidate| {
+                    let mut claimed = sum.clone();
+                    claimed.center = Some(candidate);
+                    claimed.claimed_center_is_valid(candidate)
+                });
+                multi_site_with_any_valid_center += usize::from(any_valid_center);
+            }
+        }
+        eprintln!(
+            "test-only windowed add centers: multi={multi_site_events}, prior_invalidated={multi_site_prior_center_invalidated}, any_valid_center={multi_site_with_any_valid_center}, single_valid={single_site_valid_centers}"
+        );
+        assert!(multi_site_events > 0);
+        assert_eq!(multi_site_prior_center_invalidated, multi_site_events);
+        assert_eq!(multi_site_with_any_valid_center, 0);
+        assert!(single_site_valid_centers > 0);
     }
 
     fn legacy_off_center_compress(mps: &mut Mps) {

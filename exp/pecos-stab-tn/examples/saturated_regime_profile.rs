@@ -399,6 +399,67 @@ fn projection_construction_label(construction: ProjectionConstruction) -> &'stat
     }
 }
 
+fn joined_usizes(values: &[usize]) -> String {
+    if values.is_empty() {
+        "none".to_owned()
+    } else {
+        values
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn five_number(mut values: Vec<usize>) -> String {
+    if values.is_empty() {
+        return "none".to_owned();
+    }
+    values.sort_unstable();
+    let last = values.len() - 1;
+    [0, last / 4, last / 2, 3 * last / 4, last]
+        .map(|index| values[index].to_string())
+        .join("/")
+}
+
+fn bond_walk_cost(profile: &[usize], from_site: usize, to_site: usize) -> f64 {
+    let minimum = from_site.min(to_site);
+    let maximum = from_site.max(to_site);
+    profile[minimum..maximum]
+        .iter()
+        .map(|&rank| (rank as f64).powi(3))
+        .sum()
+}
+
+fn projection_walk_model(
+    event: &pecos_stab_tn::stab_mps::ProjectionQrLocalityTelemetry,
+) -> Option<(f64, f64, f64)> {
+    if event.construction != ProjectionConstruction::DirectSum
+        || !event.center_before_positioning_is_valid
+    {
+        return None;
+    }
+    let center = event.center_before_positioning?;
+    let support_min = event.projector_site_min?;
+    let support_max = event.projector_site_max?;
+    let profile = &event.projection_entry_bond_profile;
+    let current = profile.iter().map(|&rank| (rank as f64).powi(3)).sum();
+    let to_min = bond_walk_cost(profile, center, support_min);
+    let to_max = bond_walk_cost(profile, center, support_max);
+    let edge_cost_order = to_min.total_cmp(&to_max);
+    let (position, terminal_edge) = if edge_cost_order.is_lt()
+        || (edge_cost_order.is_eq() && center.abs_diff(support_min) <= center.abs_diff(support_max))
+    {
+        (to_min, support_max)
+    } else {
+        (to_max, support_min)
+    };
+    let span = bond_walk_cost(profile, support_min, support_max);
+    let bounded = position + span;
+    let mandatory_zero = bounded + bond_walk_cost(profile, terminal_edge, 0);
+    Some((current, bounded, mandatory_zero))
+}
+
 fn print_pre_reduction_summary(
     cell: Cell,
     run: usize,
@@ -745,12 +806,14 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
             };
             let construction = projection_construction_label(event.construction);
             println!(
-                "LOCALITY cell={} run={} depth={} event={} n={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} construction={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} qr_skippable_center_ceiling={} normalization_preserved={}",
+                "LOCALITY cell={} run={} depth={} event={} n={} center_pre_position={} center_pre_position_valid={} center_pre_write={} center_pre_write_valid={} center_qr={} center_qr_valid={} construction={} touched_min={} touched_max={} touched_sites={} changed_tensor_min={} changed_tensor_max={} changed_tensors={} changed_bond_min={} changed_bond_max={} changed_bonds={} qr_sites={} qr_skippable={} qr_skippable_center_ceiling={} normalization_preserved={}",
                 cell.name,
                 run,
                 depth,
                 event_index,
                 event.chain_length,
+                option(event.center_before_positioning),
+                event.center_before_positioning_is_valid,
                 option(event.center_before_projection_write),
                 event.center_before_projection_write_is_valid,
                 option(event.center_before_qr),
@@ -772,6 +835,46 @@ fn print_query_depths(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetr
                     .normalization_preserved_center
                     .is_some_and(|preserved| preserved),
             );
+            if event.construction == ProjectionConstruction::DirectSum {
+                let external = event
+                    .external_bonds
+                    .iter()
+                    .map(|bond| {
+                        format!(
+                            "{}:{}:{}:{}:{:.17e}",
+                            bond.bond,
+                            bond.pre_projection_rank,
+                            bond.compression_input_rank,
+                            bond.post_compression_rank,
+                            bond.discarded_weight,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(";");
+                println!(
+                    "PROJECTOR_EVENT cell={} run={} depth={} event={} n={} center_pre_position={} center_pre_position_valid={} center_pre_write={} center_pre_write_valid={} s_min={} s_max={} span={} flip_sites={} sign_sites={} gauge_sites={} entry_bonds={} qr_s={:.17e} compression_bonds={} external_bonds={} external_discarded={:.17e}",
+                    cell.name,
+                    run,
+                    depth,
+                    event_index,
+                    event.chain_length,
+                    option(event.center_before_positioning),
+                    event.center_before_positioning_is_valid,
+                    option(event.center_before_projection_write),
+                    event.center_before_projection_write_is_valid,
+                    option(event.projector_site_min),
+                    option(event.projector_site_max),
+                    event.projector_span,
+                    joined_usizes(&event.projector_flip_sites),
+                    joined_usizes(&event.projector_sign_sites),
+                    joined_usizes(&event.gauge_compensation_sites),
+                    joined_usizes(&event.projection_entry_bond_profile),
+                    event.post_projection_qr_wall_time_seconds,
+                    event.compression_bonds_observed,
+                    external,
+                    event.external_discarded_weight,
+                );
+            }
         }
         if !bucket.projection_qr_locality.is_empty() {
             let mut constructions = BTreeMap::<&str, usize>::new();
@@ -926,6 +1029,240 @@ fn print_locality_total(cell: Cell, run: usize, profile: &ProbabilityQueryTeleme
         qr_skippable_center_ceiling,
         qr_skippable_center_ceiling as f64 / qr_sites as f64,
         normalization_losses,
+    );
+}
+
+fn print_projector_span_total(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetry) {
+    let events = profile
+        .by_depth
+        .iter()
+        .flat_map(|depth| &depth.projection_qr_locality)
+        .collect::<Vec<_>>();
+    if events.is_empty() {
+        return;
+    }
+    let scalar = events
+        .iter()
+        .filter(|event| event.construction == ProjectionConstruction::ScalarScale)
+        .count();
+    let local = events
+        .iter()
+        .filter(|event| event.construction == ProjectionConstruction::LocalBlockWrite)
+        .count();
+    let direct = events
+        .iter()
+        .copied()
+        .filter(|event| event.construction == ProjectionConstruction::DirectSum)
+        .collect::<Vec<_>>();
+    println!(
+        "PROJECTOR_MIX cell={} run={} all={} direct_sum={} scalar_scale={} local_block={}",
+        cell.name,
+        run,
+        events.len(),
+        direct.len(),
+        scalar,
+        local,
+    );
+    if direct.is_empty() {
+        return;
+    }
+
+    let projector_min = direct
+        .iter()
+        .map(|event| event.projector_site_min.unwrap())
+        .collect();
+    let projector_max = direct
+        .iter()
+        .map(|event| event.projector_site_max.unwrap())
+        .collect();
+    let projector_span = direct.iter().map(|event| event.projector_span).collect();
+    let left_margin = direct
+        .iter()
+        .map(|event| event.projector_site_min.unwrap())
+        .collect();
+    let right_margin = direct
+        .iter()
+        .map(|event| event.chain_length - 1 - event.projector_site_max.unwrap())
+        .collect();
+    let centers_before_positioning = direct
+        .iter()
+        .filter_map(|event| event.center_before_positioning)
+        .collect();
+    let centers_before_write = direct
+        .iter()
+        .filter_map(|event| event.center_before_projection_write)
+        .collect();
+    let gauge_counts = direct
+        .iter()
+        .map(|event| event.gauge_compensation_sites.len())
+        .collect();
+    let gauge_min = direct
+        .iter()
+        .filter_map(|event| event.gauge_compensation_sites.first().copied())
+        .collect();
+    let gauge_max = direct
+        .iter()
+        .filter_map(|event| event.gauge_compensation_sites.last().copied())
+        .collect();
+    let gauge_span = direct
+        .iter()
+        .filter_map(|event| {
+            event
+                .gauge_compensation_sites
+                .first()
+                .zip(event.gauge_compensation_sites.last())
+                .map(|(minimum, maximum)| maximum - minimum)
+        })
+        .collect();
+    let entry_bonds = direct
+        .iter()
+        .flat_map(|event| event.projection_entry_bond_profile.iter().copied())
+        .collect();
+    println!(
+        "PROJECTOR_QUINTILES cell={} run={} order=min/q25/median/q75/max s_min={} s_max={} span={} left_margin={} right_margin={} center_pre_position={} center_pre_write={} entry_bond_rank={} gauge_count={} gauge_min={} gauge_max={} gauge_span={} invalid_center_pre_position={} invalid_center_pre_write={} events_with_gauge={}",
+        cell.name,
+        run,
+        five_number(projector_min),
+        five_number(projector_max),
+        five_number(projector_span),
+        five_number(left_margin),
+        five_number(right_margin),
+        five_number(centers_before_positioning),
+        five_number(centers_before_write),
+        five_number(entry_bonds),
+        five_number(gauge_counts),
+        five_number(gauge_min),
+        five_number(gauge_max),
+        five_number(gauge_span),
+        direct
+            .iter()
+            .filter(|event| !event.center_before_positioning_is_valid)
+            .count(),
+        direct
+            .iter()
+            .filter(|event| !event.center_before_projection_write_is_valid)
+            .count(),
+        direct
+            .iter()
+            .filter(|event| !event.gauge_compensation_sites.is_empty())
+            .count(),
+    );
+
+    let mut joint = BTreeMap::<(Option<usize>, usize, usize), usize>::new();
+    for event in &direct {
+        *joint
+            .entry((
+                event.center_before_positioning,
+                event.projector_site_min.unwrap(),
+                event.projector_site_max.unwrap(),
+            ))
+            .or_default() += 1;
+    }
+    for ((center, support_min, support_max), count) in joint {
+        println!(
+            "PROJECTOR_JOINT cell={} run={} center={} s_min={} s_max={} count={}",
+            cell.name,
+            run,
+            center.map_or_else(|| "none".to_owned(), |value| value.to_string()),
+            support_min,
+            support_max,
+            count,
+        );
+    }
+
+    let qr_bucket_seconds = profile
+        .by_depth
+        .iter()
+        .map(|depth| depth.post_projection_qr.wall_time_seconds)
+        .sum::<f64>();
+    let mut current_units = 0.0;
+    let mut bounded_units = 0.0;
+    let mut mandatory_zero_units = 0.0;
+    let mut current_seconds = 0.0;
+    let mut bounded_seconds = 0.0;
+    let mut mandatory_zero_seconds = 0.0;
+    let mut model_events = 0;
+    for event in &direct {
+        if let Some((current, bounded, mandatory_zero)) = projection_walk_model(event)
+            && current > 0.0
+        {
+            current_units += current;
+            bounded_units += bounded;
+            mandatory_zero_units += mandatory_zero;
+            current_seconds += event.post_projection_qr_wall_time_seconds;
+            bounded_seconds += event.post_projection_qr_wall_time_seconds * bounded / current;
+            mandatory_zero_seconds +=
+                event.post_projection_qr_wall_time_seconds * mandatory_zero / current;
+            model_events += 1;
+        }
+    }
+    println!(
+        "PROJECTOR_MODEL cell={} run={} label=chi3_model calibration=per_event_current_qr direct_events={} modeled_events={} qr_bucket_s={:.17e} a_units={:.17e} b_units={:.17e} c_units={:.17e} a_estimated_s={:.17e} b_estimated_s={:.17e} c_estimated_s={:.17e} a_fraction_qr={:.17e} b_fraction_qr={:.17e} c_fraction_qr={:.17e} c_over_a={:.17e}",
+        cell.name,
+        run,
+        direct.len(),
+        model_events,
+        qr_bucket_seconds,
+        current_units,
+        bounded_units,
+        mandatory_zero_units,
+        current_seconds,
+        bounded_seconds,
+        mandatory_zero_seconds,
+        current_seconds / qr_bucket_seconds,
+        bounded_seconds / qr_bucket_seconds,
+        mandatory_zero_seconds / qr_bucket_seconds,
+        mandatory_zero_units / current_units,
+    );
+
+    let external_bonds = direct
+        .iter()
+        .flat_map(|event| &event.external_bonds)
+        .collect::<Vec<_>>();
+    let changed_bonds = external_bonds
+        .iter()
+        .filter(|bond| bond.retained_rank_changed)
+        .count();
+    let decreased_bonds = external_bonds
+        .iter()
+        .filter(|bond| bond.post_compression_rank < bond.pre_projection_rank)
+        .count();
+    let increased_bonds = external_bonds
+        .iter()
+        .filter(|bond| bond.post_compression_rank > bond.pre_projection_rank)
+        .count();
+    let changed_events = direct
+        .iter()
+        .filter(|event| {
+            event
+                .external_bonds
+                .iter()
+                .any(|bond| bond.retained_rank_changed)
+        })
+        .count();
+    let discarded_events = direct
+        .iter()
+        .filter(|event| event.external_discarded_weight > 0.0)
+        .count();
+    let discarded_weight = direct
+        .iter()
+        .map(|event| event.external_discarded_weight)
+        .sum::<f64>();
+    println!(
+        "PROJECTOR_EXTERNAL cell={} run={} direct_events={} changed_events={} changed_event_fraction={:.17e} external_bonds={} changed_bonds={} changed_bond_fraction={:.17e} decreased_bonds={} increased_bonds={} discarded_events={} discarded_event_fraction={:.17e} summed_discarded_weight={:.17e}",
+        cell.name,
+        run,
+        direct.len(),
+        changed_events,
+        changed_events as f64 / direct.len() as f64,
+        external_bonds.len(),
+        changed_bonds,
+        changed_bonds as f64 / external_bonds.len() as f64,
+        decreased_bonds,
+        increased_bonds,
+        discarded_events,
+        discarded_events as f64 / direct.len() as f64,
+        discarded_weight,
     );
 }
 
@@ -1096,6 +1433,7 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
     print_query_depths(cell, run, &profile);
     print_pre_reduction_total(cell, run, &profile);
     print_locality_total(cell, run, &profile);
+    print_projector_span_total(cell, run, &profile);
     println!(
         "QUERY_OPS cell={} run={} svds={} capped_svds={} attributed_s={:.9} whole_call_s={:.9} trie_clone_residual_s={:.9}",
         cell.name,

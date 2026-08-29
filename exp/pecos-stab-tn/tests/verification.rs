@@ -2586,6 +2586,7 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     let mut truncating_circuits_with_discarded_weight = 0;
     let mut locality_direct_sum_events = 0;
     let mut locality_block_write_events = 0;
+    let mut projector_external_bonds = 0;
     let mut pre_reduction_sibling_pairs = 0;
     let mut pre_reduction_numerical_events = 0;
     for truncating in [false, true] {
@@ -2872,7 +2873,57 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         .sum::<u64>(),
                     "every post-projection QR must have one locality event"
                 );
+                for bucket in &locality_profile.by_depth {
+                    assert_eq!(
+                        (bucket
+                            .projection_qr_locality
+                            .iter()
+                            .map(|event| event.post_projection_qr_wall_time_seconds)
+                            .sum::<f64>()
+                            + 0.0)
+                            .to_bits(),
+                        bucket.post_projection_qr.wall_time_seconds.to_bits(),
+                        "per-event QR timers must exactly reproduce their depth bucket"
+                    );
+                }
                 for event in locality_events {
+                    assert_eq!(event.projection_entry_bond_profile.len(), num_qubits - 1);
+                    assert_eq!(event.compression_bonds_observed, num_qubits - 1);
+                    assert_eq!(
+                        event.center_before_positioning, event.center_before_projection_write,
+                        "the current path performs no positioning between the two observations"
+                    );
+                    assert_eq!(
+                        event.center_before_positioning_is_valid,
+                        event.center_before_projection_write_is_valid
+                    );
+                    let mut projector_sites = event.projector_flip_sites.clone();
+                    projector_sites.extend(event.projector_sign_sites.iter().copied());
+                    projector_sites.sort_unstable();
+                    projector_sites.dedup();
+                    assert_eq!(event.projector_sites, projector_sites);
+                    assert_eq!(event.projector_site_min, projector_sites.first().copied());
+                    assert_eq!(event.projector_site_max, projector_sites.last().copied());
+                    assert_eq!(
+                        event.projector_span,
+                        event
+                            .projector_site_min
+                            .zip(event.projector_site_max)
+                            .map_or(0, |(minimum, maximum)| maximum - minimum)
+                    );
+                    assert!(
+                        event
+                            .gauge_compensation_sites
+                            .windows(2)
+                            .all(|pair| pair[0] < pair[1])
+                    );
+                    for gauge_site in &event.gauge_compensation_sites {
+                        assert!(
+                            event.touched_site_min <= Some(*gauge_site)
+                                && Some(*gauge_site) <= event.touched_site_max,
+                            "gauge compensation must remain separate but covered by touched sites"
+                        );
+                    }
                     assert_eq!(
                         event.normalization_preserved_center,
                         Some(true),
@@ -2918,15 +2969,53 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                     match event.construction {
                         ProjectionConstruction::DirectSum => {
                             locality_direct_sum_events += 1;
+                            assert!(!event.projector_sites.is_empty());
+                            assert_eq!(
+                                event.external_bonds.len(),
+                                num_qubits - 1 - event.projector_span,
+                                "external bonds are exactly the complement of span-internal bonds"
+                            );
+                            assert_eq!(
+                                (event
+                                    .external_bonds
+                                    .iter()
+                                    .map(|bond| bond.discarded_weight)
+                                    .sum::<f64>()
+                                    + 0.0)
+                                    .to_bits(),
+                                event.external_discarded_weight.to_bits()
+                            );
+                            for bond in &event.external_bonds {
+                                assert!(bond.bond > 0 && bond.bond < num_qubits);
+                                assert_eq!(
+                                    bond.pre_projection_rank,
+                                    event.projection_entry_bond_profile[bond.bond - 1]
+                                );
+                                assert!(bond.compression_input_rank > 0);
+                                assert_eq!(
+                                    bond.retained_rank_changed,
+                                    bond.post_compression_rank != bond.pre_projection_rank
+                                );
+                                assert!(
+                                    bond.bond <= event.projector_site_min.unwrap()
+                                        || bond.bond > event.projector_site_max.unwrap()
+                                );
+                                projector_external_bonds += 1;
+                            }
                             // `Mps::add` currently changes every tensor's
                             // shape, so its bitwise footprint is uninformative
                             // and is explicitly exempt from the support guard.
                         }
                         ProjectionConstruction::LocalBlockWrite => {
                             locality_block_write_events += 1;
+                            assert_eq!(event.projector_flip_sites.len(), 1);
+                            assert!(event.projector_sign_sites.is_empty());
+                            assert!(event.external_bonds.is_empty());
                             assert!(event.changed_tensor_max <= event.touched_site_max);
                         }
                         ProjectionConstruction::ScalarScale => {
+                            assert!(event.projector_sites.is_empty());
+                            assert!(event.external_bonds.is_empty());
                             assert!(event.changed_tensor_max <= event.touched_site_max);
                         }
                     }
@@ -3053,6 +3142,10 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     assert!(
         locality_block_write_events > 0,
         "locality diagnostics never exercised block-write construction"
+    );
+    assert!(
+        projector_external_bonds > 0,
+        "projector telemetry never observed a direct-sum external bond"
     );
     assert!(
         pre_reduction_sibling_pairs > 0,

@@ -1196,6 +1196,28 @@ pub enum ProjectionConstruction {
     DirectSum,
 }
 
+/// Compression result for one bond external to a direct-sum projector span.
+///
+/// Bond `b` lies between sites `b - 1` and `b`. For projector support
+/// `[s_min, s_max]`, the window-internal bonds are
+/// `s_min < b <= s_max`; every other internal bond is external.
+#[derive(Clone, Copy, Debug)]
+pub struct ExternalProjectionBondTelemetry {
+    /// Internal bond index.
+    pub bond: usize,
+    /// Bond dimension immediately before projection construction.
+    pub pre_projection_rank: usize,
+    /// Bond dimension entering the configured compression sweep, after the
+    /// exact right-canonical QR may already have removed rank redundancy.
+    pub compression_input_rank: usize,
+    /// Rank retained by post-projection compression.
+    pub post_compression_rank: usize,
+    /// Whether compression changed the rank relative to projection entry.
+    pub retained_rank_changed: bool,
+    /// Relative singular-value weight discarded at this bond.
+    pub discarded_weight: f64,
+}
+
 /// Runtime-gated locality details for one exact post-projection QR consult.
 ///
 /// The touched-site span includes pre-reduction bookkeeping even though the
@@ -1206,16 +1228,37 @@ pub enum ProjectionConstruction {
 pub struct ProjectionQrLocalityTelemetry {
     /// Number of MPS sites in the projected chain.
     pub chain_length: usize,
-    /// Center claim after pre-reduction and before the projection tensor update.
+    /// Center claim at projection entry, before any hypothetical positioning.
+    pub center_before_positioning: Option<usize>,
+    /// Whether the entry center claim passed a Gram check.
+    pub center_before_positioning_is_valid: bool,
+    /// Center claim immediately before the projection tensor update.
     pub center_before_projection_write: Option<usize>,
     /// Whether the pre-write center claim passed a Gram check.
     pub center_before_projection_write_is_valid: bool,
+    /// Complete internal-bond profile at projection entry.
+    pub projection_entry_bond_profile: Vec<usize>,
     /// Center claim immediately before the post-projection QR consult.
     pub center_before_qr: Option<usize>,
     /// Whether the optional claim immediately before QR passed a Gram check.
     pub center_before_qr_is_valid: bool,
     /// Projection tensor construction; this does not attribute center loss.
     pub construction: ProjectionConstruction,
+    /// X/flip sites of the Pauli actually applied after pre-reduction.
+    pub projector_flip_sites: Vec<usize>,
+    /// Z/sign sites of the Pauli actually applied after pre-reduction.
+    pub projector_sign_sites: Vec<usize>,
+    /// Sorted union of the post-reduction flip and sign sites.
+    pub projector_sites: Vec<usize>,
+    /// Smallest site in `projector_sites`.
+    pub projector_site_min: Option<usize>,
+    /// Largest site in `projector_sites`.
+    pub projector_site_max: Option<usize>,
+    /// `projector_site_max - projector_site_min`, or zero for fewer than two sites.
+    pub projector_span: usize,
+    /// Gauge-compensation sites applied after the projector write, kept
+    /// separate from the projector support.
+    pub gauge_compensation_sites: Vec<usize>,
     /// Smallest site reported by pre-reduction, projection, or compensation;
     /// unlike `changed_tensor_min`, this includes pre-snapshot pre-reduction.
     pub touched_site_min: Option<usize>,
@@ -1264,6 +1307,16 @@ pub struct ProjectionQrLocalityTelemetry {
     /// local projector with empty support, so it remains valid even if the
     /// reported touched-site footprint is wrong.
     pub qr_sites_skippable_by_center_ceiling: usize,
+    /// Measured wall time of this event's current right-canonical QR phase.
+    /// Model alternatives use this only to calibrate their dimensionless
+    /// `chi^3` units; they remain model numbers, not measured alternatives.
+    pub post_projection_qr_wall_time_seconds: f64,
+    /// Number of per-bond compression decisions observed after this event.
+    pub compression_bonds_observed: usize,
+    /// Results for every bond external to a direct-sum projector span.
+    pub external_bonds: Vec<ExternalProjectionBondTelemetry>,
+    /// Sum of per-bond relative discarded weights on `external_bonds`.
+    pub external_discarded_weight: f64,
     /// Whether the following normalization retained its pre-normalization center.
     /// `None` means the event has not yet reached its normalization phase.
     pub normalization_preserved_center: Option<bool>,

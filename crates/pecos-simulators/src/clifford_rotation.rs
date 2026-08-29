@@ -527,7 +527,7 @@ mod tests {
     fn try_rz_t_gate_fails_on_clifford_sim() {
         let mut sim = SparseStab::new(1);
         let eighth = Angle64::QUARTER_TURN / 2u64;
-        // T gate: RZ(pi/4) is not Clifford -- should fail on a stabilizer simulator
+        // RZ(pi/4), projectively equivalent to T, is not Clifford and should fail.
         assert!(sim.try_rz(eighth, &qid(0)).is_err());
     }
 
@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn try_crz_quarter_turn_fails() {
         let mut sim = SparseStab::new(2);
-        // CRZ(pi/2) requires RZ(pi/4) = T gate, not Clifford
+        // CRZ(pi/2) requires an RZ(pi/4), projectively T and not Clifford.
         assert!(
             sim.try_crz(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))])
                 .is_err()

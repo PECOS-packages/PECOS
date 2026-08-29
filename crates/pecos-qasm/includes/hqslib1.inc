@@ -2,14 +2,7 @@
 
 // === Basic Single-Qubit Gates ===
 
-// General single-qubit unitary (decomposed into PECOS native gates)
-gate U(theta, phi, lam) q {
-  RZ(lam) q;
-  R1XY(theta, pi/2) q;
-  RZ(phi) q;
-}
-
-// Lowercase alias for compatibility
+// Lowercase alias for the native, phase-exact OpenQASM U gate
 gate u(theta, phi, lam) q {
   U(theta, phi, lam) q;
 }
@@ -38,22 +31,22 @@ gate h() a {
 
 // S gate (sqrt(Z))
 gate s() a {
-  RZ(pi/2) a;
+  S a;
 }
 
 // S-dagger gate (conjugate of sqrt(Z))
 gate sdg() a {
-  RZ(-pi/2) a;
+  SDG a;
 }
 
 // T gate (sqrt(S))
 gate t() a {
-  RZ(pi/4) a;
+  T a;
 }
 
 // T-dagger gate (conjugate of sqrt(S))
 gate tdg() a {
-  RZ(-pi/4) a;
+  TDG a;
 }
 
 // === Rotation Gates ===
@@ -134,9 +127,18 @@ gate ccx a,b,c {
 
 // === Other common gates ===
 
-// Phase gate
+// Phase-gate family: diag(1, exp(i*lambda)). These differ from the symmetric
+// rotation by RZ(lambda) = exp(-i*lambda/2) * p(lambda).
+gate phase(lambda) a {
+  U(0, 0, lambda) a;
+}
+
 gate p(lambda) a {
-  RZ(lambda) a;
+  U(0, 0, lambda) a;
+}
+
+gate u1(lambda) a {
+  U(0, 0, lambda) a;
 }
 
 // Controlled phase gate
@@ -157,11 +159,11 @@ gate swap() a,b {
 
 // sqrt(X) gates
 gate sx() a {
-  R1XY(pi/2, 0) a;
+  SX a;
 }
 
 gate sxdg a {
-  R1XY(-pi/2, 0) a;
+  SXDG a;
 }
 
 // Identity gate (no-op)
@@ -173,9 +175,7 @@ gate id a {
 
 // Only define aliases that don't conflict with native gates
 gate CNOT a,b { CX a,b; }
-gate S a { s a; }
-gate Sdg a { sdg a; }
-gate T a { t a; }
-gate Tdg a { tdg a; }
+gate Sdg a { SDG a; }
+gate Tdg a { TDG a; }
 gate RX(theta) a { rx(theta) a; }
 gate RY(theta) a { ry(theta) a; }

@@ -72,8 +72,12 @@ fn test_hqslib1_phase_gates() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse phase gates");
 
-    // All phase gates expand to RZ with different angles
-    assert!(count_gate(&program.operations, "RZ") >= 5);
+    // Named phase gates stay named; the arbitrary phase gate is phase-exact U.
+    assert_eq!(count_gate(&program.operations, "SZ"), 1);
+    assert_eq!(count_gate(&program.operations, "SZdg"), 1);
+    assert_eq!(count_gate(&program.operations, "T"), 1);
+    assert_eq!(count_gate(&program.operations, "Tdg"), 1);
+    assert_eq!(count_gate(&program.operations, "U"), 1);
 }
 
 #[test]
@@ -118,10 +122,9 @@ fn test_hqslib1_universal_gates() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse universal gates");
 
-    // U gates decompose to RZ + R1XY + RZ
-    // U1q is directly R1XY
+    // U/u stay native and phase-exact; U1q is directly R1XY.
     let gate_names = get_gate_names(&program.operations);
-    assert!(gate_names.contains(&"RZ".to_string()));
+    assert_eq!(count_gate(&program.operations, "U"), 2);
     assert!(gate_names.contains(&"R1XY".to_string()));
 }
 
@@ -207,8 +210,8 @@ fn test_hqslib1_sqrt_gates() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse sqrt gates");
 
-    // sx and sxdg should expand to R1XY
-    assert!(count_gate(&program.operations, "R1XY") >= 2);
+    assert_eq!(count_gate(&program.operations, "SX"), 1);
+    assert_eq!(count_gate(&program.operations, "SXdg"), 1);
 }
 
 #[test]
@@ -228,8 +231,10 @@ fn test_hqslib1_uppercase_compatibility_aliases() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse uppercase aliases");
 
-    // All should expand to RZ with appropriate angles
-    assert!(count_gate(&program.operations, "RZ") >= 4);
+    assert_eq!(count_gate(&program.operations, "SZ"), 1);
+    assert_eq!(count_gate(&program.operations, "SZdg"), 1);
+    assert_eq!(count_gate(&program.operations, "T"), 1);
+    assert_eq!(count_gate(&program.operations, "Tdg"), 1);
 }
 
 #[test]

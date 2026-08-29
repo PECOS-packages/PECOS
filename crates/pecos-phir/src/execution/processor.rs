@@ -203,6 +203,8 @@ impl PhirProcessor {
             QuantumOp::Sdg => self.process_single_qubit_gate("Sdg", instruction, message_builder),
             QuantumOp::T => self.process_single_qubit_gate("T", instruction, message_builder),
             QuantumOp::Tdg => self.process_single_qubit_gate("Tdg", instruction, message_builder),
+            QuantumOp::SX => self.process_single_qubit_gate("SX", instruction, message_builder),
+            QuantumOp::SXdg => self.process_single_qubit_gate("SXdg", instruction, message_builder),
 
             // Parameterized single-qubit gates
             QuantumOp::RX(angle) => {
@@ -367,6 +369,12 @@ impl PhirProcessor {
             }
             "Tdg" => {
                 message_builder.tdg(&[qubit_id]);
+            }
+            "SX" => {
+                message_builder.sx(&[qubit_id]);
+            }
+            "SXdg" => {
+                message_builder.sxdg(&[qubit_id]);
             }
             _ => {
                 return Err(PhirError::internal(format!(

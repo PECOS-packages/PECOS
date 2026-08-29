@@ -163,16 +163,25 @@ fn dense_matrices_match_the_simulator_for_two_qubit_cliffords() {
     }
 }
 
-/// `F` is the `SX`-then-`SZ` face rotation cycling `X -> Y -> Z -> X`, and
-/// `Fdg` is its reverse, `X -> Z -> Y -> X`. Pinned explicitly because the
-/// composition order is the exact thing #379 got backwards, and because
-/// `SX * SZ` is `F4` -- a real, separately implemented gate, so the mistake
-/// produces a valid Clifford rather than anything obviously broken.
+/// `F = i SZ * SX` is the `SX`-then-`SZ` face rotation cycling
+/// `X -> Y -> Z -> X`, and `Fdg = -i SXdg * SZdg` is its reverse,
+/// `X -> Z -> Y -> X`. Pinned explicitly because the composition order is the
+/// exact thing #379 got backwards, and because `SX * SZ` is the projective
+/// representative of `F4` -- a real, separately implemented gate, so the
+/// mistake produces a valid Clifford rather than anything obviously broken.
 #[test]
 fn face_gate_composition_order_is_pinned() {
-    for (face, decomposition) in [
-        (GateType::F, [GateType::SX, GateType::SZ]),
-        (GateType::Fdg, [GateType::SZdg, GateType::SXdg]),
+    for (face, decomposition, phase) in [
+        (
+            GateType::F,
+            [GateType::SX, GateType::SZ],
+            num_complex::Complex64::new(0.0, 1.0),
+        ),
+        (
+            GateType::Fdg,
+            [GateType::SZdg, GateType::SXdg],
+            num_complex::Complex64::new(0.0, -1.0),
+        ),
     ] {
         let composed = {
             let mut sim = StateVecSoA::new(1);
@@ -192,8 +201,8 @@ fn face_gate_composition_order_is_pinned() {
         };
         for (a, b) in composed.iter().zip(&native) {
             assert!(
-                (a - b).norm() < 1e-9,
-                "{face:?} must equal {decomposition:?} applied in order"
+                (phase * a - b).norm() < 1e-9,
+                "{face:?} must equal {phase} times {decomposition:?} applied in order"
             );
         }
     }

@@ -158,6 +158,8 @@ fn gate_type_to_tket_op(gate_type: GateType) -> Option<TketOp> {
         GateType::SZdg => Some(TketOp::Sdg),
         GateType::T => Some(TketOp::T),
         GateType::Tdg => Some(TketOp::Tdg),
+        GateType::SX => Some(TketOp::V),
+        GateType::SXdg => Some(TketOp::Vdg),
         GateType::RX => Some(TketOp::Rx),
         GateType::RY => Some(TketOp::Ry),
         GateType::RZ => Some(TketOp::Rz),
@@ -1774,6 +1776,12 @@ mod tests {
             GateType::X,
             GateType::Y,
             GateType::Z,
+            GateType::SZ,
+            GateType::SZdg,
+            GateType::T,
+            GateType::Tdg,
+            GateType::SX,
+            GateType::SXdg,
             GateType::CX,
             GateType::QAlloc,
             GateType::QFree,
@@ -1903,6 +1911,32 @@ mod tests {
                 orig_gate.gate_type,
                 orig_gate.qubits.len()
             );
+        }
+    }
+
+    #[test]
+    fn test_round_trip_sx_and_sxdg_through_v_and_vdg() {
+        for (gate_type, tket_name) in [(GateType::SX, "V"), (GateType::SXdg, "Vdg")] {
+            let mut original = DagCircuit::new();
+            original.add_gate(Gate::with_angles(gate_type, vec![], vec![QubitId::from(0)]));
+
+            let hugr =
+                dag_circuit_to_hugr(&original).expect("SX-family gate should convert to HUGR");
+            let tket_gate_names: Vec<_> = hugr
+                .nodes()
+                .filter_map(|node| hugr.get_optype(node).as_extension_op())
+                .filter(|op| op.extension_id().as_ref() as &str == "tket.quantum")
+                .map(|op| op.unqualified_id().to_string())
+                .collect();
+            assert_eq!(tket_gate_names, [tket_name]);
+
+            let recovered =
+                hugr_to_dag_circuit(&hugr).expect("V-family HUGR should convert back to a circuit");
+            let recovered_types: Vec<_> = recovered
+                .iter_gates()
+                .map(|(_, gate)| gate.gate_type)
+                .collect();
+            assert_eq!(recovered_types, [gate_type]);
         }
     }
 

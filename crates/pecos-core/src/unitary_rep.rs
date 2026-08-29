@@ -784,7 +784,7 @@ impl FromStr for UnitaryRep {
     ///
     /// Rotation gates: `"RX(pi/4) 0"`, `"RZ(pi/2) 0"`, `"RZZ(pi) 0 1"`
     ///
-    /// Named rotations: `"T 0"`, `"Tdg 0"`, `"S 0"`, `"Sdg 0"`
+    /// Phase-fixed named gates: `"T 0"`, `"Tdg 0"`, `"S 0"`, `"Sdg 0"`
     ///
     /// # Pauli syntax
     ///
@@ -795,7 +795,9 @@ impl FromStr for UnitaryRep {
     /// Single Pauli with space: `"X 0"`, `"Z 3"` (treated same as `"X0"`, `"Z3"`)
     ///
     /// **Note**: Gate names take priority over Pauli parsing. `"S 0"` parses as an
-    /// S gate (RZ(pi/2)), not as Pauli S on qubit 0. Similarly for `"H 0"`, `"T 0"`, etc.
+    /// phase-fixed S gate, not as Pauli S on qubit 0. Similarly for `"H 0"`,
+    /// `"T 0"`, etc. Parameterized syntax such as `"RZ(pi/2) 0"` remains a
+    /// rotation and therefore differs from S by its documented global phase.
     /// Use sparse Pauli syntax without spaces (e.g., `"X0"`) to avoid ambiguity.
     ///
     /// # Examples
@@ -875,7 +877,8 @@ impl FromStr for UnitaryRep {
 
         match upper.as_str() {
             // Single-qubit fixed gates
-            "H" | "F" | "FDG" | "SX" | "SXDG" | "SY" | "SYDG" | "CH" => {
+            "H" | "F" | "FDG" | "SX" | "SXDG" | "SY" | "SYDG" | "S" | "SZ" | "SDG" | "SZDG"
+            | "T" | "TDG" | "CH" => {
                 let gate_type = match upper.as_str() {
                     "H" => GateType::H,
                     "F" => GateType::F,
@@ -884,6 +887,10 @@ impl FromStr for UnitaryRep {
                     "SXDG" => GateType::SXdg,
                     "SY" => GateType::SY,
                     "SYDG" => GateType::SYdg,
+                    "S" | "SZ" => GateType::SZ,
+                    "SDG" | "SZDG" => GateType::SZdg,
+                    "T" => GateType::T,
+                    "TDG" => GateType::Tdg,
                     "CH" => GateType::CH,
                     _ => unreachable!(),
                 };
@@ -901,60 +908,6 @@ impl FromStr for UnitaryRep {
                     require_distinct_parsed_qubits(gate_name, &qubits)?;
                 }
                 Ok(UnitaryRep::gate(gate_type, SmallVec::from_vec(qubits)))
-            }
-
-            // Named rotations (these produce Rotation variants)
-            "T" => {
-                let qubits = parse_qubits(&qubit_tokens)?;
-                if qubits.len() != 1 {
-                    return Err(ParseUnitaryRepError {
-                        message: format!("T requires 1 qubit, got {}", qubits.len()),
-                    });
-                }
-                Ok(UnitaryRep::rotation(
-                    RotationType::RZ,
-                    Angle64::HALF_TURN / 4,
-                    smallvec::smallvec![qubits[0]],
-                ))
-            }
-            "TDG" => {
-                let qubits = parse_qubits(&qubit_tokens)?;
-                if qubits.len() != 1 {
-                    return Err(ParseUnitaryRepError {
-                        message: format!("Tdg requires 1 qubit, got {}", qubits.len()),
-                    });
-                }
-                Ok(UnitaryRep::rotation(
-                    RotationType::RZ,
-                    Angle64::ZERO - Angle64::HALF_TURN / 4,
-                    smallvec::smallvec![qubits[0]],
-                ))
-            }
-            "S" | "SZ" => {
-                let qubits = parse_qubits(&qubit_tokens)?;
-                if qubits.len() != 1 {
-                    return Err(ParseUnitaryRepError {
-                        message: format!("{gate_name} requires 1 qubit, got {}", qubits.len()),
-                    });
-                }
-                Ok(UnitaryRep::rotation(
-                    RotationType::RZ,
-                    Angle64::QUARTER_TURN,
-                    smallvec::smallvec![qubits[0]],
-                ))
-            }
-            "SDG" | "SZDG" => {
-                let qubits = parse_qubits(&qubit_tokens)?;
-                if qubits.len() != 1 {
-                    return Err(ParseUnitaryRepError {
-                        message: format!("{gate_name} requires 1 qubit, got {}", qubits.len()),
-                    });
-                }
-                Ok(UnitaryRep::rotation(
-                    RotationType::RZ,
-                    Angle64::ZERO - Angle64::QUARTER_TURN,
-                    smallvec::smallvec![qubits[0]],
-                ))
             }
 
             // Two-qubit fixed gates
@@ -1159,9 +1112,11 @@ impl UnitaryRep {
                     qubits.clone(),
                 )
             }
-            Self::Gate(Unitary::Named(gate_type), _) => {
+            Self::Gate(Unitary::Named(gate_type), qubits) => {
                 if gate_type.is_self_adjoint() {
                     self.clone()
+                } else if let Some(dagger) = phase_fixed_named_adjoint(*gate_type) {
+                    Self::Gate(Unitary::Named(dagger), qubits.clone())
                 } else {
                     Self::Adjoint(Box::new(self.clone()))
                 }
@@ -1639,7 +1594,8 @@ impl UnitaryRep {
 
     /// Simplifies this gate expression by:
     /// - Merging adjacent rotations of the same type on the same qubits
-    /// - Canceling inverse operations (rotation + its negation)
+    /// - Closing phase-fixed named root powers (`SX^2 = X`, `T^8 = I`, etc.)
+    /// - Canceling inverse operations
     /// - Removing identity operations (zero-angle rotations)
     /// - Flattening single-element containers
     #[must_use]
@@ -2695,7 +2651,7 @@ fn flatten_compose(parts: Vec<UnitaryRep>) -> Vec<UnitaryRep> {
     result
 }
 
-/// Merge adjacent rotations of the same type on the same qubits.
+/// Merge adjacent rotations or phase-fixed named roots on the same qubits.
 fn merge_adjacent_rotations(parts: Vec<UnitaryRep>) -> Vec<UnitaryRep> {
     if parts.len() < 2 {
         return parts;
@@ -2768,8 +2724,101 @@ fn try_merge_rotations(a: &UnitaryRep, b: &UnitaryRep) -> Option<UnitaryRep> {
                 None
             }
         }
+        _ => try_merge_phase_fixed_named_gates(a, b),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PhaseFixedRootFamily {
+    SX,
+    SY,
+    Z8,
+    H,
+    F,
+}
+
+fn phase_fixed_root_power(gate: GateType) -> Option<(PhaseFixedRootFamily, u8, u8)> {
+    match gate {
+        GateType::SX => Some((PhaseFixedRootFamily::SX, 1, 4)),
+        GateType::SXdg => Some((PhaseFixedRootFamily::SX, 3, 4)),
+        GateType::X => Some((PhaseFixedRootFamily::SX, 2, 4)),
+        GateType::SY => Some((PhaseFixedRootFamily::SY, 1, 4)),
+        GateType::SYdg => Some((PhaseFixedRootFamily::SY, 3, 4)),
+        GateType::Y => Some((PhaseFixedRootFamily::SY, 2, 4)),
+        GateType::T => Some((PhaseFixedRootFamily::Z8, 1, 8)),
+        GateType::SZ => Some((PhaseFixedRootFamily::Z8, 2, 8)),
+        GateType::Z => Some((PhaseFixedRootFamily::Z8, 4, 8)),
+        GateType::SZdg => Some((PhaseFixedRootFamily::Z8, 6, 8)),
+        GateType::Tdg => Some((PhaseFixedRootFamily::Z8, 7, 8)),
+        GateType::H => Some((PhaseFixedRootFamily::H, 1, 2)),
+        GateType::F => Some((PhaseFixedRootFamily::F, 1, 3)),
+        GateType::Fdg => Some((PhaseFixedRootFamily::F, 2, 3)),
         _ => None,
     }
+}
+
+fn phase_fixed_named_gate(rep: &UnitaryRep) -> Option<(GateType, &SmallVec<[usize; 3]>)> {
+    match rep {
+        UnitaryRep::Gate(Unitary::Named(gate), qubits) => Some((*gate, qubits)),
+        UnitaryRep::Adjoint(inner) => match inner.as_ref() {
+            UnitaryRep::Gate(Unitary::Named(gate), qubits) => {
+                let dagger = phase_fixed_named_adjoint(*gate)
+                    .or_else(|| gate.is_self_adjoint().then_some(*gate))?;
+                Some((dagger, qubits))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn phase_fixed_named_adjoint(gate: GateType) -> Option<GateType> {
+    match gate {
+        GateType::SX => Some(GateType::SXdg),
+        GateType::SXdg => Some(GateType::SX),
+        GateType::SY => Some(GateType::SYdg),
+        GateType::SYdg => Some(GateType::SY),
+        GateType::SZ => Some(GateType::SZdg),
+        GateType::SZdg => Some(GateType::SZ),
+        GateType::T => Some(GateType::Tdg),
+        GateType::Tdg => Some(GateType::T),
+        GateType::F => Some(GateType::Fdg),
+        GateType::Fdg => Some(GateType::F),
+        _ => None,
+    }
+}
+
+fn try_merge_phase_fixed_named_gates(a: &UnitaryRep, b: &UnitaryRep) -> Option<UnitaryRep> {
+    let (gate_a, qubits_a) = phase_fixed_named_gate(a)?;
+    let (gate_b, qubits_b) = phase_fixed_named_gate(b)?;
+    if qubits_a != qubits_b {
+        return None;
+    }
+    let (family_a, power_a, order_a) = phase_fixed_root_power(gate_a)?;
+    let (family_b, power_b, order_b) = phase_fixed_root_power(gate_b)?;
+    if family_a != family_b || order_a != order_b {
+        return None;
+    }
+    let power = (power_a + power_b) % order_a;
+    let gate = match (family_a, power) {
+        (_, 0) => GateType::I,
+        (PhaseFixedRootFamily::SX, 1) => GateType::SX,
+        (PhaseFixedRootFamily::SX, 2) => GateType::X,
+        (PhaseFixedRootFamily::SX, 3) => GateType::SXdg,
+        (PhaseFixedRootFamily::SY, 1) => GateType::SY,
+        (PhaseFixedRootFamily::SY, 2) => GateType::Y,
+        (PhaseFixedRootFamily::SY, 3) => GateType::SYdg,
+        (PhaseFixedRootFamily::Z8, 1) => GateType::T,
+        (PhaseFixedRootFamily::Z8, 2) => GateType::SZ,
+        (PhaseFixedRootFamily::Z8, 4) => GateType::Z,
+        (PhaseFixedRootFamily::Z8, 6) => GateType::SZdg,
+        (PhaseFixedRootFamily::Z8, 7) => GateType::Tdg,
+        (PhaseFixedRootFamily::H, 1) => GateType::H,
+        (PhaseFixedRootFamily::F, 1) => GateType::F,
+        (PhaseFixedRootFamily::F, 2) => GateType::Fdg,
+        _ => return None,
+    };
+    Some(UnitaryRep::gate(gate, qubits_a.clone()))
 }
 
 /// Convert a rotation (type + angle) to a named `GateType` if one exists.
@@ -3159,60 +3208,72 @@ pub fn Zs(qubits: impl Into<Qubits>) -> UnitaryRep {
     }
 }
 
-/// SX gate (sqrt X): RX(π/2)
+/// Conventional SX gate (sqrt X).
+///
+/// `SX = exp(i*pi/4) * RX(pi/2)`; the parameterized rotation retains its
+/// `exp(-i*theta*X/2)` convention.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SX(qubit: impl Into<QubitId>) -> UnitaryRep {
-    RX(Angle64::QUARTER_TURN, qubit.into().0)
+    UnitaryRep::gate(GateType::SX, smallvec::smallvec![qubit.into().0])
 }
 
 /// SX gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SXs(qubits: impl Into<Qubits>) -> UnitaryRep {
-    qubits.into().apply(|q| RX(Angle64::QUARTER_TURN, q))
+    qubits.into().apply(SX)
 }
 
-/// SY gate (sqrt Y): RY(π/2)
+/// Conventional SY gate (sqrt Y).
+///
+/// `SY = exp(i*pi/4) * RY(pi/2)`; the parameterized rotation retains its
+/// `exp(-i*theta*Y/2)` convention.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SY(qubit: impl Into<QubitId>) -> UnitaryRep {
-    RY(Angle64::QUARTER_TURN, qubit.into().0)
+    UnitaryRep::gate(GateType::SY, smallvec::smallvec![qubit.into().0])
 }
 
 /// SY gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SYs(qubits: impl Into<Qubits>) -> UnitaryRep {
-    qubits.into().apply(|q| RY(Angle64::QUARTER_TURN, q))
+    qubits.into().apply(SY)
 }
 
-/// SZ gate (sqrt Z): RZ(π/2)
+/// Conventional SZ gate (sqrt Z), also called S.
+///
+/// `SZ = exp(i*pi/4) * RZ(pi/2)`; the parameterized rotation retains its
+/// `exp(-i*theta*Z/2)` convention.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SZ(qubit: impl Into<QubitId>) -> UnitaryRep {
-    RZ(Angle64::QUARTER_TURN, qubit.into().0)
+    UnitaryRep::gate(GateType::SZ, smallvec::smallvec![qubit.into().0])
 }
 
 /// SZ gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn SZs(qubits: impl Into<Qubits>) -> UnitaryRep {
-    qubits.into().apply(|q| RZ(Angle64::QUARTER_TURN, q))
+    qubits.into().apply(SZ)
 }
 
-/// T gate: RZ(π/4)
+/// Conventional T gate, `diag(1, exp(i*pi/4))`.
+///
+/// `T = exp(i*pi/8) * RZ(pi/4)`; the parameterized rotation retains its
+/// `exp(-i*theta*Z/2)` convention.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn T(qubit: impl Into<QubitId>) -> UnitaryRep {
-    RZ(Angle64::HALF_TURN / 4, qubit.into().0)
+    UnitaryRep::gate(GateType::T, smallvec::smallvec![qubit.into().0])
 }
 
-/// T gates on multiple qubits.
+/// Conventional T gates on multiple qubits.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn Ts(qubits: impl Into<Qubits>) -> UnitaryRep {
-    qubits.into().apply(|q| RZ(Angle64::HALF_TURN / 4, q))
+    qubits.into().apply(T)
 }
 
 /// Hadamard gate: RZ(π) * RY(π/2) (up to global phase)
@@ -3750,15 +3811,10 @@ mod tests {
     fn test_adjoint() {
         let t = T(0);
         let t_dg = t.dg();
-
-        // T† should have negated angle
-        if let UnitaryRep::Gate(Unitary::Rotation { angle, .. }, _) = t_dg {
-            let t_angle = Angle64::HALF_TURN / 4;
-            let expected = negate_angle(t_angle);
-            assert_eq!(angle, expected);
-        } else {
-            panic!("Expected Gate(Rotation)");
-        }
+        assert!(matches!(
+            t_dg,
+            UnitaryRep::Gate(Unitary::Named(GateType::Tdg), _)
+        ));
     }
 
     #[test]
@@ -3825,18 +3881,18 @@ mod tests {
 
         if let UnitaryRep::Compose(parts) = circuit {
             assert_eq!(parts.len(), 3);
-            // All should be rotations
+            // All are phase-fixed named roots.
             assert!(matches!(
                 &parts[0],
-                UnitaryRep::Gate(Unitary::Rotation { .. }, _)
+                UnitaryRep::Gate(Unitary::Named(GateType::SX), _)
             ));
             assert!(matches!(
                 &parts[1],
-                UnitaryRep::Gate(Unitary::Rotation { .. }, _)
+                UnitaryRep::Gate(Unitary::Named(GateType::SY), _)
             ));
             assert!(matches!(
                 &parts[2],
-                UnitaryRep::Gate(Unitary::Rotation { .. }, _)
+                UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
             ));
         } else {
             panic!("Expected Compose");
@@ -3865,24 +3921,14 @@ mod tests {
 
     #[test]
     fn test_simplify_merge_adjacent() {
-        // SZ * SZ = Z (RZ(π/2) + RZ(π/2) = RZ(π))
+        // The phase-fixed roots close exactly: SZ * SZ = Z.
         let circuit = SZ(0) * SZ(0);
         let simplified = circuit.simplify();
 
-        // Should merge into a single rotation
-        if let UnitaryRep::Gate(
-            Unitary::Rotation {
-                angle,
-                rotation_type,
-            },
-            _,
-        ) = simplified
-        {
-            assert_eq!(rotation_type, RotationType::RZ);
-            assert_eq!(angle, Angle64::HALF_TURN); // π
-        } else {
-            panic!("Expected single Gate(Rotation), got {simplified:?}");
-        }
+        assert!(matches!(
+            simplified,
+            UnitaryRep::Gate(Unitary::Named(GateType::Z), _)
+        ));
     }
 
     #[test]
@@ -3915,15 +3961,14 @@ mod tests {
 
     #[test]
     fn test_simplify_multiple_merges() {
-        // T * T * T * T = Z (4 * π/4 = π)
+        // The phase-fixed T root has T^4 = Z exactly.
         let circuit = T(0) * T(0) * T(0) * T(0);
         let simplified = circuit.simplify();
 
-        if let UnitaryRep::Gate(Unitary::Rotation { angle, .. }, _) = simplified {
-            assert_eq!(angle, Angle64::HALF_TURN);
-        } else {
-            panic!("Expected single Gate(Rotation)");
-        }
+        assert!(matches!(
+            simplified,
+            UnitaryRep::Gate(Unitary::Named(GateType::Z), _)
+        ));
     }
 
     #[test]
@@ -4348,18 +4393,18 @@ mod tests {
 
         if let UnitaryRep::Tensor(parts) = multi {
             assert_eq!(parts.len(), 3);
-            // Each should be a rotation
+            // Each should be a phase-fixed named T gate.
             assert!(matches!(
                 &parts[0],
-                UnitaryRep::Gate(Unitary::Rotation { .. }, _)
+                UnitaryRep::Gate(Unitary::Named(GateType::T), _)
             ));
             assert!(matches!(
                 &parts[1],
-                UnitaryRep::Gate(Unitary::Rotation { .. }, _)
+                UnitaryRep::Gate(Unitary::Named(GateType::T), _)
             ));
             assert!(matches!(
                 &parts[2],
-                UnitaryRep::Gate(Unitary::Rotation { .. }, _)
+                UnitaryRep::Gate(Unitary::Named(GateType::T), _)
             ));
         } else {
             panic!("Expected Tensor variant, got {multi:?}");
@@ -4389,7 +4434,10 @@ mod tests {
         let h = H(2);
 
         assert!(matches!(x, UnitaryRep::Pauli(_)));
-        assert!(matches!(t, UnitaryRep::Gate(Unitary::Rotation { .. }, _)));
+        assert!(matches!(
+            t,
+            UnitaryRep::Gate(Unitary::Named(GateType::T), _)
+        ));
         assert!(matches!(
             h,
             UnitaryRep::Gate(Unitary::Named(GateType::H), _)
@@ -4564,29 +4612,7 @@ mod tests {
         let from_range = Ts(2..=2);
         let direct = T(2);
 
-        // Both should be Rotation variants
-        if let (
-            UnitaryRep::Gate(
-                Unitary::Rotation {
-                    angle: a1,
-                    rotation_type: r1,
-                },
-                _,
-            ),
-            UnitaryRep::Gate(
-                Unitary::Rotation {
-                    angle: a2,
-                    rotation_type: r2,
-                },
-                _,
-            ),
-        ) = (&from_range, &direct)
-        {
-            assert_eq!(a1, a2);
-            assert_eq!(r1, r2);
-        } else {
-            panic!("Expected Gate(Rotation) variants, got {from_range:?} and {direct:?}");
-        }
+        assert_eq!(from_range, direct);
     }
 
     // --- Conjugation tests ---
@@ -4662,32 +4688,20 @@ mod tests {
         let sz = SZ(0);
         let result = x.conj(&sz);
 
-        // Verify structure: Compose([SZ, X, SZ†])
+        // Compose stores application order: [SZdg, X, SZ].
         if let UnitaryRep::Compose(parts) = result {
             assert_eq!(parts.len(), 3);
-            // First element is SZ (positive angle)
+            // First applied is the named phase-fixed SZdg.
             assert!(matches!(
                 &parts[0],
-                UnitaryRep::Gate(
-                    Unitary::Rotation {
-                        rotation_type: RotationType::RZ,
-                        ..
-                    },
-                    _
-                )
+                UnitaryRep::Gate(Unitary::Named(GateType::SZdg), _)
             ));
             // Middle element is X
             assert!(matches!(&parts[1], UnitaryRep::Pauli(_)));
-            // Last element is SZ† (negative angle)
+            // Last applied is the named phase-fixed SZ.
             assert!(matches!(
                 &parts[2],
-                UnitaryRep::Gate(
-                    Unitary::Rotation {
-                        rotation_type: RotationType::RZ,
-                        ..
-                    },
-                    _
-                )
+                UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
             ));
         } else {
             panic!("Expected Compose variant, got {result:?}");
@@ -4701,32 +4715,20 @@ mod tests {
         let sz = SZ(0);
         let result = x.conjdg(&sz);
 
-        // Verify structure: Compose([SZ†, X, SZ])
+        // Compose stores application order: [SZ, X, SZdg].
         if let UnitaryRep::Compose(parts) = result {
             assert_eq!(parts.len(), 3);
-            // First element is SZ† (negative angle)
+            // First applied is the named phase-fixed SZ.
             assert!(matches!(
                 &parts[0],
-                UnitaryRep::Gate(
-                    Unitary::Rotation {
-                        rotation_type: RotationType::RZ,
-                        ..
-                    },
-                    _
-                )
+                UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
             ));
             // Middle element is X
             assert!(matches!(&parts[1], UnitaryRep::Pauli(_)));
-            // Last element is SZ (positive angle)
+            // Last applied is the named phase-fixed SZdg.
             assert!(matches!(
                 &parts[2],
-                UnitaryRep::Gate(
-                    Unitary::Rotation {
-                        rotation_type: RotationType::RZ,
-                        ..
-                    },
-                    _
-                )
+                UnitaryRep::Gate(Unitary::Named(GateType::SZdg), _)
             ));
         } else {
             panic!("Expected Compose variant, got {result:?}");
@@ -4877,41 +4879,31 @@ mod tests {
 
     #[test]
     fn test_pow_rotation_simplify() {
-        // T^2 = S (RZ(π/4)^2 = RZ(π/2)) after simplification
+        // The phase-fixed root relation T^2 = SZ survives simplification.
         let t = T(0);
         let result = t.pow(2).simplify();
 
-        if let UnitaryRep::Gate(
-            Unitary::Rotation {
-                angle,
-                rotation_type,
-            },
-            _,
-        ) = result
-        {
-            assert_eq!(rotation_type, RotationType::RZ);
-            assert_eq!(angle, Angle64::QUARTER_TURN);
-        } else {
-            panic!("Expected Gate(Rotation), got {result:?}");
-        }
+        assert!(matches!(
+            result,
+            UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
+        ));
     }
 
     #[test]
     fn test_pow_four_t_simplify() {
-        // T^4 = Z (RZ(π/4)^4 = RZ(π)) after simplification
+        // The phase-fixed root relation T^4 = Z survives simplification.
         let t = T(0);
         let result = t.pow(4).simplify();
 
-        if let UnitaryRep::Gate(Unitary::Rotation { angle, .. }, _) = result {
-            assert_eq!(angle, Angle64::HALF_TURN);
-        } else {
-            panic!("Expected Gate(Rotation), got {result:?}");
-        }
+        assert!(matches!(
+            result,
+            UnitaryRep::Gate(Unitary::Named(GateType::Z), _)
+        ));
     }
 
     #[test]
     fn test_pow_eight_t_simplify() {
-        // T^8 = I (RZ(π/4)^8 = RZ(2π) = I) after simplification
+        // The phase-fixed root relation is T^8 = I exactly.
         let t = T(0);
         let result = t.pow(8).simplify();
         assert!(result.is_identity());
@@ -5022,8 +5014,8 @@ mod tests {
 
     #[test]
     fn test_decompose_rotation() {
-        let t = T(0);
-        let gates = t.decompose();
+        let rz = RZ(Angle64::HALF_TURN / 4, 0);
+        let gates = rz.decompose();
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].gate_type, GateType::RZ);
         assert_eq!(gates[0].angles.len(), 1);
@@ -5051,10 +5043,8 @@ mod tests {
         let gates = t_dg.decompose();
 
         assert_eq!(gates.len(), 1);
-        assert_eq!(gates[0].gate_type, GateType::RZ);
-        // Angle should be negated
-        let expected_angle = Angle64::ZERO - (Angle64::HALF_TURN / 4);
-        assert_eq!(gates[0].angles[0], expected_angle);
+        assert_eq!(gates[0].gate_type, GateType::Tdg);
+        assert!(gates[0].angles.is_empty());
     }
 
     #[test]
@@ -5064,9 +5054,8 @@ mod tests {
         let s_dg = s.dg();
         let gates = s_dg.decompose();
 
-        // S is a rotation, S† negates the angle
         assert_eq!(gates.len(), 1);
-        assert_eq!(gates[0].gate_type, GateType::RZ);
+        assert_eq!(gates[0].gate_type, GateType::SZdg);
     }
 
     // --- as_pauli_string / into_pauli_string tests ---
@@ -5196,13 +5185,7 @@ mod tests {
         let op: UnitaryRep = "T 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(
-                Unitary::Rotation {
-                    rotation_type: RotationType::RZ,
-                    ..
-                },
-                _
-            )
+            UnitaryRep::Gate(Unitary::Named(GateType::T), _)
         ));
     }
 
@@ -5211,13 +5194,7 @@ mod tests {
         let op: UnitaryRep = "S 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(
-                Unitary::Rotation {
-                    rotation_type: RotationType::RZ,
-                    ..
-                },
-                _
-            )
+            UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
         ));
     }
 
@@ -5483,13 +5460,7 @@ mod tests {
         let op: UnitaryRep = "Tdg 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(
-                Unitary::Rotation {
-                    rotation_type: RotationType::RZ,
-                    ..
-                },
-                _
-            )
+            UnitaryRep::Gate(Unitary::Named(GateType::Tdg), _)
         ));
     }
 
@@ -5498,13 +5469,7 @@ mod tests {
         let op: UnitaryRep = "Sdg 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(
-                Unitary::Rotation {
-                    rotation_type: RotationType::RZ,
-                    ..
-                },
-                _
-            )
+            UnitaryRep::Gate(Unitary::Named(GateType::SZdg), _)
         ));
     }
 

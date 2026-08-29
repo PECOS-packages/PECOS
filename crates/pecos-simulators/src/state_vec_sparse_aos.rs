@@ -51,7 +51,7 @@
 use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
-use pecos_core::{Angle64, QubitId};
+use pecos_core::{Angle64, Clifford, QubitId};
 use pecos_random::{PecosRng, Rng, RngExt, RngProbabilityExt};
 use std::f64::consts::FRAC_1_SQRT_2;
 use std::fmt::Debug;
@@ -836,6 +836,21 @@ impl<R: Rng> SparseStateVecAoS<R> {
 
         std::mem::swap(&mut self.amplitudes, &mut self.scratch);
     }
+
+    fn apply_canonical_clifford(&mut self, gate: Clifford, qubits: &[QubitId]) -> &mut Self {
+        let matrix = gate
+            .canonical_1q_matrix()
+            .expect("single-qubit Clifford must have a canonical matrix");
+        let a = Complex64::new(matrix[0], matrix[1]);
+        let b = Complex64::new(matrix[2], matrix[3]);
+        let c = Complex64::new(matrix[4], matrix[5]);
+        let d = Complex64::new(matrix[6], matrix[7]);
+        for &q in qubits {
+            self.ensure_sorted();
+            self.apply_single_qubit_gate(q.0, a, b, c, d);
+        }
+        self
+    }
 }
 
 // =============================================================================
@@ -870,6 +885,26 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
             self.apply_h_simd(q.0);
         }
         self
+    }
+
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H2, qubits)
+    }
+
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H3, qubits)
+    }
+
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H4, qubits)
+    }
+
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H5, qubits)
+    }
+
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::H6, qubits)
     }
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
@@ -1076,6 +1111,38 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
             self.apply_single_qubit_gate(q.0, a, b, c, a);
         }
         self
+    }
+
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F, qubits)
+    }
+
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::Fdg, qubits)
+    }
+
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F2, qubits)
+    }
+
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F2dg, qubits)
+    }
+
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F3, qubits)
+    }
+
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F3dg, qubits)
+    }
+
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F4, qubits)
+    }
+
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.apply_canonical_clifford(Clifford::F4dg, qubits)
     }
 
     // -------------------------------------------------------------------------
@@ -1545,6 +1612,18 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
                     *amp *= phase_high;
                 }
             }
+        }
+        self
+    }
+
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        for (_, amplitude) in &mut self.amplitudes {
+            *amplitude *= global_phase;
         }
         self
     }

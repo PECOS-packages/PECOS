@@ -45,8 +45,6 @@ impl GateCanonicalizer {
 
         // RZ rules
         canon.add(gates::RZ, A::ZERO, gates::I);
-        canon.add(gates::RZ, A::HALF_TURN / 4, gates::T); // π/4
-        canon.add(gates::RZ, A::ZERO - A::HALF_TURN / 4, gates::Tdg); // -π/4
         canon.add(gates::RZ, A::QUARTER_TURN, gates::SZ); // π/2
         canon.add(gates::RZ, A::ZERO - A::QUARTER_TURN, gates::SZdg); // -π/2
         canon.add(gates::RZ, A::HALF_TURN, gates::Z); // π

@@ -14,7 +14,7 @@
 //!
 //! The [`CliffordRotation`] trait extends [`CliffordGateable`] with rotation
 //! methods (`try_rz`, `try_rx`, etc.) that succeed only when the angle is a
-//! Clifford angle (0, pi/2, pi, 3pi/2, and pi/4 for T/Tdg).
+//! Clifford angle (0, pi/2, pi, or 3pi/2).
 //!
 //! A blanket implementation is provided for every [`CliffordGateable`] type,
 //! so stabilizer simulators get these methods for free.
@@ -45,7 +45,7 @@ use pecos_core::{Angle64, QubitId};
 /// assert!(sim.try_rz(Angle64::from_radians(0.123), &qid(0)).is_err());
 /// ```
 pub trait CliffordRotation: CliffordGateable {
-    /// Try to apply RZ(angle). Succeeds for Clifford angles (and pi/4 for T/Tdg).
+    /// Try to apply RZ(angle). Succeeds for Clifford angles.
     ///
     /// # Errors
     /// Returns `Err` with a message if the angle is not a recognized Clifford angle.
@@ -105,7 +105,8 @@ pub trait CliffordRotation: CliffordGateable {
         qubits: &[QubitId],
     ) -> Result<&mut Self, String>;
 
-    /// Try to apply CRZ(angle). Succeeds only for CRZ(0)=I and CRZ(pi)=CZ.
+    /// Try to apply CRZ(angle). CRZ(0) is identity, while CRZ(pi) is the
+    /// Clifford `(SZdg ⊗ I) . CZ`.
     ///
     /// # Errors
     /// Returns `Err` with a message if the angle is not 0 or pi.
@@ -239,17 +240,11 @@ impl<T: CliffordGateable> CliffordRotation for T {
         lambda: Angle64,
         qubits: &[QubitId],
     ) -> Result<&mut Self, String> {
-        // U(theta, phi, lambda) = RZ(phi) * RY(theta) * RZ(lambda)
-        // Each component must be Clifford for the whole gate to be Clifford.
-        self.try_rz(lambda, qubits).map_err(|_| {
-            format!("U(theta={theta}, phi={phi}, lambda={lambda}) is not a Clifford rotation")
-        })?;
-        self.try_ry(theta, qubits).map_err(|_| {
-            format!("U(theta={theta}, phi={phi}, lambda={lambda}) is not a Clifford rotation")
-        })?;
-        self.try_rz(phi, qubits).map_err(|_| {
-            format!("U(theta={theta}, phi={phi}, lambda={lambda}) is not a Clifford rotation")
-        })?;
+        let error =
+            || format!("U(theta={theta}, phi={phi}, lambda={lambda}) is not a Clifford rotation");
+        let decomposition = simplify_u_clifford([theta, phi, lambda]).ok_or_else(&error)?;
+
+        dispatch_u_decomposition(self, decomposition, qubits).map_err(|_| error())?;
         Ok(self)
     }
 
@@ -260,15 +255,14 @@ impl<T: CliffordGateable> CliffordRotation for T {
         gamma: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
-        // RXXRYYRZZ(a,b,c) = RXX(a) * RYY(b) * RZZ(c)
-        let err = |_| {
+        let error = || {
             format!(
                 "RXXRYYRZZ(alpha={alpha}, beta={beta}, gamma={gamma}) is not a Clifford rotation"
             )
         };
-        self.try_rxx(alpha, pairs).map_err(err)?;
-        self.try_ryy(beta, pairs).map_err(err)?;
-        self.try_rzz(gamma, pairs).map_err(err)?;
+        let decomposition = simplify_rxxryyrzz_clifford([alpha, beta, gamma]).ok_or_else(&error)?;
+
+        dispatch_rxxryyrzz_decomposition(self, decomposition, pairs).map_err(|_| error())?;
         Ok(self)
     }
 
@@ -282,21 +276,101 @@ impl<T: CliffordGateable> CliffordRotation for T {
         // U2q = (U3(before[0]) x U3(before[1])) * RXXRYYRZZ(interaction) * (U3(after[0]) x U3(after[1]))
         // Applied right-to-left: after first, then interaction, then before.
         let err = || "U2q is not a Clifford rotation".to_string();
+        let after = [
+            simplify_u_clifford(after[0]).ok_or_else(&err)?,
+            simplify_u_clifford(after[1]).ok_or_else(&err)?,
+        ];
+        let interaction = simplify_rxxryyrzz_clifford(interaction).ok_or_else(&err)?;
+        let before = [
+            simplify_u_clifford(before[0]).ok_or_else(&err)?,
+            simplify_u_clifford(before[1]).ok_or_else(&err)?,
+        ];
+
         for &(q0, q1) in pairs {
-            let q0s = &[q0];
-            let q1s = &[q1];
-            self.try_u(after[0][0], after[0][1], after[0][2], q0s)
-                .map_err(|_| err())?;
-            self.try_u(after[1][0], after[1][1], after[1][2], q1s)
-                .map_err(|_| err())?;
-            self.try_rxxryyrzz(interaction[0], interaction[1], interaction[2], &[(q0, q1)])
-                .map_err(|_| err())?;
-            self.try_u(before[0][0], before[0][1], before[0][2], q0s)
-                .map_err(|_| err())?;
-            self.try_u(before[1][0], before[1][1], before[1][2], q1s)
-                .map_err(|_| err())?;
+            dispatch_u_decomposition(self, after[0], &[q0]).map_err(|_| err())?;
+            dispatch_u_decomposition(self, after[1], &[q1]).map_err(|_| err())?;
+            dispatch_rxxryyrzz_decomposition(self, interaction, &[(q0, q1)]).map_err(|_| err())?;
+            dispatch_u_decomposition(self, before[0], &[q0]).map_err(|_| err())?;
+            dispatch_u_decomposition(self, before[1], &[q1]).map_err(|_| err())?;
         }
         Ok(self)
+    }
+}
+
+fn simplify_u_clifford(angles: [Angle64; 3]) -> Option<[GateType; 3]> {
+    let [theta, phi, lambda] = angles;
+    Some([
+        pecos_core::try_simplify_rotation(GateType::RZ, lambda)?,
+        pecos_core::try_simplify_rotation(GateType::RY, theta)?,
+        pecos_core::try_simplify_rotation(GateType::RZ, phi)?,
+    ])
+}
+
+fn dispatch_u_decomposition<T: CliffordGateable>(
+    sim: &mut T,
+    decomposition: [GateType; 3],
+    qubits: &[QubitId],
+) -> Result<(), String> {
+    for gate in decomposition {
+        dispatch_single_qubit_clifford(sim, gate, qubits)?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum TwoQubitCliffordDecomposition {
+    Named(GateType),
+    TensorPauli(GateType),
+}
+
+fn simplify_two_qubit_clifford(
+    gate: GateType,
+    angle: Angle64,
+) -> Option<TwoQubitCliffordDecomposition> {
+    pecos_core::try_simplify_rotation(gate, angle)
+        .map(TwoQubitCliffordDecomposition::Named)
+        .or_else(|| {
+            pecos_core::half_turn_decomposition(gate, angle)
+                .map(TwoQubitCliffordDecomposition::TensorPauli)
+        })
+}
+
+fn simplify_rxxryyrzz_clifford(angles: [Angle64; 3]) -> Option<[TwoQubitCliffordDecomposition; 3]> {
+    let [alpha, beta, gamma] = angles;
+    Some([
+        simplify_two_qubit_clifford(GateType::RXX, alpha)?,
+        simplify_two_qubit_clifford(GateType::RYY, beta)?,
+        simplify_two_qubit_clifford(GateType::RZZ, gamma)?,
+    ])
+}
+
+fn dispatch_rxxryyrzz_decomposition<T: CliffordGateable>(
+    sim: &mut T,
+    decomposition: [TwoQubitCliffordDecomposition; 3],
+    pairs: &[(QubitId, QubitId)],
+) -> Result<(), String> {
+    for component in decomposition {
+        dispatch_two_qubit_decomposition(sim, component, pairs)?;
+    }
+    Ok(())
+}
+
+fn dispatch_two_qubit_decomposition<T: CliffordGateable>(
+    sim: &mut T,
+    decomposition: TwoQubitCliffordDecomposition,
+    pairs: &[(QubitId, QubitId)],
+) -> Result<(), String> {
+    match decomposition {
+        TwoQubitCliffordDecomposition::Named(clifford) => {
+            dispatch_two_qubit_clifford(sim, clifford, pairs)
+        }
+        TwoQubitCliffordDecomposition::TensorPauli(pauli) => {
+            for &(q0, q1) in pairs {
+                dispatch_single_qubit_clifford(sim, pauli, &[q0])?;
+                dispatch_single_qubit_clifford(sim, pauli, &[q1])?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -321,17 +395,8 @@ fn apply_two_qubit_rotation<'a, T: CliffordGateable>(
     angle: Angle64,
     pairs: &[(QubitId, QubitId)],
 ) -> Result<&'a mut T, String> {
-    // First try direct simplification to a named Clifford gate
-    if let Some(clifford) = pecos_core::try_simplify_rotation(gate, angle) {
-        dispatch_two_qubit_clifford(sim, clifford, pairs)?;
-        return Ok(sim);
-    }
-    // Then try half-turn decomposition (RZZ(pi)->Z+Z, RXX(pi)->X+X, RYY(pi)->Y+Y)
-    if let Some(pauli) = pecos_core::half_turn_decomposition(gate, angle) {
-        for &(q0, q1) in pairs {
-            dispatch_single_qubit_clifford(sim, pauli, &[q0])?;
-            dispatch_single_qubit_clifford(sim, pauli, &[q1])?;
-        }
+    if let Some(decomposition) = simplify_two_qubit_clifford(gate, angle) {
+        dispatch_two_qubit_decomposition(sim, decomposition, pairs)?;
         return Ok(sim);
     }
     Err(format!("{gate}({angle}) is not a Clifford rotation"))
@@ -753,5 +818,60 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn try_u_failure_is_atomic() {
+        let mut sim = SparseStab::new(1);
+        let before = (sim.stab_tableau(), sim.destab_tableau());
+
+        assert!(
+            sim.try_u(
+                Angle64::from_radians(0.5),
+                Angle64::ZERO,
+                Angle64::QUARTER_TURN,
+                &qid(0),
+            )
+            .is_err()
+        );
+        assert_eq!((sim.stab_tableau(), sim.destab_tableau()), before);
+    }
+
+    #[test]
+    fn try_rxxryyrzz_failure_is_atomic() {
+        let mut sim = SparseStab::new(2);
+        let before = (sim.stab_tableau(), sim.destab_tableau());
+
+        assert!(
+            sim.try_rxxryyrzz(
+                Angle64::QUARTER_TURN,
+                Angle64::from_radians(0.5),
+                Angle64::ZERO,
+                &[(QubitId(0), QubitId(1))],
+            )
+            .is_err()
+        );
+        assert_eq!((sim.stab_tableau(), sim.destab_tableau()), before);
+    }
+
+    #[test]
+    fn try_u2q_failure_is_atomic() {
+        let mut sim = SparseStab::new(2);
+        let before_tableau = (sim.stab_tableau(), sim.destab_tableau());
+        let zero_u = [Angle64::ZERO; 3];
+
+        assert!(
+            sim.try_u2q(
+                [zero_u; 2],
+                [Angle64::ZERO, Angle64::from_radians(0.5), Angle64::ZERO,],
+                [
+                    [Angle64::ZERO, Angle64::ZERO, Angle64::QUARTER_TURN,],
+                    zero_u,
+                ],
+                &[(QubitId(0), QubitId(1))],
+            )
+            .is_err()
+        );
+        assert_eq!((sim.stab_tableau(), sim.destab_tableau()), before_tableau);
     }
 }

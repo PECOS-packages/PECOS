@@ -1638,16 +1638,41 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let Some(gate_type) = gate_id.try_to_gate_type() else {
             return CliffordRotationAttempt::NotARotation;
         };
-        let [angle] = angles else {
-            return CliffordRotationAttempt::NotARotation;
-        };
+        // GateCommand permits unchecked angle vectors, and ExecutionError has no
+        // arity-specific variant, so malformed rotation arity uses the rotation error outcome.
         let result = match gate_type {
-            GateType::RZ => sim.try_rz(*angle, qubits).map(|_| ()),
-            GateType::RX => sim.try_rx(*angle, qubits).map(|_| ()),
-            GateType::RY => sim.try_ry(*angle, qubits).map(|_| ()),
-            GateType::RZZ => sim.try_rzz(*angle, &flat_to_pairs(qubits)).map(|_| ()),
-            GateType::RXX => sim.try_rxx(*angle, &flat_to_pairs(qubits)).map(|_| ()),
-            GateType::RYY => sim.try_ryy(*angle, &flat_to_pairs(qubits)).map(|_| ()),
+            GateType::RZ => match angles {
+                [angle] => sim.try_rz(*angle, qubits).map(|_| ()),
+                _ => return CliffordRotationAttempt::NonCliffordAngle,
+            },
+            GateType::RX => match angles {
+                [angle] => sim.try_rx(*angle, qubits).map(|_| ()),
+                _ => return CliffordRotationAttempt::NonCliffordAngle,
+            },
+            GateType::RY => match angles {
+                [angle] => sim.try_ry(*angle, qubits).map(|_| ()),
+                _ => return CliffordRotationAttempt::NonCliffordAngle,
+            },
+            GateType::R1XY => match angles {
+                [theta, phi] => sim.try_r1xy(*theta, *phi, qubits).map(|_| ()),
+                _ => return CliffordRotationAttempt::NonCliffordAngle,
+            },
+            GateType::U => match angles {
+                [theta, phi, lambda] => sim.try_u(*theta, *phi, *lambda, qubits).map(|_| ()),
+                _ => return CliffordRotationAttempt::NonCliffordAngle,
+            },
+            GateType::RZZ => match angles {
+                [angle] => sim.try_rzz(*angle, &flat_to_pairs(qubits)).map(|_| ()),
+                _ => return CliffordRotationAttempt::NonCliffordAngle,
+            },
+            GateType::RXX => match angles {
+                [angle] => sim.try_rxx(*angle, &flat_to_pairs(qubits)).map(|_| ()),
+                _ => return CliffordRotationAttempt::NonCliffordAngle,
+            },
+            GateType::RYY => match angles {
+                [angle] => sim.try_ryy(*angle, &flat_to_pairs(qubits)).map(|_| ()),
+                _ => return CliffordRotationAttempt::NonCliffordAngle,
+            },
             _ => return CliffordRotationAttempt::NotARotation,
         };
         match result {
@@ -3285,6 +3310,83 @@ mod tests {
             .expect_err("non-Clifford angle must error");
         assert!(matches!(err, ExecutionError::NonCliffordAngle { .. }));
         assert!(err.to_string().contains("state_vector()"));
+    }
+
+    #[test]
+    fn multi_angle_clifford_rotations_use_fallback() {
+        let commands = [
+            GateCommand::with_angles(
+                GateType::R1XY,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN, Angle64::ZERO],
+            ),
+            GateCommand::with_angles(
+                GateType::U,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN, Angle64::ZERO, Angle64::ZERO],
+            ),
+        ];
+
+        for command in commands {
+            let mut circuit = CommandQueue::new();
+            circuit.push(command);
+            let mut state = SparseStab::with_seed(2, 42);
+            let mut runner = CircuitRunner::<SparseStab>::new();
+            runner
+                .apply_circuit(&mut state, &circuit)
+                .expect("Clifford-angle fallback must execute");
+        }
+    }
+
+    #[test]
+    fn multi_angle_non_clifford_rotations_get_specific_error() {
+        let non_clifford = Angle64::from_radians(0.123);
+        let commands = [
+            GateCommand::with_angles(
+                GateType::R1XY,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![non_clifford, Angle64::ZERO],
+            ),
+            GateCommand::with_angles(
+                GateType::U,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![non_clifford, Angle64::ZERO, Angle64::ZERO],
+            ),
+        ];
+
+        for command in commands {
+            let mut circuit = CommandQueue::new();
+            circuit.push(command);
+            let mut state = SparseStab::with_seed(2, 42);
+            let mut runner = CircuitRunner::<SparseStab>::new();
+            let err = runner
+                .apply_circuit(&mut state, &circuit)
+                .expect_err("non-Clifford angle must error");
+            assert!(matches!(err, ExecutionError::NonCliffordAngle { .. }));
+        }
+    }
+
+    #[test]
+    fn recognized_rotations_with_wrong_angle_count_use_rotation_error() {
+        for gate_type in [GateType::RZ, GateType::R1XY, GateType::U, GateType::RZZ] {
+            let qubits = if gate_type.is_two_qubit() {
+                smallvec::smallvec![QubitId(0), QubitId(1)]
+            } else {
+                smallvec::smallvec![QubitId(0)]
+            };
+            let mut circuit = CommandQueue::new();
+            circuit.push(GateCommand::with_angles(
+                gate_type,
+                qubits,
+                smallvec::SmallVec::new(),
+            ));
+            let mut state = SparseStab::with_seed(2, 42);
+            let mut runner = CircuitRunner::<SparseStab>::new();
+            let err = runner
+                .apply_circuit(&mut state, &circuit)
+                .expect_err("wrong angle count must error");
+            assert!(matches!(err, ExecutionError::NonCliffordAngle { .. }));
+        }
     }
 
     #[test]

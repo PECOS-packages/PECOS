@@ -14,7 +14,7 @@ type A64 = Angle<u64>;
 /// Numerical lowering pipelines can produce angles that are a few fixed-point
 /// units away from canonical Clifford quarter-turns. Snap only within a tiny
 /// tolerance so genuine non-Clifford rotations still fail loudly.
-const R1XY_CLIFFORD_EPSILON_TURNS: f64 = 1e-9;
+const CLIFFORD_SNAP_EPSILON_TURNS: f64 = 1e-9;
 
 /// Try to simplify a single-angle rotation gate to a named Clifford gate.
 ///
@@ -49,6 +49,7 @@ const R1XY_CLIFFORD_EPSILON_TURNS: f64 = 1e-9;
 /// | RYY(-pi/2)| 3/4 TURN  | SYYdg          |
 #[must_use]
 pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
+    let angle = snap_clifford_angle(angle);
     match gate {
         GateType::RZ => simplify_rz(angle),
         GateType::RX => simplify_rx(angle),
@@ -87,12 +88,12 @@ pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
 /// quarter-turn sqrt gates.
 #[must_use]
 pub fn try_simplify_r1xy(theta: A64, phi: A64) -> Option<GateType> {
-    let theta = snap_r1xy_clifford_angle(theta)?;
+    let theta = snap_clifford_angle(theta);
     if theta == A64::ZERO {
         return Some(GateType::I);
     }
 
-    let phi = snap_r1xy_clifford_angle(phi)?;
+    let phi = snap_clifford_angle(phi);
     match phi {
         A64::ZERO => simplify_rx(theta),
         A64::HALF_TURN => simplify_rx(-theta),
@@ -106,7 +107,7 @@ pub fn try_simplify_r1xy(theta: A64, phi: A64) -> Option<GateType> {
 // Internal helpers
 // -------------------------------------------------------------------------
 
-fn snap_r1xy_clifford_angle(angle: A64) -> Option<A64> {
+fn snap_clifford_angle(angle: A64) -> A64 {
     [
         A64::ZERO,
         A64::QUARTER_TURN,
@@ -114,7 +115,8 @@ fn snap_r1xy_clifford_angle(angle: A64) -> Option<A64> {
         A64::THREE_QUARTERS_TURN,
     ]
     .into_iter()
-    .find(|target| angle.abs_diff_eq_turns(target, R1XY_CLIFFORD_EPSILON_TURNS))
+    .find(|target| angle.abs_diff_eq_turns(target, CLIFFORD_SNAP_EPSILON_TURNS))
+    .unwrap_or(angle)
 }
 
 /// Negate an angle.
@@ -218,6 +220,7 @@ fn simplify_ryy(angle: A64) -> Option<GateType> {
 /// *decomposition* into two single-qubit gates, not a single gate replacement.
 #[must_use]
 pub fn half_turn_decomposition(gate: GateType, angle: A64) -> Option<GateType> {
+    let angle = snap_clifford_angle(angle);
     if angle != A64::HALF_TURN && angle != neg(A64::HALF_TURN) {
         return None;
     }
@@ -662,5 +665,91 @@ mod tests {
             try_simplify_rotation(GateType::RY, Angle64::from_radians(PI)),
             Some(GateType::Y)
         );
+    }
+
+    #[test]
+    fn all_rotation_tables_snap_near_clifford_turns() {
+        let one_qubit = [
+            (GateType::RZ, GateType::SZ, GateType::Z, GateType::SZdg),
+            (GateType::RX, GateType::SX, GateType::X, GateType::SXdg),
+            (GateType::RY, GateType::SY, GateType::Y, GateType::SYdg),
+        ];
+        for (rotation, sqrt, pauli, sqrt_dg) in one_qubit {
+            assert_eq!(
+                try_simplify_rotation(rotation, Angle64::from_turns(0.75 - 1e-12)),
+                Some(sqrt_dg)
+            );
+            assert_eq!(
+                try_simplify_rotation(rotation, Angle64::from_turns(0.25 + 1e-12)),
+                Some(sqrt)
+            );
+            assert_eq!(
+                try_simplify_rotation(rotation, Angle64::from_turns(0.5 + 1e-12)),
+                Some(pauli)
+            );
+            assert_eq!(
+                try_simplify_rotation(rotation, Angle64::from_turns(0.75 + 1e-6)),
+                None
+            );
+        }
+
+        let two_qubit = [
+            (GateType::RZZ, GateType::SZZ, GateType::Z, GateType::SZZdg),
+            (GateType::RXX, GateType::SXX, GateType::X, GateType::SXXdg),
+            (GateType::RYY, GateType::SYY, GateType::Y, GateType::SYYdg),
+        ];
+        for (rotation, sqrt, pauli, sqrt_dg) in two_qubit {
+            assert_eq!(
+                try_simplify_rotation(rotation, Angle64::from_turns(0.75 - 1e-12)),
+                Some(sqrt_dg)
+            );
+            assert_eq!(
+                try_simplify_rotation(rotation, Angle64::from_turns(0.25 + 1e-12)),
+                Some(sqrt)
+            );
+            assert_eq!(
+                half_turn_decomposition(rotation, Angle64::from_turns(0.5 + 1e-12)),
+                Some(pauli)
+            );
+            assert_eq!(
+                try_simplify_rotation(rotation, Angle64::from_turns(0.75 + 1e-6)),
+                None
+            );
+            assert_eq!(
+                half_turn_decomposition(rotation, Angle64::from_turns(0.75 + 1e-6)),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn python_float_radians_snap_to_clifford_turns() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+
+        let rotations = [
+            (GateType::RZ, GateType::SZ, GateType::SZdg),
+            (GateType::RX, GateType::SX, GateType::SXdg),
+            (GateType::RY, GateType::SY, GateType::SYdg),
+            (GateType::RZZ, GateType::SZZ, GateType::SZZdg),
+            (GateType::RXX, GateType::SXX, GateType::SXXdg),
+            (GateType::RYY, GateType::SYY, GateType::SYYdg),
+        ];
+        let dagger_angles = [1.5 * PI, 3.0 * FRAC_PI_2, -FRAC_PI_2, 3.5 * PI];
+        let sqrt_angles = [2.5 * PI, 1e6 * PI + FRAC_PI_2];
+
+        for (rotation, sqrt, sqrt_dg) in rotations {
+            for radians in dagger_angles {
+                assert_eq!(
+                    try_simplify_rotation(rotation, Angle64::from_radians(radians)),
+                    Some(sqrt_dg)
+                );
+            }
+            for radians in sqrt_angles {
+                assert_eq!(
+                    try_simplify_rotation(rotation, Angle64::from_radians(radians)),
+                    Some(sqrt)
+                );
+            }
+        }
     }
 }

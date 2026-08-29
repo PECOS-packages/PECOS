@@ -22,6 +22,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 use std::collections::HashMap;
 
+use crate::dtypes::AngleParam;
 use crate::sparse_stab_bindings::adjust_tableau_string;
 
 /// Raw generators data: `(col_x, col_z, row_x, row_z)`.
@@ -224,7 +225,7 @@ pub fn register_simulator_utils(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 // --- Shared batch dispatch for simulator bindings ---
 
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{CliffordGateable, MeasurementResult};
 use pyo3::types::{PySet, PyTuple};
 
@@ -243,6 +244,53 @@ pub fn extract_single_qubit(location: &Bound<'_, PyAny>) -> PyResult<usize> {
         "Expected int or 1-tuple for single-qubit location, got {:?}",
         location.get_type().name()?
     )))
+}
+
+/// Extract one angle from the `"angle"` parameter.
+pub fn extract_angle(params: Option<&Bound<'_, PyDict>>, gate_name: &str) -> PyResult<Angle64> {
+    let params = params.ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!("{gate_name} requires params with 'angle'"))
+    })?;
+    let value = params.get_item("angle")?.ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate_name} requires an 'angle' parameter"
+        ))
+    })?;
+    let angle = value.extract::<AngleParam>().map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "Expected a valid angle parameter for {gate_name}"
+        ))
+    })?;
+    Ok(angle.0)
+}
+
+/// Extract exactly `count` angles from the `"angles"` parameter.
+pub fn extract_angles(
+    params: Option<&Bound<'_, PyDict>>,
+    gate_name: &str,
+    count: usize,
+) -> PyResult<Vec<Angle64>> {
+    let params = params.ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate_name} requires params with 'angles'"
+        ))
+    })?;
+    let value = params.get_item("angles")?.ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate_name} requires an 'angles' parameter"
+        ))
+    })?;
+    let angles = value.extract::<Vec<AngleParam>>().map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "Expected valid angle parameters for {gate_name}"
+        ))
+    })?;
+    if angles.len() != count {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate_name} requires {count} angle parameters"
+        )));
+    }
+    Ok(angles.into_iter().map(|angle| angle.0).collect())
 }
 
 /// Collect single-qubit locations from a Python set into a Vec of `QubitIds`.

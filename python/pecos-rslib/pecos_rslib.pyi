@@ -132,6 +132,18 @@ class ScalarF64(Scalar):
 
     ...
 
+class ScalarAngle64(Scalar):
+    """Fixed-point angle scalar with 64-bit precision."""
+
+    @staticmethod
+    def from_radians(radians: float) -> ScalarAngle64: ...
+    @staticmethod
+    def from_turns(turns: float) -> ScalarAngle64: ...
+
+def lower_clifford_rotation(
+    symbol: str, angles: Sequence[float | ScalarAngle64]
+) -> list[tuple[str, tuple[int, ...]]]: ...
+
 class ScalarComplex64(Scalar):
     """64-bit complex number (32-bit real + 32-bit imag)."""
 
@@ -166,6 +178,7 @@ u32: type[ScalarU32]
 u64: type[ScalarU64]
 f32: type[ScalarF32]
 f64: type[ScalarF64]
+angle64: type[ScalarAngle64]
 complex64: type[ScalarComplex64]
 complex128: type[ScalarComplex128]
 

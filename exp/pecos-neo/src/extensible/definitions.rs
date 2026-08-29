@@ -221,6 +221,7 @@ impl GateDefinitions {
     /// Look up gate ID by name. O(log n).
     #[must_use]
     pub fn id_by_name(&self, name: &str) -> Option<GateId> {
+        let name = if name == "R1XY" { "RXY1Q" } else { name };
         self.name_to_id
             .binary_search_by_key(&name, |(n, _)| *n)
             .ok()
@@ -394,8 +395,8 @@ impl GateDefinitions {
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core_spec(
-            gates::R1XY,
-            GateSpec::new("R1XY")
+            gates::RXY1Q,
+            GateSpec::new("RXY1Q")
                 .with_angle_arity(2)
                 .with_category(GateCategory::SingleQubitUnitary),
         );
@@ -745,6 +746,8 @@ mod tests {
 
         assert_eq!(defs.id_by_name("H"), Some(gates::H));
         assert_eq!(defs.id_by_name("CX"), Some(gates::CX));
+        assert_eq!(defs.id_by_name("RXY1Q"), Some(gates::RXY1Q));
+        assert_eq!(defs.id_by_name("R1XY"), Some(gates::RXY1Q));
         assert_eq!(defs.id_by_name("NonExistent"), None);
 
         assert_eq!(defs.name(gates::H), Some("H"));

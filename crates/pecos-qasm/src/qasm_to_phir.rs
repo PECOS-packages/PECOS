@@ -338,7 +338,7 @@ fn gate_name_to_quantum_op(name: &str, params: &[f64]) -> Result<QuantumOp> {
         "ry" => Ok(QuantumOp::RY(angle_param(params, 0))),
         "rz" => Ok(QuantumOp::RZ(angle_param(params, 0))),
         "rzz" => Ok(QuantumOp::RZZ(angle_param(params, 0))),
-        "r1xy" => Ok(QuantumOp::R1XY(
+        "rxy1q" | "r1xy" => Ok(QuantumOp::RXY1Q(
             angle_param(params, 0),
             angle_param(params, 1),
         )),
@@ -373,7 +373,7 @@ fn gate_type_to_quantum_op(gate_type: GateType, params: &[f64]) -> Result<Quantu
         GateType::RY => Ok(QuantumOp::RY(angle_param(params, 0))),
         GateType::RZ => Ok(QuantumOp::RZ(angle_param(params, 0))),
         GateType::RZZ => Ok(QuantumOp::RZZ(angle_param(params, 0))),
-        GateType::R1XY => Ok(QuantumOp::R1XY(
+        GateType::RXY1Q => Ok(QuantumOp::RXY1Q(
             angle_param(params, 0),
             angle_param(params, 1),
         )),

@@ -1545,7 +1545,7 @@ impl<'a> DemBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY
+                | GateType::RXY1Q
                     if !loc.before =>
                 {
                     let rates = self.rates_1q_for_loc(loc);

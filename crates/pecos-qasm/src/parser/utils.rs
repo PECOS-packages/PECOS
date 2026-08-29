@@ -16,7 +16,7 @@ use pecos_core::prelude::{Gate, GateType, QubitId};
 
 /// Convert parsed parameters (radians) into angles and other params based on gate type.
 ///
-/// For rotation gates (RX, RY, RZ, RZZ, R1XY, U), parameters are angles in radians.
+/// For rotation gates (RX, RY, RZ, RZZ, RXY1Q, U), parameters are angles in radians.
 /// For other parameterized gates (like Idle), parameters are not angles.
 fn split_parameters(gate_type: GateType, parameters: &[f64]) -> (Vec<Angle64>, Vec<f64>) {
     let angle_count = gate_type.angle_arity();

@@ -20,7 +20,8 @@ import pytest
 from pecos.circuits import QuantumCircuit
 from pecos.engines.hybrid_engine_old import HybridEngine
 from pecos.exceptions import NotSupportedGateError
-from pecos.simulators import SparseStab, SparseStabPy, Stabilizer, StabVec
+from pecos.simulators import SparseStab, SparseStabPy, Stabilizer, StabVec, StateVec
+from pecos.simulators.gate_syms import alt_symbols
 from pecos_rslib import angle64, lower_clifford_rotation
 
 SIMULATORS = (SparseStab, Stabilizer, SparseStabPy, StabVec)
@@ -57,6 +58,8 @@ def _prepare_state(state: Any, preparation: str) -> None:
 
 
 def _snapshot(state: Any) -> Any:
+    if isinstance(state, StateVec):
+        return tuple((float(amplitude.real), float(amplitude.imag)) for amplitude in state.vector)
     if isinstance(state, StabVec):
         return state.state_vector()
     if hasattr(state, "stab_tableau"):
@@ -183,14 +186,14 @@ def test_pyo3_rotation_parameters_are_required_and_exact(simulator: type) -> Non
     with pytest.raises(ValueError, match="Expected a valid angle parameter"):
         state.bindings["RZ"](state, 0, angle="invalid")
     with pytest.raises(ValueError, match="requires 2 angle parameters"):
-        state.bindings["R1XY"](state, 0, angles=(0.0, 0.0, 0.0))
+        state.bindings["RXY1Q"](state, 0, angles=(0.0, 0.0, 0.0))
 
 
 @pytest.mark.parametrize("simulator", [SparseStab, Stabilizer])
 def test_multi_angle_pyo3_rotation_arms(simulator: type) -> None:
     """The additional Clifford-only pyo3 arms reach CliffordRotation."""
     cases = (
-        ("R1XY", 0, {"angles": (-math.pi / 2, 0.0)}, (("SXdg", 0),)),
+        ("RXY1Q", 0, {"angles": (-math.pi / 2, 0.0)}, (("SXdg", 0),)),
         ("U", 0, {"angles": (0.0, 0.0, -math.pi / 2)}, (("SZdg", 0),)),
         (
             "RXXRYYRZZ",
@@ -232,7 +235,7 @@ def test_stab_vec_multi_angle_rotation_arms_accept_non_clifford_values() -> None
     """StabVec routes new multi-angle symbols through arbitrary rotations."""
     cases = (
         (
-            "R1XY",
+            "RXY1Q",
             0,
             {"angles": (0.5, 0.25)},
             {"angles": (-math.pi / 2, 0.0)},
@@ -350,10 +353,42 @@ def test_lower_clifford_rotation_examples() -> None:
     assert lower_clifford_rotation("RZZ", [1.5 * math.pi]) == [("SZZdg", (0, 1))]
     assert lower_clifford_rotation("RZZ", [math.pi]) == [("Z", (0,)), ("Z", (1,))]
     assert lower_clifford_rotation("RZ", [0.0]) == [("I", (0,))]
-    assert lower_clifford_rotation("R1XY", [math.pi / 2, 0.0]) == [("SX", (0,))]
+    assert lower_clifford_rotation("RXY1Q", [math.pi / 2, 0.0]) == [("SX", (0,))]
+    assert lower_clifford_rotation("R1XY", [math.pi / 2, 0.0]) == lower_clifford_rotation(
+        "RXY1Q",
+        [math.pi / 2, 0.0],
+    )
     assert lower_clifford_rotation("RZ", [angle64.from_radians(math.pi / 2)]) == [
         ("SZ", (0,)),
     ]
+
+
+def test_xy_plane_rotation_legacy_symbol_canonicalization() -> None:
+    assert alt_symbols["R1XY"] == "RXY1Q"
+
+
+@pytest.mark.parametrize("simulator", [SparseStab, Stabilizer, StabVec, StateVec])
+def test_xy_plane_rotation_binding_alias_matches_canonical(simulator: type) -> None:
+    legacy_state = simulator(1)
+    canonical_state = simulator(1)
+
+    legacy_state.bindings["R1XY"](legacy_state, 0, angles=(math.pi / 2, 0.0))
+    canonical_state.bindings["RXY1Q"](canonical_state, 0, angles=(math.pi / 2, 0.0))
+
+    assert _snapshot(legacy_state) == _snapshot(canonical_state)
+
+
+@pytest.mark.parametrize("simulator", [SparseStab, StateVec])
+def test_xy_plane_rotation_string_aliases_run_identically_through_legacy_engine(simulator: type) -> None:
+    snapshots = []
+    for symbol in ("RXY1Q", "R1XY", "U1q"):
+        circuit = QuantumCircuit()
+        circuit.append(symbol, {0}, angles=(math.pi / 2, 0.0))
+        state = simulator(1)
+        HybridEngine().run(state, circuit, shot_id=0)
+        snapshots.append(_snapshot(state))
+
+    assert snapshots[0] == snapshots[1] == snapshots[2]
 
 
 @pytest.mark.parametrize("symbol", ["U", "RXXRYYRZZ"])
@@ -371,5 +406,5 @@ def test_lower_clifford_rotation_rejects_non_clifford_angle() -> None:
 
 def test_lower_clifford_rotation_rejects_wrong_angle_count() -> None:
     """The table helper requires the exact arity for its rotation symbol."""
-    with pytest.raises(ValueError, match="R1XY requires 2 angle parameters"):
-        lower_clifford_rotation("R1XY", [0.0])
+    with pytest.raises(ValueError, match="RXY1Q requires 2 angle parameters"):
+        lower_clifford_rotation("RXY1Q", [0.0])

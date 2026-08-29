@@ -393,6 +393,8 @@ fn test_registry_new_has_core_gates() {
     assert!(registry.get(gates::RZ).is_some());
     assert!(registry.get(gates::MZ).is_some());
     assert!(registry.get(gates::PZ).is_some());
+    assert_eq!(registry.lookup("RXY1Q"), Some(gates::RXY1Q));
+    assert_eq!(registry.lookup("R1XY"), Some(gates::RXY1Q));
 }
 
 #[test]

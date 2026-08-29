@@ -375,12 +375,12 @@ impl QASMEngine {
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn handle_r1xy(
+    fn handle_rxy1q(
         engine: &mut QASMEngine,
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.r1xy(
+        engine.message_builder.rxy1q(
             Angle64::from_radians(params[0]),
             Angle64::from_radians(params[1]),
             &[qubits[0]],
@@ -569,12 +569,12 @@ impl QASMEngine {
                     }
                 }
             }
-            GateType::R1XY => {
+            GateType::RXY1Q => {
                 if params.len() >= 2 {
                     let theta = params[0];
                     let phi = params[1];
                     for &qubit in qubits {
-                        self.message_builder.r1xy(
+                        self.message_builder.rxy1q(
                             Angle64::from_radians(theta),
                             Angle64::from_radians(phi),
                             &[qubit],
@@ -661,7 +661,7 @@ impl QASMEngine {
             | GateType::RZZ
             | GateType::RXXRYYRZZ
             | GateType::U2q
-            | GateType::R1XY
+            | GateType::RXY1Q
             | GateType::U => {
                 // Convert angles to radians for process_parameterized_gate
                 let angles_as_radians: Vec<f64> = gate
@@ -758,10 +758,10 @@ impl QASMEngine {
                 handler: Self::handle_ry,
             },
             G {
-                name: "r1xy",
+                name: "rxy1q",
                 required_qubits: 1,
                 required_params: 2,
-                handler: Self::handle_r1xy,
+                handler: Self::handle_rxy1q,
             },
             // Two-qubit gates
             G {

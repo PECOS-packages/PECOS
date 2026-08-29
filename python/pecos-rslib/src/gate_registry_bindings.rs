@@ -17,7 +17,7 @@ use pecos_core::Value;
 use pecos_core::gate_type::GateType;
 use pecos_core::{
     Angle64, AngleSource, GateDefinitionBuilder, GateRegistry, QubitId, half_turn_decomposition,
-    try_simplify_r1xy, try_simplify_rotation,
+    try_simplify_rotation, try_simplify_rxy1q,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
@@ -43,7 +43,7 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         "T" => Ok(GateType::T),
         "Tdg" => Ok(GateType::Tdg),
         "U" => Ok(GateType::U),
-        "R1XY" => Ok(GateType::R1XY),
+        "RXY1Q" | "R1XY" => Ok(GateType::RXY1Q),
         "CX" | "CNOT" => Ok(GateType::CX),
         "CY" => Ok(GateType::CY),
         "CZ" => Ok(GateType::CZ),
@@ -86,7 +86,7 @@ fn lower_clifford_rotation(
         | GateType::RZZ
         | GateType::RXX
         | GateType::RYY => 1,
-        GateType::R1XY => 2,
+        GateType::RXY1Q => 2,
         _ => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "{symbol} is unsupported by lower_clifford_rotation"
@@ -101,8 +101,8 @@ fn lower_clifford_rotation(
     let angles: Vec<Angle64> = angles.into_iter().map(|angle| angle.0).collect();
 
     let lowered = match gate {
-        GateType::R1XY => {
-            try_simplify_r1xy(angles[0], angles[1]).map(|named| vec![(named, vec![0])])
+        GateType::RXY1Q => {
+            try_simplify_rxy1q(angles[0], angles[1]).map(|named| vec![(named, vec![0])])
         }
         GateType::RZ | GateType::RX | GateType::RY => {
             try_simplify_rotation(gate, angles[0]).map(|named| vec![(named, vec![0])])
@@ -123,9 +123,9 @@ fn lower_clifford_rotation(
     };
 
     let lowered = lowered.ok_or_else(|| {
-        let message = if gate == GateType::R1XY {
+        let message = if gate == GateType::RXY1Q {
             format!(
-                "R1XY(theta={}, phi={}) is not a Clifford rotation",
+                "RXY1Q(theta={}, phi={}) is not a Clifford rotation",
                 angles[0], angles[1]
             )
         } else {

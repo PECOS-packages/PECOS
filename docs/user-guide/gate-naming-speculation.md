@@ -93,26 +93,10 @@ There is an ambiguity with rotation gates that reference two axes:
 | RXY | Single-qubit rotation in XY plane | Bloch sphere interpretation |
 | RXY | Two-qubit exp(-i θ XY/2) | Following RXX/RYY/RZZ pattern |
 
-Currently, PECOS uses `R1XY` for the single-qubit XY-plane rotation, where the `1` indicates single-qubit. However, this is not immediately obvious.
+PECOS chose `RXY1Q`: because `XY` denotes a plane rather than a Pauli string, the `1Q` suffix makes the arity explicit and leaves `RXY2Q` available for a two-qubit `X ⊗ Y` rotation. `PhasedX` was rejected because it describes a related convention rather than the generator directly, bare `R` was too ambiguous, and `R1XY` placed the arity inside the base instead of following the general qubit-count suffix rule.
 
-**Potential naming schemes:**
-
-| Single-Qubit (XY plane) | Two-Qubit (XY interaction) | Notes |
-|------------------------|---------------------------|-------|
-| R1XY | RXY | Current PECOS convention |
-| R1qXY | R2qXY | Explicit qubit count |
-| RPXY | RXY | "P" for plane |
-| RPLXY | RXY | "PL" for plane |
-
-**Considerations:**
-- The `RXX/RYY/RZZ` pattern strongly suggests two-qubit interactions
-- Single-qubit plane rotations are less common, so longer names may be acceptable
-- `R1XY` works but the `1` prefix is unique to this gate
-- Names must be valid identifiers (no special characters, case-insensitive)
-
-**Current behavior:**
 ```
-R1XY(θ, φ) = RZ(-φ + π/2) · RY(θ) · RZ(φ - π/2)
+RXY1Q(θ, φ) = RZ(-φ + π/2) · RY(θ) · RZ(φ - π/2)
 ```
 This rotates by angle θ around an axis in the XY plane specified by φ.
 

@@ -93,12 +93,12 @@ pub trait CliffordRotation: CliffordGateable {
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String>;
 
-    /// Try to apply R1XY(theta, phi). Succeeds when the combination maps to a
+    /// Try to apply RXY1Q(theta, phi). Succeeds when the combination maps to a
     /// named Clifford (identity, X, Y, SX, `SXdg`, SY, `SYdg`).
     ///
     /// # Errors
     /// Returns `Err` with a message if the angle combination is not a recognized Clifford.
-    fn try_r1xy(
+    fn try_rxy1q(
         &mut self,
         theta: Angle64,
         phi: Angle64,
@@ -216,19 +216,19 @@ impl<T: CliffordGateable> CliffordRotation for T {
         Ok(self)
     }
 
-    fn try_r1xy(
+    fn try_rxy1q(
         &mut self,
         theta: Angle64,
         phi: Angle64,
         qubits: &[QubitId],
     ) -> Result<&mut Self, String> {
-        match pecos_core::try_simplify_r1xy(theta, phi) {
+        match pecos_core::try_simplify_rxy1q(theta, phi) {
             Some(clifford) => {
                 dispatch_single_qubit_clifford(self, clifford, qubits)?;
                 Ok(self)
             }
             None => Err(format!(
-                "R1XY(theta={theta}, phi={phi}) is not a Clifford rotation"
+                "RXY1Q(theta={theta}, phi={phi}) is not a Clifford rotation"
             )),
         }
     }
@@ -602,91 +602,91 @@ mod tests {
     }
 
     #[test]
-    fn try_r1xy_identity() {
+    fn try_rxy1q_identity() {
         let mut sim = SparseStab::new(1);
-        assert!(sim.try_r1xy(Angle64::ZERO, Angle64::ZERO, &qid(0)).is_ok());
+        assert!(sim.try_rxy1q(Angle64::ZERO, Angle64::ZERO, &qid(0)).is_ok());
     }
 
     #[test]
-    fn try_r1xy_x_gate() {
+    fn try_rxy1q_x_gate() {
         let mut sim = SparseStab::new(1);
         assert!(
-            sim.try_r1xy(Angle64::HALF_TURN, Angle64::ZERO, &qid(0))
+            sim.try_rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &qid(0))
                 .is_ok()
         );
     }
 
     #[test]
-    fn try_r1xy_y_gate() {
+    fn try_rxy1q_y_gate() {
         let mut sim = SparseStab::new(1);
         assert!(
-            sim.try_r1xy(Angle64::HALF_TURN, Angle64::QUARTER_TURN, &qid(0))
+            sim.try_rxy1q(Angle64::HALF_TURN, Angle64::QUARTER_TURN, &qid(0))
                 .is_ok()
         );
     }
 
     #[test]
-    fn try_r1xy_sx_gate() {
+    fn try_rxy1q_sx_gate() {
         let mut sim = SparseStab::new(1);
         assert!(
-            sim.try_r1xy(Angle64::QUARTER_TURN, Angle64::ZERO, &qid(0))
+            sim.try_rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &qid(0))
                 .is_ok()
         );
     }
 
     #[test]
-    fn try_r1xy_sxdg_gate() {
+    fn try_rxy1q_sxdg_gate() {
         let mut sim = SparseStab::new(1);
         assert!(
-            sim.try_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::ZERO, &qid(0))
+            sim.try_rxy1q(Angle64::THREE_QUARTERS_TURN, Angle64::ZERO, &qid(0))
                 .is_ok()
         );
     }
 
     #[test]
-    fn try_r1xy_sy_gate() {
+    fn try_rxy1q_sy_gate() {
         let mut sim = SparseStab::new(1);
         assert!(
-            sim.try_r1xy(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &qid(0))
+            sim.try_rxy1q(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &qid(0))
                 .is_ok()
         );
     }
 
     #[test]
-    fn try_r1xy_sydg_gate() {
+    fn try_rxy1q_sydg_gate() {
         let mut sim = SparseStab::new(1);
         assert!(
-            sim.try_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::QUARTER_TURN, &qid(0))
+            sim.try_rxy1q(Angle64::THREE_QUARTERS_TURN, Angle64::QUARTER_TURN, &qid(0))
                 .is_ok()
         );
     }
 
     #[test]
-    fn try_r1xy_negated_axis() {
+    fn try_rxy1q_negated_axis() {
         let mut sim = SparseStab::new(1);
         // phi=pi (-X axis): equivalent to X
         assert!(
-            sim.try_r1xy(Angle64::HALF_TURN, Angle64::HALF_TURN, &qid(0))
+            sim.try_rxy1q(Angle64::HALF_TURN, Angle64::HALF_TURN, &qid(0))
                 .is_ok()
         );
         // phi=3pi/2 (-Y axis): equivalent to Y
         assert!(
-            sim.try_r1xy(Angle64::HALF_TURN, Angle64::THREE_QUARTERS_TURN, &qid(0))
+            sim.try_rxy1q(Angle64::HALF_TURN, Angle64::THREE_QUARTERS_TURN, &qid(0))
                 .is_ok()
         );
     }
 
     #[test]
-    fn try_r1xy_non_clifford_fails() {
+    fn try_rxy1q_non_clifford_fails() {
         let mut sim = SparseStab::new(1);
         // Non-Clifford theta
         assert!(
-            sim.try_r1xy(Angle64::from_radians(0.123), Angle64::ZERO, &qid(0))
+            sim.try_rxy1q(Angle64::from_radians(0.123), Angle64::ZERO, &qid(0))
                 .is_err()
         );
         // Non-axis phi (pi/4 is not along X or Y)
         assert!(
-            sim.try_r1xy(Angle64::HALF_TURN, Angle64::QUARTER_TURN / 2u64, &qid(0))
+            sim.try_rxy1q(Angle64::HALF_TURN, Angle64::QUARTER_TURN / 2u64, &qid(0))
                 .is_err()
         );
     }

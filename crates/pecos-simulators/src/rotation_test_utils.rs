@@ -604,105 +604,105 @@ pub fn verify_u_after_clifford_ordering<S: ArbitraryRotationGateable>(sim: &mut 
     );
 }
 
-// --- R1XY Gate Tests ---
+// --- RXY1Q Gate Tests ---
 
-/// Verify R1XY(0, phi) = I for any phi.
-pub fn verify_r1xy_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
+/// Verify RXY1Q(0, phi) = I for any phi.
+pub fn verify_rxy1q_identity<S: ArbitraryRotationGateable>(sim: &mut S) {
     let phi_values: &[f64] = &[0.0, FRAC_PI_4, FRAC_PI_2, PI, -1.3];
 
     for &phi in phi_values {
         sim.reset();
-        sim.r1xy(
+        sim.rxy1q(
             Angle64::from_radians(0.0),
             Angle64::from_radians(phi),
             &qid(0),
         );
-        assert_mz(sim, 0, false, &format!("R1XY(0, {phi})|0>"));
+        assert_mz(sim, 0, false, &format!("RXY1Q(0, {phi})|0>"));
 
         sim.reset();
         sim.h(&qid(0));
-        sim.r1xy(
+        sim.rxy1q(
             Angle64::from_radians(0.0),
             Angle64::from_radians(phi),
             &qid(0),
         );
-        assert_mx(sim, 0, false, &format!("R1XY(0, {phi})|+>"));
+        assert_mx(sim, 0, false, &format!("RXY1Q(0, {phi})|+>"));
     }
 }
 
-/// Verify R1XY(theta, pi/2) = RX(theta) (up to global phase).
-pub fn verify_r1xy_as_rx<S: ArbitraryRotationGateable>(sim: &mut S) {
-    // R1XY(pi, pi/2) should act like RX(pi) = X (up to phase)
+/// Verify RXY1Q(theta, pi/2) = RX(theta) (up to global phase).
+pub fn verify_rxy1q_as_rx<S: ArbitraryRotationGateable>(sim: &mut S) {
+    // RXY1Q(pi, pi/2) should act like RX(pi) = X (up to phase)
     sim.reset();
-    sim.r1xy(
+    sim.rxy1q(
         Angle64::from_radians(PI),
         Angle64::from_radians(FRAC_PI_2),
         &qid(0),
     );
-    assert_mz(sim, 0, true, "R1XY(pi, pi/2)|0> = RX(pi)|0> = |1>");
+    assert_mz(sim, 0, true, "RXY1Q(pi, pi/2)|0> = RX(pi)|0> = |1>");
 
     sim.reset();
     sim.x(&qid(0));
-    sim.r1xy(
+    sim.rxy1q(
         Angle64::from_radians(PI),
         Angle64::from_radians(FRAC_PI_2),
         &qid(0),
     );
-    assert_mz(sim, 0, false, "R1XY(pi, pi/2)|1> = RX(pi)|1> = |0>");
+    assert_mz(sim, 0, false, "RXY1Q(pi, pi/2)|1> = RX(pi)|1> = |0>");
 }
 
-/// Verify R1XY(theta, 0) = RY(theta) (up to global phase).
-pub fn verify_r1xy_as_ry<S: ArbitraryRotationGateable>(sim: &mut S) {
-    // R1XY(pi, 0) should act like RY(pi) = Y (up to phase)
+/// Verify RXY1Q(theta, 0) = RY(theta) (up to global phase).
+pub fn verify_rxy1q_as_ry<S: ArbitraryRotationGateable>(sim: &mut S) {
+    // RXY1Q(pi, 0) should act like RY(pi) = Y (up to phase)
     sim.reset();
-    sim.r1xy(
+    sim.rxy1q(
         Angle64::from_radians(PI),
         Angle64::from_radians(0.0),
         &qid(0),
     );
-    assert_mz(sim, 0, true, "R1XY(pi, 0)|0> = RY(pi)|0> = |1>");
+    assert_mz(sim, 0, true, "RXY1Q(pi, 0)|0> = RY(pi)|0> = |1>");
 
     sim.reset();
     sim.x(&qid(0));
-    sim.r1xy(
+    sim.rxy1q(
         Angle64::from_radians(PI),
         Angle64::from_radians(0.0),
         &qid(0),
     );
-    assert_mz(sim, 0, false, "R1XY(pi, 0)|1> = RY(pi)|1> = |0>");
+    assert_mz(sim, 0, false, "RXY1Q(pi, 0)|1> = RY(pi)|1> = |0>");
 }
 
-/// Verify R1XY(theta, phi) * R1XY(-theta, phi) = I.
-pub fn verify_r1xy_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
+/// Verify RXY1Q(theta, phi) * RXY1Q(-theta, phi) = I.
+pub fn verify_rxy1q_inverse<S: ArbitraryRotationGateable>(sim: &mut S) {
     let cases: &[(f64, f64)] = &[(0.7, 0.3), (PI, FRAC_PI_2), (1.5, -0.8)];
 
     for &(theta, phi) in cases {
         sim.reset();
-        sim.r1xy(
+        sim.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qid(0),
         );
-        sim.r1xy(
+        sim.rxy1q(
             Angle64::from_radians(-theta),
             Angle64::from_radians(phi),
             &qid(0),
         );
-        assert_mz(sim, 0, false, &format!("R1XY*R1XY_inv|0> theta={theta}"));
+        assert_mz(sim, 0, false, &format!("RXY1Q*RXY1Q_inv|0> theta={theta}"));
 
         sim.reset();
         sim.h(&qid(0));
-        sim.r1xy(
+        sim.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qid(0),
         );
-        sim.r1xy(
+        sim.rxy1q(
             Angle64::from_radians(-theta),
             Angle64::from_radians(phi),
             &qid(0),
         );
-        assert_mx(sim, 0, false, &format!("R1XY*R1XY_inv|+> theta={theta}"));
+        assert_mx(sim, 0, false, &format!("RXY1Q*RXY1Q_inv|+> theta={theta}"));
     }
 }
 
@@ -1132,11 +1132,11 @@ pub fn run_rotation_gate_tests<S: ArbitraryRotationGateable>(sim: &mut S, num_qu
     verify_u_inverse(sim);
     verify_u_after_clifford_ordering(sim);
 
-    // -- R1XY gate --
-    verify_r1xy_identity(sim);
-    verify_r1xy_as_rx(sim);
-    verify_r1xy_as_ry(sim);
-    verify_r1xy_inverse(sim);
+    // -- RXY1Q gate --
+    verify_rxy1q_identity(sim);
+    verify_rxy1q_as_rx(sim);
+    verify_rxy1q_as_ry(sim);
+    verify_rxy1q_inverse(sim);
 
     // -- Half-pi Clifford equivalences --
     verify_rz_half_pi_is_sz(sim);

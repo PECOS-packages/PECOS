@@ -53,12 +53,12 @@ gate tdg() a {
 
 // X-axis rotation
 gate rx(theta) a {
-  R1XY(theta, 0) a;
+  RXY1Q(theta, 0) a;
 }
 
 // Y-axis rotation
 gate ry(theta) a {
-  R1XY(theta, pi/2) a;
+  RXY1Q(theta, pi/2) a;
 }
 
 // Z-axis rotation (alias for native RZ)
@@ -89,9 +89,9 @@ gate cz() a,b {
 
 // === HQS-specific gate aliases for compatibility ===
 
-// U1q is directly implemented using native R1XY
+// U1q is directly implemented using native RXY1Q
 gate U1q(theta, phi) q {
-  R1XY(theta, phi) q;
+  RXY1Q(theta, phi) q;
 }
 
 // Rz is directly implemented using native RZ (case difference)

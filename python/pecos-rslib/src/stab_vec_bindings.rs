@@ -203,9 +203,9 @@ impl PyStabVec {
                 self.inner.rz(angle, q);
                 Ok(None)
             }
-            "R1XY" => {
-                let angles = extract_angles(params, "R1XY", 2)?;
-                self.inner.r1xy(angles[0], angles[1], q);
+            "RXY1Q" | "R1XY" => {
+                let angles = extract_angles(params, "RXY1Q", 2)?;
+                self.inner.rxy1q(angles[0], angles[1], q);
                 Ok(None)
             }
             "U" => {

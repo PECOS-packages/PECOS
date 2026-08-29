@@ -280,9 +280,9 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                     result.map_err(PecosError::Processing)?;
                 }
             }
-            GateType::R1XY => {
+            GateType::RXY1Q => {
                 if cmd.angles.len() >= 2 {
-                    sim.try_r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits)
+                    sim.try_rxy1q(cmd.angles[0], cmd.angles[1], &cmd.qubits)
                         .map_err(PecosError::Processing)?;
                 }
             }
@@ -555,9 +555,9 @@ fn process_general_message<
                     }
                 }
             }
-            GateType::R1XY => {
+            GateType::RXY1Q => {
                 if cmd.angles.len() >= 2 {
-                    sim.r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits);
+                    sim.rxy1q(cmd.angles[0], cmd.angles[1], &cmd.qubits);
                 }
             }
             GateType::U => {
@@ -1165,15 +1165,15 @@ where
                         self.simulator.rz(angle, &cmd.qubits);
                     }
                 }
-                GateType::R1XY => {
+                GateType::RXY1Q => {
                     if cmd.angles.len() >= 2 {
                         let theta = cmd.angles[0];
                         let phi = cmd.angles[1];
                         debug!(
-                            "Processing R1XY gate with angles theta={theta:?}, phi={phi:?} on qubits {:?}",
+                            "Processing RXY1Q gate with angles theta={theta:?}, phi={phi:?} on qubits {:?}",
                             cmd.qubits
                         );
-                        self.simulator.r1xy(theta, phi, &cmd.qubits);
+                        self.simulator.rxy1q(theta, phi, &cmd.qubits);
                     }
                 }
 

@@ -1555,7 +1555,7 @@ impl OperationProcessor {
                 }
 
                 // R1XY convention: angles[0] = theta (rotation angle), angles[1] = phi (axis angle)
-                // See: R1XY = RZ(phi-pi/2) * RY(theta) * RZ(phi-pi/2)
+                // See: R1XY = RZ(-phi + pi/2) * RY(theta) * RZ(phi - pi/2) (the two Z angles sum to zero)
                 let theta = angles_ref[0];
                 let phi = angles_ref[1];
                 Ok((qop.to_string(), qubit_args, vec![theta, phi]))
@@ -1637,7 +1637,7 @@ impl OperationProcessor {
                 builder.rz(Angle64::from_radians(angle_args[0]), &[qubit_args[0]]);
             }
             "R1XY" => {
-                builder.r1xy(
+                builder.rxy1q(
                     Angle64::from_radians(angle_args[0]),
                     Angle64::from_radians(angle_args[1]),
                     &[qubit_args[0]],

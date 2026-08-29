@@ -1570,7 +1570,7 @@ static CORE_ANGLE_ARITY: [u8; 256] = const {
     table[gates::RY.0 as usize] = 1;
     table[gates::RZ.0 as usize] = 1;
     table[gates::RZZ.0 as usize] = 1;
-    table[gates::R1XY.0 as usize] = 2;
+    table[gates::RXY1Q.0 as usize] = 2;
     table[gates::U.0 as usize] = 3;
     // ...
     table

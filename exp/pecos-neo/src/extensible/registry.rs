@@ -131,8 +131,8 @@ impl GateRegistry {
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
-            gates::R1XY,
-            &GateSpec::new("R1XY")
+            gates::RXY1Q,
+            &GateSpec::new("RXY1Q")
                 .with_angle_arity(2)
                 .with_category(GateCategory::SingleQubitUnitary),
         );
@@ -362,6 +362,7 @@ impl GateRegistry {
     /// Only used at parse time, never in simulation hot path.
     #[must_use]
     pub fn lookup(&self, name: &str) -> Option<GateId> {
+        let name = if name == "R1XY" { "RXY1Q" } else { name };
         self.name_index
             .binary_search_by_key(&name, |(n, _)| *n)
             .ok()

@@ -101,8 +101,8 @@ fn test_hqslib1_rotation_gates() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse rotation gates");
 
-    // rx and ry expand to R1XY, rz is native
-    assert!(count_gate(&program.operations, "R1XY") >= 4);
+    // rx and ry expand to RXY1Q, rz is native
+    assert!(count_gate(&program.operations, "RXY1Q") >= 4);
     assert!(count_gate(&program.operations, "RZ") >= 2);
 }
 
@@ -122,10 +122,10 @@ fn test_hqslib1_universal_gates() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse universal gates");
 
-    // U/u stay native and phase-exact; U1q is directly R1XY.
+    // U/u stay native and phase-exact; U1q is directly RXY1Q.
     let gate_names = get_gate_names(&program.operations);
     assert_eq!(count_gate(&program.operations, "U"), 2);
-    assert!(gate_names.contains(&"R1XY".to_string()));
+    assert!(gate_names.contains(&"RXY1Q".to_string()));
 }
 
 #[test]
@@ -292,7 +292,7 @@ fn test_hqslib1_complex_circuit() {
     // Verify various gates are present
     assert!(count_gate(&program.operations, "H") >= 2);
     assert!(count_gate(&program.operations, "SZZ") >= 1);
-    assert!(count_gate(&program.operations, "R1XY") >= 1);
+    assert!(count_gate(&program.operations, "RXY1Q") >= 1);
     assert!(count_gate(&program.operations, "CX") >= 1);
 }
 

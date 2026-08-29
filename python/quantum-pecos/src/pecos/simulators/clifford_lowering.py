@@ -34,9 +34,9 @@ def _rotation_binding(
     symbol: str,
 ) -> Callable[..., None]:
     def apply_rotation(state: _BindingState, location: int | tuple[int, ...], **params: object) -> None:
-        if symbol == "R1XY":
+        if symbol in {"RXY1Q", "R1XY"}:
             if "angles" not in params:
-                msg = "R1XY requires an 'angles' parameter"
+                msg = "RXY1Q requires an 'angles' parameter"
                 raise ValueError(msg)
             angles = params["angles"]
         else:
@@ -61,5 +61,5 @@ def _rotation_binding(
 
 def install_clifford_rotation_bindings(bindings: dict[str, Callable[..., object]]) -> None:
     """Install rotations that lower through the shared Rust Clifford table."""
-    for symbol in (*_ONE_ANGLE_ROTATIONS, "R1XY"):
+    for symbol in (*_ONE_ANGLE_ROTATIONS, "RXY1Q", "R1XY"):
         bindings[symbol] = _rotation_binding(symbol)

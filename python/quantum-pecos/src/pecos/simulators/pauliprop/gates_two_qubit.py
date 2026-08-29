@@ -1,4 +1,4 @@
-# Copyright 2018 The PECOS Developers
+# Copyright 2026 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -13,6 +13,8 @@
 
 This module provides two-qubit quantum gate operations for the Pauli fault propagation simulator, including Clifford
 gates and their effect on Pauli frame propagation for efficient stabilizer circuit simulation with entangling gates.
+
+This module is a legacy reference implementation and is not used by ``PauliProp``.
 """
 
 from __future__ import annotations
@@ -154,21 +156,21 @@ def CY(state: PauliProp, qubits: tuple[int, int]) -> None:
     """Applies the controlled-Y gate.
 
     II -> II
-    XI -> XZ
+    XI -> XY
     ZI -> ZI
-    YI -> YZ
+    YI -> YY
     IX -> ZX
-    IZ -> IZ
-    IY -> ZY
-    XX -> YY
-    XZ -> XI
-    XY -> -YX
+    IZ -> ZZ
+    IY -> IY
+    XX -> -YZ
+    XZ -> YX
+    XY -> XI
     ZX -> IX
-    ZZ -> ZZ
-    ZY -> IY
-    YX -> -XY
-    YZ -> YI
-    YY -> XX
+    ZZ -> IZ
+    ZY -> ZY
+    YX -> XZ
+    YZ -> -XX
+    YY -> YI
 
     state (SparseStabPy): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
@@ -176,7 +178,7 @@ def CY(state: PauliProp, qubits: tuple[int, int]) -> None:
     Returns: None
 
     """
-    SZ(state, qubits[1])
+    SZdg(state, qubits[1])
     CX(state, qubits)
     SZ(state, qubits[1])
 

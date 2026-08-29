@@ -1,4 +1,4 @@
-// Copyright 2025 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 
 use pyo3::ffi::c_str;
 use pyo3::prelude::*;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyModule};
 use std::collections::HashMap;
 
@@ -43,6 +44,8 @@ pub struct GateBindingsDict {
     cache: HashMap<String, Py<PyAny>>,
 }
 
+static GATE_LAMBDA_FACTORY: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+
 impl GateBindingsDict {
     /// Create a new `GateBindingsDict` from Rust code.
     pub fn new(sim: Py<PyAny>) -> Self {
@@ -66,46 +69,44 @@ impl GateBindingsDict {
             return Ok(cached.clone_ref(py));
         }
 
-        // Create a closure that calls run_gate
-        let sim = self.sim.clone_ref(py);
         let gate_name = key.to_string();
 
-        // Create a Python function that wraps the gate call
-        let locals = PyDict::new(py);
-        locals.set_item("sim", sim)?;
-        locals.set_item("gate_name", &gate_name)?;
+        let factory = GATE_LAMBDA_FACTORY.get_or_try_init(py, || {
+            let code = c_str!(
+                r#"
+def make_gate_lambda(sim, gate_name):
+    def gate_lambda(simulator, location, **params):
+        if isinstance(location, int):
+            loc_tuple = (location,)
+        elif isinstance(location, list):
+            loc_tuple = tuple(location)
+        else:
+            loc_tuple = location
 
-        // Define a wrapper function in Python using PyModule::from_code
-        let code = c_str!(
-            r#"
-def gate_lambda(simulator, location, **params):
-    # Convert location to tuple
-    if isinstance(location, int):
-        loc_tuple = (location,)
-    elif isinstance(location, list):
-        loc_tuple = tuple(location)
-    else:
-        loc_tuple = location
+        loc_set = {loc_tuple}
+        result_dict = sim.run_gate(gate_name, loc_set, **params)
 
-    # Wrap in a set (run_gate expects a set of locations)
-    loc_set = {loc_tuple}
+        if result_dict:
+            if isinstance(location, int) and location in result_dict:
+                return result_dict[location]
+            return result_dict.get(loc_tuple)
+        return None
 
-    # Call run_gate
-    result_dict = sim.run_gate(gate_name, loc_set, **params)
-
-    # Extract the result for this specific location
-    if result_dict:
-        return result_dict.get(location) or result_dict.get(loc_tuple)
-    return None
+    return gate_lambda
 "#
-        );
-
-        // Create a module with the code and inject the sim and gate_name
-        let module =
-            PyModule::from_code(py, code, c_str!("gate_bindings"), c_str!("gate_bindings"))?;
-        module.setattr("sim", self.sim.clone_ref(py))?;
-        module.setattr("gate_name", &gate_name)?;
-        let gate_lambda = module.getattr("gate_lambda")?.unbind();
+            );
+            let module = PyModule::from_code(
+                py,
+                code,
+                c_str!("_pecos_gate_bindings"),
+                c_str!("_pecos_gate_bindings"),
+            )?;
+            Ok::<_, PyErr>(module.getattr("make_gate_lambda")?.unbind())
+        })?;
+        let gate_lambda = factory
+            .bind(py)
+            .call1((self.sim.clone_ref(py), &gate_name))?
+            .unbind();
 
         // Cache the lambda
         self.cache
@@ -477,7 +478,7 @@ pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
         // Two-qubit Clifford gates (no return value)
         "CX" | "CNOT" | "CY" | "CZ" | "SZZ" | "SZZdg" | "SXX" | "SXXdg" | "SYY" | "SYYdg"
         | "SqrtZZ" | "SqrtZZd" | "SqrtXX" | "SqrtXXd" | "SqrtYY" | "SqrtYYd" | "SWAP" | "G"
-        | "G2" => {
+        | "G2" | "Gdg" | "ISWAP" | "ISWAPdg" => {
             let pairs = collect_pairs(locations)?;
             match symbol {
                 "CX" | "CNOT" => {
@@ -512,6 +513,15 @@ pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
                 }
                 "G" | "G2" => {
                     sim.g(&pairs);
+                }
+                "Gdg" => {
+                    sim.gdg(&pairs);
+                }
+                "ISWAP" => {
+                    sim.iswap(&pairs);
+                }
+                "ISWAPdg" => {
+                    sim.iswapdg(&pairs);
                 }
                 _ => unreachable!(),
             }

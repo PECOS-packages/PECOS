@@ -319,6 +319,18 @@ impl PyStabVec {
                 self.inner.g(pair);
                 Ok(None)
             }
+            "Gdg" => {
+                self.inner.gdg(pair);
+                Ok(None)
+            }
+            "ISWAP" => {
+                self.inner.iswap(pair);
+                Ok(None)
+            }
+            "ISWAPdg" => {
+                self.inner.iswapdg(pair);
+                Ok(None)
+            }
             "II" => Ok(None),
 
             // Two-qubit rotation gates

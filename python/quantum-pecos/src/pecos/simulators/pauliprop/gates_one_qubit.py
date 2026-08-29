@@ -1,4 +1,4 @@
-# Copyright 2018 The PECOS Developers
+# Copyright 2026 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -13,6 +13,8 @@
 
 This module provides single-qubit quantum gate operations for the Pauli fault propagation simulator, including
 Clifford gates and their effect on Pauli frame propagation for efficient stabilizer circuit simulation.
+
+This module is a legacy reference implementation and is not used by ``PauliProp``.
 """
 
 from __future__ import annotations
@@ -319,7 +321,7 @@ def H2(state: PauliProp, qubit: int, **_params: SimulatorGateParams) -> None:
     Returns: None
 
     """
-    if state.track_sign:
+    if state.track_sign and any(qubit in faults for faults in state.faults.values()):
         state.flip_sign()
 
     switch(
@@ -373,7 +375,7 @@ def H4(state: PauliProp, qubit: int, **_params: SimulatorGateParams) -> None:
     Returns: None
 
     """
-    if state.track_sign:
+    if state.track_sign and any(qubit in faults for faults in state.faults.values()):
         state.flip_sign()
 
     switch(
@@ -427,7 +429,7 @@ def H6(state: PauliProp, qubit: int, **_params: SimulatorGateParams) -> None:
     Returns: None
 
     """
-    if state.track_sign:
+    if state.track_sign and any(qubit in faults for faults in state.faults.values()):
         state.flip_sign()
 
     switch(

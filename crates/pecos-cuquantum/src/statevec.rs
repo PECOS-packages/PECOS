@@ -4,7 +4,8 @@
 //! which accelerates state vector quantum simulation on CUDA GPUs.
 
 use crate::error::{CuQuantumError, Result, TryClone, check_status};
-use pecos_core::{Angle64, QubitId};
+use pecos_core::gate_type::GateType;
+use pecos_core::{Angle64, Clifford, QubitId};
 use pecos_cuquantum_sys::{
     CuQuantumBackend, cuDoubleComplex, cudaDataType_t, cudaMemcpyKind_cudaMemcpyDeviceToDevice,
     cudaMemcpyKind_cudaMemcpyHostToDevice, custatevecCollapseOp_t, custatevecComputeType_t,
@@ -15,6 +16,30 @@ use pecos_simulators::{
 };
 use std::ffi::c_void;
 use std::ptr;
+
+const fn canonical_single_qubit_matrix(gate: GateType) -> [[f64; 2]; 4] {
+    let Some(matrix) = gate.canonical_1q_matrix() else {
+        panic!("gate has no canonical single-qubit matrix");
+    };
+    [
+        [matrix[0], matrix[1]],
+        [matrix[2], matrix[3]],
+        [matrix[4], matrix[5]],
+        [matrix[6], matrix[7]],
+    ]
+}
+
+const fn canonical_clifford_matrix(gate: Clifford) -> [[f64; 2]; 4] {
+    let Some(matrix) = gate.canonical_1q_matrix() else {
+        panic!("gate has no canonical single-qubit Clifford matrix");
+    };
+    [
+        [matrix[0], matrix[1]],
+        [matrix[2], matrix[3]],
+        [matrix[4], matrix[5]],
+        [matrix[6], matrix[7]],
+    ]
+}
 
 /// State vector simulator using NVIDIA cuStateVec
 ///
@@ -547,8 +572,7 @@ impl QuantumSimulator for CuStateVec {
 
 impl CliffordGateable for CuStateVec {
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // S gate = [[1, 0], [0, i]]
-        let matrix = [[1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 1.0]];
+        let matrix = canonical_single_qubit_matrix(GateType::SZ);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
         }
@@ -556,13 +580,47 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
-        let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-        let matrix = [
-            [inv_sqrt2, 0.0],
-            [inv_sqrt2, 0.0],
-            [inv_sqrt2, 0.0],
-            [-inv_sqrt2, 0.0],
-        ];
+        let matrix = canonical_single_qubit_matrix(GateType::H);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::H2);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::H3);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::H4);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::H5);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::H6);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
         }
@@ -592,7 +650,7 @@ impl CliffordGateable for CuStateVec {
     // Override some gates for efficiency (direct GPU implementation)
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
-        let matrix = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [0.0, 0.0]];
+        let matrix = canonical_single_qubit_matrix(GateType::X);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
         }
@@ -600,7 +658,7 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
-        let matrix = [[0.0, 0.0], [0.0, -1.0], [0.0, 1.0], [0.0, 0.0]];
+        let matrix = canonical_single_qubit_matrix(GateType::Y);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
         }
@@ -608,7 +666,7 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
-        let matrix = [[1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [-1.0, 0.0]];
+        let matrix = canonical_single_qubit_matrix(GateType::Z);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
         }
@@ -616,8 +674,87 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // S-dagger gate = [[1, 0], [0, -i]]
-        let matrix = [[1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, -1.0]];
+        let matrix = canonical_single_qubit_matrix(GateType::SZdg);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_single_qubit_matrix(GateType::SY);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_single_qubit_matrix(GateType::SYdg);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::F);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::Fdg);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::F2);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::F2dg);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::F3);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::F3dg);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::F4);
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        let matrix = canonical_clifford_matrix(Clifford::F4dg);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
         }
@@ -682,6 +819,15 @@ impl ArbitraryRotationGateable for CuStateVec {
         self
     }
 
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let (sin, cos) = phase.to_radians_signed().sin_cos();
+        let matrix = [[cos, sin], [0.0, 0.0], [0.0, 0.0], [cos, sin]];
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let theta = theta.to_radians_signed();
         // RZZ(theta) = diag(e^(-i*theta/2), e^(i*theta/2), e^(i*theta/2), e^(-i*theta/2))
@@ -715,10 +861,7 @@ impl ArbitraryRotationGateable for CuStateVec {
 
     // Override T gate for efficiency
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // T = [[1, 0], [0, e^(i*pi/4)]]
-        let cos = std::f64::consts::FRAC_PI_4.cos();
-        let sin = std::f64::consts::FRAC_PI_4.sin();
-        let matrix = [[1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [cos, sin]];
+        let matrix = canonical_single_qubit_matrix(GateType::T);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
         }
@@ -727,10 +870,7 @@ impl ArbitraryRotationGateable for CuStateVec {
 
     // Override T-dagger for efficiency
     fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // T-dagger = [[1, 0], [0, e^(-i*pi/4)]]
-        let cos = std::f64::consts::FRAC_PI_4.cos();
-        let sin = std::f64::consts::FRAC_PI_4.sin();
-        let matrix = [[1.0, 0.0], [0.0, 0.0], [0.0, 0.0], [cos, -sin]];
+        let matrix = canonical_single_qubit_matrix(GateType::Tdg);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
         }
@@ -750,12 +890,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_gate_matrix_values() {
-        // Test that our gate matrices are correct (pure Rust, no FFI)
-        let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-
-        // H gate should have 1/sqrt(2) entries
-        assert!((inv_sqrt2 - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-10);
+    fn canonical_gate_matrix_conversion_preserves_every_entry() {
+        for gate in pecos_core::gate_type::NAMED_SINGLE_QUBIT_GATES {
+            let canonical = gate
+                .canonical_1q_matrix()
+                .expect("named single-qubit gate must have a canonical matrix");
+            let converted = canonical_single_qubit_matrix(gate);
+            assert_eq!(
+                converted,
+                [
+                    [canonical[0], canonical[1]],
+                    [canonical[2], canonical[3]],
+                    [canonical[4], canonical[5]],
+                    [canonical[6], canonical[7]],
+                ]
+            );
+        }
     }
 
     #[test]

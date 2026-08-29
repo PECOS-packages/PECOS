@@ -90,84 +90,98 @@ pub type DefaultGpuStab = GpuStab<pecos_random::PecosRng>;
 /// Default multi-shot GPU stabilizer simulator using `PecosRng`
 pub type DefaultGpuStabMulti = GpuStabMulti<pecos_random::PecosRng>;
 
-use std::f64::consts::FRAC_1_SQRT_2;
-
 /// Standard gate matrices as [`a_re`, `a_im`, `b_re`, `b_im`, `c_re`, `c_im`, `d_re`, `d_im`]
 // GPU shaders work with f32 for performance. The precision loss from f64->f32
 // conversion is acceptable for quantum simulation (errors are ~1e-7).
 #[allow(clippy::cast_possible_truncation)]
 pub mod gates {
-    use super::FRAC_1_SQRT_2;
+    use pecos_core::Clifford;
+    use pecos_core::gate_type::{GateType, single_qubit_matrix_to_f32};
+
+    const fn canonical(gate: GateType) -> [f32; 8] {
+        let Some(matrix) = gate.canonical_1q_matrix() else {
+            panic!("gate has no canonical single-qubit matrix");
+        };
+        single_qubit_matrix_to_f32(matrix)
+    }
+
+    const fn canonical_clifford(gate: Clifford) -> [f32; 8] {
+        let Some(matrix) = gate.canonical_1q_matrix() else {
+            panic!("gate has no canonical single-qubit Clifford matrix");
+        };
+        single_qubit_matrix_to_f32(matrix)
+    }
 
     /// Identity gate
-    pub const I: [f32; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+    pub const I: [f32; 8] = canonical(GateType::I);
 
     /// Pauli-X gate (NOT)
-    pub const X: [f32; 8] = [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+    pub const X: [f32; 8] = canonical(GateType::X);
 
     /// Pauli-Y gate
-    pub const Y: [f32; 8] = [0.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0, 0.0];
+    pub const Y: [f32; 8] = canonical(GateType::Y);
 
     /// Pauli-Z gate
-    pub const Z: [f32; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0];
+    pub const Z: [f32; 8] = canonical(GateType::Z);
 
-    /// Hadamard gate
-    pub const H: [f32; 8] = [
-        FRAC_1_SQRT_2 as f32,
-        0.0,
-        FRAC_1_SQRT_2 as f32,
-        0.0,
-        FRAC_1_SQRT_2 as f32,
-        0.0,
-        -(FRAC_1_SQRT_2 as f32),
-        0.0,
-    ];
+    /// Hadamard gate H/H1
+    pub const H: [f32; 8] = canonical(GateType::H);
+
+    /// H2 gate
+    pub const H2: [f32; 8] = canonical_clifford(Clifford::H2);
+    /// H3 gate
+    pub const H3: [f32; 8] = canonical_clifford(Clifford::H3);
+    /// H4 gate
+    pub const H4: [f32; 8] = canonical_clifford(Clifford::H4);
+    /// H5 gate
+    pub const H5: [f32; 8] = canonical_clifford(Clifford::H5);
+    /// H6 gate
+    pub const H6: [f32; 8] = canonical_clifford(Clifford::H6);
 
     /// S gate (sqrt(Z))
-    pub const S: [f32; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+    pub const S: [f32; 8] = canonical(GateType::SZ);
 
     /// S-dagger gate
-    pub const SDG: [f32; 8] = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0];
+    pub const SDG: [f32; 8] = canonical(GateType::SZdg);
 
     /// Conventional T gate, `diag(1, exp(i*pi/4))`.
     ///
     /// This is `exp(i*pi/8) RZ(pi/4)`.
-    pub const T: [f32; 8] = [
-        1.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        FRAC_1_SQRT_2 as f32,
-        FRAC_1_SQRT_2 as f32,
-    ];
+    pub const T: [f32; 8] = canonical(GateType::T);
 
     /// Conventional T-dagger gate, `diag(1, exp(-i*pi/4))`.
     ///
     /// This is `exp(-i*pi/8) RZ(-pi/4)`.
-    pub const TDG: [f32; 8] = [
-        1.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        FRAC_1_SQRT_2 as f32,
-        -(FRAC_1_SQRT_2 as f32),
-    ];
+    pub const TDG: [f32; 8] = canonical(GateType::Tdg);
 
     /// SX gate (sqrt(X))
-    pub const SX: [f32; 8] = [0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5, 0.5];
+    pub const SX: [f32; 8] = canonical(GateType::SX);
 
     /// SX-dagger gate
-    pub const SXDG: [f32; 8] = [0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5];
+    pub const SXDG: [f32; 8] = canonical(GateType::SXdg);
 
     /// SY gate (sqrt(Y))
-    pub const SY: [f32; 8] = [0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5];
+    pub const SY: [f32; 8] = canonical(GateType::SY);
 
     /// SY-dagger gate
-    pub const SYDG: [f32; 8] = [0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5];
+    pub const SYDG: [f32; 8] = canonical(GateType::SYdg);
+
+    /// Face gate F/F1
+    pub const F: [f32; 8] = canonical(GateType::F);
+    /// Adjoint Face gate F/F1
+    pub const FDG: [f32; 8] = canonical(GateType::Fdg);
+    /// F2 gate
+    pub const F2: [f32; 8] = canonical_clifford(Clifford::F2);
+    /// Adjoint F2 gate
+    pub const F2DG: [f32; 8] = canonical_clifford(Clifford::F2dg);
+    /// F3 gate
+    pub const F3: [f32; 8] = canonical_clifford(Clifford::F3);
+    /// Adjoint F3 gate
+    pub const F3DG: [f32; 8] = canonical_clifford(Clifford::F3dg);
+    /// F4 gate
+    pub const F4: [f32; 8] = canonical_clifford(Clifford::F4);
+    /// Adjoint F4 gate
+    pub const F4DG: [f32; 8] = canonical_clifford(Clifford::F4dg);
 
     /// Create RX(theta) gate matrix
     #[must_use]

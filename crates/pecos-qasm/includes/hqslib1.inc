@@ -2,14 +2,7 @@
 
 // === Basic Single-Qubit Gates ===
 
-// General single-qubit unitary (decomposed into PECOS native gates)
-gate U(theta, phi, lam) q {
-  RZ(lam) q;
-  R1XY(theta, pi/2) q;
-  RZ(phi) q;
-}
-
-// Lowercase alias for compatibility
+// Lowercase alias for the native, phase-exact OpenQASM U gate
 gate u(theta, phi, lam) q {
   U(theta, phi, lam) q;
 }
@@ -134,9 +127,18 @@ gate ccx a,b,c {
 
 // === Other common gates ===
 
-// Phase gate
+// Phase-gate family: diag(1, exp(i*lambda)). These differ from the symmetric
+// rotation by RZ(lambda) = exp(-i*lambda/2) * p(lambda).
+gate phase(lambda) a {
+  U(0, 0, lambda) a;
+}
+
 gate p(lambda) a {
-  RZ(lambda) a;
+  U(0, 0, lambda) a;
+}
+
+gate u1(lambda) a {
+  U(0, 0, lambda) a;
 }
 
 // Controlled phase gate

@@ -637,15 +637,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         // Z-basis measurement on qubit q.
         // Frames and pending_rz on OTHER qubits commute with Z_q -- no flush needed.
         // Only qubit q's frame matters:
-        // - Diagonal frame (Z→±Z): just flips the outcome. Discard frame.
+        // - Diagonal frame (Z→+Z): discard frame.
         // - Non-diagonal frame: must flush (changes measurement basis).
         // Pending_rz on q is diagonal: doesn't affect Z measurement. Discard after.
-        // Pending_rz on q is diagonal: doesn't affect Z measurement. Discard after.
-        let mut flip_outcome = false;
         let cf_q = self.cliff_frame[q];
         if !cf_q.is_identity() {
             if cf_q.is_diagonal() {
-                flip_outcome = !cf_q.z_image().positive; // Z->-Z flips outcome
+                // is_diagonal() guarantees Z→+Z, so this cannot flip the outcome.
                 self.cliff_frame[q] = CliffordFrame::IDENTITY;
             } else {
                 // Non-diagonal: flush this qubit's frame (needs pending_rz flushed first).
@@ -828,25 +826,19 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             } // end non-deterministic
         };
 
-        // Adjust probability for frame flip (Z→-Z swaps |0⟩ and |1⟩ probabilities).
-        let actual_prob0 = if flip_outcome { 1.0 - prob0 } else { prob0 };
-
-        // Determine outcome from user's perspective (actual state).
+        // Determine the outcome.
         let outcome = if let Some(forced_val) = forced {
             forced_val
-        } else if (actual_prob0 - 1.0).abs() < 1e-10 {
+        } else if (prob0 - 1.0).abs() < 1e-10 {
             false // deterministic |0>
-        } else if actual_prob0 < 1e-10 {
+        } else if prob0 < 1e-10 {
             true // deterministic |1>
         } else {
             let r: f64 = self.rng.random();
-            r >= actual_prob0
+            r >= prob0
         };
 
-        let is_deterministic = (actual_prob0 - 1.0).abs() < 1e-10 || actual_prob0 < 1e-10;
-
-        // Projection uses stored-state outcome (flip back if frame flipped).
-        let stored_outcome = outcome ^ flip_outcome;
+        let is_deterministic = (prob0 - 1.0).abs() < 1e-10 || prob0 < 1e-10;
 
         // Project: measure each CH-form term, keep only compatible terms.
         // After measurement, the state should be projected onto the outcome subspace.
@@ -875,7 +867,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             // Apply mz_forced once, compute deltas, propagate to others.
             let gamma_before = self.terms[0].1.gamma().to_vec();
             let omega_before = self.terms[0].1.omega_exact();
-            self.terms[0].1.mz_forced(q, stored_outcome);
+            self.terms[0].1.mz_forced(q, outcome);
             let omega_after = self.terms[0].1.omega_exact();
             let mut gamma_delta = vec![0u8; self.num_qubits];
             for p in 0..self.num_qubits {
@@ -899,7 +891,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             }
         } else {
             for (_coeff, ch) in &mut self.terms {
-                ch.mz_forced(q, stored_outcome);
+                ch.mz_forced(q, outcome);
             }
         }
 
@@ -927,16 +919,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                     *coeff *= inv_norm;
                 }
             }
-        }
-
-        // The frame's flip was reported in the outcome, but the projection
-        // collapsed the stored (unflipped) eigenstate and the frame is gone.
-        // Re-align the state with the report: collapse projects, it does not
-        // reset, so a repeated measurement must read this outcome again.
-        if flip_outcome {
-            self.apply_clifford(|ch| {
-                ch.x(&[QubitId(q)]);
-            });
         }
 
         MeasurementResult {
@@ -990,6 +972,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for Sta
         let ch = CHFormGeneric::with_rng(self.num_qubits, rng);
         self.terms = vec![(Complex64::new(1.0, 0.0), ch)];
         self.pending_rz.fill(Angle64::default());
+        self.cliff_frame.fill(CliffordFrame::IDENTITY);
+        self.frame_phase = 0;
+        self.gamma_diff_qubits.clear();
         // rel_pruning_threshold preserved across reset
         self
     }
@@ -1392,13 +1377,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
                 // Non-diagonal frame doesn't commute with RZ. Flush.
                 self.flush_cliff_frame(qi);
             }
-            // If frame anticommutes with Z (X or Y component), negate the angle.
-            // Frame C: C†ZC = ±Z. If -Z, then C*RZ(θ) = RZ(-θ)*C.
-            if !cf.is_identity() && cf.is_diagonal() && !cf.z_image().positive {
-                self.apply_rz(-theta, qi);
-            } else {
-                self.apply_rz(theta, qi);
-            }
+            // is_diagonal() guarantees Z→+Z, so a retained frame cannot negate theta.
+            self.apply_rz(theta, qi);
         }
         self
     }
@@ -1835,6 +1815,34 @@ mod tests {
         assert_eq!(crz.num_terms(), 1);
         let sv = crz.state_vector();
         assert!((sv[0] - Complex64::new(1.0, 0.0)).norm() < EPS);
+    }
+
+    #[test]
+    fn stab_vec_reset_clears_frame_state() {
+        let mut reset_sim = StabVec::new_with_seed(2, 17);
+        let mut fresh_sim = StabVec::new_with_seed(2, 17);
+        let q0 = qid(0);
+        let q1 = qid(1);
+
+        // Leave both non-zero rotations pending while accumulating X/Y frames.
+        // The extra Z composition also leaves a non-trivial global frame phase.
+        reset_sim
+            .rz(Angle64::from_radians(0.37), &q0)
+            .y(&q0)
+            .z(&q0)
+            .rz(Angle64::from_radians(-0.91), &q1)
+            .y(&q1);
+        assert_eq!(reset_sim.cliff_frame[0], CliffordFrame::X);
+        assert_eq!(reset_sim.cliff_frame[1], CliffordFrame::Y);
+        assert_ne!(reset_sim.pending_rz[0], Angle64::ZERO);
+        assert_ne!(reset_sim.pending_rz[1], Angle64::ZERO);
+        assert_ne!(reset_sim.frame_phase, 0);
+
+        reset_sim.reset();
+        reset_sim.h(&[QubitId(0), QubitId(1)]);
+        fresh_sim.h(&[QubitId(0), QubitId(1)]);
+
+        assert_eq!(reset_sim.state_vector(), fresh_sim.state_vector());
     }
 
     #[test]

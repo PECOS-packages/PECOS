@@ -1040,7 +1040,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_sq_standard_gate_decompositions() {
-        // Test S = RZ(π/2)
+        // Test SZ = exp(iπ/4) RZ(π/2) projectively.
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.sz(&qid(0));
@@ -1806,7 +1806,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_f_vs_decomposition() {
-        // F = SX.SZ decomposition (apply sx then sz)
+        // F = i * SZ * SX (apply SX first, then SZ).
         // Test on |0⟩
         let mut direct = StateVec::new(1);
         let mut decomposed = StateVec::new(1);
@@ -1858,7 +1858,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_fdg_vs_decomposition() {
-        // FDG = SZDG.SXDG decomposition (apply szdg then sxdg)
+        // Fdg = -i * SXdg * SZdg (apply SZdg first, then SXdg).
         // Test on |0⟩
         let mut direct = StateVec::new(1);
         let mut decomposed = StateVec::new(1);
@@ -1920,7 +1920,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_f2_vs_decomposition() {
-        // F2 = SXDG.SY (apply SXDG first, then SY)
+        // F2 = -SY * SXdg (apply SXdg first, then SY).
         let mut direct = StateVec::new(1);
         let mut decomposed = StateVec::new(1);
         direct.f2(&qid(0));
@@ -1948,7 +1948,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_f2dg_vs_decomposition() {
-        // F2DG = SYDG.SX (apply SYDG first, then SX)
+        // F2dg = -SX * SYdg (apply SYdg first, then SX).
         let mut direct = StateVec::new(1);
         let mut decomposed = StateVec::new(1);
         direct.f2dg(&qid(0));
@@ -1967,7 +1967,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_f3_vs_decomposition() {
-        // F3 = SXDG.SZ (apply SXDG first, then SZ)
+        // F3 = -SZ * SXdg (apply SXdg first, then SZ).
         let mut direct = StateVec::new(1);
         let mut decomposed = StateVec::new(1);
         direct.f3(&qid(0));
@@ -1995,7 +1995,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_f3dg_vs_decomposition() {
-        // F3DG = SZDG.SX (apply SZDG first, then SX)
+        // F3dg = -SX * SZdg (apply SZdg first, then SX).
         let mut direct = StateVec::new(1);
         let mut decomposed = StateVec::new(1);
         direct.f3dg(&qid(0));
@@ -2014,7 +2014,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_f4_vs_decomposition() {
-        // F4 = SZ.SX (apply SZ first, then SX)
+        // F4 = i * SX * SZ (apply SZ first, then SX).
         let mut direct = StateVec::new(1);
         let mut decomposed = StateVec::new(1);
         direct.f4(&qid(0));
@@ -2042,7 +2042,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_f4dg_vs_decomposition() {
-        // F4DG = SXDG.SZDG (apply SXDG first, then SZDG)
+        // F4dg = -i * SZdg * SXdg (apply SXdg first, then SZdg).
         let mut direct = StateVec::new(1);
         let mut decomposed = StateVec::new(1);
         direct.f4dg(&qid(0));
@@ -2588,7 +2588,7 @@ mod detailed_sq_gate_cases {
 
     #[test]
     fn test_sqrt_gates_vs_rotations() {
-        // SX = RX(π/2)
+        // SX = exp(iπ/4) RX(π/2), compared projectively here.
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.h(&qid(0));
@@ -2599,7 +2599,7 @@ mod detailed_sq_gate_cases {
 
         assert_states_equal(q1.state(), q2.state());
 
-        // SXDG = RX(-π/2)
+        // SXdg = exp(-iπ/4) RX(-π/2), compared projectively here.
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.h(&qid(0));
@@ -2610,7 +2610,7 @@ mod detailed_sq_gate_cases {
 
         assert_states_equal(q1.state(), q2.state());
 
-        // SY = RY(π/2)
+        // SY = exp(iπ/4) RY(π/2), compared projectively here.
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.h(&qid(0));
@@ -2621,7 +2621,7 @@ mod detailed_sq_gate_cases {
 
         assert_states_equal(q1.state(), q2.state());
 
-        // SYDG = RY(-π/2)
+        // SYdg = exp(-iπ/4) RY(-π/2), compared projectively here.
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.h(&qid(0));
@@ -2632,7 +2632,7 @@ mod detailed_sq_gate_cases {
 
         assert_states_equal(q1.state(), q2.state());
 
-        // SZ = RZ(π/2)
+        // SZ = exp(iπ/4) RZ(π/2), compared projectively here.
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.h(&qid(0));
@@ -2643,7 +2643,7 @@ mod detailed_sq_gate_cases {
 
         assert_states_equal(q1.state(), q2.state());
 
-        // SZDG = RZ(-π/2)
+        // SZdg = exp(-iπ/4) RZ(-π/2), compared projectively here.
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.h(&qid(0));

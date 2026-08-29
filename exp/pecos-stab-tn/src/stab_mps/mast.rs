@@ -830,7 +830,9 @@ impl ArbitraryRotationGateable for Mast {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stab_mps::StabMps;
     use approx::assert_relative_eq;
+    use pecos_core::Clifford;
 
     fn assert_mast_disent_flags_sound(mast: &Mast, context: &str) {
         super::super::assert_disent_flags_match_stored_mps(&mast.mps, &mast.disent_flags, context);
@@ -881,6 +883,84 @@ mod tests {
         mast.apply_global_phase(Angle64::QUARTER_TURN / 4u64, &[QubitId(0), QubitId(1)]);
         let expected = Complex64::from_polar(1.0, std::f64::consts::FRAC_PI_4);
         assert!((mast.global_phase - expected).norm() < 1e-12);
+    }
+
+    fn apply_single_qubit_clifford(mast: &mut Mast, gate: Clifford, qubits: &[QubitId]) {
+        match gate {
+            Clifford::I => mast.identity(qubits),
+            Clifford::X => mast.x(qubits),
+            Clifford::Y => mast.y(qubits),
+            Clifford::Z => mast.z(qubits),
+            Clifford::H => mast.h(qubits),
+            Clifford::H2 => mast.h2(qubits),
+            Clifford::H3 => mast.h3(qubits),
+            Clifford::H4 => mast.h4(qubits),
+            Clifford::H5 => mast.h5(qubits),
+            Clifford::H6 => mast.h6(qubits),
+            Clifford::SX => mast.sx(qubits),
+            Clifford::SXdg => mast.sxdg(qubits),
+            Clifford::SY => mast.sy(qubits),
+            Clifford::SYdg => mast.sydg(qubits),
+            Clifford::SZ => mast.sz(qubits),
+            Clifford::SZdg => mast.szdg(qubits),
+            Clifford::F => mast.f(qubits),
+            Clifford::Fdg => mast.fdg(qubits),
+            Clifford::F2 => mast.f2(qubits),
+            Clifford::F2dg => mast.f2dg(qubits),
+            Clifford::F3 => mast.f3(qubits),
+            Clifford::F3dg => mast.f3dg(qubits),
+            Clifford::F4 => mast.f4(qubits),
+            Clifford::F4dg => mast.f4dg(qubits),
+            _ => panic!("expected a single-qubit Clifford, got {gate}"),
+        };
+    }
+
+    fn single_qubit_clifford_order(gate: Clifford) -> usize {
+        let mut power = Clifford::I;
+        for order in 1..=4 {
+            power = gate.compose(power);
+            if power == Clifford::I {
+                return order;
+            }
+        }
+        panic!("single-qubit Clifford {gate} has order greater than four");
+    }
+
+    fn mast_state_vector(mast: &Mast) -> Vec<Complex64> {
+        let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+        view.tableau = mast.tableau.clone();
+        view.mps = mast.mps.clone();
+        view.global_phase = mast.global_phase;
+        view.state_vector()
+    }
+
+    #[test]
+    fn test_mast_clifford_powers_restore_observable_state_phase_exactly() {
+        let mut failures = Vec::new();
+        for &gate in Clifford::all_1q() {
+            let mut mast = Mast::new(2, 0);
+            mast.h(&[QubitId(0)])
+                .sz(&[QubitId(0)])
+                .cx(&[(QubitId(0), QubitId(1))]);
+            let expected = mast_state_vector(&mast);
+            for _ in 0..single_qubit_clifford_order(gate) {
+                apply_single_qubit_clifford(&mut mast, gate, &[QubitId(0)]);
+            }
+            let actual = mast_state_vector(&mast);
+            let error = actual
+                .iter()
+                .zip(&expected)
+                .map(|(actual, expected)| (actual - expected).norm())
+                .fold(0.0, f64::max);
+            if error > 1e-10 {
+                failures.push((gate, error));
+            }
+        }
+        eprintln!(
+            "Mast: {}/24 exact; failures={failures:?}",
+            24 - failures.len()
+        );
+        assert!(failures.is_empty(), "Mast phase failures: {failures:?}");
     }
 
     #[test]

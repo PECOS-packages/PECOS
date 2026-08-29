@@ -1,5 +1,6 @@
-use pecos_qasm::Preprocessor;
+use pecos_core::prelude::GateType;
 use pecos_qasm::parser::QASMParser;
+use pecos_qasm::{Operation, Preprocessor};
 use std::fs;
 use tempfile::TempDir;
 
@@ -39,8 +40,15 @@ fn test_simple_include() {
 
     // Check that the gate definition was loaded
     assert!(program.gate_definitions.contains_key("hadamard"));
-    // After expansion, we'll have more than 2 operations due to gate expansion
-    assert!(program.operations.len() > 2);
+    // Each hadamard invocation lowers through qelib1's u2 to one native U.
+    assert_eq!(program.operations.len(), 2);
+    assert!(program.operations.iter().all(|operation| matches!(
+        operation,
+        Operation::Gate { name, .. } if name == "U"
+    ) || matches!(
+        operation,
+        Operation::NativeGate(gate) if gate.gate_type == GateType::U
+    )));
 }
 
 #[test]

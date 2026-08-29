@@ -1,4 +1,4 @@
-use pecos_core::errors::PecosError;
+use pecos_core::{errors::PecosError, gate_type::GateType};
 use pecos_engines::prelude::*;
 use pecos_qasm::QASMEngine;
 use std::str::FromStr;
@@ -35,6 +35,33 @@ fn get_bit_value(result: &Shot, register_name: &str, bit_index: usize) -> Option
 
     // Extract the bit
     Some(extract_bit(reg_value, bit_index))
+}
+
+#[test]
+fn test_named_phase_gates_remain_named_in_commands() -> Result<(), PecosError> {
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[1];
+        s q[0];
+        sdg q[0];
+        t q[0];
+        tdg q[0];
+    "#;
+
+    let mut engine = QASMEngine::from_str(qasm)?;
+    let commands = engine.generate_commands()?;
+    let gate_types: Vec<_> = commands
+        .quantum_ops()?
+        .into_iter()
+        .map(|op| op.gate_type)
+        .collect();
+
+    assert_eq!(
+        gate_types,
+        [GateType::SZ, GateType::SZdg, GateType::T, GateType::Tdg]
+    );
+    Ok(())
 }
 
 #[test]

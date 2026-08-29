@@ -136,12 +136,9 @@ fn test_hqslib1_universal_gate() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
-    // U gate should expand to RZ + R1XY + RZ
+    // Both spellings use the native phase-exact U gate.
     let gate_ops = get_gate_names(&program.operations);
-
-    // Should see RZ and R1XY from the U gate expansion
-    assert!(gate_ops.contains(&"RZ".to_string()));
-    assert!(gate_ops.contains(&"R1XY".to_string()));
+    assert_eq!(gate_ops, vec!["U".to_string(), "U".to_string()]);
 }
 
 #[test]
@@ -176,7 +173,11 @@ fn test_hqslib1_compatibility_uppercase() {
     assert!(gate_ops.contains(&"X".to_string()));
     assert!(gate_ops.contains(&"Y".to_string()));
     assert!(gate_ops.contains(&"Z".to_string()));
-    assert!(gate_ops.contains(&"RZ".to_string())); // From S, Sdg, T, Tdg, RZ
+    assert!(gate_ops.contains(&"SZ".to_string()));
+    assert!(gate_ops.contains(&"SZdg".to_string()));
+    assert!(gate_ops.contains(&"T".to_string()));
+    assert!(gate_ops.contains(&"Tdg".to_string()));
+    assert!(gate_ops.contains(&"RZ".to_string())); // Explicit RZ
     assert!(gate_ops.contains(&"R1XY".to_string())); // From RX, RY
 }
 

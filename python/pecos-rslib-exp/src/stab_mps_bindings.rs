@@ -13,7 +13,7 @@
 #![allow(clippy::needless_pass_by_value)] // PyO3 requires passing extracted types by value
 
 use pecos_core::clifford_rep::CliffordRep;
-use pecos_core::{Angle64, Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
+use pecos_core::{Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CHForm, CliffordGateable, QuantumSimulator};
 use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
 use pyo3::prelude::*;
@@ -1141,11 +1141,11 @@ impl PyStabMps {
                 Ok(None)
             }
             "T" => {
-                self.inner.rz(Angle64::QUARTER_TURN / 2u64, q);
+                self.inner.t(q);
                 Ok(None)
             }
             "Tdg" => {
-                self.inner.rz(-(Angle64::QUARTER_TURN / 2u64), q);
+                self.inner.tdg(q);
                 Ok(None)
             }
             "PZ" | "Init" | "init |0>" => {

@@ -111,7 +111,7 @@ class TestStateVecArbitraryRotations:
         def main() -> None:
             q = qubit()
             h(q)
-            # T gate is Rz(pi/4)
+            # Rz(pi/4) is T up to global phase.
             rz(q, pi / 4)
             h(q)
             bit = measure(q).read()

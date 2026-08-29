@@ -18,7 +18,7 @@
 
 use pecos_core::QubitId;
 use pecos_core::clifford::Clifford;
-use pecos_simulators::{CliffordGateable, SparseStab, StateVec, qid};
+use pecos_simulators::{CliffordGateable, SparseStab, StateVec, StateVecSoA32, qid};
 
 type GateTestEntry = (
     Clifford,
@@ -54,6 +54,16 @@ fn cross_check_1q(cliff: Clifford) {
                 "Z-basis mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
                 results[0].outcome
             );
+
+            let mut sv32 = StateVecSoA32::new(1);
+            apply_1q_clifford(&mut sv32, cliff);
+            let prob0 = sv32.get_amplitude(0).norm_sqr();
+            assert_eq!(
+                results[0].outcome,
+                prob0 <= 0.5,
+                "Z-basis mismatch for {cliff}: SparseStab={}, StateVecSoA32 prob0={prob0}",
+                results[0].outcome
+            );
         }
     }
 
@@ -72,6 +82,17 @@ fn cross_check_1q(cliff: Clifford) {
             assert_eq!(
                 results[0].outcome, expected_outcome,
                 "X-basis mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
+                results[0].outcome
+            );
+
+            let mut sv32 = StateVecSoA32::new(1);
+            apply_1q_clifford(&mut sv32, cliff);
+            sv32.h(&qid(0));
+            let prob0 = sv32.get_amplitude(0).norm_sqr();
+            assert_eq!(
+                results[0].outcome,
+                prob0 <= 0.5,
+                "X-basis mismatch for {cliff}: SparseStab={}, StateVecSoA32 prob0={prob0}",
                 results[0].outcome
             );
         }
@@ -93,6 +114,17 @@ fn cross_check_1q(cliff: Clifford) {
             assert_eq!(
                 results[0].outcome, expected_outcome,
                 "Y-basis mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
+                results[0].outcome
+            );
+
+            let mut sv32 = StateVecSoA32::new(1);
+            apply_1q_clifford(&mut sv32, cliff);
+            sv32.sx(&qid(0));
+            let prob0 = sv32.get_amplitude(0).norm_sqr();
+            assert_eq!(
+                results[0].outcome,
+                prob0 <= 0.5,
+                "Y-basis mismatch for {cliff}: SparseStab={}, StateVecSoA32 prob0={prob0}",
                 results[0].outcome
             );
         }
@@ -158,7 +190,7 @@ fn cross_check_2q(
     }
 }
 
-fn apply_1q_clifford(sim: &mut StateVec, cliff: Clifford) {
+fn apply_1q_clifford<S: CliffordGateable>(sim: &mut S, cliff: Clifford) {
     match cliff {
         Clifford::I => {}
         Clifford::X => {

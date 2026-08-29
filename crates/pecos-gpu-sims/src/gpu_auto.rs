@@ -84,8 +84,56 @@ impl CliffordGateable for GpuStateVecAuto {
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, h(qubits))
     }
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, h2(qubits))
+    }
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, h3(qubits))
+    }
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, h4(qubits))
+    }
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, h5(qubits))
+    }
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, h6(qubits))
+    }
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, y(qubits))
+    }
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, sz(qubits))
+    }
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, sy(qubits))
+    }
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, sydg(qubits))
+    }
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, f(qubits))
+    }
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, fdg(qubits))
+    }
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, f2(qubits))
+    }
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, f2dg(qubits))
+    }
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, f3(qubits))
+    }
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, f3dg(qubits))
+    }
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, f4(qubits))
+    }
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, f4dg(qubits))
     }
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         dispatch_mut!(self, cx(pairs))
@@ -104,6 +152,15 @@ impl ArbitraryRotationGateable for GpuStateVecAuto {
     }
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, rz(theta, qubits))
+    }
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, apply_global_phase(phase, qubits))
+    }
+    fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, t(qubits))
+    }
+    fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, tdg(qubits))
     }
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         dispatch_mut!(self, rzz(theta, pairs))

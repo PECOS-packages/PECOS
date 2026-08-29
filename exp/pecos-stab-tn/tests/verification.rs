@@ -18,7 +18,8 @@ use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimul
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
 use pecos_stab_tn::stab_mps::{
-    MeasurementMode, MultiStdSubtype, PauliKind, SignedEigenstateTelemetry, StabMps,
+    MeasurementMode, MultiStdSubtype, PauliKind, ProjectionConstruction, SignedEigenstateTelemetry,
+    StabMps,
 };
 use rayon::prelude::*;
 
@@ -1169,7 +1170,7 @@ fn test_seed319_minimal() {
         ("h", vec![1], None),
         ("rz", vec![3], Some(Angle64::from_radians(3.3427))),
         ("cz", vec![0, 3], None),
-        ("rz", vec![1], Some(t)), // T gate = RZ(pi/4)
+        ("rz", vec![1], Some(t)), // RZ(pi/4) equals T up to global phase.
         ("cz", vec![1, 2], None),
         ("sz", vec![1], None),
         ("h", vec![2], None),
@@ -1894,7 +1895,7 @@ fn test_t_on_every_qubit_product_state() {
 
 #[test]
 fn test_tdg_gate() {
-    // T-dagger = RZ(-pi/4)
+    // RZ(-pi/4) equals T-dagger up to global phase.
     let tdg = -(Angle64::QUARTER_TURN / 2u64);
     let gates = vec![("h", vec![0], None), ("rz", vec![0], Some(tdg))];
     let (stn_sv, crz_sv) = run_circuit_on_both(1, &gates, 42);
@@ -2583,6 +2584,8 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     }
 
     let mut truncating_circuits_with_discarded_weight = 0;
+    let mut locality_direct_sum_events = 0;
+    let mut locality_block_write_events = 0;
     for truncating in [false, true] {
         for num_qubits in 3..=6 {
             for seed_family in 0..4_u64 {
@@ -2616,6 +2619,8 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                     .collect::<Vec<_>>();
                 let batched = stn.prob_bitstrings(&queries);
                 let (profiled, profile) = stn.prob_bitstrings_profiled(&queries);
+                let (locality_profiled, locality_profile) =
+                    stn.prob_bitstrings_profiled_with_projection_locality(&queries);
                 assert_eq!(batched.len(), queries.len());
                 assert_eq!(
                     profiled
@@ -2628,6 +2633,97 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         .collect::<Vec<_>>(),
                     "profiled query changed outputs for truncating={truncating} n={num_qubits} seed={circuit_seed}"
                 );
+                assert_eq!(
+                    locality_profiled
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    batched
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    "locality diagnostics changed outputs for truncating={truncating} n={num_qubits} seed={circuit_seed}"
+                );
+                assert!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .all(|depth| depth.projection_qr_locality.is_empty()),
+                    "ordinary query profiling unexpectedly collected locality snapshots"
+                );
+                let locality_events = locality_profile
+                    .by_depth
+                    .iter()
+                    .flat_map(|depth| &depth.projection_qr_locality)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    locality_events.len() as u64,
+                    locality_profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.post_projection_qr.calls)
+                        .sum::<u64>(),
+                    "every post-projection QR must have one locality event"
+                );
+                for event in locality_events {
+                    assert_eq!(
+                        event.normalization_preserved_center,
+                        Some(true),
+                        "normalization invalidated or failed to validate the post-projection center"
+                    );
+                    let expected_skippable = if event.center_before_qr_is_valid
+                        || !event.center_before_projection_write_is_valid
+                    {
+                        0
+                    } else {
+                        let center = event
+                            .center_before_projection_write
+                            .expect("a valid pre-write center must have a site");
+                        let frontier = event
+                            .touched_site_max
+                            .map_or(center, |site| center.max(site));
+                        (event.chain_length - 1).saturating_sub(frontier)
+                    };
+                    assert_eq!(
+                        event.qr_sites_skippable_by_locality, expected_skippable,
+                        "QR locality headroom does not match the gauge frontier"
+                    );
+                    let expected_center_ceiling = if event.center_before_qr_is_valid
+                        || !event.center_before_projection_write_is_valid
+                    {
+                        0
+                    } else {
+                        let center = event
+                            .center_before_projection_write
+                            .expect("a valid pre-write center must have a site");
+                        (event.chain_length - 1).saturating_sub(center)
+                    };
+                    assert_eq!(
+                        event.qr_sites_skippable_by_center_ceiling, expected_center_ceiling,
+                        "QR center-only ceiling does not match the pre-write center frontier"
+                    );
+                    assert!(event.qr_sites_skippable_by_locality <= event.qr_sites);
+                    assert!(
+                        event.qr_sites_skippable_by_locality
+                            <= event.qr_sites_skippable_by_center_ceiling
+                    );
+                    assert!(event.qr_sites_skippable_by_center_ceiling <= event.qr_sites);
+                    match event.construction {
+                        ProjectionConstruction::DirectSum => {
+                            locality_direct_sum_events += 1;
+                            // `Mps::add` currently changes every tensor's
+                            // shape, so its bitwise footprint is uninformative
+                            // and is explicitly exempt from the support guard.
+                        }
+                        ProjectionConstruction::LocalBlockWrite => {
+                            locality_block_write_events += 1;
+                            assert!(event.changed_tensor_max <= event.touched_site_max);
+                        }
+                        ProjectionConstruction::ScalarScale => {
+                            assert!(event.changed_tensor_max <= event.touched_site_max);
+                        }
+                    }
+                }
                 assert!(
                     profile
                         .by_depth
@@ -2742,6 +2838,14 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     assert!(
         truncating_circuits_with_discarded_weight > 0,
         "truncating agreement arm never exercised a discarded-weight state"
+    );
+    assert!(
+        locality_direct_sum_events > 0,
+        "locality diagnostics never exercised direct-sum construction"
+    );
+    assert!(
+        locality_block_write_events > 0,
+        "locality diagnostics never exercised block-write construction"
     );
 
     // Every false-q0 query is an endpoint-zero subtree. It must be pruned to

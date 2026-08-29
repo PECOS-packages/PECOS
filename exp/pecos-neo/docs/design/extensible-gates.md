@@ -921,7 +921,6 @@ impl StandardAdaptor {
         bits.set(gates::RY.0 as usize, true);
         bits.set(gates::RZZ.0 as usize, true);
         bits.set(gates::SWAP.0 as usize, true);
-        bits.set(gates::T.0 as usize, true);
         Self { can_adapt_bits: bits }
     }
 }
@@ -941,10 +940,6 @@ impl GateAdaptor for StandardAdaptor {
         _params: &[f64],
     ) -> Vec<Gate> {
         match gate_id {
-            gates::T => {
-                // T = RZ(1/8 turn)
-                vec![Gate::rz(Angle64::from_turns(0.125), qubits)]
-            }
             gates::RX => {
                 // RX(θ) = H RZ(θ) H
                 let theta = angles[0];
@@ -1159,14 +1154,14 @@ impl GateCanonicalizer {
     }
 }
 
-// Usage: T → RZ(π/4)
-let (rz, angle) = canonicalizer.expand(gates::T).unwrap();
+// Usage: SZ → RZ(π/2)
+let (rz, angle) = canonicalizer.expand(gates::SZ).unwrap();
 assert_eq!(rz, gates::RZ);
-assert_eq!(angle.to_turns(), 0.125);
+assert_eq!(angle.to_turns(), 0.25);
 ```
 
 This is useful when:
-- Simulator only supports parameterized gates (e.g., only RZ, not T)
+- Simulator only supports parameterized gates when an exact expansion exists
 - Exporting to formats that don't have fixed gates
 - Optimization passes that work on parameterized form
 

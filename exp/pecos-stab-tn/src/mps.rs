@@ -1076,6 +1076,11 @@ impl Mps {
     /// Add two MPS of the same structure (direct sum of bond spaces).
     ///
     /// The result has bond dimension `chi_self + chi_other` at each internal bond.
+    /// Internal tensor blocks are block diagonal, so matching isometries are
+    /// preserved there. The fixed dimension-one boundary bonds cannot also be
+    /// direct-summed: the row blocks overlap at site zero and the column blocks
+    /// overlap at the final site. Those endpoint joins prevent retaining a
+    /// general mixed-canonical center claim for the sum.
     /// Should be followed by SVD truncation (e.g. via `left_canonicalize` + truncate).
     ///
     /// # Panics
@@ -1136,6 +1141,9 @@ impl Mps {
             num_sites: n,
             phys_dim: d,
             tensors: new_tensors,
+            // The internal block-diagonal tensors do not destroy matching
+            // isometries. The unavoidable endpoint joins above are enough to
+            // make a general center claim unavailable, however.
             center: None,
             bond_dims: new_bond_dims,
             config: self.config.clone(),
@@ -1184,6 +1192,16 @@ impl Mps {
     #[cfg(test)]
     pub(crate) fn tracked_center_for_test(&self) -> Option<usize> {
         self.center
+    }
+
+    /// Return the tracked center and validate its Gram environments for
+    /// runtime-gated projection-locality telemetry.
+    pub(crate) fn projection_diagnostic_center(&self) -> (Option<usize>, bool) {
+        (
+            self.center,
+            self.center
+                .is_some_and(|center| self.claimed_center_is_valid(center)),
+        )
     }
 
     #[cfg(test)]
@@ -1303,10 +1321,8 @@ impl Mps {
     }
 
     /// Validate a tracked center to an absolute max-entry Gram tolerance of
-    /// `1e-9`. This is compiled only when debug assertions are enabled and is
-    /// called only before a canonicalization sweep trusts the claim to skip
-    /// work.
-    #[cfg(debug_assertions)]
+    /// `1e-9`. Canonicalization and normalization call this only under debug
+    /// assertions; runtime-gated projection telemetry may call it in release.
     fn claimed_center_is_valid(&self, center: usize) -> bool {
         const TOLERANCE: f64 = 1e-9;
 

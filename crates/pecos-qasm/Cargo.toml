@@ -54,6 +54,8 @@ tempfile.workspace = true
 pest.workspace = true
 pecos-core.workspace = true
 pecos-engines.workspace = true
+pecos-simulators.workspace = true
+num-complex.workspace = true
 
 [lints]
 workspace = true

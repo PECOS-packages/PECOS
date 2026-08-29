@@ -1635,6 +1635,15 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         self
     }
 
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let (sin, cos) = phase.to_radians_signed().sin_cos();
+        let matrix = [cos, sin, 0.0, 0.0, 0.0, 0.0, cos, sin];
+        for &q in qubits {
+            self.queue_single_gate(q.index() as u32, matrix);
+        }
+        self
+    }
+
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
         let m = Self::matrix_f32_to_f64(gates::T);
         for &q in qubits {

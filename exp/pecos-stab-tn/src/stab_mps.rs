@@ -3141,10 +3141,17 @@ impl StabMps {
             self.tableau.szdg(&[qid]);
             return;
         }
-        // Non-Clifford
-        let half_rad = theta.to_radians_signed() / 2.0;
-        let cos_half = half_rad.cos();
-        let sin_half = half_rad.sin();
+        self.rz_apply_decomposed(theta, q);
+    }
+
+    /// Apply RZ through the full tableau-to-MPS Pauli decomposition, including
+    /// at Clifford angles. Unlike the tableau shortcuts, this path retains the
+    /// state-dependent scalar needed when RZ is part of a phase-fixed gate.
+    fn rz_apply_decomposed(&mut self, theta: Angle64, q: usize) {
+        if theta == Angle64::ZERO {
+            return;
+        }
+        let (sin_half, cos_half) = theta.half_angle_sin_cos();
         expect_mps_operation(
             non_clifford::apply_rz_stab_mps(
                 &mut self.tableau,
@@ -3170,9 +3177,20 @@ impl StabMps {
                         .then_some(&mut self.saturation_telemetry),
                 },
             ),
-            "StabMps::rz non-Clifford update",
+            "StabMps::rz decomposed update",
         );
         self.maybe_grow_bond_dim();
+    }
+
+    /// Flush a merged RZ and apply a new one without projective Clifford
+    /// shortcuts. This is the exact rotation primitive used by phase-fixed U.
+    fn rz_apply_phase_exact(&mut self, theta: Angle64, q: usize) {
+        if self.flags.merge_rz()
+            && let Some(pending) = self.pending_rz[q].take()
+        {
+            self.rz_apply_decomposed(pending, q);
+        }
+        self.rz_apply_decomposed(theta, q);
     }
 
     /// Measure qubit q in the Z basis using the shared STN measurement protocol.
@@ -3455,6 +3473,35 @@ impl ArbitraryRotationGateable for StabMps {
             }
         }
         self
+    }
+
+    fn u(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[QubitId],
+    ) -> &mut Self {
+        for &q in qubits {
+            self.rz_apply_phase_exact(lambda, q.index());
+        }
+
+        // RY(theta) = Sdg H RZ(theta) H S. The central rotation uses the
+        // amplitude-exact decomposition instead of a projective shortcut.
+        self.szdg(qubits);
+        self.h(qubits);
+        for &q in qubits {
+            self.rz_apply_phase_exact(theta, q.index());
+        }
+        self.h(qubits);
+        self.sz(qubits);
+
+        for &q in qubits {
+            self.rz_apply_phase_exact(phi, q.index());
+        }
+        let phase =
+            Angle64::from_radians((lambda.to_radians_signed() + phi.to_radians_signed()) / 2.0);
+        self.apply_global_phase(phase, qubits)
     }
 
     fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
@@ -6832,6 +6879,78 @@ mod tests {
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         assert_eq!(stn.max_bond_dim(), 1);
         assert_relative_eq!(stn.mps().norm_squared(), 1.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_stn_u_phase_family_is_exact() {
+        for (lambda, expected_high, label) in [
+            (Angle64::ZERO, Complex64::new(1.0, 0.0), "I"),
+            (
+                Angle64::QUARTER_TURN / 2u64,
+                Complex64::new(
+                    std::f64::consts::FRAC_1_SQRT_2,
+                    std::f64::consts::FRAC_1_SQRT_2,
+                ),
+                "T",
+            ),
+            (Angle64::QUARTER_TURN, Complex64::new(0.0, 1.0), "SZ"),
+            (Angle64::HALF_TURN, Complex64::new(-1.0, 0.0), "Z"),
+        ] {
+            let mut zero = StabMps::builder(1).merge_rz(false).build();
+            zero.u(Angle64::ZERO, Angle64::ZERO, lambda, &[QubitId(0)]);
+            let zero_state = zero.state_vector();
+            assert!((zero_state[0] - Complex64::new(1.0, 0.0)).norm() < 1e-12);
+            assert!(zero_state[1].norm() < 1e-12);
+
+            let mut one = StabMps::builder(1).merge_rz(false).build();
+            one.x(&[QubitId(0)]);
+            one.u(Angle64::ZERO, Angle64::ZERO, lambda, &[QubitId(0)]);
+            let one_state = one.state_vector();
+            assert!(one_state[0].norm() < 1e-12);
+            assert!(
+                (one_state[1] - expected_high).norm() < 1e-12,
+                "U phase-family {label}: expected {expected_high}, got {}",
+                one_state[1]
+            );
+        }
+    }
+
+    #[test]
+    fn test_stn_u_matches_documented_matrix() {
+        let theta = Angle64::from_radians(0.73);
+        let phi = Angle64::from_radians(-0.41);
+        let lambda = Angle64::from_radians(1.17);
+        let theta_rad = theta.to_radians_signed();
+        let phi_rad = phi.to_radians_signed();
+        let lambda_rad = lambda.to_radians_signed();
+        let c = (theta_rad / 2.0).cos();
+        let s = (theta_rad / 2.0).sin();
+        let expected_columns = [
+            [Complex64::new(c, 0.0), Complex64::from_polar(s, phi_rad)],
+            [
+                -Complex64::from_polar(s, lambda_rad),
+                Complex64::from_polar(c, lambda_rad + phi_rad),
+            ],
+        ];
+
+        for merge_rz in [false, true] {
+            for (basis, expected) in expected_columns.iter().enumerate() {
+                let mut sim = StabMps::builder(1).merge_rz(merge_rz).build();
+                if basis == 1 {
+                    sim.x(&[QubitId(0)]);
+                }
+                sim.u(theta, phi, lambda, &[QubitId(0)]);
+                let actual = sim.state_vector();
+                for (row, &expected_amplitude) in expected.iter().enumerate() {
+                    assert!(
+                        (actual[row] - expected_amplitude).norm() < 1e-10,
+                        "merge_rz={merge_rz}, column={basis}, row={row}: expected \
+                         {expected_amplitude}, got {}",
+                        actual[row]
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -32,6 +32,15 @@ The `C` prefix indicates a controlled operation where the first qubit controls t
 
 The `R` prefix indicates a parameterized rotation by an arbitrary angle θ.
 
+This family uses the symmetric exponential convention
+`RP(θ) = exp(-i θ P/2)` for a Pauli operator `P`. In particular,
+`RZ(θ) = exp(-i θ Z/2)`. It is distinct by an exact global phase from the
+OpenQASM phase gate `p(θ) = diag(1, exp(iθ))`:
+
+```
+RZ(θ) = exp(-iθ/2) p(θ)
+```
+
 | Gate | Meaning |
 |------|---------|
 | RX(θ) | Rotation around X-axis by θ |
@@ -211,14 +220,29 @@ T² = SZ = S = exp(iπ/4) RZ(π/2)
 T⁴ = Z = i RZ(π)
 ```
 
+### The Phase-Gate Family
+
+The OpenQASM spellings `p(θ)`, `phase(θ)`, and `u1(θ)` denote the same
+phase-fixed gate:
+
+```
+p(θ) = phase(θ) = u1(θ) = U(0, 0, θ) = diag(1, exp(iθ))
+RZ(θ) = exp(-iθ/2) p(θ)
+```
+
+Unlike the symmetric rotation family, the named discrete gates and phase gates
+close exactly: `p(0) = I`, `p(π/4) = T`, `p(π/2) = SZ`, and `p(π) = Z`.
+The lowercase QASM name `p` is historical and is unrelated to PECOS's uppercase
+`P` preparation prefix.
+
 ### Gate Aliases
 
 Several gates have multiple names due to historical conventions:
 
 | Systematic Name | Historical Aliases | Notes |
 |-----------------|-------------------|-------|
-| SZ | S, P (phase gate) | All refer to RZ(π/2) |
-| SZdg | S†, Sdg, P† | Inverse of S |
+| SZ | S, p(π/2) (phase gate) | Exactly equal; each is exp(iπ/4) RZ(π/2) |
+| SZdg | S†, Sdg, p(-π/2) | Exactly equal; inverse of S |
 | CX | CNOT | Controlled-NOT |
 
 PECOS generally accepts both forms where applicable.

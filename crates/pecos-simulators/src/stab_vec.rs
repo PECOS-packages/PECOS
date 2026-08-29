@@ -990,6 +990,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for Sta
         let ch = CHFormGeneric::with_rng(self.num_qubits, rng);
         self.terms = vec![(Complex64::new(1.0, 0.0), ch)];
         self.pending_rz.fill(Angle64::default());
+        self.cliff_frame.fill(CliffordFrame::IDENTITY);
+        self.frame_phase = 0;
+        self.gamma_diff_qubits.clear();
         // rel_pruning_threshold preserved across reset
         self
     }

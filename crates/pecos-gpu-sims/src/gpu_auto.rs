@@ -153,6 +153,9 @@ impl ArbitraryRotationGateable for GpuStateVecAuto {
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, rz(theta, qubits))
     }
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, apply_global_phase(phase, qubits))
+    }
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, t(qubits))
     }

@@ -840,6 +840,13 @@ RZ(θ) = [[e^(-iθ/2),     0     ],
          [    0,      e^(iθ/2) ]]
 ```
 
+RZ belongs to the symmetric exponential rotation family. The phase-fixed
+OpenQASM gate `p(θ) = U(0,0,θ) = diag(1, exp(iθ))` differs by a scalar:
+
+```
+RZ(θ) = exp(-iθ/2) p(θ)
+```
+
 === ":fontawesome-brands-python: Python"
     ```python
     state.run_gate("RZ", {q}, angles=(theta,))
@@ -877,11 +884,27 @@ T = [[1,        0     ],
 
 ---
 
+#### Phase Gate (p, phase, u1)
+
+The OpenQASM spellings `p(θ)`, `phase(θ)`, and `u1(θ)` are phase-fixed aliases:
+
+```
+p(θ) = U(0,0,θ) = [[1,       0    ],
+                    [0, exp(iθ)    ]]
+```
+
+Consequently `p(0) = I`, `p(π/4) = T`, `p(π/2) = SZ`, and `p(π) = Z`
+exactly, including global phase. This family must not be substituted with RZ;
+their exact bridge is `RZ(θ) = exp(-iθ/2) p(θ)`.
+
+---
+
 #### U Gate (General Single-Qubit Unitary)
 
 The U gate is a general single-qubit unitary with three parameters.
 
-**Definition:** U(θ, φ, λ) = RZ(φ) · RY(θ) · RZ(λ)
+**Definition:**
+`U(θ, φ, λ) = exp(i(φ+λ)/2) RZ(φ) · RY(θ) · RZ(λ)`
 
 **Matrix:**
 ```
@@ -903,7 +926,16 @@ U(θ,φ,λ) = [[        cos(θ/2),      -e^(iλ)·sin(θ/2)],
 
 #### R1XY (X-Y Plane Rotation)
 
-An X-Y plane rotation gate with a specified angle and axis.
+An X-Y plane rotation gate with a specified angle and axis:
+
+```
+R1XY(θ,φ) = exp(-iθ(cos(φ)X + sin(φ)Y)/2)
+           = [[cos(θ/2), -i exp(-iφ) sin(θ/2)],
+              [-i exp(iφ) sin(θ/2), cos(θ/2)]]
+```
+
+Its `RZ(π/2-φ)`, `RY(θ)`, `RZ(φ-π/2)` decomposition is exact, not merely
+equal up to global phase, because the two Z angles sum to zero.
 
 === ":fontawesome-brands-rust: Rust"
     ```rust

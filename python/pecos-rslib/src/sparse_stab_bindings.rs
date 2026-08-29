@@ -404,6 +404,18 @@ impl PySparseStab {
                 self.inner.g(pair);
                 Ok(None)
             }
+            "Gdg" => {
+                self.inner.gdg(pair);
+                Ok(None)
+            }
+            "ISWAP" => {
+                self.inner.iswap(pair);
+                Ok(None)
+            }
+            "ISWAPdg" => {
+                self.inner.iswapdg(pair);
+                Ok(None)
+            }
             "RXX" => {
                 let angle = extract_angle(params, "RXX")?;
                 self.inner

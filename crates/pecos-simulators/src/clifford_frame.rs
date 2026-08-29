@@ -765,7 +765,7 @@ impl CliffordFrame {
 
     /// Whether this Clifford is diagonal in the computational basis.
     ///
-    /// A Clifford is diagonal iff its Z-image axis is Z (maps Z to +/-Z).
+    /// A Clifford is diagonal iff its Z image is +Z.
     /// The four diagonal Cliffords are: I, Z, S, Sdg.
     #[inline]
     #[must_use]

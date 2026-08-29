@@ -107,14 +107,102 @@ fn apply_expanded_operation(sim: &mut StateVecSoA32, operation: &Operation) {
         Operation::Gate { name, qubits, .. } if name == "CX" => {
             sim.cx(&[(QubitId(qubits[0]), QubitId(qubits[1]))]);
         }
+        Operation::Gate { name, qubits, .. } if name == "H" => {
+            sim.h(&[QubitId(qubits[0])]);
+        }
+        Operation::Gate {
+            name,
+            parameters,
+            qubits,
+        } if name == "RX" => {
+            sim.rx(Angle64::from_radians(parameters[0]), &[QubitId(qubits[0])]);
+        }
+        Operation::Gate {
+            name,
+            parameters,
+            qubits,
+        } if name == "RZ" => {
+            sim.rz(Angle64::from_radians(parameters[0]), &[QubitId(qubits[0])]);
+        }
+        Operation::Gate {
+            name,
+            parameters,
+            qubits,
+        } if name == "R1XY" => {
+            sim.r1xy(
+                Angle64::from_radians(parameters[0]),
+                Angle64::from_radians(parameters[1]),
+                &[QubitId(qubits[0])],
+            );
+        }
         Operation::NativeGate(gate) if gate.gate_type == GateType::U => {
             sim.u(gate.angles[0], gate.angles[1], gate.angles[2], &gate.qubits);
         }
         Operation::NativeGate(gate) if gate.gate_type == GateType::CX => {
             sim.cx(&[(gate.qubits[0], gate.qubits[1])]);
         }
-        operation => panic!("unexpected controlled-phase operation {operation:?}"),
+        Operation::NativeGate(gate) if gate.gate_type == GateType::H => {
+            sim.h(&gate.qubits);
+        }
+        Operation::NativeGate(gate) if gate.gate_type == GateType::RX => {
+            sim.rx(gate.angles[0], &gate.qubits);
+        }
+        Operation::NativeGate(gate) if gate.gate_type == GateType::RZ => {
+            sim.rz(gate.angles[0], &gate.qubits);
+        }
+        Operation::NativeGate(gate) if gate.gate_type == GateType::R1XY => {
+            sim.r1xy(gate.angles[0], gate.angles[1], &gate.qubits);
+        }
+        operation => panic!("unexpected expanded operation {operation:?}"),
     }
+}
+
+fn single_qubit_columns(invocation: &str) -> [[Complex64; 2]; 2] {
+    let qasm = format!("OPENQASM 2.0;\ninclude \"qelib1.inc\";\nqreg q[1];\n{invocation} q[0];");
+    let program = QASMParser::parse_str(&qasm).expect("single-qubit gate must parse");
+    let mut columns = [[Complex64::new(0.0, 0.0); 2]; 2];
+
+    for (basis, column) in columns.iter_mut().enumerate() {
+        let mut sim = StateVecSoA32::new(1);
+        if basis == 1 {
+            sim.x(&[QubitId(0)]);
+        }
+        for operation in &program.operations {
+            apply_expanded_operation(&mut sim, operation);
+        }
+        *column = [
+            complex64(sim.get_amplitude(0)),
+            complex64(sim.get_amplitude(1)),
+        ];
+    }
+
+    columns
+}
+
+fn assert_columns_equal(label: &str, actual: &[[Complex64; 2]; 2], expected: &[[Complex64; 2]; 2]) {
+    for (column, (actual_column, expected_column)) in actual.iter().zip(expected).enumerate() {
+        for (row, (actual, expected)) in actual_column.iter().zip(expected_column).enumerate() {
+            let error = (actual - expected).norm();
+            assert!(
+                error < TOLERANCE,
+                "{label}, column {column}, row {row}: actual={actual}, expected={expected}, error={error:e}"
+            );
+        }
+    }
+}
+
+#[test]
+fn qelib1_u3_zero_theta_matches_u1_phase_exactly() {
+    let u3 = single_qubit_columns("u3(0, 0, 0.7)");
+    let u1 = single_qubit_columns("u1(0.7)");
+    assert_columns_equal("u3(0,0,lambda) versus u1(lambda)", &u3, &u1);
+}
+
+#[test]
+fn qelib1_u2_matches_native_u_phase_exactly() {
+    let u2 = single_qubit_columns("u2(0.4, 0.8)");
+    let native_u = single_qubit_columns("U(pi/2, 0.4, 0.8)");
+    assert_columns_equal("u2(phi,lambda) versus U(pi/2,phi,lambda)", &u2, &native_u);
 }
 
 fn assert_controlled_phase(include: &str, spelling: &str) {

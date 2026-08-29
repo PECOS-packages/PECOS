@@ -154,20 +154,10 @@ gate u(theta, phi, lambda) q { U(theta, phi, lambda) q; }
 gate u1(lambda) a { U(0, 0, lambda) a; }
 
 // Two-parameter rotation
-gate u2(phi, lambda) a {
-  rz(phi) a;
-  rx(pi/2) a;
-  rz(lambda) a;
-}
+gate u2(phi, lambda) a { U(pi/2, phi, lambda) a; }
 
 // Three-parameter general rotation
-gate u3(theta, phi, lambda) a {
-  rz(phi) a;
-  rx(-pi/2) a;
-  rz(theta) a;
-  rx(pi/2) a;
-  rz(lambda) a;
-}
+gate u3(theta, phi, lambda) a { U(theta, phi, lambda) a; }
 
 // Controlled gates
 gate cu1(lambda) a,b {

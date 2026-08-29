@@ -1910,6 +1910,12 @@ impl<R: Rng> SparseStateVecSoA<R> {
         self.frame_phases[q] =
             (self.frame_phases[q] + PHASE_COCYCLE[old][gate_idx.index() as usize] + gate_delta) % 8;
     }
+
+    fn add_named_gate_phase(&mut self, qubits: &[QubitId], phase: u8) {
+        for &q in qubits {
+            self.frame_phases[q.0] = (self.frame_phases[q.0] + phase) % 8;
+        }
+    }
 }
 
 // --- QuantumSimulator trait implementation ---
@@ -2014,6 +2020,84 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         for &q in qubits {
             self.compose_frame(q.0, CliffordFrame::H, 0);
         }
+        self
+    }
+
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sy(qubits).z(qubits);
+        self.add_named_gate_phase(qubits, 7);
+        self
+    }
+
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sz(qubits).y(qubits);
+        self.add_named_gate_phase(qubits, 7);
+        self
+    }
+
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sz(qubits).x(qubits);
+        self.add_named_gate_phase(qubits, 7);
+        self
+    }
+
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits).z(qubits);
+        self.add_named_gate_phase(qubits, 7);
+        self
+    }
+
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits).y(qubits);
+        self.add_named_gate_phase(qubits, 7);
+        self
+    }
+
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits).sz(qubits);
+        self.add_named_gate_phase(qubits, 2);
+        self
+    }
+
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.szdg(qubits).sxdg(qubits);
+        self.add_named_gate_phase(qubits, 6);
+        self
+    }
+
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sxdg(qubits).sy(qubits);
+        self.add_named_gate_phase(qubits, 4);
+        self
+    }
+
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sydg(qubits).sx(qubits);
+        self.add_named_gate_phase(qubits, 4);
+        self
+    }
+
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sxdg(qubits).sz(qubits);
+        self.add_named_gate_phase(qubits, 4);
+        self
+    }
+
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.szdg(qubits).sx(qubits);
+        self.add_named_gate_phase(qubits, 4);
+        self
+    }
+
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sz(qubits).sx(qubits);
+        self.add_named_gate_phase(qubits, 2);
+        self
+    }
+
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sxdg(qubits).szdg(qubits);
+        self.add_named_gate_phase(qubits, 6);
         self
     }
 

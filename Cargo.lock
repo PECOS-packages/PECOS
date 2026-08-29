@@ -4884,6 +4884,7 @@ version = "0.2.0-dev.0"
 dependencies = [
  "num-bigint",
  "num-traits",
+ "pecos-core",
 ]
 
 [[package]]

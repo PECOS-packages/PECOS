@@ -770,7 +770,8 @@ impl CliffordFrame {
     #[inline]
     #[must_use]
     pub fn is_diagonal(self) -> bool {
-        HEIS[self.0 as usize].2 == 2 // z_axis == Z
+        let (_, _, z_axis, z_neg) = HEIS[self.0 as usize];
+        z_axis == 2 && !z_neg
     }
 
     /// Decompose into Pauli × Coset: `self_matrix` = pauli · coset.
@@ -1035,6 +1036,17 @@ mod tests {
     }
     fn mat_z() -> Mat2 {
         [[ONE, ZERO], [ZERO, NEG1]]
+    }
+
+    #[test]
+    fn only_computational_basis_diagonal_frames_are_diagonal() {
+        assert!(CliffordFrame::IDENTITY.is_diagonal());
+        assert!(CliffordFrame::Z.is_diagonal());
+        assert!(CliffordFrame::SZ.is_diagonal());
+        assert!(CliffordFrame::SZDG.is_diagonal());
+        assert!(!CliffordFrame::X.is_diagonal());
+        assert!(!CliffordFrame::Y.is_diagonal());
+        assert!(!CliffordFrame::H.is_diagonal());
     }
 
     fn mat_mul(a: &Mat2, b: &Mat2) -> Mat2 {

@@ -427,13 +427,6 @@ impl PyStabilizer {
                     .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 Ok(None)
             }
-            "CRZ" => {
-                let angle = extract_angle(params, "CRZ")?;
-                self.inner
-                    .try_crz(angle, pair)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-                Ok(None)
-            }
             "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
                 let angles = extract_angles(params, "RXXRYYRZZ", 3)?;
                 self.inner

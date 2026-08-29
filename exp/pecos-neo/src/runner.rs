@@ -1673,10 +1673,6 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 [angle] => sim.try_ryy(*angle, &flat_to_pairs(qubits)).map(|_| ()),
                 _ => return CliffordRotationAttempt::NonCliffordAngle,
             },
-            GateType::CRZ => match angles {
-                [angle] => sim.try_crz(*angle, &flat_to_pairs(qubits)).map(|_| ()),
-                _ => return CliffordRotationAttempt::NonCliffordAngle,
-            },
             _ => return CliffordRotationAttempt::NotARotation,
         };
         match result {
@@ -3325,11 +3321,6 @@ mod tests {
                 smallvec::smallvec![Angle64::QUARTER_TURN, Angle64::ZERO],
             ),
             GateCommand::with_angles(
-                GateType::CRZ,
-                smallvec::smallvec![QubitId(0), QubitId(1)],
-                smallvec::smallvec![Angle64::HALF_TURN],
-            ),
-            GateCommand::with_angles(
                 GateType::U,
                 smallvec::smallvec![QubitId(0)],
                 smallvec::smallvec![Angle64::QUARTER_TURN, Angle64::ZERO, Angle64::ZERO],
@@ -3357,11 +3348,6 @@ mod tests {
                 smallvec::smallvec![non_clifford, Angle64::ZERO],
             ),
             GateCommand::with_angles(
-                GateType::CRZ,
-                smallvec::smallvec![QubitId(0), QubitId(1)],
-                smallvec::smallvec![non_clifford],
-            ),
-            GateCommand::with_angles(
                 GateType::U,
                 smallvec::smallvec![QubitId(0)],
                 smallvec::smallvec![non_clifford, Angle64::ZERO, Angle64::ZERO],
@@ -3382,13 +3368,7 @@ mod tests {
 
     #[test]
     fn recognized_rotations_with_wrong_angle_count_use_rotation_error() {
-        for gate_type in [
-            GateType::RZ,
-            GateType::R1XY,
-            GateType::U,
-            GateType::RZZ,
-            GateType::CRZ,
-        ] {
+        for gate_type in [GateType::RZ, GateType::R1XY, GateType::U, GateType::RZZ] {
             let qubits = if gate_type.is_two_qubit() {
                 smallvec::smallvec![QubitId(0), QubitId(1)]
             } else {

@@ -193,12 +193,6 @@ def test_multi_angle_pyo3_rotation_arms(simulator: type) -> None:
         ("R1XY", 0, {"angles": (-math.pi / 2, 0.0)}, (("SXdg", 0),)),
         ("U", 0, {"angles": (0.0, 0.0, -math.pi / 2)}, (("SZdg", 0),)),
         (
-            "CRZ",
-            (0, 1),
-            {"angle": math.pi},
-            (("SZ", 1), ("CX", (0, 1)), ("SZdg", 1), ("CX", (0, 1))),
-        ),
-        (
             "RXXRYYRZZ",
             (0, 1),
             {"angles": (-math.pi / 2, 0.0, 0.0)},
@@ -252,13 +246,6 @@ def test_stab_vec_multi_angle_rotation_arms_accept_non_clifford_values() -> None
             (("SZdg", 0),),
         ),
         (
-            "CRZ",
-            (0, 1),
-            {"angle": 0.5},
-            {"angle": math.pi},
-            (("SZ", 1), ("CX", (0, 1)), ("SZdg", 1), ("CX", (0, 1))),
-        ),
-        (
             "RXXRYYRZZ",
             (0, 1),
             {"angles": (0.5, 0.25, 0.125)},
@@ -279,6 +266,46 @@ def test_stab_vec_multi_angle_rotation_arms_accept_non_clifford_values() -> None
         for named, named_location in reference_gates:
             reference.bindings[named](reference, named_location)
         _assert_equivalent_state(rotated, reference)
+
+
+@pytest.mark.parametrize("simulator", [SparseStab, Stabilizer])
+@pytest.mark.parametrize(
+    ("alias", "canonical", "location", "params", "preparation"),
+    [
+        (
+            "RXXYYZZ",
+            "RXXRYYRZZ",
+            (0, 1),
+            {"angles": (-math.pi / 2, 0.0, 0.0)},
+            "plus_zero",
+        ),
+        (
+            "R2XXYYZZ",
+            "RXXRYYRZZ",
+            (0, 1),
+            {"angles": (-math.pi / 2, 0.0, 0.0)},
+            "plus_zero",
+        ),
+    ],
+)
+def test_pyo3_rotation_alias_matches_canonical(
+    simulator: type,
+    alias: str,
+    canonical: str,
+    location: int | tuple[int, int],
+    params: dict[str, object],
+    preparation: str,
+) -> None:
+    """Rust-backed bindings accept the RXXRYYRZZ spellings the state-vector bindings already accept."""
+    alias_state = simulator(2)
+    canonical_state = simulator(2)
+    _prepare_state(alias_state, preparation)
+    _prepare_state(canonical_state, preparation)
+
+    alias_state.bindings[alias](alias_state, location, **params)
+    canonical_state.bindings[canonical](canonical_state, location, **params)
+
+    assert _snapshot(alias_state) == _snapshot(canonical_state)
 
 
 @pytest.mark.parametrize("simulator", [SparseStab, Stabilizer, SparseStabPy])
@@ -329,7 +356,7 @@ def test_lower_clifford_rotation_examples() -> None:
     ]
 
 
-@pytest.mark.parametrize("symbol", ["U", "CRZ", "RXXRYYRZZ"])
+@pytest.mark.parametrize("symbol", ["U", "RXXRYYRZZ"])
 def test_lower_clifford_rotation_rejects_unsupported_symbols(symbol: str) -> None:
     """Decomposition-only symbols are outside the table helper."""
     with pytest.raises(ValueError, match=rf"^{symbol} is unsupported"):

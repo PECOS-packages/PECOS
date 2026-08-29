@@ -337,11 +337,6 @@ impl PyStabVec {
                 self.inner.rzz(angle, pair);
                 Ok(None)
             }
-            "CRZ" => {
-                let angle = extract_angle(params, "CRZ")?;
-                self.inner.crz(angle, pair);
-                Ok(None)
-            }
             "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
                 let angles = extract_angles(params, "RXXRYYRZZ", 3)?;
                 self.inner.rxxryyrzz(angles[0], angles[1], angles[2], pair);

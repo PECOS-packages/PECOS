@@ -287,6 +287,9 @@ fn simplify_gate_in_place(gate: &mut Gate) -> bool {
     // R1XY has two angles — handle separately
     if gate.gate_type == GateType::R1XY && gate.angles.len() == 2 {
         if let Some(named) = pecos_core::try_simplify_r1xy(gate.angles[0], gate.angles[1]) {
+            if named == GateType::I {
+                return false;
+            }
             gate.gate_type = named;
             gate.angles.clear();
             return true;
@@ -303,6 +306,9 @@ fn simplify_gate_in_place(gate: &mut Gate) -> bool {
         return false;
     }
     if let Some(named) = pecos_core::try_simplify_rotation(gate.gate_type, gate.angles[0]) {
+        if named == GateType::I {
+            return false;
+        }
         gate.gate_type = named;
         gate.angles.clear();
         return true;
@@ -1856,6 +1862,28 @@ mod tests {
         let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::RZ);
         assert_eq!(gate.angles.as_slice(), &[Angle64::ZERO]);
+    }
+
+    #[test]
+    fn tick_near_zero_angle_rotation_unchanged() {
+        let angle = Angle64::from_turns(1e-10);
+        let mut tc = TickCircuit::new();
+        tc.tick().rz(angle, &[0]);
+        SimplifyRotations.apply_tick(&mut tc);
+        let gate = &tc.ticks()[0].gate_batches()[0];
+        assert_eq!(gate.gate_type, GateType::RZ);
+        assert_eq!(gate.angles.as_slice(), &[angle]);
+    }
+
+    #[test]
+    fn tick_near_zero_r1xy_rotation_unchanged() {
+        let theta = Angle64::from_turns(1e-10);
+        let mut tc = TickCircuit::new();
+        tc.tick().r1xy(theta, Angle64::ZERO, &[0]);
+        SimplifyRotations.apply_tick(&mut tc);
+        let gate = &tc.ticks()[0].gate_batches()[0];
+        assert_eq!(gate.gate_type, GateType::R1XY);
+        assert_eq!(gate.angles.as_slice(), &[theta, Angle64::ZERO]);
     }
 
     #[test]

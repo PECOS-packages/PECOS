@@ -101,12 +101,12 @@ fn lower_clifford_rotation(
     let angles: Vec<Angle64> = angles.into_iter().map(|angle| angle.0).collect();
 
     let lowered = match gate {
-        GateType::R1XY => try_simplify_r1xy(angles[0], angles[1])
-            .filter(|named| !matches!(named, GateType::T | GateType::Tdg))
-            .map(|named| vec![(named, vec![0])]),
-        GateType::RZ | GateType::RX | GateType::RY => try_simplify_rotation(gate, angles[0])
-            .filter(|named| !matches!(named, GateType::T | GateType::Tdg))
-            .map(|named| vec![(named, vec![0])]),
+        GateType::R1XY => {
+            try_simplify_r1xy(angles[0], angles[1]).map(|named| vec![(named, vec![0])])
+        }
+        GateType::RZ | GateType::RX | GateType::RY => {
+            try_simplify_rotation(gate, angles[0]).map(|named| vec![(named, vec![0])])
+        }
         GateType::RZZ | GateType::RXX | GateType::RYY => {
             if let Some(named) = try_simplify_rotation(gate, angles[0]) {
                 if named == GateType::I {

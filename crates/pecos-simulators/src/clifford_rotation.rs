@@ -297,17 +297,12 @@ impl<T: CliffordGateable> CliffordRotation for T {
     }
 }
 
-fn simplify_single_qubit_clifford(gate: GateType, angle: Angle64) -> Option<GateType> {
-    pecos_core::try_simplify_rotation(gate, angle)
-        .filter(|simplified| !matches!(simplified, GateType::T | GateType::Tdg))
-}
-
 fn simplify_u_clifford(angles: [Angle64; 3]) -> Option<[GateType; 3]> {
     let [theta, phi, lambda] = angles;
     Some([
-        simplify_single_qubit_clifford(GateType::RZ, lambda)?,
-        simplify_single_qubit_clifford(GateType::RY, theta)?,
-        simplify_single_qubit_clifford(GateType::RZ, phi)?,
+        pecos_core::try_simplify_rotation(GateType::RZ, lambda)?,
+        pecos_core::try_simplify_rotation(GateType::RY, theta)?,
+        pecos_core::try_simplify_rotation(GateType::RZ, phi)?,
     ])
 }
 

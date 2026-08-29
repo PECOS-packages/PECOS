@@ -1871,7 +1871,7 @@ fn build_gate_from_python(
         "SXXdg" => GateType::SXXdg,
         "SYY" => GateType::SYY,
         "SYYdg" => GateType::SYYdg,
-        "R1XY" => GateType::R1XY,
+        "RXY1Q" => GateType::RXY1Q,
         "I" | "Idle" => GateType::I,
         other => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -2044,10 +2044,10 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                         cb = cb.rz(&qubits, Angle64::from_radians(angle));
                     }
                 }
-                "R1XY" => {
+                "RXY1Q" => {
                     let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
                     if angles.len() >= 2 {
-                        cb = cb.r1xy(
+                        cb = cb.rxy1q(
                             &qubits,
                             Angle64::from_radians(angles[0]),
                             Angle64::from_radians(angles[1]),

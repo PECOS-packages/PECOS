@@ -240,10 +240,10 @@ impl PySparseStab {
                     .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 Ok(None)
             }
-            "R1XY" => {
-                let angles = extract_angles(params, "R1XY", 2)?;
+            "RXY1Q" | "R1XY" => {
+                let angles = extract_angles(params, "RXY1Q", 2)?;
                 self.inner
-                    .try_r1xy(angles[0], angles[1], q)
+                    .try_rxy1q(angles[0], angles[1], q)
                     .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 Ok(None)
             }

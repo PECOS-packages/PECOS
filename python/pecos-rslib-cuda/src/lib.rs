@@ -466,10 +466,10 @@ impl PyCuStateVec {
         );
     }
 
-    /// Apply R1XY gate (rotation in XY plane).
-    fn r1xy(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
+    /// Apply RXY1Q gate (rotation in XY plane).
+    fn rxy1q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.r1xy(
+        self.inner.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qubits,

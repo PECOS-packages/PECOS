@@ -129,9 +129,9 @@ impl PyByteMessageBuilder {
         self.inner.ry(theta.0, &qubits);
     }
 
-    /// Add R1XY gate(s): `r1xy(theta, phi, [q0, q1])`
-    fn r1xy(&mut self, theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) {
-        self.inner.r1xy(theta.0, phi.0, &qubits);
+    /// Add RXY1Q gate(s): `rxy1q(theta, phi, [q0, q1])`
+    fn rxy1q(&mut self, theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) {
+        self.inner.rxy1q(theta.0, phi.0, &qubits);
     }
 
     /// Add U gate(s): `u(theta, phi, lambda_, [q0, q1])`

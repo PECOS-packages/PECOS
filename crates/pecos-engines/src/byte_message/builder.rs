@@ -526,12 +526,17 @@ impl ByteMessageBuilder {
         self.add_gate_parts(GateType::RZ, qubits, &[theta], &[])
     }
 
-    /// Add an R1XY gate
-    pub fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
+    /// Add an RXY1Q gate
+    pub fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
         if qubits.len() == 1 {
-            return self.add_single_qubit_gate_parts(GateType::R1XY, qubits[0], &[theta, phi], &[]);
+            return self.add_single_qubit_gate_parts(
+                GateType::RXY1Q,
+                qubits[0],
+                &[theta, phi],
+                &[],
+            );
         }
-        self.add_gate_parts(GateType::R1XY, qubits, &[theta, phi], &[])
+        self.add_gate_parts(GateType::RXY1Q, qubits, &[theta, phi], &[])
     }
 
     /// Add a U gate
@@ -1093,7 +1098,7 @@ mod tests {
         builder.y(&[2]);
         builder.z(&[3]);
         builder.rz(Angle64::from_radians(0.5), &[4]);
-        builder.r1xy(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
+        builder.rxy1q(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
         builder.mz(&[6]);
 
         // Build the message
@@ -1113,8 +1118,8 @@ mod tests {
         assert_eq!(commands[4].angles.len(), 1);
         assert!((commands[4].angles[0].to_radians() - 0.5).abs() < 1e-10);
         assert!(commands[4].params.is_empty());
-        assert_eq!(commands[5].gate_type, GateType::R1XY);
-        // R1XY has two angles, also stored in angles field
+        assert_eq!(commands[5].gate_type, GateType::RXY1Q);
+        // RXY1Q has two angles, also stored in angles field
         assert_eq!(commands[5].angles.len(), 2);
         assert!((commands[5].angles[0].to_radians() - 0.1).abs() < 1e-10);
         assert!((commands[5].angles[1].to_radians() - 0.2).abs() < 1e-10);
@@ -1127,8 +1132,8 @@ mod tests {
         let theta_rx = Angle64::from_radians(0.3);
         let theta_ry = Angle64::from_radians(0.4);
         let theta_rz = Angle64::from_radians(0.5);
-        let theta_r1xy = Angle64::from_radians(0.6);
-        let phi_r1xy = Angle64::from_radians(0.7);
+        let theta_rxy1q = Angle64::from_radians(0.6);
+        let phi_rxy1q = Angle64::from_radians(0.7);
         let theta_rzz = Angle64::from_radians(0.8);
 
         let mut generic_builder = ByteMessageBuilder::new();
@@ -1136,7 +1141,7 @@ mod tests {
         generic_builder.add_gate_command(&Gate::rx(theta_rx, &[1]));
         generic_builder.add_gate_command(&Gate::ry(theta_ry, &[2]));
         generic_builder.add_gate_command(&Gate::rz(theta_rz, &[3]));
-        generic_builder.add_gate_command(&Gate::r1xy(theta_r1xy, phi_r1xy, &[4]));
+        generic_builder.add_gate_command(&Gate::rxy1q(theta_rxy1q, phi_rxy1q, &[4]));
         generic_builder.add_gate_command(&Gate::rzz(theta_rzz, &[(5, 6)]));
 
         let mut fast_path_builder = ByteMessageBuilder::new();
@@ -1144,7 +1149,7 @@ mod tests {
         fast_path_builder.rx(theta_rx, &[1]);
         fast_path_builder.ry(theta_ry, &[2]);
         fast_path_builder.rz(theta_rz, &[3]);
-        fast_path_builder.r1xy(theta_r1xy, phi_r1xy, &[4]);
+        fast_path_builder.rxy1q(theta_rxy1q, phi_rxy1q, &[4]);
         fast_path_builder.rzz(theta_rzz, &[(5, 6)]);
 
         let generic_message = generic_builder.build();

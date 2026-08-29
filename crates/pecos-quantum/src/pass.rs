@@ -284,9 +284,9 @@ impl CircuitPass for InsertIdleAfterTwoQubitGates {
 /// Apply an in-place simplification to a gate. Returns `true` if the gate was
 /// simplified (either renamed in place or needs decomposition handling).
 fn simplify_gate_in_place(gate: &mut Gate) -> bool {
-    // R1XY has two angles — handle separately
-    if gate.gate_type == GateType::R1XY && gate.angles.len() == 2 {
-        if let Some(named) = pecos_core::try_simplify_r1xy(gate.angles[0], gate.angles[1]) {
+    // RXY1Q has two angles — handle separately
+    if gate.gate_type == GateType::RXY1Q && gate.angles.len() == 2 {
+        if let Some(named) = pecos_core::try_simplify_rxy1q(gate.angles[0], gate.angles[1]) {
             if named == GateType::I {
                 return false;
             }
@@ -1876,13 +1876,13 @@ mod tests {
     }
 
     #[test]
-    fn tick_near_zero_r1xy_rotation_unchanged() {
+    fn tick_near_zero_rxy1q_rotation_unchanged() {
         let theta = Angle64::from_turns(1e-10);
         let mut tc = TickCircuit::new();
-        tc.tick().r1xy(theta, Angle64::ZERO, &[0]);
+        tc.tick().rxy1q(theta, Angle64::ZERO, &[0]);
         SimplifyRotations.apply_tick(&mut tc);
         let gate = &tc.ticks()[0].gate_batches()[0];
-        assert_eq!(gate.gate_type, GateType::R1XY);
+        assert_eq!(gate.gate_type, GateType::RXY1Q);
         assert_eq!(gate.angles.as_slice(), &[theta, Angle64::ZERO]);
     }
 

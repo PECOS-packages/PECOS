@@ -151,7 +151,7 @@ The `GateType` enum classifies quantum gates for circuit representation and simu
 `CX`, `CY`, `CZ`, `SWAP`, `SXX`, `SXXdg`, `SYY`, `SYYdg`, `SZZ`, `SZZdg`, `ISWAP`, `ISWAPdg`
 
 **Parameterized (non-Clifford):**
-`RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, `CRZ`, `T`, `Tdg`, `U`, `R1XY`
+`RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, `CRZ`, `T`, `Tdg`, `U`, `RXY1Q`
 
 **Three-qubit:**
 `CCX` (Toffoli)

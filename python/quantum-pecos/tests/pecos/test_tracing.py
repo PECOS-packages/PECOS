@@ -118,6 +118,23 @@ def test_leakage_measurement_replays_as_accepted_path_mz() -> None:
     assert replayed.get_meta("qis_source_measurement_ids") == "[7]"
 
 
+def test_legacy_r1xy_trace_record_replays_as_rxy1q() -> None:
+    trace = _completed_trace()
+    trace[0]["lowered_quantum_ops"].insert(
+        1,
+        {
+            "gate_type": "R1XY",
+            "qubits": [0],
+            "angles": [0.5, 0.0],
+            "params": [],
+        },
+    )
+
+    replayed = pecos.qis_operation_trace_to_tick_circuit(trace)
+
+    assert "RXY1Q" in _gate_names(replayed)
+
+
 def test_qis_operation_trace_conversion_rejects_an_incomplete_trace() -> None:
     with pytest.raises(ValueError, match="terminal trace_complete"):
         pecos.qis_operation_trace_to_tick_circuit(_completed_trace()[:-1])
@@ -193,7 +210,7 @@ def test_qis_operation_trace_conversion_rejects_boolean_framing_counts() -> None
         ("RX", []),
         ("RY", [0.5, 0.25]),
         ("RZ", []),
-        ("R1XY", [0.5]),
+        ("RXY1Q", [0.5]),
         ("CRZ", []),
         ("RZZ", []),
     ],

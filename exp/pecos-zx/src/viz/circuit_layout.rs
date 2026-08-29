@@ -93,7 +93,7 @@ fn gate_label(gate_type: GateType, angles: &[pecos_core::Angle64]) -> String {
         GateType::RY => "RY",
         GateType::RZ => "RZ",
         GateType::U => "U",
-        GateType::R1XY => "R1XY",
+        GateType::RXY1Q => "RXY1Q",
         GateType::CX => "CX",
         GateType::CY => "CY",
         GateType::CZ => "CZ",

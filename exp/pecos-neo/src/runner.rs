@@ -1653,8 +1653,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 [angle] => sim.try_ry(*angle, qubits).map(|_| ()),
                 _ => return CliffordRotationAttempt::NonCliffordAngle,
             },
-            GateType::R1XY => match angles {
-                [theta, phi] => sim.try_r1xy(*theta, *phi, qubits).map(|_| ()),
+            GateType::RXY1Q => match angles {
+                [theta, phi] => sim.try_rxy1q(*theta, *phi, qubits).map(|_| ()),
                 _ => return CliffordRotationAttempt::NonCliffordAngle,
             },
             GateType::U => match angles {
@@ -2409,10 +2409,10 @@ where
                 sim.u(angle, angle2, angle3, qubits);
                 true
             }
-            GateType::R1XY => {
+            GateType::RXY1Q => {
                 let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
                 let angle2 = angles.get(1).copied().unwrap_or(Angle64::ZERO);
-                sim.r1xy(angle, angle2, qubits);
+                sim.rxy1q(angle, angle2, qubits);
                 true
             }
             GateType::RXX => {
@@ -3316,7 +3316,7 @@ mod tests {
     fn multi_angle_clifford_rotations_use_fallback() {
         let commands = [
             GateCommand::with_angles(
-                GateType::R1XY,
+                GateType::RXY1Q,
                 smallvec::smallvec![QubitId(0)],
                 smallvec::smallvec![Angle64::QUARTER_TURN, Angle64::ZERO],
             ),
@@ -3343,7 +3343,7 @@ mod tests {
         let non_clifford = Angle64::from_radians(0.123);
         let commands = [
             GateCommand::with_angles(
-                GateType::R1XY,
+                GateType::RXY1Q,
                 smallvec::smallvec![QubitId(0)],
                 smallvec::smallvec![non_clifford, Angle64::ZERO],
             ),
@@ -3368,7 +3368,7 @@ mod tests {
 
     #[test]
     fn recognized_rotations_with_wrong_angle_count_use_rotation_error() {
-        for gate_type in [GateType::RZ, GateType::R1XY, GateType::U, GateType::RZZ] {
+        for gate_type in [GateType::RZ, GateType::RXY1Q, GateType::U, GateType::RZZ] {
             let qubits = if gate_type.is_two_qubit() {
                 smallvec::smallvec![QubitId(0), QubitId(1)]
             } else {

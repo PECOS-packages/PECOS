@@ -512,7 +512,7 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
         GateType::RY => "ry",
         GateType::RZ => "rz",
         GateType::U => "u",
-        GateType::R1XY => "r1xy",
+        GateType::RXY1Q => "rxy1q",
         GateType::CX => "cx",
         GateType::CY => "cy",
         GateType::CZ => "cz",

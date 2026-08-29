@@ -370,7 +370,7 @@ pub fn parse_gate_type_from_string(gate_str: &str) -> Option<GateType> {
         "SZZ" => Some(GateType::SZZ),
         "SZZDAG" | "SZZDG" => Some(GateType::SZZdg),
         "U" => Some(GateType::U),
-        "R1XY" => Some(GateType::R1XY),
+        "RXY1Q" => Some(GateType::RXY1Q),
         "MEASURE" | "M" => Some(GateType::MZ),
         "PREP" => Some(GateType::PZ),
         "IDLE" => Some(GateType::Idle),

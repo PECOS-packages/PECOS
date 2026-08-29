@@ -1691,8 +1691,8 @@ impl DagCircuit {
         self
     }
 
-    /// Apply R1XY (X-Y plane rotation) gate(s).
-    pub fn r1xy(
+    /// Apply RXY1Q (X-Y plane rotation) gate(s).
+    pub fn rxy1q(
         &mut self,
         theta: impl Into<Angle64>,
         phi: impl Into<Angle64>,
@@ -1702,7 +1702,7 @@ impl DagCircuit {
         let p = phi.into();
         for &q in qubits {
             self.add_gate_auto_wire(Gate::with_angles(
-                GateType::R1XY,
+                GateType::RXY1Q,
                 vec![t, p],
                 vec![q.into()],
             ));

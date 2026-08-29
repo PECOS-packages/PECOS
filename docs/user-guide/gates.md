@@ -924,12 +924,12 @@ U(θ,φ,λ) = [[        cos(θ/2),      -e^(iλ)·sin(θ/2)],
 
 ---
 
-#### R1XY (X-Y Plane Rotation)
+#### RXY1Q (X-Y Plane Rotation)
 
 An X-Y plane rotation gate with a specified angle and axis:
 
 ```
-R1XY(θ,φ) = exp(-iθ(cos(φ)X + sin(φ)Y)/2)
+RXY1Q(θ,φ) = exp(-iθ(cos(φ)X + sin(φ)Y)/2)
            = [[cos(θ/2), -i exp(-iφ) sin(θ/2)],
               [-i exp(iφ) sin(θ/2), cos(θ/2)]]
 ```
@@ -939,7 +939,7 @@ equal up to global phase, because the two Z angles sum to zero.
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.r1xy(theta, phi, &[q]);
+    sim.rxy1q(theta, phi, &[q]);
     ```
 
 ---

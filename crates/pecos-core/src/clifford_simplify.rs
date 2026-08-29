@@ -61,12 +61,12 @@ pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
     }
 }
 
-/// Try to simplify an R1XY(theta, phi) gate to a named Clifford.
+/// Try to simplify an RXY1Q(theta, phi) gate to a named Clifford.
 ///
-/// R1XY(theta, phi) is a rotation by `theta` about the axis
+/// RXY1Q(theta, phi) is a rotation by `theta` about the axis
 /// `cos(phi)*X + sin(phi)*Y` in the XY plane.
 ///
-/// R1XY has two angle parameters, so it is handled separately from the
+/// RXY1Q has two angle parameters, so it is handled separately from the
 /// single-angle rotations.
 ///
 /// | theta     | phi            | Simplifies to |
@@ -87,7 +87,7 @@ pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
 /// the same Clifford up to global phase for half-turns (`pi`), not for the
 /// quarter-turn sqrt gates.
 #[must_use]
-pub fn try_simplify_r1xy(theta: A64, phi: A64) -> Option<GateType> {
+pub fn try_simplify_rxy1q(theta: A64, phi: A64) -> Option<GateType> {
     let theta = snap_clifford_angle(theta);
     if theta == A64::ZERO {
         return Some(GateType::I);
@@ -379,87 +379,87 @@ mod tests {
     }
 
     #[test]
-    fn r1xy_identity() {
+    fn rxy1q_identity() {
         // theta=0 with any phi is identity
         assert_eq!(
-            try_simplify_r1xy(Angle64::ZERO, Angle64::ZERO),
+            try_simplify_rxy1q(Angle64::ZERO, Angle64::ZERO),
             Some(GateType::I)
         );
         assert_eq!(
-            try_simplify_r1xy(Angle64::ZERO, Angle64::QUARTER_TURN),
+            try_simplify_rxy1q(Angle64::ZERO, Angle64::QUARTER_TURN),
             Some(GateType::I)
         );
         assert_eq!(
-            try_simplify_r1xy(Angle64::ZERO, Angle64::HALF_TURN),
+            try_simplify_rxy1q(Angle64::ZERO, Angle64::HALF_TURN),
             Some(GateType::I)
         );
     }
 
     #[test]
-    fn r1xy_half_turn_pauli_gates() {
+    fn rxy1q_half_turn_pauli_gates() {
         // theta=pi, phi=0: X
         assert_eq!(
-            try_simplify_r1xy(Angle64::HALF_TURN, Angle64::ZERO),
+            try_simplify_rxy1q(Angle64::HALF_TURN, Angle64::ZERO),
             Some(GateType::X)
         );
         // theta=pi, phi=pi/2: Y
         assert_eq!(
-            try_simplify_r1xy(Angle64::HALF_TURN, Angle64::QUARTER_TURN),
+            try_simplify_rxy1q(Angle64::HALF_TURN, Angle64::QUARTER_TURN),
             Some(GateType::Y)
         );
         // theta=-pi also works
         assert_eq!(
-            try_simplify_r1xy(-Angle64::HALF_TURN, Angle64::ZERO),
+            try_simplify_rxy1q(-Angle64::HALF_TURN, Angle64::ZERO),
             Some(GateType::X)
         );
         assert_eq!(
-            try_simplify_r1xy(-Angle64::HALF_TURN, Angle64::QUARTER_TURN),
+            try_simplify_rxy1q(-Angle64::HALF_TURN, Angle64::QUARTER_TURN),
             Some(GateType::Y)
         );
     }
 
     #[test]
-    fn r1xy_half_turn_negated_axis() {
+    fn rxy1q_half_turn_negated_axis() {
         // phi=pi (-X axis) is equivalent to X for stabilizer
         assert_eq!(
-            try_simplify_r1xy(Angle64::HALF_TURN, Angle64::HALF_TURN),
+            try_simplify_rxy1q(Angle64::HALF_TURN, Angle64::HALF_TURN),
             Some(GateType::X)
         );
         // phi=3pi/2 (-Y axis) is equivalent to Y for stabilizer
         assert_eq!(
-            try_simplify_r1xy(Angle64::HALF_TURN, Angle64::THREE_QUARTERS_TURN),
+            try_simplify_rxy1q(Angle64::HALF_TURN, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::Y)
         );
     }
 
     #[test]
-    fn r1xy_quarter_turn_sqrt_gates() {
+    fn rxy1q_quarter_turn_sqrt_gates() {
         // theta=pi/2, phi=0: SX
         assert_eq!(
-            try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::ZERO),
+            try_simplify_rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO),
             Some(GateType::SX)
         );
         // theta=pi/2, phi=pi/2: SY
         assert_eq!(
-            try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN),
+            try_simplify_rxy1q(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN),
             Some(GateType::SY)
         );
         // theta=pi/2, phi=pi: rotation about -X is SXdg
         assert_eq!(
-            try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::HALF_TURN),
+            try_simplify_rxy1q(Angle64::QUARTER_TURN, Angle64::HALF_TURN),
             Some(GateType::SXdg)
         );
         // theta=pi/2, phi=3pi/2: rotation about -Y is SYdg
         assert_eq!(
-            try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN),
+            try_simplify_rxy1q(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SYdg)
         );
     }
 
     #[test]
-    fn r1xy_near_quarter_turn_sqrt_gates() {
+    fn rxy1q_near_quarter_turn_sqrt_gates() {
         assert_eq!(
-            try_simplify_r1xy(
+            try_simplify_rxy1q(
                 Angle64::from_turns(0.25 + 1e-12),
                 Angle64::from_turns(0.75 - 1e-12),
             ),
@@ -468,48 +468,48 @@ mod tests {
     }
 
     #[test]
-    fn r1xy_three_quarter_turn_sqrt_dagger_gates() {
+    fn rxy1q_three_quarter_turn_sqrt_dagger_gates() {
         // theta=3pi/2, phi=0: SXdg
         assert_eq!(
-            try_simplify_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::ZERO),
+            try_simplify_rxy1q(Angle64::THREE_QUARTERS_TURN, Angle64::ZERO),
             Some(GateType::SXdg)
         );
         // theta=3pi/2, phi=pi/2: SYdg
         assert_eq!(
-            try_simplify_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::QUARTER_TURN),
+            try_simplify_rxy1q(Angle64::THREE_QUARTERS_TURN, Angle64::QUARTER_TURN),
             Some(GateType::SYdg)
         );
         // theta=3pi/2, phi=pi: rotation about -X is SX
         assert_eq!(
-            try_simplify_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::HALF_TURN),
+            try_simplify_rxy1q(Angle64::THREE_QUARTERS_TURN, Angle64::HALF_TURN),
             Some(GateType::SX)
         );
         // theta=3pi/2, phi=3pi/2: rotation about -Y is SY
         assert_eq!(
-            try_simplify_r1xy(Angle64::THREE_QUARTERS_TURN, Angle64::THREE_QUARTERS_TURN),
+            try_simplify_rxy1q(Angle64::THREE_QUARTERS_TURN, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SY)
         );
         // theta=-pi/2 wraps to 3pi/2
         assert_eq!(
-            try_simplify_r1xy(-Angle64::QUARTER_TURN, Angle64::ZERO),
+            try_simplify_rxy1q(-Angle64::QUARTER_TURN, Angle64::ZERO),
             Some(GateType::SXdg)
         );
         assert_eq!(
-            try_simplify_r1xy(-Angle64::QUARTER_TURN, Angle64::QUARTER_TURN),
+            try_simplify_rxy1q(-Angle64::QUARTER_TURN, Angle64::QUARTER_TURN),
             Some(GateType::SYdg)
         );
     }
 
     #[test]
-    fn r1xy_non_clifford_angles() {
+    fn rxy1q_non_clifford_angles() {
         // Non-Clifford theta
         assert_eq!(
-            try_simplify_r1xy(Angle64::from_radians(0.123), Angle64::ZERO),
+            try_simplify_rxy1q(Angle64::from_radians(0.123), Angle64::ZERO),
             None
         );
         // Non-axis phi (pi/4 is not along X or Y axis)
         assert_eq!(
-            try_simplify_r1xy(Angle64::HALF_TURN, Angle64::QUARTER_TURN / 2u64),
+            try_simplify_rxy1q(Angle64::HALF_TURN, Angle64::QUARTER_TURN / 2u64),
             None
         );
     }

@@ -1016,7 +1016,7 @@ where
 
     /// Implementation of single-qubit rotation in XY plane.
     ///
-    /// See [`ArbitraryRotationGateable::r1xy`] for mathematical details and gate properties.
+    /// See [`ArbitraryRotationGateable::rxy1q`] for mathematical details and gate properties.
     /// Optimized for rotations in the XY plane of the Bloch sphere.
     ///
     /// # Examples
@@ -1028,7 +1028,7 @@ where
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // 90-degree rotation around X+Y axis
-    /// state.r1xy(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(FRAC_PI_2), &[QubitId(0)]);
+    /// state.rxy1q(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(FRAC_PI_2), &[QubitId(0)]);
     /// ```
     ///
     /// # Safety
@@ -1036,7 +1036,7 @@ where
     /// - All qubit indices are valid (i.e., `< number of qubits`).
     /// - These conditions must be ensured by the caller or a higher-level component.
     #[inline]
-    fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
         let phi = phi.to_radians_signed();
         let cos = (theta / 2.0).cos();
@@ -1773,32 +1773,32 @@ mod tests {
         assert!((q.state[1].norm() - expected_1_mag).abs() < 1e-10);
     }
     #[test]
-    fn test_r1xy() {
+    fn test_rxy1q() {
         // Initialize state vectors with one qubit in the |0⟩ state.
-        let mut state_vec_r1xy = StateVecAoS::new(1);
-        let mut trait_r1xy = StateVecAoS::new(1);
+        let mut state_vec_rxy1q = StateVecAoS::new(1);
+        let mut trait_rxy1q = StateVecAoS::new(1);
 
         // Define angles for the test.
         let theta = FRAC_PI_3;
         let phi = FRAC_PI_4;
 
-        // Apply the manual `r1xy` implementation.
-        state_vec_r1xy.r1xy(
+        // Apply the manual `rxy1q` implementation.
+        state_vec_rxy1q.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qid(0),
         );
 
-        // Apply the `r1xy` implementation from the `ArbitraryRotationGateable` trait.
-        ArbitraryRotationGateable::r1xy(
-            &mut trait_r1xy,
+        // Apply the `rxy1q` implementation from the `ArbitraryRotationGateable` trait.
+        ArbitraryRotationGateable::rxy1q(
+            &mut trait_rxy1q,
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qid(0),
         );
 
         // Use the `assert_states_equal` function to compare the states up to a global phase.
-        assert_states_equal(&state_vec_r1xy.state, &trait_r1xy.state);
+        assert_states_equal(&state_vec_rxy1q.state, &trait_rxy1q.state);
     }
 
     // Basic two-qubit rotation gate tests

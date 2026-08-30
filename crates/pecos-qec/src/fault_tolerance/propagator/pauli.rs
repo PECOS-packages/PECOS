@@ -769,7 +769,7 @@ mod batched_pair_tests {
 
 #[cfg(test)]
 mod rotation_exactness_tests {
-    use super::{Direction, apply_gate};
+    use super::{Direction, PauliPropagationOutcome, apply_gate};
     use pecos_core::Angle64;
     use pecos_core::gate_type::GateType;
     use pecos_core::gates::Gate;
@@ -785,7 +785,12 @@ mod rotation_exactness_tests {
             vec![0.into()],
         );
 
-        apply_gate(&mut prop, &gate, Direction::Forward);
+        // On this branch apply_gate reports the classification; a near-miss
+        // Clifford angle must be Unsupported, not silently skipped.
+        assert_eq!(
+            apply_gate(&mut prop, &gate, Direction::Forward),
+            PauliPropagationOutcome::Unsupported
+        );
 
         assert!(prop.contains_x(0));
         assert!(!prop.contains_z(0));

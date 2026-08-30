@@ -14,8 +14,9 @@
 //!
 //! The decoder performs ordered dynamic programming over independent binary
 //! fault mechanisms or mutually exclusive multi-outcome factors. Prefixes with
-//! identical active detector boundary and logical labels are merged by
-//! log-sum-exp, preserving degeneracy mass. The configured frontier width and
+//! identical active detector boundary and logical labels are merged by the
+//! configured metric: log-sum-exp preserves degeneracy mass by default, while
+//! integer max-log retains the best route. The configured frontier width and
 //! log-mass window provide deterministic pruning for a fixed build and
 //! platform; underlying `ln`/`exp` implementations may differ across platforms.
 //! This engine is PECOS-native code. Its numerics are additionally held to a
@@ -38,6 +39,20 @@ use std::time::Instant;
 const WORD_BITS: usize = u64::BITS as usize;
 const BP_MIN_SUM_SCALE: f64 = 0.625;
 const BP_SCORE_PROBABILITY_MIN: f64 = 1e-6;
+const INT_METRIC_NEG_INF: i64 = i64::MIN / 4;
+const INT_METRIC_MAX: i64 = i64::MAX / 4;
+
+/// Arithmetic used to merge routes and rank trellis states.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MetricMode {
+    /// Sum route masses with floating-point log-sum-exp. Exact unpruned
+    /// results are logical-coset masses.
+    #[default]
+    LogSumExpFloat,
+    /// Keep the best route with quantized integer max-log arithmetic.
+    /// Unpruned results are Viterbi route masses, not logical-coset masses.
+    MaxLogInt,
+}
 
 /// Pruning and column-order configuration for the trellis engine.
 ///
@@ -59,9 +74,10 @@ pub struct TrellisConfig {
     /// Merge probabilistic mechanisms with identical detector and observable
     /// sets using their XOR-combined probability.
     ///
-    /// This merge is mathematically exact, but it takes a different
-    /// floating-point path and the external parity contract on this engine is
-    /// bitwise, so it is disabled by default.
+    /// This merge is mathematically exact under the default float metric and is
+    /// rejected under `maxlog_int`. It takes a different floating-point path and
+    /// the external parity contract on this engine is bitwise, so it is disabled
+    /// by default.
     /// Zero-probability mechanisms are already discarded, while probability-one
     /// mechanisms remain separate in the forced layer and are not merged with
     /// otherwise identical probabilistic mechanisms.
@@ -69,6 +85,11 @@ pub struct TrellisConfig {
     /// Number of min-sum BP iterations used only to score pruning candidates.
     /// Zero disables BP-informed scoring.
     pub bp_score_iterations: usize,
+    /// Arithmetic used for route merging and pruning scores.
+    pub metric_mode: MetricMode,
+    /// Quantization units per natural-log unit for [`MetricMode::MaxLogInt`].
+    /// This must be positive in every mode and is ignored by the float metric.
+    pub int_metric_scale: i32,
 }
 
 impl Default for TrellisConfig {
@@ -81,6 +102,8 @@ impl Default for TrellisConfig {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: MetricMode::LogSumExpFloat,
+            int_metric_scale: 1024,
         }
     }
 }
@@ -167,9 +190,13 @@ pub fn backward_deadline_column_order_for_factors(
 pub struct TrellisLogicalMass {
     /// Logical-observable flip label.
     pub logical: ObsMask,
-    /// Unnormalized joint mass `ln P(logical class, observed syndrome)`.
-    /// Subtract [`TrellisResult::log_evidence`] to obtain the label's log
-    /// posterior probability within the retained terminal mass.
+    /// Under the float metric, unnormalized joint mass
+    /// `ln P(logical class, observed syndrome)`. Under `maxlog_int`, the
+    /// quantized best-route mass for this logical label divided by the metric
+    /// scale.
+    ///
+    /// In float mode, subtract [`TrellisResult::log_evidence`] to obtain this
+    /// label's log posterior probability within the retained terminal mass.
     pub log_mass: f64,
 }
 
@@ -195,15 +222,16 @@ pub enum TrellisStatus {
 pub struct TrellisResult {
     /// Predicted logical-observable flip mask.
     pub predicted: ObsMask,
-    /// Log evidence: the logarithm of the total retained joint mass over all
-    /// terminal logical labels, approximating `ln P(observed syndrome)` when
-    /// pruning is enabled.
+    /// Under the float metric, the logarithm of the total retained joint mass
+    /// over all terminal logical labels, approximating
+    /// `ln P(observed syndrome)` when pruning is enabled. Under `maxlog_int`,
+    /// the winning label's quantized best-route mass divided by the scale.
     ///
     /// The winning label's own log mass is [`Self::logical_masses`]'s first
     /// entry.
     pub log_evidence: f64,
-    /// Difference between the winning and runner-up unnormalized joint log
-    /// masses, if a runner-up exists.
+    /// Difference between the winning and runner-up terminal masses, if a
+    /// runner-up exists. Under `maxlog_int`, this is a best-route margin.
     ///
     /// This is retained-mass telemetry, not a certified confidence measure.
     /// In the M6 BB144 experiment, none of 300 shots retained a runner-up at
@@ -222,8 +250,9 @@ pub struct TrellisResult {
     /// Number of merged boundary states discarded across all pruning calls in
     /// the successful rung.
     pub dropped_states: u64,
-    /// Log-sum-exp of the log masses of all states discarded by pruning, or
-    /// negative infinity when no state was discarded.
+    /// Log-sum-exp of the log masses of all states discarded by float pruning,
+    /// or negative infinity when no state was discarded. Under `maxlog_int`,
+    /// this is the largest dropped quantized route mass divided by the scale.
     ///
     /// This accounts for retained prefix mass discarded at pruning time. It is
     /// not a bound on true lost posterior mass: a state dropped early would
@@ -245,9 +274,9 @@ pub struct TrellisResult {
     /// discarded at least one state. For an escalated `BpTrellis` result, this
     /// is the successful rung's status.
     pub status: TrellisStatus,
-    /// Retained unnormalized joint terminal masses, ordered by mass descending
-    /// and numeric label ascending. The first entry is the winning label and
-    /// its retained log mass.
+    /// Retained terminal masses, ordered by mass descending and numeric label
+    /// ascending. Under `maxlog_int`, each entry is the label's best-route
+    /// mass rather than a sum over routes.
     pub logical_masses: Vec<TrellisLogicalMass>,
 }
 
@@ -260,6 +289,8 @@ struct Column {
     suffix_compatibility: Vec<SuffixCompatibility>,
     log_odds: f64,
     log_one_minus_probability: f64,
+    log_odds_int: i64,
+    log_one_minus_probability_int: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -282,6 +313,7 @@ struct ColumnOutcome {
     logical_toggle: Vec<u64>,
     probability: f64,
     log_prior: f64,
+    log_prior_int: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -290,6 +322,9 @@ struct SuffixCompatibility {
     bit_mask: u64,
     log_probability_zero: f64,
     log_probability_one: f64,
+    log_probability_zero_int: i64,
+    log_probability_one_int: i64,
+    int_metric_scale: Option<i32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -327,6 +362,38 @@ struct PruneResult {
     retained: BTreeMap<StateKey, f64>,
     dropped_states: u64,
     dropped_log_mass: f64,
+    k_capped: bool,
+    delta_pruned: bool,
+}
+
+#[derive(Clone, Debug)]
+struct IntCandidate {
+    key: StateKey,
+    log_mass: i64,
+}
+
+#[derive(Clone, Debug)]
+struct ScoredIntCandidate {
+    candidate: IntCandidate,
+    score: i64,
+}
+
+struct IntPruneResult {
+    retained: BTreeMap<StateKey, i64>,
+    dropped_states: u64,
+    dropped_log_mass: i64,
+    k_capped: bool,
+    delta_pruned: bool,
+}
+
+#[derive(Clone, Copy)]
+struct MaxLogDecodeStats {
+    peak_retained_states: usize,
+    processed_columns: usize,
+    transitions: u64,
+    dropped_states: u64,
+    dropped_log_mass: i64,
+    bp_seconds: f64,
     k_capped: bool,
     delta_pruned: bool,
 }
@@ -557,19 +624,30 @@ impl TrellisDecoder {
             and_not_assign(&mut open_detectors, &close_mask);
 
             column_moments.push(1.0 - 2.0 * probability);
+            let log_odds = libm::log(probability / (1.0 - probability));
+            let log_one_minus_probability = libm::log(1.0 - probability);
             columns.push(Column {
                 detector_toggle,
                 logical_toggle,
                 close_mask,
                 active_mask: open_detectors.clone(),
                 suffix_compatibility: Vec::new(),
-                log_odds: libm::log(probability / (1.0 - probability)),
-                log_one_minus_probability: libm::log(1.0 - probability),
+                log_odds,
+                log_one_minus_probability,
+                log_odds_int: quantize_metric(log_odds, config.int_metric_scale),
+                log_one_minus_probability_int: quantize_metric(
+                    log_one_minus_probability,
+                    config.int_metric_scale,
+                ),
             });
         }
 
-        let suffix_tables =
-            build_suffix_compatibility_tables(&columns, &column_moments, dem.num_detectors);
+        let suffix_tables = build_suffix_compatibility_tables(
+            &columns,
+            &column_moments,
+            dem.num_detectors,
+            (config.metric_mode == MetricMode::MaxLogInt).then_some(config.int_metric_scale),
+        );
         for (column, suffix_compatibility) in columns.iter_mut().zip(suffix_tables) {
             column.suffix_compatibility = suffix_compatibility;
         }
@@ -681,7 +759,14 @@ impl TrellisDecoder {
                     raw_columns.push(
                         outcomes
                             .into_iter()
-                            .map(|outcome| column_outcome(&outcome, detector_words, logical_words))
+                            .map(|outcome| {
+                                column_outcome(
+                                    &outcome,
+                                    detector_words,
+                                    logical_words,
+                                    config.int_metric_scale,
+                                )
+                            })
                             .collect(),
                     );
                 }
@@ -727,7 +812,11 @@ impl TrellisDecoder {
             });
         }
 
-        let suffix_tables = build_suffix_compatibility_tables_nary(&columns, model.num_detectors());
+        let suffix_tables = build_suffix_compatibility_tables_nary(
+            &columns,
+            model.num_detectors(),
+            (config.metric_mode == MetricMode::MaxLogInt).then_some(config.int_metric_scale),
+        );
         for (column, suffix_compatibility) in columns.iter_mut().zip(suffix_tables) {
             column.suffix_compatibility = suffix_compatibility;
         }
@@ -795,9 +884,13 @@ impl TrellisDecoder {
     /// policies.
     #[must_use]
     pub fn decode_attempt(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
-        match &self.kernel {
-            Kernel::Binary(_) => self.decode_attempt_binary(syndrome),
-            Kernel::Nary(_) => self.decode_attempt_nary(syndrome),
+        match (self.config.metric_mode, &self.kernel) {
+            (MetricMode::LogSumExpFloat, Kernel::Binary(_)) => self.decode_attempt_binary(syndrome),
+            (MetricMode::LogSumExpFloat, Kernel::Nary(_)) => self.decode_attempt_nary(syndrome),
+            (MetricMode::MaxLogInt, Kernel::Binary(_)) => {
+                self.decode_attempt_binary_maxlog(syndrome)
+            }
+            (MetricMode::MaxLogInt, Kernel::Nary(_)) => self.decode_attempt_nary_maxlog(syndrome),
         }
     }
 
@@ -1081,6 +1174,230 @@ impl TrellisDecoder {
         })
     }
 
+    fn decode_attempt_binary_maxlog(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+        if syndrome.len() != self.num_detectors {
+            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
+                expected: self.num_detectors,
+                actual: syndrome.len(),
+            });
+        }
+
+        let observed = syndrome_to_words(syndrome, self.detector_words);
+        if observed
+            .iter()
+            .zip(&self.forced_syndrome)
+            .zip(&self.touched_detectors)
+            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
+        {
+            return TrellisDecodeAttempt::NoPath {
+                error: unexplainable_error(),
+                transitions: 0,
+                bp_seconds: 0.0,
+            };
+        }
+
+        let (bp_suffix_compatibility, bp_seconds) = match self.bp_suffix_compatibility(&observed) {
+            Ok(preparation) => preparation,
+            Err(error) => return TrellisDecodeAttempt::Error(error),
+        };
+        let mut initial_syndrome = self.forced_syndrome.clone();
+        and_assign(&mut initial_syndrome, &self.touched_detectors);
+        let initial = StateKey {
+            active_syndrome: initial_syndrome,
+            logical: self.forced_logical.clone(),
+        };
+        let mut frontier = BTreeMap::from([(initial, 0_i64)]);
+        let mut peak_retained_states = frontier.len();
+        let mut transitions = 0;
+        let mut dropped_states = 0;
+        let mut dropped_log_mass = INT_METRIC_NEG_INF;
+        let mut k_capped = false;
+        let mut delta_pruned = false;
+        let scale = self.config.int_metric_scale;
+        let delta_int = quantize_metric(self.config.delta, scale);
+        debug_assert!(
+            delta_int >= 0,
+            "validate_config rejects negative and non-finite delta under maxlog_int"
+        );
+        let alpha_int = quantize_metric(self.config.score_alpha, scale);
+
+        let Kernel::Binary(columns) = &self.kernel else {
+            unreachable!("binary max-log decode called with N-ary kernel");
+        };
+        for (column_index, column) in columns.iter().enumerate() {
+            let mut merged = BTreeMap::new();
+            for (state, &log_mass) in &frontier {
+                let branch_base = int_metric_add(log_mass, column.log_one_minus_probability_int);
+                merge_branch_maxlog(
+                    &mut merged,
+                    state.clone(),
+                    branch_base,
+                    &column.close_mask,
+                    &column.active_mask,
+                    &observed,
+                    &mut transitions,
+                );
+
+                let mut taken = state.clone();
+                xor_assign(&mut taken.active_syndrome, &column.detector_toggle);
+                xor_assign(&mut taken.logical, &column.logical_toggle);
+                merge_branch_maxlog(
+                    &mut merged,
+                    taken,
+                    int_metric_add(branch_base, column.log_odds_int),
+                    &column.close_mask,
+                    &column.active_mask,
+                    &observed,
+                    &mut transitions,
+                );
+            }
+            if merged.is_empty() {
+                return TrellisDecodeAttempt::NoPath {
+                    error: unexplainable_error(),
+                    transitions,
+                    bp_seconds,
+                };
+            }
+            let suffix_compatibility = bp_suffix_compatibility
+                .as_ref()
+                .map_or(&column.suffix_compatibility, |tables| &tables[column_index]);
+            let pruned = prune_maxlog(
+                merged,
+                self.config.k,
+                delta_int,
+                alpha_int,
+                scale,
+                suffix_compatibility,
+                &observed,
+            );
+            frontier = pruned.retained;
+            dropped_states += pruned.dropped_states;
+            dropped_log_mass = dropped_log_mass.max(pruned.dropped_log_mass);
+            k_capped |= pruned.k_capped;
+            delta_pruned |= pruned.delta_pruned;
+            peak_retained_states = peak_retained_states.max(frontier.len());
+        }
+
+        finish_maxlog_decode(
+            frontier,
+            scale,
+            MaxLogDecodeStats {
+                peak_retained_states,
+                processed_columns: columns.len(),
+                transitions,
+                dropped_states,
+                dropped_log_mass,
+                bp_seconds,
+                k_capped,
+                delta_pruned,
+            },
+        )
+    }
+
+    fn decode_attempt_nary_maxlog(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+        if syndrome.len() != self.num_detectors {
+            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
+                expected: self.num_detectors,
+                actual: syndrome.len(),
+            });
+        }
+
+        let observed = syndrome_to_words(syndrome, self.detector_words);
+        if observed
+            .iter()
+            .zip(&self.forced_syndrome)
+            .zip(&self.touched_detectors)
+            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
+        {
+            return TrellisDecodeAttempt::NoPath {
+                error: unexplainable_error(),
+                transitions: 0,
+                bp_seconds: 0.0,
+            };
+        }
+
+        let mut initial_syndrome = self.forced_syndrome.clone();
+        and_assign(&mut initial_syndrome, &self.touched_detectors);
+        let initial = StateKey {
+            active_syndrome: initial_syndrome,
+            logical: self.forced_logical.clone(),
+        };
+        let mut frontier = BTreeMap::from([(initial, 0_i64)]);
+        let mut peak_retained_states = frontier.len();
+        let mut transitions = 0;
+        let mut dropped_states = 0;
+        let mut dropped_log_mass = INT_METRIC_NEG_INF;
+        let mut k_capped = false;
+        let mut delta_pruned = false;
+        let scale = self.config.int_metric_scale;
+        let delta_int = quantize_metric(self.config.delta, scale);
+        debug_assert!(
+            delta_int >= 0,
+            "validate_config rejects negative and non-finite delta under maxlog_int"
+        );
+        let alpha_int = quantize_metric(self.config.score_alpha, scale);
+
+        let Kernel::Nary(columns) = &self.kernel else {
+            unreachable!("N-ary max-log decode called with binary kernel");
+        };
+        for column in columns {
+            let mut merged = BTreeMap::new();
+            for (state, &log_mass) in &frontier {
+                for outcome in &column.outcomes {
+                    let mut taken = state.clone();
+                    xor_assign(&mut taken.active_syndrome, &outcome.detector_toggle);
+                    xor_assign(&mut taken.logical, &outcome.logical_toggle);
+                    merge_branch_maxlog(
+                        &mut merged,
+                        taken,
+                        int_metric_add(log_mass, outcome.log_prior_int),
+                        &column.close_mask,
+                        &column.active_mask,
+                        &observed,
+                        &mut transitions,
+                    );
+                }
+            }
+            if merged.is_empty() {
+                return TrellisDecodeAttempt::NoPath {
+                    error: unexplainable_error(),
+                    transitions,
+                    bp_seconds: 0.0,
+                };
+            }
+            let pruned = prune_maxlog(
+                merged,
+                self.config.k,
+                delta_int,
+                alpha_int,
+                scale,
+                &column.suffix_compatibility,
+                &observed,
+            );
+            frontier = pruned.retained;
+            dropped_states += pruned.dropped_states;
+            dropped_log_mass = dropped_log_mass.max(pruned.dropped_log_mass);
+            k_capped |= pruned.k_capped;
+            delta_pruned |= pruned.delta_pruned;
+            peak_retained_states = peak_retained_states.max(frontier.len());
+        }
+
+        finish_maxlog_decode(
+            frontier,
+            scale,
+            MaxLogDecodeStats {
+                peak_retained_states,
+                processed_columns: columns.len(),
+                transitions,
+                dropped_states,
+                dropped_log_mass,
+                bp_seconds: 0.0,
+                k_capped,
+                delta_pruned,
+            },
+        )
+    }
+
     fn bp_suffix_compatibility(
         &mut self,
         observed: &[u64],
@@ -1122,7 +1439,13 @@ impl TrellisDecoder {
             .iter()
             .map(|&llr| 1.0 - 2.0 * bp_score_probability(llr))
             .collect();
-        let tables = build_suffix_compatibility_tables(columns, &moments, self.num_detectors);
+        let tables = build_suffix_compatibility_tables(
+            columns,
+            &moments,
+            self.num_detectors,
+            (self.config.metric_mode == MetricMode::MaxLogInt)
+                .then_some(self.config.int_metric_scale),
+        );
         Ok((Some(tables), started.elapsed().as_secs_f64()))
     }
 }
@@ -1244,6 +1567,32 @@ fn validate_config(config: &TrellisConfig, mechanism_count: usize) -> Result<(),
             config.delta
         )));
     }
+    if config.metric_mode == MetricMode::MaxLogInt && !config.delta.is_finite() {
+        return Err(DecoderError::InvalidConfiguration(
+            "delta must be finite under maxlog_int; infinite delta would quantize to zero and prune to score-ties"
+                .into(),
+        ));
+    }
+    if config.metric_mode == MetricMode::MaxLogInt && config.merge_indistinguishable {
+        return Err(DecoderError::InvalidConfiguration(
+            "indistinguishable-mechanism merging sums coset mass and is incompatible with the max-log route metric"
+                .into(),
+        ));
+    }
+    if config.int_metric_scale <= 0 {
+        return Err(DecoderError::InvalidConfiguration(
+            "TrellisConfig.int_metric_scale must be positive".into(),
+        ));
+    }
+    if config.metric_mode == MetricMode::MaxLogInt
+        && config.score_alpha > 0.0
+        && quantize_metric(config.score_alpha, config.int_metric_scale) == 0
+    {
+        return Err(DecoderError::InvalidConfiguration(format!(
+            "score_alpha {} quantizes to zero at int_metric_scale {} and would silently disable suffix scoring; pass score_alpha 0.0 to disable it explicitly or use a larger scale",
+            config.score_alpha, config.int_metric_scale
+        )));
+    }
     if !config.score_alpha.is_finite() || config.score_alpha < 0.0 {
         return Err(DecoderError::InvalidConfiguration(format!(
             "TrellisConfig.score_alpha must be finite and non-negative, got {}",
@@ -1307,12 +1656,19 @@ fn xor_combined_probability(first: f64, second: f64) -> f64 {
     combined
 }
 
-fn column_outcome(outcome: &Outcome, detector_words: usize, logical_words: usize) -> ColumnOutcome {
+fn column_outcome(
+    outcome: &Outcome,
+    detector_words: usize,
+    logical_words: usize,
+    int_metric_scale: i32,
+) -> ColumnOutcome {
+    let log_prior = libm::log(outcome.probability);
     ColumnOutcome {
         detector_toggle: indices_to_words(&outcome.detectors, detector_words),
         logical_toggle: indices_to_words(&outcome.observables, logical_words),
         probability: outcome.probability,
-        log_prior: libm::log(outcome.probability),
+        log_prior,
+        log_prior_int: quantize_metric(log_prior, int_metric_scale),
     }
 }
 
@@ -1343,6 +1699,131 @@ fn compare_words_as_unsigned(left: &[u64], right: &[u64]) -> Ordering {
     left.iter().rev().cmp(right.iter().rev())
 }
 
+/// Quantizes with an `f64` product and round-half-away-from-zero. Upstream's
+/// intermediate `long double` width is x86-specific. Divergence is confined to
+/// non-power-of-two scales whose exact product lands within one ulp of a half
+/// boundary; PECOS owns these numerics, and fixture parity covers the shipped
+/// power-of-two scales.
+fn quantize_metric(value: f64, scale: i32) -> i64 {
+    debug_assert!(
+        value != f64::INFINITY,
+        "positive-infinite metric input would saturate to the negative sentinel"
+    );
+    if !value.is_finite() {
+        return INT_METRIC_NEG_INF;
+    }
+    let scaled = value * f64::from(scale);
+    let lo = i64_to_f64(INT_METRIC_NEG_INF + 1);
+    let hi = i64_to_f64(INT_METRIC_MAX);
+    if scaled <= lo {
+        INT_METRIC_NEG_INF
+    } else if scaled >= hi {
+        INT_METRIC_MAX
+    } else {
+        integral_f64_to_i64(scaled.round())
+    }
+}
+
+fn i64_to_f64(value: i64) -> f64 {
+    let high = i32::try_from(value >> 32).expect("the high i64 word must fit i32");
+    let low =
+        u32::try_from(value & i64::from(u32::MAX)).expect("the masked low i64 word must fit u32");
+    f64::from(high) * 4_294_967_296.0 + f64::from(low)
+}
+
+fn integral_f64_to_i64(value: f64) -> i64 {
+    debug_assert!(
+        value.is_finite() && value.fract() == 0.0 && value.abs() <= i64_to_f64(INT_METRIC_MAX),
+        "integral metric conversion requires a finite integer within the metric saturation range"
+    );
+    let bits = value.to_bits();
+    let negative = bits >> 63 != 0;
+    let biased_exponent = i32::try_from((bits >> 52) & 0x7ff).expect("exponent fits i32");
+    let exponent = biased_exponent - 1023;
+    if exponent < 0 {
+        return 0;
+    }
+    let significand = (bits & ((1_u64 << 52) - 1)) | (1_u64 << 52);
+    let magnitude = if exponent >= 52 {
+        significand << u32::try_from(exponent - 52).expect("nonnegative shift fits u32")
+    } else {
+        significand >> u32::try_from(52 - exponent).expect("nonnegative shift fits u32")
+    };
+    let magnitude = i64::try_from(magnitude).expect("quantized metric magnitude fits i64");
+    if negative { -magnitude } else { magnitude }
+}
+
+fn saturating_i128_to_i64(value: i128) -> i64 {
+    if value > i128::from(i64::MAX) {
+        i64::MAX
+    } else if value < i128::from(i64::MIN) {
+        i64::MIN
+    } else {
+        i64::try_from(value).expect("range was checked above")
+    }
+}
+
+fn fixed_mul_round(value: i64, multiplier: i64, scale: i64) -> i64 {
+    if value <= INT_METRIC_NEG_INF / 2 {
+        return INT_METRIC_NEG_INF;
+    }
+    if multiplier == 0 {
+        return 0;
+    }
+    if multiplier == scale {
+        return value;
+    }
+    let mut product = i128::from(value) * i128::from(multiplier);
+    let divisor = i128::from(scale);
+    let rounded = if product >= 0 {
+        product += divisor / 2;
+        product / divisor
+    } else {
+        product = -product + divisor / 2;
+        -(product / divisor)
+    };
+    saturating_i128_to_i64(rounded)
+}
+
+fn fixed_mul_round_fast(value: i64, multiplier: i64, scale: i64) -> i64 {
+    if value <= INT_METRIC_NEG_INF / 2 {
+        return INT_METRIC_NEG_INF;
+    }
+    if multiplier == 0 {
+        return 0;
+    }
+    if multiplier == scale {
+        return value;
+    }
+    if scale == 1024 {
+        let mut product = i128::from(value) * i128::from(multiplier);
+        let rounded = if product >= 0 {
+            product += 512;
+            product >> 10
+        } else {
+            product = -product + 512;
+            -(product >> 10)
+        };
+        return saturating_i128_to_i64(rounded);
+    }
+    fixed_mul_round(value, multiplier, scale)
+}
+
+fn int_metric_add(left: i64, right: i64) -> i64 {
+    if left <= INT_METRIC_NEG_INF / 2 || right <= INT_METRIC_NEG_INF / 2 {
+        INT_METRIC_NEG_INF
+    } else {
+        left.saturating_add(right)
+    }
+}
+
+fn score_int_metric(log_mass: i64, parity: i64, alpha_int: i64, scale: i32) -> i64 {
+    int_metric_add(
+        log_mass,
+        fixed_mul_round_fast(parity, alpha_int, i64::from(scale)),
+    )
+}
+
 fn merge_branch(
     merged: &mut BTreeMap<StateKey, f64>,
     mut state: StateKey,
@@ -1366,6 +1847,32 @@ fn merge_branch(
     merged
         .entry(state)
         .and_modify(|mass| *mass = logaddexp(*mass, log_mass))
+        .or_insert(log_mass);
+}
+
+fn merge_branch_maxlog(
+    merged: &mut BTreeMap<StateKey, i64>,
+    mut state: StateKey,
+    log_mass: i64,
+    close_mask: &[u64],
+    active_mask: &[u64],
+    observed: &[u64],
+    transitions: &mut u64,
+) {
+    *transitions += 1;
+    if state
+        .active_syndrome
+        .iter()
+        .zip(observed)
+        .zip(close_mask)
+        .any(|((&accumulated, &expected), &closing)| (accumulated ^ expected) & closing != 0)
+    {
+        return;
+    }
+    and_assign(&mut state.active_syndrome, active_mask);
+    merged
+        .entry(state)
+        .and_modify(|mass| *mass = (*mass).max(log_mass))
         .or_insert(log_mass);
 }
 
@@ -1442,10 +1949,89 @@ fn prune(
     }
 }
 
+fn prune_maxlog(
+    frontier: BTreeMap<StateKey, i64>,
+    k: usize,
+    delta_int: i64,
+    alpha_int: i64,
+    scale: i32,
+    suffix_compatibility: &[SuffixCompatibility],
+    observed: &[u64],
+) -> IntPruneResult {
+    assert!(
+        suffix_compatibility
+            .first()
+            .is_none_or(|row| row.int_metric_scale == Some(scale)),
+        "integer suffix scoring requires a table quantized at the decoder's metric scale"
+    );
+    let mut candidates: Vec<ScoredIntCandidate> = frontier
+        .into_iter()
+        .map(|(key, log_mass)| {
+            // alpha_int == 0 must skip suffix scoring entirely, not multiply
+            // it away: fixed_mul_round* return the NEG_INF sentinel for a
+            // sentinel parity BEFORE checking multiplier == 0 (upstream-
+            // faithful order), so "0 times an ln(0) suffix row" would poison
+            // a feasible state's score and prune it. Mirrors the float
+            // path's score_alpha == 0.0 short-circuit.
+            let score = if alpha_int == 0 {
+                log_mass
+            } else {
+                let parity = suffix_compatibility_score_int(
+                    &key.active_syndrome,
+                    observed,
+                    suffix_compatibility,
+                );
+                score_int_metric(log_mass, parity, alpha_int, scale)
+            };
+            ScoredIntCandidate {
+                candidate: IntCandidate { key, log_mass },
+                score,
+            }
+        })
+        .collect();
+    // The integer path matches upstream's common score ties by preferring log
+    // mass descending before StateKey; the float path keeps this engine's order.
+    candidates.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| right.candidate.log_mass.cmp(&left.candidate.log_mass))
+            .then_with(|| left.candidate.key.cmp(&right.candidate.key))
+    });
+    let cutoff = candidates[0].score.saturating_sub(delta_int);
+    let mut retained = BTreeMap::new();
+    let mut dropped_states = 0;
+    let mut dropped_log_mass = INT_METRIC_NEG_INF;
+    let mut k_capped = false;
+    let mut delta_pruned = false;
+
+    for (index, scored) in candidates.into_iter().enumerate() {
+        let within_k = index < k;
+        let within_delta = scored.score >= cutoff;
+        if within_k && within_delta {
+            retained.insert(scored.candidate.key, scored.candidate.log_mass);
+        } else {
+            dropped_states += 1;
+            dropped_log_mass = dropped_log_mass.max(scored.candidate.log_mass);
+            k_capped |= !within_k;
+            delta_pruned |= within_k && !within_delta;
+        }
+    }
+
+    IntPruneResult {
+        retained,
+        dropped_states,
+        dropped_log_mass,
+        k_capped,
+        delta_pruned,
+    }
+}
+
 fn build_suffix_compatibility_tables(
     columns: &[Column],
     column_moments: &[f64],
     num_detectors: usize,
+    int_metric_scale: Option<i32>,
 ) -> Vec<Vec<SuffixCompatibility>> {
     assert_eq!(columns.len(), column_moments.len());
     let mut tables = vec![Vec::new(); columns.len()];
@@ -1459,11 +2045,23 @@ fn build_suffix_compatibility_tables(
         *table = set_bits(&column.active_mask)
             .map(|detector| {
                 let eta = row_moments[detector];
+                let log_probability_zero = libm::log(1.0_f64.midpoint(eta));
+                let log_probability_one = libm::log(1.0_f64.midpoint(-eta));
                 SuffixCompatibility {
                     word_index: detector / WORD_BITS,
                     bit_mask: 1 << (detector % WORD_BITS),
-                    log_probability_zero: libm::log(1.0_f64.midpoint(eta)),
-                    log_probability_one: libm::log(1.0_f64.midpoint(-eta)),
+                    log_probability_zero,
+                    log_probability_one,
+                    // Float tables never read these sentinels; the scale tag is
+                    // asserted before integer suffix scoring.
+                    log_probability_zero_int: int_metric_scale
+                        .map_or(INT_METRIC_NEG_INF, |scale| {
+                            quantize_metric(log_probability_zero, scale)
+                        }),
+                    log_probability_one_int: int_metric_scale.map_or(INT_METRIC_NEG_INF, |scale| {
+                        quantize_metric(log_probability_one, scale)
+                    }),
+                    int_metric_scale,
                 }
             })
             .collect();
@@ -1477,6 +2075,7 @@ fn build_suffix_compatibility_tables(
 fn build_suffix_compatibility_tables_nary(
     columns: &[FactorColumn],
     num_detectors: usize,
+    int_metric_scale: Option<i32>,
 ) -> Vec<Vec<SuffixCompatibility>> {
     let mut tables = vec![Vec::new(); columns.len()];
     let mut row_moments = vec![1.0; num_detectors];
@@ -1484,11 +2083,23 @@ fn build_suffix_compatibility_tables_nary(
         *table = set_bits(&column.active_mask)
             .map(|detector| {
                 let eta = row_moments[detector];
+                let log_probability_zero = libm::log(1.0_f64.midpoint(eta));
+                let log_probability_one = libm::log(1.0_f64.midpoint(-eta));
                 SuffixCompatibility {
                     word_index: detector / WORD_BITS,
                     bit_mask: 1 << (detector % WORD_BITS),
-                    log_probability_zero: libm::log(1.0_f64.midpoint(eta)),
-                    log_probability_one: libm::log(1.0_f64.midpoint(-eta)),
+                    log_probability_zero,
+                    log_probability_one,
+                    // Float tables never read these sentinels; the scale tag is
+                    // asserted before integer suffix scoring.
+                    log_probability_zero_int: int_metric_scale
+                        .map_or(INT_METRIC_NEG_INF, |scale| {
+                            quantize_metric(log_probability_zero, scale)
+                        }),
+                    log_probability_one_int: int_metric_scale.map_or(INT_METRIC_NEG_INF, |scale| {
+                        quantize_metric(log_probability_one, scale)
+                    }),
+                    int_metric_scale,
                 }
             })
             .collect();
@@ -1605,6 +2216,84 @@ fn suffix_compatibility_score(
         .sum()
 }
 
+fn suffix_compatibility_score_int(
+    active_syndrome: &[u64],
+    observed: &[u64],
+    suffix_compatibility: &[SuffixCompatibility],
+) -> i64 {
+    suffix_compatibility.iter().fold(0, |total, row| {
+        let term =
+            if (active_syndrome[row.word_index] ^ observed[row.word_index]) & row.bit_mask == 0 {
+                row.log_probability_zero_int
+            } else {
+                row.log_probability_one_int
+            };
+        int_metric_add(total, term)
+    })
+}
+
+fn finish_maxlog_decode(
+    frontier: BTreeMap<StateKey, i64>,
+    scale: i32,
+    stats: MaxLogDecodeStats,
+) -> TrellisDecodeAttempt {
+    let mut terminal_by_logical = BTreeMap::<Vec<u64>, i64>::new();
+    for (key, log_mass) in frontier {
+        // The final column closes every active detector, so StateKey uniqueness
+        // already implies one terminal entry per logical label. Upstream's
+        // per-label MAX fold is therefore a no-op in this representation.
+        assert!(
+            terminal_by_logical.insert(key.logical, log_mass).is_none(),
+            "terminal boundary states must be unique per logical label"
+        );
+    }
+    let mut terminal: Vec<(Vec<u64>, i64)> = terminal_by_logical.into_iter().collect();
+    terminal.sort_by(|(left_logical, left_mass), (right_logical, right_mass)| {
+        right_mass
+            .cmp(left_mass)
+            .then_with(|| compare_words_as_unsigned(left_logical, right_logical))
+    });
+    let (winner_logical, winner_mass) = &terminal[0];
+    let scale_f64 = f64::from(scale);
+    let runner_up_gap = terminal
+        .get(1)
+        .map(|(_, runner_up_mass)| i64_to_f64(*winner_mass - *runner_up_mass) / scale_f64);
+    let logical_masses = terminal
+        .iter()
+        .map(|(logical, log_mass)| TrellisLogicalMass {
+            logical: ObsMask::from_words(logical),
+            log_mass: i64_to_f64(*log_mass) / scale_f64,
+        })
+        .collect();
+    let status = if stats.dropped_states == 0 {
+        TrellisStatus::Exact
+    } else {
+        TrellisStatus::Pruned {
+            k_capped: stats.k_capped,
+            delta_pruned: stats.delta_pruned,
+        }
+    };
+
+    TrellisDecodeAttempt::Success(TrellisResult {
+        predicted: ObsMask::from_words(winner_logical),
+        log_evidence: i64_to_f64(*winner_mass) / scale_f64,
+        runner_up_gap,
+        peak_retained_states: stats.peak_retained_states,
+        processed_columns: stats.processed_columns,
+        transitions: stats.transitions,
+        dropped_states: stats.dropped_states,
+        dropped_log_mass: if stats.dropped_log_mass == INT_METRIC_NEG_INF {
+            f64::NEG_INFINITY
+        } else {
+            i64_to_f64(stats.dropped_log_mass) / scale_f64
+        },
+        bp_seconds: stats.bp_seconds,
+        escalation_rungs_used: 0,
+        status,
+        logical_masses,
+    })
+}
+
 fn sort_candidates(candidates: &mut [Candidate]) {
     candidates.sort_by(|left, right| {
         right
@@ -1703,8 +2392,9 @@ fn and_not_assign(left: &mut [u64], right: &[u64]) {
 #[cfg(test)]
 mod tests {
     use super::{
-        SparseDem, TrellisConfig, TrellisDecoder, bp_score_probability, logaddexp,
-        merge_indistinguishable_columns,
+        INT_METRIC_MAX, INT_METRIC_NEG_INF, MetricMode, SparseDem, TrellisConfig, TrellisDecoder,
+        bp_score_probability, fixed_mul_round, fixed_mul_round_fast, i64_to_f64, logaddexp,
+        merge_indistinguishable_columns, quantize_metric,
     };
     use std::collections::BTreeMap;
 
@@ -1718,6 +2408,66 @@ mod tests {
             logaddexp(-2.5, f64::NEG_INFINITY).to_bits(),
             (-2.5_f64).to_bits()
         );
+    }
+
+    #[test]
+    fn integer_metric_quantization_saturates_at_its_boundaries() {
+        for non_finite in [f64::NEG_INFINITY, f64::NAN] {
+            assert_eq!(quantize_metric(non_finite, 1024), INT_METRIC_NEG_INF);
+        }
+        #[cfg(debug_assertions)]
+        assert!(
+            std::panic::catch_unwind(|| quantize_metric(f64::INFINITY, 1024)).is_err(),
+            "positive infinity must trip the debug-only caller-contract assertion"
+        );
+        // Release builds compile the caller-contract assertion out; the
+        // upstream-faithful fallback (saturate to the negative sentinel)
+        // must hold there.
+        #[cfg(not(debug_assertions))]
+        assert_eq!(quantize_metric(f64::INFINITY, 1024), INT_METRIC_NEG_INF);
+        assert_eq!(quantize_metric(f64::MIN, 1024), INT_METRIC_NEG_INF);
+        assert_eq!(quantize_metric(f64::MAX, 1024), INT_METRIC_MAX);
+        assert_eq!(quantize_metric(-3e18, 1), INT_METRIC_NEG_INF);
+        // `INT_METRIC_NEG_INF + 1` rounds back to the same f64 as the sentinel,
+        // so upstream's `+ 1` low-bound detail is inert in this f64 port.
+        let just_inside_low = i64_to_f64(INT_METRIC_NEG_INF) + 1024.0;
+        assert_eq!(
+            quantize_metric(just_inside_low, 1),
+            INT_METRIC_NEG_INF + 1024
+        );
+        assert_eq!(
+            quantize_metric(i64_to_f64(INT_METRIC_MAX), 1),
+            INT_METRIC_MAX
+        );
+        assert_eq!(quantize_metric(1.5 / 1024.0, 1024), 2);
+        assert_eq!(quantize_metric(-1.5 / 1024.0, 1024), -2);
+        // Unlike 1.5, 2.5 distinguishes half-away from ties-to-even.
+        assert_eq!(quantize_metric(2.5 / 1024.0, 1024), 3);
+        assert_eq!(quantize_metric(-2.5 / 1024.0, 1024), -3);
+    }
+
+    #[test]
+    fn integer_fixed_multiply_fast_path_matches_general_rounding() {
+        for value in [
+            1,
+            -1,
+            1_025,
+            -1_025,
+            987_654_321,
+            -987_654_321,
+            INT_METRIC_NEG_INF,
+        ] {
+            for multiplier in [0, 1, 512, 800, 1024] {
+                assert_eq!(
+                    fixed_mul_round_fast(value, multiplier, 1024),
+                    fixed_mul_round(value, multiplier, 1024)
+                );
+            }
+        }
+        assert_eq!(fixed_mul_round(1, 512, 1024), 1);
+        assert_eq!(fixed_mul_round(-1, 512, 1024), -1);
+        assert_eq!(fixed_mul_round_fast(1, 512, 1024), 1);
+        assert_eq!(fixed_mul_round_fast(-1, 512, 1024), -1);
     }
 
     #[test]
@@ -1790,6 +2540,8 @@ mod tests {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 5,
+            metric_mode: MetricMode::default(),
+            int_metric_scale: 1024,
         };
         let first = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
         let second = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();

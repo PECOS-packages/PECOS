@@ -63,10 +63,14 @@ mass, and `runner_up_gap` is the log-mass difference between the first two --
 includes a fully exact decode with a single reachable class, so treat a
 missing gap as "no runner-up existed", not as a pruning signal, and handle it
 before comparing.
-When `status` is `"exact"` (nothing was pruned), the masses are the true
-unnormalized posteriors: a large gap means one logical class really was
-overwhelmingly more likely, and a gap near zero means the shot was nearly a
-coin flip -- a natural candidate for post-selection or a soft-output pipeline.
+With the default float metric, when `status` is `"exact"` (nothing was pruned),
+the masses are the true unnormalized posteriors: a large gap means one logical
+class really was overwhelmingly more likely, and a gap near zero means the
+shot was nearly a coin flip -- a natural candidate for post-selection or a
+soft-output pipeline. Under the integer `maxlog_int` metric (Rust API only for
+now), each terminal mass is instead the best-route (Viterbi) mass for that
+logical class, the gap is a route-mass margin, and `log_evidence` is the winning
+route mass rather than evidence.
 When the result was pruned, the gap and the masses describe only what the
 search retained, not a certified confidence -- treat them as search
 diagnostics, not posteriors.
@@ -81,8 +85,9 @@ if result.runner_up_gap is not None:
 ```
 
 The remaining fields describe the search itself rather than the answer:
-`log_evidence` (total retained log evidence), `status` (`"exact"` when nothing
-was pruned), `dropped_states` and `dropped_log_mass` (what pruning discarded),
+`log_evidence` (total retained log evidence under the default float metric),
+`status` (`"exact"` when nothing was pruned), `dropped_states` and
+`dropped_log_mass` (what pruning discarded),
 `peak_retained_states`, `processed_columns`, `escalation_rungs_used`, and
 `bp_seconds`. `dropped_log_mass` counts only the mass states carried when they
 were pruned -- a state dropped early would have branched through later columns,

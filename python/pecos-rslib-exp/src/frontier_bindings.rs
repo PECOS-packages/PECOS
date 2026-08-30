@@ -115,6 +115,10 @@ fn parse_dem_and_config(
             column_order,
             merge_indistinguishable,
             bp_score_iterations,
+            // The integer max-log metric is not yet exposed to Python; the
+            // bindings pin the default float metric until that surface lands.
+            metric_mode: pecos_trellis::MetricMode::LogSumExpFloat,
+            int_metric_scale: 1024,
         },
     ))
 }

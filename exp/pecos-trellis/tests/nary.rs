@@ -12,8 +12,8 @@
 
 use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 use pecos_trellis::{
-    DecoderError, SparseDem, TrellisConfig, TrellisDecoder, TrellisResult, TrellisStatus,
-    deadline_column_order, deadline_column_order_for_factors,
+    DecoderError, MetricMode, SparseDem, TrellisConfig, TrellisDecoder, TrellisResult,
+    TrellisStatus, deadline_column_order, deadline_column_order_for_factors,
 };
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -27,6 +27,8 @@ fn exact_config() -> TrellisConfig {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations: 0,
+        metric_mode: MetricMode::default(),
+        int_metric_scale: 1024,
     }
 }
 
@@ -120,6 +122,150 @@ fn enumerate_factor_model(model: &FactorModel) -> BTreeMap<(u64, u64), f64> {
     let mut totals = BTreeMap::new();
     visit(model, 0, 0, 0, 1.0, &mut totals);
     totals
+}
+
+fn quantized_seeded_probability(probability: f64) -> i64 {
+    if probability.to_bits() == 0.5_f64.to_bits() {
+        -710
+    } else if probability.to_bits() == 0.3_f64.to_bits() {
+        -1_233
+    } else if probability.to_bits() == 0.2_f64.to_bits() {
+        -1_648
+    } else {
+        panic!("seeded oracle received an unexpected probability {probability}");
+    }
+}
+
+fn enumerate_factor_model_maxlog(model: &FactorModel) -> BTreeMap<(u64, u64), i64> {
+    fn visit(
+        model: &FactorModel,
+        factor_index: usize,
+        detector_mask: u64,
+        logical_mask: u64,
+        route_mass: i64,
+        maxima: &mut BTreeMap<(u64, u64), i64>,
+    ) {
+        if factor_index == model.factors().len() {
+            maxima
+                .entry((detector_mask, logical_mask))
+                .and_modify(|mass| *mass = (*mass).max(route_mass))
+                .or_insert(route_mass);
+            return;
+        }
+        for outcome in &model.factors()[factor_index].outcomes {
+            let outcome_detectors = outcome
+                .detectors
+                .iter()
+                .fold(0, |mask, &detector| mask ^ (1 << detector));
+            let outcome_observables = outcome
+                .observables
+                .iter()
+                .fold(0, |mask, &observable| mask ^ (1 << observable));
+            visit(
+                model,
+                factor_index + 1,
+                detector_mask ^ outcome_detectors,
+                logical_mask ^ outcome_observables,
+                route_mass + quantized_seeded_probability(outcome.probability),
+                maxima,
+            );
+        }
+    }
+
+    let mut maxima = BTreeMap::new();
+    visit(model, 0, 0, 0, 0, &mut maxima);
+    maxima
+}
+
+#[test]
+fn seeded_nary_maxlog_matches_brute_force_integer_routes() {
+    const SCALE: i32 = 1024;
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4d41_584c_4f47_4e41);
+    for case_index in 0..20 {
+        let num_detectors = rng.random_range(1..=4);
+        let num_observables = rng.random_range(1..=3);
+        let factor_count = rng.random_range(1..=4);
+        let factors = (0..factor_count)
+            .map(|_| Factor {
+                outcomes: [0.5, 0.3, 0.2]
+                    .into_iter()
+                    .map(|probability| Outcome {
+                        probability,
+                        detectors: (0..num_detectors)
+                            .filter(|_| rng.random_bool(0.4))
+                            .map(|detector| u32::try_from(detector).unwrap())
+                            .collect(),
+                        observables: (0..num_observables)
+                            .filter(|_| rng.random_bool(0.4))
+                            .map(|observable| u32::try_from(observable).unwrap())
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let model = FactorModel::new(factors, num_detectors, num_observables).unwrap();
+        let enumerated = enumerate_factor_model_maxlog(&model);
+        let mut decoder = TrellisDecoder::from_factor_model(
+            &model,
+            TrellisConfig {
+                k: 1_000_000_000,
+                delta: 1_000_000.0,
+                metric_mode: MetricMode::MaxLogInt,
+                int_metric_scale: SCALE,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
+
+        for syndrome_mask in 0..(1 << num_detectors) {
+            let mut expected: Vec<(u64, i64)> = enumerated
+                .iter()
+                .filter_map(|(&(detectors, logical), &mass)| {
+                    (detectors == syndrome_mask as u64).then_some((logical, mass))
+                })
+                .collect();
+            expected.sort_by(|(left_logical, left_mass), (right_logical, right_mass)| {
+                right_mass
+                    .cmp(left_mass)
+                    .then_with(|| left_logical.cmp(right_logical))
+            });
+            let decoded = decoder.decode(&syndrome(syndrome_mask, num_detectors));
+            if expected.is_empty() {
+                assert!(
+                    decoded.is_err(),
+                    "case {case_index}, syndrome {syndrome_mask}"
+                );
+                continue;
+            }
+            let result = decoded.unwrap_or_else(|error| {
+                panic!("case {case_index}, syndrome {syndrome_mask}: {error}")
+            });
+            assert_eq!(words_to_u64(result.predicted.words()), expected[0].0);
+            assert_eq!(result.logical_masses.len(), expected.len());
+            for (actual, (expected_logical, expected_mass)) in
+                result.logical_masses.iter().zip(&expected)
+            {
+                assert_eq!(words_to_u64(actual.logical.words()), *expected_logical);
+                let expected_mass = i32::try_from(*expected_mass).unwrap();
+                assert_eq!(
+                    (actual.log_mass * f64::from(SCALE)).to_bits(),
+                    f64::from(expected_mass).to_bits()
+                );
+            }
+            let expected_evidence = i32::try_from(expected[0].1).unwrap();
+            assert_eq!(
+                (result.log_evidence * f64::from(SCALE)).to_bits(),
+                f64::from(expected_evidence).to_bits()
+            );
+            let expected_gap = expected.get(1).map(|runner_up| {
+                f64::from(i32::try_from(expected[0].1 - runner_up.1).unwrap()) / f64::from(SCALE)
+            });
+            assert_eq!(
+                result.runner_up_gap.map(f64::to_bits),
+                expected_gap.map(f64::to_bits)
+            );
+        }
+    }
 }
 
 fn assert_decode_matches_enumeration(model: &FactorModel, case_index: usize) {
@@ -552,6 +698,8 @@ fn sparse_dem_factor_conversion_delegates_bitwise_with_binary_features() {
         column_order: Some(vec![4, 2, 0, 3, 1]),
         merge_indistinguishable: true,
         bp_score_iterations: 4,
+        metric_mode: MetricMode::default(),
+        int_metric_scale: 1024,
     };
     let mut direct = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
     let mut delegated = TrellisDecoder::from_factor_model(&model, config).unwrap();

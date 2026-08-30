@@ -24,7 +24,7 @@
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{
-    DecoderError, ObsMask, SparseDem, backward_deadline_column_order,
+    DecoderError, MetricMode, ObsMask, SparseDem, backward_deadline_column_order,
     backward_deadline_column_order_for_factors, deadline_column_order,
     deadline_column_order_for_factors,
 };
@@ -105,6 +105,12 @@ impl FrontierCommittee {
     /// DEM is invalid.
     pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
         let build_started = Instant::now();
+        if config.metric_mode == MetricMode::MaxLogInt {
+            return Err(DecoderError::InvalidConfiguration(
+                "FrontierCommittee arbitration ranks on coset-mass posteriors; the integer max-log metric is not supported"
+                    .into(),
+            ));
+        }
         let FrontierConfig {
             k,
             delta,
@@ -112,6 +118,8 @@ impl FrontierCommittee {
             column_order,
             merge_indistinguishable,
             bp_score_iterations,
+            metric_mode,
+            int_metric_scale,
         } = config;
         let mut forward_order = column_order.unwrap_or_else(|| (0..dem.mechanisms.len()).collect());
         let forward = FrontierDecoder::from_sparse_dem(
@@ -123,6 +131,8 @@ impl FrontierCommittee {
                 column_order: Some(forward_order.clone()),
                 merge_indistinguishable,
                 bp_score_iterations,
+                metric_mode,
+                int_metric_scale,
             },
         )?;
         forward_order.reverse();
@@ -133,6 +143,8 @@ impl FrontierCommittee {
             column_order: Some(forward_order),
             merge_indistinguishable,
             bp_score_iterations,
+            metric_mode,
+            int_metric_scale,
         };
         let backward = FrontierDecoder::from_sparse_dem(dem, backward_config)?;
         let build_seconds = build_started.elapsed().as_secs_f64();
@@ -311,7 +323,7 @@ fn committee_rank(result: Option<&FrontierResult>, is_forward: bool) -> [f64; 6]
 mod tests {
     use super::{
         CommitteeStatus, DecoderError, FrontierCommittee, FrontierConfig, FrontierDecodeAttempt,
-        FrontierLogicalMass, FrontierResult, FrontierStatus, SparseDem, committee_rank,
+        FrontierLogicalMass, FrontierResult, FrontierStatus, MetricMode, SparseDem, committee_rank,
         resolve_committee_attempts,
     };
     use pecos_decoder_core::obs_mask::ObsMask;
@@ -384,6 +396,8 @@ mod tests {
                 column_order: None,
                 merge_indistinguishable: false,
                 bp_score_iterations: 0,
+                metric_mode: MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();
@@ -424,6 +438,8 @@ mod tests {
                 column_order: None,
                 merge_indistinguishable: true,
                 bp_score_iterations: 0,
+                metric_mode: MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();
@@ -433,6 +449,28 @@ mod tests {
         assert_eq!(forward.processed_columns, 2);
         assert_eq!(backward.processed_columns, 2);
         assert_eq!(forward.processed_columns, backward.processed_columns);
+    }
+
+    #[test]
+    fn committee_rejects_maxlog_metric() {
+        let dem = SparseDem {
+            mechanisms: vec![(0.2, vec![0], vec![0])],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 1,
+            num_observables: 1,
+        };
+        let error = FrontierCommittee::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                metric_mode: MetricMode::MaxLogInt,
+                ..FrontierConfig::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid configuration: FrontierCommittee arbitration ranks on coset-mass posteriors; the integer max-log metric is not supported"
+        );
     }
 
     #[test]
@@ -456,6 +494,8 @@ mod tests {
                 column_order: None,
                 merge_indistinguishable: false,
                 bp_score_iterations: 5,
+                metric_mode: MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();

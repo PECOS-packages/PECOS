@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import numpy as np
 import pytest
 from pecos.circuits import QuantumCircuit
 from pecos.engines.hybrid_engine_old import HybridEngine
@@ -50,6 +51,39 @@ ANGLE_CASES = [
     (1.5 * math.pi + 1e-10, "dg"),
 ]
 PREPARATIONS = ("bell", "plus_zero")
+
+_PAULI_X = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
+_PAULI_Y = np.array([[0.0, -1j], [1j, 0.0]], dtype=complex)
+_PAULI_Z = np.diag([1.0, -1.0]).astype(complex)
+
+
+def _rotation_matrix(generator: np.ndarray, angle: float) -> np.ndarray:
+    identity = np.eye(generator.shape[0], dtype=complex)
+    return math.cos(angle / 2) * identity - 1j * math.sin(angle / 2) * generator
+
+
+def _rxy1q_matrix(theta: float, phi: float) -> np.ndarray:
+    return _rotation_matrix(math.cos(phi) * _PAULI_X + math.sin(phi) * _PAULI_Y, theta)
+
+
+def _u_matrix(theta: float, phi: float, lambda_: float) -> np.ndarray:
+    cos_half = math.cos(theta / 2)
+    sin_half = math.sin(theta / 2)
+    return np.array(
+        [
+            [cos_half, -np.exp(1j * lambda_) * sin_half],
+            [np.exp(1j * phi) * sin_half, np.exp(1j * (phi + lambda_)) * cos_half],
+        ],
+        dtype=complex,
+    )
+
+
+def _rxxryyrzz_matrix(alpha: float, beta: float, gamma: float) -> np.ndarray:
+    return (
+        _rotation_matrix(np.kron(_PAULI_X, _PAULI_X), alpha)
+        @ _rotation_matrix(np.kron(_PAULI_Y, _PAULI_Y), beta)
+        @ _rotation_matrix(np.kron(_PAULI_Z, _PAULI_Z), gamma)
+    )
 
 
 def _prepare_state(state: Any, preparation: str) -> None:
@@ -235,44 +269,46 @@ def test_multi_angle_pyo3_rotation_arms(simulator: type) -> None:
         assert _snapshot(rotated) == _snapshot(reference)
 
 
-def test_stab_vec_multi_angle_rotation_arms_accept_non_clifford_values() -> None:
-    """StabVec routes new multi-angle symbols through arbitrary rotations."""
-    cases = (
-        (
-            "RXY1Q",
-            0,
-            {"angles": (0.5, 0.25)},
-            {"angles": (-math.pi / 2, 0.0)},
-            (("SXdg", 0),),
-        ),
-        (
-            "U",
-            0,
-            {"angles": (0.5, 0.25, 0.125)},
-            {"angles": (0.0, 0.0, -math.pi / 2)},
-            (("SZdg", 0),),
-        ),
-        (
+@pytest.mark.parametrize(
+    ("symbol", "location", "angles", "matrix"),
+    [
+        pytest.param("RXY1Q", 0, (math.pi / 2, 0.0), _rxy1q_matrix, id="rxy1q-clifford"),
+        pytest.param("RXY1Q", 0, (0.5, 0.25), _rxy1q_matrix, id="rxy1q-non-clifford"),
+        pytest.param("U", 0, (math.pi / 2, 0.0, 0.0), _u_matrix, id="u-clifford"),
+        pytest.param("U", 0, (0.5, 0.25, 0.125), _u_matrix, id="u-non-clifford"),
+        pytest.param(
             "RXXRYYRZZ",
             (0, 1),
-            {"angles": (0.5, 0.25, 0.125)},
-            {"angles": (-math.pi / 2, 0.0, 0.0)},
-            (("SXXdg", (0, 1)),),
+            (math.pi / 2, 0.0, 0.0),
+            _rxxryyrzz_matrix,
+            id="rxxryyrzz-clifford",
         ),
-    )
-    for symbol, location, arbitrary_params, clifford_params, reference_gates in cases:
-        arbitrary_state = StabVec(2)
-        _prepare_state(arbitrary_state, "plus_zero")
-        arbitrary_state.bindings[symbol](arbitrary_state, location, **arbitrary_params)
+        pytest.param(
+            "RXXRYYRZZ",
+            (0, 1),
+            (0.5, 0.25, 0.125),
+            _rxxryyrzz_matrix,
+            id="rxxryyrzz-non-clifford",
+        ),
+    ],
+)
+def test_stab_vec_multi_angle_rotations_preserve_full_phase(
+    symbol: str,
+    location: int | tuple[int, int],
+    angles: tuple[float, ...],
+    matrix: Any,
+) -> None:
+    """StabVec multi-angle bindings match matrix references including global phase."""
+    num_qubits = 2 if isinstance(location, tuple) else 1
+    state = StabVec(num_qubits)
 
-        rotated = StabVec(2)
-        reference = StabVec(2)
-        _prepare_state(rotated, "plus_zero")
-        _prepare_state(reference, "plus_zero")
-        rotated.bindings[symbol](rotated, location, **clifford_params)
-        for named, named_location in reference_gates:
-            reference.bindings[named](reference, named_location)
-        _assert_equivalent_state(rotated, reference)
+    state.bindings[symbol](state, location, angles=angles)
+
+    initial = np.zeros(1 << num_qubits, dtype=complex)
+    initial[0] = 1.0
+    expected = matrix(*angles) @ initial
+    actual = np.array([complex(*amplitude) for amplitude in state.state_vector()])
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
 @pytest.mark.parametrize("simulator", [SparseStab, Stabilizer])

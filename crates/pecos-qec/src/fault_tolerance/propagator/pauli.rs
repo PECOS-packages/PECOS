@@ -768,6 +768,31 @@ mod batched_pair_tests {
 }
 
 #[cfg(test)]
+mod rotation_exactness_tests {
+    use super::{Direction, apply_gate};
+    use pecos_core::Angle64;
+    use pecos_core::gate_type::GateType;
+    use pecos_core::gates::Gate;
+    use pecos_simulators::PauliProp;
+
+    #[test]
+    fn near_quarter_turn_rotation_does_not_propagate_as_clifford() {
+        let mut prop = PauliProp::new();
+        prop.track_x(&[0]);
+        let gate = Gate::with_angles(
+            GateType::RZ,
+            vec![Angle64::from_turns(0.25 + 1e-12)],
+            vec![0.into()],
+        );
+
+        apply_gate(&mut prop, &gate, Direction::Forward);
+
+        assert!(prop.contains_x(0));
+        assert!(!prop.contains_z(0));
+    }
+}
+
+#[cfg(test)]
 mod collapse_tests {
     use super::{Direction, cross_measurement};
     use pecos_quantum::GateType;

@@ -4,6 +4,7 @@ use bitvec::prelude::*;
 use log::debug;
 use pecos_core::Angle64;
 use pecos_core::errors::PecosError;
+use pecos_core::gate_type::GateType;
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::prelude::*;
 use pecos_random::rng_pcg::RNGModel;
@@ -25,8 +26,8 @@ type GateHandler = fn(&mut QASMEngine, &[usize], &[f64]) -> Result<(), PecosErro
 /// Gate information for table-driven processing
 struct GateInfo {
     name: &'static str,
+    gate_type: GateType,
     required_qubits: usize,
-    required_params: usize,
     handler: GateHandler,
 }
 
@@ -375,12 +376,12 @@ impl QASMEngine {
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn handle_r1xy(
+    fn handle_rxy1q(
         engine: &mut QASMEngine,
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.r1xy(
+        engine.message_builder.rxy1q(
             Angle64::from_radians(params[0]),
             Angle64::from_radians(params[1]),
             &[qubits[0]],
@@ -471,8 +472,6 @@ impl QASMEngine {
         gate_type: pecos_core::prelude::GateType,
         qubits: &[usize],
     ) -> Result<(), PecosError> {
-        use pecos_core::prelude::GateType;
-
         for &qubit in qubits {
             match gate_type {
                 GateType::X => self.message_builder.x(&[qubit]),
@@ -504,8 +503,6 @@ impl QASMEngine {
         gate_type: pecos_core::prelude::GateType,
         qubits: &[usize],
     ) -> Result<(), PecosError> {
-        use pecos_core::prelude::GateType;
-
         for chunk in qubits.chunks(2) {
             if chunk.len() == 2 {
                 match gate_type {
@@ -532,69 +529,67 @@ impl QASMEngine {
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        use pecos_core::prelude::GateType;
+        let expected = gate_type.angle_arity();
+        if params.len() != expected {
+            return Err(PecosError::Processing(format!(
+                "Gate {gate_type:?} expected {expected} angle parameters, got {}",
+                params.len()
+            )));
+        }
 
         match gate_type {
             GateType::RX => {
-                if let Some(&angle) = params.first() {
-                    for &qubit in qubits {
-                        self.message_builder
-                            .rx(Angle64::from_radians(angle), &[qubit]);
-                    }
+                let angle = params[0];
+                for &qubit in qubits {
+                    self.message_builder
+                        .rx(Angle64::from_radians(angle), &[qubit]);
                 }
             }
             GateType::RY => {
-                if let Some(&angle) = params.first() {
-                    for &qubit in qubits {
-                        self.message_builder
-                            .ry(Angle64::from_radians(angle), &[qubit]);
-                    }
+                let angle = params[0];
+                for &qubit in qubits {
+                    self.message_builder
+                        .ry(Angle64::from_radians(angle), &[qubit]);
                 }
             }
             GateType::RZ => {
-                if let Some(&angle) = params.first() {
-                    for &qubit in qubits {
-                        self.message_builder
-                            .rz(Angle64::from_radians(angle), &[qubit]);
-                    }
+                let angle = params[0];
+                for &qubit in qubits {
+                    self.message_builder
+                        .rz(Angle64::from_radians(angle), &[qubit]);
                 }
             }
             GateType::RZZ => {
-                if let Some(&angle) = params.first() {
-                    for chunk in qubits.chunks(2) {
-                        if chunk.len() == 2 {
-                            self.message_builder
-                                .rzz(Angle64::from_radians(angle), &[(chunk[0], chunk[1])]);
-                        }
+                let angle = params[0];
+                for chunk in qubits.chunks(2) {
+                    if chunk.len() == 2 {
+                        self.message_builder
+                            .rzz(Angle64::from_radians(angle), &[(chunk[0], chunk[1])]);
                     }
                 }
             }
-            GateType::R1XY => {
-                if params.len() >= 2 {
-                    let theta = params[0];
-                    let phi = params[1];
-                    for &qubit in qubits {
-                        self.message_builder.r1xy(
-                            Angle64::from_radians(theta),
-                            Angle64::from_radians(phi),
-                            &[qubit],
-                        );
-                    }
+            GateType::RXY1Q => {
+                let theta = params[0];
+                let phi = params[1];
+                for &qubit in qubits {
+                    self.message_builder.rxy1q(
+                        Angle64::from_radians(theta),
+                        Angle64::from_radians(phi),
+                        &[qubit],
+                    );
                 }
             }
             GateType::U => {
-                if params.len() >= 3 {
-                    let theta = params[0];
-                    let phi = params[1];
-                    let lambda = params[2];
-                    for &qubit in qubits {
-                        self.message_builder.u(
-                            Angle64::from_radians(theta),
-                            Angle64::from_radians(phi),
-                            Angle64::from_radians(lambda),
-                            &[qubit],
-                        );
-                    }
+                let theta = params[0];
+                let phi = params[1];
+                let lambda = params[2];
+                for &qubit in qubits {
+                    self.message_builder.u(
+                        Angle64::from_radians(theta),
+                        Angle64::from_radians(phi),
+                        Angle64::from_radians(lambda),
+                        &[qubit],
+                    );
                 }
             }
             _ => {
@@ -608,8 +603,6 @@ impl QASMEngine {
 
     /// Process a native gate directly
     fn process_native_gate(&mut self, gate: &pecos_core::prelude::Gate) -> Result<(), PecosError> {
-        use pecos_core::prelude::GateType;
-
         // Convert QubitIds to usize array
         let qubits: Vec<usize> = gate.qubits.iter().map(|q| q.0).collect();
 
@@ -661,7 +654,7 @@ impl QASMEngine {
             | GateType::RZZ
             | GateType::RXXRYYRZZ
             | GateType::U2q
-            | GateType::R1XY
+            | GateType::RXY1Q
             | GateType::U => {
                 // Convert angles to radians for process_parameterized_gate
                 let angles_as_radians: Vec<f64> = gate
@@ -693,111 +686,111 @@ impl QASMEngine {
             // Single-qubit gates
             G {
                 name: "h",
+                gate_type: GateType::H,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_h,
             },
             G {
                 name: "x",
+                gate_type: GateType::X,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_x,
             },
             G {
                 name: "y",
+                gate_type: GateType::Y,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_y,
             },
             G {
                 name: "z",
+                gate_type: GateType::Z,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_z,
             },
             G {
                 name: "s",
+                gate_type: GateType::SZ,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_s,
             },
             G {
                 name: "sdg",
+                gate_type: GateType::SZdg,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_sdg,
             },
             G {
                 name: "t",
+                gate_type: GateType::T,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_t,
             },
             G {
                 name: "tdg",
+                gate_type: GateType::Tdg,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_tdg,
             },
             G {
                 name: "rz",
+                gate_type: GateType::RZ,
                 required_qubits: 1,
-                required_params: 1,
                 handler: Self::handle_rz,
             },
             G {
                 name: "rx",
+                gate_type: GateType::RX,
                 required_qubits: 1,
-                required_params: 1,
                 handler: Self::handle_rx,
             },
             G {
                 name: "ry",
+                gate_type: GateType::RY,
                 required_qubits: 1,
-                required_params: 1,
                 handler: Self::handle_ry,
             },
             G {
-                name: "r1xy",
+                name: "rxy1q",
+                gate_type: GateType::RXY1Q,
                 required_qubits: 1,
-                required_params: 2,
-                handler: Self::handle_r1xy,
+                handler: Self::handle_rxy1q,
             },
             // Two-qubit gates
             G {
                 name: "cx",
+                gate_type: GateType::CX,
                 required_qubits: 2,
-                required_params: 0,
                 handler: Self::handle_cx,
             },
             G {
                 name: "cy",
+                gate_type: GateType::CY,
                 required_qubits: 2,
-                required_params: 0,
                 handler: Self::handle_cy,
             },
             G {
                 name: "cz",
+                gate_type: GateType::CZ,
                 required_qubits: 2,
-                required_params: 0,
                 handler: Self::handle_cz,
             },
             G {
                 name: "rzz",
+                gate_type: GateType::RZZ,
                 required_qubits: 2,
-                required_params: 1,
                 handler: Self::handle_rzz,
             },
             G {
                 name: "szz",
+                gate_type: GateType::SZZ,
                 required_qubits: 2,
-                required_params: 0,
                 handler: Self::handle_szz,
             },
             G {
                 name: "swap",
+                gate_type: GateType::SWAP,
                 required_qubits: 2,
-                required_params: 0,
                 handler: Self::handle_swap,
             },
         ]
@@ -831,17 +824,11 @@ impl QASMEngine {
                     )));
                 }
 
-                // Validate parameter count
-                if parameters.len() < gate_info.required_params {
+                let gate_type = gate_info.gate_type;
+                let expected = gate_type.angle_arity();
+                if parameters.len() != expected {
                     return Err(PecosError::Input(format!(
-                        "{} gate requires {} parameter{}, got {}",
-                        gate_info.name,
-                        gate_info.required_params,
-                        if gate_info.required_params == 1 {
-                            ""
-                        } else {
-                            "s"
-                        },
+                        "Gate {gate_type:?} expected {expected} angle parameters, got {}",
                         parameters.len()
                     )));
                 }
@@ -1714,5 +1701,48 @@ impl fmt::Debug for QASMEngine {
         s.field("foreign_object", &self.foreign_object.is_some());
 
         s.finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pecos_core::gate_type::GateType;
+
+    #[test]
+    fn parameterized_gate_rejects_missing_angle() {
+        let err = QASMEngine::default()
+            .process_parameterized_gate(GateType::RZ, &[0], &[])
+            .expect_err("missing angles must fail");
+        assert!(
+            err.to_string()
+                .contains("Gate RZ expected 1 angle parameters, got 0")
+        );
+    }
+
+    #[test]
+    fn parameterized_gate_rejects_surplus_angle() {
+        let err = QASMEngine::default()
+            .process_parameterized_gate(GateType::RZ, &[0], &[0.5, 0.25])
+            .expect_err("surplus angles must fail");
+        assert!(
+            err.to_string()
+                .contains("Gate RZ expected 1 angle parameters, got 2")
+        );
+    }
+
+    #[test]
+    fn gate_table_dispatches_rz_and_cz_with_stored_gate_types() {
+        let mut engine = QASMEngine::default();
+        assert!(
+            engine
+                .process_gate_operation("rz", &[0], &[std::f64::consts::FRAC_PI_2])
+                .expect("RZ table dispatch should succeed")
+        );
+        assert!(
+            engine
+                .process_gate_operation("cz", &[0, 1], &[])
+                .expect("CZ table dispatch should succeed")
+        );
     }
 }

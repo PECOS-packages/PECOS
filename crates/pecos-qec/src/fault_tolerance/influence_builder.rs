@@ -189,7 +189,7 @@ impl std::error::Error for InfluenceBuildError {}
 ///
 /// Symbolic replay accepts the rotation gates `RX`, `RY`, `RZ`, `RXX`, `RYY`,
 /// `RZZ`, and `CRZ` only when their sole angle is exactly zero. It rejects
-/// every `R1XY`, including `R1XY(0, phi)`, even though core Clifford lowering
+/// every `RXY1Q`, including `RXY1Q(0, phi)`, even though core Clifford lowering
 /// recognizes that case as the identity. Other Clifford-equivalent rotations
 /// must be lowered to supported named gates before this builder is used.
 pub struct InfluenceBuilder<'a> {
@@ -385,7 +385,7 @@ impl<'a> InfluenceBuilder<'a> {
     ///
     /// Symbolic replay accepts `RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, and
     /// `CRZ` only with exactly one, exactly-zero angle. It rejects every
-    /// `R1XY`, including `R1XY(0, phi)`. Other Clifford-equivalent rotations
+    /// `RXY1Q`, including `RXY1Q(0, phi)`. Other Clifford-equivalent rotations
     /// must be lowered to supported named gates before calling this method.
     ///
     /// # Errors

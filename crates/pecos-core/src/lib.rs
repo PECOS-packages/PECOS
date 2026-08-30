@@ -66,7 +66,7 @@ pub use rng::RandomUtils;
 
 pub use classical_bit_id::ClassicalBitId;
 pub use clifford_simplify::{
-    half_turn_decomposition, is_rzz_z_tensor_z, try_simplify_r1xy, try_simplify_rotation,
+    half_turn_decomposition, is_rzz_z_tensor_z, try_simplify_rotation, try_simplify_rxy1q,
 };
 pub use gate_registry::{
     AngleSource, ConcreteStep, DecompStep, GateDefinition, GateDefinitionBuilder, GateRegistry,

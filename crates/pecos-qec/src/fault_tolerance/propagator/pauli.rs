@@ -17,7 +17,7 @@
 
 use super::{PauliFault, is_supported_noop_or_metadata_gate, is_supported_prep_gate};
 use pecos_core::gate_type::GateType;
-use pecos_core::{half_turn_decomposition, try_simplify_r1xy, try_simplify_rotation};
+use pecos_core::{half_turn_decomposition, try_simplify_rotation, try_simplify_rxy1q};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
 use smallvec::SmallVec;
@@ -88,11 +88,11 @@ fn consecutive_pairs(
 ///   commutes with the measurement in the direction of travel is absorbed
 ///
 /// Rotation eligibility follows the core lowering policy. Axis rotations such
-/// as `RZ` require exact Clifford-angle equality, while `R1XY` snaps angles
+/// as `RZ` require exact Clifford-angle equality, while `RXY1Q` snaps angles
 /// within `1e-9` turns of its Clifford grid. [`InfluenceBuilder`](crate::fault_tolerance::InfluenceBuilder)
 /// is intentionally more conservative: its symbolic replay accepts `RX`,
 /// `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, and `CRZ` only with one exactly-zero
-/// angle, and rejects every `R1XY`, including `R1XY(0, phi)`.
+/// angle, and rejects every `RXY1Q`, including `RXY1Q(0, phi)`.
 ///
 /// Returns [`PauliPropagationOutcome::Unsupported`] when the gate changes the
 /// state in a way this Pauli-only representation cannot faithfully express, or
@@ -159,10 +159,10 @@ pub(crate) fn apply_gate_unchecked(
             }
             PauliPropagationOutcome::Unsupported
         }
-        GateType::R1XY if gate.angles.len() >= 2 => {
+        GateType::RXY1Q if gate.angles.len() >= 2 => {
             let theta = gate.angles[0];
             let phi = gate.angles[1];
-            if let Some(clifford) = try_simplify_r1xy(theta, phi) {
+            if let Some(clifford) = try_simplify_rxy1q(theta, phi) {
                 if apply_named_gate(prop, clifford, &gate.qubits, direction) {
                     PauliPropagationOutcome::Propagated
                 } else {

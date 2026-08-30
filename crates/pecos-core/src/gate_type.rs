@@ -51,7 +51,7 @@ pub enum GateType {
     Tdg = 34,
     // Other T-like gates?
     U = 35,
-    R1XY = 36,
+    RXY1Q = 36,
 
     CX = 50,
     CY = 51,
@@ -349,7 +349,7 @@ impl From<u8> for GateType {
             33 => GateType::T,
             34 => GateType::Tdg,
             35 => GateType::U,
-            36 => GateType::R1XY,
+            36 => GateType::RXY1Q,
             50 => GateType::CX,
             51 => GateType::CY,
             52 => GateType::CZ,
@@ -525,7 +525,7 @@ impl GateType {
             | GateType::Idle => 1,
 
             // Gates with two parameters
-            GateType::R1XY => 2,
+            GateType::RXY1Q => 2,
 
             // Gates with three parameters
             GateType::U | GateType::RXXRYYRZZ => 3,
@@ -564,7 +564,7 @@ impl GateType {
             | GateType::RZ
             | GateType::T
             | GateType::Tdg
-            | GateType::R1XY
+            | GateType::RXY1Q
             | GateType::U
             | GateType::MX
             | GateType::MZ
@@ -647,7 +647,7 @@ impl GateType {
             | GateType::RYY
             | GateType::RZZ
             | GateType::CRZ => 1,
-            GateType::R1XY => 2,
+            GateType::RXY1Q => 2,
             GateType::U | GateType::RXXRYYRZZ => 3,
             GateType::U2q => 15,
             // All other gates have no angle parameters
@@ -705,7 +705,7 @@ impl fmt::Display for GateType {
             GateType::T => write!(f, "T"),
             GateType::Tdg => write!(f, "Tdg"),
             GateType::U => write!(f, "U"),
-            GateType::R1XY => write!(f, "R1XY"),
+            GateType::RXY1Q => write!(f, "RXY1Q"),
             GateType::CX => write!(f, "CX"),
             GateType::CY => write!(f, "CY"),
             GateType::CZ => write!(f, "CZ"),
@@ -777,7 +777,7 @@ impl std::str::FromStr for GateType {
             "RX" => Ok(GateType::RX),
             "RY" => Ok(GateType::RY),
             "RZ" => Ok(GateType::RZ),
-            "R1XY" => Ok(GateType::R1XY),
+            "RXY1Q" | "R1XY" => Ok(GateType::RXY1Q),
             "U" => Ok(GateType::U),
             "CX" | "CNOT" => Ok(GateType::CX),
             "CY" => Ok(GateType::CY),
@@ -1023,7 +1023,7 @@ mod tests {
         assert_eq!(GateType::SYYdg as u8, 56);
         assert_eq!(GateType::SZZ as u8, 57);
         assert_eq!(GateType::RZ as u8, 32);
-        assert_eq!(GateType::R1XY as u8, 36);
+        assert_eq!(GateType::RXY1Q as u8, 36);
         assert_eq!(GateType::MZ as u8, 104);
         assert_eq!(GateType::MeasureLeaked as u8, 105);
         assert_eq!(GateType::MeasureFree as u8, 106);
@@ -1050,7 +1050,7 @@ mod tests {
         assert_eq!(GateType::from(56u8), GateType::SYYdg);
         assert_eq!(GateType::from(57u8), GateType::SZZ);
         assert_eq!(GateType::from(32u8), GateType::RZ);
-        assert_eq!(GateType::from(36u8), GateType::R1XY);
+        assert_eq!(GateType::from(36u8), GateType::RXY1Q);
         assert_eq!(GateType::from(104u8), GateType::MZ);
         assert_eq!(GateType::from(105u8), GateType::MeasureLeaked);
         assert_eq!(GateType::from(106u8), GateType::MeasureFree);
@@ -1081,6 +1081,10 @@ mod tests {
         assert_eq!(GateType::from_str("Channel").unwrap(), GateType::Channel);
         assert_eq!(GateType::from_str("SWAP").unwrap(), GateType::SWAP);
         assert_eq!(GateType::from_str("CCX").unwrap(), GateType::CCX);
+        assert_eq!(GateType::from_str("RXY1Q").unwrap(), GateType::RXY1Q);
+        assert_eq!(GateType::from_str("R1XY").unwrap(), GateType::RXY1Q);
+        assert!(GateType::from_str("U1q").is_err());
+        assert_eq!(GateType::RXY1Q.to_string(), "RXY1Q");
         assert_eq!(
             GateType::from_str("MeasCrosstalkGlobalPayload").unwrap(),
             GateType::MeasCrosstalkGlobalPayload
@@ -1152,7 +1156,7 @@ mod tests {
         assert_eq!(GateType::Idle.classical_arity(), 1);
 
         // Gates with two parameters
-        assert_eq!(GateType::R1XY.classical_arity(), 2);
+        assert_eq!(GateType::RXY1Q.classical_arity(), 2);
 
         // Gates with three parameters
         assert_eq!(GateType::U.classical_arity(), 3);
@@ -1167,7 +1171,7 @@ mod tests {
         assert_eq!(GateType::Z.quantum_arity(), 1);
         assert_eq!(GateType::H.quantum_arity(), 1);
         assert_eq!(GateType::RZ.quantum_arity(), 1);
-        assert_eq!(GateType::R1XY.quantum_arity(), 1);
+        assert_eq!(GateType::RXY1Q.quantum_arity(), 1);
         assert_eq!(GateType::U.quantum_arity(), 1);
         assert_eq!(GateType::MZ.quantum_arity(), 1);
         assert_eq!(GateType::MeasureLeaked.quantum_arity(), 1);
@@ -1245,7 +1249,7 @@ mod tests {
         // Parameterized gates
         assert!(GateType::RZ.is_parameterized());
         assert!(GateType::RZZ.is_parameterized());
-        assert!(GateType::R1XY.is_parameterized());
+        assert!(GateType::RXY1Q.is_parameterized());
         assert!(GateType::U.is_parameterized());
         assert!(GateType::Idle.is_parameterized());
     }
@@ -1259,7 +1263,7 @@ mod tests {
         assert!(GateType::Z.is_single_qubit());
         assert!(GateType::H.is_single_qubit());
         assert!(GateType::RZ.is_single_qubit());
-        assert!(GateType::R1XY.is_single_qubit());
+        assert!(GateType::RXY1Q.is_single_qubit());
         assert!(GateType::U.is_single_qubit());
         assert!(GateType::MZ.is_single_qubit());
         assert!(GateType::MeasureLeaked.is_single_qubit());
@@ -1287,7 +1291,7 @@ mod tests {
         assert!(!GateType::Z.is_two_qubit());
         assert!(!GateType::H.is_two_qubit());
         assert!(!GateType::RZ.is_two_qubit());
-        assert!(!GateType::R1XY.is_two_qubit());
+        assert!(!GateType::RXY1Q.is_two_qubit());
         assert!(!GateType::U.is_two_qubit());
         assert!(!GateType::MZ.is_two_qubit());
         assert!(!GateType::MeasureLeaked.is_two_qubit());

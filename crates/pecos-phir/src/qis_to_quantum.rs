@@ -6,7 +6,7 @@ Lowers QIS dialect `CustomOps` to standard PHIR `QuantumOps`:
 - `qis.qfree` -> `QuantumOp::Dealloc`
 - `qis.reset` -> `QuantumOp::Reset`
 - named `qis.h/x/y/z/s/sdg/t/tdg/cx` operations remain named `QuantumOp`s
-- `qis.rxy` -> `QuantumOp::R1XY(theta, phi)`
+- `qis.rxy` -> `QuantumOp::RXY1Q(theta, phi)`
 - `qis.rz` -> `QuantumOp::RZ(angle)`
 - `qis.rzz` -> `QuantumOp::RZZ(angle)`
 - `qis.measure` / `qis.lazy_measure` -> `QuantumOp::Measure`
@@ -158,7 +158,7 @@ fn convert_qis_op(
             let qubit = instr.operands[0];
             Ok(Some(Instruction {
                 results: vec![],
-                operation: Operation::Quantum(QuantumOp::R1XY(theta, phi)),
+                operation: Operation::Quantum(QuantumOp::RXY1Q(theta, phi)),
                 operands: vec![qubit],
                 result_types: vec![],
                 regions: vec![],
@@ -469,7 +469,7 @@ mod tests {
         assert_eq!(quantum_ops.len(), 1);
         assert!(matches!(
             quantum_ops[0].operation,
-            Operation::Quantum(QuantumOp::R1XY(theta, phi))
+            Operation::Quantum(QuantumOp::RXY1Q(theta, phi))
                 if theta == Angle64::from_radians(FRAC_PI_2) && phi == Angle64::ZERO
         ));
     }

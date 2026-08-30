@@ -1338,9 +1338,9 @@ mod tests {
     }
 
     #[test]
-    fn test_r1xy_propagation_matches_sx() {
+    fn test_rxy1q_propagation_matches_sx() {
         let mut rotated = TickCircuit::new();
-        rotated.tick().r1xy(
+        rotated.tick().rxy1q(
             pecos_core::Angle64::QUARTER_TURN,
             pecos_core::Angle64::ZERO,
             &[0],

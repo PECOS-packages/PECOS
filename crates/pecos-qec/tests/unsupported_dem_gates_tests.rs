@@ -69,10 +69,17 @@ fn assert_sampler_error(
     assert_eq!(error.qubits, [0]);
 }
 
-fn assert_eighth_turn_rejected_by_every_dem_family(angle: Angle64) {
+/// Every DEM entry point must reject `gate_type`, placed as the single gate
+/// between a preparation and a measurement, reporting that gate and its exact
+/// source location. `add_dag` / `add_tick` insert the gate under test.
+fn assert_rotation_rejected_by_every_dem_family(
+    gate_type: GateType,
+    add_dag: &dyn Fn(&mut DagCircuit),
+    add_tick: &dyn Fn(&mut TickCircuit),
+) {
     let mut circuit = DagCircuit::new();
     circuit.pz(&[0]);
-    circuit.rz(angle, &[0]);
+    add_dag(&mut circuit);
     circuit.mz(&[0]);
     let dag_location = UnsupportedGateLocation::DagNode { node: 1 };
 
@@ -84,38 +91,38 @@ fn assert_eighth_turn_rejected_by_every_dem_family(angle: Angle64) {
     let probabilities = vec![0.0; map.locations.len()];
     assert_dem_error(
         DemBuilder::new(&map).build().unwrap_err(),
-        GateType::RZ,
+        gate_type,
         dag_location,
     );
     assert_dem_error(
         MemBuilder::new(&map).build().unwrap_err(),
-        GateType::RZ,
+        gate_type,
         dag_location,
     );
     assert_sampler_error(
         DemSamplerBuilder::new(&map).build().unwrap_err(),
-        GateType::RZ,
+        gate_type,
         dag_location,
     );
     assert_sampler_error(
         DemSampler::from_influence_map(&map, &probabilities).unwrap_err(),
-        GateType::RZ,
+        gate_type,
         dag_location,
     );
     let engine_error =
         SamplingEngine::from_influence_map(&map, &probabilities, &NoiseConfig::default())
             .unwrap_err();
-    assert_eq!(engine_error.gate_type, GateType::RZ);
+    assert_eq!(engine_error.gate_type, gate_type);
     assert_eq!(engine_error.location, dag_location);
 
     assert_dem_error(
         DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.0, 0.0).unwrap_err(),
-        GateType::RZ,
+        gate_type,
         dag_location,
     );
     assert_sampler_error(
         DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap_err(),
-        GateType::RZ,
+        gate_type,
         dag_location,
     );
     assert!(matches!(
@@ -132,7 +139,7 @@ fn assert_eighth_turn_rejected_by_every_dem_family(angle: Angle64) {
 
     let mut tick = TickCircuit::new();
     tick.tick().pz(&[0]);
-    tick.tick().rz(angle, &[0]);
+    add_tick(&mut tick);
     tick.tick().mz(&[0]);
     let tick_location = UnsupportedGateLocation::Tick {
         tick: 1,
@@ -140,12 +147,12 @@ fn assert_eighth_turn_rejected_by_every_dem_family(angle: Angle64) {
     };
     assert_dem_error(
         DemBuilder::from_tick_circuit(&tick, 0.0, 0.0, 0.0, 0.0).unwrap_err(),
-        GateType::RZ,
+        gate_type,
         tick_location,
     );
     assert_sampler_error(
         DemSampler::from_tick_circuit(&tick, &NoiseConfig::default()).unwrap_err(),
-        GateType::RZ,
+        gate_type,
         tick_location,
     );
 }
@@ -200,6 +207,8 @@ fn apply_gate_classifies_supported_transparent_and_unsupported_gates() {
     for gate in [
         Gate::rz(Angle64::QUARTER_TURN, &[0]),
         Gate::rz(Angle64::HALF_TURN, &[0]),
+        // RXY1Q(pi/2, 0) lowers to the named SX and must propagate.
+        Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]),
     ] {
         assert_eq!(
             apply_gate(&mut prop, &gate, Direction::Forward),
@@ -242,6 +251,17 @@ fn apply_gate_classifies_supported_transparent_and_unsupported_gates() {
             gate.gate_type
         );
     }
+    // A non-Clifford RXY1Q has no Pauli conjugation rule and must not be
+    // reported as propagated. This is the arm that took a merge conflict when
+    // R1XY was renamed to RXY1Q.
+    assert_eq!(
+        apply_gate(
+            &mut prop,
+            &Gate::rxy1q(Angle64::from_turns(0.1), Angle64::ZERO, &[0]),
+            Direction::Forward
+        ),
+        PauliPropagationOutcome::Unsupported
+    );
 }
 
 #[test]
@@ -250,10 +270,10 @@ fn malformed_gate_payloads_are_unsupported() {
     missing_rz_angle.angles.clear();
     let mut extra_rz_angle = Gate::rz(Angle64::ZERO, &[0]);
     extra_rz_angle.angles.push(Angle64::ZERO);
-    let mut missing_r1xy_angle = Gate::r1xy(Angle64::ZERO, Angle64::ZERO, &[0]);
-    missing_r1xy_angle.angles.pop();
-    let mut extra_r1xy_angle = Gate::r1xy(Angle64::ZERO, Angle64::ZERO, &[0]);
-    extra_r1xy_angle.angles.push(Angle64::ZERO);
+    let mut missing_rxy1q_angle = Gate::rxy1q(Angle64::ZERO, Angle64::ZERO, &[0]);
+    missing_rxy1q_angle.angles.pop();
+    let mut extra_rxy1q_angle = Gate::rxy1q(Angle64::ZERO, Angle64::ZERO, &[0]);
+    extra_rxy1q_angle.angles.push(Angle64::ZERO);
     let mut malformed_named = Gate::h(&[0]);
     malformed_named.angles.push(Angle64::ZERO);
     let mut malformed_transparent = Gate::pz(&[0]);
@@ -263,8 +283,8 @@ fn malformed_gate_payloads_are_unsupported() {
     for gate in [
         missing_rz_angle,
         extra_rz_angle,
-        missing_r1xy_angle,
-        extra_r1xy_angle,
+        missing_rxy1q_angle,
+        extra_rxy1q_angle,
         malformed_named,
         malformed_transparent,
     ] {
@@ -420,12 +440,48 @@ fn non_clifford_rz_is_rejected_with_its_gate_and_location() {
 
 #[test]
 fn positive_eighth_turn_rz_is_rejected_by_every_dem_family() {
-    assert_eighth_turn_rejected_by_every_dem_family(Angle64::from_turns(0.125));
+    let angle = Angle64::from_turns(0.125);
+    assert_rotation_rejected_by_every_dem_family(
+        GateType::RZ,
+        &|c| {
+            c.rz(angle, &[0]);
+        },
+        &|t| {
+            t.tick().rz(angle, &[0]);
+        },
+    );
 }
 
 #[test]
 fn negative_eighth_turn_rz_is_rejected_by_every_dem_family() {
-    assert_eighth_turn_rejected_by_every_dem_family(Angle64::from_turns(-0.125));
+    let angle = Angle64::from_turns(-0.125);
+    assert_rotation_rejected_by_every_dem_family(
+        GateType::RZ,
+        &|c| {
+            c.rz(angle, &[0]);
+        },
+        &|t| {
+            t.tick().rz(angle, &[0]);
+        },
+    );
+}
+
+/// `RXY1Q` at a non-Clifford angle has no Pauli conjugation rule. This is the
+/// arm that took a merge conflict when the gate was renamed from `R1XY`, so it
+/// gets its own end-to-end guard rather than relying on the `RZ` cases.
+#[test]
+fn non_clifford_rxy1q_is_rejected_by_every_dem_family() {
+    let theta = Angle64::from_turns(0.1);
+    let phi = Angle64::ZERO;
+    assert_rotation_rejected_by_every_dem_family(
+        GateType::RXY1Q,
+        &|c| {
+            c.rxy1q(theta, phi, &[0]);
+        },
+        &|t| {
+            t.tick().rxy1q(theta, phi, &[0]);
+        },
+    );
 }
 
 #[test]

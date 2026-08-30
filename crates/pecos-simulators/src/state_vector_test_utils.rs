@@ -1577,41 +1577,41 @@ pub fn verify_u_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &
     );
 }
 
-/// Verify R1XY gate.
+/// Verify RXY1Q gate.
 ///
-/// R1XY(θ, φ) applies a rotation in the XY plane of the Bloch sphere.
-pub fn verify_r1xy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
-    // R1XY(π, 0) should act like X (flip |0⟩ to |1⟩)
+/// RXY1Q(θ, φ) applies a rotation in the XY plane of the Bloch sphere.
+pub fn verify_rxy1q_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
+    // RXY1Q(π, 0) should act like X (flip |0⟩ to |1⟩)
     sim.reset();
-    sim.r1xy(
+    sim.rxy1q(
         Angle64::from_radians(PI),
         Angle64::from_radians(0.0),
         &qid(0),
     );
 
-    assert_amplitude_near_zero(sim.get_amplitude(0), "R1XY(π,0)|0⟩: |0⟩");
+    assert_amplitude_near_zero(sim.get_amplitude(0), "RXY1Q(π,0)|0⟩: |0⟩");
     assert!(
         (sim.get_amplitude(1).norm() - 1.0).abs() < TOLERANCE,
-        "R1XY(π,0)|0⟩: |1⟩ magnitude should be 1"
+        "RXY1Q(π,0)|0⟩: |1⟩ magnitude should be 1"
     );
 
-    // R1XY(π, π/2) should act like Y (up to global phase)
+    // RXY1Q(π, π/2) should act like Y (up to global phase)
     sim.reset();
-    sim.r1xy(
+    sim.rxy1q(
         Angle64::from_radians(PI),
         Angle64::from_radians(FRAC_PI_2),
         &qid(0),
     );
 
-    assert_amplitude_near_zero(sim.get_amplitude(0), "R1XY(π,π/2)|0⟩: |0⟩");
+    assert_amplitude_near_zero(sim.get_amplitude(0), "RXY1Q(π,π/2)|0⟩: |0⟩");
     assert!(
         (sim.get_amplitude(1).norm() - 1.0).abs() < TOLERANCE,
-        "R1XY(π,π/2)|0⟩: |1⟩ magnitude should be 1"
+        "RXY1Q(π,π/2)|0⟩: |1⟩ magnitude should be 1"
     );
 
-    // R1XY(π/2, 0) should create superposition like a Hadamard-like rotation
+    // RXY1Q(π/2, 0) should create superposition like a Hadamard-like rotation
     sim.reset();
-    sim.r1xy(
+    sim.rxy1q(
         Angle64::from_radians(FRAC_PI_2),
         Angle64::from_radians(0.0),
         &qid(0),
@@ -1622,14 +1622,14 @@ pub fn verify_r1xy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim
     let amp1 = sim.get_amplitude(1);
     assert!(
         (amp0.norm() - amp1.norm()).abs() < TOLERANCE,
-        "R1XY(π/2,0)|0⟩: equal superposition magnitudes"
+        "RXY1Q(π/2,0)|0⟩: equal superposition magnitudes"
     );
 
     // Verify unitarity
     let norm_sq = amp0.norm_sqr() + amp1.norm_sqr();
     assert!(
         (norm_sq - 1.0).abs() < TOLERANCE,
-        "R1XY preserves normalization"
+        "RXY1Q preserves normalization"
     );
 }
 
@@ -2713,7 +2713,7 @@ pub fn run_rotation_test_suite<S: StateVectorSimulator + ArbitraryRotationGateab
     verify_rzz_gate(sim);
     verify_rotation_identities(sim);
     verify_u_gate(sim);
-    verify_r1xy_gate(sim);
+    verify_rxy1q_gate(sim);
     verify_single_qubit_rotation(sim);
 
     // State preparation requiring rotations

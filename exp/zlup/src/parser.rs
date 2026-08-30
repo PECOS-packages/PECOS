@@ -3946,7 +3946,7 @@ impl<'a> ParserState<'a> {
             "syydg" => Ok(SYYdg),
             "szzdg" => Ok(SZZdg),
             "rzz" => Ok(RZZ),
-            "crz" => Ok(RZZ), // CRZ is effectively RZZ
+            "crz" => Ok(CRZ),
             // Swap gates
             "swap" => Ok(SWAP),
             "iswap" => Ok(ISWAP),
@@ -4098,6 +4098,13 @@ mod tests {
     fn test_parse_function() {
         let result = parse("fn main() -> unit { return unit; }");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn crz_parser_keeps_boundary_spelling_distinct_from_rzz() {
+        let parser = ParserState::new("");
+        assert_eq!(parser.parse_gate_keyword("crz").unwrap(), GateKind::CRZ);
+        assert_eq!(parser.parse_gate_keyword("rzz").unwrap(), GateKind::RZZ);
     }
 
     #[test]

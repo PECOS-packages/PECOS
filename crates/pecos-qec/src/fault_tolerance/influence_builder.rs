@@ -490,7 +490,6 @@ impl<'a> InfluenceBuilder<'a> {
                                 | pecos_quantum::GateType::RXX
                                 | pecos_quantum::GateType::RYY
                                 | pecos_quantum::GateType::RZZ
-                                | pecos_quantum::GateType::CRZ
                         ) && op.angles.len() == 1
                             && op.angles[0].is_zero() => {}
                     // Anything else would be silently mis-analyzed: an ignored

@@ -654,13 +654,18 @@ impl HugrEngine {
             }
 
             let op_name = ext_op.unqualified_id().to_string();
-            let Some(gate_type) = hugr_op_to_gate_type(&op_name) else {
+            let is_crz = op_name == "CRz";
+            let gate_type = if is_crz {
+                GateType::RZZ
+            } else if let Some(gate_type) = hugr_op_to_gate_type(&op_name) {
+                gate_type
+            } else {
                 debug!("Unknown quantum operation in Case: {op_name}");
                 continue;
             };
 
             // Determine number of qubit inputs/outputs
-            // Use quantum_arity() for most gates to correctly handle CRZ, SWAP, CCX, etc.
+            // Use quantum_arity() for most gates to correctly handle SWAP, CCX, etc.
             let (num_qubit_inputs, num_qubit_outputs) = match gate_type {
                 GateType::QAlloc => (0, 1),
                 GateType::QFree | GateType::MeasureFree => (1, 0),
@@ -671,7 +676,7 @@ impl HugrEngine {
             };
 
             // Extract rotation parameters
-            let params = if is_rotation_gate(gate_type) {
+            let params = if is_crz || is_rotation_gate(gate_type) {
                 if let Some(angle_turns) = try_extract_rotation_angle(hugr, child, num_qubit_inputs)
                 {
                     vec![angle_turns * std::f64::consts::TAU]
@@ -697,6 +702,8 @@ impl HugrEngine {
                 QuantumOp {
                     node: child,
                     gate_type,
+                    source_name: op_name,
+                    is_crz,
                     num_qubit_inputs,
                     num_qubit_outputs,
                     params,

@@ -68,8 +68,9 @@ pub enum QuantumOp {
     RY(Angle64),
     /// Z-axis rotation
     RZ(Angle64),
-    /// R1XY rotation (theta, phi) - hardware-native single-qubit gate
-    R1XY(Angle64, Angle64),
+    /// RXY1Q rotation (theta, phi) - hardware-native single-qubit gate
+    #[serde(alias = "R1XY")]
+    RXY1Q(Angle64, Angle64),
     /// Arbitrary single-qubit rotation
     U3(Angle64, Angle64, Angle64), // theta, phi, lambda
 
@@ -529,7 +530,7 @@ impl QuantumOp {
             QuantumOp::RX(_) => "rx",
             QuantumOp::RY(_) => "ry",
             QuantumOp::RZ(_) => "rz",
-            QuantumOp::R1XY(_, _) => "r1xy",
+            QuantumOp::RXY1Q(_, _) => "rxy1q",
             QuantumOp::U3(_, _, _) => "u3",
             QuantumOp::CX => "cx",
             QuantumOp::CY => "cy",
@@ -573,7 +574,7 @@ impl QuantumOp {
             | QuantumOp::RX(_)
             | QuantumOp::RY(_)
             | QuantumOp::RZ(_)
-            | QuantumOp::R1XY(_, _)
+            | QuantumOp::RXY1Q(_, _)
             | QuantumOp::Measure
             | QuantumOp::MeasurePauli(_)
             | QuantumOp::Reset

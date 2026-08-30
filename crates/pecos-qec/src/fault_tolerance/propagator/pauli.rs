@@ -17,7 +17,7 @@
 
 use super::PauliFault;
 use pecos_core::gate_type::GateType;
-use pecos_core::{half_turn_decomposition, try_simplify_r1xy, try_simplify_rotation};
+use pecos_core::{half_turn_decomposition, try_simplify_rotation, try_simplify_rxy1q};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
 use smallvec::SmallVec;
@@ -100,10 +100,10 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
                 }
             }
         }
-        GateType::R1XY if gate.angles.len() >= 2 => {
+        GateType::RXY1Q if gate.angles.len() >= 2 => {
             let theta = gate.angles[0];
             let phi = gate.angles[1];
-            if let Some(clifford) = try_simplify_r1xy(theta, phi) {
+            if let Some(clifford) = try_simplify_rxy1q(theta, phi) {
                 let _ = apply_named_gate(prop, clifford, &gate.qubits, direction);
             }
         }

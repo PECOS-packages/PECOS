@@ -224,10 +224,14 @@ entry:
         // Verify the RON contains expected quantum ops
         assert!(ron_string.contains("Alloc"), "RON should contain Alloc");
         assert!(ron_string.contains("RZ("), "RON should contain RZ");
-        assert!(ron_string.contains("R1XY("), "RON should contain R1XY");
+        assert!(ron_string.contains("RXY1Q("), "RON should contain RXY1Q");
         assert!(ron_string.contains("RZZ("), "RON should contain RZZ");
         assert!(ron_string.contains("Measure"), "RON should contain Measure");
         assert!(ron_string.contains("Dealloc"), "RON should contain Dealloc");
+
+        let legacy_ron = ron_string.replace("RXY1Q(", "R1XY(");
+        let legacy_module = from_ron(&legacy_ron).unwrap();
+        assert_eq!(module, legacy_module);
 
         // Deserialize back
         let module2 = from_ron(&ron_string).unwrap();
@@ -313,7 +317,7 @@ entry:
                 .operations
                 .iter()
                 .filter_map(|i| match &i.operation {
-                    Operation::Quantum(QuantumOp::R1XY(theta, phi)) => {
+                    Operation::Quantum(QuantumOp::RXY1Q(theta, phi)) => {
                         Some(theta.to_radians() + phi.to_radians())
                     }
                     Operation::Quantum(QuantumOp::RZ(angle) | QuantumOp::RZZ(angle)) => {

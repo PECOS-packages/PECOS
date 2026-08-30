@@ -137,7 +137,7 @@ impl<'a> MemBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY
+                | GateType::RXY1Q
                     if self.noise.p1 != 0.0 && !loc.before =>
                 {
                     self.process_single_qubit_fault(loc_idx, &mut mem);

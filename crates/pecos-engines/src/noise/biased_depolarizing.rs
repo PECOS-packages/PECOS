@@ -181,7 +181,7 @@ impl BiasedDepolarizingNoiseModel {
                 | GateType::T
                 | GateType::Tdg
                 | GateType::U
-                | GateType::R1XY => {
+                | GateType::RXY1Q => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying single-qubit gate with possible fault");
                     self.apply_sq_faults(&mut builder, gate);

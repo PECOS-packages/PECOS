@@ -185,7 +185,7 @@ impl UnitaryMatrix {
     /// Attempts to identify this matrix as a [`Unitary`] gate descriptor.
     ///
     /// Named gates are identified up to any nonzero scalar (so `2*H` matches `H`).
-    /// Rotation extraction (RX, RY, RZ, R1XY, RXX, RYY, RZZ) requires the
+    /// Rotation extraction (RX, RY, RZ, RXY1Q, RXX, RYY, RZZ) requires the
     /// matrix to be unitary -- scaled matrices like `3*RZ(0.5)` will not match.
     ///
     /// The returned `Unitary` can be further queried with `is_pauli()`,
@@ -329,11 +329,11 @@ fn try_identify_rotation(mat: &DMatrix<Complex64>) -> Option<Unitary> {
     }
 }
 
-/// Identifies a 2x2 matrix as RX, RY, RZ, or R1XY with some angle(s).
+/// Identifies a 2x2 matrix as RX, RY, RZ, or RXY1Q with some angle(s).
 ///
 /// Decomposes M = `c_I` * I + `c_X` * X + `c_Y` * Y + `c_Z` * Z.
 /// - If exactly one Pauli coefficient is nonzero: single-axis rotation (RX/RY/RZ).
-/// - If `c_X` and `c_Y` are nonzero but `c_Z` is zero: R1XY(theta, phi).
+/// - If `c_X` and `c_Y` are nonzero but `c_Z` is zero: RXY1Q(theta, phi).
 fn try_identify_1q_rotation(mat: &DMatrix<Complex64>) -> Option<Unitary> {
     let m = |r, c| mat[(r, c)];
 
@@ -355,21 +355,21 @@ fn try_identify_1q_rotation(mat: &DMatrix<Complex64>) -> Option<Unitary> {
     } else if has_y && !has_x && !has_z {
         extract_rotation_angle(c_i, c_y, RotationType::RY, tol)
     } else if !has_z && (has_x || has_y) {
-        // R1XY: rotation in XY plane
-        try_identify_r1xy(c_i, c_x, c_y, tol)
+        // RXY1Q: rotation in XY plane
+        try_identify_rxy1q(c_i, c_x, c_y, tol)
     } else {
         // General single-qubit unitary: all Pauli components present
         try_identify_u3(mat, tol)
     }
 }
 
-/// Identifies an R1XY(theta, phi) gate from its Pauli decomposition.
+/// Identifies an RXY1Q(theta, phi) gate from its Pauli decomposition.
 ///
-/// R1XY = cos(theta/2)*I - i*sin(theta/2)*(cos(phi)*X + sin(phi)*Y)
+/// RXY1Q = cos(theta/2)*I - i*sin(theta/2)*(cos(phi)*X + sin(phi)*Y)
 /// So `c_X` = -i*alpha*sin(theta/2)*cos(phi), `c_Y` = -i*alpha*sin(theta/2)*sin(phi).
 ///
 /// From `c_I` and `c_X/c_Y` we can extract theta and phi.
-fn try_identify_r1xy(c_i: Complex64, c_x: Complex64, c_y: Complex64, tol: f64) -> Option<Unitary> {
+fn try_identify_rxy1q(c_i: Complex64, c_x: Complex64, c_y: Complex64, tol: f64) -> Option<Unitary> {
     if c_i.norm() < tol {
         // theta = pi: cos(theta/2) = 0, so c_I = 0.
         // c_X = -i*alpha*cos(phi), c_Y = -i*alpha*sin(phi)
@@ -379,7 +379,7 @@ fn try_identify_r1xy(c_i: Complex64, c_x: Complex64, c_y: Complex64, tol: f64) -
             return None;
         }
         let phi = ratio.re.atan();
-        return Some(Unitary::R1XY {
+        return Some(Unitary::RXY1Q {
             theta: Angle64::from_radians(std::f64::consts::PI),
             phi: Angle64::from_radians(phi),
         });
@@ -408,7 +408,7 @@ fn try_identify_r1xy(c_i: Complex64, c_x: Complex64, c_y: Complex64, tol: f64) -
     };
     let theta = 2.0 * tan_half_theta.atan();
 
-    Some(Unitary::R1XY {
+    Some(Unitary::RXY1Q {
         theta: Angle64::from_radians(theta),
         phi: Angle64::from_radians(phi),
     })
@@ -1279,8 +1279,8 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
             qubits,
         ) => rotation_to_matrix(*rotation_type, *angle, qubits, num_qubits),
 
-        UnitaryRep::Gate(pecos_core::Unitary::R1XY { theta, phi }, qubits) => {
-            r1xy_to_matrix(*theta, *phi, qubits, num_qubits)
+        UnitaryRep::Gate(pecos_core::Unitary::RXY1Q { theta, phi }, qubits) => {
+            rxy1q_to_matrix(*theta, *phi, qubits, num_qubits)
         }
 
         UnitaryRep::Gate(pecos_core::Unitary::U3 { theta, phi, lambda }, qubits) => {
@@ -1610,8 +1610,8 @@ fn rotation_to_matrix(
     }
 }
 
-/// Constructs the matrix for R1XY(theta, phi) = cos(theta/2)*I - i*sin(theta/2)*(cos(phi)*X + sin(phi)*Y).
-fn r1xy_to_matrix(
+/// Constructs the matrix for RXY1Q(theta, phi) = cos(theta/2)*I - i*sin(theta/2)*(cos(phi)*X + sin(phi)*Y).
+fn rxy1q_to_matrix(
     theta: Angle64,
     phi: Angle64,
     qubits: &[usize],
@@ -1621,7 +1621,7 @@ fn r1xy_to_matrix(
     let phi_rad = phi.to_radians_signed();
     let cos_t = half_theta.cos();
     let sin_t = half_theta.sin();
-    // R1XY: [[cos, r01], [r10, cos]]
+    // RXY1Q: [[cos, r01], [r10, cos]]
     // r01 = -i*sin*e^{-i*phi}
     // r10 = -i*sin*e^{i*phi}
     let r01 = Complex64::new(-sin_t * phi_rad.sin(), -sin_t * phi_rad.cos());
@@ -1842,7 +1842,7 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         | GateType::RZZ
         | GateType::CRZ
         | GateType::U
-        | GateType::R1XY
+        | GateType::RXY1Q
         | GateType::RXXRYYRZZ
         | GateType::U2q => {
             panic!(
@@ -3024,35 +3024,35 @@ mod tests {
     }
 
     #[test]
-    fn try_to_unitary_identifies_r1xy() {
-        // R1XY(theta, phi) for various angles
-        // Note: R1XY(-theta, phi) = R1XY(theta, phi+pi), so we compare matrices
+    fn try_to_unitary_identifies_rxy1q() {
+        // RXY1Q(theta, phi) for various angles
+        // Note: RXY1Q(-theta, phi) = RXY1Q(theta, phi+pi), so we compare matrices
         // rather than raw angles to handle this sign ambiguity.
         for &(theta_rad, phi_rad) in &[(0.3, 0.7), (1.0, 2.0), (2.5, -0.5), (-0.7, 1.2)] {
             let theta = Angle64::from_radians(theta_rad);
             let phi = Angle64::from_radians(phi_rad);
-            let mat = Unitary::R1XY { theta, phi }.on_qubit(0).to_matrix();
+            let mat = Unitary::RXY1Q { theta, phi }.on_qubit(0).to_matrix();
             let u = mat
                 .try_to_unitary()
-                .unwrap_or_else(|| panic!("R1XY({theta_rad}, {phi_rad}) not identified"));
+                .unwrap_or_else(|| panic!("RXY1Q({theta_rad}, {phi_rad}) not identified"));
             match u {
-                Unitary::R1XY { .. } => {
+                Unitary::RXY1Q { .. } => {
                     let roundtrip = u.on_qubit(0).to_matrix();
                     assert!(
                         mat.equiv_up_to_phase(&roundtrip),
-                        "R1XY({theta_rad},{phi_rad}): matrix mismatch after roundtrip"
+                        "RXY1Q({theta_rad},{phi_rad}): matrix mismatch after roundtrip"
                     );
                 }
-                other => panic!("R1XY({theta_rad},{phi_rad}) identified as {other:?}"),
+                other => panic!("RXY1Q({theta_rad},{phi_rad}) identified as {other:?}"),
             }
         }
     }
 
     #[test]
-    fn try_to_unitary_r1xy_special_cases() {
-        // R1XY(theta, 0) should be identified as RX (single-axis, not R1XY)
+    fn try_to_unitary_rxy1q_special_cases() {
+        // RXY1Q(theta, 0) should be identified as RX (single-axis, not RXY1Q)
         let theta = Angle64::from_radians(0.5);
-        let mat = Unitary::R1XY {
+        let mat = Unitary::RXY1Q {
             theta,
             phi: Angle64::ZERO,
         }
@@ -3067,11 +3067,11 @@ mod tests {
                     ..
                 }
             ),
-            "R1XY(0.5, 0) should match as RX, got {u:?}"
+            "RXY1Q(0.5, 0) should match as RX, got {u:?}"
         );
 
-        // R1XY(theta, pi/2) should be identified as RY
-        let mat = Unitary::R1XY {
+        // RXY1Q(theta, pi/2) should be identified as RY
+        let mat = Unitary::RXY1Q {
             theta,
             phi: Angle64::QUARTER_TURN,
         }
@@ -3086,7 +3086,7 @@ mod tests {
                     ..
                 }
             ),
-            "R1XY(0.5, pi/2) should match as RY, got {u:?}"
+            "RXY1Q(0.5, pi/2) should match as RY, got {u:?}"
         );
     }
 

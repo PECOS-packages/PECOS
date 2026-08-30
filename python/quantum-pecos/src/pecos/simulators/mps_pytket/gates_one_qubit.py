@@ -189,13 +189,13 @@ def RZ(
     _apply_one_qubit_matrix(state, qubit, matrix)
 
 
-def R1XY(
+def RXY1Q(
     state: MPS,
     qubit: int,
     angles: tuple[float, float],
     **_params: SimulatorGateParams,
 ) -> None:
-    """Apply an R1XY gate.
+    """Apply an RXY1Q gate.
 
     Args:
         state: An instance of MPS

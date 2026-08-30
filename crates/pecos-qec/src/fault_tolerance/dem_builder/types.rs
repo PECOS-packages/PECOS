@@ -4353,7 +4353,7 @@ fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
         GateType::T => pecos_neo::GateType::T,
         GateType::Tdg => pecos_neo::GateType::Tdg,
         GateType::U => pecos_neo::GateType::U,
-        GateType::R1XY => pecos_neo::GateType::R1XY,
+        GateType::RXY1Q => pecos_neo::GateType::RXY1Q,
         GateType::CX => pecos_neo::GateType::CX,
         GateType::CY => pecos_neo::GateType::CY,
         GateType::CZ => pecos_neo::GateType::CZ,

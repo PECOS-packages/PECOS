@@ -88,7 +88,7 @@ fn get_quantum_traits(q_op: &QuantumOp) -> BTreeSet<OpTrait> {
         | QuantumOp::RX(_)
         | QuantumOp::RY(_)
         | QuantumOp::RZ(_)
-        | QuantumOp::R1XY(_, _)
+        | QuantumOp::RXY1Q(_, _)
         | QuantumOp::U3(_, _, _)
         | QuantumOp::CX
         | QuantumOp::CY

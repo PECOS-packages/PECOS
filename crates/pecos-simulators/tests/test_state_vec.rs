@@ -1191,15 +1191,15 @@ mod detailed_sq_gate_cases {
     }
 
     #[test]
-    fn test_r1xy_vs_u() {
-        let mut state_r1xy = StateVec::new(1);
+    fn test_rxy1q_vs_u() {
+        let mut state_rxy1q = StateVec::new(1);
         let mut state_u = StateVec::new(1);
 
         let theta = FRAC_PI_3;
         let phi = FRAC_PI_4;
 
-        // Apply r1xy and equivalent u gates
-        state_r1xy.r1xy(
+        // Apply rxy1q and equivalent u gates
+        state_rxy1q.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qid(0),
@@ -1211,7 +1211,7 @@ mod detailed_sq_gate_cases {
             &qid(0),
         );
 
-        assert_states_equal(state_r1xy.state(), state_u.state());
+        assert_states_equal(state_rxy1q.state(), state_u.state());
     }
 
     #[test]
@@ -1252,7 +1252,7 @@ mod detailed_sq_gate_cases {
 
         // Apply the decomposed gates
         state_decomposed.rz(Angle64::from_radians(lambda), &qid(0));
-        state_decomposed.r1xy(
+        state_decomposed.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(FRAC_PI_2),
             &qid(0),
@@ -1264,56 +1264,56 @@ mod detailed_sq_gate_cases {
     }
 
     #[test]
-    fn test_x_vs_r1xy() {
+    fn test_x_vs_rxy1q() {
         let mut state = StateVec::new(1);
         state.x(&qid(0));
         let mut state_after_x = state.clone();
 
         state.reset();
-        state.r1xy(
+        state.rxy1q(
             Angle64::from_radians(PI),
             Angle64::from_radians(0.0),
             &qid(0),
         );
-        let mut state_after_r1xy = state.clone();
+        let mut state_after_rxy1q = state.clone();
 
-        assert_states_equal(state_after_x.state(), state_after_r1xy.state());
+        assert_states_equal(state_after_x.state(), state_after_rxy1q.state());
     }
 
     #[test]
-    fn test_y_vs_r1xy() {
+    fn test_y_vs_rxy1q() {
         let mut state = StateVec::new(1);
         state.y(&qid(0));
         let mut state_after_y = state.clone();
 
         state.reset();
-        state.r1xy(
+        state.rxy1q(
             Angle64::from_radians(PI),
             Angle64::from_radians(FRAC_PI_2),
             &qid(0),
         );
-        let mut state_after_r1xy = state.clone();
+        let mut state_after_rxy1q = state.clone();
 
-        assert_states_equal(state_after_y.state(), state_after_r1xy.state());
+        assert_states_equal(state_after_y.state(), state_after_rxy1q.state());
     }
 
     #[test]
-    fn test_h_vs_r1xy_rz() {
+    fn test_h_vs_rxy1q_rz() {
         let mut state = StateVec::new(1);
         state.h(&qid(0)); // Apply the H gate
         let mut state_after_h = state.clone();
 
         state.reset(); // Reset state to |0⟩
         state
-            .r1xy(
+            .rxy1q(
                 Angle64::from_radians(FRAC_PI_2),
                 Angle64::from_radians(-FRAC_PI_2),
                 &qid(0),
             )
             .rz(Angle64::from_radians(PI), &qid(0));
-        let mut state_after_r1xy_rz = state.clone();
+        let mut state_after_rxy1q_rz = state.clone();
 
-        assert_states_equal(state_after_h.state(), state_after_r1xy_rz.state());
+        assert_states_equal(state_after_h.state(), state_after_rxy1q_rz.state());
     }
 
     #[test]
@@ -1643,8 +1643,8 @@ mod detailed_sq_gate_cases {
     }
 
     #[test]
-    fn test_r1xy_vs_decomposition() {
-        // R1XY(theta, phi) = RZ(-phi + pi/2).RY(theta).RZ(phi - pi/2)
+    fn test_rxy1q_vs_decomposition() {
+        // RXY1Q(theta, phi) = RZ(-phi + pi/2).RY(theta).RZ(phi - pi/2)
         let theta = FRAC_PI_3;
         let phi = FRAC_PI_4;
 
@@ -1652,7 +1652,7 @@ mod detailed_sq_gate_cases {
         let mut direct = StateVec::new(1);
         let mut decomposed = StateVec::new(1);
 
-        direct.r1xy(
+        direct.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qid(0),
@@ -1670,7 +1670,7 @@ mod detailed_sq_gate_cases {
         direct.x(&qid(0));
         decomposed.x(&qid(0));
 
-        direct.r1xy(
+        direct.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qid(0),
@@ -1688,7 +1688,7 @@ mod detailed_sq_gate_cases {
         direct.h(&qid(0));
         decomposed.h(&qid(0));
 
-        direct.r1xy(
+        direct.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qid(0),
@@ -1708,7 +1708,7 @@ mod detailed_sq_gate_cases {
                 direct.h(&qid(0));
                 decomposed.h(&qid(0));
 
-                direct.r1xy(
+                direct.rxy1q(
                     Angle64::from_radians(theta),
                     Angle64::from_radians(phi),
                     &qid(0),
@@ -2675,7 +2675,7 @@ mod detailed_tq_gate_cases {
         state_cx.cx(&[(QubitId(control), QubitId(target))]);
 
         // Apply the decomposed gates
-        state_decomposed.r1xy(
+        state_decomposed.rxy1q(
             Angle64::from_radians(-FRAC_PI_2),
             Angle64::from_radians(FRAC_PI_2),
             &qid(target),
@@ -2685,7 +2685,7 @@ mod detailed_tq_gate_cases {
             &[(QubitId(control), QubitId(target))],
         );
         state_decomposed.rz(Angle64::from_radians(-FRAC_PI_2), &qid(control));
-        state_decomposed.r1xy(
+        state_decomposed.rxy1q(
             Angle64::from_radians(FRAC_PI_2),
             Angle64::from_radians(PI),
             &qid(target),
@@ -2711,12 +2711,12 @@ mod detailed_tq_gate_cases {
         );
 
         // Apply the decomposed gates
-        state_decomposed.r1xy(
+        state_decomposed.rxy1q(
             Angle64::from_radians(FRAC_PI_2),
             Angle64::from_radians(FRAC_PI_2),
             &qid(control),
         );
-        state_decomposed.r1xy(
+        state_decomposed.rxy1q(
             Angle64::from_radians(FRAC_PI_2),
             Angle64::from_radians(FRAC_PI_2),
             &qid(target),
@@ -2725,12 +2725,12 @@ mod detailed_tq_gate_cases {
             Angle64::from_radians(FRAC_PI_4),
             &[(QubitId(control), QubitId(target))],
         );
-        state_decomposed.r1xy(
+        state_decomposed.rxy1q(
             Angle64::from_radians(FRAC_PI_2),
             Angle64::from_radians(-FRAC_PI_2),
             &qid(control),
         );
-        state_decomposed.r1xy(
+        state_decomposed.rxy1q(
             Angle64::from_radians(FRAC_PI_2),
             Angle64::from_radians(-FRAC_PI_2),
             &qid(target),

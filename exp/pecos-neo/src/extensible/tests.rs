@@ -393,6 +393,8 @@ fn test_registry_new_has_core_gates() {
     assert!(registry.get(gates::RZ).is_some());
     assert!(registry.get(gates::MZ).is_some());
     assert!(registry.get(gates::PZ).is_some());
+    assert_eq!(registry.lookup("RXY1Q"), Some(gates::RXY1Q));
+    assert_eq!(registry.lookup("R1XY"), Some(gates::RXY1Q));
 }
 
 #[test]
@@ -1436,6 +1438,16 @@ fn test_exact_angle_validator_accepts_non_parameterized() {
     let circuit = vec![make_gate(gates::H, &[]), make_gate(gates::CX, &[])];
 
     assert!(validator.validate(&circuit, &registry).is_ok());
+}
+
+#[test]
+fn test_exact_angle_validator_preserves_unregistered_empty_angle_semantics() {
+    let validator = ExactAngleValidator::new();
+    let registry = GateRegistry::new();
+    let unregistered = GateId(256);
+
+    assert!(validator.is_gate_allowed(unregistered, &[], &registry));
+    assert!(!validator.is_gate_allowed(unregistered, &[Angle64::ZERO], &registry));
 }
 
 #[test]

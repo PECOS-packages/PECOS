@@ -128,8 +128,8 @@ fn apply_expanded_operation(sim: &mut StateVecSoA32, operation: &Operation) {
             name,
             parameters,
             qubits,
-        } if name == "R1XY" => {
-            sim.r1xy(
+        } if name == "RXY1Q" => {
+            sim.rxy1q(
                 Angle64::from_radians(parameters[0]),
                 Angle64::from_radians(parameters[1]),
                 &[QubitId(qubits[0])],
@@ -150,8 +150,8 @@ fn apply_expanded_operation(sim: &mut StateVecSoA32, operation: &Operation) {
         Operation::NativeGate(gate) if gate.gate_type == GateType::RZ => {
             sim.rz(gate.angles[0], &gate.qubits);
         }
-        Operation::NativeGate(gate) if gate.gate_type == GateType::R1XY => {
-            sim.r1xy(gate.angles[0], gate.angles[1], &gate.qubits);
+        Operation::NativeGate(gate) if gate.gate_type == GateType::RXY1Q => {
+            sim.rxy1q(gate.angles[0], gate.angles[1], &gate.qubits);
         }
         operation => panic!("unexpected expanded operation {operation:?}"),
     }

@@ -129,7 +129,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
 
     /// Applies an X-Y plane rotation gate with a specified angle and axis.
     ///
-    /// `R1XY(theta, phi) = exp(-i*theta*(cos(phi) X + sin(phi) Y)/2)`, with matrix
+    /// `RXY1Q(theta, phi) = exp(-i*theta*(cos(phi) X + sin(phi) Y)/2)`, with matrix
     /// `[[cos(theta/2), -i*exp(-i*phi)*sin(theta/2)],
     ///   [-i*exp(i*phi)*sin(theta/2), cos(theta/2)]]`.
     ///
@@ -144,7 +144,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
         self.rz(-phi + Angle64::QUARTER_TURN, qubits)
             .ry(theta, qubits)
             .rz(phi - Angle64::QUARTER_TURN, qubits)
@@ -598,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn default_r1xy_matches_documented_matrix_exactly() {
+    fn default_rxy1q_matches_documented_matrix_exactly() {
         use crate::StateVecSoA32;
         use num_complex::Complex64;
 
@@ -626,7 +626,7 @@ mod tests {
             if basis == 1 {
                 sim.x(&target);
             }
-            sim.r1xy(theta, phi, &target);
+            sim.rxy1q(theta, phi, &target);
             for (row, expected_entry) in expected.iter().enumerate() {
                 let actual = sim.get_amplitude(row);
                 let actual = Complex64::new(f64::from(actual.re), f64::from(actual.im));

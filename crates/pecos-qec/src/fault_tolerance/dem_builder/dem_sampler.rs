@@ -2305,7 +2305,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY
+                | GateType::RXY1Q
                     // Single-qubit gate errors: only "after" locations, depolarizing
                     if !loc.before =>
                 {

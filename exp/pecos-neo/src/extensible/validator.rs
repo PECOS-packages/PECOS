@@ -28,6 +28,14 @@ pub enum ValidationError {
         position: usize,
         allowed: Vec<Angle64>,
     },
+    /// A gate has the wrong number of angle parameters.
+    AngleArity {
+        gate_id: GateId,
+        gate_name: String,
+        expected: usize,
+        got: usize,
+        position: usize,
+    },
     /// An angle cannot be canonicalized to a fixed gate
     NonCanonicalAngle {
         gate_id: GateId,
@@ -63,6 +71,16 @@ impl std::fmt::Display for ValidationError {
                     position
                 )
             }
+            Self::AngleArity {
+                gate_name,
+                expected,
+                got,
+                position,
+                ..
+            } => write!(
+                f,
+                "Gate {gate_name} expected {expected} angle parameters, got {got} at position {position}"
+            ),
             Self::NonCanonicalAngle {
                 gate_name,
                 angle,
@@ -216,8 +234,19 @@ impl CircuitValidator for CliffordValidator {
                 });
             }
 
+            let expected = usize::from(spec.angle_arity);
+            if expected > 0 && gate.angles.len() != expected {
+                return Err(ValidationError::AngleArity {
+                    gate_id: gate.gate_id,
+                    gate_name: spec.name.to_string(),
+                    expected,
+                    got: gate.angles.len(),
+                    position: idx,
+                });
+            }
+
             // For parameterized gates, check angles
-            if spec.angle_arity > 0 && !gate.angles.is_empty() {
+            if spec.angle_arity > 0 {
                 for angle in &gate.angles {
                     if !self.is_clifford_angle(*angle) {
                         return Err(ValidationError::ForbiddenAngle {
@@ -245,10 +274,13 @@ impl CircuitValidator for CliffordValidator {
             return false;
         }
 
-        if let Some(spec) = registry.get(gate_id)
-            && spec.angle_arity > 0
-        {
-            return angles.iter().all(|a| self.is_clifford_angle(*a));
+        if let Some(spec) = registry.get(gate_id) {
+            if spec.angle_arity > 0 && angles.len() != usize::from(spec.angle_arity) {
+                return false;
+            }
+            if spec.angle_arity > 0 {
+                return angles.iter().all(|a| self.is_clifford_angle(*a));
+            }
         }
 
         true
@@ -350,9 +382,15 @@ impl CircuitValidator for ExactAngleValidator {
                 }
             })?;
 
-            // Skip gates without angles
-            if gate.angles.is_empty() {
-                continue;
+            let expected = usize::from(spec.angle_arity);
+            if expected > 0 && gate.angles.len() != expected {
+                return Err(ValidationError::AngleArity {
+                    gate_id: gate.gate_id,
+                    gate_name: spec.name.to_string(),
+                    expected,
+                    got: gate.angles.len(),
+                    position: idx,
+                });
             }
 
             // For single-angle gates, check if canonicalizable
@@ -381,12 +419,14 @@ impl CircuitValidator for ExactAngleValidator {
         &self,
         gate_id: GateId,
         angles: &[Angle64],
-        _registry: &GateRegistry,
+        registry: &GateRegistry,
     ) -> bool {
-        if angles.is_empty() {
-            return true;
+        let Some(spec) = registry.get(gate_id) else {
+            return angles.is_empty();
+        };
+        if spec.angle_arity > 0 && angles.len() != usize::from(spec.angle_arity) {
+            return false;
         }
-
         if angles.len() == 1 {
             // If this gate can be canonicalized, check if this angle works
             if self.canonicalizer.can_canonicalize(gate_id) {

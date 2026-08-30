@@ -145,7 +145,7 @@ impl std::error::Error for HugrExecutionError {}
 /// # Unsupported Gates
 ///
 /// The following gates will return an error:
-/// - Rotation gates: RX, RY, RZ, RZZ, T, Tdg, U, R1XY
+/// - Rotation gates: RX, RY, RZ, RZZ, T, Tdg, U, RXY1Q
 /// - Other: SZZ, `SZZdg`
 ///
 /// # Arguments
@@ -329,7 +329,7 @@ where
             | GateType::T
             | GateType::Tdg
             | GateType::U
-            | GateType::R1XY
+            | GateType::RXY1Q
             | GateType::F
             | GateType::Fdg
             | GateType::SXX

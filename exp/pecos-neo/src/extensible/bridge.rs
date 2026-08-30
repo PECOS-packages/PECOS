@@ -37,7 +37,7 @@ impl GateType {
             Self::RY => gates::RY,
             Self::RZ => gates::RZ,
             Self::U => gates::U,
-            Self::R1XY => gates::R1XY,
+            Self::RXY1Q => gates::RXY1Q,
 
             // Two-qubit gates
             Self::CX => gates::CX,
@@ -112,7 +112,7 @@ impl GateId {
             31 => GateType::RY,
             32 => GateType::RZ,
             33 => GateType::U,
-            34 => GateType::R1XY,
+            34 => GateType::RXY1Q,
 
             // Two-qubit gates
             50 => GateType::CX,
@@ -228,7 +228,7 @@ mod tests {
             GateType::RY,
             GateType::RZ,
             GateType::U,
-            GateType::R1XY,
+            GateType::RXY1Q,
             GateType::CX,
             GateType::CY,
             GateType::CZ,

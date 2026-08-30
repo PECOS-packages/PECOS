@@ -4434,12 +4434,12 @@ where
     }
 
     #[inline]
-    fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
         let phi = phi.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
-        // R1XY: [[cos, r01], [r10, cos]]
+        // RXY1Q: [[cos, r01], [r10, cos]]
         // r01 = -i*sin*e^(-iφ) = -sin*sinφ - i*sin*cosφ
         // r10 = -i*sin*e^(iφ)  = sin*sinφ - i*sin*cosφ
         let m = Complex2x2 {
@@ -5582,25 +5582,25 @@ mod tests {
     }
 
     #[test]
-    fn test_r1xy_gate() {
+    fn test_rxy1q_gate() {
         let mut sv = StateVecSoA::new(1);
         let mut opt: StateVecSoA = StateVecSoA::new(1);
 
         let theta = FRAC_PI_3;
         let phi = FRAC_PI_4;
 
-        sv.r1xy(
+        sv.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &[QubitId(0)],
         );
-        opt.r1xy(
+        opt.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &[QubitId(0)],
         );
 
-        assert_states_match(&mut sv, &mut opt, "R1XY gate");
+        assert_states_match(&mut sv, &mut opt, "RXY1Q gate");
     }
 
     #[test]

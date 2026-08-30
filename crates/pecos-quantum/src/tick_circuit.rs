@@ -2865,7 +2865,7 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::rz(theta.into(), qubits))
     }
 
-    /// Apply R1XY rotation(s) to one or more qubits.
+    /// Apply RXY1Q rotation(s) to one or more qubits.
     ///
     /// This is a single-qubit rotation parameterized by two angles (theta, phi).
     ///
@@ -2876,15 +2876,15 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().r1xy(PI / 2.0, PI / 4.0, &[0]);
+    /// circuit.tick().rxy1q(PI / 2.0, PI / 4.0, &[0]);
     /// ```
-    pub fn r1xy(
+    pub fn rxy1q(
         &mut self,
         theta: impl Into<Angle64>,
         phi: impl Into<Angle64>,
         qubits: &[impl Into<QubitId> + Copy],
     ) -> &mut Self {
-        self.add_gate(Gate::r1xy(theta.into(), phi.into(), qubits))
+        self.add_gate(Gate::rxy1q(theta.into(), phi.into(), qubits))
     }
 
     /// Apply U gate(s) (general single-qubit unitary) to one or more qubits.
@@ -5013,7 +5013,7 @@ mod tests {
             .rx(Angle64::from_turns(0.125), &[40])
             .ry(Angle64::from_turns(0.25), &[41])
             .rz(Angle64::from_turns(0.375), &[42])
-            .r1xy(Angle64::from_turns(0.125), Angle64::from_turns(0.25), &[43])
+            .rxy1q(Angle64::from_turns(0.125), Angle64::from_turns(0.25), &[43])
             .u(
                 Angle64::from_turns(0.125),
                 Angle64::from_turns(0.25),

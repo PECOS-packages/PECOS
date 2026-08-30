@@ -17,7 +17,7 @@
 
 use super::PauliFault;
 use pecos_core::gate_type::GateType;
-use pecos_core::{half_turn_decomposition, try_simplify_r1xy, try_simplify_rotation};
+use pecos_core::{half_turn_decomposition, try_simplify_rotation, try_simplify_rxy1q};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
 use smallvec::SmallVec;
@@ -100,10 +100,10 @@ pub fn apply_gate(prop: &mut PauliProp, gate: &pecos_core::Gate, direction: Dire
                 }
             }
         }
-        GateType::R1XY if gate.angles.len() >= 2 => {
+        GateType::RXY1Q if gate.angles.len() >= 2 => {
             let theta = gate.angles[0];
             let phi = gate.angles[1];
-            if let Some(clifford) = try_simplify_r1xy(theta, phi) {
+            if let Some(clifford) = try_simplify_rxy1q(theta, phi) {
                 let _ = apply_named_gate(prop, clifford, &gate.qubits, direction);
             }
         }
@@ -699,6 +699,31 @@ mod batched_pair_tests {
                  comparison would be vacuous for this gate"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod rotation_exactness_tests {
+    use super::{Direction, apply_gate};
+    use pecos_core::Angle64;
+    use pecos_core::gate_type::GateType;
+    use pecos_core::gates::Gate;
+    use pecos_simulators::PauliProp;
+
+    #[test]
+    fn near_quarter_turn_rotation_does_not_propagate_as_clifford() {
+        let mut prop = PauliProp::new();
+        prop.track_x(&[0]);
+        let gate = Gate::with_angles(
+            GateType::RZ,
+            vec![Angle64::from_turns(0.25 + 1e-12)],
+            vec![0.into()],
+        );
+
+        apply_gate(&mut prop, &gate, Direction::Forward);
+
+        assert!(prop.contains_x(0));
+        assert!(!prop.contains_z(0));
     }
 }
 

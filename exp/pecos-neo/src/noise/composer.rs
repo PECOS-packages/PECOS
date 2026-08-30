@@ -589,7 +589,7 @@ fn supports_rotation_noise_gate(gate_type: GateType) -> bool {
             | GateType::RY
             | GateType::RZ
             | GateType::U
-            | GateType::R1XY
+            | GateType::RXY1Q
             | GateType::CRZ
             | GateType::RXX
             | GateType::RYY

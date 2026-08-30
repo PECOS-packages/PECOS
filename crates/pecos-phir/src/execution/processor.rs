@@ -222,9 +222,9 @@ impl PhirProcessor {
                 message_builder.rz(*angle, &[qubit_id]);
                 Ok(true)
             }
-            QuantumOp::R1XY(theta, phi) => {
-                let qubit_id = self.extract_single_qubit(instruction, "R1XY")?;
-                message_builder.r1xy(*theta, *phi, &[qubit_id]);
+            QuantumOp::RXY1Q(theta, phi) => {
+                let qubit_id = self.extract_single_qubit(instruction, "RXY1Q")?;
+                message_builder.rxy1q(*theta, *phi, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::U3(theta, phi, lambda) => {

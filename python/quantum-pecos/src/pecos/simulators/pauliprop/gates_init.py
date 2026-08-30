@@ -1,4 +1,4 @@
-# Copyright 2018 The PECOS Developers
+# Copyright 2026 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -13,6 +13,8 @@
 
 This module provides quantum state initialization operations for the Pauli fault propagation simulator, including
 functions to initialize qubits to computational basis states using efficient Pauli frame tracking.
+
+This module is a legacy reference implementation and is not used by ``PauliProp``.
 """
 
 from __future__ import annotations

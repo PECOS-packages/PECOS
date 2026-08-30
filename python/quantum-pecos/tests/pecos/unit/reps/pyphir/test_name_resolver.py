@@ -64,13 +64,13 @@ def test_rz2rz() -> None:
     assert sim_name_resolver(qop) == "RZ"
 
 
-def test_r1xy2x() -> None:
+def test_rxy1q2x() -> None:
     """Verify that a R1XY(pi, 0) will give back X."""
     qop = QOp(name="R1XY", angles=(pc.f64.pi, 0.0), args=[0, 1, 2, 3])
     assert sim_name_resolver(qop) == "X"
 
 
-def test_r1xy2sydg() -> None:
+def test_rxy1q2sydg() -> None:
     """Verify that a R1XY(-pi/2,pi/2) will give back SYdg."""
     qop = QOp(
         name="R1XY",
@@ -80,7 +80,13 @@ def test_r1xy2sydg() -> None:
     assert sim_name_resolver(qop) == "SYdg"
 
 
-def test_r1xy2i() -> None:
+def test_rxy1q2i() -> None:
     """Verify that a R1XY(0, 0) will give back I."""
     qop = QOp(name="R1XY", angles=(0.0, 0.0), args=[0, 1, 2, 3])
     assert sim_name_resolver(qop) == "I"
+
+
+def test_rxy1q_non_clifford_uses_canonical_simulator_name() -> None:
+    """A non-Clifford XY-plane rotation resolves to the canonical PECOS name, not the PHIR spelling."""
+    qop = QOp(name="R1XY", angles=(0.123, 0.456), args=[])
+    assert sim_name_resolver(qop) == "RXY1Q"

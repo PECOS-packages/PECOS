@@ -22,6 +22,7 @@ from pecos.engines.hybrid_engine_old import HybridEngine
 from pecos.exceptions import NotSupportedGateError
 from pecos.simulators import SparseStab, SparseStabPy, Stabilizer, StabVec, StateVec
 from pecos.simulators.gate_syms import alt_symbols
+from pecos_rslib import StateVec as RustStateVec
 from pecos_rslib import angle64, lower_clifford_rotation
 
 SIMULATORS = (SparseStab, Stabilizer, SparseStabPy, StabVec)
@@ -185,7 +186,10 @@ def test_pyo3_rotation_parameters_are_required_and_exact(simulator: type) -> Non
         state.bindings["RZ"](state, 0)
     with pytest.raises(ValueError, match="Expected a valid angle parameter"):
         state.bindings["RZ"](state, 0, angle="invalid")
-    with pytest.raises(ValueError, match="requires 2 angle parameters"):
+    with pytest.raises(
+        ValueError,
+        match="Gate RXY1Q expected 2 angle parameters, got 3",
+    ):
         state.bindings["RXY1Q"](state, 0, angles=(0.0, 0.0, 0.0))
 
 
@@ -340,6 +344,28 @@ def test_lowering_uses_per_instance_named_gate_override() -> None:
     assert calls == [0]
 
 
+def test_state_vec_rz_requires_angle_and_matches_sz_at_quarter_turn() -> None:
+    """State-vector bindings reject absent rotation parameters and apply valid ones."""
+    state = RustStateVec(1)
+    with pytest.raises(ValueError, match="RZ requires params with 'angle'"):
+        state.bindings["RZ"](state, 0)
+
+    rotated = RustStateVec(1)
+    named = RustStateVec(1)
+    rotated.bindings["H"](rotated, 0)
+    named.bindings["H"](named, 0)
+    rotated.bindings["RZ"](rotated, 0, angle=math.pi / 2)
+    named.bindings["SZ"](named, 0)
+
+    rotated_vector = list(rotated.vector)
+    named_vector = list(named.vector)
+    global_phase = rotated_vector[0] / named_vector[0]
+    assert all(
+        abs(actual - global_phase * expected) < 1e-12
+        for actual, expected in zip(rotated_vector, named_vector, strict=True)
+    )
+
+
 def test_lowering_reports_named_gate_missing_from_instance() -> None:
     """A missing per-instance named gate uses the simulator's existing error."""
     state = SparseStabPy(2)
@@ -406,5 +432,8 @@ def test_lower_clifford_rotation_rejects_non_clifford_angle() -> None:
 
 def test_lower_clifford_rotation_rejects_wrong_angle_count() -> None:
     """The table helper requires the exact arity for its rotation symbol."""
-    with pytest.raises(ValueError, match="RXY1Q requires 2 angle parameters"):
+    with pytest.raises(
+        ValueError,
+        match="Gate RXY1Q expected 2 angle parameters, got 1",
+    ):
         lower_clifford_rotation("RXY1Q", [0.0])

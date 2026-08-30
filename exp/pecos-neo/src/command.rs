@@ -140,13 +140,8 @@ impl GateType {
 
     /// Returns the number of angle parameters this gate requires.
     #[must_use]
-    pub const fn angle_arity(self) -> usize {
-        match self {
-            Self::RX | Self::RY | Self::RZ | Self::RXX | Self::RYY | Self::RZZ | Self::CRZ => 1,
-            Self::RXY1Q => 2,
-            Self::U => 3,
-            _ => 0,
-        }
+    pub fn angle_arity(self) -> usize {
+        pecos_core::gate_type::GateType::from(self).angle_arity()
     }
 
     /// Returns true if this is a single-qubit gate.

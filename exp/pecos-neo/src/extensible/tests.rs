@@ -1441,6 +1441,16 @@ fn test_exact_angle_validator_accepts_non_parameterized() {
 }
 
 #[test]
+fn test_exact_angle_validator_preserves_unregistered_empty_angle_semantics() {
+    let validator = ExactAngleValidator::new();
+    let registry = GateRegistry::new();
+    let unregistered = GateId(256);
+
+    assert!(validator.is_gate_allowed(unregistered, &[], &registry));
+    assert!(!validator.is_gate_allowed(unregistered, &[Angle64::ZERO], &registry));
+}
+
+#[test]
 fn test_allow_list_validator() {
     let mut validator = AllowListValidator::new();
     validator.allow(gates::H);

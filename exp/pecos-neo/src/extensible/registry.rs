@@ -1,6 +1,11 @@
 //! Gate registry for managing gate specifications.
 
 use super::{GateCategory, GateId, GateSpec, gates};
+use crate::command::GateType;
+
+fn core_angle_arity(gate_type: GateType) -> u8 {
+    u8::try_from(gate_type.angle_arity()).expect("core gate angle arity fits in u8")
+}
 
 /// Registry of gate specifications.
 ///
@@ -109,31 +114,31 @@ impl GateRegistry {
         self.set_core(
             gates::RX,
             &GateSpec::new("RX")
-                .with_angle_arity(1)
+                .with_angle_arity(core_angle_arity(GateType::RX))
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::RY,
             &GateSpec::new("RY")
-                .with_angle_arity(1)
+                .with_angle_arity(core_angle_arity(GateType::RY))
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::RZ,
             &GateSpec::new("RZ")
-                .with_angle_arity(1)
+                .with_angle_arity(core_angle_arity(GateType::RZ))
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::U,
             &GateSpec::new("U")
-                .with_angle_arity(3)
+                .with_angle_arity(core_angle_arity(GateType::U))
                 .with_category(GateCategory::SingleQubitUnitary),
         );
         self.set_core(
             gates::RXY1Q,
             &GateSpec::new("RXY1Q")
-                .with_angle_arity(2)
+                .with_angle_arity(core_angle_arity(GateType::RXY1Q))
                 .with_category(GateCategory::SingleQubitUnitary),
         );
 
@@ -212,28 +217,28 @@ impl GateRegistry {
             gates::CRZ,
             &GateSpec::new("CRZ")
                 .with_quantum_arity(2)
-                .with_angle_arity(1)
+                .with_angle_arity(core_angle_arity(GateType::CRZ))
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::RXX,
             &GateSpec::new("RXX")
                 .with_quantum_arity(2)
-                .with_angle_arity(1)
+                .with_angle_arity(core_angle_arity(GateType::RXX))
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::RYY,
             &GateSpec::new("RYY")
                 .with_quantum_arity(2)
-                .with_angle_arity(1)
+                .with_angle_arity(core_angle_arity(GateType::RYY))
                 .with_category(GateCategory::TwoQubitUnitary),
         );
         self.set_core(
             gates::RZZ,
             &GateSpec::new("RZZ")
                 .with_quantum_arity(2)
-                .with_angle_arity(1)
+                .with_angle_arity(core_angle_arity(GateType::RZZ))
                 .with_category(GateCategory::TwoQubitUnitary),
         );
 

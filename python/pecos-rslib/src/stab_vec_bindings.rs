@@ -204,12 +204,12 @@ impl PyStabVec {
                 Ok(None)
             }
             "RXY1Q" | "R1XY" => {
-                let angles = extract_angles(params, "RXY1Q", 2)?;
+                let angles = extract_angles(params, "RXY1Q", GateType::RXY1Q.angle_arity())?;
                 self.inner.rxy1q(angles[0], angles[1], q);
                 Ok(None)
             }
             "U" => {
-                let angles = extract_angles(params, "U", 3)?;
+                let angles = extract_angles(params, "U", GateType::U.angle_arity())?;
                 self.inner.u(angles[0], angles[1], angles[2], q);
                 Ok(None)
             }
@@ -350,7 +350,8 @@ impl PyStabVec {
                 Ok(None)
             }
             "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
-                let angles = extract_angles(params, "RXXRYYRZZ", 3)?;
+                let angles =
+                    extract_angles(params, "RXXRYYRZZ", GateType::RXXRYYRZZ.angle_arity())?;
                 self.inner.rxxryyrzz(angles[0], angles[1], angles[2], pair);
                 Ok(None)
             }

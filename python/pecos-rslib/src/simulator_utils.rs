@@ -288,7 +288,8 @@ pub fn extract_angles(
     })?;
     if angles.len() != count {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "{gate_name} requires {count} angle parameters"
+            "Gate {gate_name} expected {count} angle parameters, got {}",
+            angles.len()
         )));
     }
     Ok(angles.into_iter().map(|angle| angle.0).collect())

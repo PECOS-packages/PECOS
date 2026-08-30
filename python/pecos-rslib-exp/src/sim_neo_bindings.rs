@@ -1908,6 +1908,21 @@ fn build_gate_from_python(
 // Circuit extraction
 // ============================================================================
 
+fn extract_exact_gate_angles(
+    gate: &Bound<'_, PyAny>,
+    gate_type: pecos_core::gate_type::GateType,
+) -> PyResult<Vec<Angle64>> {
+    let angles: Vec<f64> = gate.getattr("angles")?.extract()?;
+    let expected = gate_type.angle_arity();
+    if angles.len() != expected {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Gate {gate_type:?} expected {expected} angle parameters, got {}",
+            angles.len()
+        )));
+    }
+    Ok(angles.into_iter().map(Angle64::from_radians).collect())
+}
+
 /// Extract a CommandQueue from a Python TickCircuit by iterating its stored gate batches.
 fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::CommandQueue> {
     let num_ticks: usize = py_tc.call_method0("num_ticks")?.extract()?;
@@ -2027,56 +2042,45 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                     cb = cb.mz(&qubits);
                 }
                 "RX" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        cb = cb.rx(&qubits, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RX)?;
+                    cb = cb.rx(&qubits, angles[0]);
                 }
                 "RY" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        cb = cb.ry(&qubits, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RY)?;
+                    cb = cb.ry(&qubits, angles[0]);
                 }
                 "RZ" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        cb = cb.rz(&qubits, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RZ)?;
+                    cb = cb.rz(&qubits, angles[0]);
                 }
                 "RXY1Q" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if angles.len() >= 2 {
-                        cb = cb.rxy1q(
-                            &qubits,
-                            Angle64::from_radians(angles[0]),
-                            Angle64::from_radians(angles[1]),
-                        );
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RXY1Q)?;
+                    cb = cb.rxy1q(&qubits, angles[0], angles[1]);
                 }
                 "RZZ" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        let pairs: Vec<(usize, usize)> =
-                            qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                        cb = cb.rzz(&pairs, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RZZ)?;
+                    let pairs: Vec<(usize, usize)> =
+                        qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                    cb = cb.rzz(&pairs, angles[0]);
                 }
                 "RXX" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        let pairs: Vec<(usize, usize)> =
-                            qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                        cb = cb.rxx(&pairs, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RXX)?;
+                    let pairs: Vec<(usize, usize)> =
+                        qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                    cb = cb.rxx(&pairs, angles[0]);
                 }
                 "RYY" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        let pairs: Vec<(usize, usize)> =
-                            qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                        cb = cb.ryy(&pairs, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RYY)?;
+                    let pairs: Vec<(usize, usize)> =
+                        qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                    cb = cb.ryy(&pairs, angles[0]);
                 }
                 "I" | "Idle" | "TrackedPauli" | "TrackedPauliMeta" => {
                     // Identity/Idle and tracked-Pauli metadata gates: skip (no-op for simulation)

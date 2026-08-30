@@ -61,6 +61,36 @@ def test_sim_neo_stab_mps_measurement_and_boolean_builder_options():
         exp.stab_mps().measurement("eager")
 
 
+def test_sim_neo_rejects_rotation_with_wrong_angle_arity():
+    from pecos_rslib.quantum import Gate, GateType
+
+    class Tick:
+        def __init__(self):
+            self.calls = 0
+
+        def gate_batches(self):
+            self.calls += 1
+            if self.calls == 1:
+                return [Gate(GateType.RZ, params=[0.5], qubits=[0])]
+            return [Gate(GateType.RZ, qubits=[0])]
+
+    class Circuit:
+        def __init__(self):
+            self.tick = Tick()
+
+        def num_ticks(self):
+            return 1
+
+        def get_tick(self, _index):
+            return self.tick
+
+        def annotations(self):
+            return []
+
+    with pytest.raises(ValueError, match="Gate RZ expected 1 angle parameters, got 0"):
+        exp.sim_neo(Circuit())
+
+
 def test_stab_mps_measurement_selection_precedence_and_reset_retention():
     assert exp.StabMps(1).measurement == "exact"
     assert exp.StabMps(1, measurement="pragmatic").measurement == "pragmatic"

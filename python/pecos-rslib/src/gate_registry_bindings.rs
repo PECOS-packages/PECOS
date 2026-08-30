@@ -79,23 +79,25 @@ fn lower_clifford_rotation(
     angles: Vec<AngleParam>,
 ) -> PyResult<Py<PyList>> {
     let gate = parse_gate_type(symbol)?;
-    let expected_angles = match gate {
+    match gate {
         GateType::RZ
         | GateType::RX
         | GateType::RY
         | GateType::RZZ
         | GateType::RXX
-        | GateType::RYY => 1,
-        GateType::RXY1Q => 2,
+        | GateType::RYY
+        | GateType::RXY1Q => {}
         _ => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "{symbol} is unsupported by lower_clifford_rotation"
             )));
         }
-    };
+    }
+    let expected_angles = gate.angle_arity();
     if angles.len() != expected_angles {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "{symbol} requires {expected_angles} angle parameters"
+            "Gate {gate:?} expected {expected_angles} angle parameters, got {}",
+            angles.len()
         )));
     }
     let angles: Vec<Angle64> = angles.into_iter().map(|angle| angle.0).collect();

@@ -22,8 +22,11 @@
 //! decoder. Its input-order defaults remain those of that port.
 
 use pecos_decoder_core::ObservableDecoder;
+pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{
-    DecoderError, ObsMask, SparseDem, backward_deadline_column_order, deadline_column_order,
+    DecoderError, ObsMask, SparseDem, backward_deadline_column_order,
+    backward_deadline_column_order_for_factors, deadline_column_order,
+    deadline_column_order_for_factors,
 };
 use std::cmp::Ordering;
 use std::time::Instant;

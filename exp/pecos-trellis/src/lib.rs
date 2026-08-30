@@ -13,16 +13,19 @@
 //! Trellis dynamic-programming engine for coset-mass decoding.
 //!
 //! The decoder performs ordered dynamic programming over independent binary
-//! fault mechanisms. Prefixes with identical active detector boundary and
-//! logical labels are merged by log-sum-exp, preserving degeneracy mass. The
-//! configured frontier width and log-mass window provide deterministic pruning
-//! for a fixed build and platform; underlying `ln`/`exp` implementations may
-//! differ across platforms.
+//! fault mechanisms or mutually exclusive multi-outcome factors. Prefixes with
+//! identical active detector boundary and logical labels are merged by
+//! log-sum-exp, preserving degeneracy mass. The configured frontier width and
+//! log-mass window provide deterministic pruning for a fixed build and
+//! platform; underlying `ln`/`exp` implementations may differ across platforms.
 //! This engine is PECOS-native code. Its numerics are additionally held to a
 //! bitwise parity contract with an external reference implementation of the
 //! same algorithm class; that contract is maintained by a separate crate and
 //! is not a constraint this crate imposes on its callers.
 
+pub mod factor;
+
+use factor::{FactorModel, NormalizedFactor, Outcome};
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::bp::{BpGraph, BpScratch, min_sum_bp_into};
 pub use pecos_decoder_core::dem::SparseDem;
@@ -51,7 +54,7 @@ pub struct TrellisConfig {
     /// Weight applied to the suffix-compatibility score during pruning.
     /// Defaults to `0.8`, chosen to match the parity contract.
     pub score_alpha: f64,
-    /// Optional permutation of the DEM mechanism indices.
+    /// Optional permutation of the DEM mechanism or factor indices.
     pub column_order: Option<Vec<usize>>,
     /// Merge probabilistic mechanisms with identical detector and observable
     /// sets using their XOR-combined probability.
@@ -94,8 +97,13 @@ impl Default for TrellisConfig {
 /// Returns [`DecoderError::InvalidConfiguration`] if a mechanism contains an
 /// out-of-range or duplicate detector index.
 pub fn deadline_column_order(dem: &SparseDem) -> Result<Vec<usize>, DecoderError> {
+    let supports: Vec<Vec<u32>> = dem
+        .mechanisms
+        .iter()
+        .map(|(_, detectors, _)| detectors.clone())
+        .collect();
     let time_order: Vec<usize> = (0..dem.mechanisms.len()).collect();
-    deadline_order_for_sequence(dem, &time_order)
+    deadline_order_for_sequence(&supports, dem.num_detectors, "mechanism", &time_order)
 }
 
 /// Generate the backward deadline-optimized processing order for a sparse DEM.
@@ -109,9 +117,49 @@ pub fn deadline_column_order(dem: &SparseDem) -> Result<Vec<usize>, DecoderError
 /// Returns [`DecoderError::InvalidConfiguration`] if a mechanism contains an
 /// out-of-range or duplicate detector index.
 pub fn backward_deadline_column_order(dem: &SparseDem) -> Result<Vec<usize>, DecoderError> {
+    let supports: Vec<Vec<u32>> = dem
+        .mechanisms
+        .iter()
+        .map(|(_, detectors, _)| detectors.clone())
+        .collect();
     let mut reversed_forward = deadline_column_order(dem)?;
     reversed_forward.reverse();
-    deadline_order_for_sequence(dem, &reversed_forward)
+    deadline_order_for_sequence(&supports, dem.num_detectors, "mechanism", &reversed_forward)
+}
+
+/// Generate the deadline-optimized processing order for a factor model.
+///
+/// A factor's support is the sorted union of the detectors in all of its raw
+/// outcomes, including zero-probability outcomes.
+///
+/// # Errors
+///
+/// Returns [`DecoderError::InvalidConfiguration`] if a support contains an
+/// out-of-range detector index.
+pub fn deadline_column_order_for_factors(model: &FactorModel) -> Result<Vec<usize>, DecoderError> {
+    let supports = factor_supports(model);
+    let time_order: Vec<usize> = (0..model.factors().len()).collect();
+    deadline_order_for_sequence(&supports, model.num_detectors(), "factor", &time_order)
+}
+
+/// Generate the backward deadline-optimized processing order for a factor model.
+///
+/// # Errors
+///
+/// Returns [`DecoderError::InvalidConfiguration`] if a support contains an
+/// out-of-range detector index.
+pub fn backward_deadline_column_order_for_factors(
+    model: &FactorModel,
+) -> Result<Vec<usize>, DecoderError> {
+    let supports = factor_supports(model);
+    let mut reversed_forward = deadline_column_order_for_factors(model)?;
+    reversed_forward.reverse();
+    deadline_order_for_sequence(
+        &supports,
+        model.num_detectors(),
+        "factor",
+        &reversed_forward,
+    )
 }
 
 /// Retained unnormalized joint log mass for one logical label.
@@ -163,10 +211,11 @@ pub struct TrellisResult {
     pub runner_up_gap: Option<f64>,
     /// Largest retained frontier size, including the initial boundary state.
     pub peak_retained_states: usize,
-    /// Number of probabilistic columns processed (`0 < p < 1`).
+    /// Number of probabilistic binary mechanisms or non-forced factors processed.
     pub processed_columns: usize,
     /// Number of candidate branch evaluations, counted at entry to
-    /// `merge_branch` (two per retained state for every processed column).
+    /// `merge_branch` (two per retained state for a binary column, or one per
+    /// outcome and retained state for an N-ary column).
     /// For an escalated `BpTrellis` result, this is the total across
     /// the base attempt and every attempted rung.
     pub transitions: u64,
@@ -211,6 +260,28 @@ struct Column {
     suffix_compatibility: Vec<SuffixCompatibility>,
     log_odds: f64,
     log_one_minus_probability: f64,
+}
+
+#[derive(Clone, Debug)]
+enum Kernel {
+    Binary(Vec<Column>),
+    Nary(Vec<FactorColumn>),
+}
+
+#[derive(Clone, Debug)]
+struct FactorColumn {
+    outcomes: Vec<ColumnOutcome>,
+    close_mask: Vec<u64>,
+    active_mask: Vec<u64>,
+    suffix_compatibility: Vec<SuffixCompatibility>,
+}
+
+#[derive(Clone, Debug)]
+struct ColumnOutcome {
+    detector_toggle: Vec<u64>,
+    logical_toggle: Vec<u64>,
+    probability: f64,
+    log_prior: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -315,11 +386,11 @@ impl TrellisDecodeAttempt {
     }
 }
 
-/// Ordered, pruned dynamic-programming decoder for sparse detector error models.
+/// Ordered, pruned dynamic-programming decoder for sparse DEMs and factor models.
 #[derive(Clone, Debug)]
 pub struct TrellisDecoder {
     config: TrellisConfig,
-    columns: Vec<Column>,
+    kernel: Kernel,
     num_detectors: usize,
     detector_words: usize,
     logical_words: usize,
@@ -366,11 +437,18 @@ impl TrellisDecoder {
         for mechanism_index in order {
             let (probability, detectors, observables) = &dem.mechanisms[mechanism_index];
             validate_probability(*probability, mechanism_index)?;
-            validate_indices(detectors, dem.num_detectors, "detector", mechanism_index)?;
+            validate_indices(
+                detectors,
+                dem.num_detectors,
+                "detector",
+                "mechanism",
+                mechanism_index,
+            )?;
             validate_indices(
                 observables,
                 dem.num_observables,
                 "observable",
+                "mechanism",
                 mechanism_index,
             )?;
             if *probability == 0.0 {
@@ -501,7 +579,7 @@ impl TrellisDecoder {
 
         Ok(Self {
             config,
-            columns,
+            kernel: Kernel::Binary(columns),
             num_detectors: dem.num_detectors,
             detector_words,
             logical_words,
@@ -513,8 +591,164 @@ impl TrellisDecoder {
         })
     }
 
-    /// Wall-clock seconds spent constructing this model in
-    /// [`Self::from_sparse_dem`].
+    /// Construct a decoder from a validated multi-outcome factor model.
+    ///
+    /// Binary-shaped models delegate to [`Self::from_sparse_dem`] and are
+    /// bitwise-identical to the equivalent sparse DEM parameterized by each
+    /// toggle probability. A stored baseline may differ from that DEM's implied
+    /// complement only when the induced relative baseline log-mass error is
+    /// within the engine's `1e-9` acceptance tolerance. Models containing any
+    /// genuinely multi-outcome factor use the N-ary kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning or
+    /// ordering configuration, or when binary-only BP scoring or mechanism
+    /// merging is requested for a genuinely N-ary model.
+    pub fn from_factor_model(
+        model: &FactorModel,
+        config: TrellisConfig,
+    ) -> Result<Self, DecoderError> {
+        let normalized_factors = model.normalized_factors();
+        if normalized_factors
+            .iter()
+            .all(|factor| !matches!(factor, NormalizedFactor::Nary(_)))
+        {
+            let mechanisms = normalized_factors
+                .into_iter()
+                .map(|factor| match factor {
+                    NormalizedFactor::Forced(outcome) => {
+                        (1.0, outcome.detectors, outcome.observables)
+                    }
+                    NormalizedFactor::Binary { toggle, .. } => {
+                        (toggle.probability, toggle.detectors, toggle.observables)
+                    }
+                    NormalizedFactor::Nary(_) => unreachable!("model was classified binary-shaped"),
+                })
+                .collect();
+            let dem = SparseDem {
+                mechanisms,
+                detector_coords: BTreeMap::new(),
+                num_detectors: model.num_detectors(),
+                num_observables: model.num_observables(),
+            };
+            return Self::from_sparse_dem(&dem, config);
+        }
+
+        if config.bp_score_iterations > 0 && !(config.k == usize::MAX && config.delta.is_infinite())
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "BP-guided pruning requires a binary model".into(),
+            ));
+        }
+        if config.merge_indistinguishable {
+            return Err(DecoderError::InvalidConfiguration(
+                "indistinguishable-mechanism merging is defined for binary mechanisms only".into(),
+            ));
+        }
+        validate_config(&config, model.factors().len())?;
+
+        let build_started = Instant::now();
+        let detector_words = words_for(model.num_detectors());
+        let logical_words = words_for(model.num_observables());
+        let order = config
+            .column_order
+            .clone()
+            .unwrap_or_else(|| (0..model.factors().len()).collect());
+        let mut forced_syndrome = vec![0; detector_words];
+        let mut forced_logical = vec![0; logical_words];
+        let mut raw_columns: Vec<Vec<ColumnOutcome>> = Vec::with_capacity(model.factors().len());
+        let mut normalized_factors: Vec<Option<NormalizedFactor>> =
+            normalized_factors.into_iter().map(Some).collect();
+
+        for factor_index in order {
+            let factor = normalized_factors
+                .get_mut(factor_index)
+                .and_then(Option::take)
+                .ok_or_else(|| {
+                    DecoderError::InternalError(
+                        "validated column_order did not select each normalized factor once".into(),
+                    )
+                })?;
+            match factor {
+                NormalizedFactor::Forced(outcome) => {
+                    let detector_toggle = indices_to_words(&outcome.detectors, detector_words);
+                    let logical_toggle = indices_to_words(&outcome.observables, logical_words);
+                    xor_assign(&mut forced_syndrome, &detector_toggle);
+                    xor_assign(&mut forced_logical, &logical_toggle);
+                }
+                NormalizedFactor::Binary { outcomes, .. } | NormalizedFactor::Nary(outcomes) => {
+                    raw_columns.push(
+                        outcomes
+                            .into_iter()
+                            .map(|outcome| column_outcome(&outcome, detector_words, logical_words))
+                            .collect(),
+                    );
+                }
+            }
+        }
+
+        let mut touched_detectors = vec![0; detector_words];
+        let mut last_touch = vec![None; model.num_detectors()];
+        let supports: Vec<Vec<u64>> = raw_columns
+            .iter()
+            .enumerate()
+            .map(|(column_index, outcomes)| {
+                let mut support = vec![0; detector_words];
+                for outcome in outcomes {
+                    or_assign(&mut support, &outcome.detector_toggle);
+                }
+                or_assign(&mut touched_detectors, &support);
+                for detector in set_bits(&support) {
+                    last_touch[detector] = Some(column_index);
+                }
+                support
+            })
+            .collect();
+
+        let mut open_detectors = forced_syndrome.clone();
+        and_assign(&mut open_detectors, &touched_detectors);
+        let mut columns = Vec::with_capacity(raw_columns.len());
+        for (column_index, (outcomes, support)) in raw_columns.into_iter().zip(supports).enumerate()
+        {
+            or_assign(&mut open_detectors, &support);
+            let mut close_mask = vec![0; detector_words];
+            for (detector, &last) in last_touch.iter().enumerate() {
+                if last == Some(column_index) {
+                    set_bit(&mut close_mask, detector);
+                }
+            }
+            and_not_assign(&mut open_detectors, &close_mask);
+            columns.push(FactorColumn {
+                outcomes,
+                close_mask,
+                active_mask: open_detectors.clone(),
+                suffix_compatibility: Vec::new(),
+            });
+        }
+
+        let suffix_tables = build_suffix_compatibility_tables_nary(&columns, model.num_detectors());
+        for (column, suffix_compatibility) in columns.iter_mut().zip(suffix_tables) {
+            column.suffix_compatibility = suffix_compatibility;
+        }
+        debug_assert_factor_model_invariants(&columns, &touched_detectors);
+        let build_seconds = build_started.elapsed().as_secs_f64();
+
+        Ok(Self {
+            config,
+            kernel: Kernel::Nary(columns),
+            num_detectors: model.num_detectors(),
+            detector_words,
+            logical_words,
+            touched_detectors,
+            forced_syndrome,
+            forced_logical,
+            bp_score: None,
+            build_seconds,
+        })
+    }
+
+    /// Wall-clock seconds spent constructing this model.
     #[must_use]
     pub fn build_seconds(&self) -> f64 {
         self.build_seconds
@@ -561,6 +795,13 @@ impl TrellisDecoder {
     /// policies.
     #[must_use]
     pub fn decode_attempt(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+        match &self.kernel {
+            Kernel::Binary(_) => self.decode_attempt_binary(syndrome),
+            Kernel::Nary(_) => self.decode_attempt_nary(syndrome),
+        }
+    }
+
+    fn decode_attempt_binary(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
         if syndrome.len() != self.num_detectors {
             return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
                 expected: self.num_detectors,
@@ -601,7 +842,10 @@ impl TrellisDecoder {
         let mut k_capped = false;
         let mut delta_pruned = false;
 
-        for (column_index, column) in self.columns.iter().enumerate() {
+        let Kernel::Binary(columns) = &self.kernel else {
+            unreachable!("binary decode called with N-ary kernel");
+        };
+        for (column_index, column) in columns.iter().enumerate() {
             let mut merged = BTreeMap::new();
             for (state, &log_mass) in &frontier {
                 let branch_base = log_mass + column.log_one_minus_probability;
@@ -609,7 +853,8 @@ impl TrellisDecoder {
                     &mut merged,
                     state.clone(),
                     branch_base,
-                    column,
+                    &column.close_mask,
+                    &column.active_mask,
                     &observed,
                     &mut transitions,
                 );
@@ -621,7 +866,8 @@ impl TrellisDecoder {
                     &mut merged,
                     taken,
                     branch_base + column.log_odds,
-                    column,
+                    &column.close_mask,
+                    &column.active_mask,
                     &observed,
                     &mut transitions,
                 );
@@ -695,7 +941,7 @@ impl TrellisDecoder {
                 .get(1)
                 .map(|runner_up| winner.log_mass - runner_up.log_mass),
             peak_retained_states,
-            processed_columns: self.columns.len(),
+            processed_columns: columns.len(),
             transitions,
             dropped_states,
             dropped_log_mass,
@@ -706,10 +952,142 @@ impl TrellisDecoder {
         })
     }
 
+    fn decode_attempt_nary(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+        if syndrome.len() != self.num_detectors {
+            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
+                expected: self.num_detectors,
+                actual: syndrome.len(),
+            });
+        }
+
+        let observed = syndrome_to_words(syndrome, self.detector_words);
+        if observed
+            .iter()
+            .zip(&self.forced_syndrome)
+            .zip(&self.touched_detectors)
+            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
+        {
+            return TrellisDecodeAttempt::NoPath {
+                error: unexplainable_error(),
+                transitions: 0,
+                bp_seconds: 0.0,
+            };
+        }
+
+        let mut initial_syndrome = self.forced_syndrome.clone();
+        and_assign(&mut initial_syndrome, &self.touched_detectors);
+        let initial = StateKey {
+            active_syndrome: initial_syndrome,
+            logical: self.forced_logical.clone(),
+        };
+        let mut frontier = BTreeMap::from([(initial, 0.0)]);
+        let mut peak_retained_states = frontier.len();
+        let mut transitions = 0;
+        let mut dropped_states = 0;
+        let mut dropped_log_mass = f64::NEG_INFINITY;
+        let mut k_capped = false;
+        let mut delta_pruned = false;
+
+        let Kernel::Nary(columns) = &self.kernel else {
+            unreachable!("N-ary decode called with binary kernel");
+        };
+        for column in columns {
+            let mut merged = BTreeMap::new();
+            for (state, &log_mass) in &frontier {
+                for outcome in &column.outcomes {
+                    let mut taken = state.clone();
+                    xor_assign(&mut taken.active_syndrome, &outcome.detector_toggle);
+                    xor_assign(&mut taken.logical, &outcome.logical_toggle);
+                    merge_branch(
+                        &mut merged,
+                        taken,
+                        log_mass + outcome.log_prior,
+                        &column.close_mask,
+                        &column.active_mask,
+                        &observed,
+                        &mut transitions,
+                    );
+                }
+            }
+
+            if merged.is_empty() {
+                return TrellisDecodeAttempt::NoPath {
+                    error: unexplainable_error(),
+                    transitions,
+                    bp_seconds: 0.0,
+                };
+            }
+            let pruned = prune(
+                merged,
+                self.config.k,
+                self.config.delta,
+                self.config.score_alpha,
+                &column.suffix_compatibility,
+                &observed,
+            );
+            frontier = pruned.retained;
+            dropped_states += pruned.dropped_states;
+            dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
+            k_capped |= pruned.k_capped;
+            delta_pruned |= pruned.delta_pruned;
+            if frontier.is_empty() {
+                return TrellisDecodeAttempt::Error(DecoderError::InternalError(
+                    "pruning emptied a nonempty frontier; candidate scores were not finite".into(),
+                ));
+            }
+            peak_retained_states = peak_retained_states.max(frontier.len());
+        }
+
+        let mut terminal: Vec<Candidate> = frontier
+            .into_iter()
+            .map(|(key, log_mass)| Candidate { key, log_mass })
+            .collect();
+        sort_candidates(&mut terminal);
+        let winner = &terminal[0];
+        let log_evidence = terminal.iter().fold(f64::NEG_INFINITY, |total, candidate| {
+            logaddexp(total, candidate.log_mass)
+        });
+        let logical_masses = terminal
+            .iter()
+            .map(|candidate| TrellisLogicalMass {
+                logical: ObsMask::from_words(&candidate.key.logical),
+                log_mass: candidate.log_mass,
+            })
+            .collect();
+        let status = if dropped_states == 0 {
+            TrellisStatus::Exact
+        } else {
+            TrellisStatus::Pruned {
+                k_capped,
+                delta_pruned,
+            }
+        };
+
+        TrellisDecodeAttempt::Success(TrellisResult {
+            predicted: ObsMask::from_words(&winner.key.logical),
+            log_evidence,
+            runner_up_gap: terminal
+                .get(1)
+                .map(|runner_up| winner.log_mass - runner_up.log_mass),
+            peak_retained_states,
+            processed_columns: columns.len(),
+            transitions,
+            dropped_states,
+            dropped_log_mass,
+            bp_seconds: 0.0,
+            escalation_rungs_used: 0,
+            status,
+            logical_masses,
+        })
+    }
+
     fn bp_suffix_compatibility(
         &mut self,
         observed: &[u64],
     ) -> Result<BpSuffixPreparation, DecoderError> {
+        let Kernel::Binary(columns) = &self.kernel else {
+            return Ok((None, 0.0));
+        };
         let Some(bp_score) = &mut self.bp_score else {
             return Ok((None, 0.0));
         };
@@ -732,7 +1110,7 @@ impl TrellisDecoder {
         )?;
         assert_eq!(
             bp_score.posterior.len(),
-            self.columns.len(),
+            columns.len(),
             "BP beliefs must correspond one-for-one with DP columns"
         );
 
@@ -744,7 +1122,7 @@ impl TrellisDecoder {
             .iter()
             .map(|&llr| 1.0 - 2.0 * bp_score_probability(llr))
             .collect();
-        let tables = build_suffix_compatibility_tables(&self.columns, &moments, self.num_detectors);
+        let tables = build_suffix_compatibility_tables(columns, &moments, self.num_detectors);
         Ok((Some(tables), started.elapsed().as_secs_f64()))
     }
 }
@@ -768,16 +1146,24 @@ impl ObservableDecoder for TrellisDecoder {
 type DeadlineKey = (usize, usize, usize, usize, usize);
 
 fn deadline_order_for_sequence(
-    dem: &SparseDem,
+    supports: &[Vec<u32>],
+    num_detectors: usize,
+    item_noun: &str,
     sequence: &[usize],
 ) -> Result<Vec<usize>, DecoderError> {
-    let sentinel = dem.mechanisms.len() + 1;
-    let mut first_touch = vec![sentinel; dem.num_detectors];
-    let mut last_touch = vec![sentinel; dem.num_detectors];
+    let sentinel = supports.len() + 1;
+    let mut first_touch = vec![sentinel; num_detectors];
+    let mut last_touch = vec![sentinel; num_detectors];
 
     for (position, &mechanism_index) in sequence.iter().enumerate() {
-        let detectors = &dem.mechanisms[mechanism_index].1;
-        validate_indices(detectors, dem.num_detectors, "detector", mechanism_index)?;
+        let detectors = &supports[mechanism_index];
+        validate_indices(
+            detectors,
+            num_detectors,
+            "detector",
+            item_noun,
+            mechanism_index,
+        )?;
         for &detector in detectors {
             let detector = detector as usize;
             first_touch[detector] = first_touch[detector].min(position);
@@ -788,7 +1174,7 @@ fn deadline_order_for_sequence(
     let mut positions: Vec<usize> = (0..sequence.len()).collect();
     positions.sort_by_key(|&position| -> DeadlineKey {
         let mechanism_index = sequence[position];
-        let detectors = &dem.mechanisms[mechanism_index].1;
+        let detectors = &supports[mechanism_index];
         if detectors.is_empty() {
             return (sentinel, sentinel, sentinel, mechanism_index, position);
         }
@@ -828,6 +1214,22 @@ fn deadline_order_for_sequence(
         );
     }
     Ok(ordered_sequence)
+}
+
+fn factor_supports(model: &FactorModel) -> Vec<Vec<u32>> {
+    model
+        .factors()
+        .iter()
+        .map(|factor| {
+            factor
+                .outcomes
+                .iter()
+                .flat_map(|outcome| outcome.detectors.iter().copied())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        })
+        .collect()
 }
 
 fn validate_config(config: &TrellisConfig, mechanism_count: usize) -> Result<(), DecoderError> {
@@ -905,22 +1307,32 @@ fn xor_combined_probability(first: f64, second: f64) -> f64 {
     combined
 }
 
+fn column_outcome(outcome: &Outcome, detector_words: usize, logical_words: usize) -> ColumnOutcome {
+    ColumnOutcome {
+        detector_toggle: indices_to_words(&outcome.detectors, detector_words),
+        logical_toggle: indices_to_words(&outcome.observables, logical_words),
+        probability: outcome.probability,
+        log_prior: libm::log(outcome.probability),
+    }
+}
+
 fn validate_indices(
     indices: &[u32],
     upper_bound: usize,
     kind: &str,
-    mechanism_index: usize,
+    item_noun: &str,
+    item_index: usize,
 ) -> Result<(), DecoderError> {
     let mut seen = std::collections::BTreeSet::new();
     for &index in indices {
         if index as usize >= upper_bound {
             return Err(DecoderError::InvalidConfiguration(format!(
-                "mechanism {mechanism_index} {kind} index {index} is out of range 0..{upper_bound}"
+                "{item_noun} {item_index} {kind} index {index} is out of range 0..{upper_bound}"
             )));
         }
         if !seen.insert(index) {
             return Err(DecoderError::InvalidConfiguration(format!(
-                "mechanism {mechanism_index} repeats {kind} index {index}"
+                "{item_noun} {item_index} repeats {kind} index {index}"
             )));
         }
     }
@@ -935,7 +1347,8 @@ fn merge_branch(
     merged: &mut BTreeMap<StateKey, f64>,
     mut state: StateKey,
     log_mass: f64,
-    column: &Column,
+    close_mask: &[u64],
+    active_mask: &[u64],
     observed: &[u64],
     transitions: &mut u64,
 ) {
@@ -944,12 +1357,12 @@ fn merge_branch(
         .active_syndrome
         .iter()
         .zip(observed)
-        .zip(&column.close_mask)
+        .zip(close_mask)
         .any(|((&accumulated, &expected), &closing)| (accumulated ^ expected) & closing != 0)
     {
         return;
     }
-    and_assign(&mut state.active_syndrome, &column.active_mask);
+    and_assign(&mut state.active_syndrome, active_mask);
     merged
         .entry(state)
         .and_modify(|mass| *mass = logaddexp(*mass, log_mass))
@@ -1061,6 +1474,45 @@ fn build_suffix_compatibility_tables(
     tables
 }
 
+fn build_suffix_compatibility_tables_nary(
+    columns: &[FactorColumn],
+    num_detectors: usize,
+) -> Vec<Vec<SuffixCompatibility>> {
+    let mut tables = vec![Vec::new(); columns.len()];
+    let mut row_moments = vec![1.0; num_detectors];
+    for (column, table) in columns.iter().rev().zip(tables.iter_mut().rev()) {
+        *table = set_bits(&column.active_mask)
+            .map(|detector| {
+                let eta = row_moments[detector];
+                SuffixCompatibility {
+                    word_index: detector / WORD_BITS,
+                    bit_mask: 1 << (detector % WORD_BITS),
+                    log_probability_zero: libm::log(1.0_f64.midpoint(eta)),
+                    log_probability_one: libm::log(1.0_f64.midpoint(-eta)),
+                }
+            })
+            .collect();
+
+        let mut support = vec![0; words_for(num_detectors)];
+        for outcome in &column.outcomes {
+            or_assign(&mut support, &outcome.detector_toggle);
+        }
+        for detector in set_bits(&support) {
+            let word_index = detector / WORD_BITS;
+            let bit_mask = 1 << (detector % WORD_BITS);
+            let toggle_probability = column
+                .outcomes
+                .iter()
+                .filter(|outcome| outcome.detector_toggle[word_index] & bit_mask != 0)
+                .map(|outcome| outcome.probability)
+                .sum::<f64>()
+                .min(1.0);
+            row_moments[detector] *= 1.0 - 2.0 * toggle_probability;
+        }
+    }
+    tables
+}
+
 fn bp_score_probability(posterior_llr: f64) -> f64 {
     let probability = 1.0 / (1.0 + libm::exp(posterior_llr));
     probability.clamp(BP_SCORE_PROBABILITY_MIN, 1.0 - BP_SCORE_PROBABILITY_MIN)
@@ -1071,6 +1523,41 @@ fn debug_assert_model_invariants(_columns: &[Column], _touched_detectors: &[u64]
 
 #[cfg(debug_assertions)]
 fn debug_assert_model_invariants(columns: &[Column], touched_detectors: &[u64]) {
+    let mut closed_detectors = vec![0; touched_detectors.len()];
+    for column in columns {
+        debug_assert!(
+            closed_detectors
+                .iter()
+                .zip(&column.close_mask)
+                .all(|(&closed, &closing)| closed & closing == 0),
+            "close masks must be disjoint"
+        );
+        or_assign(&mut closed_detectors, &column.close_mask);
+        debug_assert!(
+            closed_detectors
+                .iter()
+                .zip(&column.active_mask)
+                .all(|(&closed, &active)| closed & active == 0),
+            "a detector must not remain active after its closing column"
+        );
+    }
+    debug_assert_eq!(
+        closed_detectors, touched_detectors,
+        "close masks must partition touched detectors"
+    );
+    debug_assert!(
+        columns
+            .last()
+            .is_none_or(|column| column.active_mask.iter().all(|&word| word == 0)),
+        "the final column must have an empty active mask"
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_assert_factor_model_invariants(_columns: &[FactorColumn], _touched_detectors: &[u64]) {}
+
+#[cfg(debug_assertions)]
+fn debug_assert_factor_model_invariants(columns: &[FactorColumn], touched_detectors: &[u64]) {
     let mut closed_detectors = vec![0; touched_detectors.len()];
     for column in columns {
         debug_assert!(

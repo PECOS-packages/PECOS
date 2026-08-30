@@ -420,7 +420,11 @@ def make_gate_lambda(sim, gate_name, is_measurement):
             if len(loc_tuple) == 1 and loc_tuple[0] in result_dict:
                 return result_dict[loc_tuple[0]]
             return result_dict.get(loc_tuple)
-        return 0 if is_measurement else None
+        # run_gate returns {} both for a measured 0 and for execution disabled via
+        # simulate_gate=False; only the former is an outcome.
+        if is_measurement and params.get("simulate_gate", True):
+            return 0
+        return None
 
     return gate_lambda
 "#

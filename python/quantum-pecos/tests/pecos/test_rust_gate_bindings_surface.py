@@ -216,3 +216,14 @@ def test_batch_measurement_output_remains_sparse() -> None:
     """Aggregate measurement output continues to contain fired locations only."""
     state = SparseStab(2)
     assert state.run_gate("MZ", {(0,), (1,)}) == {}
+
+
+@pytest.mark.parametrize(("simulator_name", "factory"), SIMULATORS)
+def test_measurement_binding_reports_nothing_when_simulation_is_disabled(
+    simulator_name: str,
+    factory: SimulatorFactory,
+) -> None:
+    """A disabled measurement is not an outcome: the callable must not fabricate a zero."""
+    state = factory(1)
+    assert state.bindings["MZ"](state, 0, simulate_gate=False) is None, simulator_name
+    assert state.bindings["MZ"](state, 0) == 0, simulator_name

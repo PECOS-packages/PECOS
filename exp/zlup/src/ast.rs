@@ -636,65 +636,85 @@ pub struct GateOp {
     pub location: Option<SourceLocation>,
 }
 
-/// Gate types (matches SLR GateKind).
-/// Note: Gate names like SXX, RZZ use uppercase for clarity with quantum conventions.
-#[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GateKind {
+macro_rules! gate_kinds {
+    ($($variant:ident => $keyword:literal),+ $(,)?) => {
+        /// Gate types (matches SLR GateKind).
+        /// Note: Gate names like SXX, RZZ use uppercase for clarity with quantum conventions.
+        #[allow(clippy::upper_case_acronyms)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        pub enum GateKind {
+            $($variant),+
+        }
+
+        impl GateKind {
+            /// Every variant in declaration order.
+            pub const ALL: &[GateKind] = &[$(GateKind::$variant),+];
+
+            /// Canonical zlup source keyword for this gate.
+            pub fn keyword(&self) -> &'static str {
+                match self {
+                    $(GateKind::$variant => $keyword),+
+                }
+            }
+        }
+    };
+}
+
+gate_kinds! {
     // Single-qubit Paulis
-    X,
-    Y,
-    Z,
+    X => "x",
+    Y => "y",
+    Z => "z",
 
     // Hadamard
-    H,
+    H => "h",
 
     // T gates (fourth root of Z)
-    T,
-    Tdg,
+    T => "t",
+    Tdg => "tdg",
 
     // Square root gates (SZ is the S gate / sqrt(Z))
-    SX,
-    SY,
-    SZ,
-    SXdg,
-    SYdg,
-    SZdg,
+    SX => "sx",
+    SY => "sy",
+    SZ => "sz",
+    SXdg => "sxdg",
+    SYdg => "sydg",
+    SZdg => "szdg",
 
     // Rotation gates (parameterized)
-    RX,
-    RY,
-    RZ,
+    RX => "rx",
+    RY => "ry",
+    RZ => "rz",
 
     // Two-qubit gates
-    CX,
-    CY,
-    CZ,
-    CH,
-    SWAP,
-    ISWAP,
+    CX => "cx",
+    CY => "cy",
+    CZ => "cz",
+    CH => "ch",
+    SWAP => "swap",
+    ISWAP => "iswap",
 
     // Two-qubit rotation gates
-    SXX,
-    SYY,
-    SZZ,
-    SXXdg,
-    SYYdg,
-    SZZdg,
-    CRZ,
-    RZZ,
+    SXX => "sxx",
+    SYY => "syy",
+    SZZ => "szz",
+    SXXdg => "sxxdg",
+    SYYdg => "syydg",
+    SZZdg => "szzdg",
+    CRZ => "crz",
+    RZZ => "rzz",
 
     // Three-qubit gates
-    CCX, // Toffoli gate
+    CCX => "ccx", // Toffoli gate
 
     // Face rotations
-    F,
-    Fdg,
-    F4,
-    F4dg,
+    F => "f",
+    Fdg => "fdg",
+    F4 => "f4",
+    F4dg => "f4dg",
 
     // Prepare/reset operations (pz = prepare Z, reset to |0⟩)
-    PZ,
+    PZ => "pz",
 }
 
 impl GateKind {

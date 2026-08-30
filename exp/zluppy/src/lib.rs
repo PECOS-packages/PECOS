@@ -7,10 +7,11 @@
 //!
 //! # Compile to SLR-AST (returns dict)
 //! ast = zluppy.compile_to_slr("""
-//!     fn main() -> void {
-//!         var q = qalloc(2);
-//!         H(q[0]);
-//!         CX(q[0], q[1]);
+//!     pub fn main() -> unit {
+//!         q := qalloc(2);
+//!         h q[0];
+//!         cx (q[0], q[1]);
+//!         return;
 //!     }
 //! """)
 //!
@@ -667,7 +668,7 @@ impl ZlupProgram {
     /// Returns:
     ///     self: For method chaining
     fn add_allocator(&mut self, name: &str, capacity: usize) -> Self {
-        // Build: var {name} = qalloc({capacity});
+        // Build: mut {name} := qalloc({capacity});
         let alloc_call = ::zlup::ast::Expr::Call(Box::new(::zlup::ast::CallExpr {
             callee: ::zlup::ast::Expr::Ident(::zlup::ast::Ident {
                 name: "qalloc".to_string(),
@@ -1008,7 +1009,14 @@ impl ZlupProgram {
 impl ZlupProgram {
     /// Build the Zlup AST Program.
     fn build_ast(&self) -> ::zlup::ast::Program {
-        // Create main function with all statements
+        let mut statements = self.statements.clone();
+        statements.push(::zlup::ast::Stmt::Return(::zlup::ast::ReturnStmt {
+            value: Some(::zlup::ast::Expr::Unit(::zlup::ast::UnitLit {
+                location: None,
+            })),
+            location: None,
+        }));
+
         let main_fn = ::zlup::ast::FnDecl {
             name: self.name.clone(),
             params: Vec::new(),
@@ -1016,7 +1024,7 @@ impl ZlupProgram {
             body: ::zlup::ast::Block {
                 label: None,
                 attrs: Vec::new(),
-                statements: self.statements.clone(),
+                statements,
                 trailing_expr: None,
                 location: None,
             },
@@ -1047,10 +1055,11 @@ impl ZlupProgram {
 /// Example:
 ///     ```python
 ///     result = zluppy.ZluppyEngine().source('''
-///         fn main() -> void {
-///             var q = qalloc(2);
-///             H(q[0]);
-///             CX(q[0], q[1]);
+///         pub fn main() -> unit {
+///             q := qalloc(2);
+///             h q[0];
+///             cx (q[0], q[1]);
+///             return;
 ///         }
 ///     ''').run(shots=100)
 ///     print(result.to_dict())

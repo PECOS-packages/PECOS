@@ -3911,75 +3911,25 @@ impl<'a> ParserState<'a> {
 
     /// Parse gate keyword to GateKind.
     fn parse_gate_keyword(&self, s: &str) -> ParseResult<GateKind> {
-        use GateKind::*;
-        match s {
-            // Single-qubit Pauli gates
-            "x" => Ok(X),
-            "y" => Ok(Y),
-            "z" => Ok(Z),
-            // Hadamard
-            "h" => Ok(H),
-            // T gates (fourth root of Z)
-            "t" => Ok(T),
-            "tdg" => Ok(Tdg),
-            // Square root gates
-            "sx" => Ok(SX),
-            "sy" => Ok(SY),
-            "sz" => Ok(SZ),
-            "sxdg" => Ok(SXdg),
-            "sydg" => Ok(SYdg),
-            "szdg" => Ok(SZdg),
-            // Rotation gates
-            "rx" => Ok(RX),
-            "ry" => Ok(RY),
-            "rz" => Ok(RZ),
-            // Two-qubit gates
-            "cx" => Ok(CX),
-            "cy" => Ok(CY),
-            "cz" => Ok(CZ),
-            "ch" => Ok(CH),
-            // Two-qubit rotation gates
-            "sxx" => Ok(SXX),
-            "syy" => Ok(SYY),
-            "szz" => Ok(SZZ),
-            "sxxdg" => Ok(SXXdg),
-            "syydg" => Ok(SYYdg),
-            "szzdg" => Ok(SZZdg),
-            "rzz" => Ok(RZZ),
-            "crz" => Ok(CRZ),
-            // Swap gates
-            "swap" => Ok(SWAP),
-            "iswap" => Ok(ISWAP),
-            // Three-qubit gates
-            "ccx" => Ok(CCX), // Toffoli gate
-            // Face rotations
-            "f" => Ok(F),
-            "fdg" => Ok(Fdg),
-            "f4" => Ok(F4),
-            "f4dg" => Ok(F4dg),
-            // Prepare operation
-            "pz" => Ok(PZ),
-            other => {
-                let suggestion = suggest_gate_name(other);
-                let message = match suggestion {
-                    Some(name) => format!("unknown gate '{}', did you mean '{}'?", other, name),
-                    None => format!("unknown gate '{}'", other),
-                };
-                Err(ParseError {
-                    message,
-                    location: SourceLocation::default(),
-                })
-            }
+        if let Some(kind) = GateKind::ALL
+            .iter()
+            .copied()
+            .find(|kind| kind.keyword() == s)
+        {
+            return Ok(kind);
         }
+
+        let suggestion = suggest_gate_name(s);
+        let message = match suggestion {
+            Some(name) => format!("unknown gate '{}', did you mean '{}'?", s, name),
+            None => format!("unknown gate '{}'", s),
+        };
+        Err(ParseError {
+            message,
+            location: SourceLocation::default(),
+        })
     }
 }
-
-/// Known gate names for suggestions.
-const KNOWN_GATE_NAMES: &[&str] = &[
-    "x", "y", "z", "h", "t", "tdg", "sx", "sy", "sz", "sxdg", "sydg", "szdg", "rx", "ry", "rz",
-    "cx", "cy", "cz", "ch", "sxx", "syy", "szz", "sxxdg", "syydg", "szzdg", "rzz", "crz", "swap",
-    "iswap", "ccx", "f", "fdg", "f4", "f4dg", "pz",
-];
 
 /// Deprecated gate name mappings.
 const DEPRECATED_GATES: &[(&str, &str)] = &[("s", "sz"), ("sdg", "szdg")];
@@ -3995,7 +3945,11 @@ pub fn suggest_gate_name(unknown: &str) -> Option<&'static str> {
 
     // Find closest match by edit distance
     let mut best: Option<(&str, usize)> = None;
-    for &name in KNOWN_GATE_NAMES {
+    for name in GateKind::ALL
+        .iter()
+        .map(GateKind::keyword)
+        .chain(std::iter::once("crz"))
+    {
         let dist = edit_distance(unknown, name);
         if dist <= 2 {
             match best {
@@ -4105,6 +4059,45 @@ mod tests {
         let parser = ParserState::new("");
         assert_eq!(parser.parse_gate_keyword("crz").unwrap(), GateKind::CRZ);
         assert_eq!(parser.parse_gate_keyword("rzz").unwrap(), GateKind::RZZ);
+    }
+
+    #[test]
+    fn test_gate_kind_keywords_round_trip() {
+        let parser = ParserState::new("");
+        let mut keywords = std::collections::HashSet::new();
+        for kind in GateKind::ALL {
+            let keyword = kind.keyword();
+            assert!(
+                keywords.insert(keyword),
+                "duplicate canonical gate keyword: {}",
+                keyword
+            );
+
+            let grammar_rule = if kind.is_parameterized() {
+                Rule::param_gate_keyword
+            } else {
+                Rule::simple_gate_keyword
+            };
+            let mut grammar_pairs =
+                ZluppyParser::parse(grammar_rule, keyword).unwrap_or_else(|error| {
+                    panic!("grammar rejected gate keyword '{keyword}': {error}")
+                });
+            let grammar_pair = grammar_pairs
+                .next()
+                .expect("successful grammar parse should produce a pair");
+            assert_eq!(grammar_pair.as_span().start(), 0, "keyword: {keyword}");
+            assert_eq!(
+                grammar_pair.as_span().end(),
+                keyword.len(),
+                "grammar did not consume the whole keyword: {keyword}"
+            );
+            assert!(grammar_pairs.next().is_none(), "keyword: {keyword}");
+
+            let parsed = parser
+                .parse_gate_keyword(keyword)
+                .expect("canonical gate keyword should parse");
+            assert_eq!(parsed, *kind, "keyword: {keyword}");
+        }
     }
 
     #[test]

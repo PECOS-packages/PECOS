@@ -1993,34 +1993,57 @@ impl SlrCodegen {
                                     .with_attrs(attrs.clone()),
                             ));
                         }
-                        // Tuple for two-qubit gates: (q[0], q[1])
-                        (2, Expr::Tuple(tuple)) if tuple.elements.len() == 2 => {
-                            let control = self.extract_slot_ref(&tuple.elements[0])?;
-                            let target = self.extract_slot_ref(&tuple.elements[1])?;
+                        // Tuple for multi-qubit gates: (q[0], q[1], ...)
+                        (expected, Expr::Tuple(tuple)) if tuple.elements.len() == expected => {
+                            let targets = tuple
+                                .elements
+                                .iter()
+                                .map(|element| self.extract_slot_ref(element))
+                                .collect::<SlrResult<Vec<_>>>()?;
                             statements.push(SlrStatement::Gate(
-                                SlrGateOp::new(gate_name, vec![control, target])
+                                SlrGateOp::new(gate_name, targets)
                                     .with_params(params.clone())
                                     .with_attrs(attrs.clone()),
                             ));
                         }
-                        // Wrong arity: single qubit for 2-qubit gate or vice versa
-                        (expected, _) => {
+                        // Wrong arity: single qubit for a multi-qubit gate
+                        (expected, Expr::Index(_)) => {
                             return Err(SlrError::WrongArgumentCount {
                                 gate: gate_name.to_string(),
                                 expected,
-                                got: if matches!(elem, Expr::Index(_)) { 1 } else { 2 },
+                                got: 1,
                             });
                         }
+                        // Wrong arity: tuple has the wrong number of qubits
+                        (expected, Expr::Tuple(tuple)) => {
+                            return Err(SlrError::WrongArgumentCount {
+                                gate: gate_name.to_string(),
+                                expected,
+                                got: tuple.elements.len(),
+                            });
+                        }
+                        (_, _) => return Err(SlrError::UnsupportedExpression),
                     }
                 }
                 Ok(statements)
             }
-            // Two-qubit gate with tuple: (q[0], q[1])
-            Expr::Tuple(tuple) if tuple.elements.len() == 2 => {
-                let control = self.extract_slot_ref(&tuple.elements[0])?;
-                let target = self.extract_slot_ref(&tuple.elements[1])?;
+            // Multi-qubit gate with tuple: (q[0], q[1], ...)
+            Expr::Tuple(tuple) => {
+                let expected = gate_kind_arity(&gate.kind);
+                if tuple.elements.len() != expected {
+                    return Err(SlrError::WrongArgumentCount {
+                        gate: gate_name.to_string(),
+                        expected,
+                        got: tuple.elements.len(),
+                    });
+                }
+                let targets = tuple
+                    .elements
+                    .iter()
+                    .map(|element| self.extract_slot_ref(element))
+                    .collect::<SlrResult<Vec<_>>>()?;
                 Ok(vec![SlrStatement::Gate(
-                    SlrGateOp::new(gate_name, vec![control, target])
+                    SlrGateOp::new(gate_name, targets)
                         .with_params(params)
                         .with_attrs(attrs),
                 )])
@@ -2039,22 +2062,33 @@ impl SlrCodegen {
                                     .with_attrs(attrs.clone()),
                             ));
                         }
-                        (2, Expr::Tuple(tuple)) if tuple.elements.len() == 2 => {
-                            let control = self.extract_slot_ref(&tuple.elements[0])?;
-                            let target = self.extract_slot_ref(&tuple.elements[1])?;
+                        (expected, Expr::Tuple(tuple)) if tuple.elements.len() == expected => {
+                            let targets = tuple
+                                .elements
+                                .iter()
+                                .map(|element| self.extract_slot_ref(element))
+                                .collect::<SlrResult<Vec<_>>>()?;
                             statements.push(SlrStatement::Gate(
-                                SlrGateOp::new(gate_name, vec![control, target])
+                                SlrGateOp::new(gate_name, targets)
                                     .with_params(params.clone())
                                     .with_attrs(attrs.clone()),
                             ));
                         }
-                        (expected, _) => {
+                        (expected, Expr::Index(_)) => {
                             return Err(SlrError::WrongArgumentCount {
                                 gate: gate_name.to_string(),
                                 expected,
-                                got: if matches!(elem, Expr::Index(_)) { 1 } else { 2 },
+                                got: 1,
                             });
                         }
+                        (expected, Expr::Tuple(tuple)) => {
+                            return Err(SlrError::WrongArgumentCount {
+                                gate: gate_name.to_string(),
+                                expected,
+                                got: tuple.elements.len(),
+                            });
+                        }
+                        (_, _) => return Err(SlrError::UnsupportedExpression),
                     }
                 }
                 Ok(statements)
@@ -3207,6 +3241,7 @@ fn extract_pi_fraction(left: &Expr, right: &Expr) -> Option<(i64, i64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::GateKind;
     use crate::parse;
 
     fn compile_to_slr(source: &str) -> SlrResult<SlrProgram> {
@@ -3220,6 +3255,27 @@ mod tests {
         let mut codegen = SlrCodegen::new();
         let slr = codegen.compile(&program).expect("compile failed");
         codegen.to_json(&slr).expect("json failed")
+    }
+
+    #[test]
+    fn test_gate_info_covers_every_lowered_gate_kind() {
+        for kind in GateKind::ALL {
+            if *kind == GateKind::PZ {
+                // PZ becomes an SLR Prepare statement before the gate-info lookup.
+                assert!(get_gate_info(kind.keyword()).is_none());
+                continue;
+            }
+
+            let info = get_gate_info(kind.keyword())
+                .unwrap_or_else(|| panic!("missing SLR gate info for {}", kind.keyword()));
+            assert_eq!(info.arity, kind.arity(), "gate: {}", kind.keyword());
+            assert_eq!(
+                info.parameterized,
+                kind.is_parameterized(),
+                "gate: {}",
+                kind.keyword()
+            );
+        }
     }
 
     #[test]
@@ -3278,6 +3334,24 @@ mod tests {
         } else {
             panic!("Expected CX gate");
         }
+    }
+
+    #[test]
+    fn test_three_qubit_gate() {
+        let source = r#"
+            pub fn main() -> unit {
+                q := qalloc(3);
+                ccx (q[0], q[1], q[2]);
+                return unit;
+            }
+        "#;
+
+        let slr = compile_to_slr(source).unwrap();
+        let SlrStatement::Gate(gate) = &slr.body[0] else {
+            panic!("Expected CCX gate operation");
+        };
+        assert_eq!(gate.gate, "CCX");
+        assert_eq!(gate.targets.len(), 3);
     }
 
     #[test]
@@ -3439,6 +3513,29 @@ mod tests {
 
         let result = compile_to_slr(source);
         assert!(matches!(result, Err(SlrError::WrongArgumentCount { .. })));
+    }
+
+    #[test]
+    fn test_batch_gate_rejects_non_qubit_elements_without_fake_arity() {
+        for source in [
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(1);
+                    h {q[0], 42};
+                }
+            "#,
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(1);
+                    h [q[0], 42];
+                }
+            "#,
+        ] {
+            assert!(matches!(
+                compile_to_slr(source),
+                Err(SlrError::UnsupportedExpression)
+            ));
+        }
     }
 
     #[test]

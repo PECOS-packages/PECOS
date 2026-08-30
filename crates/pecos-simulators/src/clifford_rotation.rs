@@ -300,9 +300,9 @@ impl<T: CliffordGateable> CliffordRotation for T {
 fn simplify_u_clifford(angles: [Angle64; 3]) -> Option<[GateType; 3]> {
     let [theta, phi, lambda] = angles;
     Some([
-        pecos_core::try_simplify_rotation(GateType::RZ, lambda)?,
-        pecos_core::try_simplify_rotation(GateType::RY, theta)?,
-        pecos_core::try_simplify_rotation(GateType::RZ, phi)?,
+        pecos_core::try_simplify_rotation_snapped(GateType::RZ, lambda)?,
+        pecos_core::try_simplify_rotation_snapped(GateType::RY, theta)?,
+        pecos_core::try_simplify_rotation_snapped(GateType::RZ, phi)?,
     ])
 }
 
@@ -327,10 +327,10 @@ fn simplify_two_qubit_clifford(
     gate: GateType,
     angle: Angle64,
 ) -> Option<TwoQubitCliffordDecomposition> {
-    pecos_core::try_simplify_rotation(gate, angle)
+    pecos_core::try_simplify_rotation_snapped(gate, angle)
         .map(TwoQubitCliffordDecomposition::Named)
         .or_else(|| {
-            pecos_core::half_turn_decomposition(gate, angle)
+            pecos_core::half_turn_decomposition_snapped(gate, angle)
                 .map(TwoQubitCliffordDecomposition::TensorPauli)
         })
 }
@@ -381,7 +381,7 @@ fn apply_rotation<'a, T: CliffordGateable>(
     angle: Angle64,
     qubits: &[QubitId],
 ) -> Result<&'a mut T, String> {
-    if let Some(clifford) = pecos_core::try_simplify_rotation(gate, angle) {
+    if let Some(clifford) = pecos_core::try_simplify_rotation_snapped(gate, angle) {
         dispatch_single_qubit_clifford(sim, clifford, qubits)?;
         return Ok(sim);
     }
@@ -689,6 +689,27 @@ mod tests {
             sim.try_rxy1q(Angle64::HALF_TURN, Angle64::QUARTER_TURN / 2u64, &qid(0))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn clifford_rotation_snap_threshold_is_bounded() {
+        for offset in [-0.9e-9, 0.9e-9] {
+            let mut sim = SparseStab::new(1);
+            assert!(
+                sim.try_rz(Angle64::from_turns(0.25 + offset), &qid(0))
+                    .is_ok(),
+                "offset {offset} turns should snap"
+            );
+        }
+
+        for offset in [-1.1e-9, 1.1e-9] {
+            let mut sim = SparseStab::new(1);
+            assert!(
+                sim.try_rz(Angle64::from_turns(0.25 + offset), &qid(0))
+                    .is_err(),
+                "offset {offset} turns must not snap"
+            );
+        }
     }
 
     // --- CRZ tests ---

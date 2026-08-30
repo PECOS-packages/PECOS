@@ -60,6 +60,11 @@ def _rotation_binding(
 
 
 def install_clifford_rotation_bindings(bindings: dict[str, Callable[..., object]]) -> None:
-    """Install rotations that lower through the shared Rust Clifford table."""
+    """Install projective rotation lowerings for stabilizer/tableau consumers.
+
+    Results are equivalent only up to global phase and are unsuitable for
+    phase-carrying simulation or matrix-exact rewriting. For example,
+    ``RZZ(3*pi/2) = -SZZdg``, while the lowering installs ``SZZdg``.
+    """
     for symbol in (*_ONE_ANGLE_ROTATIONS, "RXY1Q", "R1XY"):
         bindings[symbol] = _rotation_binding(symbol)

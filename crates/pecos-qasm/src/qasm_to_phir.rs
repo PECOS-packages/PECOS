@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn uppercase_native_rotations_preserve_angles_in_phir() {
-        let qasm = r#"
+        let qasm = r"
             OPENQASM 2.0;
             qreg q[2];
             RX(0.1) q[0];
@@ -520,7 +520,7 @@ mod tests {
             RZZ(0.4) q[0], q[1];
             RXY1Q(0.5, 0.6) q[0];
             U(0.7, 0.8, 0.9) q[0];
-        "#;
+        ";
         let module = parse_and_convert(qasm);
         let quantum_ops: Vec<_> = get_main_block(&module)
             .operations

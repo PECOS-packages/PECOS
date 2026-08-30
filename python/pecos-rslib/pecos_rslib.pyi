@@ -142,7 +142,14 @@ class ScalarAngle64(Scalar):
 
 def lower_clifford_rotation(
     symbol: str, angles: Sequence[float | ScalarAngle64]
-) -> list[tuple[str, tuple[int, ...]]]: ...
+) -> list[tuple[str, tuple[int, ...]]]:
+    """Lower a rotation for projective stabilizer/tableau consumers.
+
+    Results are equivalent only up to global phase and are not suitable for
+    phase-carrying simulation or matrix-exact rewriting. For example,
+    ``RZZ(3*pi/2) = -SZZdg``, while this function returns ``SZZdg``.
+    """
+    ...
 
 class ScalarComplex64(Scalar):
     """64-bit complex number (32-bit real + 32-bit imag)."""

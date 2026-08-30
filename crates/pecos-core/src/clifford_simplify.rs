@@ -3,7 +3,9 @@
 //! When a rotation gate is applied at a special Clifford angle,
 //! it is equivalent up to global phase to a named gate. This module provides a single source
 //! of truth for those simplifications so that both PHIR-level passes and engine-level
-//! dispatch can reuse the same logic.
+//! dispatch can reuse the same logic. The unsuffixed single-angle helpers match exactly;
+//! Clifford-only consumers that accept numerically lowered angles must opt into the
+//! corresponding `*_snapped` helper.
 
 use crate::angle::Angle;
 use crate::gate_type::GateType;
@@ -12,8 +14,9 @@ use crate::gate_type::GateType;
 type A64 = Angle<u64>;
 
 /// Numerical lowering pipelines can produce angles that are a few fixed-point
-/// units away from canonical Clifford quarter-turns. Snap only within a tiny
-/// tolerance so genuine non-Clifford rotations still fail loudly.
+/// units away from canonical Clifford quarter-turns. Clifford-only entry points
+/// snap within this tolerance so genuine non-Clifford rotations still fail loudly.
+/// Shared rewriting and propagation consumers use exact matching instead.
 const CLIFFORD_SNAP_EPSILON_TURNS: f64 = 1e-9;
 
 /// Try to simplify a single-angle rotation gate to a named Clifford gate.
@@ -21,6 +24,8 @@ const CLIFFORD_SNAP_EPSILON_TURNS: f64 = 1e-9;
 /// Supports `RZ`, `RX`, `RY`, `RZZ`, `RXX`, `RYY`.
 /// Returns `Some(clifford_gate)` when the angle matches a known Clifford, or
 /// `None` if the angle is not a special Clifford angle.
+/// Matching is exact; use [`try_simplify_rotation_snapped`] only at a
+/// Clifford-only boundary that explicitly accepts numerical tolerance.
 ///
 /// For `RZ(0)`, `RX(0)`, etc. returns `Some(GateType::I)` (identity).
 ///
@@ -49,7 +54,6 @@ const CLIFFORD_SNAP_EPSILON_TURNS: f64 = 1e-9;
 /// | RYY(-pi/2)| 3/4 TURN  | SYYdg          |
 #[must_use]
 pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
-    let angle = snap_clifford_angle(angle);
     match gate {
         GateType::RZ => simplify_rz(angle),
         GateType::RX => simplify_rx(angle),
@@ -61,6 +65,17 @@ pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
     }
 }
 
+/// Try to simplify a single-angle rotation after applying the Clifford-only
+/// numerical snap policy.
+///
+/// This is intended for entry points that cannot execute arbitrary rotations.
+/// General circuit rewriting and propagation should use the exact
+/// [`try_simplify_rotation`] helper.
+#[must_use]
+pub fn try_simplify_rotation_snapped(gate: GateType, angle: A64) -> Option<GateType> {
+    try_simplify_rotation(gate, snap_clifford_angle(angle))
+}
+
 /// Try to simplify an RXY1Q(theta, phi) gate to a named Clifford.
 ///
 /// RXY1Q(theta, phi) is a rotation by `theta` about the axis
@@ -68,6 +83,7 @@ pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
 ///
 /// RXY1Q has two angle parameters, so it is handled separately from the
 /// single-angle rotations.
+/// It retains its pre-existing numerical snap policy for both angles.
 ///
 /// | theta     | phi            | Simplifies to |
 /// |-----------|---------------|---------------|
@@ -218,9 +234,10 @@ fn simplify_ryy(angle: A64) -> Option<GateType> {
 ///
 /// This is separate from `try_simplify_rotation` because the result is a
 /// *decomposition* into two single-qubit gates, not a single gate replacement.
+/// Matching is exact; use [`half_turn_decomposition_snapped`] only at a
+/// Clifford-only boundary that explicitly accepts numerical tolerance.
 #[must_use]
 pub fn half_turn_decomposition(gate: GateType, angle: A64) -> Option<GateType> {
-    let angle = snap_clifford_angle(angle);
     if angle != A64::HALF_TURN && angle != neg(A64::HALF_TURN) {
         return None;
     }
@@ -230,6 +247,16 @@ pub fn half_turn_decomposition(gate: GateType, angle: A64) -> Option<GateType> {
         GateType::RYY => Some(GateType::Y),
         _ => None,
     }
+}
+
+/// Check for a two-qubit half-turn decomposition after applying the
+/// Clifford-only numerical snap policy.
+///
+/// General circuit rewriting and propagation should use the exact
+/// [`half_turn_decomposition`] helper.
+#[must_use]
+pub fn half_turn_decomposition_snapped(gate: GateType, angle: A64) -> Option<GateType> {
+    half_turn_decomposition(gate, snap_clifford_angle(angle))
 }
 
 /// Check whether RZZ at the given angle decomposes to Z tensor Z (i.e. angle = pi).
@@ -668,55 +695,35 @@ mod tests {
     }
 
     #[test]
-    fn all_rotation_tables_snap_near_clifford_turns() {
-        let one_qubit = [
-            (GateType::RZ, GateType::SZ, GateType::Z, GateType::SZdg),
-            (GateType::RX, GateType::SX, GateType::X, GateType::SXdg),
-            (GateType::RY, GateType::SY, GateType::Y, GateType::SYdg),
-        ];
-        for (rotation, sqrt, pauli, sqrt_dg) in one_qubit {
+    fn single_angle_rotation_tables_reject_near_clifford_turns() {
+        let one_qubit = [GateType::RZ, GateType::RX, GateType::RY];
+        for rotation in one_qubit {
             assert_eq!(
                 try_simplify_rotation(rotation, Angle64::from_turns(0.75 - 1e-12)),
-                Some(sqrt_dg)
+                None
             );
             assert_eq!(
                 try_simplify_rotation(rotation, Angle64::from_turns(0.25 + 1e-12)),
-                Some(sqrt)
+                None
             );
             assert_eq!(
                 try_simplify_rotation(rotation, Angle64::from_turns(0.5 + 1e-12)),
-                Some(pauli)
-            );
-            assert_eq!(
-                try_simplify_rotation(rotation, Angle64::from_turns(0.75 + 1e-6)),
                 None
             );
         }
 
-        let two_qubit = [
-            (GateType::RZZ, GateType::SZZ, GateType::Z, GateType::SZZdg),
-            (GateType::RXX, GateType::SXX, GateType::X, GateType::SXXdg),
-            (GateType::RYY, GateType::SYY, GateType::Y, GateType::SYYdg),
-        ];
-        for (rotation, sqrt, pauli, sqrt_dg) in two_qubit {
+        let two_qubit = [GateType::RZZ, GateType::RXX, GateType::RYY];
+        for rotation in two_qubit {
             assert_eq!(
                 try_simplify_rotation(rotation, Angle64::from_turns(0.75 - 1e-12)),
-                Some(sqrt_dg)
-            );
-            assert_eq!(
-                try_simplify_rotation(rotation, Angle64::from_turns(0.25 + 1e-12)),
-                Some(sqrt)
-            );
-            assert_eq!(
-                half_turn_decomposition(rotation, Angle64::from_turns(0.5 + 1e-12)),
-                Some(pauli)
-            );
-            assert_eq!(
-                try_simplify_rotation(rotation, Angle64::from_turns(0.75 + 1e-6)),
                 None
             );
             assert_eq!(
-                half_turn_decomposition(rotation, Angle64::from_turns(0.75 + 1e-6)),
+                try_simplify_rotation(rotation, Angle64::from_turns(0.25 + 1e-12)),
+                None
+            );
+            assert_eq!(
+                half_turn_decomposition(rotation, Angle64::from_turns(0.5 + 1e-12)),
                 None
             );
         }
@@ -740,13 +747,13 @@ mod tests {
         for (rotation, sqrt, sqrt_dg) in rotations {
             for radians in dagger_angles {
                 assert_eq!(
-                    try_simplify_rotation(rotation, Angle64::from_radians(radians)),
+                    try_simplify_rotation_snapped(rotation, Angle64::from_radians(radians)),
                     Some(sqrt_dg)
                 );
             }
             for radians in sqrt_angles {
                 assert_eq!(
-                    try_simplify_rotation(rotation, Angle64::from_radians(radians)),
+                    try_simplify_rotation_snapped(rotation, Angle64::from_radians(radians)),
                     Some(sqrt)
                 );
             }

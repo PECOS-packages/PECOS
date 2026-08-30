@@ -1855,6 +1855,17 @@ mod tests {
     }
 
     #[test]
+    fn tick_near_quarter_turn_rotation_unchanged() {
+        let angle = Angle64::from_turns(0.25 + 1e-12);
+        let mut tc = TickCircuit::new();
+        tc.tick().rz(angle, &[0]);
+        SimplifyRotations.apply_tick(&mut tc);
+        let gate = &tc.ticks()[0].gate_batches()[0];
+        assert_eq!(gate.gate_type, GateType::RZ);
+        assert_eq!(gate.angles.as_slice(), &[angle]);
+    }
+
+    #[test]
     fn tick_zero_angle_rotation_unchanged() {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::ZERO, &[0]);

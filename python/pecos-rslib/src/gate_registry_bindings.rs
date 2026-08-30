@@ -16,8 +16,8 @@ use crate::dtypes::AngleParam;
 use pecos_core::Value;
 use pecos_core::gate_type::GateType;
 use pecos_core::{
-    Angle64, AngleSource, GateDefinitionBuilder, GateRegistry, QubitId, half_turn_decomposition,
-    try_simplify_rotation, try_simplify_rxy1q,
+    Angle64, AngleSource, GateDefinitionBuilder, GateRegistry, QubitId,
+    half_turn_decomposition_snapped, try_simplify_rotation_snapped, try_simplify_rxy1q,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
@@ -72,6 +72,11 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
 }
 
 /// Lower a table-backed rotation at a Clifford angle to named gates.
+///
+/// Results are equivalent only up to global phase and are suitable only for
+/// projective consumers such as stabilizer/tableau simulators. They must not be
+/// used for phase-carrying simulation or matrix-exact rewriting. Concretely,
+/// `RZZ(3*pi/2) = -SZZdg`, while this function returns `SZZdg`.
 #[pyfunction]
 fn lower_clifford_rotation(
     py: Python<'_>,
@@ -107,17 +112,17 @@ fn lower_clifford_rotation(
             try_simplify_rxy1q(angles[0], angles[1]).map(|named| vec![(named, vec![0])])
         }
         GateType::RZ | GateType::RX | GateType::RY => {
-            try_simplify_rotation(gate, angles[0]).map(|named| vec![(named, vec![0])])
+            try_simplify_rotation_snapped(gate, angles[0]).map(|named| vec![(named, vec![0])])
         }
         GateType::RZZ | GateType::RXX | GateType::RYY => {
-            if let Some(named) = try_simplify_rotation(gate, angles[0]) {
+            if let Some(named) = try_simplify_rotation_snapped(gate, angles[0]) {
                 if named == GateType::I {
                     Some(vec![(named, vec![0]), (named, vec![1])])
                 } else {
                     Some(vec![(named, vec![0, 1])])
                 }
             } else {
-                half_turn_decomposition(gate, angles[0])
+                half_turn_decomposition_snapped(gate, angles[0])
                     .map(|pauli| vec![(pauli, vec![0]), (pauli, vec![1])])
             }
         }

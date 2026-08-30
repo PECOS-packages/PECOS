@@ -460,10 +460,10 @@ impl PyGateType {
     }
 
     #[classattr]
-    #[pyo3(name = "R1XY")]
-    fn r1xy() -> Self {
+    #[pyo3(name = "RXY1Q")]
+    fn rxy1q() -> Self {
         Self {
-            inner: GateType::R1XY,
+            inner: GateType::RXY1Q,
         }
     }
 
@@ -916,11 +916,11 @@ impl PyGate {
         }
     }
 
-    /// Create an R1XY gate.
+    /// Create an RXY1Q gate.
     #[staticmethod]
-    fn r1xy(theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) -> Self {
+    fn rxy1q(theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) -> Self {
         Self {
-            inner: Gate::r1xy(theta.0, phi.0, &qubits),
+            inner: Gate::rxy1q(theta.0, phi.0, &qubits),
         }
     }
 
@@ -2944,7 +2944,7 @@ impl PyTickCircuit {
                     | GateType::RY
                     | GateType::RZ
                     | GateType::U
-                    | GateType::R1XY
+                    | GateType::RXY1Q
                     | GateType::Idle
                         if p1 > 0.0 =>
                     {
@@ -3467,13 +3467,13 @@ impl PyTickHandle {
         Ok(slf)
     }
 
-    /// Apply an R1XY rotation (single-qubit gate with two angle parameters).
+    /// Apply an RXY1Q rotation (single-qubit gate with two angle parameters).
     ///
     /// Args:
     ///     theta: First rotation angle (angle64 or float radians).
     ///     phi: Second rotation angle (angle64 or float radians).
     ///     qubits: List of qubits to rotate.
-    fn r1xy(
+    fn rxy1q(
         slf: Py<Self>,
         py: Python<'_>,
         theta: AngleParam,
@@ -3481,7 +3481,7 @@ impl PyTickHandle {
         qubits: Vec<usize>,
     ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::r1xy(theta.0, phi.0, &qubits))?;
+            .add_gate_internal(py, Gate::rxy1q(theta.0, phi.0, &qubits))?;
         Ok(slf)
     }
 

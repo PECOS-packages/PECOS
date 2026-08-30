@@ -91,7 +91,7 @@ impl Complex2x2 {
     /// Matrix multiplication: self * other
     /// Computes the product of two 2x2 complex matrices.
     #[inline]
-    fn mul(&self, other: &Self) -> Self {
+    const fn mul(&self, other: &Self) -> Self {
         // (a1*a2 + b1*c2, a1*b2 + b1*d2)
         // (c1*a2 + d1*c2, c1*b2 + d1*d2)
         Self {
@@ -126,284 +126,76 @@ impl Complex2x2 {
 /// Pre-defined gate matrices for fusion
 mod gate_matrices {
     use super::Complex2x2;
+    use pecos_core::Clifford;
+    use pecos_core::gate_type::GateType;
 
-    const INV_SQRT2: f64 = std::f64::consts::FRAC_1_SQRT_2;
+    const fn from_canonical(gate: GateType) -> Complex2x2 {
+        let Some(matrix) = gate.canonical_1q_matrix() else {
+            panic!("gate has no canonical single-qubit matrix");
+        };
+        Complex2x2 {
+            a_re: matrix[0],
+            a_im: matrix[1],
+            b_re: matrix[2],
+            b_im: matrix[3],
+            c_re: matrix[4],
+            c_im: matrix[5],
+            d_re: matrix[6],
+            d_im: matrix[7],
+        }
+    }
 
-    /// Hadamard gate: (1/sqrt(2)) * [[1, 1], [1, -1]]
-    pub const H: Complex2x2 = Complex2x2 {
-        a_re: INV_SQRT2,
-        a_im: 0.0,
-        b_re: INV_SQRT2,
-        b_im: 0.0,
-        c_re: INV_SQRT2,
-        c_im: 0.0,
-        d_re: -INV_SQRT2,
-        d_im: 0.0,
-    };
+    const fn from_clifford(gate: Clifford) -> Complex2x2 {
+        let Some(matrix) = gate.canonical_1q_matrix() else {
+            panic!("gate has no canonical single-qubit Clifford matrix");
+        };
+        Complex2x2 {
+            a_re: matrix[0],
+            a_im: matrix[1],
+            b_re: matrix[2],
+            b_im: matrix[3],
+            c_re: matrix[4],
+            c_im: matrix[5],
+            d_re: matrix[6],
+            d_im: matrix[7],
+        }
+    }
 
-    /// X gate: [[0, 1], [1, 0]]
-    pub const X: Complex2x2 = Complex2x2 {
-        a_re: 0.0,
-        a_im: 0.0,
-        b_re: 1.0,
-        b_im: 0.0,
-        c_re: 1.0,
-        c_im: 0.0,
-        d_re: 0.0,
-        d_im: 0.0,
-    };
+    pub const H: Complex2x2 = from_canonical(GateType::H);
+    pub const X: Complex2x2 = from_canonical(GateType::X);
+    pub const Y: Complex2x2 = from_canonical(GateType::Y);
+    pub const Z: Complex2x2 = from_canonical(GateType::Z);
+    pub const SZ: Complex2x2 = from_canonical(GateType::SZ);
+    pub const SZDG: Complex2x2 = from_canonical(GateType::SZdg);
+    pub const SX: Complex2x2 = from_canonical(GateType::SX);
+    pub const SXDG: Complex2x2 = from_canonical(GateType::SXdg);
+    pub const SY: Complex2x2 = from_canonical(GateType::SY);
+    pub const SYDG: Complex2x2 = from_canonical(GateType::SYdg);
+    pub const F: Complex2x2 = from_canonical(GateType::F);
+    pub const FDG: Complex2x2 = from_canonical(GateType::Fdg);
 
-    /// Y gate: [[0, -i], [i, 0]]
-    pub const Y: Complex2x2 = Complex2x2 {
-        a_re: 0.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: -1.0,
-        c_re: 0.0,
-        c_im: 1.0,
-        d_re: 0.0,
-        d_im: 0.0,
-    };
-
-    /// Z gate: [[1, 0], [0, -1]]
-    pub const Z: Complex2x2 = Complex2x2 {
-        a_re: 1.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: 0.0,
-        c_re: 0.0,
-        c_im: 0.0,
-        d_re: -1.0,
-        d_im: 0.0,
-    };
-
-    /// S gate (SZ): [[1, 0], [0, i]]
-    pub const SZ: Complex2x2 = Complex2x2 {
-        a_re: 1.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: 0.0,
-        c_re: 0.0,
-        c_im: 0.0,
-        d_re: 0.0,
-        d_im: 1.0,
-    };
-
-    /// S-dagger gate (SZDG): [[1, 0], [0, -i]]
-    pub const SZDG: Complex2x2 = Complex2x2 {
-        a_re: 1.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: 0.0,
-        c_re: 0.0,
-        c_im: 0.0,
-        d_re: 0.0,
-        d_im: -1.0,
-    };
-
-    /// SX gate: (1/2)[[1+i, 1-i], [1-i, 1+i]]
-    pub const SX: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: 0.5,
-        c_im: -0.5,
-        d_re: 0.5,
-        d_im: 0.5,
-    };
-
-    /// SXDG gate: (1/2)[[1-i, 1+i], [1+i, 1-i]]
-    pub const SXDG: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: 0.5,
-        b_im: 0.5,
-        c_re: 0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: -0.5,
-    };
-
-    /// SY gate: (1/2)[[1+i, -1-i], [1+i, 1+i]]
-    pub const SY: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: -0.5,
-        b_im: -0.5,
-        c_re: 0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: 0.5,
-    };
-
-    /// SYDG gate: (1/2)[[1-i, 1-i], [-1+i, 1-i]]
-    pub const SYDG: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: -0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: -0.5,
-    };
-
-    /// F gate = SZ * SX: (1/2)[[1+i, 1-i], [1+i, -1+i]]
-    pub const F: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: 0.5,
-        c_im: 0.5,
-        d_re: -0.5,
-        d_im: 0.5,
-    };
-
-    /// FDG gate = SXDG * SZDG: (1/2)[[1-i, 1-i], [1+i, -1-i]]
-    pub const FDG: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: 0.5,
-        c_im: 0.5,
-        d_re: -0.5,
-        d_im: -0.5,
-    };
-
-    /// H2 gate: Z * SY = (1/2)[[1+i, -(1+i)], [-(1+i), -(1+i)]]
-    pub const H2: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: -0.5,
-        b_im: -0.5,
-        c_re: -0.5,
-        c_im: -0.5,
-        d_re: -0.5,
-        d_im: -0.5,
-    };
-
-    /// H3 gate: Y * SZ = [[0, 1], [i, 0]]
-    pub const H3: Complex2x2 = Complex2x2 {
-        a_re: 0.0,
-        a_im: 0.0,
-        b_re: 1.0,
-        b_im: 0.0,
-        c_re: 0.0,
-        c_im: 1.0,
-        d_re: 0.0,
-        d_im: 0.0,
-    };
-
-    /// H4 gate: X * SZ = [[0, i], [1, 0]]
-    pub const H4: Complex2x2 = Complex2x2 {
-        a_re: 0.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: 1.0,
-        c_re: 1.0,
-        c_im: 0.0,
-        d_re: 0.0,
-        d_im: 0.0,
-    };
-
-    /// H5 gate: Z * SX = (1/2)[[1+i, 1-i], [-(1-i), -(1+i)]]
-    pub const H5: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: -0.5,
-        c_im: 0.5,
-        d_re: -0.5,
-        d_im: -0.5,
-    };
-
-    /// H6 gate: Y * SX = (1/2)[[-1-i, 1-i], [-1+i, 1+i]]
-    pub const H6: Complex2x2 = Complex2x2 {
-        a_re: -0.5,
-        a_im: -0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: -0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: 0.5,
-    };
-
-    /// F2 gate: SY * SXDG = (1/2)[[1-i, -1+i], [1+i, 1+i]]
-    pub const F2: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: -0.5,
-        b_im: 0.5,
-        c_re: 0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: 0.5,
-    };
-
-    /// F2DG gate: SX * SYDG = (1/2)[[1+i, 1-i], [-1-i, 1-i]]
-    pub const F2DG: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: -0.5,
-        c_im: -0.5,
-        d_re: 0.5,
-        d_im: -0.5,
-    };
-
-    /// F3 gate: SZ * SXDG = (1/2)[[1-i, 1+i], [-1+i, 1+i]]
-    pub const F3: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: 0.5,
-        b_im: 0.5,
-        c_re: -0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: 0.5,
-    };
-
-    /// F3DG gate: SX * SZDG = (1/2)[[1+i, -1-i], [1-i, 1-i]]
-    pub const F3DG: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: -0.5,
-        b_im: -0.5,
-        c_re: 0.5,
-        c_im: -0.5,
-        d_re: 0.5,
-        d_im: -0.5,
-    };
-
-    /// F4 gate: SX * SZ = (1/2)[[1+i, 1+i], [1-i, -1+i]]
-    pub const F4: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: 0.5,
-        b_im: 0.5,
-        c_re: 0.5,
-        c_im: -0.5,
-        d_re: -0.5,
-        d_im: 0.5,
-    };
-
-    /// F4DG gate: SZDG * SXDG = (1/2)[[1-i, 1+i], [1-i, -1-i]]
-    pub const F4DG: Complex2x2 = Complex2x2 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: 0.5,
-        b_im: 0.5,
-        c_re: 0.5,
-        c_im: -0.5,
-        d_re: -0.5,
-        d_im: -0.5,
-    };
+    /// H2 gate: exp(-i*pi/4) * Z * SY
+    pub const H2: Complex2x2 = from_clifford(Clifford::H2);
+    /// H3 gate: exp(-i*pi/4) * Y * SZ
+    pub const H3: Complex2x2 = from_clifford(Clifford::H3);
+    /// H4 gate: exp(-i*pi/4) * X * SZ
+    pub const H4: Complex2x2 = from_clifford(Clifford::H4);
+    /// H5 gate: exp(-i*pi/4) * Z * SX
+    pub const H5: Complex2x2 = from_clifford(Clifford::H5);
+    /// H6 gate: exp(-i*pi/4) * Y * SX
+    pub const H6: Complex2x2 = from_clifford(Clifford::H6);
+    /// F2 gate: -SY * SXDG
+    pub const F2: Complex2x2 = from_clifford(Clifford::F2);
+    /// F2DG gate: -SX * SYDG
+    pub const F2DG: Complex2x2 = from_clifford(Clifford::F2dg);
+    /// F3 gate: -SZ * SXDG
+    pub const F3: Complex2x2 = from_clifford(Clifford::F3);
+    /// F3DG gate: -SX * SZDG
+    pub const F3DG: Complex2x2 = from_clifford(Clifford::F3dg);
+    /// F4 gate: i * SX * SZ
+    pub const F4: Complex2x2 = from_clifford(Clifford::F4);
+    /// F4DG gate: -i * SZDG * SXDG
+    pub const F4DG: Complex2x2 = from_clifford(Clifford::F4dg);
 }
 
 /// Optimized state vector simulator with `SoA` layout.
@@ -1901,7 +1693,7 @@ where
         }
     }
 
-    /// Specialized H3 gate: [[0, 1], [i, 0]] - swap with i on lower
+    /// Specialized H3 gate: [[0, (1-i)/sqrt(2)], [(1+i)/sqrt(2), 0]].
     #[inline]
     fn apply_h3_gate(&mut self, q: usize) {
         let step = 1 << q;
@@ -1916,17 +1708,18 @@ where
                 let b_re = self.real[paired_j];
                 let b_im = self.imag[paired_j];
 
-                // new_a = b
-                // new_b = i * a = (-a_im, a_re)
-                self.real[j] = b_re;
-                self.imag[j] = b_im;
-                self.real[paired_j] = -a_im;
-                self.imag[paired_j] = a_re;
+                // new_a = (1-i) * b / sqrt(2)
+                // new_b = (1+i) * a / sqrt(2)
+                let scale = std::f64::consts::FRAC_1_SQRT_2;
+                self.real[j] = (b_re + b_im) * scale;
+                self.imag[j] = (b_im - b_re) * scale;
+                self.real[paired_j] = (a_re - a_im) * scale;
+                self.imag[paired_j] = (a_re + a_im) * scale;
             }
         }
     }
 
-    /// Specialized H4 gate: [[0, i], [1, 0]] - swap with i on upper
+    /// Specialized H4 gate: [[0, (1+i)/sqrt(2)], [(1-i)/sqrt(2), 0]].
     #[inline]
     fn apply_h4_gate(&mut self, q: usize) {
         let step = 1 << q;
@@ -1941,12 +1734,13 @@ where
                 let b_re = self.real[paired_j];
                 let b_im = self.imag[paired_j];
 
-                // new_a = i * b = (-b_im, b_re)
-                // new_b = a
-                self.real[j] = -b_im;
-                self.imag[j] = b_re;
-                self.real[paired_j] = a_re;
-                self.imag[paired_j] = a_im;
+                // new_a = (1+i) * b / sqrt(2)
+                // new_b = (1-i) * a / sqrt(2)
+                let scale = std::f64::consts::FRAC_1_SQRT_2;
+                self.real[j] = (b_re - b_im) * scale;
+                self.imag[j] = (b_re + b_im) * scale;
+                self.real[paired_j] = (a_re + a_im) * scale;
+                self.imag[paired_j] = (a_im - a_re) * scale;
             }
         }
     }
@@ -4625,13 +4419,27 @@ where
         self
     }
 
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        for (real, imag) in self.real.iter_mut().zip(&mut self.imag) {
+            let amplitude = Complex64::new(*real, *imag) * global_phase;
+            *real = amplitude.re;
+            *imag = amplitude.im;
+        }
+        self
+    }
+
     #[inline]
-    fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
         let phi = phi.to_radians_signed();
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
-        // R1XY: [[cos, r01], [r10, cos]]
+        // RXY1Q: [[cos, r01], [r10, cos]]
         // r01 = -i*sin*e^(-iφ) = -sin*sinφ - i*sin*cosφ
         // r10 = -i*sin*e^(iφ)  = sin*sinφ - i*sin*cosφ
         let m = Complex2x2 {
@@ -5774,25 +5582,25 @@ mod tests {
     }
 
     #[test]
-    fn test_r1xy_gate() {
+    fn test_rxy1q_gate() {
         let mut sv = StateVecSoA::new(1);
         let mut opt: StateVecSoA = StateVecSoA::new(1);
 
         let theta = FRAC_PI_3;
         let phi = FRAC_PI_4;
 
-        sv.r1xy(
+        sv.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &[QubitId(0)],
         );
-        opt.r1xy(
+        opt.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &[QubitId(0)],
         );
 
-        assert_states_match(&mut sv, &mut opt, "R1XY gate");
+        assert_states_match(&mut sv, &mut opt, "RXY1Q gate");
     }
 
     #[test]

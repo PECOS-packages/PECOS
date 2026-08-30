@@ -22,6 +22,8 @@
 use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex;
+use pecos_core::Clifford;
+use pecos_core::gate_type::{GateType, single_qubit_matrix_to_f32};
 use pecos_core::{Angle64, QubitId};
 use pecos_random::{PecosRng, Rng, RngExt};
 use std::fmt::Debug;
@@ -46,6 +48,41 @@ struct Complex2x2_32 {
 }
 
 impl Complex2x2_32 {
+    // This table intentionally stores the canonical f64 values at simulator f32 precision.
+    const fn from_canonical(gate: GateType) -> Self {
+        let Some(matrix) = gate.canonical_1q_matrix() else {
+            panic!("gate has no canonical single-qubit matrix");
+        };
+        let matrix = single_qubit_matrix_to_f32(matrix);
+        Self {
+            a_re: matrix[0],
+            a_im: matrix[1],
+            b_re: matrix[2],
+            b_im: matrix[3],
+            c_re: matrix[4],
+            c_im: matrix[5],
+            d_re: matrix[6],
+            d_im: matrix[7],
+        }
+    }
+
+    const fn from_clifford(gate: Clifford) -> Self {
+        let Some(matrix) = gate.canonical_1q_matrix() else {
+            panic!("gate has no canonical single-qubit Clifford matrix");
+        };
+        let matrix = single_qubit_matrix_to_f32(matrix);
+        Self {
+            a_re: matrix[0],
+            a_im: matrix[1],
+            b_re: matrix[2],
+            b_im: matrix[3],
+            c_re: matrix[4],
+            c_im: matrix[5],
+            d_re: matrix[6],
+            d_im: matrix[7],
+        }
+    }
+
     #[inline]
     fn is_identity(&self) -> bool {
         const EPS: f32 = 1e-6;
@@ -92,140 +129,34 @@ impl Complex2x2_32 {
 
 mod gate_matrices_32 {
     use super::Complex2x2_32;
+    use pecos_core::Clifford;
+    use pecos_core::gate_type::GateType;
 
-    const INV_SQRT2: f32 = std::f32::consts::FRAC_1_SQRT_2;
-
-    pub const H: Complex2x2_32 = Complex2x2_32 {
-        a_re: INV_SQRT2,
-        a_im: 0.0,
-        b_re: INV_SQRT2,
-        b_im: 0.0,
-        c_re: INV_SQRT2,
-        c_im: 0.0,
-        d_re: -INV_SQRT2,
-        d_im: 0.0,
-    };
-
-    pub const X: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.0,
-        a_im: 0.0,
-        b_re: 1.0,
-        b_im: 0.0,
-        c_re: 1.0,
-        c_im: 0.0,
-        d_re: 0.0,
-        d_im: 0.0,
-    };
-
-    pub const Y: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: -1.0,
-        c_re: 0.0,
-        c_im: 1.0,
-        d_re: 0.0,
-        d_im: 0.0,
-    };
-
-    pub const Z: Complex2x2_32 = Complex2x2_32 {
-        a_re: 1.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: 0.0,
-        c_re: 0.0,
-        c_im: 0.0,
-        d_re: -1.0,
-        d_im: 0.0,
-    };
-
-    pub const SZ: Complex2x2_32 = Complex2x2_32 {
-        a_re: 1.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: 0.0,
-        c_re: 0.0,
-        c_im: 0.0,
-        d_re: 0.0,
-        d_im: 1.0,
-    };
-
-    pub const SZDG: Complex2x2_32 = Complex2x2_32 {
-        a_re: 1.0,
-        a_im: 0.0,
-        b_re: 0.0,
-        b_im: 0.0,
-        c_re: 0.0,
-        c_im: 0.0,
-        d_re: 0.0,
-        d_im: -1.0,
-    };
-
-    pub const SX: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: 0.5,
-        c_im: -0.5,
-        d_re: 0.5,
-        d_im: 0.5,
-    };
-
-    pub const SXDG: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: 0.5,
-        b_im: 0.5,
-        c_re: 0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: -0.5,
-    };
-
-    pub const SY: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: -0.5,
-        b_im: -0.5,
-        c_re: 0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: 0.5,
-    };
-
-    pub const SYDG: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: -0.5,
-        c_im: 0.5,
-        d_re: 0.5,
-        d_im: -0.5,
-    };
-
-    pub const F: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5,
-        a_im: 0.5,
-        b_re: 0.5,
-        b_im: -0.5,
-        c_re: 0.5,
-        c_im: 0.5,
-        d_re: -0.5,
-        d_im: 0.5,
-    };
-
-    pub const FDG: Complex2x2_32 = Complex2x2_32 {
-        a_re: 0.5,
-        a_im: -0.5,
-        b_re: 0.5,
-        b_im: 0.5,
-        c_re: 0.5,
-        c_im: -0.5,
-        d_re: -0.5,
-        d_im: -0.5,
-    };
+    pub const H: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::H);
+    pub const H2: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::H2);
+    pub const H3: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::H3);
+    pub const H4: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::H4);
+    pub const H5: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::H5);
+    pub const H6: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::H6);
+    pub const X: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::X);
+    pub const Y: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::Y);
+    pub const Z: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::Z);
+    pub const SZ: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::SZ);
+    pub const SZDG: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::SZdg);
+    pub const SX: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::SX);
+    pub const SXDG: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::SXdg);
+    pub const SY: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::SY);
+    pub const SYDG: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::SYdg);
+    pub const F: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::F);
+    pub const FDG: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::Fdg);
+    pub const F2: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::F2);
+    pub const F2DG: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::F2dg);
+    pub const F3: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::F3);
+    pub const F3DG: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::F3dg);
+    pub const F4: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::F4);
+    pub const F4DG: Complex2x2_32 = Complex2x2_32::from_clifford(Clifford::F4dg);
+    pub const T: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::T);
+    pub const TDG: Complex2x2_32 = Complex2x2_32::from_canonical(GateType::Tdg);
 }
 
 // =============================================================================
@@ -746,10 +677,10 @@ where
                     let diff_re = a_re - b_re;
                     let diff_im = a_im - b_im;
 
-                    let new_a_re: [f32; 8] = ((sum_re + diff_re) * half).into();
-                    let new_a_im: [f32; 8] = ((sum_im + diff_im) * half).into();
-                    let new_b_re: [f32; 8] = ((sum_re - diff_re) * half).into();
-                    let new_b_im: [f32; 8] = ((sum_im - diff_im) * half).into();
+                    let new_a_re: [f32; 8] = ((diff_re - diff_im) * half).into();
+                    let new_a_im: [f32; 8] = ((diff_re + diff_im) * half).into();
+                    let new_b_re: [f32; 8] = ((sum_re - sum_im) * half).into();
+                    let new_b_im: [f32; 8] = ((sum_re + sum_im) * half).into();
 
                     self.real[j..j + 8].copy_from_slice(&new_a_re);
                     self.imag[j..j + 8].copy_from_slice(&new_a_im);
@@ -774,10 +705,10 @@ where
                     let diff_re = a_re - b_re;
                     let diff_im = a_im - b_im;
 
-                    self.real[j] = (sum_re + diff_re) * 0.5;
-                    self.imag[j] = (sum_im + diff_im) * 0.5;
-                    self.real[paired_j] = (sum_re - diff_re) * 0.5;
-                    self.imag[paired_j] = (sum_im - diff_im) * 0.5;
+                    self.real[j] = (diff_re - diff_im) * 0.5;
+                    self.imag[j] = (diff_re + diff_im) * 0.5;
+                    self.real[paired_j] = (sum_re - sum_im) * 0.5;
+                    self.imag[paired_j] = (sum_re + sum_im) * 0.5;
                 }
             }
         }
@@ -806,10 +737,10 @@ where
                     let diff_re = a_re - b_re;
                     let diff_im = a_im - b_im;
 
-                    let new_a_re: [f32; 8] = ((sum_re - diff_re) * half).into();
-                    let new_a_im: [f32; 8] = ((sum_im - diff_im) * half).into();
-                    let new_b_re: [f32; 8] = ((sum_re + diff_re) * half).into();
-                    let new_b_im: [f32; 8] = ((sum_im + diff_im) * half).into();
+                    let new_a_re: [f32; 8] = ((sum_re + sum_im) * half).into();
+                    let new_a_im: [f32; 8] = ((sum_im - sum_re) * half).into();
+                    let new_b_re: [f32; 8] = ((-diff_re - diff_im) * half).into();
+                    let new_b_im: [f32; 8] = ((diff_re - diff_im) * half).into();
 
                     self.real[j..j + 8].copy_from_slice(&new_a_re);
                     self.imag[j..j + 8].copy_from_slice(&new_a_im);
@@ -834,10 +765,10 @@ where
                     let diff_re = a_re - b_re;
                     let diff_im = a_im - b_im;
 
-                    self.real[j] = (sum_re - diff_re) * 0.5;
-                    self.imag[j] = (sum_im - diff_im) * 0.5;
-                    self.real[paired_j] = (sum_re + diff_re) * 0.5;
-                    self.imag[paired_j] = (sum_im + diff_im) * 0.5;
+                    self.real[j] = (sum_re + sum_im) * 0.5;
+                    self.imag[j] = (sum_im - sum_re) * 0.5;
+                    self.real[paired_j] = (-diff_re - diff_im) * 0.5;
+                    self.imag[paired_j] = (diff_re - diff_im) * 0.5;
                 }
             }
         }
@@ -973,6 +904,41 @@ where
         self
     }
 
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::H2);
+        }
+        self
+    }
+
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::H3);
+        }
+        self
+    }
+
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::H4);
+        }
+        self
+    }
+
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::H5);
+        }
+        self
+    }
+
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::H6);
+        }
+        self
+    }
+
     #[inline]
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -1093,6 +1059,48 @@ where
     fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             self.queue_gate(q.index(), &gate_matrices_32::FDG);
+        }
+        self
+    }
+
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::F2);
+        }
+        self
+    }
+
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::F2DG);
+        }
+        self
+    }
+
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::F3);
+        }
+        self
+    }
+
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::F3DG);
+        }
+        self
+    }
+
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::F4);
+        }
+        self
+    }
+
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::F4DG);
         }
         self
     }
@@ -1354,6 +1362,41 @@ where
 
         for &q in qubits {
             self.queue_gate(q.index(), &matrix);
+        }
+        self
+    }
+
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let (sin, cos) = phase.sin_cos();
+        #[allow(clippy::cast_possible_truncation)]
+        let (sin, cos) = (sin as f32, cos as f32);
+        let matrix = Complex2x2_32 {
+            a_re: cos,
+            a_im: sin,
+            b_re: 0.0,
+            b_im: 0.0,
+            c_re: 0.0,
+            c_im: 0.0,
+            d_re: cos,
+            d_im: sin,
+        };
+
+        for &q in qubits {
+            self.queue_gate(q.index(), &matrix);
+        }
+        self
+    }
+
+    fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::T);
+        }
+        self
+    }
+
+    fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.queue_gate(q.index(), &gate_matrices_32::TDG);
         }
         self
     }

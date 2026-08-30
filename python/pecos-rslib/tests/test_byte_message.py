@@ -79,7 +79,7 @@ def test_byte_message_parameterized_gates() -> None:
     # Add some parameterized gates
     builder.rz(0.5, [0])
     builder.rzz(0.25, [(0, 1)])
-    builder.r1xy(0.3, 0.4, [2])
+    builder.rxy1q(0.3, 0.4, [2])
 
     # Build the message
     message = builder.build()
@@ -100,7 +100,7 @@ def test_byte_message_parameterized_gates() -> None:
     assert ops[1]["qubits"] == [0, 1]
     assert math.isclose(ops[1]["angles"][0], 0.25)
 
-    assert ops[2]["gate_type"] == "R1XY"
+    assert ops[2]["gate_type"] == "RXY1Q"
     assert ops[2]["qubits"] == [2]
     assert math.isclose(ops[2]["angles"][0], 0.3)
     assert math.isclose(ops[2]["angles"][1], 0.4)

@@ -228,7 +228,7 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
                                         writeln!(output, "    Theta: {theta}").unwrap();
                                     }
                                 36
-                                    // R1XY
+                                    // RXY1Q
                                     if params_offset + 2 * size_of::<f64>() <= payload.len() => {
                                         let phi = f64::from_le_bytes([
                                             payload[params_offset],

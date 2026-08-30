@@ -682,7 +682,7 @@ impl QisEngine {
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RXY(theta, phi, qubit) => {
-                            builder.r1xy(
+                            builder.rxy1q(
                                 Angle64::from_radians(*theta),
                                 Angle64::from_radians(*phi),
                                 &[self.mapped_qubit(*qubit, qop)?],
@@ -837,7 +837,7 @@ impl QisEngine {
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RXY(theta, phi, qubit) => {
-                        builder.r1xy(
+                        builder.rxy1q(
                             Angle64::from_radians(theta),
                             Angle64::from_radians(phi),
                             &[qubit],
@@ -2125,7 +2125,7 @@ mod tests {
         let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(1)));
         let mut builder = ByteMessage::quantum_operations_builder();
         builder.pz(&[0]);
-        builder.r1xy(
+        builder.rxy1q(
             Angle64::from_radians(std::f64::consts::FRAC_PI_2),
             Angle64::from_radians(3.0 * std::f64::consts::FRAC_PI_2),
             &[0],

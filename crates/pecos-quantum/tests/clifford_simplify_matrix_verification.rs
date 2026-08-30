@@ -314,74 +314,74 @@ fn crz_pi_twice_equiv_cz_squared() {
 }
 
 // ---------------------------------------------------------------------------
-// R1XY simplifications (build from RX/RY rotation operators)
+// RXY1Q simplifications (build from RX/RY rotation operators)
 // ---------------------------------------------------------------------------
 
-/// R1XY(theta, phi) = exp(-i theta/2 (cos(phi) X + sin(phi) Y)).
+/// RXY1Q(theta, phi) = exp(-i theta/2 (cos(phi) X + sin(phi) Y)).
 /// For Clifford angles of phi (0, pi/2, pi, 3pi/2), this reduces to:
 ///   phi=0 or pi  -> rotation about X axis -> equivalent to RX(theta)
 ///   phi=pi/2 or 3pi/2 -> rotation about Y axis -> equivalent to RY(theta)
 
 #[test]
-fn r1xy_pi_zero_equiv_x() {
-    // R1XY(pi, 0) = rotation by pi about X = X
+fn rxy1q_pi_zero_equiv_x() {
+    // RXY1Q(pi, 0) = rotation by pi about X = X
     let rx = RX(Angle64::HALF_TURN, 0);
     let x = X(0);
-    assert!(unitaries_equiv(&rx, &x), "R1XY(pi, 0) should equal X");
+    assert!(unitaries_equiv(&rx, &x), "RXY1Q(pi, 0) should equal X");
 }
 
 #[test]
-fn r1xy_pi_half_equiv_y() {
-    // R1XY(pi, pi/2) = rotation by pi about Y = Y
+fn rxy1q_pi_half_equiv_y() {
+    // RXY1Q(pi, pi/2) = rotation by pi about Y = Y
     let ry = RY(Angle64::HALF_TURN, 0);
     let y = Y(0);
-    assert!(unitaries_equiv(&ry, &y), "R1XY(pi, pi/2) should equal Y");
+    assert!(unitaries_equiv(&ry, &y), "RXY1Q(pi, pi/2) should equal Y");
 }
 
 #[test]
-fn r1xy_quarter_zero_equiv_sx() {
-    // R1XY(pi/2, 0) = RX(pi/2) = SX
+fn rxy1q_quarter_zero_equiv_sx() {
+    // RXY1Q(pi/2, 0) = RX(pi/2) = SX
     let rx = RX(Angle64::QUARTER_TURN, 0);
     let sx = SX(0);
-    assert!(unitaries_equiv(&rx, &sx), "R1XY(pi/2, 0) should equal SX");
+    assert!(unitaries_equiv(&rx, &sx), "RXY1Q(pi/2, 0) should equal SX");
 }
 
 #[test]
-fn r1xy_three_quarter_zero_equiv_sxdg() {
-    // R1XY(3pi/2, 0) = RX(3pi/2) = SXdg
+fn rxy1q_three_quarter_zero_equiv_sxdg() {
+    // RXY1Q(3pi/2, 0) = RX(3pi/2) = SXdg
     let rx = RX(Angle64::THREE_QUARTERS_TURN, 0);
     let sxdg = SX(0).dg();
     assert!(
         unitaries_equiv(&rx, &sxdg),
-        "R1XY(3pi/2, 0) should equal SXdg"
+        "RXY1Q(3pi/2, 0) should equal SXdg"
     );
 }
 
 #[test]
-fn r1xy_quarter_half_equiv_sy() {
-    // R1XY(pi/2, pi/2) = RY(pi/2) = SY
+fn rxy1q_quarter_half_equiv_sy() {
+    // RXY1Q(pi/2, pi/2) = RY(pi/2) = SY
     let ry = RY(Angle64::QUARTER_TURN, 0);
     let sy = SY(0);
     assert!(
         unitaries_equiv(&ry, &sy),
-        "R1XY(pi/2, pi/2) should equal SY"
+        "RXY1Q(pi/2, pi/2) should equal SY"
     );
 }
 
 #[test]
-fn r1xy_three_quarter_half_equiv_sydg() {
-    // R1XY(3pi/2, pi/2) = RY(3pi/2) = SYdg
+fn rxy1q_three_quarter_half_equiv_sydg() {
+    // RXY1Q(3pi/2, pi/2) = RY(3pi/2) = SYdg
     let ry = RY(Angle64::THREE_QUARTERS_TURN, 0);
     let sydg = SY(0).dg();
     assert!(
         unitaries_equiv(&ry, &sydg),
-        "R1XY(3pi/2, pi/2) should equal SYdg"
+        "RXY1Q(3pi/2, pi/2) should equal SYdg"
     );
 }
 
-// Negated-axis equivalences: R1XY(pi, pi) should equal X (rotation about -X = X up to phase)
+// Negated-axis equivalences: RXY1Q(pi, pi) should equal X (rotation about -X = X up to phase)
 #[test]
-fn r1xy_pi_negx_equiv_x() {
+fn rxy1q_pi_negx_equiv_x() {
     // R(-X, pi) = exp(-i pi/2 (-X)) = exp(i pi/2 X) = cos(pi/2) I + i sin(pi/2) X = iX
     // iX = X up to global phase
     let rx_neg = RX(-Angle64::HALF_TURN, 0);

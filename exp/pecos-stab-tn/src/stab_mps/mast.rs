@@ -322,6 +322,46 @@ impl Mast {
         self.inject_magic_state(theta, q);
     }
 
+    /// Apply RZ through the full tableau-to-MPS Pauli decomposition, including
+    /// at Clifford angles. This retains the state-dependent scalar required
+    /// when the rotation is part of a phase-fixed gate.
+    fn rz_apply_decomposed(&mut self, theta: Angle64, q: usize) {
+        if theta == Angle64::ZERO {
+            return;
+        }
+        let (sin_half, cos_half) = theta.half_angle_sin_cos();
+        super::expect_mps_operation(
+            non_clifford::apply_rz_stab_mps(
+                &mut self.tableau,
+                &mut self.mps,
+                cos_half,
+                sin_half,
+                q,
+                true,
+                &mut non_clifford::RzContext {
+                    disent_flags: &mut self.disent_flags,
+                    deferred_ops: &[],
+                    numerical_flag_redetection: self.numerical_flag_redetection,
+                    gf2_matrix: &mut self.gf2_matrix,
+                    stats: &mut self.stats,
+                    saturation_telemetry: None,
+                },
+            ),
+            "Mast::rz decomposed update",
+        );
+    }
+
+    /// Flush a merged RZ and apply a new one without projective Clifford
+    /// shortcuts. This is the exact rotation primitive used by phase-fixed U.
+    fn rz_apply_phase_exact(&mut self, theta: Angle64, q: usize) {
+        if self.merge_rz
+            && let Some(pending) = self.pending_rz[q].take()
+        {
+            self.rz_apply_decomposed(pending, q);
+        }
+        self.rz_apply_decomposed(theta, q);
+    }
+
     /// Materialize all pending merged RZ rotations. Public; useful before read
     /// operations.
     pub fn flush(&mut self) {
@@ -809,6 +849,41 @@ impl ArbitraryRotationGateable for Mast {
         self
     }
 
+    fn u(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[QubitId],
+    ) -> &mut Self {
+        for &q in qubits {
+            self.rz_apply_phase_exact(lambda, q.index());
+        }
+
+        self.szdg(qubits);
+        self.h(qubits);
+        for &q in qubits {
+            self.rz_apply_phase_exact(theta, q.index());
+        }
+        self.h(qubits);
+        self.sz(qubits);
+
+        for &q in qubits {
+            self.rz_apply_phase_exact(phi, q.index());
+        }
+        let phase =
+            Angle64::from_radians((lambda.to_radians_signed() + phi.to_radians_signed()) / 2.0);
+        self.apply_global_phase(phase, qubits)
+    }
+
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let scalar = Complex64::from_polar(1.0, phase.to_radians_signed());
+        for _ in qubits {
+            self.global_phase *= scalar;
+        }
+        self
+    }
+
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q0, q1) in pairs {
             self.cx(&[(q0, q1)]);
@@ -822,10 +897,95 @@ impl ArbitraryRotationGateable for Mast {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stab_mps::StabMps;
     use approx::assert_relative_eq;
+    use pecos_core::Clifford;
 
     fn assert_mast_disent_flags_sound(mast: &Mast, context: &str) {
         super::super::assert_disent_flags_match_stored_mps(&mast.mps, &mast.disent_flags, context);
+    }
+
+    fn mast_state_vector_without_ancillas(mast: &Mast) -> Vec<Complex64> {
+        assert_eq!(mast.total_qubits, mast.num_data_qubits);
+        let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+        view.tableau = mast.tableau.clone();
+        view.mps = mast.mps.clone();
+        view.global_phase = mast.global_phase;
+        view.state_vector()
+    }
+
+    #[test]
+    fn u_phase_family_is_exact() {
+        for (lambda, expected_high, label) in [
+            (Angle64::ZERO, Complex64::new(1.0, 0.0), "I"),
+            (
+                Angle64::QUARTER_TURN / 2u64,
+                Complex64::new(
+                    std::f64::consts::FRAC_1_SQRT_2,
+                    std::f64::consts::FRAC_1_SQRT_2,
+                ),
+                "T",
+            ),
+            (Angle64::QUARTER_TURN, Complex64::new(0.0, 1.0), "SZ"),
+            (Angle64::HALF_TURN, Complex64::new(-1.0, 0.0), "Z"),
+        ] {
+            for basis in 0..=1 {
+                let mut sim = Mast::new(1, 0);
+                if basis == 1 {
+                    sim.x(&[QubitId(0)]);
+                }
+                sim.u(Angle64::ZERO, Angle64::ZERO, lambda, &[QubitId(0)]);
+                let actual = mast_state_vector_without_ancillas(&sim);
+                let expected = if basis == 0 {
+                    [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)]
+                } else {
+                    [Complex64::new(0.0, 0.0), expected_high]
+                };
+                for row in 0..2 {
+                    assert!(
+                        (actual[row] - expected[row]).norm() < 1e-12,
+                        "U phase-family {label}, column={basis}, row={row}: expected {}, got {}",
+                        expected[row],
+                        actual[row]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn u_matches_documented_matrix() {
+        let theta = Angle64::from_radians(0.73);
+        let phi = Angle64::from_radians(-0.41);
+        let lambda = Angle64::from_radians(1.17);
+        let theta_rad = theta.to_radians_signed();
+        let phi_rad = phi.to_radians_signed();
+        let lambda_rad = lambda.to_radians_signed();
+        let c = (theta_rad / 2.0).cos();
+        let s = (theta_rad / 2.0).sin();
+        let expected_columns = [
+            [Complex64::new(c, 0.0), Complex64::from_polar(s, phi_rad)],
+            [
+                -Complex64::from_polar(s, lambda_rad),
+                Complex64::from_polar(c, lambda_rad + phi_rad),
+            ],
+        ];
+
+        for (basis, expected) in expected_columns.iter().enumerate() {
+            let mut sim = Mast::new(1, 0).with_merge_rz(true);
+            if basis == 1 {
+                sim.x(&[QubitId(0)]);
+            }
+            sim.u(theta, phi, lambda, &[QubitId(0)]);
+            let actual = mast_state_vector_without_ancillas(&sim);
+            for (row, &expected_amplitude) in expected.iter().enumerate() {
+                assert!(
+                    (actual[row] - expected_amplitude).norm() < 1e-10,
+                    "column={basis}, row={row}: expected {expected_amplitude}, got {}",
+                    actual[row]
+                );
+            }
+        }
     }
 
     fn project_next_and_assert(mast: &mut Mast, context: &str) {
@@ -865,6 +1025,92 @@ mod tests {
         let measurements = mast.mz(&qubits);
 
         assert_eq!(measurements.len(), qubits.len());
+    }
+
+    #[test]
+    fn test_global_phase_hook_accumulates_once_per_target() {
+        let mut mast = Mast::new(2, 0);
+        mast.apply_global_phase(Angle64::QUARTER_TURN / 4u64, &[QubitId(0), QubitId(1)]);
+        let expected = Complex64::from_polar(1.0, std::f64::consts::FRAC_PI_4);
+        assert!((mast.global_phase - expected).norm() < 1e-12);
+    }
+
+    fn apply_single_qubit_clifford(mast: &mut Mast, gate: Clifford, qubits: &[QubitId]) {
+        match gate {
+            Clifford::I => mast.identity(qubits),
+            Clifford::X => mast.x(qubits),
+            Clifford::Y => mast.y(qubits),
+            Clifford::Z => mast.z(qubits),
+            Clifford::H => mast.h(qubits),
+            Clifford::H2 => mast.h2(qubits),
+            Clifford::H3 => mast.h3(qubits),
+            Clifford::H4 => mast.h4(qubits),
+            Clifford::H5 => mast.h5(qubits),
+            Clifford::H6 => mast.h6(qubits),
+            Clifford::SX => mast.sx(qubits),
+            Clifford::SXdg => mast.sxdg(qubits),
+            Clifford::SY => mast.sy(qubits),
+            Clifford::SYdg => mast.sydg(qubits),
+            Clifford::SZ => mast.sz(qubits),
+            Clifford::SZdg => mast.szdg(qubits),
+            Clifford::F => mast.f(qubits),
+            Clifford::Fdg => mast.fdg(qubits),
+            Clifford::F2 => mast.f2(qubits),
+            Clifford::F2dg => mast.f2dg(qubits),
+            Clifford::F3 => mast.f3(qubits),
+            Clifford::F3dg => mast.f3dg(qubits),
+            Clifford::F4 => mast.f4(qubits),
+            Clifford::F4dg => mast.f4dg(qubits),
+            _ => panic!("expected a single-qubit Clifford, got {gate}"),
+        };
+    }
+
+    fn single_qubit_clifford_order(gate: Clifford) -> usize {
+        let mut power = Clifford::I;
+        for order in 1..=4 {
+            power = gate.compose(power);
+            if power == Clifford::I {
+                return order;
+            }
+        }
+        panic!("single-qubit Clifford {gate} has order greater than four");
+    }
+
+    fn mast_state_vector(mast: &Mast) -> Vec<Complex64> {
+        let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+        view.tableau = mast.tableau.clone();
+        view.mps = mast.mps.clone();
+        view.global_phase = mast.global_phase;
+        view.state_vector()
+    }
+
+    #[test]
+    fn test_mast_clifford_powers_restore_observable_state_phase_exactly() {
+        let mut failures = Vec::new();
+        for &gate in Clifford::all_1q() {
+            let mut mast = Mast::new(2, 0);
+            mast.h(&[QubitId(0)])
+                .sz(&[QubitId(0)])
+                .cx(&[(QubitId(0), QubitId(1))]);
+            let expected = mast_state_vector(&mast);
+            for _ in 0..single_qubit_clifford_order(gate) {
+                apply_single_qubit_clifford(&mut mast, gate, &[QubitId(0)]);
+            }
+            let actual = mast_state_vector(&mast);
+            let error = actual
+                .iter()
+                .zip(&expected)
+                .map(|(actual, expected)| (actual - expected).norm())
+                .fold(0.0, f64::max);
+            if error > 1e-10 {
+                failures.push((gate, error));
+            }
+        }
+        eprintln!(
+            "Mast: {}/24 exact; failures={failures:?}",
+            24 - failures.len()
+        );
+        assert!(failures.is_empty(), "Mast phase failures: {failures:?}");
     }
 
     #[test]
@@ -1560,7 +1806,7 @@ mod tests {
             // Magic state injection for T on q0:
             tab.h(&[QubitId(2)]); // ancilla in |+>
             tab.sz(&[QubitId(2)]); // S on ancilla (half of T = S*T^{1/2}... wait, we need T)
-            // Actually, SparseStabY can't do T. Let me use T = RZ(pi/4) via the Clifford S.
+            // SparseStabY cannot apply T; use the projectively equivalent RZ(pi/4).
             // T|+> via Clifford: not possible. T is non-Clifford.
             // In the SparseStabY world, we can test the protocol with S instead of T.
             // S|+> = (|0> + i|1>)/sqrt(2)

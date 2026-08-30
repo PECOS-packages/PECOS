@@ -308,7 +308,7 @@ fn qasm_gate_to_phir(name: &str) -> Result<String, String> {
         "ry" => "RY",
         "rz" => "RZ",
         "rzz" | "zzphase" => "RZZ",
-        "r1xy" | "u1q" => "R1XY",
+        "rxy1q" | "r1xy" | "u1q" => "R1XY",
         "u" | "u3" => "U",
         "reset" => "Init",
         other => return Err(format!("Unsupported QASM gate: {other}")),
@@ -337,7 +337,7 @@ fn gate_type_to_phir(gt: GateType) -> Result<String, String> {
         GateType::RX => "RX",
         GateType::RY => "RY",
         GateType::RZ => "RZ",
-        GateType::R1XY => "R1XY",
+        GateType::RXY1Q => "R1XY",
         GateType::U => "U",
         GateType::CX => "CX",
         GateType::CY => "CY",
@@ -661,6 +661,39 @@ mod tests {
         let ops = get_ops(&phir);
         let rz = ops.iter().find(|o| o["qop"] == "RZ").unwrap();
         assert!(rz.get("angles").is_some());
+    }
+
+    #[test]
+    fn xy_plane_rotation_aliases_emit_phir_json_r1xy() {
+        let programs = [
+            r#"
+                OPENQASM 2.0;
+                include "pecos.inc";
+                qreg q[1];
+                rxy1q(pi/2, 0) q[0];
+            "#,
+            r#"
+                OPENQASM 2.0;
+                include "pecos.inc";
+                qreg q[1];
+                r1xy(pi/2, 0) q[0];
+            "#,
+            r#"
+                OPENQASM 2.0;
+                include "hqslib1.inc";
+                qreg q[1];
+                U1q(pi/2, 0) q[0];
+            "#,
+        ];
+
+        for qasm in programs {
+            let phir = convert(qasm);
+            let qop = get_ops(&phir)
+                .iter()
+                .find_map(|op| op.get("qop").and_then(Value::as_str))
+                .unwrap();
+            assert_eq!(qop, "R1XY");
+        }
     }
 
     #[test]

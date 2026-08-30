@@ -317,12 +317,12 @@ fn test_processor_rz_gate() {
 }
 
 #[test]
-fn test_processor_r1xy_gate() {
+fn test_processor_rxy1q_gate() {
     let mut processor = PhirProcessor::new();
     let mut builder = ByteMessageBuilder::new();
 
-    let r1xy_instr = instr(
-        Operation::Quantum(QuantumOp::R1XY(
+    let rxy1q_instr = instr(
+        Operation::Quantum(QuantumOp::RXY1Q(
             Angle64::from_radians(std::f64::consts::FRAC_PI_2),
             Angle64::ZERO,
         )),
@@ -331,7 +331,7 @@ fn test_processor_r1xy_gate() {
         vec![Type::Qubit],
     );
 
-    let result = processor.process_instruction(&r1xy_instr, &mut builder);
+    let result = processor.process_instruction(&rxy1q_instr, &mut builder);
     assert!(result.is_ok());
     assert!(result.unwrap());
 }
@@ -482,15 +482,18 @@ fn test_processor_cz_gate() {
 // ──────────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_processor_s_sdg_t_tdg_gates() {
+fn test_processor_named_phase_sensitive_gates() {
     let mut processor = PhirProcessor::new();
     let mut builder = ByteMessageBuilder::new();
+    let _ = builder.for_quantum_operations();
 
     for (op, name) in [
         (QuantumOp::S, "S"),
         (QuantumOp::Sdg, "Sdg"),
         (QuantumOp::T, "T"),
         (QuantumOp::Tdg, "Tdg"),
+        (QuantumOp::SX, "SX"),
+        (QuantumOp::SXdg, "SXdg"),
     ] {
         let gate_instr = instr(Operation::Quantum(op), vec![0], vec![10], vec![Type::Qubit]);
         let result = processor.process_instruction(&gate_instr, &mut builder);
@@ -500,6 +503,21 @@ fn test_processor_s_sdg_t_tdg_gates() {
             "{name} gate should produce quantum instructions"
         );
     }
+
+    let ops = builder.build().quantum_ops().unwrap();
+    assert_eq!(ops.len(), 6);
+    assert_eq!(
+        ops.iter().map(|op| op.gate_type).collect::<Vec<_>>(),
+        [
+            pecos_core::gate_type::GateType::SZ,
+            pecos_core::gate_type::GateType::SZdg,
+            pecos_core::gate_type::GateType::T,
+            pecos_core::gate_type::GateType::Tdg,
+            pecos_core::gate_type::GateType::SX,
+            pecos_core::gate_type::GateType::SXdg,
+        ]
+    );
+    assert!(ops.iter().all(|op| op.angles.is_empty()));
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1656,7 +1674,7 @@ fn test_engine_classical_only_module() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn test_engine_rz_rxy_module() -> Result<(), Box<dyn std::error::Error>> {
-    // Build a module with Alloc, RZ, R1XY, Measure, Dealloc
+    // Build a module with Alloc, RZ, RXY1Q, Measure, Dealloc
     let instructions = vec![
         instr(
             Operation::Quantum(QuantumOp::Alloc),
@@ -1673,7 +1691,7 @@ fn test_engine_rz_rxy_module() -> Result<(), Box<dyn std::error::Error>> {
             vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::R1XY(
+            Operation::Quantum(QuantumOp::RXY1Q(
                 Angle64::from_radians(std::f64::consts::FRAC_PI_2),
                 Angle64::ZERO,
             )),

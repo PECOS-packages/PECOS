@@ -298,9 +298,9 @@ impl CommandBuilder {
         self
     }
 
-    /// Add R1XY rotation gates with two angles (theta, phi).
+    /// Add RXY1Q rotation gates with two angles (theta, phi).
     #[must_use]
-    pub fn r1xy(
+    pub fn rxy1q(
         mut self,
         qubits: &[impl Into<QubitId> + Copy],
         theta: impl Into<Angle64> + Copy,
@@ -308,7 +308,7 @@ impl CommandBuilder {
     ) -> Self {
         for &q in qubits {
             self.queue.push(GateCommand::with_angles(
-                GateType::R1XY,
+                GateType::RXY1Q,
                 smallvec::smallvec![q.into()],
                 smallvec::smallvec![theta.into(), phi.into()],
             ));

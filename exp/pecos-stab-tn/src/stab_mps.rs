@@ -3352,10 +3352,17 @@ impl StabMps {
             self.tableau.szdg(&[qid]);
             return;
         }
-        // Non-Clifford
-        let half_rad = theta.to_radians_signed() / 2.0;
-        let cos_half = half_rad.cos();
-        let sin_half = half_rad.sin();
+        self.rz_apply_decomposed(theta, q);
+    }
+
+    /// Apply RZ through the full tableau-to-MPS Pauli decomposition, including
+    /// at Clifford angles. Unlike the tableau shortcuts, this path retains the
+    /// state-dependent scalar needed when RZ is part of a phase-fixed gate.
+    fn rz_apply_decomposed(&mut self, theta: Angle64, q: usize) {
+        if theta == Angle64::ZERO {
+            return;
+        }
+        let (sin_half, cos_half) = theta.half_angle_sin_cos();
         expect_mps_operation(
             non_clifford::apply_rz_stab_mps(
                 &mut self.tableau,
@@ -3381,9 +3388,20 @@ impl StabMps {
                         .then_some(&mut self.saturation_telemetry),
                 },
             ),
-            "StabMps::rz non-Clifford update",
+            "StabMps::rz decomposed update",
         );
         self.maybe_grow_bond_dim();
+    }
+
+    /// Flush a merged RZ and apply a new one without projective Clifford
+    /// shortcuts. This is the exact rotation primitive used by phase-fixed U.
+    fn rz_apply_phase_exact(&mut self, theta: Angle64, q: usize) {
+        if self.flags.merge_rz()
+            && let Some(pending) = self.pending_rz[q].take()
+        {
+            self.rz_apply_decomposed(pending, q);
+        }
+        self.rz_apply_decomposed(theta, q);
     }
 
     /// Measure qubit q in the Z basis using the shared STN measurement protocol.
@@ -3668,6 +3686,43 @@ impl ArbitraryRotationGateable for StabMps {
         self
     }
 
+    fn u(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[QubitId],
+    ) -> &mut Self {
+        for &q in qubits {
+            self.rz_apply_phase_exact(lambda, q.index());
+        }
+
+        // RY(theta) = Sdg H RZ(theta) H S. The central rotation uses the
+        // amplitude-exact decomposition instead of a projective shortcut.
+        self.szdg(qubits);
+        self.h(qubits);
+        for &q in qubits {
+            self.rz_apply_phase_exact(theta, q.index());
+        }
+        self.h(qubits);
+        self.sz(qubits);
+
+        for &q in qubits {
+            self.rz_apply_phase_exact(phi, q.index());
+        }
+        let phase =
+            Angle64::from_radians((lambda.to_radians_signed() + phi.to_radians_signed()) / 2.0);
+        self.apply_global_phase(phase, qubits)
+    }
+
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let scalar = Complex64::from_polar(1.0, phase.to_radians_signed());
+        for _ in qubits {
+            self.global_phase *= scalar;
+        }
+        self
+    }
+
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // RZZ(theta) = CX * RZ_target(theta) * CX
         for &(q0, q1) in pairs {
@@ -3683,13 +3738,214 @@ impl ArbitraryRotationGateable for StabMps {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use pecos_simulators::StabVec;
+    use pecos_core::Clifford;
+    use pecos_simulators::{CHForm, StabVec};
 
     #[test]
     fn test_stn_initial_state() {
         let stn = StabMps::new(2);
         assert_eq!(stn.num_qubits(), 2);
         assert_eq!(stn.max_bond_dim(), 1);
+    }
+
+    fn apply_single_qubit_clifford<S: CliffordGateable>(
+        sim: &mut S,
+        gate: Clifford,
+        qubits: &[QubitId],
+    ) {
+        match gate {
+            Clifford::I => sim.identity(qubits),
+            Clifford::X => sim.x(qubits),
+            Clifford::Y => sim.y(qubits),
+            Clifford::Z => sim.z(qubits),
+            Clifford::H => sim.h(qubits),
+            Clifford::H2 => sim.h2(qubits),
+            Clifford::H3 => sim.h3(qubits),
+            Clifford::H4 => sim.h4(qubits),
+            Clifford::H5 => sim.h5(qubits),
+            Clifford::H6 => sim.h6(qubits),
+            Clifford::SX => sim.sx(qubits),
+            Clifford::SXdg => sim.sxdg(qubits),
+            Clifford::SY => sim.sy(qubits),
+            Clifford::SYdg => sim.sydg(qubits),
+            Clifford::SZ => sim.sz(qubits),
+            Clifford::SZdg => sim.szdg(qubits),
+            Clifford::F => sim.f(qubits),
+            Clifford::Fdg => sim.fdg(qubits),
+            Clifford::F2 => sim.f2(qubits),
+            Clifford::F2dg => sim.f2dg(qubits),
+            Clifford::F3 => sim.f3(qubits),
+            Clifford::F3dg => sim.f3dg(qubits),
+            Clifford::F4 => sim.f4(qubits),
+            Clifford::F4dg => sim.f4dg(qubits),
+            _ => panic!("expected a single-qubit Clifford, got {gate}"),
+        };
+    }
+
+    fn single_qubit_clifford_order(gate: Clifford) -> usize {
+        let mut power = Clifford::I;
+        for order in 1..=4 {
+            power = gate.compose(power);
+            if power == Clifford::I {
+                return order;
+            }
+        }
+        panic!("single-qubit Clifford {gate} has order greater than four");
+    }
+
+    fn state_vector_max_error(actual: &[Complex64], expected: &[Complex64]) -> f64 {
+        actual
+            .iter()
+            .zip(expected)
+            .map(|(actual, expected)| (actual - expected).norm())
+            .fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn test_stab_mps_clifford_powers_restore_observable_state_phase_exactly() {
+        let mut failures = Vec::new();
+        for &gate in Clifford::all_1q() {
+            let mut sim = StabMps::new(2);
+            sim.h(&[QubitId(0)])
+                .sz(&[QubitId(0)])
+                .cx(&[(QubitId(0), QubitId(1))]);
+            let expected = sim.state_vector();
+            for _ in 0..single_qubit_clifford_order(gate) {
+                apply_single_qubit_clifford(&mut sim, gate, &[QubitId(0)]);
+            }
+            let error = state_vector_max_error(&sim.state_vector(), &expected);
+            if error > 1e-10 {
+                failures.push((gate, error));
+            }
+        }
+        eprintln!(
+            "StabMps: {}/24 exact; failures={failures:?}",
+            24 - failures.len()
+        );
+        assert!(failures.is_empty(), "StabMps phase failures: {failures:?}");
+    }
+
+    #[test]
+    fn test_ch_form_clifford_powers_restore_observable_state_phase_exactly() {
+        let mut failures = Vec::new();
+        for &gate in Clifford::all_1q() {
+            let mut sim = CHForm::new(2);
+            sim.h(&[QubitId(0)])
+                .sz(&[QubitId(0)])
+                .cx(&[(QubitId(0), QubitId(1))]);
+            let expected = sim.state_vector();
+            for _ in 0..single_qubit_clifford_order(gate) {
+                apply_single_qubit_clifford(&mut sim, gate, &[QubitId(0)]);
+            }
+            let error = state_vector_max_error(&sim.state_vector(), &expected);
+            if error > 1e-10 {
+                failures.push((gate, error));
+            }
+        }
+        eprintln!(
+            "CHForm: {}/24 exact; failures={failures:?}",
+            24 - failures.len()
+        );
+        assert!(failures.is_empty(), "CHForm phase failures: {failures:?}");
+    }
+
+    fn assert_state_vectors_equal(lhs: &mut StabMps, rhs: &mut StabMps, context: &str) {
+        lhs.flush();
+        rhs.flush();
+        for (index, (lhs, rhs)) in lhs
+            .state_vector()
+            .iter()
+            .zip(rhs.state_vector())
+            .enumerate()
+        {
+            assert!(
+                (*lhs - rhs).norm() < 1e-10,
+                "{context}, basis {index}: lhs={lhs}, rhs={rhs}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_conventional_t_exact_identities_and_batched_phase() {
+        let q0 = [QubitId(0)];
+        let q1 = [QubitId(1)];
+        let both = [QubitId(0), QubitId(1)];
+        let prepare = |sim: &mut StabMps| {
+            sim.h(&both).sz(&q1).cx(&[(QubitId(0), QubitId(1))]);
+        };
+        let make = || StabMps::builder(2).merge_rz(true).build();
+
+        let mut t_squared = make();
+        let mut sz = make();
+        prepare(&mut t_squared);
+        prepare(&mut sz);
+        t_squared.t(&q0).t(&q0);
+        sz.sz(&q0);
+        assert_state_vectors_equal(&mut t_squared, &mut sz, "T^2 must equal SZ exactly");
+
+        let mut t_eighth = make();
+        let mut identity = make();
+        prepare(&mut t_eighth);
+        prepare(&mut identity);
+        for _ in 0..8 {
+            t_eighth.t(&q0);
+        }
+        assert_state_vectors_equal(&mut t_eighth, &mut identity, "T^8 must equal I exactly");
+
+        let mut batched = make();
+        let mut separate = make();
+        prepare(&mut batched);
+        prepare(&mut separate);
+        batched.t(&both);
+        separate.t(&q0).t(&q1);
+        assert_state_vectors_equal(
+            &mut batched,
+            &mut separate,
+            "batched T must accumulate one scalar per target",
+        );
+
+        let mut odd_tdg = StabMps::builder(1).merge_rz(true).build();
+        odd_tdg.h(&q0).tdg(&q0);
+        odd_tdg.flush();
+        let expected = [
+            Complex64::new(std::f64::consts::FRAC_1_SQRT_2, 0.0),
+            Complex64::new(0.5, -0.5),
+        ];
+        for (index, (actual, expected)) in odd_tdg.state_vector().iter().zip(expected).enumerate() {
+            assert!(
+                (*actual - expected).norm() < 1e-10,
+                "odd Tdg, basis {index}: actual={actual}, expected={expected}"
+            );
+        }
+
+        let mut tdg_squared = make();
+        let mut szdg = make();
+        prepare(&mut tdg_squared);
+        prepare(&mut szdg);
+        tdg_squared.tdg(&q0).tdg(&q0);
+        szdg.szdg(&q0);
+        assert_state_vectors_equal(&mut tdg_squared, &mut szdg, "Tdg^2 must equal SZdg exactly");
+
+        let mut tdg_eighth = make();
+        let mut identity = make();
+        prepare(&mut tdg_eighth);
+        prepare(&mut identity);
+        for _ in 0..8 {
+            tdg_eighth.tdg(&q0);
+        }
+        assert_state_vectors_equal(&mut tdg_eighth, &mut identity, "Tdg^8 must equal I exactly");
+
+        let mut batched_tdg = make();
+        let mut separate_tdg = make();
+        prepare(&mut batched_tdg);
+        prepare(&mut separate_tdg);
+        batched_tdg.tdg(&both);
+        separate_tdg.tdg(&q0).tdg(&q1);
+        assert_state_vectors_equal(
+            &mut batched_tdg,
+            &mut separate_tdg,
+            "batched Tdg must accumulate one scalar per target",
+        );
     }
 
     #[test]
@@ -4136,9 +4392,9 @@ mod tests {
         assert!(a1.norm() < 1e-9, "a(1) should be 0, got {a1}");
     }
 
-    /// Single-qubit T|+⟩ = RZ(π/4)H|0⟩. amp(0) = e^{-iπ/8}/√2.
+    /// Single-qubit RZ(π/4)|+⟩ has amp(0) = e^{-iπ/8}/√2.
     #[test]
-    fn test_amplitude_iterative_t_plus_1q() {
+    fn test_amplitude_iterative_rz_quarter_plus_1q() {
         let q = |i: usize| QubitId(i);
         let t = Angle64::QUARTER_TURN / 2u64;
         let mut stn = StabMps::new(1);
@@ -4146,7 +4402,7 @@ mod tests {
         stn.rz(t, &[q(0)]);
         let a = stn.amplitude_iterative(&[false]);
         let s = stn.amplitude(&[false]);
-        eprintln!("T|+⟩: iter={a} sv={s}");
+        eprintln!("RZ(pi/4)|+⟩: iter={a} sv={s}");
         assert!((a - s).norm() < 1e-9);
     }
 
@@ -6821,7 +7077,8 @@ mod tests {
     #[test]
     fn test_stn_t_gate_on_zero() {
         let mut stn = StabMps::builder(1).merge_rz(false).build();
-        stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]); // T = RZ(pi/4)
+        // RZ(pi/4) is projectively equivalent to T.
+        stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         assert_eq!(stn.max_bond_dim(), 1);
     }
 
@@ -6829,9 +7086,82 @@ mod tests {
     fn test_stn_t_gate_on_plus() {
         let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
-        stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]); // T gate
+        // Projectively equivalent to T; the executed RZ retains its symmetric phase.
+        stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         assert_eq!(stn.max_bond_dim(), 1);
         assert_relative_eq!(stn.mps().norm_squared(), 1.0, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_stn_u_phase_family_is_exact() {
+        for (lambda, expected_high, label) in [
+            (Angle64::ZERO, Complex64::new(1.0, 0.0), "I"),
+            (
+                Angle64::QUARTER_TURN / 2u64,
+                Complex64::new(
+                    std::f64::consts::FRAC_1_SQRT_2,
+                    std::f64::consts::FRAC_1_SQRT_2,
+                ),
+                "T",
+            ),
+            (Angle64::QUARTER_TURN, Complex64::new(0.0, 1.0), "SZ"),
+            (Angle64::HALF_TURN, Complex64::new(-1.0, 0.0), "Z"),
+        ] {
+            let mut zero = StabMps::builder(1).merge_rz(false).build();
+            zero.u(Angle64::ZERO, Angle64::ZERO, lambda, &[QubitId(0)]);
+            let zero_state = zero.state_vector();
+            assert!((zero_state[0] - Complex64::new(1.0, 0.0)).norm() < 1e-12);
+            assert!(zero_state[1].norm() < 1e-12);
+
+            let mut one = StabMps::builder(1).merge_rz(false).build();
+            one.x(&[QubitId(0)]);
+            one.u(Angle64::ZERO, Angle64::ZERO, lambda, &[QubitId(0)]);
+            let one_state = one.state_vector();
+            assert!(one_state[0].norm() < 1e-12);
+            assert!(
+                (one_state[1] - expected_high).norm() < 1e-12,
+                "U phase-family {label}: expected {expected_high}, got {}",
+                one_state[1]
+            );
+        }
+    }
+
+    #[test]
+    fn test_stn_u_matches_documented_matrix() {
+        let theta = Angle64::from_radians(0.73);
+        let phi = Angle64::from_radians(-0.41);
+        let lambda = Angle64::from_radians(1.17);
+        let theta_rad = theta.to_radians_signed();
+        let phi_rad = phi.to_radians_signed();
+        let lambda_rad = lambda.to_radians_signed();
+        let c = (theta_rad / 2.0).cos();
+        let s = (theta_rad / 2.0).sin();
+        let expected_columns = [
+            [Complex64::new(c, 0.0), Complex64::from_polar(s, phi_rad)],
+            [
+                -Complex64::from_polar(s, lambda_rad),
+                Complex64::from_polar(c, lambda_rad + phi_rad),
+            ],
+        ];
+
+        for merge_rz in [false, true] {
+            for (basis, expected) in expected_columns.iter().enumerate() {
+                let mut sim = StabMps::builder(1).merge_rz(merge_rz).build();
+                if basis == 1 {
+                    sim.x(&[QubitId(0)]);
+                }
+                sim.u(theta, phi, lambda, &[QubitId(0)]);
+                let actual = sim.state_vector();
+                for (row, &expected_amplitude) in expected.iter().enumerate() {
+                    assert!(
+                        (actual[row] - expected_amplitude).norm() < 1e-10,
+                        "merge_rz={merge_rz}, column={basis}, row={row}: expected \
+                         {expected_amplitude}, got {}",
+                        actual[row]
+                    );
+                }
+            }
+        }
     }
 
     #[test]

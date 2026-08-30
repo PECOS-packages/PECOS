@@ -137,14 +137,13 @@ def test_every_legacy_symbol_dispatches_like_the_fixed_reference(symbol: str, tr
         assert state.faults == oracle.faults, (symbol, labels, track_sign)
         assert state.sign == oracle.sign, (symbol, labels, track_sign)
         if legacy_gate.__module__.endswith("gates_meas"):
-            # Batch false outcomes are None while per-location false outcomes are 0.
-            assert (rust_result or 0) == (legacy_result or 0), (symbol, labels, track_sign)
+            assert rust_result == legacy_result, (symbol, labels, track_sign)
 
 
-def test_zero_measurement_output_convention_depends_on_dispatch_path() -> None:
-    """Record the existing batch-versus-per-location zero-outcome convention."""
+def test_zero_measurement_output_is_consistent_across_dispatch_paths() -> None:
+    """Batch and per-location measurement paths both return explicit zeros."""
     state = RustPauliProp(1)
-    assert state.bindings["measure Z"](state, 0) is None
+    assert state.bindings["measure Z"](state, 0) == 0
     assert state.bindings["measure X"](state, 0) == 0
 
 
@@ -152,10 +151,13 @@ def test_zero_measurement_output_convention_depends_on_dispatch_path() -> None:
 def test_legacy_symbols_without_rust_meaning_are_rejected(symbol: str) -> None:
     """Legacy operations with no frame-propagation meaning never silently succeed."""
     state = PauliProp(num_qubits=2)
+    assert symbol not in state.bindings
+    with pytest.raises(KeyError, match=symbol):
+        state.bindings[symbol]
     with pytest.raises(ValueError, match="Unsupported gate"):
-        state.bindings[symbol](state, 0)
+        RustPauliProp(2).run_gate(symbol, {0})
     with pytest.raises(ValueError, match="Unsupported gate"):
-        state.bindings[symbol](state, 0, simulate_gate=False)
+        RustPauliProp(2).run_gate(symbol, {0}, simulate_gate=False)
 
 
 def test_clifford_rotations_lower_through_bindings() -> None:

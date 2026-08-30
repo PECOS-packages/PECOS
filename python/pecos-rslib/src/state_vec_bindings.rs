@@ -1,4 +1,4 @@
-// Copyright 2024 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 use crate::dtypes::AngleParam;
 use crate::prelude::*;
 //
@@ -17,12 +17,90 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyDict, PySet, PyTuple};
 
 use crate::pecos_array::Array;
-use crate::simulator_utils::{extract_angle, extract_angles};
+use crate::simulator_utils::{
+    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_supported_symbol,
+};
 
 /// The struct represents the state-vector simulator exposed to Python
 #[pyclass(name = "StateVec", module = "pecos_rslib")]
 pub struct PyStateVec {
     inner: StateVec,
+}
+
+#[cfg(test)]
+crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
+    PyStateVec::new(2, None)
+});
+
+fn supports(entry: &SymbolEntry) -> bool {
+    supports_exact! { entry;
+        I => ["I"];
+        X => ["X"];
+        Y => ["Y"];
+        Z => ["Z"];
+        H => ["H", "H1", "H+z+x"];
+        H2 => ["H2", "H-z-x"];
+        H3 => ["H3", "H+y-z"];
+        H4 => ["H4", "H-y-z"];
+        H5 => ["H5", "H-x+y"];
+        H6 => ["H6", "H-x-y"];
+        F => ["F", "F1"];
+        Fdg => ["Fdg", "F1d", "F1dg"];
+        F2 => ["F2"];
+        F2dg => ["F2dg", "F2d"];
+        F3 => ["F3"];
+        F3dg => ["F3dg", "F3d"];
+        F4 => ["F4"];
+        F4dg => ["F4dg", "F4d"];
+        Sx => ["Q", "SX", "SqrtX"];
+        Sxdg => ["Qd", "SXdg", "SqrtXd"];
+        Sy => ["R", "SY", "SqrtY"];
+        Sydg => ["Rd", "SYdg", "SqrtYd"];
+        Sz => ["S", "SZ", "SqrtZ"];
+        Szdg => ["Sd", "SZdg", "SqrtZd"];
+        T => ["T"];
+        Tdg => ["Tdg"];
+        Pz => ["PZ"];
+        Pnz => ["PNZ"];
+        Px => ["PX"];
+        Pnx => ["PNX"];
+        Py => ["PY"];
+        Pny => ["PNY"];
+        InitZ => ["Init", "Init +Z", "init |0>", "leak", "leak |0>", "unleak |0>"];
+        InitNz => ["Init -Z", "init |1>", "leak |1>", "unleak |1>"];
+        InitX => ["Init +X", "init |+>"];
+        InitNx => ["Init -X", "init |->"];
+        InitY => ["Init +Y", "init |+i>"];
+        InitNy => ["Init -Y", "init |-i>"];
+        Mz => ["MZ"];
+        MeasureZ => ["Measure", "measure Z", "Measure +Z"];
+        Mx => ["MX", "Measure +X"];
+        My => ["MY", "Measure +Y"];
+        Rx => ["RX"];
+        Ry => ["RY"];
+        Rz => ["RZ"];
+        Rxy1q => ["RXY1Q", "R1XY"];
+        U => ["U"];
+        Cx => ["CX", "CNOT"];
+        Cy => ["CY"];
+        Cz => ["CZ"];
+        Sxx => ["SXX", "SqrtXX"];
+        Sxxdg => ["SXXdg", "SqrtXXd", "SqrtXXdg"];
+        Syy => ["SYY", "SqrtYY"];
+        Syydg => ["SYYdg", "SqrtYYd", "SqrtYYdg"];
+        Szz => ["SZZ", "SqrtZZ"];
+        Szzdg => ["SZZdg", "SqrtZZd", "SqrtZZdg"];
+        Swap => ["SWAP"];
+        G => ["G", "G2"];
+        Rxx => ["RXX"];
+        Ryy => ["RYY"];
+        Rzz => ["RZZ"];
+        RxxRyyRzz => ["RXXRYYRZZ", "RZZRYYRXX", "R2XXYYZZ", "RXXYYZZ"];
+        Ii => ["II"];
+        Crx => ["CRX"];
+        Cry => ["CRY"];
+        Crz => ["CRZ"];
+    }
 }
 
 #[pymethods]
@@ -415,6 +493,7 @@ impl PyStateVec {
     /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible)
     ///
     /// This is the main API that matches the Python wrapper behavior
+    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,
@@ -530,6 +609,8 @@ impl PyStateVec {
         py: Python<'_>,
     ) -> PyResult<Py<PyDict>> {
         let output = PyDict::new(py);
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        validate_supported_symbol(symbol, &locations_set, supports)?;
 
         // Check if simulate_gate is False
         if let Some(p) = params
@@ -538,9 +619,6 @@ impl PyStateVec {
         {
             return Ok(output.into());
         }
-
-        // Convert locations to a vector
-        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
 
         for location in locations_set.iter() {
             // Convert location to tuple
@@ -669,6 +747,8 @@ impl PyStateVec {
         // Create a Rust GateBindingsDict directly
         let py = slf.py();
         let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
-        Ok(crate::simulator_utils::GateBindingsDict::new(sim_obj))
+        Ok(crate::simulator_utils::GateBindingsDict::new(
+            sim_obj, supports,
+        ))
     }
 }

@@ -12,6 +12,7 @@ members = [
   "python/selene-plugins/pecos-selene-statevec",
   "julia/pecos-julia-ffi",
   "go/pecos-go-ffi",
+  "crates/pecos-synth",
   "crates/pecos*",
   "crates/benchmarks",
   "exp/pecos*",

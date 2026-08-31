@@ -10,6 +10,10 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+//! Environment-side conjugate gates retain the chosen `L = psi * delta`/Cholesky-shaped
+//! purification representative; because reconstruction is invariant under any unitary on the
+//! low register, these gates are a representation choice rather than a physics requirement.
+
 use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
@@ -51,6 +55,9 @@ impl Error for StateConversionError {}
 /// `DensityMatrix` represents an N-qubit density matrix as a 2N-qubit state vector,
 /// which allows reusing the state vector operations for density matrix simulation.
 /// This enables the simulation of both pure and mixed quantum states, including the effects of noise.
+/// The layout invariant is `rho[a][b] = sum_k psi[(a << n) | k] * conj(psi[(b << n) | k])`:
+/// the physical index occupies the high register and the traced environment occupies the low
+/// register.
 ///
 /// # Type Parameters
 /// * `R` - Random number generator type implementing `Rng + SeedableRng` traits
@@ -1170,17 +1177,17 @@ where
 
         for &q in qubits {
             let qubit = q.index();
-            // First calculate the probabilities of measuring 0 and 1
             let n = self.num_physical_qubits;
-            let mut prob_one = 0.0;
+            let state = self.state_vector.state();
+            let qubit_mask = 1 << qubit;
 
-            // Calculate probability of measuring 1
-            for i in 0..(1 << n) {
-                if (i & (1 << qubit)) != 0 {
-                    // This is a state where qubit is 1
-                    prob_one += self.probability(i);
-                }
-            }
+            // P(qubit = 1) is the norm on physical rows whose measured bit is set.
+            let prob_one: f64 = state
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| ((idx >> n) & qubit_mask) != 0)
+                .map(|(_, amplitude)| amplitude.norm_sqr())
+                .sum();
 
             // Determine if measurement is deterministic
             let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
@@ -1192,13 +1199,9 @@ where
                 self.state_vector.rng_mut().random_range(0.0..1.0) < prob_one
             };
 
-            // Apply the measurement projection: rho -> P_m rho P_m / Tr(P_m rho P_m)
-            // In the Choi representation, index (row << n) | col corresponds to rho_{row,col}
-            // The projector P_m zeros out rows/cols where the measured qubit doesn't match outcome
-            let qubit_mask = 1 << qubit;
+            // Apply the measurement projection to the physical/high register. The low index is a
+            // traced purification environment, not the density-matrix column, so it is untouched.
             let target_bit = if outcome { qubit_mask } else { 0 };
-
-            let sv = self.state_vector.state();
             let sv_size = 1 << (2 * n);
 
             // Create new state with projected amplitudes
@@ -1207,24 +1210,19 @@ where
 
             for idx in 0..sv_size {
                 let row = idx >> n;
-                let col = idx & ((1 << n) - 1);
-
-                // Check if both row and column have the correct qubit value
-                let row_matches = (row & qubit_mask) == target_bit;
-                let col_matches = (col & qubit_mask) == target_bit;
-
-                if row_matches && col_matches {
-                    new_state[idx] = sv[idx];
-                    norm_sq += sv[idx].norm_sqr();
+                if (row & qubit_mask) == target_bit {
+                    new_state[idx] = state[idx];
+                    norm_sq += state[idx].norm_sqr();
                 }
             }
 
-            // Renormalize the state
-            if norm_sq > 1e-15 {
-                let norm = norm_sq.sqrt();
-                for amplitude in &mut new_state {
-                    *amplitude /= norm;
-                }
+            assert!(
+                norm_sq > 1e-15,
+                "projected outcome has zero weight; sampler and projector disagree"
+            );
+            let norm = norm_sq.sqrt();
+            for amplitude in &mut new_state {
+                *amplitude /= norm;
             }
 
             // Update the state vector
@@ -1374,71 +1372,27 @@ impl crate::density_matrix_test_utils::DensityMatrixSimulator for DensityMatrix 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::StateVecAoS;
+    use crate::density_matrix_test_utils::{
+        apply_oracle_gate, assert_complex_close, seeded_oracle_circuit,
+    };
     use pecos_core::{QubitId, qid};
 
     const CONJUGATION_TOLERANCE: f64 = 1e-12;
 
-    fn assert_complex_close(actual: Complex64, expected: Complex64, tolerance: f64, label: &str) {
-        let error = (actual - expected).norm();
-        assert!(
-            error < tolerance,
-            "{label}: actual={actual}, expected={expected}, error={error}"
-        );
-    }
-
-    #[derive(Clone, Copy)]
-    enum OracleGate {
-        H(QubitId),
-        Sz(QubitId),
-        Rz(Angle64, QubitId),
-        Rx(Angle64, QubitId),
-        Ry(Angle64, QubitId),
-        Cx(QubitId, QubitId),
-        Cz(QubitId, QubitId),
-    }
-
-    fn seeded_oracle_circuit() -> Vec<OracleGate> {
-        let mut rng = PecosRng::seed_from_u64(0x607);
-        // Include every gate family, then use the seed to randomize order,
-        // operands, and the non-T rotation angles.
-        let mut kinds = [0_u8, 1, 2, 3, 4, 5, 6, 7, 0, 3, 5, 4];
-        for i in (1..kinds.len()).rev() {
-            let j = rng.random_range(0..=i);
-            kinds.swap(i, j);
+    fn assert_density_diagonal(rho: &[Vec<Complex64>], expected_diagonal: &[f64], tolerance: f64) {
+        assert_eq!(rho.len(), expected_diagonal.len());
+        for (row, rho_row) in rho.iter().enumerate() {
+            assert_eq!(rho_row.len(), expected_diagonal.len());
+            for (col, &actual) in rho_row.iter().enumerate() {
+                let expected = if row == col {
+                    Complex64::new(expected_diagonal[row], 0.0)
+                } else {
+                    Complex64::new(0.0, 0.0)
+                };
+                assert_complex_close(actual, expected, tolerance, &format!("rho[{row}][{col}]"));
+            }
         }
-
-        kinds
-            .into_iter()
-            .map(|kind| {
-                let q = QubitId(rng.random_range(0..3));
-                let other = QubitId((q.index() + rng.random_range(1..3)) % 3);
-                let angle = Angle64::from_radians(rng.random_range(-2.5..2.5));
-                match kind {
-                    0 => OracleGate::H(q),
-                    1 => OracleGate::Sz(q),
-                    // A T-equivalent symmetric RZ, as distinct from the named T gate.
-                    2 => OracleGate::Rz(Angle64::QUARTER_TURN / 2_u64, q),
-                    3 => OracleGate::Rx(angle, q),
-                    4 => OracleGate::Ry(angle, q),
-                    5 => OracleGate::Rz(angle, q),
-                    6 => OracleGate::Cx(q, other),
-                    7 => OracleGate::Cz(q, other),
-                    _ => unreachable!(),
-                }
-            })
-            .collect()
-    }
-
-    fn apply_oracle_gate<S: ArbitraryRotationGateable>(sim: &mut S, gate: OracleGate) {
-        match gate {
-            OracleGate::H(q) => sim.h(&[q]),
-            OracleGate::Sz(q) => sim.sz(&[q]),
-            OracleGate::Rz(theta, q) => sim.rz(theta, &[q]),
-            OracleGate::Rx(theta, q) => sim.rx(theta, &[q]),
-            OracleGate::Ry(theta, q) => sim.ry(theta, &[q]),
-            OracleGate::Cx(control, target) => sim.cx(&[(control, target)]),
-            OracleGate::Cz(control, target) => sim.cz(&[(control, target)]),
-        };
     }
 
     #[test]
@@ -1502,7 +1456,7 @@ mod tests {
     fn seeded_complex_circuit_matches_state_vector_outer_product() {
         let circuit = seeded_oracle_circuit();
         let mut density = DensityMatrix::new(3);
-        let mut state_vector = StateVecSoA::new(3);
+        let mut state_vector = StateVecAoS::new(3);
 
         for gate in circuit {
             apply_oracle_gate(&mut density, gate);
@@ -1521,6 +1475,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn mixed_bit_flip_measurement_preserves_environment_information() {
+        let mut density = DensityMatrix::with_seed(2, 2);
+        density
+            .h(&[QubitId(0)])
+            .cx(&[(QubitId(0), QubitId(1))])
+            .apply_bit_flip(1, 0.3);
+
+        let result = density.mz(&[QubitId(0)]);
+        assert!(!result[0].outcome);
+        assert_density_diagonal(
+            &density.get_density_matrix(),
+            &[0.7, 0.0, 0.3, 0.0],
+            CONJUGATION_TOLERANCE,
+        );
+    }
+
+    #[test]
+    fn mixed_amplitude_damping_measurement_preserves_environment_information() {
+        let mut density = DensityMatrix::with_seed(2, 1);
+        density
+            .h(&[QubitId(0)])
+            .cx(&[(QubitId(0), QubitId(1))])
+            .apply_amplitude_damping(0, 0.3);
+
+        let result = density.mz(&[QubitId(1)]);
+        assert!(result[0].outcome);
+        assert_density_diagonal(
+            &density.get_density_matrix(),
+            &[0.0, 0.0, 0.3, 0.7],
+            CONJUGATION_TOLERANCE,
+        );
+    }
+
+    #[test]
+    fn converted_state_vector_measurement_remains_normalized() {
+        let mut state_vector = StateVecSoA::new(1);
+        state_vector.x(&[QubitId(0)]);
+        let mut density = DensityMatrix::from(&state_vector);
+
+        let result = density.mz(&[QubitId(0)]);
+        assert!(result[0].outcome);
+        assert_density_diagonal(
+            &density.get_density_matrix(),
+            &[0.0, 1.0],
+            CONJUGATION_TOLERANCE,
+        );
+        assert!((density.purity() - 1.0).abs() < CONJUGATION_TOLERANCE);
     }
 
     #[test]

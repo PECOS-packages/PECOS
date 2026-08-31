@@ -11,6 +11,9 @@
 //! Each physical-qubit gate G becomes two state-vector gates: G on high qubit
 //! q+N (the physical system) and elementwise-conjugate G* on low qubit q (the
 //! traced environment).
+//! Environment-side conjugate gates retain the chosen `L = psi * delta`/Cholesky-shaped
+//! purification representative; because reconstruction is invariant under any unitary on the
+//! low register, these gates are a representation choice rather than a physics requirement.
 //!
 //! Generic over the backing GPU state vector (f32 or f64). Use the
 //! [`GpuDensityMatrix64`] alias for f64 precision (canonical) or
@@ -881,20 +884,21 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
 
             for idx in 0..sv_size {
                 let row = idx >> n;
-                let col = idx & ((1 << n) - 1);
-                if (row & qubit_mask) == target_bit && (col & qubit_mask) == target_bit {
+                if (row & qubit_mask) == target_bit {
                     new_state[idx] = state[idx];
                     let [re, im] = state[idx];
                     norm_sq += re * re + im * im;
                 }
             }
 
-            if norm_sq > 1e-15 {
-                let norm = norm_sq.sqrt();
-                for amp in &mut new_state {
-                    amp[0] /= norm;
-                    amp[1] /= norm;
-                }
+            assert!(
+                norm_sq > 1e-15,
+                "projected outcome has zero weight; sampler and projector disagree"
+            );
+            let norm = norm_sq.sqrt();
+            for amp in &mut new_state {
+                amp[0] /= norm;
+                amp[1] /= norm;
             }
 
             self.state_vector.write_state_f64(&new_state);
@@ -1005,6 +1009,9 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_simulators::density_matrix_test_utils::{
+        apply_oracle_gate, assert_complex_close, seeded_oracle_circuit,
+    };
     use pecos_simulators::{DensityMatrix, StateVecSoA};
 
     impl GpuStateVecBackend for StateVecSoA {
@@ -1039,64 +1046,57 @@ mod tests {
     const TOL: f64 = 1e-3;
     const CONJUGATION_TOLERANCE: f64 = 1e-12;
 
-    fn assert_complex_close(actual: Complex64, expected: Complex64, tolerance: f64, label: &str) {
-        let error = (actual - expected).norm();
-        assert!(
-            error < tolerance,
-            "{label}: actual={actual}, expected={expected}, error={error}"
-        );
-    }
-
-    #[derive(Clone, Copy)]
-    enum OracleGate {
-        H(QubitId),
-        Sz(QubitId),
-        Rz(Angle64, QubitId),
-        Rx(Angle64, QubitId),
-        Ry(Angle64, QubitId),
-        Cx(QubitId, QubitId),
-        Cz(QubitId, QubitId),
-    }
-
-    fn seeded_oracle_circuit() -> Vec<OracleGate> {
-        let mut rng = PecosRng::seed_from_u64(0x607);
-        let mut kinds = [0_u8, 1, 2, 3, 4, 5, 6, 7, 0, 3, 5, 4];
-        for i in (1..kinds.len()).rev() {
-            let j = rng.random_range(0..=i);
-            kinds.swap(i, j);
+    fn assert_density_diagonal(rho: &[Vec<Complex64>], expected_diagonal: &[f64], tolerance: f64) {
+        assert_eq!(rho.len(), expected_diagonal.len());
+        for (row, rho_row) in rho.iter().enumerate() {
+            assert_eq!(rho_row.len(), expected_diagonal.len());
+            for (col, &actual) in rho_row.iter().enumerate() {
+                let expected = if row == col {
+                    Complex64::new(expected_diagonal[row], 0.0)
+                } else {
+                    Complex64::new(0.0, 0.0)
+                };
+                assert_complex_close(actual, expected, tolerance, &format!("rho[{row}][{col}]"));
+            }
         }
-
-        kinds
-            .into_iter()
-            .map(|kind| {
-                let q = QubitId(rng.random_range(0..3));
-                let other = QubitId((q.index() + rng.random_range(1..3)) % 3);
-                let angle = Angle64::from_radians(rng.random_range(-2.5..2.5));
-                match kind {
-                    0 => OracleGate::H(q),
-                    1 => OracleGate::Sz(q),
-                    2 => OracleGate::Rz(Angle64::QUARTER_TURN / 2_u64, q),
-                    3 => OracleGate::Rx(angle, q),
-                    4 => OracleGate::Ry(angle, q),
-                    5 => OracleGate::Rz(angle, q),
-                    6 => OracleGate::Cx(q, other),
-                    7 => OracleGate::Cz(q, other),
-                    _ => unreachable!(),
-                }
-            })
-            .collect()
     }
 
-    fn apply_oracle_gate<S: ArbitraryRotationGateable>(sim: &mut S, gate: OracleGate) {
-        match gate {
-            OracleGate::H(q) => sim.h(&[q]),
-            OracleGate::Sz(q) => sim.sz(&[q]),
-            OracleGate::Rz(theta, q) => sim.rz(theta, &[q]),
-            OracleGate::Rx(theta, q) => sim.rx(theta, &[q]),
-            OracleGate::Ry(theta, q) => sim.ry(theta, &[q]),
-            OracleGate::Cx(control, target) => sim.cx(&[(control, target)]),
-            OracleGate::Cz(control, target) => sim.cz(&[(control, target)]),
-        };
+    fn check_mixed_bit_flip_measurement<SV: GpuStateVecBackend>(
+        tolerance: f64,
+    ) -> Result<(), GpuError> {
+        let mut density = GpuDensityMatrix::<SV>::with_seed(2, 2)?;
+        density
+            .h(&[QubitId(0)])
+            .cx(&[(QubitId(0), QubitId(1))])
+            .apply_bit_flip(1, 0.3);
+
+        let result = density.mz(&[QubitId(0)]);
+        assert!(!result[0].outcome);
+        assert_density_diagonal(
+            &density.get_density_matrix(),
+            &[0.7, 0.0, 0.3, 0.0],
+            tolerance,
+        );
+        Ok(())
+    }
+
+    fn check_mixed_amplitude_damping_measurement<SV: GpuStateVecBackend>(
+        tolerance: f64,
+    ) -> Result<(), GpuError> {
+        let mut density = GpuDensityMatrix::<SV>::with_seed(2, 1)?;
+        density
+            .h(&[QubitId(0)])
+            .cx(&[(QubitId(0), QubitId(1))])
+            .apply_amplitude_damping(0, 0.3);
+
+        let result = density.mz(&[QubitId(1)]);
+        assert!(result[0].outcome);
+        assert_density_diagonal(
+            &density.get_density_matrix(),
+            &[0.0, 0.0, 0.3, 0.7],
+            tolerance,
+        );
+        Ok(())
     }
 
     fn check_complex_unitary_analytics<SV: GpuStateVecBackend>(
@@ -1193,6 +1193,16 @@ mod tests {
     }
 
     #[test]
+    fn mixed_bit_flip_measurement_preserves_environment_information() {
+        check_mixed_bit_flip_measurement::<StateVecSoA>(CONJUGATION_TOLERANCE).unwrap();
+    }
+
+    #[test]
+    fn mixed_amplitude_damping_measurement_preserves_environment_information() {
+        check_mixed_amplitude_damping_measurement::<StateVecSoA>(CONJUGATION_TOLERANCE).unwrap();
+    }
+
+    #[test]
     fn gpu_f64_complex_unitaries_have_analytic_off_diagonals() {
         // Software and f32-class adapters introduce ~1e-7 noise; the reversed-conjugation
         // failure mode is O(1), so this tolerance still kills it.
@@ -1206,6 +1216,20 @@ mod tests {
         // Software and f32-class adapters introduce ~1e-7 noise; the reversed-conjugation
         // failure mode is O(1), so this tolerance still kills it.
         let Ok(()) = check_seeded_state_vector_oracle::<GpuStateVec64>(TOL) else {
+            return;
+        };
+    }
+
+    #[test]
+    fn gpu_f64_mixed_bit_flip_measurement_preserves_environment_information() {
+        let Ok(()) = check_mixed_bit_flip_measurement::<GpuStateVec64>(TOL) else {
+            return;
+        };
+    }
+
+    #[test]
+    fn gpu_f64_mixed_amplitude_damping_measurement_preserves_environment_information() {
+        let Ok(()) = check_mixed_amplitude_damping_measurement::<GpuStateVec64>(TOL) else {
             return;
         };
     }

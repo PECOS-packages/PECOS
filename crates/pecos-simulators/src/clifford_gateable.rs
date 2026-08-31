@@ -913,7 +913,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of XX (SXX) operation between qubit pairs.
     ///
-    /// The SXX gate implements evolution under XX coupling for time π/4.
+    /// This is the conventional phase-fixed root `((1+i)I + (1-i)XX)/2`.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -928,10 +928,10 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SXX = 1/√2 [[1,  0,  0, -i],
-    ///             [0,  1, -i,  0],
-    ///             [0, -i,  1,  0],
-    ///             [-i, 0,  0,  1]]
+    /// SXX = 1/2 [[1+i,   0,   0, 1-i],
+    ///              [  0, 1+i, 1-i,   0],
+    ///              [  0, 1-i, 1+i,   0],
+    ///              [1-i,   0,   0, 1+i]]
     /// ```
     ///
     /// # Returns
@@ -945,7 +945,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint of the square root of XX operation.
     ///
-    /// The SXX† gate implements reverse evolution under XX coupling.
+    /// This is the exact adjoint of the conventional phase-fixed SXX.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -960,10 +960,10 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SXX† = 1/√2 [[1,  0,  0,  i],
-    ///              [0,  1,  i,  0],
-    ///              [0,  i,  1,  0],
-    ///              [i,  0,  0,  1]]
+    /// SXX† = 1/2 [[1-i,   0,   0, 1+i],
+    ///               [  0, 1-i, 1+i,   0],
+    ///               [  0, 1+i, 1-i,   0],
+    ///               [1+i,   0,   0, 1-i]]
     /// ```
     ///
     /// # Returns
@@ -977,7 +977,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of YY (SYY) operation between qubit pairs.
     ///
-    /// The SYY gate implements evolution under YY coupling for time π/4.
+    /// This is the conventional phase-fixed root `((1+i)I + (1-i)YY)/2`.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -992,10 +992,10 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SYY = 1/√2 [[1,  0,   0, -i],
-    ///             [0, -i,   1,  0],
-    ///             [0,  1,  -i,  0],
-    ///             [-i, 0,   0,  1]]
+    /// SYY = 1/2 [[ 1+i,   0,   0, -1+i],
+    ///              [   0, 1+i, 1-i,    0],
+    ///              [   0, 1-i, 1+i,    0],
+    ///              [-1+i,   0,   0,  1+i]]
     /// ```
     ///
     /// # Returns
@@ -1009,7 +1009,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint of the square root of YY operation.
     ///
-    /// The SYY† gate implements reverse evolution under YY coupling.
+    /// This is the exact adjoint of the conventional phase-fixed SYY.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -1024,10 +1024,10 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SYY† = 1/√2 [[1,  0,  0,  i],
-    ///              [0,  i,  1,  0],
-    ///              [0,  1,  i,  0],
-    ///              [i,  0,  0,  1]]
+    /// SYY† = 1/2 [[ 1-i,   0,   0, -1-i],
+    ///               [   0, 1-i, 1+i,    0],
+    ///               [   0, 1+i, 1-i,    0],
+    ///               [-1-i,   0,   0,  1-i]]
     /// ```
     ///
     /// # Returns
@@ -1041,7 +1041,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of ZZ (SZZ) operation between qubit pairs.
     ///
-    /// The SZZ gate implements evolution under ZZ coupling for time π/4.
+    /// This is the conventional phase-fixed root `((1+i)I + (1-i)ZZ)/2`.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -1056,10 +1056,10 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SZZ = e^(-iπ/4) [[1,  0,  0,  0],
-    ///                  [0, -i,  0,  0],
-    ///                  [0,  0, -i,  0],
-    ///                  [0,  0,  0,  1]]
+    /// SZZ = [[1, 0, 0, 0],
+    ///        [0, i, 0, 0],
+    ///        [0, 0, i, 0],
+    ///        [0, 0, 0, 1]]
     /// ```
     ///
     /// # Returns
@@ -1073,7 +1073,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint of the square root of ZZ operation.
     ///
-    /// The SZZ† gate implements reverse evolution under ZZ coupling.
+    /// This is the exact adjoint of the conventional phase-fixed SZZ.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -1088,10 +1088,10 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SZZ† = e^(iπ/4) [[1,  0,  0,  0],
-    ///                  [0,  i,  0,  0],
-    ///                  [0,  0,  i,  0],
-    ///                  [0,  0,  0,  1]]
+    /// SZZ† = [[1,  0,  0, 0],
+    ///         [0, -i,  0, 0],
+    ///         [0,  0, -i, 0],
+    ///         [0,  0,  0, 1]]
     /// ```
     ///
     /// # Returns

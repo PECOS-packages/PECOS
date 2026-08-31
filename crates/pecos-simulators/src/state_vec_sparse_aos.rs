@@ -495,6 +495,63 @@ impl<R: Rng> SparseStateVecAoS<R> {
         std::mem::swap(&mut self.amplitudes, &mut self.scratch);
     }
 
+    /// Apply the conventional square root of XX or YY directly as
+    /// `alpha I + beta P`, accumulating the two contributions for every sparse
+    /// amplitude before merging equal output indices.
+    fn apply_two_qubit_pauli_root(&mut self, q1: usize, q2: usize, yy: bool, dagger: bool) {
+        self.ensure_sorted();
+        let mask1 = 1usize << q1;
+        let mask2 = 1usize << q2;
+        let flip_mask = mask1 | mask2;
+        let alpha = Complex64::new(0.5, if dagger { -0.5 } else { 0.5 });
+        let beta = Complex64::new(0.5, if dagger { 0.5 } else { -0.5 });
+
+        self.scratch.clear();
+        self.scratch.reserve(self.amplitudes.len() * 2);
+        for &(index, amplitude) in &self.amplitudes {
+            let pauli_sign = if yy && ((index & mask1 == 0) == (index & mask2 == 0)) {
+                -1.0
+            } else {
+                1.0
+            };
+            self.scratch.push((index, alpha * amplitude));
+            self.scratch
+                .push((index ^ flip_mask, beta * pauli_sign * amplitude));
+        }
+
+        self.scratch.sort_unstable_by_key(|&(index, _)| index);
+        self.amplitudes.clear();
+        let mut cursor = 0;
+        while cursor < self.scratch.len() {
+            let index = self.scratch[cursor].0;
+            let mut amplitude = Complex64::new(0.0, 0.0);
+            while cursor < self.scratch.len() && self.scratch[cursor].0 == index {
+                amplitude += self.scratch[cursor].1;
+                cursor += 1;
+            }
+            if amplitude.norm_sqr() > self.epsilon {
+                self.amplitudes.push((index, amplitude));
+            }
+        }
+        self.scratch.clear();
+        self.needs_sort = false;
+    }
+
+    /// Apply SZZ or its adjoint as an exact odd-parity quarter-turn.
+    fn apply_szz_root(&mut self, q1: usize, q2: usize, dagger: bool) {
+        let mask1 = 1usize << q1;
+        let mask2 = 1usize << q2;
+        for (index, amplitude) in &mut self.amplitudes {
+            if (*index & mask1 == 0) != (*index & mask2 == 0) {
+                *amplitude = if dagger {
+                    Complex64::new(amplitude.im, -amplitude.re)
+                } else {
+                    Complex64::new(-amplitude.im, amplitude.re)
+                };
+            }
+        }
+    }
+
     /// SIMD-optimized H gate implementation.
     ///
     /// Processes pairs in batches of 2 using f64x4 SIMD operations inline.
@@ -1148,6 +1205,48 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
     // -------------------------------------------------------------------------
     // Two-qubit gates
     // -------------------------------------------------------------------------
+
+    fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.apply_two_qubit_pauli_root(q1.0, q2.0, false, false);
+        }
+        self
+    }
+
+    fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.apply_two_qubit_pauli_root(q1.0, q2.0, false, true);
+        }
+        self
+    }
+
+    fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.apply_two_qubit_pauli_root(q1.0, q2.0, true, false);
+        }
+        self
+    }
+
+    fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.apply_two_qubit_pauli_root(q1.0, q2.0, true, true);
+        }
+        self
+    }
+
+    fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.apply_szz_root(q1.0, q2.0, false);
+        }
+        self
+    }
+
+    fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.apply_szz_root(q1.0, q2.0, true);
+        }
+        self
+    }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         if pairs.len() == 1 {

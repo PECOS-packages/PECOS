@@ -1206,10 +1206,7 @@ pub fn SWAP(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
 pub fn SXX(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
     let a = q0.into();
     let b = q1.into();
-    cliff(
-        CliffordRep::sxx(a.0, b.0),
-        crate::unitary_rep::RXX(Angle64::QUARTER_TURN, a, b),
-    )
+    cliff(CliffordRep::sxx(a.0, b.0), crate::unitary_rep::SXX(a, b))
 }
 
 /// sqrt(XX)-dagger gate.
@@ -1220,7 +1217,7 @@ pub fn SXXdg(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
     let b = q1.into();
     cliff(
         CliffordRep::sxxdg(a.0, b.0),
-        crate::unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b),
+        crate::unitary_rep::SXX(a, b).dg(),
     )
 }
 
@@ -1230,10 +1227,7 @@ pub fn SXXdg(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
 pub fn SYY(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
     let a = q0.into();
     let b = q1.into();
-    cliff(
-        CliffordRep::syy(a.0, b.0),
-        crate::unitary_rep::RYY(Angle64::QUARTER_TURN, a, b),
-    )
+    cliff(CliffordRep::syy(a.0, b.0), crate::unitary_rep::SYY(a, b))
 }
 
 /// sqrt(YY)-dagger gate.
@@ -1244,7 +1238,7 @@ pub fn SYYdg(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> Op {
     let b = q1.into();
     cliff(
         CliffordRep::syydg(a.0, b.0),
-        crate::unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b),
+        crate::unitary_rep::SYY(a, b).dg(),
     )
 }
 

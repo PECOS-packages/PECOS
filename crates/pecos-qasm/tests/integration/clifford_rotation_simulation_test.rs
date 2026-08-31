@@ -7,6 +7,86 @@ use pecos_programs::Qasm;
 use pecos_qasm::{Operation, QASMParser, qasm_engine};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA32};
 
+fn zz_observable_snapshot(qasm: &str) -> ([f64; 4], [usize; 4]) {
+    let program = QASMParser::parse_str(qasm).unwrap();
+    let mut state = StateVecSoA32::new(2);
+    for operation in &program.operations {
+        match operation {
+            Operation::NativeGate(gate) if gate.gate_type == GateType::H => {
+                state.h(&gate.qubits);
+            }
+            Operation::NativeGate(gate) if gate.gate_type == GateType::SZZ => {
+                state.szz(&[(gate.qubits[0], gate.qubits[1])]);
+            }
+            Operation::MeasureWithMapping { .. } => {}
+            other => panic!("unexpected operation in ZZ observable probe: {other:?}"),
+        }
+    }
+    let probabilities =
+        std::array::from_fn(|basis| f64::from(state.get_amplitude(basis).norm_sqr()));
+
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(4096)
+        .unwrap();
+    let mut histogram = [0; 4];
+    for shot in &results.shots {
+        let value = shot.data.get("c").unwrap().as_u32().unwrap() as usize;
+        histogram[value] += 1;
+    }
+    (probabilities, histogram)
+}
+
+#[test]
+fn qasm_zz_alias_and_szz_have_identical_observables() {
+    let zz = r#"
+        OPENQASM 2.0;
+        include "hqslib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        h q[1];
+        ZZ q[0], q[1];
+        h q[0];
+        h q[1];
+        measure q -> c;
+    "#;
+    let szz = r#"
+        OPENQASM 2.0;
+        include "pecos.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        h q[1];
+        SZZ q[0], q[1];
+        h q[0];
+        h q[1];
+        measure q -> c;
+    "#;
+
+    let zz_snapshot = zz_observable_snapshot(zz);
+    let szz_snapshot = zz_observable_snapshot(szz);
+    eprintln!(
+        "ZZ probabilities={:?}, histogram={:?}",
+        zz_snapshot.0, zz_snapshot.1
+    );
+    eprintln!(
+        "SZZ probabilities={:?}, histogram={:?}",
+        szz_snapshot.0, szz_snapshot.1
+    );
+
+    for (actual, expected) in zz_snapshot.0.iter().zip([0.5, 0.0, 0.0, 0.5]) {
+        assert!((actual - expected).abs() < 3e-6);
+    }
+    assert_eq!(zz_snapshot.1, szz_snapshot.1);
+    for (zz_probability, szz_probability) in zz_snapshot.0.iter().zip(szz_snapshot.0) {
+        assert!((zz_probability - szz_probability).abs() < f64::EPSILON);
+    }
+}
+
 #[test]
 fn xy_plane_rotation_spellings_are_identical_native_gates() {
     let programs = [

@@ -2070,6 +2070,10 @@ impl UnitaryRep {
                         GateType::SZdg => GateType::SZ,
                         GateType::T => GateType::Tdg,
                         GateType::Tdg => GateType::T,
+                        GateType::SXX => GateType::SXXdg,
+                        GateType::SXXdg => GateType::SXX,
+                        GateType::SYY => GateType::SYYdg,
+                        GateType::SYYdg => GateType::SYY,
                         GateType::SZZ => GateType::SZZdg,
                         GateType::SZZdg => GateType::SZZ,
                         other => other, // Self-adjoint gates unchanged
@@ -2351,11 +2355,11 @@ fn rotation_to_clifford_rep(
             let q1 = qubits[1];
 
             if angle == quarter {
-                // SXX = RXX(π/2)
+                // Projectively SXX; CliffordRep deliberately omits global phase.
                 let cliff = CliffordRep::sxx(q0, q1);
                 Some(extend_clifford(cliff, num_qubits))
             } else if angle == neg_quarter || angle == three_quarter {
-                // SXXdg = RXX(-π/2) = RXX(3π/2)
+                // Projectively SXXdg; CliffordRep deliberately omits global phase.
                 let cliff = CliffordRep::sxxdg(q0, q1);
                 Some(extend_clifford(cliff, num_qubits))
             } else if angle == half || angle == neg_half {
@@ -2374,11 +2378,11 @@ fn rotation_to_clifford_rep(
             let q1 = qubits[1];
 
             if angle == quarter {
-                // SYY = RYY(π/2)
+                // Projectively SYY; CliffordRep deliberately omits global phase.
                 let cliff = CliffordRep::syy(q0, q1);
                 Some(extend_clifford(cliff, num_qubits))
             } else if angle == neg_quarter || angle == three_quarter {
-                // SYYdg = RYY(-π/2) = RYY(3π/2)
+                // Projectively SYYdg; CliffordRep deliberately omits global phase.
                 let cliff = CliffordRep::syydg(q0, q1);
                 Some(extend_clifford(cliff, num_qubits))
             } else if angle == half || angle == neg_half {
@@ -2397,11 +2401,11 @@ fn rotation_to_clifford_rep(
             let q1 = qubits[1];
 
             if angle == quarter {
-                // SZZ = RZZ(π/2)
+                // Projectively SZZ; CliffordRep deliberately omits global phase.
                 let cliff = CliffordRep::szz(q0, q1);
                 Some(extend_clifford(cliff, num_qubits))
             } else if angle == neg_quarter || angle == three_quarter {
-                // SZZdg = RZZ(-π/2) = RZZ(3π/2)
+                // Projectively SZZdg; CliffordRep deliberately omits global phase.
                 let cliff = CliffordRep::szzdg(q0, q1);
                 Some(extend_clifford(cliff, num_qubits))
             } else if angle == half || angle == neg_half {
@@ -2784,6 +2788,12 @@ fn phase_fixed_named_adjoint(gate: GateType) -> Option<GateType> {
         GateType::Tdg => Some(GateType::T),
         GateType::F => Some(GateType::Fdg),
         GateType::Fdg => Some(GateType::F),
+        GateType::SXX => Some(GateType::SXXdg),
+        GateType::SXXdg => Some(GateType::SXX),
+        GateType::SYY => Some(GateType::SYYdg),
+        GateType::SYYdg => Some(GateType::SYY),
+        GateType::SZZ => Some(GateType::SZZdg),
+        GateType::SZZdg => Some(GateType::SZZ),
         _ => None,
     }
 }
@@ -3382,7 +3392,50 @@ pub fn SWAPs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
     pairs.into().apply(SWAP)
 }
 
-/// SZZ gate: RZZ(π/2)
+/// Conventional SXX gate (square root of XX).
+///
+/// `SXX = exp(i*pi/4) * RXX(pi/2)`; the parameterized rotation retains its
+/// `exp(-i*theta*XX/2)` convention.
+#[must_use]
+#[allow(non_snake_case)]
+pub fn SXX(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
+    let q0 = q0.into();
+    let q1 = q1.into();
+    assert_distinct_qubits("SXX", [q0.0, q1.0]);
+    UnitaryRep::gate(GateType::SXX, smallvec::smallvec![q0.0, q1.0])
+}
+
+/// Conventional SXX gates on multiple qubit pairs.
+#[must_use]
+#[allow(non_snake_case)]
+pub fn SXXs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
+    pairs.into().apply(SXX)
+}
+
+/// Conventional SYY gate (square root of YY).
+///
+/// `SYY = exp(i*pi/4) * RYY(pi/2)`; the parameterized rotation retains its
+/// `exp(-i*theta*YY/2)` convention.
+#[must_use]
+#[allow(non_snake_case)]
+pub fn SYY(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
+    let q0 = q0.into();
+    let q1 = q1.into();
+    assert_distinct_qubits("SYY", [q0.0, q1.0]);
+    UnitaryRep::gate(GateType::SYY, smallvec::smallvec![q0.0, q1.0])
+}
+
+/// Conventional SYY gates on multiple qubit pairs.
+#[must_use]
+#[allow(non_snake_case)]
+pub fn SYYs(pairs: impl Into<QubitPairs>) -> UnitaryRep {
+    pairs.into().apply(SYY)
+}
+
+/// Conventional SZZ gate (square root of ZZ).
+///
+/// `SZZ = exp(i*pi/4) * RZZ(pi/2)`; the parameterized rotation retains its
+/// `exp(-i*theta*ZZ/2)` convention.
 ///
 /// For multiple pairs, use `SZZs([(0, 1), (2, 3)])` or tensor: `SZZ(0, 1) & SZZ(2, 3)`
 #[must_use]
@@ -3391,11 +3444,7 @@ pub fn SZZ(q0: impl Into<QubitId>, q1: impl Into<QubitId>) -> UnitaryRep {
     let q0 = q0.into();
     let q1 = q1.into();
     assert_distinct_qubits("SZZ", [q0.0, q1.0]);
-    UnitaryRep::rotation(
-        RotationType::RZZ,
-        Angle64::QUARTER_TURN,
-        smallvec::smallvec![q0.0, q1.0],
-    )
+    UnitaryRep::gate(GateType::SZZ, smallvec::smallvec![q0.0, q1.0])
 }
 
 /// SZZ gates on multiple qubit pairs.

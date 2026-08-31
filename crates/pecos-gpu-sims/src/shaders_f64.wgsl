@@ -45,6 +45,14 @@ fn cmul(a: vec2<f64>, b: vec2<f64>) -> vec2<f64> {
     );
 }
 
+fn named_root_component(a: vec2<f64>, b: vec2<f64>, p: f64, d: f64) -> vec2<f64> {
+    let pb = b * p;
+    return vec2<f64>(
+        a.x + pb.x - d * a.y + d * pb.y,
+        a.y + pb.y + d * a.x - d * pb.x
+    ) * 0.5;
+}
+
 // Apply diagonal single-qubit gate: [[a, 0], [0, d]]
 // Each thread handles ONE amplitude (not a pair), applying the appropriate
 // diagonal element based on the qubit bit. Fully coalesced memory access.
@@ -235,12 +243,18 @@ fn apply_rxx(
     // via (a_re, a_im). wgpu+Vulkan f64 cos/sin is unreliable.
     let partner = idx ^ mask_a ^ mask_b;
     if (idx < partner) {
-        let c = params.a_re;
-        let s = params.a_im;
         let amp0 = state[idx];
         let amp1 = state[partner];
-        state[idx] = vec2<f64>(amp0.x * c + amp1.y * s, amp0.y * c - amp1.x * s);
-        state[partner] = vec2<f64>(amp1.x * c + amp0.y * s, amp1.y * c - amp0.x * s);
+        if (params.b_re != 0.0) {
+            let d = params.b_re;
+            state[idx] = named_root_component(amp0, amp1, 1.0, d);
+            state[partner] = named_root_component(amp1, amp0, 1.0, d);
+        } else {
+            let c = params.a_re;
+            let s = params.a_im;
+            state[idx] = vec2<f64>(amp0.x * c + amp1.y * s, amp0.y * c - amp1.x * s);
+            state[partner] = vec2<f64>(amp1.x * c + amp0.y * s, amp1.y * c - amp0.x * s);
+        }
     }
 }
 
@@ -263,13 +277,20 @@ fn apply_ryy(
     let bit_b = (idx & mask_b) != 0u;
     let partner = idx ^ mask_a ^ mask_b;
     if (idx < partner) {
-        let c = params.a_re;
-        let s_abs = params.a_im;
-        let s = select(s_abs, -s_abs, bit_a == bit_b);
         let amp0 = state[idx];
         let amp1 = state[partner];
-        state[idx] = vec2<f64>(amp0.x * c + amp1.y * s, amp0.y * c - amp1.x * s);
-        state[partner] = vec2<f64>(amp1.x * c + amp0.y * s, amp1.y * c - amp0.x * s);
+        if (params.b_re != 0.0) {
+            let d = params.b_re;
+            let p = select(1.0lf, -1.0lf, bit_a == bit_b);
+            state[idx] = named_root_component(amp0, amp1, p, d);
+            state[partner] = named_root_component(amp1, amp0, p, d);
+        } else {
+            let c = params.a_re;
+            let s_abs = params.a_im;
+            let s = select(s_abs, -s_abs, bit_a == bit_b);
+            state[idx] = vec2<f64>(amp0.x * c + amp1.y * s, amp0.y * c - amp1.x * s);
+            state[partner] = vec2<f64>(amp1.x * c + amp0.y * s, amp1.y * c - amp0.x * s);
+        }
     }
 }
 
@@ -293,13 +314,23 @@ fn apply_rzz(
     let q1_set = (idx & q1_mask) != 0u;
     let q2_set = (idx & q2_mask) != 0u;
 
-    // RZZ phase is -theta/2 when both bits match, +theta/2 otherwise.
-    // cos/sin precomputed on CPU: a_re = cos(theta/2), a_im = sin(theta/2).
-    let c = params.a_re;
-    let s_abs = params.a_im;
-    let s = select(s_abs, -s_abs, q1_set == q2_set);
-    let amp = state[idx];
-    state[idx] = vec2<f64>(amp.x * c - amp.y * s, amp.x * s + amp.y * c);
+    if (params.b_re != 0.0) {
+        if (q1_set != q2_set) {
+            let amp = state[idx];
+            state[idx] = select(
+                vec2<f64>(amp.y, -amp.x),
+                vec2<f64>(-amp.y, amp.x),
+                params.b_re > 0.0
+            );
+        }
+    } else {
+        // RZZ phase is -theta/2 when both bits match, +theta/2 otherwise.
+        let c = params.a_re;
+        let s_abs = params.a_im;
+        let s = select(s_abs, -s_abs, q1_set == q2_set);
+        let amp = state[idx];
+        state[idx] = vec2<f64>(amp.x * c - amp.y * s, amp.x * s + amp.y * c);
+    }
 }
 
 // Collapse state after measurement

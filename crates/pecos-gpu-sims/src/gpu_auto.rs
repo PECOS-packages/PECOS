@@ -138,6 +138,24 @@ impl CliffordGateable for GpuStateVecAuto {
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         dispatch_mut!(self, cx(pairs))
     }
+    fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, sxx(pairs))
+    }
+    fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, sxxdg(pairs))
+    }
+    fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, syy(pairs))
+    }
+    fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, syydg(pairs))
+    }
+    fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, szz(pairs))
+    }
+    fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, szzdg(pairs))
+    }
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         match self {
             Self::F64(s) => s.mz(qubits),

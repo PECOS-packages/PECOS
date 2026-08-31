@@ -1499,6 +1499,19 @@ fn canonical_single_qubit_matrix(gate: GateType) -> DMatrix<Complex64> {
     )
 }
 
+fn canonical_two_qubit_matrix(gate: GateType) -> DMatrix<Complex64> {
+    let entries = gate
+        .canonical_2q_matrix()
+        .expect("named two-qubit Pauli root must have a canonical matrix");
+    let entries: Vec<_> = entries
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|entry| Complex64::new(entry[0], entry[1]))
+        .collect();
+    DMatrix::from_row_slice(4, 4, &entries)
+}
+
 /// Converts a [`PauliString`] to a dense matrix (implementation).
 fn pauli_string_to_matrix_impl(ps: &PauliString, num_qubits: usize) -> DMatrix<Complex64> {
     let dim = 1 << num_qubits;
@@ -1546,6 +1559,31 @@ fn embed_single_qubit_gate(
                 let i_bit = (i >> qubit) & 1;
                 let j_bit = (j >> qubit) & 1;
                 result[(i, j)] = gate[(i_bit, j_bit)];
+            }
+        }
+    }
+
+    result
+}
+
+/// Embeds a two-qubit gate into a larger Hilbert space.
+fn embed_two_qubit_gate(
+    gate: &DMatrix<Complex64>,
+    first_qubit: usize,
+    second_qubit: usize,
+    num_qubits: usize,
+) -> DMatrix<Complex64> {
+    let dim = 1 << num_qubits;
+    let mut result = DMatrix::from_element(dim, dim, Complex64::new(0.0, 0.0));
+    let unaffected_mask = !((1 << first_qubit) | (1 << second_qubit));
+
+    for row in 0..dim {
+        for column in 0..dim {
+            if (row & unaffected_mask) == (column & unaffected_mask) {
+                let local_row = (((row >> first_qubit) & 1) << 1) | ((row >> second_qubit) & 1);
+                let local_column =
+                    (((column >> first_qubit) & 1) << 1) | ((column >> second_qubit) & 1);
+                result[(row, column)] = gate[(local_row, local_column)];
             }
         }
     }
@@ -1784,37 +1822,15 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
             controlled_gate(&h_gate, qubits[0], qubits[1], num_qubits)
         }
         GateType::SWAP => swap_matrix(qubits[0], qubits[1], num_qubits),
-        GateType::SXX => {
-            // SXX = RXX(pi/2)
-            rotation_to_matrix(RotationType::RXX, Angle64::QUARTER_TURN, qubits, num_qubits)
+        GateType::SXX
+        | GateType::SXXdg
+        | GateType::SYY
+        | GateType::SYYdg
+        | GateType::SZZ
+        | GateType::SZZdg => {
+            let gate = canonical_two_qubit_matrix(gate_type);
+            embed_two_qubit_gate(&gate, qubits[0], qubits[1], num_qubits)
         }
-        GateType::SXXdg => {
-            // SXXdg = RXX(3pi/2)
-            rotation_to_matrix(
-                RotationType::RXX,
-                Angle64::THREE_QUARTERS_TURN,
-                qubits,
-                num_qubits,
-            )
-        }
-        GateType::SYY => {
-            rotation_to_matrix(RotationType::RYY, Angle64::QUARTER_TURN, qubits, num_qubits)
-        }
-        GateType::SYYdg => rotation_to_matrix(
-            RotationType::RYY,
-            Angle64::THREE_QUARTERS_TURN,
-            qubits,
-            num_qubits,
-        ),
-        GateType::SZZ => {
-            rotation_to_matrix(RotationType::RZZ, Angle64::QUARTER_TURN, qubits, num_qubits)
-        }
-        GateType::SZZdg => rotation_to_matrix(
-            RotationType::RZZ,
-            Angle64::THREE_QUARTERS_TURN,
-            qubits,
-            num_qubits,
-        ),
         GateType::CCX => {
             // Toffoli: flip target when both controls are |1>
             let dim = 1 << num_qubits;

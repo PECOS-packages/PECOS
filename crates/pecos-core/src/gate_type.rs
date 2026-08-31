@@ -140,6 +140,11 @@ pub enum GateType {
 /// `[[a, b], [c, d]]`.
 pub type SingleQubitGateMatrix = [f64; 8];
 
+/// Row-major 4x4 complex matrix stored as `(real, imaginary)` pairs.
+///
+/// Entry `(row, column)` starts at index `2 * (4 * row + column)`.
+pub type TwoQubitGateMatrix = [f64; 32];
+
 /// Converts a canonical f64 matrix to f32 in a constant context.
 ///
 /// Canonical gate entries are finite zero or normal-range values. Conversion
@@ -222,6 +227,16 @@ pub const NAMED_SINGLE_QUBIT_GATES: [GateType; 15] = [
     GateType::Tdg,
 ];
 
+/// Named, phase-fixed two-qubit Pauli roots with canonical matrices.
+pub const NAMED_TWO_QUBIT_ROOT_GATES: [GateType; 6] = [
+    GateType::SXX,
+    GateType::SXXdg,
+    GateType::SYY,
+    GateType::SYYdg,
+    GateType::SZZ,
+    GateType::SZZdg,
+];
+
 const SX_MATRIX: SingleQubitGateMatrix = [0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5, 0.5];
 
 // Conventional phase-fixed sqrt(Y), not RY(pi/2):
@@ -233,6 +248,85 @@ const SY_MATRIX: SingleQubitGateMatrix = [0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0
 const SY_DAGGER_MATRIX: SingleQubitGateMatrix = [0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5];
 
 const SZ_MATRIX: SingleQubitGateMatrix = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+
+const fn tensor_2x2(lhs: SingleQubitGateMatrix, rhs: SingleQubitGateMatrix) -> TwoQubitGateMatrix {
+    let mut result = [0.0; 32];
+    let mut lhs_row = 0;
+    while lhs_row < 2 {
+        let mut lhs_column = 0;
+        while lhs_column < 2 {
+            let lhs_index = 2 * (2 * lhs_row + lhs_column);
+            let mut rhs_row = 0;
+            while rhs_row < 2 {
+                let mut rhs_column = 0;
+                while rhs_column < 2 {
+                    let rhs_index = 2 * (2 * rhs_row + rhs_column);
+                    let result_row = 2 * lhs_row + rhs_row;
+                    let result_column = 2 * lhs_column + rhs_column;
+                    let result_index = 2 * (4 * result_row + result_column);
+                    let product = multiply_complex(
+                        lhs[lhs_index],
+                        lhs[lhs_index + 1],
+                        rhs[rhs_index],
+                        rhs[rhs_index + 1],
+                    );
+                    result[result_index] = product.0;
+                    result[result_index + 1] = product.1;
+                    rhs_column += 1;
+                }
+                rhs_row += 1;
+            }
+            lhs_column += 1;
+        }
+        lhs_row += 1;
+    }
+    result
+}
+
+/// Derives the conventional square root of a 4x4 involution `P`:
+/// `((1+i) I + (1-i) P) / 2`.
+const fn sqrt_involution_4x4(pauli: TwoQubitGateMatrix) -> TwoQubitGateMatrix {
+    let mut result = [0.0; 32];
+    let mut row = 0;
+    while row < 4 {
+        let mut column = 0;
+        while column < 4 {
+            let index = 2 * (4 * row + column);
+            let pauli_term = multiply_complex(0.5, -0.5, pauli[index], pauli[index + 1]);
+            let identity_re = if row == column { 0.5 } else { 0.0 };
+            let identity_im = if row == column { 0.5 } else { 0.0 };
+            result[index] = identity_re + pauli_term.0;
+            result[index + 1] = identity_im + pauli_term.1;
+            column += 1;
+        }
+        row += 1;
+    }
+    result
+}
+
+const fn adjoint_4x4(matrix: TwoQubitGateMatrix) -> TwoQubitGateMatrix {
+    let mut result = [0.0; 32];
+    let mut row = 0;
+    while row < 4 {
+        let mut column = 0;
+        while column < 4 {
+            let source = 2 * (4 * column + row);
+            let destination = 2 * (4 * row + column);
+            result[destination] = matrix[source];
+            result[destination + 1] = -matrix[source + 1];
+            column += 1;
+        }
+        row += 1;
+    }
+    result
+}
+
+const XX_MATRIX: TwoQubitGateMatrix = tensor_2x2(X_MATRIX, X_MATRIX);
+const YY_MATRIX: TwoQubitGateMatrix = tensor_2x2(Y_MATRIX, Y_MATRIX);
+const ZZ_MATRIX: TwoQubitGateMatrix = tensor_2x2(Z_MATRIX, Z_MATRIX);
+const SXX_MATRIX: TwoQubitGateMatrix = sqrt_involution_4x4(XX_MATRIX);
+const SYY_MATRIX: TwoQubitGateMatrix = sqrt_involution_4x4(YY_MATRIX);
+const SZZ_MATRIX: TwoQubitGateMatrix = sqrt_involution_4x4(ZZ_MATRIX);
 
 const H_MATRIX: SingleQubitGateMatrix = [
     std::f64::consts::FRAC_1_SQRT_2,
@@ -425,6 +519,27 @@ impl GateType {
             GateType::Fdg => Some(adjoint_2x2(F_MATRIX)),
             GateType::T => Some(T_MATRIX),
             GateType::Tdg => Some(adjoint_2x2(T_MATRIX)),
+            _ => None,
+        }
+    }
+
+    /// Returns the canonical phase-fixed matrix for a named two-qubit Pauli root.
+    ///
+    /// For `P` in `{XX, YY, ZZ}`, the matrices are derived from
+    /// `SP = ((1+i) I + (1-i) P) / 2`; dagger entries are exact adjoints.
+    /// Therefore `SP^2 = P`, `SP * SPdg = I`, and all six roots have exact
+    /// multiplicative order four. The parameterized rotation family remains
+    /// `RP(theta) = exp(-i theta P / 2)` and is deliberately not represented
+    /// by this table.
+    #[must_use]
+    pub const fn canonical_2q_matrix(self) -> Option<TwoQubitGateMatrix> {
+        match self {
+            GateType::SXX => Some(SXX_MATRIX),
+            GateType::SXXdg => Some(adjoint_4x4(SXX_MATRIX)),
+            GateType::SYY => Some(SYY_MATRIX),
+            GateType::SYYdg => Some(adjoint_4x4(SYY_MATRIX)),
+            GateType::SZZ => Some(SZZ_MATRIX),
+            GateType::SZZdg => Some(adjoint_4x4(SZZ_MATRIX)),
             _ => None,
         }
     }
@@ -1004,6 +1119,257 @@ mod tests {
                 !closure_holds(&mutant),
                 "exp(i*pi/4) phase mutation of {gate:?} escaped every closure relation"
             );
+        }
+    }
+
+    fn canonical_two_qubit_table() -> [TwoQubitGateMatrix; NAMED_TWO_QUBIT_ROOT_GATES.len()] {
+        NAMED_TWO_QUBIT_ROOT_GATES.map(|gate| {
+            gate.canonical_2q_matrix()
+                .expect("named two-qubit Pauli root must have a canonical matrix")
+        })
+    }
+
+    fn two_qubit_table_matrix(
+        table: &[TwoQubitGateMatrix; NAMED_TWO_QUBIT_ROOT_GATES.len()],
+        gate: GateType,
+    ) -> TwoQubitGateMatrix {
+        let index = NAMED_TWO_QUBIT_ROOT_GATES
+            .iter()
+            .position(|candidate| *candidate == gate)
+            .expect("gate must be present in canonical two-qubit table");
+        table[index]
+    }
+
+    fn multiply_4x4(lhs: TwoQubitGateMatrix, rhs: TwoQubitGateMatrix) -> TwoQubitGateMatrix {
+        let mut result = [0.0; 32];
+        for row in 0..4 {
+            for column in 0..4 {
+                let mut value = (0.0, 0.0);
+                for inner in 0..4 {
+                    let lhs_index = 2 * (4 * row + inner);
+                    let rhs_index = 2 * (4 * inner + column);
+                    value = add_complex(
+                        value,
+                        multiply_complex(
+                            lhs[lhs_index],
+                            lhs[lhs_index + 1],
+                            rhs[rhs_index],
+                            rhs[rhs_index + 1],
+                        ),
+                    );
+                }
+                let result_index = 2 * (4 * row + column);
+                result[result_index] = value.0;
+                result[result_index + 1] = value.1;
+            }
+        }
+        result
+    }
+
+    fn matrix_power_4x4(matrix: TwoQubitGateMatrix, exponent: usize) -> TwoQubitGateMatrix {
+        let mut result = tensor_2x2(I_MATRIX, I_MATRIX);
+        for _ in 0..exponent {
+            result = multiply_4x4(result, matrix);
+        }
+        result
+    }
+
+    fn max_matrix_error_4x4(lhs: TwoQubitGateMatrix, rhs: TwoQubitGateMatrix) -> f64 {
+        lhs.into_iter()
+            .zip(rhs)
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0, f64::max)
+    }
+
+    fn two_qubit_closure_relations(
+        table: &[TwoQubitGateMatrix; NAMED_TWO_QUBIT_ROOT_GATES.len()],
+    ) -> Vec<(&'static str, TwoQubitGateMatrix, TwoQubitGateMatrix)> {
+        let matrix = |gate| two_qubit_table_matrix(table, gate);
+        let identity = tensor_2x2(I_MATRIX, I_MATRIX);
+        let mut relations = Vec::new();
+
+        for (root, dagger, pauli, name) in [
+            (GateType::SXX, GateType::SXXdg, XX_MATRIX, "SXX"),
+            (GateType::SYY, GateType::SYYdg, YY_MATRIX, "SYY"),
+            (GateType::SZZ, GateType::SZZdg, ZZ_MATRIX, "SZZ"),
+        ] {
+            let root_matrix = matrix(root);
+            let dagger_matrix = matrix(dagger);
+            relations.extend([
+                (
+                    match name {
+                        "SXX" => "SXX^2 = XX",
+                        "SYY" => "SYY^2 = YY",
+                        _ => "SZZ^2 = ZZ",
+                    },
+                    matrix_power_4x4(root_matrix, 2),
+                    pauli,
+                ),
+                (
+                    match name {
+                        "SXX" => "SXXdg^2 = XX",
+                        "SYY" => "SYYdg^2 = YY",
+                        _ => "SZZdg^2 = ZZ",
+                    },
+                    matrix_power_4x4(dagger_matrix, 2),
+                    pauli,
+                ),
+                (
+                    match name {
+                        "SXX" => "SXX * SXXdg = I",
+                        "SYY" => "SYY * SYYdg = I",
+                        _ => "SZZ * SZZdg = I",
+                    },
+                    multiply_4x4(root_matrix, dagger_matrix),
+                    identity,
+                ),
+                (
+                    match name {
+                        "SXX" => "SXX^4 = I",
+                        "SYY" => "SYY^4 = I",
+                        _ => "SZZ^4 = I",
+                    },
+                    matrix_power_4x4(root_matrix, 4),
+                    identity,
+                ),
+                (
+                    match name {
+                        "SXX" => "SXXdg^4 = I",
+                        "SYY" => "SYYdg^4 = I",
+                        _ => "SZZdg^4 = I",
+                    },
+                    matrix_power_4x4(dagger_matrix, 4),
+                    identity,
+                ),
+                (
+                    match name {
+                        "SXX" => "SXXdg = SXX adjoint",
+                        "SYY" => "SYYdg = SYY adjoint",
+                        _ => "SZZdg = SZZ adjoint",
+                    },
+                    dagger_matrix,
+                    adjoint_4x4(root_matrix),
+                ),
+            ]);
+        }
+        relations
+    }
+
+    fn two_qubit_closure_holds(
+        table: &[TwoQubitGateMatrix; NAMED_TWO_QUBIT_ROOT_GATES.len()],
+    ) -> bool {
+        two_qubit_closure_relations(table)
+            .into_iter()
+            .all(|(_, lhs, rhs)| max_matrix_error_4x4(lhs, rhs) <= CLOSURE_TOLERANCE)
+    }
+
+    #[test]
+    fn canonical_two_qubit_roots_close_phase_exactly_with_order_four() {
+        let table = canonical_two_qubit_table();
+        for (label, actual, expected) in two_qubit_closure_relations(&table) {
+            let error = max_matrix_error_4x4(actual, expected);
+            assert!(
+                error <= CLOSURE_TOLERANCE,
+                "{label}: max entrywise error {error:e} exceeds phase-exact tolerance \
+                 {CLOSURE_TOLERANCE:e}; actual={actual:?}, expected={expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_two_qubit_roots_have_exact_dyadic_entries() {
+        for gate in NAMED_TWO_QUBIT_ROOT_GATES {
+            let matrix = gate
+                .canonical_2q_matrix()
+                .expect("named two-qubit root must have a canonical matrix");
+            assert!(
+                matrix
+                    .into_iter()
+                    .all(|entry| matches!(entry, -0.5 | 0.0 | 0.5 | 1.0 | -1.0)),
+                "{gate:?} contains a non-dyadic entry"
+            );
+        }
+
+        assert_eq!(
+            GateType::SZZ
+                .canonical_2q_matrix()
+                .unwrap()
+                .map(f64::to_bits),
+            [
+                1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // row 0
+                0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, // row 1
+                0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, // row 2
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, // row 3
+            ]
+            .map(f64::to_bits),
+            "conventional SZZ must be exactly diag(1, i, i, 1)"
+        );
+    }
+
+    #[test]
+    fn two_qubit_closure_guard_rejects_a_phase_mutation_of_every_root() {
+        let table = canonical_two_qubit_table();
+        let phase_re = std::f64::consts::FRAC_1_SQRT_2;
+        let phase_im = std::f64::consts::FRAC_1_SQRT_2;
+
+        for (index, gate) in NAMED_TWO_QUBIT_ROOT_GATES.into_iter().enumerate() {
+            let mut mutant = table;
+            for entry in mutant[index].as_chunks_mut::<2>().0 {
+                let phased = multiply_complex(entry[0], entry[1], phase_re, phase_im);
+                entry[0] = phased.0;
+                entry[1] = phased.1;
+            }
+            let required_failures: &[&str] = match gate {
+                GateType::SXX => &[
+                    "SXX^2 = XX",
+                    "SXX * SXXdg = I",
+                    "SXX^4 = I",
+                    "SXXdg = SXX adjoint",
+                ],
+                GateType::SXXdg => &[
+                    "SXXdg^2 = XX",
+                    "SXX * SXXdg = I",
+                    "SXXdg^4 = I",
+                    "SXXdg = SXX adjoint",
+                ],
+                GateType::SYY => &[
+                    "SYY^2 = YY",
+                    "SYY * SYYdg = I",
+                    "SYY^4 = I",
+                    "SYYdg = SYY adjoint",
+                ],
+                GateType::SYYdg => &[
+                    "SYYdg^2 = YY",
+                    "SYY * SYYdg = I",
+                    "SYYdg^4 = I",
+                    "SYYdg = SYY adjoint",
+                ],
+                GateType::SZZ => &[
+                    "SZZ^2 = ZZ",
+                    "SZZ * SZZdg = I",
+                    "SZZ^4 = I",
+                    "SZZdg = SZZ adjoint",
+                ],
+                GateType::SZZdg => &[
+                    "SZZdg^2 = ZZ",
+                    "SZZ * SZZdg = I",
+                    "SZZdg^4 = I",
+                    "SZZdg = SZZ adjoint",
+                ],
+                _ => unreachable!(),
+            };
+            let relations = two_qubit_closure_relations(&mutant);
+            for &required in required_failures {
+                let (_, actual, expected) = relations
+                    .iter()
+                    .find(|(label, _, _)| *label == required)
+                    .expect("required mutation guard must exist");
+                assert!(
+                    max_matrix_error_4x4(*actual, *expected) > CLOSURE_TOLERANCE,
+                    "exp(i*pi/4) phase mutation of {gate:?} escaped guard {required}"
+                );
+            }
+            assert!(!two_qubit_closure_holds(&mutant));
         }
     }
 

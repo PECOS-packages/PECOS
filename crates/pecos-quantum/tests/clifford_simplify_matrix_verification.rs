@@ -207,16 +207,15 @@ fn rxx_zero_equiv_identity() {
 
 #[test]
 fn rxx_quarter_equiv_sxx() {
-    // SXX = RXX(pi/2)
     let rxx = RXX(Angle64::QUARTER_TURN, 0, 1);
-    let sxx = RXX(Angle64::QUARTER_TURN, 0, 1);
+    let sxx = SXX(0, 1);
     assert!(unitaries_equiv(&rxx, &sxx), "RXX(pi/2) should equal SXX");
 }
 
 #[test]
 fn rxx_three_quarters_equiv_sxxdg() {
     let rxx = RXX(Angle64::THREE_QUARTERS_TURN, 0, 1);
-    let sxxdg = RXX(Angle64::QUARTER_TURN, 0, 1).dg();
+    let sxxdg = SXX(0, 1).dg();
     assert!(
         unitaries_equiv(&rxx, &sxxdg),
         "RXX(3pi/2) should equal SXXdg"
@@ -244,14 +243,14 @@ fn ryy_zero_equiv_identity() {
 #[test]
 fn ryy_quarter_equiv_syy() {
     let ryy = RYY(Angle64::QUARTER_TURN, 0, 1);
-    let syy = RYY(Angle64::QUARTER_TURN, 0, 1);
+    let syy = SYY(0, 1);
     assert!(unitaries_equiv(&ryy, &syy), "RYY(pi/2) should equal SYY");
 }
 
 #[test]
 fn ryy_three_quarters_equiv_syydg() {
     let ryy = RYY(Angle64::THREE_QUARTERS_TURN, 0, 1);
-    let syydg = RYY(Angle64::QUARTER_TURN, 0, 1).dg();
+    let syydg = SYY(0, 1).dg();
     assert!(
         unitaries_equiv(&ryy, &syydg),
         "RYY(3pi/2) should equal SYYdg"

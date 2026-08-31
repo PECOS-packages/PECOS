@@ -22,6 +22,16 @@ pub mod matrix;
 pub mod ring;
 pub mod synthesis;
 
+pub(crate) mod grid;
+pub(crate) mod interval;
+
+// Phase 2a deliberately has no public driver yet. This compile-time signature
+// assertion keeps its crate-internal entry point connected to the library
+// target until the later `synthesize_rz` packet becomes its production caller.
+const _: () = {
+    let _ = grid::candidate_stream;
+};
+
 pub use matrix::{GateToken, Matrix, OmegaExponent};
 pub use ring::{DOmega, ZOmega, ZSqrt2};
 pub use synthesis::{NormalForm, SynthError, exact_synthesize};

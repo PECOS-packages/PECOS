@@ -70,6 +70,9 @@ impl NormalForm {
 /// A structured exact-synthesis failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SynthError {
+    /// Interval refinement reached the caller's precision ceiling without
+    /// resolving a comparison.
+    Inconclusive { precision: u32 },
     /// The supplied matrix does not satisfy `U^dagger U = I` exactly.
     NotUnitary,
     /// An entry of the Bloch representation violated its required real form.
@@ -89,6 +92,10 @@ pub enum SynthError {
 impl fmt::Display for SynthError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Inconclusive { precision } => write!(
+                formatter,
+                "interval comparison remained inconclusive at precision {precision}"
+            ),
             Self::NotUnitary => write!(formatter, "matrix is not exactly unitary over D[omega]"),
             Self::InvalidBlochEntry => {
                 write!(formatter, "Bloch representation contains a non-real entry")

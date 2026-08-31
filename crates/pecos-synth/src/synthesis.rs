@@ -15,7 +15,7 @@
 //! Matsumoto--Amano exact synthesis for one-qubit Clifford+T operators.
 //!
 //! The normal form is `(T | epsilon) (HT | SHT)* C` in operator order, where
-//! operators act from right to left. Public [`Gate`] words instead use execution
+//! operators act from right to left. Public [`GateToken`] words instead use execution
 //! order, so an `HT` syllable is stored as `[T, H]`, and an `SHT` syllable as
 //! `[T, H, S]`.
 
@@ -27,32 +27,36 @@ use std::sync::OnceLock;
 use num_bigint::BigInt;
 use num_traits::{One, Zero};
 
-use crate::{DOmega, Gate, Matrix, ZOmega};
+use crate::{DOmega, GateToken, Matrix, OmegaExponent, ZOmega};
 
-/// The result of exact Matsumoto--Amano synthesis.
+/// A Matsumoto--Amano normal form: the canonical word, its separate global
+/// `omega` scalar, and the cached `T`-count.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExactSynthesis {
-    word: Vec<Gate>,
-    scalar: u8,
-    t_count: usize,
+pub struct NormalForm {
+    word: Vec<GateToken>,
+    scalar: OmegaExponent,
+    t_count: u32,
 }
 
-impl ExactSynthesis {
+impl NormalForm {
     /// Returns the normal-form gate word in execution order.
     #[must_use]
-    pub fn word(&self) -> &[Gate] {
+    pub fn word(&self) -> &[GateToken] {
         &self.word
     }
 
-    /// Returns `j` for the separate global scalar `omega^j`, with `0 <= j < 8`.
+    /// Returns the exponent of the separate global scalar `omega^j`.
     #[must_use]
-    pub const fn scalar(&self) -> u8 {
+    pub const fn scalar(&self) -> OmegaExponent {
         self.scalar
     }
 
     /// Returns the number of `T` tokens in the normal-form word.
+    ///
+    /// Fixed-width by the crate's determinism rule: this value is observable
+    /// (it lands in fixtures), so it is never platform-sized.
     #[must_use]
-    pub const fn t_count(&self) -> usize {
+    pub const fn t_count(&self) -> u32 {
         self.t_count
     }
 
@@ -120,14 +124,20 @@ impl Error for SynthError {}
 
 /// Synthesizes an exactly unitary `D[omega]` matrix into Matsumoto--Amano form.
 ///
+/// # Panics
+///
+/// Panics only if a normal-form word exceeds `u32::MAX` `T` tokens, which
+/// would require a matrix whose denominator exponent is at least `2^32` --
+/// physically unreachable input (see `DOmega`'s capacity section).
+///
 /// The returned word contains `T` but never `Tdg`; its global `omega` scalar is
-/// carried separately in [`ExactSynthesis`].
+/// carried separately in [`NormalForm`].
 ///
 /// # Errors
 ///
 /// Returns [`SynthError::NotUnitary`] if `u^dagger * u != I` in the exact ring.
 /// The other structured variants report violated internal algebraic invariants.
-pub fn exact_synthesize(u: &Matrix) -> Result<ExactSynthesis, SynthError> {
+pub fn exact_synthesize(u: &Matrix) -> Result<NormalForm, SynthError> {
     if !u.is_unitary() {
         return Err(SynthError::NotUnitary);
     }
@@ -175,8 +185,9 @@ pub fn exact_synthesize(u: &Matrix) -> Result<ExactSynthesis, SynthError> {
         word.extend_from_slice(syllable.execution_word());
     }
 
-    let t_count = word.iter().filter(|gate| **gate == Gate::T).count();
-    Ok(ExactSynthesis {
+    let t_count = u32::try_from(word.iter().filter(|gate| **gate == GateToken::T).count())
+        .expect("T-count of a normal form fits in u32");
+    Ok(NormalForm {
         word,
         scalar,
         t_count,
@@ -191,11 +202,11 @@ enum Syllable {
 }
 
 impl Syllable {
-    const fn execution_word(self) -> &'static [Gate] {
+    const fn execution_word(self) -> &'static [GateToken] {
         match self {
-            Self::T => &[Gate::T],
-            Self::HT => &[Gate::T, Gate::H],
-            Self::Sht => &[Gate::T, Gate::H, Gate::S],
+            Self::T => &[GateToken::T],
+            Self::HT => &[GateToken::T, GateToken::H],
+            Self::Sht => &[GateToken::T, GateToken::H, GateToken::SZ],
         }
     }
 }
@@ -207,9 +218,9 @@ struct BlochMatrix {
 impl BlochMatrix {
     fn from_unitary(unitary: &Matrix) -> Self {
         let paulis = [
-            Matrix::from_gate(Gate::X),
-            Matrix::from_gate(Gate::Y),
-            Matrix::from_gate(Gate::Z),
+            Matrix::from_gate(GateToken::X),
+            Matrix::from_gate(GateToken::Y),
+            Matrix::from_gate(GateToken::Z),
         ];
         let adjoint = unitary.adjoint();
         let half = DOmega::new(ZOmega::one(), 2);
@@ -325,7 +336,7 @@ fn equivalent_by_column_permutation(left: &[[bool; 3]; 3], right: &[[bool; 3]; 3
 #[derive(Clone)]
 struct CliffordEntry {
     matrix: Matrix,
-    word: Vec<Gate>,
+    word: Vec<GateToken>,
 }
 
 fn clifford_table() -> &'static [CliffordEntry] {
@@ -334,9 +345,9 @@ fn clifford_table() -> &'static [CliffordEntry] {
 }
 
 fn generate_clifford_table() -> Vec<CliffordEntry> {
-    // This order is the restriction of I < X < Y < Z < H < S < Sdg < T < Tdg
+    // This order is the restriction of I < X < Y < Z < H < SZ < SZdg < T < Tdg
     // to the required suffix alphabet {H, S, X, Z}.
-    const GENERATORS: [Gate; 4] = [Gate::X, Gate::Z, Gate::H, Gate::S];
+    const GENERATORS: [GateToken; 4] = [GateToken::X, GateToken::Z, GateToken::H, GateToken::SZ];
 
     let mut entries = vec![CliffordEntry {
         matrix: Matrix::identity(),
@@ -365,8 +376,10 @@ fn generate_clifford_table() -> Vec<CliffordEntry> {
     entries
 }
 
-fn phase_between(left: &Matrix, right: &Matrix) -> Option<u8> {
-    (0..8).find(|exponent| left == &right.with_global_phase(*exponent))
+fn phase_between(left: &Matrix, right: &Matrix) -> Option<OmegaExponent> {
+    (0u8..8)
+        .map(OmegaExponent::new)
+        .find(|exponent| left == &right.with_global_phase(*exponent))
 }
 
 #[cfg(test)]
@@ -376,7 +389,7 @@ mod tests {
     use num_traits::{One, Zero};
 
     use super::{SynthError, clifford_table, exact_synthesize, phase_between};
-    use crate::{DOmega, Gate, Matrix};
+    use crate::{DOmega, GateToken, Matrix, OmegaExponent};
 
     #[test]
     fn clifford_table_covers_24_projective_and_192_scalar_classes() {
@@ -385,26 +398,27 @@ mod tests {
 
         let mut scalar_complete = HashSet::new();
         for (index, entry) in table.iter().enumerate() {
-            assert!(
-                entry
-                    .word
-                    .iter()
-                    .all(|gate| matches!(gate, Gate::H | Gate::S | Gate::X | Gate::Z))
-            );
+            assert!(entry.word.iter().all(|gate| matches!(
+                gate,
+                GateToken::H | GateToken::SZ | GateToken::X | GateToken::Z
+            )));
             assert_eq!(Matrix::from_word(&entry.word), entry.matrix);
             assert!(entry.matrix.is_unitary());
 
             for other in &table[..index] {
                 assert!(phase_between(&entry.matrix, &other.matrix).is_none());
             }
-            for scalar in 0..8 {
-                assert!(scalar_complete.insert(entry.matrix.with_global_phase(scalar)));
+            for scalar in 0u8..8 {
+                assert!(
+                    scalar_complete
+                        .insert(entry.matrix.with_global_phase(OmegaExponent::new(scalar)))
+                );
             }
         }
         assert_eq!(scalar_complete.len(), 192);
 
         for entry in table {
-            for generator in [Gate::X, Gate::Z, Gate::H, Gate::S] {
+            for generator in [GateToken::X, GateToken::Z, GateToken::H, GateToken::SZ] {
                 let product = Matrix::from_gate(generator) * entry.matrix.clone();
                 assert!(
                     table
@@ -423,7 +437,7 @@ mod tests {
             .map(|entry| entry.word.len())
             .max()
             .expect("the Clifford table is nonempty");
-        let generators = [Gate::X, Gate::Z, Gate::H, Gate::S];
+        let generators = [GateToken::X, GateToken::Z, GateToken::H, GateToken::SZ];
         let mut first_words = vec![None; table.len()];
         let mut words = vec![Vec::new()];
 
@@ -468,10 +482,10 @@ mod tests {
             let before = matrices.len();
             enumerate_exact_t_count(t_count, |word, scalar| {
                 assert_eq!(
-                    word.iter().filter(|gate| **gate == Gate::T).count(),
+                    word.iter().filter(|gate| **gate == GateToken::T).count(),
                     t_count
                 );
-                assert!(!word.contains(&Gate::Tdg));
+                assert!(!word.contains(&GateToken::Tdg));
 
                 let matrix = Matrix::from_word(&word).with_global_phase(scalar);
                 assert!(matrix.is_unitary());
@@ -484,13 +498,13 @@ mod tests {
                 let synthesis = exact_synthesize(&matrix).expect("normal form must synthesize");
                 assert_eq!(synthesis.word(), word);
                 assert_eq!(synthesis.scalar(), scalar);
-                assert_eq!(synthesis.t_count(), t_count);
+                assert_eq!(usize::try_from(synthesis.t_count()).unwrap(), t_count);
                 assert_eq!(
-                    synthesis.t_count(),
+                    usize::try_from(synthesis.t_count()).unwrap(),
                     synthesis
                         .word()
                         .iter()
-                        .filter(|gate| **gate == Gate::T)
+                        .filter(|gate| **gate == GateToken::T)
                         .count()
                 );
                 assert_eq!(synthesis.to_matrix(), matrix);
@@ -521,11 +535,14 @@ mod tests {
         assert_eq!(exact_synthesize(&non_unitary), Err(SynthError::NotUnitary));
     }
 
-    fn enumerate_exact_t_count(t_count: usize, mut visit: impl FnMut(Vec<Gate>, u8)) {
+    fn enumerate_exact_t_count(
+        t_count: usize,
+        mut visit: impl FnMut(Vec<GateToken>, OmegaExponent),
+    ) {
         if t_count == 0 {
             for suffix in clifford_table() {
-                for scalar in 0..8 {
-                    visit(suffix.word.clone(), scalar);
+                for scalar in 0u8..8 {
+                    visit(suffix.word.clone(), OmegaExponent::new(scalar));
                 }
             }
             return;
@@ -535,18 +552,18 @@ mod tests {
             let star_length = t_count - usize::from(leading_t);
             for choices in 0..(1_usize << star_length) {
                 for suffix in clifford_table() {
-                    for scalar in 0..8 {
+                    for scalar in 0u8..8 {
                         let mut word = suffix.word.clone();
                         for syllable in (0..star_length).rev() {
-                            word.extend_from_slice(&[Gate::T, Gate::H]);
+                            word.extend_from_slice(&[GateToken::T, GateToken::H]);
                             if choices & (1 << syllable) != 0 {
-                                word.push(Gate::S);
+                                word.push(GateToken::SZ);
                             }
                         }
                         if leading_t {
-                            word.push(Gate::T);
+                            word.push(GateToken::T);
                         }
-                        visit(word, scalar);
+                        visit(word, OmegaExponent::new(scalar));
                     }
                 }
             }

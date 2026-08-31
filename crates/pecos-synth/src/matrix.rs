@@ -14,7 +14,8 @@
 
 //! Exact one-qubit matrices and gate words.
 //!
-//! Gate words are stored in **execution order**: index zero is applied first.
+//! [`GateToken`] words are stored in **execution order**: index zero is applied
+//! first.
 //! Consequently, the matrix of `[A, B]` is `B * A`. This is the reverse of the
 //! operator-string convention used in the Matsumoto--Amano literature.
 
@@ -24,12 +25,35 @@ use num_traits::{One, Zero};
 
 use crate::{DOmega, ZOmega};
 
+/// Exponent `j` of a global scalar `omega^j`, held modulo 8.
+///
+/// A bare `u8` here invites passing some other small integer -- a degree, a
+/// qubit index, a tick -- and getting a silently wrong phase. The newtype makes
+/// that a compile error; construction wraps, so every held value is canonical.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct OmegaExponent(u8);
+
+impl OmegaExponent {
+    /// Wraps `j` into `0..8`.
+    #[must_use]
+    pub const fn new(j: u8) -> Self {
+        Self(j % 8)
+    }
+
+    /// Returns the canonical exponent in `0..8`.
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
 /// A one-qubit gate token.
 ///
 /// The declaration order is the fixed canonical alphabet order used by exact
-/// synthesis. `S` is PECOS's `SZ` gate.
+/// synthesis. Spellings match `pecos_core::GateType` (`SZ`, not the synthesis
+/// literature's `S`), so token-to-`GateType` conversion is one-to-one.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum Gate {
+pub enum GateToken {
     /// Identity.
     I,
     /// Pauli X.
@@ -40,10 +64,10 @@ pub enum Gate {
     Z,
     /// Hadamard.
     H,
-    /// Phase gate `diag(1, i)` (PECOS `SZ`).
-    S,
-    /// Adjoint phase gate `diag(1, -i)` (PECOS `SZdg`).
-    Sdg,
+    /// Phase gate `diag(1, i)`.
+    SZ,
+    /// Adjoint phase gate `diag(1, -i)`.
+    SZdg,
     /// Pi/8 gate `diag(1, omega)`.
     T,
     /// Adjoint pi/8 gate `diag(1, omega^-1)`.
@@ -80,7 +104,7 @@ impl Matrix {
 
     /// Returns the exact matrix of a gate token.
     #[must_use]
-    pub fn from_gate(gate: Gate) -> Self {
+    pub fn from_gate(gate: GateToken) -> Self {
         let zero = DOmega::zero();
         let one = DOmega::one();
         let minus_one = -&one;
@@ -89,21 +113,21 @@ impl Matrix {
         let omega = DOmega::from(ZOmega::omega());
 
         match gate {
-            Gate::I => Self::identity(),
-            Gate::X => Self::new([[zero.clone(), one.clone()], [one, zero]]),
-            Gate::Y => Self::new([[zero.clone(), minus_i], [i, zero]]),
-            Gate::Z => Self::new([[one, zero.clone()], [zero, minus_one]]),
-            Gate::H => {
+            GateToken::I => Self::identity(),
+            GateToken::X => Self::new([[zero.clone(), one.clone()], [one, zero]]),
+            GateToken::Y => Self::new([[zero.clone(), minus_i], [i, zero]]),
+            GateToken::Z => Self::new([[one, zero.clone()], [zero, minus_one]]),
+            GateToken::H => {
                 let inverse_sqrt2 = DOmega::new(ZOmega::one(), 1);
                 Self::new([
                     [inverse_sqrt2.clone(), inverse_sqrt2.clone()],
                     [inverse_sqrt2.clone(), -inverse_sqrt2],
                 ])
             }
-            Gate::S => Self::new([[one, zero.clone()], [zero, i]]),
-            Gate::Sdg => Self::new([[one, zero.clone()], [zero, minus_i]]),
-            Gate::T => Self::new([[one, zero.clone()], [zero, omega]]),
-            Gate::Tdg => Self::new([
+            GateToken::SZ => Self::new([[one, zero.clone()], [zero, i]]),
+            GateToken::SZdg => Self::new([[one, zero.clone()], [zero, minus_i]]),
+            GateToken::T => Self::new([[one, zero.clone()], [zero, omega]]),
+            GateToken::Tdg => Self::new([
                 [one, zero.clone()],
                 [zero, DOmega::from(ZOmega::omega().conjugate())],
             ]),
@@ -112,7 +136,7 @@ impl Matrix {
 
     /// Reconstructs the exact matrix of a word in execution order.
     #[must_use]
-    pub fn from_word(word: &[Gate]) -> Self {
+    pub fn from_word(word: &[GateToken]) -> Self {
         word.iter().fold(Self::identity(), |matrix, gate| {
             &Self::from_gate(*gate) * &matrix
         })
@@ -141,9 +165,9 @@ impl Matrix {
 
     /// Multiplies every entry by the scalar `omega^exponent`.
     #[must_use]
-    pub fn with_global_phase(&self, exponent: u8) -> Self {
+    pub fn with_global_phase(&self, exponent: OmegaExponent) -> Self {
         let mut scalar = ZOmega::one();
-        for _ in 0..exponent % 8 {
+        for _ in 0..exponent.value() {
             scalar = &scalar * &ZOmega::omega();
         }
         let scalar = DOmega::from(scalar);
@@ -185,7 +209,7 @@ impl Mul for &Matrix {
 
 #[cfg(test)]
 mod tests {
-    use super::{Gate, Matrix};
+    use super::{GateToken, Matrix, OmegaExponent};
 
     /// Absolute fixtures pinning the ORIENTATION of the convention.
     ///
@@ -220,12 +244,12 @@ mod tests {
         // S = diag(1, i) and T = diag(1, omega), with the POSITIVE angle in
         // the lower-right entry. Under the mirrored convention these would be
         // [0,0,-1,0] and [0,0,0,-1] respectively.
-        let s = Matrix::from_gate(Gate::S);
+        let s = Matrix::from_gate(GateToken::SZ);
         assert_eq!(
             s.entries()[1][1].numerator().coordinates(),
             &coords(0, 0, 1, 0)
         );
-        let t = Matrix::from_gate(Gate::T);
+        let t = Matrix::from_gate(GateToken::T);
         assert_eq!(
             t.entries()[1][1].numerator().coordinates(),
             &coords(0, 1, 0, 0)
@@ -237,7 +261,7 @@ mod tests {
         //   H * T = (1/sqrt2) [[1, omega], [1, -omega]]
         // The (0,1) entry is omega/sqrt2. Its numerator distinguishes omega
         // from omega^{-1} = -omega^3, which would be [0,0,0,-1].
-        let ht = Matrix::from_word(&[Gate::T, Gate::H]);
+        let ht = Matrix::from_word(&[GateToken::T, GateToken::H]);
         let upper_right = &ht.entries()[0][1];
         assert_eq!(upper_right.least_denominator_exponent(), 1);
         assert_eq!(upper_right.numerator().coordinates(), &coords(0, 1, 0, 0));
@@ -249,53 +273,57 @@ mod tests {
     #[test]
     fn execution_order_is_reverse_matrix_order() {
         assert_eq!(
-            Matrix::from_word(&[Gate::T, Gate::H]),
-            Matrix::from_gate(Gate::H) * Matrix::from_gate(Gate::T)
+            Matrix::from_word(&[GateToken::T, GateToken::H]),
+            Matrix::from_gate(GateToken::H) * Matrix::from_gate(GateToken::T)
         );
     }
 
     #[test]
     fn generators_and_scalars_are_exactly_unitary() {
         for gate in [
-            Gate::I,
-            Gate::X,
-            Gate::Y,
-            Gate::Z,
-            Gate::H,
-            Gate::S,
-            Gate::Sdg,
-            Gate::T,
-            Gate::Tdg,
+            GateToken::I,
+            GateToken::X,
+            GateToken::Y,
+            GateToken::Z,
+            GateToken::H,
+            GateToken::SZ,
+            GateToken::SZdg,
+            GateToken::T,
+            GateToken::Tdg,
         ] {
             assert!(Matrix::from_gate(gate).is_unitary(), "{gate:?}");
         }
 
-        for exponent in 0..8 {
-            assert!(Matrix::identity().with_global_phase(exponent).is_unitary());
+        for exponent in 0u8..8 {
+            assert!(
+                Matrix::identity()
+                    .with_global_phase(OmegaExponent::new(exponent))
+                    .is_unitary()
+            );
         }
     }
 
     #[test]
     fn adjoints_match_inverse_tokens() {
         assert_eq!(
-            Matrix::from_gate(Gate::S).adjoint(),
-            Matrix::from_gate(Gate::Sdg)
+            Matrix::from_gate(GateToken::SZ).adjoint(),
+            Matrix::from_gate(GateToken::SZdg)
         );
         assert_eq!(
-            Matrix::from_gate(Gate::T).adjoint(),
-            Matrix::from_gate(Gate::Tdg)
+            Matrix::from_gate(GateToken::T).adjoint(),
+            Matrix::from_gate(GateToken::Tdg)
         );
     }
 
     #[test]
     fn phase_generators_use_the_conventional_positive_angle() {
         assert_eq!(
-            Matrix::from_gate(Gate::T) * Matrix::from_gate(Gate::T),
-            Matrix::from_gate(Gate::S)
+            Matrix::from_gate(GateToken::T) * Matrix::from_gate(GateToken::T),
+            Matrix::from_gate(GateToken::SZ)
         );
         assert_eq!(
-            Matrix::from_gate(Gate::S) * Matrix::from_gate(Gate::S),
-            Matrix::from_gate(Gate::Z)
+            Matrix::from_gate(GateToken::SZ) * Matrix::from_gate(GateToken::SZ),
+            Matrix::from_gate(GateToken::Z)
         );
     }
 }

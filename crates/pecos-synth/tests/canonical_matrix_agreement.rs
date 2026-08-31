@@ -11,7 +11,7 @@
 //! definitions has moved, and which one is correct is a deliberate decision.
 
 use pecos_core::gate_type::GateType;
-use pecos_synth::matrix::{Gate, Matrix};
+use pecos_synth::matrix::{GateToken, Matrix};
 use pecos_synth::ring::DOmega;
 
 /// Numeric value of `omega^j` where `omega = exp(i*pi/4)`.
@@ -38,15 +38,15 @@ fn evaluate(entry: &DOmega) -> (f64, f64) {
 fn exact_generators_match_the_canonical_single_qubit_table() {
     const TOL: f64 = 1e-12;
     let cases = [
-        (Gate::I, GateType::I),
-        (Gate::X, GateType::X),
-        (Gate::Y, GateType::Y),
-        (Gate::Z, GateType::Z),
-        (Gate::H, GateType::H),
-        (Gate::S, GateType::SZ),
-        (Gate::Sdg, GateType::SZdg),
-        (Gate::T, GateType::T),
-        (Gate::Tdg, GateType::Tdg),
+        (GateToken::I, GateType::I),
+        (GateToken::X, GateType::X),
+        (GateToken::Y, GateType::Y),
+        (GateToken::Z, GateType::Z),
+        (GateToken::H, GateType::H),
+        (GateToken::SZ, GateType::SZ),
+        (GateToken::SZdg, GateType::SZdg),
+        (GateToken::T, GateType::T),
+        (GateToken::Tdg, GateType::Tdg),
     ];
     for (gate, gate_type) in cases {
         let canonical = gate_type

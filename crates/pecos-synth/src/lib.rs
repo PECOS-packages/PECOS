@@ -22,6 +22,6 @@ pub mod matrix;
 pub mod ring;
 pub mod synthesis;
 
-pub use matrix::{Gate, Matrix};
+pub use matrix::{GateToken, Matrix, OmegaExponent};
 pub use ring::{DOmega, ZOmega, ZSqrt2};
-pub use synthesis::{ExactSynthesis, SynthError, exact_synthesize};
+pub use synthesis::{NormalForm, SynthError, exact_synthesize};

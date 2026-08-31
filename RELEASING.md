@@ -40,9 +40,8 @@ a member drifts off it:
 | Python | `[project].version` in the root `pyproject.toml` | `just python-workspace-check` -- every tracked `pyproject.toml` with a `[build-system]` must match, wherever it lives |
 | Rust | `[workspace.package].version` in the root `Cargo.toml` | `just rust-workspace-check` -- every workspace member must use `version.workspace = true` |
 | Julia | `version` in `julia/PECOS.jl/Project.toml` | `just julia-version-check` -- manifest, FFI crate, and `build_tarballs.jl` must agree, as must the Julia compat bound; `just rust-workspace-check` separately holds the FFI crate to it |
-| Go | `version` in `go/pecos-go-ffi/Cargo.toml` | single declaration: `pecos_version()` derives the string from `CARGO_PKG_VERSION`, and Go modules are versioned by git tag |
 
-A Python release moves only the Python train. The Rust, Julia, and Go trains are
+A Python release moves only the Python train. The Rust and Julia trains are
 bumped on their own schedules, and the guards keep them from being dragged along
 by accident. Julia has its own bump command, matching the Python one:
 
@@ -51,8 +50,7 @@ just bump-julia-version <new-version>
 ```
 
 It rewrites all three Julia files, refreshes `Cargo.lock` for the FFI crate, and runs both
-guards. Rust and Go are a single literal each (`[workspace.package].version` and
-`go/pecos-go-ffi/Cargo.toml`), so they need no tool.
+guards. Rust is a single literal (`[workspace.package].version`), so it needs no tool.
 
 ## 2. Merge and wait for post-merge green
 

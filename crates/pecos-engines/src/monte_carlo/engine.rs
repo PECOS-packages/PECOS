@@ -16,8 +16,8 @@ use crate::engine_system::{
     ClassicalControlEngine, ClassicalEngine, ControlEngine, EngineStage, HybridEngine,
 };
 use crate::hybrid::HybridEngineBuilder;
-use crate::noise::{DepolarizingNoiseModel, DepolarizingSampledFault, NoiseModel};
 use crate::noise::depolarizing::DepolarizingFaultCatalog;
+use crate::noise::{DepolarizingNoiseModel, DepolarizingSampledFault, NoiseModel};
 use crate::quantum::{QuantumEngine, StateVecEngine};
 use crate::shot_results::{Data, Shot, ShotVec};
 use log::debug;
@@ -303,9 +303,13 @@ impl MonteCarloEngine {
 
         // Shared fault history collection if enabled
         let fault_histories_vec = if self.fault_history_enabled {
-            Some(Arc::new(Mutex::new(
-                Vec::<(usize, usize, DepolarizingFaultHistory)>::with_capacity(num_shots),
-            )))
+            Some(Arc::new(Mutex::new(Vec::<(
+                usize,
+                usize,
+                DepolarizingFaultHistory,
+            )>::with_capacity(
+                num_shots
+            ))))
         } else {
             None
         };
@@ -420,7 +424,7 @@ impl MonteCarloEngine {
                                     .sampled_fault_history()
                                     .map_or_else(Vec::new, |history| history.to_vec())
                             };
-                            
+
                             // Add history to the history vector
                             histories_shared
                                 .lock()
@@ -452,9 +456,14 @@ impl MonteCarloEngine {
         // Sort the fault histories into the shot order
         let combined_histories = if let Some(histories_shared) = fault_histories_vec {
             // Sort the histories by worker and shot index to ensure deterministic ordering
-            let mut histories = histories_shared.lock().expect("fault histories mutex poisoned");
+            let mut histories = histories_shared
+                .lock()
+                .expect("fault histories mutex poisoned");
             histories.sort_by(|(w1, s1, _), (w2, s2, _)| w1.cmp(w2).then(s1.cmp(s2)));
-            histories.iter().map(|(_, _, history)| history.clone()).collect::<Vec<DepolarizingFaultHistory>>()
+            histories
+                .iter()
+                .map(|(_, _, history)| history.clone())
+                .collect::<Vec<DepolarizingFaultHistory>>()
         } else {
             Vec::new()
         };
@@ -480,13 +489,14 @@ impl MonteCarloEngine {
             .as_any_mut()
             .downcast_mut::<DepolarizingNoiseModel>()
             .ok_or_else(|| {
-                PecosError::Input(
-                    "catalog_faults requires DepolarizingNoiseModel".to_string(),
-                )
+                PecosError::Input("catalog_faults requires DepolarizingNoiseModel".to_string())
             })?;
-        let msg = engine.classical_engine.generate_commands().unwrap_or_else(|e| {
-            panic!("Failed to generate commands for fault catalog: {e}");
-        });
+        let msg = engine
+            .classical_engine
+            .generate_commands()
+            .unwrap_or_else(|e| {
+                panic!("Failed to generate commands for fault catalog: {e}");
+            });
         depolarizing.build_fault_catalog_from_message(&msg)
     }
 
@@ -1133,9 +1143,7 @@ mod tests {
 
         sampler_mc.set_seed(0);
 
-        let sampled_run = sampler_mc
-            .run(12)
-            .expect("initial run should succeed");
+        let sampled_run = sampler_mc.run(12).expect("initial run should succeed");
         let sampled_histories = sampled_run.fault_histories.clone();
 
         assert_eq!(sampled_histories.len(), 12);
@@ -1171,9 +1179,7 @@ mod tests {
 
         sampler_mc.set_seed(0);
 
-        let sampled_run = sampler_mc
-            .run(2)
-            .expect("initial run should succeed");
+        let sampled_run = sampler_mc.run(2).expect("initial run should succeed");
         let sampled_histories = sampled_run.fault_histories.clone();
 
         assert_eq!(sampled_histories.len(), 2);

@@ -312,6 +312,12 @@ pytest-ci-core:
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
+# Run the experimental zluppy package's independent Python test project.
+[group('test')]
+pytest-zluppy:
+    uv sync --project exp/zluppy --frozen
+    uv run --project exp/zluppy --frozen pytest exp/zluppy/tests
+
 # Build and import the core Python packages on a target platform/interpreter.
 [group('test')]
 python-ci-smoke profile="debug": (validate-profile "python-ci-smoke" profile) (python-ci-build profile)

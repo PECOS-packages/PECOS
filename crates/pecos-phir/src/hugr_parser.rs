@@ -22,7 +22,7 @@ use crate::ops::{ClassicalOp, Operation, QuantumOp};
 use crate::phir::{AttributeValue, Block, Instruction, SSAValue, Terminator};
 use crate::types::{FunctionType, IntWidth, Type};
 use log::debug;
-use pecos_core::Angle64;
+use pecos_core::{Angle64, QubitId};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -504,6 +504,49 @@ impl HugrToPhirConverter {
                     } else {
                         None
                     };
+                    if is_rotation_op(&op_name) && angle.is_none() {
+                        return Err(PhirError::internal(format!(
+                            "{op_name}: missing rotation angle at node {:?}",
+                            node.index()
+                        )));
+                    }
+
+                    if op_name == "CRz" {
+                        let control = self.resolve_wire(hugr, node, 0).ok_or_else(|| {
+                            PhirError::internal(format!(
+                                "CRz: unresolved control input at node {:?}",
+                                node.index()
+                            ))
+                        })?;
+                        let target = self.resolve_wire(hugr, node, 1).ok_or_else(|| {
+                            PhirError::internal(format!(
+                                "CRz: unresolved target input at node {:?}",
+                                node.index()
+                            ))
+                        })?;
+                        // PHIR carries qubit identity in SSA operands, so only the lowered gate
+                        // kinds and angles are retained from these placeholder qubit IDs.
+                        let [rzz, rz] = pecos_core::controlled_rotations::lower_crz(
+                            angle.expect("rotation angle checked above"),
+                            QubitId(0),
+                            QubitId(1),
+                        );
+                        block.add_instruction(Instruction::new(
+                            Operation::Quantum(QuantumOp::RZZ(rzz.angles[0])),
+                            vec![control, target],
+                            vec![self.fresh_ssa(), self.fresh_ssa()],
+                            vec![Type::Qubit; 2],
+                        ));
+                        block.add_instruction(Instruction::new(
+                            Operation::Quantum(QuantumOp::RZ(rz.angles[0])),
+                            vec![target],
+                            vec![self.fresh_ssa()],
+                            vec![Type::Qubit],
+                        ));
+                        self.map_wire(node, 0, control);
+                        self.map_wire(node, 1, target);
+                        continue;
+                    }
 
                     let Some(quantum_op) = hugr_name_to_quantum_op(&op_name, angle) else {
                         debug!("Skipping unsupported quantum op: {op_name}");
@@ -858,15 +901,15 @@ fn hugr_name_to_quantum_op(name: &str, angle: Option<f64>) -> Option<QuantumOp> 
         "Vdg" => Some(QuantumOp::SXdg),
         // Rotation gates retain their symmetric rotation matrices.
         "Rx" => {
-            let a = Angle64::from_radians(angle.unwrap_or(0.0));
+            let a = Angle64::from_radians(angle?);
             Some(QuantumOp::RX(a))
         }
         "Ry" => {
-            let a = Angle64::from_radians(angle.unwrap_or(0.0));
+            let a = Angle64::from_radians(angle?);
             Some(QuantumOp::RY(a))
         }
         "Rz" => {
-            let a = Angle64::from_radians(angle.unwrap_or(0.0));
+            let a = Angle64::from_radians(angle?);
             Some(QuantumOp::RZ(a))
         }
         // Two-qubit gates
@@ -875,7 +918,6 @@ fn hugr_name_to_quantum_op(name: &str, angle: Option<f64>) -> Option<QuantumOp> 
         "CZ" => Some(QuantumOp::CZ),
         "CH" => Some(QuantumOp::CH),
         "SWAP" => Some(QuantumOp::SWAP),
-        "CRz" => Some(QuantumOp::RZZ(Angle64::from_radians(angle.unwrap_or(0.0)))),
         "ZZMax" => Some(QuantumOp::RZZ(Angle64::QUARTER_TURN)),
         // Three-qubit gates
         "Toffoli" | "CCX" => Some(QuantumOp::Toffoli),
@@ -1114,6 +1156,57 @@ mod tests {
 
         let rotation = Const::new(ConstRotation::PI.into());
         assert_eq!(extract_const_float(&rotation), Some((1.0, true)));
+    }
+
+    #[cfg(feature = "hugr")]
+    #[test]
+    fn crz_without_rotation_input_is_an_error() {
+        use tket::TketOp;
+        use tket::extension::rotation::ConstRotation;
+        use tket::hugr::builder::{DFGBuilder, Dataflow, DataflowHugr};
+        use tket::hugr::hugr::hugrmut::HugrMut;
+        use tket::hugr::types::Signature;
+        use tket::hugr::{HugrView, IncomingPort};
+
+        let mut builder = DFGBuilder::new(Signature::new(vec![], vec![])).unwrap();
+        let target = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .unwrap()
+            .outputs()
+            .next()
+            .unwrap();
+        let control = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .unwrap()
+            .outputs()
+            .next()
+            .unwrap();
+        let rotation = builder.add_load_value(ConstRotation::PI);
+        let mut outputs = builder
+            .add_dataflow_op(TketOp::CRz, vec![control, target, rotation])
+            .unwrap()
+            .outputs();
+        let control = outputs.next().unwrap();
+        let target = outputs.next().unwrap();
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![target])
+            .unwrap();
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![control])
+            .unwrap();
+        let mut hugr = builder.finish_hugr_with_outputs(vec![]).unwrap();
+        let crz_node = hugr
+            .nodes()
+            .find(|&node| {
+                hugr.get_optype(node)
+                    .as_extension_op()
+                    .is_some_and(|op| op.unqualified_id() == "CRz")
+            })
+            .unwrap();
+        hugr.disconnect(crz_node, IncomingPort::from(2));
+
+        let error = HugrToPhirConverter::new().convert(&hugr).unwrap_err();
+        assert!(error.to_string().contains("CRz: missing rotation angle"));
     }
 
     #[test]

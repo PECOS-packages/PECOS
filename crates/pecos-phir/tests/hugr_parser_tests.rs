@@ -5,9 +5,19 @@
 
 #![cfg(feature = "hugr")]
 
+use pecos_engines::quantum::StateVecEngine;
+use pecos_engines::{ClassicalEngine, Engine};
+use pecos_phir::PhirEngine;
 use pecos_phir::builtin_ops::BuiltinOp;
 use pecos_phir::hugr_parser::parse_hugr_bytes_to_phir;
 use pecos_phir::ops::{ClassicalOp, Operation, QuantumOp};
+use std::io::Cursor;
+use tket::TketOp;
+use tket::extension::rotation::ConstRotation;
+use tket::hugr::Hugr;
+use tket::hugr::builder::{DFGBuilder, Dataflow, DataflowHugr};
+use tket::hugr::envelope::EnvelopeConfig;
+use tket::hugr::types::Signature;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -81,9 +91,145 @@ fn has_result_with_export(block: &pecos_phir::phir::Block, name: &str) -> bool {
     })
 }
 
+fn crz_hugr(theta: f64, basis: usize) -> Hugr {
+    let mut builder = DFGBuilder::new(Signature::new(vec![], vec![])).expect("create HUGR");
+    let mut target = builder
+        .add_dataflow_op(TketOp::QAlloc, vec![])
+        .expect("allocate target")
+        .outputs()
+        .next()
+        .expect("target output");
+    let mut control = builder
+        .add_dataflow_op(TketOp::QAlloc, vec![])
+        .expect("allocate control")
+        .outputs()
+        .next()
+        .expect("control output");
+
+    if basis & 1 != 0 {
+        target = builder
+            .add_dataflow_op(TketOp::X, vec![target])
+            .expect("prepare target")
+            .outputs()
+            .next()
+            .expect("target output");
+    }
+    if basis & 2 != 0 {
+        control = builder
+            .add_dataflow_op(TketOp::X, vec![control])
+            .expect("prepare control")
+            .outputs()
+            .next()
+            .expect("control output");
+    }
+
+    let rotation = builder.add_load_value(
+        ConstRotation::new(theta / std::f64::consts::PI).expect("finite HUGR rotation"),
+    );
+    let mut outputs = builder
+        .add_dataflow_op(TketOp::CRz, vec![control, target, rotation])
+        .expect("add CRz")
+        .outputs();
+    control = outputs.next().expect("control output");
+    target = outputs.next().expect("target output");
+    builder
+        .add_dataflow_op(TketOp::QFree, vec![target])
+        .expect("free target");
+    builder
+        .add_dataflow_op(TketOp::QFree, vec![control])
+        .expect("free control");
+    builder
+        .finish_hugr_with_outputs(vec![])
+        .expect("finish HUGR")
+}
+
+fn hugr_bytes(hugr: &Hugr) -> Vec<u8> {
+    let mut buffer = Cursor::new(Vec::new());
+    hugr.store(&mut buffer, EnvelopeConfig::text())
+        .expect("serialize HUGR");
+    buffer.into_inner()
+}
+
+fn state_from_phir_hugr_parser(theta: f64, basis: usize) -> Vec<(f64, f64)> {
+    let module =
+        parse_hugr_bytes_to_phir(&hugr_bytes(&crz_hugr(theta, basis))).expect("parse HUGR to PHIR");
+    let mut phir = PhirEngine::new(module).expect("create PHIR engine");
+    let mut simulator = StateVecEngine::new(2);
+    while !phir.finished {
+        let commands = phir.generate_commands().expect("generate PHIR commands");
+        simulator.process(commands).expect("execute PHIR commands");
+    }
+    simulator
+        .simulator_mut()
+        .state()
+        .iter()
+        .map(|amplitude| (amplitude.re, amplitude.im))
+        .collect()
+}
+
+fn assert_crz_matrix(execute: impl Fn(f64, usize) -> Vec<(f64, f64)>) {
+    for theta in [
+        -std::f64::consts::PI,
+        std::f64::consts::PI / 3.0,
+        std::f64::consts::PI,
+        std::f64::consts::TAU,
+        3.0 * std::f64::consts::PI,
+    ] {
+        let mut actual = vec![vec![(0.0, 0.0); 4]; 4];
+        for column in 0..4 {
+            for (row_values, amplitude) in actual.iter_mut().zip(execute(theta, column)) {
+                row_values[column] = amplitude;
+            }
+        }
+
+        let half = theta / 2.0;
+        let reference = [
+            (1.0, 0.0),
+            (1.0, 0.0),
+            (half.cos(), -half.sin()),
+            (half.cos(), half.sin()),
+        ];
+        let phase = actual[0][0];
+        let phase_norm = phase.0 * phase.0 + phase.1 * phase.1;
+        assert!(
+            (phase_norm - 1.0).abs() < 1e-12,
+            "theta={theta}, phase={phase:?}"
+        );
+        if theta.abs() <= std::f64::consts::PI {
+            assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+        } else {
+            assert!((phase.0.abs() - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+        }
+
+        for (row, row_values) in actual.iter().enumerate() {
+            for (column, &value) in row_values.iter().enumerate() {
+                let normalized = (
+                    (value.0 * phase.0 + value.1 * phase.1) / phase_norm,
+                    (value.1 * phase.0 - value.0 * phase.1) / phase_norm,
+                );
+                let expected = if row == column {
+                    reference[row]
+                } else {
+                    (0.0, 0.0)
+                };
+                assert!(
+                    (normalized.0 - expected.0).abs() < 1e-12
+                        && (normalized.1 - expected.1).abs() < 1e-12,
+                    "theta={theta}, entry=({row}, {column}), actual={normalized:?}, expected={expected:?}, phase={phase:?}"
+                );
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Real .hugr file tests
 // ---------------------------------------------------------------------------
+
+#[test]
+fn phir_hugr_crz_boundary_preserves_full_matrix() {
+    assert_crz_matrix(state_from_phir_hugr_parser);
+}
 
 #[test]
 fn parse_single_hadamard_hugr() {

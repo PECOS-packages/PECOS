@@ -69,8 +69,8 @@ pub enum GateType {
     SWAP = 59,
     // iSWAP = 60
     // G = 61
-    /// Controlled-RZ gate (2 qubits, 1 angle parameter)
-    CRZ = 70,
+    // 70 is retired. Controlled rotations are boundary spellings lowered to
+    // native rotations before entering the executed IR.
     /// Controlled-H gate (2 qubits)
     CH = 71,
     /// RXX rotation gate
@@ -421,9 +421,11 @@ const fn adjoint_2x2(matrix: SingleQubitGateMatrix) -> SingleQubitGateMatrix {
     ]
 }
 
-impl From<u8> for GateType {
-    fn from(value: u8) -> Self {
-        match value {
+impl TryFrom<u8> for GateType {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        let gate_type = match value {
             0 => GateType::I,
             1 => GateType::X,
             2 => GateType::Z,
@@ -454,7 +456,6 @@ impl From<u8> for GateType {
             57 => GateType::SZZ,
             58 => GateType::SZZdg,
             59 => GateType::SWAP,
-            70 => GateType::CRZ,
             71 => GateType::CH,
             80 => GateType::RXX,
             81 => GateType::RYY,
@@ -477,8 +478,9 @@ impl From<u8> for GateType {
             210 => GateType::TrackedPauliMeta,
             220 => GateType::Channel,
             255 => GateType::Custom,
-            _ => panic!("Invalid gate type ID: {value}"),
-        }
+            _ => return Err(format!("Invalid gate type ID: {value}")),
+        };
+        Ok(gate_type)
     }
 }
 
@@ -636,7 +638,6 @@ impl GateType {
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
-            | GateType::CRZ
             | GateType::Idle => 1,
 
             // Gates with two parameters
@@ -712,7 +713,6 @@ impl GateType {
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::SWAP
-            | GateType::CRZ
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
@@ -760,8 +760,7 @@ impl GateType {
             | GateType::RZ
             | GateType::RXX
             | GateType::RYY
-            | GateType::RZZ
-            | GateType::CRZ => 1,
+            | GateType::RZZ => 1,
             GateType::RXY1Q => 2,
             GateType::U | GateType::RXXRYYRZZ => 3,
             GateType::U2q => 15,
@@ -834,7 +833,6 @@ impl fmt::Display for GateType {
             GateType::RXX => write!(f, "RXX"),
             GateType::RYY => write!(f, "RYY"),
             GateType::SWAP => write!(f, "SWAP"),
-            GateType::CRZ => write!(f, "CRZ"),
             GateType::RZZ => write!(f, "RZZ"),
             GateType::RXXRYYRZZ => write!(f, "RXXRYYRZZ"),
             GateType::U2q => write!(f, "U2q"),
@@ -909,7 +907,6 @@ impl std::str::FromStr for GateType {
             "RZZ" => Ok(GateType::RZZ),
             "RXXRYYRZZ" => Ok(GateType::RXXRYYRZZ),
             "U2Q" => Ok(GateType::U2q),
-            "CRZ" => Ok(GateType::CRZ),
             "CCX" | "TOFFOLI" => Ok(GateType::CCX),
             "SWAP" => Ok(GateType::SWAP),
             "MX" | "MEASURE X" => Ok(GateType::MX),
@@ -1447,32 +1444,39 @@ mod tests {
         assert_eq!(GateType::Channel as u8, 220);
         assert_eq!(GateType::Custom as u8, 255);
 
-        assert_eq!(GateType::from(0u8), GateType::I);
-        assert_eq!(GateType::from(1u8), GateType::X);
-        assert_eq!(GateType::from(2u8), GateType::Z);
-        assert_eq!(GateType::from(3u8), GateType::Y);
-        assert_eq!(GateType::from(10u8), GateType::H);
-        assert_eq!(GateType::from(16u8), GateType::F);
-        assert_eq!(GateType::from(17u8), GateType::Fdg);
-        assert_eq!(GateType::from(50u8), GateType::CX);
-        assert_eq!(GateType::from(53u8), GateType::SXX);
-        assert_eq!(GateType::from(54u8), GateType::SXXdg);
-        assert_eq!(GateType::from(55u8), GateType::SYY);
-        assert_eq!(GateType::from(56u8), GateType::SYYdg);
-        assert_eq!(GateType::from(57u8), GateType::SZZ);
-        assert_eq!(GateType::from(32u8), GateType::RZ);
-        assert_eq!(GateType::from(36u8), GateType::RXY1Q);
-        assert_eq!(GateType::from(104u8), GateType::MZ);
-        assert_eq!(GateType::from(105u8), GateType::MeasureLeaked);
-        assert_eq!(GateType::from(106u8), GateType::MeasureFree);
-        assert_eq!(GateType::from(134u8), GateType::PZ);
-        assert_eq!(GateType::from(135u8), GateType::QAlloc);
-        assert_eq!(GateType::from(136u8), GateType::QFree);
-        assert_eq!(GateType::from(200u8), GateType::Idle);
-        assert_eq!(GateType::from(218u8), GateType::MeasCrosstalkGlobalPayload);
-        assert_eq!(GateType::from(219u8), GateType::MeasCrosstalkLocalPayload);
-        assert_eq!(GateType::from(220u8), GateType::Channel);
-        assert_eq!(GateType::from(255u8), GateType::Custom);
+        assert_eq!(GateType::try_from(0u8), Ok(GateType::I));
+        assert_eq!(GateType::try_from(1u8), Ok(GateType::X));
+        assert_eq!(GateType::try_from(2u8), Ok(GateType::Z));
+        assert_eq!(GateType::try_from(3u8), Ok(GateType::Y));
+        assert_eq!(GateType::try_from(10u8), Ok(GateType::H));
+        assert_eq!(GateType::try_from(16u8), Ok(GateType::F));
+        assert_eq!(GateType::try_from(17u8), Ok(GateType::Fdg));
+        assert_eq!(GateType::try_from(50u8), Ok(GateType::CX));
+        assert_eq!(GateType::try_from(53u8), Ok(GateType::SXX));
+        assert_eq!(GateType::try_from(54u8), Ok(GateType::SXXdg));
+        assert_eq!(GateType::try_from(55u8), Ok(GateType::SYY));
+        assert_eq!(GateType::try_from(56u8), Ok(GateType::SYYdg));
+        assert_eq!(GateType::try_from(57u8), Ok(GateType::SZZ));
+        assert_eq!(GateType::try_from(32u8), Ok(GateType::RZ));
+        assert_eq!(GateType::try_from(36u8), Ok(GateType::RXY1Q));
+        assert_eq!(GateType::try_from(104u8), Ok(GateType::MZ));
+        assert_eq!(GateType::try_from(105u8), Ok(GateType::MeasureLeaked));
+        assert_eq!(GateType::try_from(106u8), Ok(GateType::MeasureFree));
+        assert_eq!(GateType::try_from(134u8), Ok(GateType::PZ));
+        assert_eq!(GateType::try_from(135u8), Ok(GateType::QAlloc));
+        assert_eq!(GateType::try_from(136u8), Ok(GateType::QFree));
+        assert_eq!(GateType::try_from(200u8), Ok(GateType::Idle));
+        assert_eq!(
+            GateType::try_from(218u8),
+            Ok(GateType::MeasCrosstalkGlobalPayload)
+        );
+        assert_eq!(
+            GateType::try_from(219u8),
+            Ok(GateType::MeasCrosstalkLocalPayload)
+        );
+        assert_eq!(GateType::try_from(220u8), Ok(GateType::Channel));
+        assert_eq!(GateType::try_from(255u8), Ok(GateType::Custom));
+        assert!(GateType::try_from(70u8).is_err());
     }
 
     #[test]

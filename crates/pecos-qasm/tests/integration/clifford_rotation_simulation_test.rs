@@ -307,9 +307,9 @@ fn qasm_rzz_pi_over_2_entangles_qubits() {
 }
 
 #[test]
-fn qasm_rx_pi_via_decomposition_acts_as_x() {
-    // In qelib1.inc, rx(theta) decomposes to h; rz(theta); h.
-    // rx(pi) = H*Z*H = X. So |0> -> |1>.
+fn qasm_rx_pi_via_rxy1q_acts_as_x() {
+    // In qelib1.inc, rx(theta) maps to RXY1Q(theta, 0).
+    // RXY1Q(pi, 0) = X up to global phase. So |0> -> |1>.
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";

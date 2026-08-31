@@ -1938,21 +1938,18 @@ impl DagCircuit {
         self
     }
 
-    /// Apply CRZ (controlled-RZ) gate(s).
-    ///
-    /// The angle can be an `Angle64` or an `f64` (interpreted as radians).
+    /// Lower CRZ (controlled-RZ) boundary spelling into native rotations.
     pub fn crz(
         &mut self,
-        theta: impl Into<Angle64>,
+        theta_radians: f64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
-        let angle = theta.into();
         for &(c, t) in pairs {
-            self.add_gate_auto_wire(Gate::with_angles(
-                GateType::CRZ,
-                vec![angle],
-                vec![c.into(), t.into()],
-            ));
+            for gate in
+                pecos_core::controlled_rotations::lower_crz(theta_radians, c.into(), t.into())
+            {
+                self.add_gate_auto_wire(gate);
+            }
         }
         self
     }
@@ -2753,6 +2750,84 @@ impl CircuitMut for DagCircuit {
 mod tests {
     use super::*;
     use pecos_core::Angle64;
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
+
+    fn dag_crz_state(theta: f64, basis: usize) -> Vec<(f64, f64)> {
+        let mut circuit = DagCircuit::new();
+        if basis & 1 != 0 {
+            circuit.x(&[0]);
+        }
+        if basis & 2 != 0 {
+            circuit.x(&[1]);
+        }
+        circuit.crz(theta, &[(1, 0)]);
+        let mut simulator = StateVec::new(2);
+        for node in circuit.topological_order() {
+            let gate = circuit.gate(node).expect("DAG node contains a gate");
+            match gate.gate_type {
+                GateType::X => simulator.x(&gate.qubits),
+                GateType::RZ => simulator.rz(gate.angles[0], &gate.qubits),
+                GateType::RZZ => simulator.rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])]),
+                other => panic!("unexpected DAG builder gate {other}"),
+            };
+        }
+        simulator
+            .state()
+            .iter()
+            .map(|amplitude| (amplitude.re, amplitude.im))
+            .collect()
+    }
+
+    #[test]
+    fn dag_crz_builder_preserves_full_matrix() {
+        for theta in [
+            -std::f64::consts::PI,
+            std::f64::consts::PI / 3.0,
+            std::f64::consts::PI,
+            std::f64::consts::TAU,
+            3.0 * std::f64::consts::PI,
+        ] {
+            let mut actual = vec![vec![(0.0, 0.0); 4]; 4];
+            for column in 0..4 {
+                for (row_values, amplitude) in actual.iter_mut().zip(dag_crz_state(theta, column)) {
+                    row_values[column] = amplitude;
+                }
+            }
+            let half = theta / 2.0;
+            let reference = [
+                (1.0, 0.0),
+                (1.0, 0.0),
+                (half.cos(), -half.sin()),
+                (half.cos(), half.sin()),
+            ];
+            let phase = actual[0][0];
+            let phase_norm = phase.0 * phase.0 + phase.1 * phase.1;
+            assert!((phase_norm - 1.0).abs() < 1e-12);
+            if theta.abs() <= std::f64::consts::PI {
+                assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+            } else {
+                assert!((phase.0.abs() - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+            }
+            for (row, row_values) in actual.iter().enumerate() {
+                for (column, &value) in row_values.iter().enumerate() {
+                    let normalized = (
+                        (value.0 * phase.0 + value.1 * phase.1) / phase_norm,
+                        (value.1 * phase.0 - value.0 * phase.1) / phase_norm,
+                    );
+                    let expected = if row == column {
+                        reference[row]
+                    } else {
+                        (0.0, 0.0)
+                    };
+                    assert!(
+                        (normalized.0 - expected.0).abs() < 1e-12
+                            && (normalized.1 - expected.1).abs() < 1e-12,
+                        "theta={theta}, entry=({row}, {column}), actual={normalized:?}, expected={expected:?}, phase={phase:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_empty_circuit() {

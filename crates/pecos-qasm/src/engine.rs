@@ -682,7 +682,7 @@ impl QASMEngine {
             | GateType::SYY
             | GateType::SYYdg => self.process_two_qubit_gate(gate.gate_type, &qubits),
             // Gates not yet supported in QASM engine
-            GateType::SWAP | GateType::CCX | GateType::CRZ | GateType::CH | GateType::Channel => {
+            GateType::SWAP | GateType::CCX | GateType::CH | GateType::Channel => {
                 Err(PecosError::Processing(format!(
                     "Gate type {:?} is not yet supported in the QASM engine",
                     gate.gate_type

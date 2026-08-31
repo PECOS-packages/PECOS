@@ -310,6 +310,9 @@ impl<R: Rng> SparseStateVecAoS<R> {
         c: Complex64,
         d: Complex64,
     ) {
+        // Pair lookup below requires sorted support. Keep that precondition at
+        // the generic owning layer so every present and future caller is safe.
+        self.ensure_sorted();
         let mask = 1usize << q;
         let len = self.amplitudes.len();
 
@@ -420,6 +423,9 @@ impl<R: Rng> SparseStateVecAoS<R> {
         }
 
         std::mem::swap(&mut self.amplitudes, &mut self.scratch);
+        // The two-pointer walk appends low/high results per matched support
+        // item, so the swapped output is interleaved rather than index-sorted.
+        self.needs_sort = true;
     }
 
     /// Apply single-qubit gate for small states using binary search.
@@ -822,76 +828,21 @@ impl<R: Rng> SparseStateVecAoS<R> {
         std::mem::swap(&mut self.amplitudes, &mut self.scratch);
     }
 
-    /// Apply CX gate using O(k) partition-swap instead of O(k log k) sort.
+    /// Apply CX by relabeling support indices and deferring the resulting sort.
     ///
-    /// CX flips the target bit only when control bit is 1.
-    /// For control=0 indices: unchanged
-    /// For control=1 indices: apply X-gate-like partition-swap on target bit
-    ///
-    /// For very small states (<= 8 amplitudes), uses simple XOR + sort which has
-    /// lower overhead.
+    /// The target-bit groups are not generally contiguous inside the
+    /// control-one support, so a partition-swap is not valid for arbitrary
+    /// control/target placement.
     #[inline]
     fn apply_cx_inplace(&mut self, control: usize, target: usize) {
         let control_mask = 1usize << control;
         let target_mask = 1usize << target;
-        let len = self.amplitudes.len();
-
-        // For very small states, simple XOR + sort has lower overhead
-        if len <= 8 {
-            for (idx, _) in &mut self.amplitudes {
-                if *idx & control_mask != 0 {
-                    *idx ^= target_mask;
-                }
+        for (idx, _) in &mut self.amplitudes {
+            if *idx & control_mask != 0 {
+                *idx ^= target_mask;
             }
-            self.amplitudes.sort_unstable_by_key(|&(idx, _)| idx);
-            return;
         }
-
-        // For larger states, use O(k) partition-swap
-        // Find the boundary between control=0 and control=1 indices
-        // Since array is sorted, we can use partition_point
-        let control_boundary = self
-            .amplitudes
-            .partition_point(|&(idx, _)| idx & control_mask == 0);
-
-        // Control=0 indices stay unchanged
-        // Control=1 indices need X applied on target bit
-
-        // For control=1 indices, partition by target bit
-        let control1_slice = &self.amplitudes[control_boundary..];
-        let target_boundary_in_control1 =
-            control1_slice.partition_point(|&(idx, _)| idx & target_mask == 0);
-        let target_boundary = control_boundary + target_boundary_in_control1;
-
-        // After CX on control=1:
-        // - Indices with (c=1, t=0) become (c=1, t=1)
-        // - Indices with (c=1, t=1) become (c=1, t=0)
-        //
-        // Original order in control=1 region: [c1_t0...] [c1_t1...]
-        // After CX:                          [c1_t1'...] [c1_t0'...]  (where ' means XOR with target_mask)
-
-        // Build result: control=0 indices unchanged, then merge transformed control=1 indices
-        self.scratch.clear();
-        self.scratch.reserve(len);
-
-        // Control=0 indices (unchanged)
-        for i in 0..control_boundary {
-            self.scratch.push(self.amplitudes[i]);
-        }
-
-        // Control=1, originally t=1, now becomes t=0 (goes first in control=1 region)
-        for i in target_boundary..len {
-            let (idx, amp) = self.amplitudes[i];
-            self.scratch.push((idx ^ target_mask, amp));
-        }
-
-        // Control=1, originally t=0, now becomes t=1 (goes second in control=1 region)
-        for i in control_boundary..target_boundary {
-            let (idx, amp) = self.amplitudes[i];
-            self.scratch.push((idx ^ target_mask, amp));
-        }
-
-        std::mem::swap(&mut self.amplitudes, &mut self.scratch);
+        self.needs_sort = true;
     }
 
     fn apply_canonical_clifford(&mut self, gate: Clifford, qubits: &[QubitId]) -> &mut Self {
@@ -1250,7 +1201,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         if pairs.len() == 1 {
-            // Single pair: use O(k) partition-swap (needs sorted input)
+            // Single pair: relabel the affected support indices in O(k).
             self.ensure_sorted();
             self.apply_cx_inplace(pairs[0].0.0, pairs[0].1.0);
         } else {
@@ -1783,6 +1734,58 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::StateVecSoA;
+
+    fn assert_matches_dense(
+        sparse: &mut SparseStateVecAoS,
+        dense: &mut StateVecSoA,
+        num_qubits: usize,
+    ) {
+        for index in 0..(1 << num_qubits) {
+            let actual = sparse.get_amplitude(index);
+            let expected = dense.get_amplitude(index);
+            assert!(
+                (actual - expected).norm() < 1e-12,
+                "state mismatch at {index}: sparse={actual}, dense={expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_large_single_qubit_path_marks_interleaved_support_for_sorting() {
+        let mut sparse = SparseStateVecAoS::new(6);
+        let mut dense = StateVecSoA::new(6);
+        let superposition = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+        sparse.h(&superposition).f3(&[QubitId(4)]);
+        dense.h(&superposition).f3(&[QubitId(4)]);
+
+        assert!(
+            sparse.needs_sort,
+            "the large generic path must mark its interleaved output"
+        );
+        sparse.sxdg(&[QubitId(2)]).cx(&[(QubitId(4), QubitId(0))]);
+        dense.sxdg(&[QubitId(2)]).cx(&[(QubitId(4), QubitId(0))]);
+        assert_matches_dense(&mut sparse, &mut dense, 6);
+    }
+
+    #[test]
+    fn issue_613_reproducer_matches_dense_state_vector() {
+        let mut sparse = SparseStateVecAoS::new(4);
+        let mut dense = StateVecSoA::new(4);
+
+        sparse
+            .f3(&[QubitId(3)])
+            .sxdg(&[QubitId(2)])
+            .h5(&[QubitId(1), QubitId(0)])
+            .cx(&[(QubitId(3), QubitId(0))]);
+        dense
+            .f3(&[QubitId(3)])
+            .sxdg(&[QubitId(2)])
+            .h5(&[QubitId(1), QubitId(0)])
+            .cx(&[(QubitId(3), QubitId(0))]);
+
+        assert_matches_dense(&mut sparse, &mut dense, 4);
+    }
 
     #[test]
     fn test_new() {

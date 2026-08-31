@@ -79,8 +79,13 @@ gate swap a,b {
 // ZZ rotation (native)
 gate rzz(theta) a,b { RZZ(theta) a,b; }
 
-// Strong ZZ interaction (native)
+// Phase-exact Pauli-root interactions (native)
+gate sxx a,b { SXX a,b; }
+gate sxxdg a,b { SXXDG a,b; }
+gate syy a,b { SYY a,b; }
+gate syydg a,b { SYYDG a,b; }
 gate szz a,b { SZZ a,b; }
+gate szzdg a,b { SZZDG a,b; }
 
 // Controlled RZ
 gate crz(theta) a,b {

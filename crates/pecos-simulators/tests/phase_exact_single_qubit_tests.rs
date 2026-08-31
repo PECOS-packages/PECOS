@@ -150,6 +150,17 @@ fn apply_canonical_two_qubit_matrix(
     }
 }
 
+fn relocate_one_matrix_entry(mut matrix: TwoQubitGateMatrix) -> TwoQubitGateMatrix {
+    // These canonical root matrices are symmetric, so a full transpose is the
+    // original matrix and cannot witness an index-placement defect. Relocating
+    // only U[0,0] to U[0,1] is deliberately asymmetric and must be detected.
+    matrix[2] = matrix[0];
+    matrix[3] = matrix[1];
+    matrix[0] = 0.0;
+    matrix[1] = 0.0;
+    matrix
+}
+
 fn apply_clifford_gate<S: CliffordGateable>(sim: &mut S, gate: Clifford, qubits: &[QubitId]) {
     match gate {
         Clifford::I => sim.identity(qubits),
@@ -286,14 +297,20 @@ fn state_vector<S: StateVectorSimulator>(sim: &mut S) -> Vec<Complex64> {
         .collect()
 }
 
-fn prepare_four_qubit_state<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
+fn prepare_six_qubit_state<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     sim.ry(Angle64::from_radians(0.731), &[QubitId(0)])
         .rz(Angle64::from_radians(-0.417), &[QubitId(0)])
         .rx(Angle64::from_radians(-0.293), &[QubitId(1)])
         .ry(Angle64::from_radians(0.619), &[QubitId(2)])
         .rz(Angle64::from_radians(0.383), &[QubitId(3)])
-        .cx(&[(QubitId(0), QubitId(2)), (QubitId(1), QubitId(3))])
-        .cz(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))]);
+        .rx(Angle64::from_radians(-0.227), &[QubitId(4)])
+        .ry(Angle64::from_radians(0.511), &[QubitId(5)])
+        .cx(&[
+            (QubitId(0), QubitId(2)),
+            (QubitId(1), QubitId(4)),
+            (QubitId(3), QubitId(5)),
+        ])
+        .cz(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(5))]);
 }
 
 fn check_two_qubit_root_kernels<S, F>(simulator: &str, tolerance: f64, configure: F)
@@ -307,18 +324,29 @@ where
             .expect("named two-qubit root must have a canonical matrix");
         for (case, pairs) in [
             ("scalar pair", vec![(QubitId(0), QubitId(1))]),
-            ("SIMD pair", vec![(QubitId(2), QubitId(3))]),
+            ("reversed pair", vec![(QubitId(4), QubitId(1))]),
+            ("distant vectorized pair", vec![(QubitId(2), QubitId(5))]),
             (
                 "batched pairs",
-                vec![(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))],
+                vec![(QubitId(0), QubitId(1)), (QubitId(2), QubitId(5))],
             ),
         ] {
-            let mut sim = S::with_seed(4, 42);
+            let mut sim = S::with_seed(6, 42);
             configure(&mut sim);
-            prepare_four_qubit_state(&mut sim);
-            let mut expected = state_vector(&mut sim);
+            prepare_six_qubit_state(&mut sim);
+            let input = state_vector(&mut sim);
+            let mut expected = input.clone();
             for &(q1, q2) in &pairs {
                 apply_canonical_two_qubit_matrix(&mut expected, matrix, q1, q2);
+            }
+            let mut relocated = input;
+            for &(q1, q2) in &pairs {
+                apply_canonical_two_qubit_matrix(
+                    &mut relocated,
+                    relocate_one_matrix_entry(matrix),
+                    q1,
+                    q2,
+                );
             }
 
             apply_named_two_qubit_gate(&mut sim, gate, &pairs);
@@ -330,7 +358,38 @@ where
                 &expected,
                 tolerance,
             );
+            assert!(
+                max_state_error(&actual, &relocated) > tolerance,
+                "{simulator}::{gate:?} {case} accepted a one-sided entry relocation"
+            );
         }
+    }
+}
+
+fn check_sparse_batched_two_qubit_roots<S>(simulator: &str)
+where
+    S: StateVectorSimulator + ArbitraryRotationGateable,
+{
+    let pairs = [(QubitId(5), QubitId(2)), (QubitId(4), QubitId(1))];
+    for gate in NAMED_TWO_QUBIT_ROOT_GATES {
+        let matrix = gate.canonical_2q_matrix().unwrap();
+        let mut sim = S::with_seed(6, 42);
+        sim.h(&[QubitId(0), QubitId(3)])
+            .sz(&[QubitId(3)])
+            .cx(&[(QubitId(0), QubitId(5))]);
+        let mut expected = state_vector(&mut sim);
+        for &(q1, q2) in &pairs {
+            apply_canonical_two_qubit_matrix(&mut expected, matrix, q1, q2);
+        }
+        apply_named_two_qubit_gate(&mut sim, gate, &pairs);
+        let actual = state_vector(&mut sim);
+        assert_phase_exact_state(
+            simulator,
+            &format!("{gate:?} sparse batched pairs"),
+            &actual,
+            &expected,
+            F64_TOLERANCE,
+        );
     }
 }
 
@@ -446,6 +505,8 @@ fn phase_carrying_cpu_simulators_match_two_qubit_root_conventions() {
         F32_TOLERANCE,
         |sim| sim.set_fusion(false),
     );
+    check_sparse_batched_two_qubit_roots::<SparseStateVecSoA>("SparseStateVecSoA");
+    check_sparse_batched_two_qubit_roots::<SparseStateVecAoS>("SparseStateVecAoS");
 }
 
 #[test]

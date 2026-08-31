@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, MeasId, QubitId, TimeUnits};
+use pecos_core::{Angle64, ClassicalBitId, Gate, MeasId, QubitId, TimeUnits};
 use pecos_num::dag::{DAG, DagWouldCycleError};
 
 use crate::circuit::{Circuit, CircuitMut, GateHandle, GateView};
@@ -561,6 +561,12 @@ pub struct DagCircuit {
     qubit_heads: BTreeMap<QubitId, usize>,
     /// Tracks the last added node for `.meta()` calls.
     last_node: Option<usize>,
+    /// Number of classical bits addressable by measurement targets and conditions.
+    num_cbits: usize,
+    /// Classical destination for each measurement node.
+    measurement_targets: BTreeMap<usize, ClassicalBitId>,
+    /// Classical condition attached to each conditional gate node.
+    conditions: BTreeMap<usize, (ClassicalBitId, bool)>,
     /// Maximum qubit index seen so far (updated incrementally on gate addition).
     max_qubit: usize,
     /// Unified Pauli annotations (detectors, observables, and tracked Paulis).
@@ -596,6 +602,9 @@ impl DagCircuit {
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
             last_node: None,
+            num_cbits: 0,
+            measurement_targets: BTreeMap::new(),
+            conditions: BTreeMap::new(),
             max_qubit: 0,
             next_meas_id: 0,
             used_meas_ids: BTreeSet::new(),
@@ -620,6 +629,9 @@ impl DagCircuit {
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
             last_node: None,
+            num_cbits: 0,
+            measurement_targets: BTreeMap::new(),
+            conditions: BTreeMap::new(),
             max_qubit: 0,
             next_meas_id: 0,
             used_meas_ids: BTreeSet::new(),
@@ -880,6 +892,8 @@ impl DagCircuit {
         }
 
         self.dag.remove_node(node);
+        self.measurement_targets.remove(&node);
+        self.conditions.remove(&node);
         if node < self.gates.len() {
             let removed = self.gates[node].take();
             if let Some(gate) = &removed {
@@ -1516,6 +1530,52 @@ impl DagCircuit {
     #[must_use]
     pub fn last_added_node(&self) -> Option<usize> {
         self.last_node
+    }
+
+    /// Set the number of classical bits used by this circuit.
+    pub fn set_num_cbits(&mut self, num_cbits: usize) {
+        self.num_cbits = num_cbits;
+    }
+
+    /// Associate a measurement gate with its classical destination bit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` does not identify a measurement gate in this circuit.
+    pub fn set_measurement_target(&mut self, node: usize, target: ClassicalBitId) {
+        let gate = self
+            .gate(node)
+            .unwrap_or_else(|| panic!("measurement target references missing gate {node}"));
+        assert!(
+            matches!(
+                gate.gate_type,
+                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
+            ),
+            "measurement target requires a measurement gate, got {:?}",
+            gate.gate_type
+        );
+        self.num_cbits = self.num_cbits.max(target.index() + 1);
+        self.measurement_targets.insert(node, target);
+    }
+
+    /// Return all measurement-to-classical-bit mappings.
+    #[must_use]
+    pub fn measurement_targets(&self) -> &BTreeMap<usize, ClassicalBitId> {
+        &self.measurement_targets
+    }
+
+    /// Attach a classical-bit condition to a gate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` does not identify a gate in this circuit.
+    pub fn set_condition(&mut self, node: usize, cbit: ClassicalBitId, value: bool) {
+        assert!(
+            self.gate(node).is_some(),
+            "condition references missing gate {node}"
+        );
+        self.num_cbits = self.num_cbits.max(cbit.index() + 1);
+        self.conditions.insert(node, (cbit, value));
     }
 
     // -------------------- Single-qubit Clifford gates --------------------
@@ -2643,6 +2703,18 @@ impl Circuit for DagCircuit {
 
     fn gate_attrs(&self, gate: GateHandle) -> Option<&BTreeMap<String, Attribute>> {
         self.gate_attrs(gate)
+    }
+
+    fn num_cbits(&self) -> usize {
+        self.num_cbits
+    }
+
+    fn measurement_target(&self, gate: GateHandle) -> Option<ClassicalBitId> {
+        self.measurement_targets.get(&gate).copied()
+    }
+
+    fn condition(&self, gate: GateHandle) -> Option<(ClassicalBitId, bool)> {
+        self.conditions.get(&gate).copied()
     }
 }
 

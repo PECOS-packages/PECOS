@@ -409,6 +409,12 @@ impl ImprovedConverter {
             "T" => QuantumOp::T,
             "CX" | "CNOT" => QuantumOp::CX,
             "CZ" => QuantumOp::CZ,
+            "SXX" => QuantumOp::SXX,
+            "SXXdg" => QuantumOp::SXXdg,
+            "SYY" => QuantumOp::SYY,
+            "SYYdg" => QuantumOp::SYYdg,
+            "SZZ" | "ZZ" => QuantumOp::SZZ,
+            "SZZdg" => QuantumOp::SZZdg,
             "Measure" => QuantumOp::Measure,
             _ => {
                 return Err(PecosError::Input(format!(
@@ -421,15 +427,28 @@ impl ImprovedConverter {
         let mut operands = Vec::new();
         if let Some(args) = obj.get("args").and_then(|v| v.as_array()) {
             for arg in args {
-                if let Some(arr) = arg.as_array()
-                    && arr.len() == 2
-                    && let (Some(_var), Some(idx)) = (arr[0].as_str(), arr[1].as_u64())
+                let Some(arr) = arg.as_array() else {
+                    continue;
+                };
+                if let [Value::String(_), Value::Number(idx)] = arr.as_slice()
+                    && let Some(idx) = idx.as_u64()
                 {
-                    // For quantum operations, the operand is the qubit index directly
                     operands.push(SSAValue {
                         id: u32::try_from(idx).unwrap_or(0),
                         version: 0,
                     });
+                    continue;
+                }
+                for nested in arr {
+                    if let Some([Value::String(_), Value::Number(idx)]) =
+                        nested.as_array().map(Vec::as_slice)
+                        && let Some(idx) = idx.as_u64()
+                    {
+                        operands.push(SSAValue {
+                            id: u32::try_from(idx).unwrap_or(0),
+                            version: 0,
+                        });
+                    }
                 }
             }
         }
@@ -579,6 +598,44 @@ impl ImprovedConverter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_named_two_qubit_roots_convert_to_typed_phir_with_tuple_args() {
+        let json = r#"{
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
+                {"qop": "SXX", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SXXdg", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SYY", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SYYdg", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SZZ", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SZZdg", "args": [[["q", 0], ["q", 1]]]}
+            ]
+        }"#;
+        let module = phir_json_to_module(json).expect("all roots should convert");
+        let quantum: Vec<_> = module.body.blocks[0]
+            .operations
+            .iter()
+            .filter_map(|instruction| match &instruction.operation {
+                Operation::Quantum(op) => Some((op.clone(), instruction.operands.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            quantum.iter().map(|(op, _)| op).collect::<Vec<_>>(),
+            [
+                &QuantumOp::SXX,
+                &QuantumOp::SXXdg,
+                &QuantumOp::SYY,
+                &QuantumOp::SYYdg,
+                &QuantumOp::SZZ,
+                &QuantumOp::SZZdg,
+            ]
+        );
+        assert!(quantum.iter().all(|(_, operands)| operands.len() == 2));
+    }
 
     #[test]
     fn test_missing_format_field() {

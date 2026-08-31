@@ -520,6 +520,47 @@ fn test_processor_named_phase_sensitive_gates() {
     assert!(ops.iter().all(|op| op.angles.is_empty()));
 }
 
+#[test]
+fn test_processor_all_named_two_qubit_roots() {
+    let mut processor = PhirProcessor::new();
+    let mut builder = ByteMessageBuilder::new();
+    let _ = builder.for_quantum_operations();
+
+    for op in [
+        QuantumOp::SXX,
+        QuantumOp::SXXdg,
+        QuantumOp::SYY,
+        QuantumOp::SYYdg,
+        QuantumOp::SZZ,
+        QuantumOp::SZZdg,
+    ] {
+        let gate_instr = instr(
+            Operation::Quantum(op),
+            vec![0, 1],
+            vec![10],
+            vec![Type::Qubit],
+        );
+        assert!(
+            processor
+                .process_instruction(&gate_instr, &mut builder)
+                .expect("named root should execute")
+        );
+    }
+
+    let ops = builder.build().quantum_ops().unwrap();
+    assert_eq!(
+        ops.iter().map(|op| op.gate_type).collect::<Vec<_>>(),
+        [
+            pecos_core::gate_type::GateType::SXX,
+            pecos_core::gate_type::GateType::SXXdg,
+            pecos_core::gate_type::GateType::SYY,
+            pecos_core::gate_type::GateType::SYYdg,
+            pecos_core::gate_type::GateType::SZZ,
+            pecos_core::gate_type::GateType::SZZdg,
+        ]
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Resource management tests (Alloc, Dealloc, Reset, InitZero)
 // ──────────────────────────────────────────────────────────────────────

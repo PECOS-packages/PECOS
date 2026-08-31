@@ -23,6 +23,7 @@
 //! ```
 //! use pecos_qasm::dag_bridge::{qasm_to_dag, dag_to_qasm};
 //! use pecos_qasm::parser::QASMParser;
+//! use pecos_quantum::Circuit;
 //!
 //! let qasm = r#"
 //!     OPENQASM 2.0;
@@ -46,6 +47,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::fmt::Write as _;
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{Angle64, ClassicalBitId, Gate, QubitId};
@@ -279,6 +281,12 @@ fn resolve_gate(
         "cy" => Gate::simple(GateType::CY, qubits.to_vec()),
         "cz" => Gate::simple(GateType::CZ, qubits.to_vec()),
         "ch" => Gate::simple(GateType::CH, qubits.to_vec()),
+        "sxx" => resolve_simple_two_qubit_gate(GateType::SXX, name, qubits)?,
+        "sxxdg" => resolve_simple_two_qubit_gate(GateType::SXXdg, name, qubits)?,
+        "syy" => resolve_simple_two_qubit_gate(GateType::SYY, name, qubits)?,
+        "syydg" => resolve_simple_two_qubit_gate(GateType::SYYdg, name, qubits)?,
+        "szz" => resolve_simple_two_qubit_gate(GateType::SZZ, name, qubits)?,
+        "szzdg" => resolve_simple_two_qubit_gate(GateType::SZZdg, name, qubits)?,
         "swap" => Gate::simple(GateType::SWAP, qubits.to_vec()),
         "ccx" | "toffoli" => Gate::simple(GateType::CCX, qubits.to_vec()),
         "rx" => {
@@ -386,6 +394,20 @@ fn resolve_gate(
     Ok(gate)
 }
 
+fn resolve_simple_two_qubit_gate(
+    gate_type: GateType,
+    name: &str,
+    qubits: &[QubitId],
+) -> Result<Gate, QasmBridgeError> {
+    if qubits.len() != 2 {
+        return Err(QasmBridgeError::ParameterError(format!(
+            "{name} gate requires 2 qubits, got {}",
+            qubits.len()
+        )));
+    }
+    Ok(Gate::simple(gate_type, qubits.to_vec()))
+}
+
 /// Convert a [`DagCircuit`] to a QASM 2.0 string.
 ///
 /// Walks the circuit in topological order and emits QASM statements,
@@ -396,6 +418,7 @@ pub fn dag_to_qasm(dag: &DagCircuit) -> String {
     let mut lines = Vec::new();
 
     lines.push("OPENQASM 2.0;".to_string());
+    lines.push("include \"qelib1.inc\";".to_string());
 
     // Determine number of qubits
     let num_qubits = if dag.gate_count() > 0 {
@@ -464,11 +487,10 @@ fn format_gate_stmt(
             ),
             None => format!("{prefix}measure {};", qubit_strs.join(", ")),
         };
-        let resets: String = gate
-            .qubits
-            .iter()
-            .map(|q| format!(" reset q[{}];", q.0))
-            .collect();
+        let mut resets = String::new();
+        for q in &gate.qubits {
+            write!(resets, " reset q[{}];", q.0).expect("writing to a String cannot fail");
+        }
         return format!("{measure}{resets}");
     }
 
@@ -517,6 +539,10 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
         GateType::CY => "cy",
         GateType::CZ => "cz",
         GateType::CH => "ch",
+        GateType::SXX => "sxx",
+        GateType::SXXdg => "sxxdg",
+        GateType::SYY => "syy",
+        GateType::SYYdg => "syydg",
         GateType::SZZ => "szz",
         GateType::SZZdg => "szzdg",
         GateType::SWAP => "swap",
@@ -537,6 +563,7 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::QASMParser;
 
     #[test]
     fn test_bell_state_dag_to_qasm() {
@@ -544,8 +571,10 @@ mod tests {
         dag.set_num_cbits(2);
         dag.h(&[0]);
         dag.cx(&[(0, 1)]);
-        dag.mz_to(0, ClassicalBitId::new(0));
-        dag.mz_to(1, ClassicalBitId::new(1));
+        let meas0 = dag.add_gate_auto_wire(Gate::mz(&[0]));
+        dag.set_measurement_target(meas0, ClassicalBitId::new(0));
+        let meas1 = dag.add_gate_auto_wire(Gate::mz(&[1]));
+        dag.set_measurement_target(meas1, ClassicalBitId::new(1));
 
         let qasm = dag_to_qasm(&dag);
         assert!(qasm.contains("OPENQASM 2.0;"));
@@ -562,8 +591,10 @@ mod tests {
         let mut dag = DagCircuit::new();
         dag.set_num_cbits(1);
         dag.h(&[0]);
-        dag.mz_to(0, ClassicalBitId::new(0));
-        dag.if_bit(ClassicalBitId::new(0), true).x(&[1]);
+        let meas = dag.add_gate_auto_wire(Gate::mz(&[0]));
+        dag.set_measurement_target(meas, ClassicalBitId::new(0));
+        let conditional = dag.add_gate_auto_wire(Gate::x(&[1]));
+        dag.set_condition(conditional, ClassicalBitId::new(0), true);
 
         let qasm = dag_to_qasm(&dag);
         assert!(qasm.contains("if(c[0]==1) x q[1];"));
@@ -644,6 +675,35 @@ mod tests {
         let qubits = vec![QubitId::from(0), QubitId::from(1)];
         let gate = resolve_gate("cx", &[], &qubits).unwrap();
         assert_eq!(gate.gate_type, GateType::CX);
+    }
+
+    #[test]
+    fn named_two_qubit_roots_round_trip_through_qasm_dag_bridge() {
+        for gate_type in [
+            GateType::SXX,
+            GateType::SXXdg,
+            GateType::SYY,
+            GateType::SYYdg,
+            GateType::SZZ,
+            GateType::SZZdg,
+        ] {
+            let mut source = DagCircuit::new();
+            source.add_gate_auto_wire(Gate::simple(gate_type, vec![QubitId(0), QubitId(1)]));
+
+            let qasm = dag_to_qasm(&source);
+            let parsed = QASMParser::parse_str(&qasm)
+                .unwrap_or_else(|error| panic!("{gate_type:?} output did not parse: {error}"));
+            let round_tripped = qasm_to_dag(&parsed)
+                .unwrap_or_else(|error| panic!("{gate_type:?} did not convert back: {error}"));
+            let gates: Vec<_> = round_tripped
+                .topological_order()
+                .into_iter()
+                .filter_map(|node| round_tripped.gate(node))
+                .collect();
+            assert_eq!(gates.len(), 1, "{gate_type:?} changed gate count");
+            assert_eq!(gates[0].gate_type, gate_type);
+            assert_eq!(gates[0].qubits.as_slice(), &[QubitId(0), QubitId(1)]);
+        }
     }
 
     #[test]

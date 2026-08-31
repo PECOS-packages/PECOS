@@ -85,6 +85,18 @@ pub enum QuantumOp {
     CH,
     /// SWAP gate
     SWAP,
+    /// Phase-exact square root of XX
+    SXX,
+    /// Adjoint phase-exact square root of XX
+    SXXdg,
+    /// Phase-exact square root of YY
+    SYY,
+    /// Adjoint phase-exact square root of YY
+    SYYdg,
+    /// Phase-exact square root of ZZ
+    SZZ,
+    /// Adjoint phase-exact square root of ZZ
+    SZZdg,
     /// Controlled phase
     CPhase(Angle64),
     /// ZZ rotation
@@ -537,6 +549,12 @@ impl QuantumOp {
             QuantumOp::CZ => "cz",
             QuantumOp::CH => "ch",
             QuantumOp::SWAP => "swap",
+            QuantumOp::SXX => "sxx",
+            QuantumOp::SXXdg => "sxxdg",
+            QuantumOp::SYY => "syy",
+            QuantumOp::SYYdg => "syydg",
+            QuantumOp::SZZ => "szz",
+            QuantumOp::SZZdg => "szzdg",
             QuantumOp::CPhase(_) => "cp",
             QuantumOp::RZZ(_) => "rzz",
             QuantumOp::MCX(_) => "mcx",
@@ -587,6 +605,12 @@ impl QuantumOp {
             | QuantumOp::CZ
             | QuantumOp::CH
             | QuantumOp::SWAP
+            | QuantumOp::SXX
+            | QuantumOp::SXXdg
+            | QuantumOp::SYY
+            | QuantumOp::SYYdg
+            | QuantumOp::SZZ
+            | QuantumOp::SZZdg
             | QuantumOp::CPhase(_)
             | QuantumOp::RZZ(_) => Some(2),
             QuantumOp::Toffoli | QuantumOp::Fredkin => Some(3),

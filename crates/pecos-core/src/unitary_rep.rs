@@ -2736,6 +2736,9 @@ fn try_merge_rotations(a: &UnitaryRep, b: &UnitaryRep) -> Option<UnitaryRep> {
 enum PhaseFixedRootFamily {
     SX,
     SY,
+    Sxx,
+    Syy,
+    Szz,
     Z8,
     H,
     F,
@@ -2749,6 +2752,12 @@ fn phase_fixed_root_power(gate: GateType) -> Option<(PhaseFixedRootFamily, u8, u
         GateType::SY => Some((PhaseFixedRootFamily::SY, 1, 4)),
         GateType::SYdg => Some((PhaseFixedRootFamily::SY, 3, 4)),
         GateType::Y => Some((PhaseFixedRootFamily::SY, 2, 4)),
+        GateType::SXX => Some((PhaseFixedRootFamily::Sxx, 1, 4)),
+        GateType::SXXdg => Some((PhaseFixedRootFamily::Sxx, 3, 4)),
+        GateType::SYY => Some((PhaseFixedRootFamily::Syy, 1, 4)),
+        GateType::SYYdg => Some((PhaseFixedRootFamily::Syy, 3, 4)),
+        GateType::SZZ => Some((PhaseFixedRootFamily::Szz, 1, 4)),
+        GateType::SZZdg => Some((PhaseFixedRootFamily::Szz, 3, 4)),
         GateType::T => Some((PhaseFixedRootFamily::Z8, 1, 8)),
         GateType::SZ => Some((PhaseFixedRootFamily::Z8, 2, 8)),
         GateType::Z => Some((PhaseFixedRootFamily::Z8, 4, 8)),
@@ -2761,19 +2770,55 @@ fn phase_fixed_root_power(gate: GateType) -> Option<(PhaseFixedRootFamily, u8, u
     }
 }
 
-fn phase_fixed_named_gate(rep: &UnitaryRep) -> Option<(GateType, &SmallVec<[usize; 3]>)> {
-    match rep {
-        UnitaryRep::Gate(Unitary::Named(gate), qubits) => Some((*gate, qubits)),
+fn phase_fixed_root(
+    rep: &UnitaryRep,
+) -> Option<(PhaseFixedRootFamily, u8, u8, SmallVec<[usize; 3]>)> {
+    let (family, power, order, mut qubits) = match rep {
+        UnitaryRep::Gate(Unitary::Named(gate), qubits) => {
+            let (family, power, order) = phase_fixed_root_power(*gate)?;
+            (family, power, order, qubits.clone())
+        }
         UnitaryRep::Adjoint(inner) => match inner.as_ref() {
             UnitaryRep::Gate(Unitary::Named(gate), qubits) => {
                 let dagger = phase_fixed_named_adjoint(*gate)
                     .or_else(|| gate.is_self_adjoint().then_some(*gate))?;
-                Some((dagger, qubits))
+                let (family, power, order) = phase_fixed_root_power(dagger)?;
+                (family, power, order, qubits.clone())
             }
-            _ => None,
+            _ => return None,
         },
-        _ => None,
+        UnitaryRep::Pauli(pauli_string)
+            if pauli_string.phase() == QuarterPhase::PlusOne
+                && pauli_string.paulis().len() == 2 =>
+        {
+            let [(pauli_a, qubit_a), (pauli_b, qubit_b)] = pauli_string.paulis() else {
+                unreachable!("length checked above")
+            };
+            if pauli_a != pauli_b {
+                return None;
+            }
+            let family = match pauli_a {
+                Pauli::X => PhaseFixedRootFamily::Sxx,
+                Pauli::Y => PhaseFixedRootFamily::Syy,
+                Pauli::Z => PhaseFixedRootFamily::Szz,
+                Pauli::I => return None,
+            };
+            (
+                family,
+                2,
+                4,
+                smallvec::smallvec![qubit_a.index(), qubit_b.index()],
+            )
+        }
+        _ => return None,
+    };
+    if matches!(
+        family,
+        PhaseFixedRootFamily::Sxx | PhaseFixedRootFamily::Syy | PhaseFixedRootFamily::Szz
+    ) {
+        qubits.sort_unstable();
     }
+    Some((family, power, order, qubits))
 }
 
 fn phase_fixed_named_adjoint(gate: GateType) -> Option<GateType> {
@@ -2799,25 +2844,56 @@ fn phase_fixed_named_adjoint(gate: GateType) -> Option<GateType> {
 }
 
 fn try_merge_phase_fixed_named_gates(a: &UnitaryRep, b: &UnitaryRep) -> Option<UnitaryRep> {
-    let (gate_a, qubits_a) = phase_fixed_named_gate(a)?;
-    let (gate_b, qubits_b) = phase_fixed_named_gate(b)?;
+    let (family_a, power_a, order_a, qubits_a) = phase_fixed_root(a)?;
+    let (family_b, power_b, order_b, qubits_b) = phase_fixed_root(b)?;
     if qubits_a != qubits_b {
         return None;
     }
-    let (family_a, power_a, order_a) = phase_fixed_root_power(gate_a)?;
-    let (family_b, power_b, order_b) = phase_fixed_root_power(gate_b)?;
     if family_a != family_b || order_a != order_b {
         return None;
     }
     let power = (power_a + power_b) % order_a;
+    if power == 0 {
+        return Some(I(qubits_a[0]));
+    }
+    if power == 2
+        && matches!(
+            family_a,
+            PhaseFixedRootFamily::SX
+                | PhaseFixedRootFamily::SY
+                | PhaseFixedRootFamily::Sxx
+                | PhaseFixedRootFamily::Syy
+                | PhaseFixedRootFamily::Szz
+        )
+    {
+        let pauli_product = match family_a {
+            PhaseFixedRootFamily::Sxx => X(qubits_a[0]) & X(qubits_a[1]),
+            PhaseFixedRootFamily::Syy => Y(qubits_a[0]) & Y(qubits_a[1]),
+            PhaseFixedRootFamily::Szz => Z(qubits_a[0]) & Z(qubits_a[1]),
+            _ => {
+                let gate = match family_a {
+                    PhaseFixedRootFamily::SX => GateType::X,
+                    PhaseFixedRootFamily::SY => GateType::Y,
+                    _ => return None,
+                };
+                return Some(UnitaryRep::gate(gate, qubits_a));
+            }
+        };
+        return Some(pauli_product);
+    }
     let gate = match (family_a, power) {
-        (_, 0) => GateType::I,
         (PhaseFixedRootFamily::SX, 1) => GateType::SX,
         (PhaseFixedRootFamily::SX, 2) => GateType::X,
         (PhaseFixedRootFamily::SX, 3) => GateType::SXdg,
         (PhaseFixedRootFamily::SY, 1) => GateType::SY,
         (PhaseFixedRootFamily::SY, 2) => GateType::Y,
         (PhaseFixedRootFamily::SY, 3) => GateType::SYdg,
+        (PhaseFixedRootFamily::Sxx, 1) => GateType::SXX,
+        (PhaseFixedRootFamily::Sxx, 3) => GateType::SXXdg,
+        (PhaseFixedRootFamily::Syy, 1) => GateType::SYY,
+        (PhaseFixedRootFamily::Syy, 3) => GateType::SYYdg,
+        (PhaseFixedRootFamily::Szz, 1) => GateType::SZZ,
+        (PhaseFixedRootFamily::Szz, 3) => GateType::SZZdg,
         (PhaseFixedRootFamily::Z8, 1) => GateType::T,
         (PhaseFixedRootFamily::Z8, 2) => GateType::SZ,
         (PhaseFixedRootFamily::Z8, 4) => GateType::Z,
@@ -2828,7 +2904,7 @@ fn try_merge_phase_fixed_named_gates(a: &UnitaryRep, b: &UnitaryRep) -> Option<U
         (PhaseFixedRootFamily::F, 2) => GateType::Fdg,
         _ => return None,
     };
-    Some(UnitaryRep::gate(gate, qubits_a.clone()))
+    Some(UnitaryRep::gate(gate, qubits_a))
 }
 
 /// Convert a rotation (type + angle) to a named `GateType` if one exists.
@@ -3545,7 +3621,7 @@ impl Mul for UnitaryRep {
 // --- Circuit diagram generation ---
 
 use crate::circuit_diagram::{
-    CellColor, CircuitDiagram, DiagramRenderer, DiagramStyle, GateFamily, SymbolSet,
+    CellColor, CircuitDiagram, DiagramCell, DiagramRenderer, DiagramStyle, GateFamily, SymbolSet,
 };
 
 /// Map a `GateType` to its axis color using PECOS color algebra.
@@ -3563,8 +3639,13 @@ fn gate_type_color(gt: GateType) -> CellColor {
         | GateType::SZZ
         | GateType::SZZdg
         | GateType::CRZ => CellColor::ZAxis,
-        GateType::SX | GateType::SXdg => CellColor::YZMix,
-        GateType::SY | GateType::SYdg | GateType::H | GateType::CH => CellColor::XZMix,
+        GateType::SX | GateType::SXdg | GateType::SXX | GateType::SXXdg => CellColor::YZMix,
+        GateType::SY
+        | GateType::SYdg
+        | GateType::SYY
+        | GateType::SYYdg
+        | GateType::H
+        | GateType::CH => CellColor::XZMix,
         GateType::SZ | GateType::SZdg => CellColor::XYMix,
         _ => CellColor::None,
     }
@@ -3750,6 +3831,22 @@ impl UnitaryRep {
                     let max_q = qubits[0].max(qubits[1]).max(qubits[2]);
                     diagram.connect_vertical(min_q, max_q, CellColor::None);
                 }
+                GateType::SXX
+                | GateType::SXXdg
+                | GateType::SYY
+                | GateType::SYYdg
+                | GateType::SZZ
+                | GateType::SZZdg => {
+                    let color = gate_type_color(*gate_type);
+                    let top = qubits[0].min(qubits[1]);
+                    let bottom = qubits[0].max(qubits[1]);
+                    diagram.set_cell(qubits[0], DiagramCell::Control, color);
+                    diagram.set_cell(qubits[1], DiagramCell::Control, color);
+                    for row in (top + 1)..bottom {
+                        diagram.set_cell(row, DiagramCell::Crossing, CellColor::None);
+                    }
+                    diagram.add_labeled_connector(top, bottom, format!("{gate_type:?}"));
+                }
                 _ => {
                     if qubits.len() == 1 {
                         let family = gate_type_family(*gate_type);
@@ -3907,6 +4004,25 @@ mod tests {
         let diagram = cx.to_diagram(2);
         assert!(diagram.contains("\u{25CF}")); // control dot
         assert!(diagram.contains("[X]")); // Default family for controlled target
+    }
+
+    #[test]
+    fn test_diagram_named_two_qubit_roots() {
+        for (gate, label, color) in [
+            (SXX(0, 2), "SXX", CellColor::YZMix),
+            (SXX(0, 2).dg(), "SXXdg", CellColor::YZMix),
+            (SYY(0, 2), "SYY", CellColor::XZMix),
+            (SYY(0, 2).dg(), "SYYdg", CellColor::XZMix),
+            (SZZ(0, 2), "SZZ", CellColor::ZAxis),
+            (SZZ(0, 2).dg(), "SZZdg", CellColor::ZAxis),
+        ] {
+            let diagram = gate.to_unicode(3);
+            assert!(diagram.contains(label), "missing {label} connector label");
+            let named = gate
+                .to_named_gate()
+                .expect("root and root adjoint should normalize to a named gate");
+            assert_eq!(gate_type_color(named), color);
+        }
     }
 
     #[test]
@@ -4956,6 +5072,35 @@ mod tests {
         let t = T(0);
         let result = t.pow(8).simplify();
         assert!(result.is_identity());
+    }
+
+    #[test]
+    fn test_two_qubit_named_root_powers_simplify_exactly() {
+        for (root, pauli, name) in [
+            (SXX(0, 1), X(0) & X(1), "SXX"),
+            (SYY(0, 1), Y(0) & Y(1), "SYY"),
+            (SZZ(0, 1), Z(0) & Z(1), "SZZ"),
+        ] {
+            let dagger = root.clone().dg();
+            assert_eq!(
+                root.clone().pow(2).simplify(),
+                pauli,
+                "{name}^2 must simplify to its exact two-qubit Pauli"
+            );
+            assert_eq!(
+                dagger.clone().pow(2).simplify(),
+                pauli,
+                "{name}dg^2 must simplify to the same exact two-qubit Pauli"
+            );
+            assert!(
+                (root.clone() * dagger).simplify().is_identity(),
+                "{name} and its dagger must cancel"
+            );
+            assert!(
+                root.pow(4).simplify().is_identity(),
+                "{name}^4 must simplify to identity"
+            );
+        }
     }
 
     // --- commutes tests ---

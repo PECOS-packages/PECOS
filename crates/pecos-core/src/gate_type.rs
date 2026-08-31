@@ -1290,6 +1290,34 @@ mod tests {
             );
         }
 
+        let sxx_fixture = [
+            0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.5, -0.5, // row 0
+            0.0, 0.0, 0.5, 0.5, 0.5, -0.5, 0.0, 0.0, // row 1
+            0.0, 0.0, 0.5, -0.5, 0.5, 0.5, 0.0, 0.0, // row 2
+            0.5, -0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, // row 3
+        ];
+        let syy_fixture = [
+            0.5, 0.5, 0.0, 0.0, 0.0, 0.0, -0.5, 0.5, // row 0
+            0.0, 0.0, 0.5, 0.5, 0.5, -0.5, 0.0, 0.0, // row 1
+            0.0, 0.0, 0.5, -0.5, 0.5, 0.5, 0.0, 0.0, // row 2
+            -0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, // row 3
+        ];
+        assert_eq!(
+            GateType::SXX
+                .canonical_2q_matrix()
+                .unwrap()
+                .map(f64::to_bits),
+            sxx_fixture.map(f64::to_bits),
+            "conventional SXX must match its independent exact-entry fixture"
+        );
+        assert_eq!(
+            GateType::SYY
+                .canonical_2q_matrix()
+                .unwrap()
+                .map(f64::to_bits),
+            syy_fixture.map(f64::to_bits),
+            "conventional SYY must match its independent exact-entry fixture"
+        );
         assert_eq!(
             GateType::SZZ
                 .canonical_2q_matrix()
@@ -1303,6 +1331,23 @@ mod tests {
             ]
             .map(f64::to_bits),
             "conventional SZZ must be exactly diag(1, i, i, 1)"
+        );
+
+        // A coordinated root/dagger swap preserves every closure relation, so
+        // the independent entry fixtures must be the guard that detects it.
+        let mut swapped = canonical_two_qubit_table();
+        swapped.swap(0, 1);
+        assert_ne!(
+            two_qubit_table_matrix(&swapped, GateType::SXX).map(f64::to_bits),
+            sxx_fixture.map(f64::to_bits),
+            "the SXX fixture failed to reject an SXX/SXXdg table swap"
+        );
+        swapped = canonical_two_qubit_table();
+        swapped.swap(2, 3);
+        assert_ne!(
+            two_qubit_table_matrix(&swapped, GateType::SYY).map(f64::to_bits),
+            syy_fixture.map(f64::to_bits),
+            "the SYY fixture failed to reject an SYY/SYYdg table swap"
         );
     }
 

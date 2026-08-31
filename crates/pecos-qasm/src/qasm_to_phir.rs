@@ -333,6 +333,12 @@ fn gate_name_to_quantum_op(name: &str, params: &[f64]) -> Result<QuantumOp> {
         "sxdg" => Ok(QuantumOp::SXdg),
         "cx" | "cnot" => Ok(QuantumOp::CX),
         "cz" => Ok(QuantumOp::CZ),
+        "sxx" => Ok(QuantumOp::SXX),
+        "sxxdg" => Ok(QuantumOp::SXXdg),
+        "syy" => Ok(QuantumOp::SYY),
+        "syydg" => Ok(QuantumOp::SYYdg),
+        "szz" => Ok(QuantumOp::SZZ),
+        "szzdg" => Ok(QuantumOp::SZZdg),
         "swap" => Ok(QuantumOp::SWAP),
         "rx" => Ok(QuantumOp::RX(angle_param(params, 0, GateType::RX)?)),
         "ry" => Ok(QuantumOp::RY(angle_param(params, 0, GateType::RY)?)),
@@ -377,6 +383,12 @@ fn gate_type_to_quantum_op(gate_type: GateType, angles: &[Angle64]) -> Result<Qu
         GateType::SXdg => Ok(QuantumOp::SXdg),
         GateType::CX => Ok(QuantumOp::CX),
         GateType::CZ => Ok(QuantumOp::CZ),
+        GateType::SXX => Ok(QuantumOp::SXX),
+        GateType::SXXdg => Ok(QuantumOp::SXXdg),
+        GateType::SYY => Ok(QuantumOp::SYY),
+        GateType::SYYdg => Ok(QuantumOp::SYYdg),
+        GateType::SZZ => Ok(QuantumOp::SZZ),
+        GateType::SZZdg => Ok(QuantumOp::SZZdg),
         GateType::RX => Ok(QuantumOp::RX(angles[0])),
         GateType::RY => Ok(QuantumOp::RY(angles[0])),
         GateType::RZ => Ok(QuantumOp::RZ(angles[0])),
@@ -550,6 +562,44 @@ mod tests {
         let ron = qasm_to_ron(qasm).expect("native rotations should convert to RON");
         let ron_module: Module = pecos_phir::from_ron(&ron).expect("RON should deserialize");
         assert_eq!(ron_module, module);
+    }
+
+    #[test]
+    fn named_two_qubit_roots_round_trip_from_qasm_through_typed_phir() {
+        let qasm = r"
+            OPENQASM 2.0;
+            qreg q[2];
+            SXX q[0],q[1];
+            SXXDG q[0],q[1];
+            SYY q[0],q[1];
+            SYYDG q[0],q[1];
+            SZZ q[0],q[1];
+            SZZDG q[0],q[1];
+        ";
+        let module = parse_and_convert(qasm);
+        let quantum_ops: Vec<_> = get_main_block(&module)
+            .operations
+            .iter()
+            .filter_map(|instruction| match &instruction.operation {
+                Operation::Quantum(op) => Some(op.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            quantum_ops,
+            [
+                QuantumOp::SXX,
+                QuantumOp::SXXdg,
+                QuantumOp::SYY,
+                QuantumOp::SYYdg,
+                QuantumOp::SZZ,
+                QuantumOp::SZZdg,
+            ]
+        );
+
+        let ron = qasm_to_ron(qasm).expect("root gates should serialize");
+        let round_tripped = pecos_phir::from_ron(&ron).expect("root gates should deserialize");
+        assert_eq!(round_tripped, module);
     }
 
     #[test]

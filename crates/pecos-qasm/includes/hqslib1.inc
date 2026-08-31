@@ -104,6 +104,14 @@ gate ZZ q0,q1 {
   SZZ q0,q1;
 }
 
+// Phase-exact Pauli-root interactions
+gate sxx q0,q1 { SXX q0,q1; }
+gate sxxdg q0,q1 { SXXDG q0,q1; }
+gate syy q0,q1 { SYY q0,q1; }
+gate syydg q0,q1 { SYYDG q0,q1; }
+gate szz q0,q1 { SZZ q0,q1; }
+gate szzdg q0,q1 { SZZDG q0,q1; }
+
 // === Three-qubit gates ===
 
 // Toffoli gate (CCNOT)

@@ -30,6 +30,27 @@ The `C` prefix indicates a controlled operation where the first qubit controls t
 | CY | Controlled-Y |
 | CZ | Controlled-Z |
 
+Parameterized controlled rotations (`CRX`, `CRY`, `CRZ`) and controlled phase
+(`CPhase`/`CU1`) are accepted only as boundary spellings. Direct PECOS
+ingresses lower them from the source angle before it can be reduced modulo 2π:
+
+```
+CRZ(θ)     = (I ⊗ RZ(θ/2)) RZZ(-θ/2)
+CRX(θ)     = (I ⊗ H) CRZ(θ) (I ⊗ H)
+CRY(θ)     = (I ⊗ SX†) CRZ(θ) (I ⊗ SX)
+CPhase(λ) = (U(0,0,λ/2) ⊗ RZ(λ/2)) RZZ(-λ/2)
+```
+
+The resulting stored circuit contains only native Clifford, `RZ`, `RZZ`, and
+`U` gates. It is exact up to the single global sign inherent in reducing stored
+PECOS rotations modulo 2π; all relative phases are exact.
+
+Lowercase OpenQASM names instead expand through `qelib1.inc`, because only the
+uppercase native-gate names are resolved directly by the QASM parser. Its
+`crz` and `cphase` macros are correct (and `cu1` is the same controlled-phase
+operation); the current `ry`, `crx`, and `cry` macros are tracked separately by
+issue #637 and are not corrected by this boundary-lowering rule.
+
 ### R - Rotation
 
 The `R` prefix indicates a parameterized rotation by an arbitrary angle θ.

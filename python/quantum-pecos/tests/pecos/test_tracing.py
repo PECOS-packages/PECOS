@@ -3,10 +3,13 @@
 
 """Tests for the public QIS operation-tracing API."""
 
+import math
+
 import pecos
 import pecos_rslib
 import pytest
 from pecos.quantum import TickCircuit
+from pecos.simulators import StateVec
 
 
 def _completed_trace() -> list[dict]:
@@ -67,6 +70,82 @@ def _idle_gates(circuit: TickCircuit) -> list[tuple[list[int], float]]:
         for node_id in dag.nodes()
         if (gate := dag.gate(node_id)) is not None and gate.gate_type.name == "Idle"
     ]
+
+
+def _execute_tick_circuit(circuit: TickCircuit) -> list[complex]:
+    simulator = StateVec(2)
+    for tick_index in range(circuit.num_ticks()):
+        for gate in circuit.get_tick(tick_index).gate_batches():
+            name = gate.gate_type.name
+            qubits = list(gate.qubits)
+            angles = list(gate.angles)
+            if name in {"PZ", "X", "RZ"}:
+                params = {"angle": angles[0]} if name == "RZ" else None
+                for qubit in qubits:
+                    simulator.backend.run_1q_gate(name, qubit, params)
+            elif name == "RZZ":
+                for offset in range(0, len(qubits), 2):
+                    simulator.backend.run_2q_gate(
+                        name,
+                        (qubits[offset], qubits[offset + 1]),
+                        {"angle": angles[0]},
+                    )
+            else:
+                msg = f"unexpected replay gate {name}"
+                raise AssertionError(msg)
+    return [complex(value) for value in simulator.backend.vector]
+
+
+def test_qis_trace_crz_preserves_full_matrix() -> None:
+    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, 3 * math.pi):
+        columns: list[list[complex]] = []
+        for basis in range(4):
+            operations = [
+                {"AllocateQubit": {"id": 0}},
+                {"AllocateQubit": {"id": 1}},
+            ]
+            lowered = [
+                {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "PZ", "qubits": [1], "angles": [], "params": []},
+            ]
+            if basis & 1:
+                operations.append({"Quantum": {"X": 0}})
+                lowered.append({"gate_type": "X", "qubits": [0], "angles": [], "params": []})
+            if basis & 2:
+                operations.append({"Quantum": {"X": 1}})
+                lowered.append({"gate_type": "X", "qubits": [1], "angles": [], "params": []})
+            operations.append({"Quantum": {"CRZ": [theta, 1, 0]}})
+            lowered.append(
+                {
+                    "gate_type": "CRZ",
+                    "qubits": [1, 0],
+                    "angles": [theta],
+                    "params": [],
+                },
+            )
+            trace = _completed_trace()
+            trace[0]["operations"] = operations
+            trace[0]["num_operations"] = len(operations)
+            trace[0]["lowered_quantum_ops"] = lowered
+            circuit = pecos.qis_operation_trace_to_tick_circuit(trace)
+            columns.append(_execute_tick_circuit(circuit))
+
+        half = theta / 2
+        reference = [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, complex(math.cos(half), -math.sin(half)), 0],
+            [0, 0, 0, complex(math.cos(half), math.sin(half))],
+        ]
+        phase = columns[0][0] / reference[0][0]
+        assert abs(abs(phase) - 1) < 1e-12
+        if theta in {-math.pi, math.pi / 3, math.pi}:
+            assert abs(phase - 1) < 1e-12
+        else:
+            assert min(abs(phase - 1), abs(phase + 1)) < 1e-12
+        for column in range(4):
+            for row in range(4):
+                assert abs(columns[column][row] / phase - reference[row][column]) < 1e-12
 
 
 def test_tracing_apis_are_exported_at_top_level() -> None:

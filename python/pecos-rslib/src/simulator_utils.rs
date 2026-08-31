@@ -347,6 +347,7 @@ pub(crate) const SYMBOL_ENTRIES: &[SymbolEntry] = symbol_entries! {
     Rzz, Angle, ["RZZ"];
     RxxRyyRzz, Angles3, ["RXXRYYRZZ", "RZZRYYRXX", "R2XXYYZZ", "RXXYYZZ"];
     Ii, None, ["II"];
+    // Boundary spellings lowered before simulator dispatch.
     Crx, Angle, ["CRX"];
     Cry, Angle, ["CRY"];
     Crz, Angle, ["CRZ"];

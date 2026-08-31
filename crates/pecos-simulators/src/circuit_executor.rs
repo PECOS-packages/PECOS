@@ -236,9 +236,6 @@ fn execute_gate_command<S: CliffordGateable>(
         GateType::RXY1Q => {
             sim.try_rxy1q(gate.angles[0], gate.angles[1], qubits)?;
         }
-        GateType::CRZ => {
-            sim.try_crz(gate.angles[0], &flat_to_pairs(qubits))?;
-        }
         GateType::U => {
             sim.try_u(gate.angles[0], gate.angles[1], gate.angles[2], qubits)?;
         }

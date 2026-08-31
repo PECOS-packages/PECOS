@@ -20,6 +20,7 @@ pub mod circuit_diagram;
 pub mod classical_bit_id;
 pub mod clifford_rep;
 pub mod clifford_simplify;
+pub mod controlled_rotations;
 pub mod duration;
 pub mod element;
 pub mod errors;

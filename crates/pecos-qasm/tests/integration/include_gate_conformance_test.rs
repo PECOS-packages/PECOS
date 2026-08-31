@@ -224,7 +224,6 @@ fn rxx_matrix(theta: f64) -> Matrix {
     ])
 }
 
-
 /// Conventional two-qubit root: `((1+i) I + (1-i) P) / 2` for an involution P.
 fn conventional_root(pauli: &Matrix) -> Matrix {
     let a = complex(0.5, 0.5);
@@ -233,7 +232,11 @@ fn conventional_root(pauli: &Matrix) -> Matrix {
         .map(|r| {
             (0..4)
                 .map(|c| {
-                    let ident = if r == c { complex(1.0, 0.0) } else { complex(0.0, 0.0) };
+                    let ident = if r == c {
+                        complex(1.0, 0.0)
+                    } else {
+                        complex(0.0, 0.0)
+                    };
                     a * ident + b * pauli[r][c]
                 })
                 .collect()

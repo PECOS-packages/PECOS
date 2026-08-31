@@ -1095,11 +1095,11 @@ where
 
         for &q in qubits {
             let qubit = q.index();
-            // Apply H to the system qubit
-            self.state_vector_mut().h(&[QubitId(qubit)]);
-
-            // Apply H* (= H since H is Hermitian) to the environment qubit
+            // The physical system occupies the high register.
             self.state_vector_mut().h(&[QubitId(qubit + n)]);
+
+            // The traced environment occupies the low register. H* = H.
+            self.state_vector_mut().h(&[QubitId(qubit)]);
         }
 
         self
@@ -1118,12 +1118,12 @@ where
 
         for &q in qubits {
             let qubit = q.index();
-            // Apply S to the system qubit
-            self.state_vector_mut().sz(&[QubitId(qubit)]);
+            // Apply S to the physical (high) qubit.
+            self.state_vector_mut().sz(&[QubitId(qubit + n)]);
 
-            // For the environment qubit, we need S* which is S dagger
+            // For the environment (low) qubit, we need S* which is S dagger
             // S dagger is the inverse of S, which is implemented as szdg in the state vector
-            self.state_vector_mut().szdg(&[QubitId(qubit + n)]);
+            self.state_vector_mut().szdg(&[QubitId(qubit)]);
         }
 
         self
@@ -1144,14 +1144,14 @@ where
             let control = control.index();
             let target = target.index();
 
-            // Apply CX to the system qubits
-            self.state_vector_mut()
-                .cx(&[(QubitId(control), QubitId(target))]);
-
-            // Apply CX* to the environment qubits
-            // CX is real so CX* = CX
+            // Apply CX to the physical (high) qubits
             self.state_vector_mut()
                 .cx(&[(QubitId(control + n), QubitId(target + n))]);
+
+            // Apply CX* to the environment (low) qubits
+            // CX is real so CX* = CX
+            self.state_vector_mut()
+                .cx(&[(QubitId(control), QubitId(target))]);
         }
 
         self
@@ -1259,17 +1259,17 @@ where
 
         for &q in qubits {
             let qubit = q.index();
-            let sys_qubits = [QubitId(qubit)];
-            let env_qubits = [QubitId(qubit + n)];
+            let physical_qubits = [QubitId(qubit + n)];
+            let environment_qubits = [QubitId(qubit)];
 
-            // Apply RX to the system qubit
-            self.state_vector_mut().rx(theta, &sys_qubits);
+            // Apply RX to the physical (high) qubit
+            self.state_vector_mut().rx(theta, &physical_qubits);
 
-            // Apply RX* to the environment qubit
+            // Apply RX* to the environment (low) qubit
             // RX(-theta) = Z * RX(theta) * Z
-            self.state_vector_mut().z(&env_qubits);
-            self.state_vector_mut().rx(theta, &env_qubits);
-            self.state_vector_mut().z(&env_qubits);
+            self.state_vector_mut().z(&environment_qubits);
+            self.state_vector_mut().rx(theta, &environment_qubits);
+            self.state_vector_mut().z(&environment_qubits);
         }
 
         self
@@ -1289,15 +1289,15 @@ where
 
         for &q in qubits {
             let qubit = q.index();
-            let sys_qubits = [QubitId(qubit)];
-            let env_qubits = [QubitId(qubit + n)];
+            let physical_qubits = [QubitId(qubit + n)];
+            let environment_qubits = [QubitId(qubit)];
 
-            // Apply RY to the system qubit
-            self.state_vector_mut().ry(theta, &sys_qubits);
+            // Apply RY to the physical (high) qubit
+            self.state_vector_mut().ry(theta, &physical_qubits);
 
-            // Apply RY* to the environment qubit
+            // Apply RY* to the environment (low) qubit
             // RY is a real matrix, so RY* = RY
-            self.state_vector_mut().ry(theta, &env_qubits);
+            self.state_vector_mut().ry(theta, &environment_qubits);
         }
 
         self
@@ -1317,17 +1317,17 @@ where
 
         for &q in qubits {
             let qubit = q.index();
-            let sys_qubits = [QubitId(qubit)];
-            let env_qubits = [QubitId(qubit + n)];
+            let physical_qubits = [QubitId(qubit + n)];
+            let environment_qubits = [QubitId(qubit)];
 
-            // Apply RZ to the system qubit
-            self.state_vector_mut().rz(theta, &sys_qubits);
+            // Apply RZ to the physical (high) qubit
+            self.state_vector_mut().rz(theta, &physical_qubits);
 
-            // Apply RZ* to the environment qubit
+            // Apply RZ* to the environment (low) qubit
             // RZ(-theta) = X * RZ(theta) * X
-            self.state_vector_mut().x(&env_qubits);
-            self.state_vector_mut().rz(theta, &env_qubits);
-            self.state_vector_mut().x(&env_qubits);
+            self.state_vector_mut().x(&environment_qubits);
+            self.state_vector_mut().rz(theta, &environment_qubits);
+            self.state_vector_mut().x(&environment_qubits);
         }
 
         self
@@ -1348,17 +1348,17 @@ where
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
-            let sys_pairs = [(QubitId(q1), QubitId(q2))];
-            let env_pairs = [(QubitId(q1 + n), QubitId(q2 + n))];
+            let physical_pairs = [(QubitId(q1 + n), QubitId(q2 + n))];
+            let environment_pairs = [(QubitId(q1), QubitId(q2))];
 
-            // Apply RZZ to the system qubits
-            self.state_vector_mut().rzz(theta, &sys_pairs);
+            // Apply RZZ to the physical (high) qubits
+            self.state_vector_mut().rzz(theta, &physical_pairs);
 
-            // Apply RZZ* to the environment qubits
+            // Apply RZZ* to the environment (low) qubits
             // RZZ(-theta) = (X tensor I) * RZZ(theta) * (X tensor I)
-            self.state_vector_mut().x(&[env_pairs[0].0]);
-            self.state_vector_mut().rzz(theta, &env_pairs);
-            self.state_vector_mut().x(&[env_pairs[0].0]);
+            self.state_vector_mut().x(&[environment_pairs[0].0]);
+            self.state_vector_mut().rzz(theta, &environment_pairs);
+            self.state_vector_mut().x(&[environment_pairs[0].0]);
         }
 
         self
@@ -1375,6 +1375,153 @@ impl crate::density_matrix_test_utils::DensityMatrixSimulator for DensityMatrix 
 mod tests {
     use super::*;
     use pecos_core::{QubitId, qid};
+
+    const CONJUGATION_TOLERANCE: f64 = 1e-12;
+
+    fn assert_complex_close(actual: Complex64, expected: Complex64, tolerance: f64, label: &str) {
+        let error = (actual - expected).norm();
+        assert!(
+            error < tolerance,
+            "{label}: actual={actual}, expected={expected}, error={error}"
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    enum OracleGate {
+        H(QubitId),
+        Sz(QubitId),
+        Rz(Angle64, QubitId),
+        Rx(Angle64, QubitId),
+        Ry(Angle64, QubitId),
+        Cx(QubitId, QubitId),
+        Cz(QubitId, QubitId),
+    }
+
+    fn seeded_oracle_circuit() -> Vec<OracleGate> {
+        let mut rng = PecosRng::seed_from_u64(0x607);
+        // Include every gate family, then use the seed to randomize order,
+        // operands, and the non-T rotation angles.
+        let mut kinds = [0_u8, 1, 2, 3, 4, 5, 6, 7, 0, 3, 5, 4];
+        for i in (1..kinds.len()).rev() {
+            let j = rng.random_range(0..=i);
+            kinds.swap(i, j);
+        }
+
+        kinds
+            .into_iter()
+            .map(|kind| {
+                let q = QubitId(rng.random_range(0..3));
+                let other = QubitId((q.index() + rng.random_range(1..3)) % 3);
+                let angle = Angle64::from_radians(rng.random_range(-2.5..2.5));
+                match kind {
+                    0 => OracleGate::H(q),
+                    1 => OracleGate::Sz(q),
+                    // A T-equivalent symmetric RZ, as distinct from the named T gate.
+                    2 => OracleGate::Rz(Angle64::QUARTER_TURN / 2_u64, q),
+                    3 => OracleGate::Rx(angle, q),
+                    4 => OracleGate::Ry(angle, q),
+                    5 => OracleGate::Rz(angle, q),
+                    6 => OracleGate::Cx(q, other),
+                    7 => OracleGate::Cz(q, other),
+                    _ => unreachable!(),
+                }
+            })
+            .collect()
+    }
+
+    fn apply_oracle_gate<S: ArbitraryRotationGateable>(sim: &mut S, gate: OracleGate) {
+        match gate {
+            OracleGate::H(q) => sim.h(&[q]),
+            OracleGate::Sz(q) => sim.sz(&[q]),
+            OracleGate::Rz(theta, q) => sim.rz(theta, &[q]),
+            OracleGate::Rx(theta, q) => sim.rx(theta, &[q]),
+            OracleGate::Ry(theta, q) => sim.ry(theta, &[q]),
+            OracleGate::Cx(control, target) => sim.cx(&[(control, target)]),
+            OracleGate::Cz(control, target) => sim.cz(&[(control, target)]),
+        };
+    }
+
+    #[test]
+    fn complex_unitaries_have_analytic_off_diagonals() {
+        let q0 = QubitId(0);
+
+        let mut t_state = DensityMatrix::new(1);
+        t_state.h(&[q0]).t(&[q0]);
+        let expected_t = Complex64::from_polar(0.5, -std::f64::consts::FRAC_PI_4);
+        assert_complex_close(
+            t_state.get_density_matrix()[0][1],
+            expected_t,
+            CONJUGATION_TOLERANCE,
+            "T(H|0>) rho_01",
+        );
+
+        let mut rz_state = DensityMatrix::new(1);
+        rz_state.h(&[q0]).rz(Angle64::QUARTER_TURN / 2_u64, &[q0]);
+        assert_complex_close(
+            rz_state.get_density_matrix()[0][1],
+            expected_t,
+            CONJUGATION_TOLERANCE,
+            "RZ(pi/4)(H|0>) rho_01",
+        );
+
+        let mut s_state = DensityMatrix::new(1);
+        s_state.h(&[q0]).sz(&[q0]);
+        assert_complex_close(
+            s_state.get_density_matrix()[0][1],
+            Complex64::new(0.0, -0.5),
+            CONJUGATION_TOLERANCE,
+            "S(H|0>) rho_01",
+        );
+
+        let mut rx_state = DensityMatrix::new(1);
+        rx_state.rx(Angle64::QUARTER_TURN, &[q0]);
+        // RX(pi/2)|0> = (|0> - i|1>)/sqrt(2), so
+        // rho_01 = (1/sqrt(2)) * conj(-i/sqrt(2)) = +i/2.
+        assert_complex_close(
+            rx_state.get_density_matrix()[0][1],
+            Complex64::new(0.0, 0.5),
+            CONJUGATION_TOLERANCE,
+            "RX(pi/2)|0> rho_01",
+        );
+
+        let mut rzz_state = DensityMatrix::new(2);
+        rzz_state
+            .h(&[QubitId(0), QubitId(1)])
+            .rzz(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
+        // RZZ(pi/2)|++> has phases (-pi/4,+pi/4,+pi/4,-pi/4),
+        // hence rho_00,01 = exp(-i*pi/2)/4 = -i/4.
+        assert_complex_close(
+            rzz_state.get_density_matrix()[0][1],
+            Complex64::new(0.0, -0.25),
+            CONJUGATION_TOLERANCE,
+            "RZZ(pi/2)|++> rho_00,01",
+        );
+    }
+
+    #[test]
+    fn seeded_complex_circuit_matches_state_vector_outer_product() {
+        let circuit = seeded_oracle_circuit();
+        let mut density = DensityMatrix::new(3);
+        let mut state_vector = StateVecSoA::new(3);
+
+        for gate in circuit {
+            apply_oracle_gate(&mut density, gate);
+            apply_oracle_gate(&mut state_vector, gate);
+        }
+
+        let rho = density.get_density_matrix();
+        let amplitudes = state_vector.state();
+        for (row, amplitude_row) in amplitudes.iter().enumerate() {
+            for (col, amplitude_col) in amplitudes.iter().enumerate() {
+                assert_complex_close(
+                    rho[row][col],
+                    amplitude_row * amplitude_col.conj(),
+                    1e-10,
+                    &format!("seeded oracle rho[{row}][{col}]"),
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_new_density_matrix() {

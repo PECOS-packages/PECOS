@@ -8,8 +8,9 @@
 //! GPU density matrix simulator via Choi-Jamiolkowski isomorphism.
 //!
 //! Represents an N-qubit density matrix as a 2N-qubit state vector on the GPU.
-//! Each physical-qubit gate G becomes two state-vector gates: G on qubit q
-//! (system) and G-dagger on qubit q+N (environment).
+//! Each physical-qubit gate G becomes two state-vector gates: G on high qubit
+//! q+N (the physical system) and elementwise-conjugate G* on low qubit q (the
+//! traced environment).
 //!
 //! Generic over the backing GPU state vector (f32 or f64). Use the
 //! [`GpuDensityMatrix64`] alias for f64 precision (canonical) or
@@ -503,7 +504,7 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
     // Internal gate helpers
     // -------------------------------------------------------------------------
 
-    fn apply_1q_sys_env<F, G>(&mut self, qubits: &[QubitId], sys_op: F, env_op: G)
+    fn apply_1q_sys_env<F, G>(&mut self, qubits: &[QubitId], physical_op: F, environment_op: G)
     where
         F: Fn(&mut SV, &[QubitId]),
         G: Fn(&mut SV, &[QubitId]),
@@ -511,13 +512,17 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
         let n = self.num_physical_qubits;
         for &q in qubits {
             let qi = q.index();
-            sys_op(&mut self.state_vector, &[QubitId(qi)]);
-            env_op(&mut self.state_vector, &[QubitId(qi + n)]);
+            physical_op(&mut self.state_vector, &[QubitId(qi + n)]);
+            environment_op(&mut self.state_vector, &[QubitId(qi)]);
         }
     }
 
-    fn apply_2q_sys_env<F, G>(&mut self, pairs: &[(QubitId, QubitId)], sys_op: F, env_op: G)
-    where
+    fn apply_2q_sys_env<F, G>(
+        &mut self,
+        pairs: &[(QubitId, QubitId)],
+        physical_op: F,
+        environment_op: G,
+    ) where
         F: Fn(&mut SV, &[(QubitId, QubitId)]),
         G: Fn(&mut SV, &[(QubitId, QubitId)]),
     {
@@ -525,11 +530,11 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
         for &(c, t) in pairs {
             let ci = c.index();
             let ti = t.index();
-            sys_op(&mut self.state_vector, &[(QubitId(ci), QubitId(ti))]);
-            env_op(
+            physical_op(
                 &mut self.state_vector,
                 &[(QubitId(ci + n), QubitId(ti + n))],
             );
+            environment_op(&mut self.state_vector, &[(QubitId(ci), QubitId(ti))]);
         }
     }
 }
@@ -562,7 +567,7 @@ impl<SV: GpuStateVecBackend> RngManageable for GpuDensityMatrix<SV> {
 }
 
 impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
-    // --- Hermitian 1q: apply identically on system and environment ---
+    // --- Real 1q: apply identically on physical system and environment ---
 
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.apply_1q_sys_env(
@@ -597,7 +602,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
                 s.y(q);
             },
             |s, q| {
+                // Y* = -Y = X Y X.
+                s.x(q);
                 s.y(q);
+                s.x(q);
             },
         );
         self
@@ -616,7 +624,7 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
         self
     }
 
-    // --- Non-Hermitian 1q: env gets the dagger ---
+    // --- Complex 1q: environment gets the elementwise conjugate ---
 
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.apply_1q_sys_env(
@@ -677,7 +685,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
                 s.sy(q);
             },
             |s, q| {
+                // SY* = X SYdg X.
+                s.x(q);
                 s.sydg(q);
+                s.x(q);
             },
         );
         self
@@ -690,7 +701,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
                 s.sydg(q);
             },
             |s, q| {
+                // SYdg* = X SY X.
+                s.x(q);
                 s.sy(q);
+                s.x(q);
             },
         );
         self
@@ -718,7 +732,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
                 s.cy(p);
             },
             |s, p| {
+                // CY* = (Z on control) CY.
                 s.cy(p);
+                s.z(&[p[0].0]);
             },
         );
         self
@@ -750,7 +766,7 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
         self
     }
 
-    // SZZ/SXX/SYY family: non-Hermitian, env gets dagger
+    // SZZ/SXX/SYY are symmetric, so their conjugates are their daggers.
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         self.apply_2q_sys_env(
@@ -899,10 +915,10 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
         let n = self.num_physical_qubits;
         for &q in qubits {
             let qi = q.index();
-            self.state_vector.rx(theta, &[QubitId(qi)]);
-            self.state_vector.z(&[QubitId(qi + n)]);
             self.state_vector.rx(theta, &[QubitId(qi + n)]);
-            self.state_vector.z(&[QubitId(qi + n)]);
+            self.state_vector.z(&[QubitId(qi)]);
+            self.state_vector.rx(theta, &[QubitId(qi)]);
+            self.state_vector.z(&[QubitId(qi)]);
         }
         self
     }
@@ -912,8 +928,8 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
         let n = self.num_physical_qubits;
         for &q in qubits {
             let qi = q.index();
-            self.state_vector.ry(theta, &[QubitId(qi)]);
             self.state_vector.ry(theta, &[QubitId(qi + n)]);
+            self.state_vector.ry(theta, &[QubitId(qi)]);
         }
         self
     }
@@ -923,10 +939,10 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
         let n = self.num_physical_qubits;
         for &q in qubits {
             let qi = q.index();
-            self.state_vector.rz(theta, &[QubitId(qi)]);
-            self.state_vector.x(&[QubitId(qi + n)]);
             self.state_vector.rz(theta, &[QubitId(qi + n)]);
-            self.state_vector.x(&[QubitId(qi + n)]);
+            self.state_vector.x(&[QubitId(qi)]);
+            self.state_vector.rz(theta, &[QubitId(qi)]);
+            self.state_vector.x(&[QubitId(qi)]);
         }
         self
     }
@@ -972,11 +988,11 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
         for &(c, t) in pairs {
             let ci = c.index();
             let ti = t.index();
-            self.state_vector.rzz(theta, &[(QubitId(ci), QubitId(ti))]);
-            self.state_vector.x(&[QubitId(ci + n)]);
             self.state_vector
                 .rzz(theta, &[(QubitId(ci + n), QubitId(ti + n))]);
-            self.state_vector.x(&[QubitId(ci + n)]);
+            self.state_vector.x(&[QubitId(ci)]);
+            self.state_vector.rzz(theta, &[(QubitId(ci), QubitId(ti))]);
+            self.state_vector.x(&[QubitId(ci)]);
         }
         self
     }
@@ -989,12 +1005,210 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_simulators::DensityMatrix;
+    use pecos_simulators::{DensityMatrix, StateVecSoA};
+
+    impl GpuStateVecBackend for StateVecSoA {
+        fn new_backend(num_qubits: u32) -> Result<Self, GpuError> {
+            Ok(Self::new(
+                usize::try_from(num_qubits).expect("u32 qubit count must fit usize"),
+            ))
+        }
+
+        fn state_f64(&mut self) -> Vec<[f64; 2]> {
+            self.state()
+                .into_iter()
+                .map(|amplitude| [amplitude.re, amplitude.im])
+                .collect()
+        }
+
+        fn write_state_f64(&mut self, amplitudes: &[[f64; 2]]) {
+            let amplitudes: Vec<Complex64> = amplitudes
+                .iter()
+                .map(|[re, im]| Complex64::new(*re, *im))
+                .collect();
+            let rng = self.rng().clone();
+            *self = Self::from_state(&amplitudes, rng);
+        }
+
+        fn sync_backend(&mut self) {}
+    }
 
     // Primary tests run on the f32 backend (GpuDensityMatrix32), because the
     // f64 backend has pre-existing shader bugs in RZZ/RXX/RYY we haven't
     // fixed yet. Tolerance ~1e-3 reflects f32 precision for f64 comparisons.
     const TOL: f64 = 1e-3;
+    const CONJUGATION_TOLERANCE: f64 = 1e-12;
+
+    fn assert_complex_close(actual: Complex64, expected: Complex64, tolerance: f64, label: &str) {
+        let error = (actual - expected).norm();
+        assert!(
+            error < tolerance,
+            "{label}: actual={actual}, expected={expected}, error={error}"
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    enum OracleGate {
+        H(QubitId),
+        Sz(QubitId),
+        Rz(Angle64, QubitId),
+        Rx(Angle64, QubitId),
+        Ry(Angle64, QubitId),
+        Cx(QubitId, QubitId),
+        Cz(QubitId, QubitId),
+    }
+
+    fn seeded_oracle_circuit() -> Vec<OracleGate> {
+        let mut rng = PecosRng::seed_from_u64(0x607);
+        let mut kinds = [0_u8, 1, 2, 3, 4, 5, 6, 7, 0, 3, 5, 4];
+        for i in (1..kinds.len()).rev() {
+            let j = rng.random_range(0..=i);
+            kinds.swap(i, j);
+        }
+
+        kinds
+            .into_iter()
+            .map(|kind| {
+                let q = QubitId(rng.random_range(0..3));
+                let other = QubitId((q.index() + rng.random_range(1..3)) % 3);
+                let angle = Angle64::from_radians(rng.random_range(-2.5..2.5));
+                match kind {
+                    0 => OracleGate::H(q),
+                    1 => OracleGate::Sz(q),
+                    2 => OracleGate::Rz(Angle64::QUARTER_TURN / 2_u64, q),
+                    3 => OracleGate::Rx(angle, q),
+                    4 => OracleGate::Ry(angle, q),
+                    5 => OracleGate::Rz(angle, q),
+                    6 => OracleGate::Cx(q, other),
+                    7 => OracleGate::Cz(q, other),
+                    _ => unreachable!(),
+                }
+            })
+            .collect()
+    }
+
+    fn apply_oracle_gate<S: ArbitraryRotationGateable>(sim: &mut S, gate: OracleGate) {
+        match gate {
+            OracleGate::H(q) => sim.h(&[q]),
+            OracleGate::Sz(q) => sim.sz(&[q]),
+            OracleGate::Rz(theta, q) => sim.rz(theta, &[q]),
+            OracleGate::Rx(theta, q) => sim.rx(theta, &[q]),
+            OracleGate::Ry(theta, q) => sim.ry(theta, &[q]),
+            OracleGate::Cx(control, target) => sim.cx(&[(control, target)]),
+            OracleGate::Cz(control, target) => sim.cz(&[(control, target)]),
+        };
+    }
+
+    fn check_complex_unitary_analytics<SV: GpuStateVecBackend>(
+        tolerance: f64,
+    ) -> Result<(), GpuError> {
+        let mut density = GpuDensityMatrix::<SV>::new(1)?;
+        let q0 = QubitId(0);
+
+        density.h(&[q0]).t(&[q0]);
+        let expected_t = Complex64::from_polar(0.5, -std::f64::consts::FRAC_PI_4);
+        assert_complex_close(
+            density.get_density_matrix()[0][1],
+            expected_t,
+            tolerance,
+            "T(H|0>) rho_01",
+        );
+
+        density
+            .reset()
+            .h(&[q0])
+            .rz(Angle64::QUARTER_TURN / 2_u64, &[q0]);
+        assert_complex_close(
+            density.get_density_matrix()[0][1],
+            expected_t,
+            tolerance,
+            "RZ(pi/4)(H|0>) rho_01",
+        );
+
+        density.reset().h(&[q0]).sz(&[q0]);
+        assert_complex_close(
+            density.get_density_matrix()[0][1],
+            Complex64::new(0.0, -0.5),
+            tolerance,
+            "S(H|0>) rho_01",
+        );
+
+        density.reset().rx(Angle64::QUARTER_TURN, &[q0]);
+        // RX(pi/2)|0> = (|0> - i|1>)/sqrt(2), so
+        // rho_01 = (1/sqrt(2)) * conj(-i/sqrt(2)) = +i/2.
+        assert_complex_close(
+            density.get_density_matrix()[0][1],
+            Complex64::new(0.0, 0.5),
+            tolerance,
+            "RX(pi/2)|0> rho_01",
+        );
+
+        let mut rzz_density = GpuDensityMatrix::<SV>::new(2)?;
+        rzz_density
+            .h(&[QubitId(0), QubitId(1)])
+            .rzz(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
+        assert_complex_close(
+            rzz_density.get_density_matrix()[0][1],
+            Complex64::new(0.0, -0.25),
+            tolerance,
+            "RZZ(pi/2)|++> rho_00,01",
+        );
+        Ok(())
+    }
+
+    fn check_seeded_state_vector_oracle<SV: GpuStateVecBackend>(
+        tolerance: f64,
+    ) -> Result<(), GpuError> {
+        let mut density = GpuDensityMatrix::<SV>::new(3)?;
+        let mut state_vector = StateVecSoA::new(3);
+
+        for gate in seeded_oracle_circuit() {
+            apply_oracle_gate(&mut density, gate);
+            apply_oracle_gate(&mut state_vector, gate);
+        }
+
+        let rho = density.get_density_matrix();
+        let amplitudes = state_vector.state();
+        for (row, amplitude_row) in amplitudes.iter().enumerate() {
+            for (col, amplitude_col) in amplitudes.iter().enumerate() {
+                assert_complex_close(
+                    rho[row][col],
+                    amplitude_row * amplitude_col.conj(),
+                    tolerance,
+                    &format!("seeded oracle rho[{row}][{col}]"),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn complex_unitaries_have_analytic_off_diagonals() {
+        check_complex_unitary_analytics::<StateVecSoA>(CONJUGATION_TOLERANCE).unwrap();
+    }
+
+    #[test]
+    fn seeded_complex_circuit_matches_state_vector_outer_product() {
+        check_seeded_state_vector_oracle::<StateVecSoA>(1e-10).unwrap();
+    }
+
+    #[test]
+    fn gpu_f64_complex_unitaries_have_analytic_off_diagonals() {
+        // Software and f32-class adapters introduce ~1e-7 noise; the reversed-conjugation
+        // failure mode is O(1), so this tolerance still kills it.
+        let Ok(()) = check_complex_unitary_analytics::<GpuStateVec64>(TOL) else {
+            return;
+        };
+    }
+
+    #[test]
+    fn gpu_f64_seeded_complex_circuit_matches_state_vector_outer_product() {
+        // Software and f32-class adapters introduce ~1e-7 noise; the reversed-conjugation
+        // failure mode is O(1), so this tolerance still kills it.
+        let Ok(()) = check_seeded_state_vector_oracle::<GpuStateVec64>(TOL) else {
+            return;
+        };
+    }
 
     fn gpu_dm_matrix<SV: GpuStateVecBackend>(sim: &mut GpuDensityMatrix<SV>) -> Vec<Complex64> {
         let rho = sim.get_density_matrix();

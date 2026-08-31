@@ -26,8 +26,9 @@ See pecos-docs/design/windowed-logical-subgraph-proper-solution.md.
 from __future__ import annotations
 
 import pytest
+import stim
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-from pecos_rslib.qec import LogicalCircuitDecoder
+from pecos_rslib.qec import LogicalAlgorithmDecoder, LogicalCircuitDecoder
 
 
 def _memory_descriptor(d: int, rounds: int) -> dict:
@@ -48,6 +49,46 @@ def _h_boundary_descriptor() -> dict:
     desc = b.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
     assert desc["boundary_gates"][0][0]["type"] == "Hadamard"
     return desc
+
+
+def _decision_descriptor() -> dict:
+    patch = SurfacePatch.create(3)
+    num_qubits = patch.geometry.num_qubits
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "data", qubit_offset=0)
+    builder.add_patch(patch, "ancilla", qubit_offset=num_qubits)
+    builder.add_t_via_injection("data", "ancilla", rounds_before=2, rounds_after=2)
+    return builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
+
+
+def test_algorithm_descriptor_happy_path_keeps_segment_and_boundary_schema():
+    desc = _h_boundary_descriptor()
+    assert len(desc["segments"]) == 2
+    assert len(desc["boundary_gates"]) == 1
+    assert desc["boundary_gates"][0][0]["type"] == "Hadamard"
+    assert desc["num_observables"] == stim.DetectorErrorModel(desc["full_dem"]).num_observables
+    assert desc["num_frame_slots"] == 2
+
+
+def test_algorithm_descriptor_rejects_trailing_logical_gates():
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 2, "Z")
+    builder.add_transversal_h("A")
+
+    with pytest.raises(
+        ValueError,
+        match=r"Hadamard.*after final data measurement.*terminal-segment support.*#595",
+    ):
+        builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
+
+
+def test_algorithm_descriptor_rejects_boundary_cardinality_mismatch():
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+
+    with pytest.raises(ValueError, match=r"0 boundary gate lists and 0 segments"):
+        builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
 
 
 def test_unlimited_budget_reports_unlimited():
@@ -120,12 +161,32 @@ def test_logical_circuit_decoder_rejects_missing_boundary_gate_bit():
 
 
 def test_logical_circuit_decoder_rejects_out_of_range_boundary_gate_bit():
-    """Boundary gate bits index a u64 observable frame and must be below 64."""
+    """Boundary gate bits must fit the descriptor's logical frame schema."""
     desc = _h_boundary_descriptor()
-    desc["boundary_gates"][0][0]["x_obs_bit"] = 64
+    desc["boundary_gates"][0][0]["x_obs_bit"] = desc["num_frame_slots"]
 
-    with pytest.raises(ValueError, match="exceeds the 64-observable frame limit"):
+    with pytest.raises(ValueError, match=r"frame slot 2.*num_frame_slots is 2"):
         LogicalCircuitDecoder(desc, budget="unlimited")
+
+
+def test_logical_circuit_decoder_rejects_boundary_cardinality_mismatch():
+    desc = _memory_descriptor(3, 3)
+    desc["boundary_gates"].append([])
+
+    with pytest.raises(ValueError, match=r"1 boundary gate lists and 1 segments"):
+        LogicalCircuitDecoder(desc, budget="unlimited")
+
+
+@pytest.mark.parametrize("decoder_type", [LogicalAlgorithmDecoder, LogicalCircuitDecoder])
+def test_python_logical_decoders_reject_decision_points(decoder_type):
+    desc = _decision_descriptor()
+    kwargs = {} if decoder_type is LogicalAlgorithmDecoder else {"budget": "unlimited"}
+
+    with pytest.raises(
+        ValueError,
+        match=r"descriptor contains feed-forward decision points.*issue #596",
+    ):
+        decoder_type(desc, **kwargs)
 
 
 if __name__ == "__main__":

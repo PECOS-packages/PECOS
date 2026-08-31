@@ -17,6 +17,11 @@
 //! tracks the net logical correction. The frame is consumed only when
 //! a logical operation requires it (T-gate injection, logical measurement).
 //!
+//! S-gate propagation for algorithm frames lives in
+//! `logical_algorithm::LogicalAlgorithmDecoder::apply_boundary_gate`'s
+//! `BoundaryGate::SGate` arm. A pair of X/Z masks cannot express that operation:
+//! it identifies the two sets of slots but carries no X-to-Z pairing information.
+//!
 //! # Example
 //!
 //! ```
@@ -150,17 +155,6 @@ pub fn propagate_cnot_frames(
 
     // Z-type bits on target propagate to control: control ^= target & z_mask
     *control.frame_mut() ^= tgt_frame & z_obs_mask;
-}
-
-/// Propagate Pauli frame through a logical S gate (phase gate).
-///
-/// S gate: X → Y = iXZ, Z → Z. For the frame:
-/// - Z-type bits are unchanged
-/// - X-type bits that are set also flip the corresponding Z-type bit
-pub fn propagate_s_gate_frame(frame: &mut PauliFrameAccumulator, x_obs_mask: u64, z_obs_mask: u64) {
-    let f = frame.current_frame();
-    // X-type corrections also induce Z-type corrections after S gate
-    *frame.frame_mut() ^= (f & x_obs_mask) & z_obs_mask;
 }
 
 /// Propagate Pauli frame through a logical Hadamard.

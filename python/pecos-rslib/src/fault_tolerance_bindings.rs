@@ -5285,13 +5285,6 @@ fn req_bit(
             ))
         })?
         .extract()?;
-    // Every boundary-gate bit indexes a u64 observable frame (`1u64 << bit`), so
-    // it must be < 64 -- reject out-of-range here rather than shift-overflow later.
-    if bit >= 64 {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "boundary gate '{gate_type}' field '{key}' = {bit} exceeds the 64-observable frame limit"
-        )));
-    }
     Ok(bit)
 }
 
@@ -5342,6 +5335,10 @@ impl PyLogicalAlgorithmDecoder {
         let num_obs: usize = descriptor
             .get_item("num_observables")?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_observables"))?
+            .extract()?;
+        let num_frame_slots: usize = descriptor
+            .get_item("num_frame_slots")?
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_frame_slots"))?
             .extract()?;
 
         // Parse stab_coords from the first segment (original orientation)
@@ -5450,10 +5447,13 @@ impl PyLogicalAlgorithmDecoder {
             segments: seg_descs,
             boundary_gates,
             num_observables: num_obs,
+            num_frame_slots,
         };
 
-        let algo_dec = LogicalAlgorithmDecoder::new(Box::new(full_osd), algo_desc);
-        let inner = pecos_decoder_core::logical_algorithm::StreamingLogicalDecoder::new(algo_dec);
+        let algo_dec = LogicalAlgorithmDecoder::new(Box::new(full_osd), algo_desc)
+            .map_err(decoder_parse_error_to_py)?;
+        let inner = pecos_decoder_core::logical_algorithm::StreamingLogicalDecoder::new(algo_dec)
+            .map_err(decoder_parse_error_to_py)?;
         Ok(Self { inner })
     }
 
@@ -5608,6 +5608,10 @@ impl PyLogicalCircuitDecoder {
             .get_item("num_observables")?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_observables"))?
             .extract()?;
+        let num_frame_slots: usize = descriptor
+            .get_item("num_frame_slots")?
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_frame_slots"))?
+            .extract()?;
 
         // Parse stab_coords from first segment
         let first_seg = seg_list.first().ok_or_else(|| {
@@ -5714,6 +5718,7 @@ impl PyLogicalCircuitDecoder {
             segments: seg_descs,
             boundary_gates,
             num_observables: num_obs,
+            num_frame_slots,
         };
 
         // Select budget: "unlimited" for full-circuit, "windowed" for
@@ -5840,7 +5845,8 @@ impl PyLogicalCircuitDecoder {
                 Box::new(wosd)
             };
 
-        let inner = LogicalCircuitDecoder::new(algo_desc, strategy, decode_budget, num_qubits);
+        let inner = LogicalCircuitDecoder::new(algo_desc, strategy, decode_budget)
+            .map_err(decoder_parse_error_to_py)?;
         Ok(Self {
             inner,
             effective_windowing,

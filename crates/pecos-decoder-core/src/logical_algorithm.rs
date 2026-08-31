@@ -24,8 +24,64 @@
 //!   with buffer overlap at gate boundaries.
 
 use crate::ObservableDecoder;
+use crate::decode_budget::DecodeStrategy;
 use crate::errors::DecoderError;
 use crate::obs_mask::ObsMask;
+
+const UNSUPPORTED_DECISION_POINT_MESSAGE: &str = "descriptor contains feed-forward decision points \
+    (TGateInjection); no available decode strategy consults them yet — decoding would silently \
+    treat the injection as Clifford (issue #596)";
+
+/// Pauli-frame bits for the logical patches in an algorithm descriptor.
+///
+/// Slot `2 * patch` stores that patch's X frame and slot `2 * patch + 1`
+/// stores its Z frame. The storage reuses [`ObsMask`] so frame widths are not
+/// limited to one machine word; `num_slots` records the descriptor's logical
+/// width independently of the detector error model's observable count.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FrameBits {
+    bits: ObsMask,
+    num_slots: usize,
+}
+
+impl FrameBits {
+    /// Create an all-zero frame with `num_slots` addressable slots.
+    #[must_use]
+    pub fn new(num_slots: usize) -> Self {
+        Self {
+            bits: ObsMask::new(),
+            num_slots,
+        }
+    }
+
+    /// Return the value of a frame slot.
+    #[must_use]
+    pub fn get(&self, slot: usize) -> bool {
+        assert!(slot < self.num_slots, "frame slot {slot} is out of range");
+        self.bits.get(slot)
+    }
+
+    /// Toggle a frame slot.
+    pub fn flip(&mut self, slot: usize) {
+        assert!(slot < self.num_slots, "frame slot {slot} is out of range");
+        let mut mask = ObsMask::new();
+        mask.set(slot);
+        self.bits ^= &mask;
+    }
+
+    /// Set a frame slot to `value`.
+    pub fn set(&mut self, slot: usize, value: bool) {
+        if self.get(slot) != value {
+            self.flip(slot);
+        }
+    }
+
+    /// Number of addressable frame slots.
+    #[must_use]
+    pub fn num_slots(&self) -> usize {
+        self.num_slots
+    }
+}
 
 /// One segment of a logical algorithm.
 pub struct SegmentDescriptor {
@@ -79,8 +135,7 @@ impl BoundaryGate {
         matches!(self, Self::TGateInjection { .. })
     }
 
-    /// All observable-frame bit indices this gate references. Each must be < 64
-    /// (they index a `u64` frame). Used to assert that invariant at apply time.
+    /// All frame-slot indices this gate references.
     #[must_use]
     pub fn obs_bits(&self) -> Vec<u32> {
         match self {
@@ -112,8 +167,101 @@ pub struct AlgorithmDescriptor {
     pub segments: Vec<SegmentDescriptor>,
     /// Gates at segment boundaries. `boundary_gates[i]` between segment i and i+1.
     pub boundary_gates: Vec<Vec<BoundaryGate>>,
-    /// Total number of observables.
+    /// Number of observables declared by the full detector error model.
     pub num_observables: usize,
+    /// Number of Pauli-frame slots (two per logical patch: X then Z).
+    pub num_frame_slots: usize,
+}
+
+impl AlgorithmDescriptor {
+    /// Validate the between-segment boundary schema and all frame references.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] when the descriptor is
+    /// empty, its boundary cardinality is not exactly one fewer than its segment
+    /// cardinality, or a boundary gate references a slot outside
+    /// `num_frame_slots`.
+    pub fn validate(&self) -> Result<(), DecoderError> {
+        if self.segments.is_empty() {
+            return Err(DecoderError::InvalidConfiguration(
+                "algorithm descriptor must contain at least one segment".into(),
+            ));
+        }
+
+        let expected_boundaries = self.segments.len() - 1;
+        if self.boundary_gates.len() != expected_boundaries {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "algorithm descriptor has {} boundary gate lists and {} segments; expected exactly one boundary list between consecutive segments",
+                self.boundary_gates.len(),
+                self.segments.len(),
+            )));
+        }
+
+        for (boundary_index, gates) in self.boundary_gates.iter().enumerate() {
+            for (gate_index, gate) in gates.iter().enumerate() {
+                if let Some(bit) = gate
+                    .obs_bits()
+                    .into_iter()
+                    .find(|&bit| bit as usize >= self.num_frame_slots)
+                {
+                    return Err(DecoderError::InvalidConfiguration(format!(
+                        "boundary gate at boundary {boundary_index}, gate {gate_index} references frame slot {bit}, but num_frame_slots is {}",
+                        self.num_frame_slots,
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn reject_unsupported_decision_points(&self) -> Result<(), DecoderError> {
+        if self.has_decision_points() {
+            return Err(DecoderError::InvalidConfiguration(
+                UNSUPPORTED_DECISION_POINT_MESSAGE.into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether any boundary requires feed-forward consultation.
+    #[must_use]
+    pub fn has_decision_points(&self) -> bool {
+        self.boundary_gates
+            .iter()
+            .flatten()
+            .any(BoundaryGate::is_decision_point)
+    }
+}
+
+/// Outcome of consulting an interactive decoder at a feed-forward boundary.
+pub enum DecisionStatus {
+    /// The frame-corrected ancilla bit is ready and selects the S correction.
+    Ready { corrected_bit: bool },
+    /// The patience protocol needs more syndrome before it can decide.
+    NeedMoreData { extra_rounds: usize },
+}
+
+/// Decode strategy capable of consulting a feed-forward decision point.
+///
+/// In the phase-2 contract, [`Self::consult`] is called at a decision-point
+/// boundary *after* the post-injection segment's syndrome has been fed.
+/// [`DecisionStatus::Ready`] carries the frame-corrected ancilla bit selecting
+/// the S correction; [`DecisionStatus::NeedMoreData`] asks the harness for
+/// additional syndrome rounds under the patience protocol. No implementation
+/// exists yet, and all current logical decoders reject decision descriptors so
+/// they cannot silently bypass consultation (issue #596). Terminal-segment
+/// support for gates after final measurement remains tracked by issue #595.
+/// See `pecos-docs/design/streaming-transversal-decoding.md`.
+pub trait DecisionConsultingStrategy: DecodeStrategy {
+    /// Consult the strategy at a T-injection decision boundary.
+    fn consult(
+        &mut self,
+        gate: &BoundaryGate,
+        raw_ancilla_outcome: u8,
+        frame: &FrameBits,
+    ) -> Result<DecisionStatus, DecoderError>;
 }
 
 /// Decoder for logical quantum algorithms.
@@ -130,12 +278,8 @@ pub struct AlgorithmDescriptor {
 pub struct LogicalAlgorithmDecoder {
     /// Full-circuit decoder (logical-subgraph decoder on the complete DEM).
     full_decoder: Box<dyn ObservableDecoder + Send + Sync>,
-    /// Segment metadata for streaming/frame tracking.
-    segments: Vec<SegmentDescriptor>,
-    /// Gates at segment boundaries.
-    boundary_gates: Vec<Vec<BoundaryGate>>,
-    /// Total number of observables.
-    _num_observables: usize,
+    /// Validated segment, boundary, observable, and frame metadata.
+    descriptor: AlgorithmDescriptor,
 }
 
 impl LogicalAlgorithmDecoder {
@@ -143,17 +287,16 @@ impl LogicalAlgorithmDecoder {
     ///
     /// The `full_decoder` is typically an `LogicalSubgraphDecoder`
     /// built from the full circuit DEM.
-    #[must_use]
     pub fn new(
         full_decoder: Box<dyn ObservableDecoder + Send + Sync>,
         descriptor: AlgorithmDescriptor,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, DecoderError> {
+        descriptor.validate()?;
+        descriptor.reject_unsupported_decision_points()?;
+        Ok(Self {
             full_decoder,
-            segments: descriptor.segments,
-            boundary_gates: descriptor.boundary_gates,
-            _num_observables: descriptor.num_observables,
-        }
+            descriptor,
+        })
     }
 
     /// Decode one shot using the full-circuit decoder.
@@ -164,40 +307,32 @@ impl LogicalAlgorithmDecoder {
     /// Number of segments.
     #[must_use]
     pub fn num_segments(&self) -> usize {
-        self.segments.len()
+        self.descriptor.segments.len()
     }
 
     /// Total detectors across all segments.
     #[must_use]
     pub fn total_detectors(&self) -> usize {
-        self.segments.iter().map(|s| s.num_detectors).sum()
+        self.descriptor
+            .segments
+            .iter()
+            .map(|s| s.num_detectors)
+            .sum()
     }
 
     /// Apply boundary gate to a Pauli frame.
     /// Used when consuming the frame at logical operations.
     ///
-    /// # Errors
-    /// Returns [`DecoderError::ObservableBitOutOfRange`] if any of the gate's
-    /// observable bits is `>= 64`. All bits index the `u64` observable frame, so
-    /// each must be `< 64`; the Python descriptor binding rejects this at
-    /// construction, and this runtime check guards the same invariant for direct
-    /// Rust callers (a shift by `>= 64` is otherwise an overflow panic in debug /
-    /// unspecified in release).
-    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) -> Result<(), DecoderError> {
-        if let Some(&bit) = gate.obs_bits().iter().find(|&&b| b >= 64) {
-            return Err(DecoderError::ObservableBitOutOfRange { bit });
-        }
+    pub fn apply_boundary_gate(frame: &mut FrameBits, gate: &BoundaryGate) {
         match gate {
             BoundaryGate::Hadamard {
                 x_obs_bit,
                 z_obs_bit,
             } => {
-                let x_set = (*frame >> x_obs_bit) & 1;
-                let z_set = (*frame >> z_obs_bit) & 1;
-                *frame &= !(1u64 << x_obs_bit);
-                *frame &= !(1u64 << z_obs_bit);
-                *frame |= z_set << x_obs_bit;
-                *frame |= x_set << z_obs_bit;
+                let x_set = frame.get(*x_obs_bit as usize);
+                let z_set = frame.get(*z_obs_bit as usize);
+                frame.set(*x_obs_bit as usize, z_set);
+                frame.set(*z_obs_bit as usize, x_set);
             }
             BoundaryGate::Cnot {
                 ctrl_x_bit,
@@ -205,19 +340,19 @@ impl LogicalAlgorithmDecoder {
                 tgt_x_bit,
                 tgt_z_bit,
             } => {
-                if (*frame >> ctrl_x_bit) & 1 != 0 {
-                    *frame ^= 1u64 << tgt_x_bit;
+                if frame.get(*ctrl_x_bit as usize) {
+                    frame.flip(*tgt_x_bit as usize);
                 }
-                if (*frame >> tgt_z_bit) & 1 != 0 {
-                    *frame ^= 1u64 << ctrl_z_bit;
+                if frame.get(*tgt_z_bit as usize) {
+                    frame.flip(*ctrl_z_bit as usize);
                 }
             }
             BoundaryGate::SGate {
                 x_obs_bit,
                 z_obs_bit,
             } => {
-                if (*frame >> x_obs_bit) & 1 != 0 {
-                    *frame ^= 1u64 << z_obs_bit;
+                if frame.get(*x_obs_bit as usize) {
+                    frame.flip(*z_obs_bit as usize);
                 }
             }
             BoundaryGate::TGateInjection {
@@ -231,12 +366,11 @@ impl LogicalAlgorithmDecoder {
                 // Frame propagation: the ancilla's Z observable is folded
                 // into the data's Z observable. If the ancilla Z bit is
                 // set in the frame, flip the data's Z bit.
-                if (*frame >> ancilla_z_bit) & 1 != 0 {
-                    *frame ^= 1u64 << z_obs_bit;
+                if frame.get(*ancilla_z_bit as usize) {
+                    frame.flip(*z_obs_bit as usize);
                 }
             }
         }
-        Ok(())
     }
 }
 
@@ -287,9 +421,10 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 ///     }],
 ///     boundary_gates: vec![],
 ///     num_observables: 1,
+///     num_frame_slots: 2,
 /// };
-/// let decoder = LogicalAlgorithmDecoder::new(Box::new(AnyDetectionDecoder), descriptor);
-/// let mut stream = StreamingLogicalDecoder::new(decoder);
+/// let decoder = LogicalAlgorithmDecoder::new(Box::new(AnyDetectionDecoder), descriptor).unwrap();
+/// let mut stream = StreamingLogicalDecoder::new(decoder).unwrap();
 ///
 /// // Feed syndrome round by round
 /// for sparse_round in [vec![(0, 1)], vec![(1, 0)]] {
@@ -316,16 +451,17 @@ pub struct StreamingLogicalDecoder {
 
 impl StreamingLogicalDecoder {
     /// Create from a `LogicalAlgorithmDecoder`.
-    #[must_use]
-    pub fn new(decoder: LogicalAlgorithmDecoder) -> Self {
+    pub fn new(decoder: LogicalAlgorithmDecoder) -> Result<Self, DecoderError> {
+        decoder.descriptor.validate()?;
+        decoder.descriptor.reject_unsupported_decision_points()?;
         let total = decoder.total_detectors();
-        Self {
+        Ok(Self {
             inner: decoder,
             syndrome: vec![0u8; total],
             total_detectors: total,
             rounds_fed: 0,
             accumulated_obs: ObsMask::new(),
-        }
+        })
     }
 
     /// Feed one detection event into the syndrome buffer.
@@ -416,15 +552,12 @@ impl StreamingLogicalDecoder {
     /// Access the boundary gates for frame propagation.
     #[must_use]
     pub fn boundary_gates(&self) -> &[Vec<BoundaryGate>] {
-        &self.inner.boundary_gates
+        &self.inner.descriptor.boundary_gates
     }
 
     /// Apply boundary gate to a Pauli frame (delegates to inner).
-    ///
-    /// # Errors
-    /// Propagates [`DecoderError::ObservableBitOutOfRange`] from the inner apply.
-    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) -> Result<(), DecoderError> {
-        LogicalAlgorithmDecoder::apply_boundary_gate(frame, gate)
+    pub fn apply_boundary_gate(frame: &mut FrameBits, gate: &BoundaryGate) {
+        LogicalAlgorithmDecoder::apply_boundary_gate(frame, gate);
     }
 
     /// Reset for the next shot.
@@ -460,7 +593,7 @@ pub fn streaming_decode_count(
 // Budget-aware logical circuit decoder
 // ============================================================================
 
-use crate::decode_budget::{DecodeBudget, DecodeStrategy, DetectorRegion};
+use crate::decode_budget::{DecodeBudget, DetectorRegion};
 
 /// Budget-aware decoder for logical quantum circuits.
 ///
@@ -487,8 +620,8 @@ pub struct LogicalCircuitDecoder {
     _segment_offsets: Vec<usize>,
     /// Gates at segment boundaries.
     boundary_gates: Vec<Vec<BoundaryGate>>,
-    /// Per-qubit Pauli frames.
-    frames: Vec<u64>,
+    /// Reset-only Pauli frame. Phase 2 will update it while decoding boundaries.
+    frame: FrameBits,
     /// Decode budget.
     budget: DecodeBudget,
     /// Syndrome buffer.
@@ -503,13 +636,13 @@ pub struct LogicalCircuitDecoder {
 
 impl LogicalCircuitDecoder {
     /// Build from an algorithm descriptor, decode strategy, and budget.
-    #[must_use]
     pub fn new(
         descriptor: AlgorithmDescriptor,
         strategy: Box<dyn DecodeStrategy + Send + Sync>,
         budget: DecodeBudget,
-        num_qubits: usize,
-    ) -> Self {
+    ) -> Result<Self, DecoderError> {
+        descriptor.validate()?;
+        descriptor.reject_unsupported_decision_points()?;
         let mut segment_offsets = Vec::with_capacity(descriptor.segments.len());
         let mut offset = 0;
         for seg in &descriptor.segments {
@@ -518,18 +651,19 @@ impl LogicalCircuitDecoder {
         }
         let total_detectors = offset;
 
-        Self {
+        let frame = FrameBits::new(descriptor.num_frame_slots);
+        Ok(Self {
             strategy,
             segments: descriptor.segments,
             _segment_offsets: segment_offsets,
             boundary_gates: descriptor.boundary_gates,
-            frames: vec![0u64; num_qubits],
+            frame,
             budget,
             syndrome: vec![0u8; total_detectors],
             total_detectors,
             current_segment: 0,
             current_segment_fed: 0,
-        }
+        })
     }
 
     /// Decode a full shot (batch mode).
@@ -596,10 +730,13 @@ impl LogicalCircuitDecoder {
         self.total_detectors
     }
 
-    /// Current Pauli frames (per qubit).
+    /// Current Pauli frame.
+    ///
+    /// The frame remains reset-only in phase 0. Boundary-driven updates arrive
+    /// with decision plumbing in phase 2.
     #[must_use]
-    pub fn frames(&self) -> &[u64] {
-        &self.frames
+    pub fn frame(&self) -> &FrameBits {
+        &self.frame
     }
 
     /// The decode budget.
@@ -612,7 +749,7 @@ impl LogicalCircuitDecoder {
     pub fn reset(&mut self) {
         self.strategy.reset();
         self.syndrome.fill(0);
-        self.frames.fill(0);
+        self.frame = FrameBits::new(self.frame.num_slots());
         self.current_segment = 0;
         self.current_segment_fed = 0;
     }
@@ -825,6 +962,20 @@ impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
 mod tests {
     use super::*;
 
+    fn frame_from_u64(value: u64, num_slots: usize) -> FrameBits {
+        let mut frame = FrameBits::new(num_slots);
+        for slot in 0..num_slots.min(64) {
+            frame.set(slot, value & (1 << slot) != 0);
+        }
+        frame
+    }
+
+    fn frame_as_u64(frame: &FrameBits) -> u64 {
+        (0..frame.num_slots().min(64)).fold(0, |value, slot| {
+            value | (u64::from(frame.get(slot)) << slot)
+        })
+    }
+
     struct FixedDecoder(u64);
     impl ObservableDecoder for FixedDecoder {
         fn decode_obs(&mut self, _: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
@@ -841,9 +992,144 @@ mod tests {
             }],
             boundary_gates: vec![],
             num_observables: 2,
+            num_frame_slots: 2,
         };
-        let mut dec = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b01)), desc);
+        let mut dec = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b01)), desc).unwrap();
         assert_eq!(dec.decode_shot(&[0, 1, 0, 1]).unwrap(), 0b01);
+    }
+
+    #[test]
+    fn descriptor_rejects_empty_segments() {
+        let descriptor = AlgorithmDescriptor {
+            segments: vec![],
+            boundary_gates: vec![],
+            num_observables: 0,
+            num_frame_slots: 0,
+        };
+        let error = descriptor.validate().unwrap_err();
+        assert!(error.to_string().contains("at least one segment"));
+    }
+
+    #[test]
+    fn descriptor_rejects_boundary_cardinality_mismatch() {
+        let descriptor = AlgorithmDescriptor {
+            segments: vec![SegmentDescriptor {
+                num_detectors: 1,
+                num_observables: 0,
+            }],
+            boundary_gates: vec![vec![]],
+            num_observables: 0,
+            num_frame_slots: 0,
+        };
+        let error = descriptor.validate().unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("1 boundary gate lists"));
+        assert!(message.contains("1 segments"));
+    }
+
+    #[test]
+    fn descriptor_rejects_frame_slot_out_of_range() {
+        let descriptor = AlgorithmDescriptor {
+            segments: vec![
+                SegmentDescriptor {
+                    num_detectors: 1,
+                    num_observables: 1,
+                },
+                SegmentDescriptor {
+                    num_detectors: 1,
+                    num_observables: 1,
+                },
+            ],
+            boundary_gates: vec![vec![BoundaryGate::Hadamard {
+                x_obs_bit: 4,
+                z_obs_bit: 1,
+            }]],
+            num_observables: 1,
+            num_frame_slots: 4,
+        };
+        let error = descriptor.validate().unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("frame slot 4"));
+        assert!(message.contains("num_frame_slots is 4"));
+    }
+
+    fn decision_descriptor() -> AlgorithmDescriptor {
+        AlgorithmDescriptor {
+            segments: vec![
+                SegmentDescriptor {
+                    num_detectors: 1,
+                    num_observables: 1,
+                },
+                SegmentDescriptor {
+                    num_detectors: 1,
+                    num_observables: 1,
+                },
+            ],
+            boundary_gates: vec![vec![BoundaryGate::TGateInjection {
+                z_obs_bit: 1,
+                ancilla_z_bit: 3,
+            }]],
+            num_observables: 1,
+            num_frame_slots: 4,
+        }
+    }
+
+    fn assert_decision_rejection(error: DecoderError) {
+        assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
+        assert_eq!(
+            error.to_string(),
+            format!("Invalid configuration: {UNSUPPORTED_DECISION_POINT_MESSAGE}")
+        );
+    }
+
+    #[test]
+    fn logical_algorithm_decoder_rejects_decision_points() {
+        let error = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0)), decision_descriptor())
+            .err()
+            .expect("decision descriptors must be rejected");
+        assert_decision_rejection(error);
+    }
+
+    #[test]
+    fn streaming_logical_decoder_revalidates_decision_points() {
+        let valid = AlgorithmDescriptor {
+            segments: vec![SegmentDescriptor {
+                num_detectors: 1,
+                num_observables: 1,
+            }],
+            boundary_gates: vec![],
+            num_observables: 1,
+            num_frame_slots: 4,
+        };
+        let mut decoder = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0)), valid).unwrap();
+        decoder.descriptor = decision_descriptor();
+        let error = StreamingLogicalDecoder::new(decoder)
+            .err()
+            .expect("decision descriptors must be rejected");
+        assert_decision_rejection(error);
+    }
+
+    #[test]
+    fn logical_circuit_decoder_rejects_decision_points() {
+        let strategy = FullCircuitStrategy::new(Box::new(FixedDecoder(0)));
+        let error = LogicalCircuitDecoder::new(
+            decision_descriptor(),
+            Box::new(strategy),
+            DecodeBudget::unlimited(),
+        )
+        .err()
+        .expect("decision descriptors must be rejected");
+        assert_decision_rejection(error);
+    }
+
+    #[test]
+    fn frame_bits_support_slots_above_u64() {
+        let mut frame = FrameBits::new(130);
+        frame.flip(97);
+        assert!(frame.get(97));
+        frame.set(97, false);
+        assert!(!frame.get(97));
+        assert_eq!(frame.num_slots(), 130);
     }
 
     #[test]
@@ -899,44 +1185,35 @@ mod tests {
 
     #[test]
     fn test_hadamard_frame() {
-        let mut frame = 0b01u64; // X correction on bit 0
+        let mut frame = frame_from_u64(0b01, 2); // X correction on bit 0
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::Hadamard {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b10); // X became Z
+        );
+        assert_eq!(frame_as_u64(&frame), 0b10); // X became Z
     }
 
     #[test]
-    fn test_apply_boundary_gate_rejects_obs_bit_ge_64() {
-        // A boundary bit >= 64 cannot index the u64 frame; apply must fail loud
-        // (not panic in debug / shift-overflow in release) for direct Rust callers.
-        let mut frame = 0u64;
-        let result = LogicalAlgorithmDecoder::apply_boundary_gate(
+    fn test_apply_boundary_gate_supports_frame_slot_ge_64() {
+        let mut frame = FrameBits::new(66);
+        frame.set(64, true);
+        LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::Hadamard {
                 x_obs_bit: 64,
-                z_obs_bit: 1,
+                z_obs_bit: 65,
             },
         );
-        assert!(matches!(
-            result,
-            Err(DecoderError::ObservableBitOutOfRange { bit: 64 })
-        ));
-        assert_eq!(
-            frame, 0,
-            "frame must be untouched when the gate is rejected"
-        );
+        assert!(!frame.get(64));
+        assert!(frame.get(65));
     }
 
     #[test]
     fn test_boundary_gate_obs_bits_cover_all_fields() {
-        // The apply-time `< 64` assert relies on obs_bits() listing EVERY bit a
-        // gate references -- a missed field would let an out-of-range shift slip.
+        // Descriptor validation relies on obs_bits() listing every referenced slot.
         assert_eq!(
             BoundaryGate::Hadamard {
                 x_obs_bit: 2,
@@ -975,7 +1252,7 @@ mod tests {
 
     #[test]
     fn test_cnot_frame() {
-        let mut frame = 0b0001u64; // X on control (bit 0)
+        let mut frame = frame_from_u64(0b0001, 4); // X on control (bit 0)
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::Cnot {
@@ -984,9 +1261,8 @@ mod tests {
                 tgt_x_bit: 2,
                 tgt_z_bit: 3,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b0101); // X propagated to target
+        );
+        assert_eq!(frame_as_u64(&frame), 0b0101); // X propagated to target
     }
 
     #[test]
@@ -1007,12 +1283,14 @@ mod tests {
                 z_obs_bit: 1,
             }]],
             num_observables: 2,
+            num_frame_slots: 2,
         };
 
         let strategy = FullCircuitStrategy::new(Box::new(FixedDecoder(0b01)));
         let budget = DecodeBudget::unlimited();
 
-        let mut dec = LogicalCircuitDecoder::new(desc, Box::new(strategy), budget, 1);
+        let mut dec = LogicalCircuitDecoder::new(desc, Box::new(strategy), budget).unwrap();
+        assert_eq!(dec.frame().num_slots(), 2);
         let result = dec.decode_shot(&[0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
         assert_eq!(result, 0b01);
     }
@@ -1020,7 +1298,7 @@ mod tests {
     #[test]
     fn test_cnot_frame_z_backward() {
         // Z on target should propagate back to control
-        let mut frame = 0b1000u64; // Z on target (bit 3)
+        let mut frame = frame_from_u64(0b1000, 4); // Z on target (bit 3)
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::Cnot {
@@ -1029,15 +1307,14 @@ mod tests {
                 tgt_x_bit: 2,
                 tgt_z_bit: 3,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b1010); // Z propagated back to control Z (bit 1)
+        );
+        assert_eq!(frame_as_u64(&frame), 0b1010); // Z propagated back to control Z (bit 1)
     }
 
     #[test]
     fn test_cnot_frame_both_directions() {
         // X on control + Z on target -> both propagate
-        let mut frame = 0b1001u64; // X on ctrl (bit 0), Z on tgt (bit 3)
+        let mut frame = frame_from_u64(0b1001, 4); // X on ctrl (bit 0), Z on tgt (bit 3)
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::Cnot {
@@ -1046,128 +1323,119 @@ mod tests {
                 tgt_x_bit: 2,
                 tgt_z_bit: 3,
             },
-        )
-        .expect("boundary observable bits < 64");
+        );
         // X ctrl -> X tgt (bit 2), Z tgt -> Z ctrl (bit 1)
-        assert_eq!(frame, 0b1111);
+        assert_eq!(frame_as_u64(&frame), 0b1111);
     }
 
     #[test]
     fn test_sgate_frame_x_induces_z() {
         // S gate: X correction induces Z correction (X -> XZ = Y)
-        let mut frame = 0b01u64; // X correction on bit 0
+        let mut frame = frame_from_u64(0b01, 2); // X correction on bit 0
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::SGate {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b11); // X stays, Z also set
+        );
+        assert_eq!(frame_as_u64(&frame), 0b11); // X stays, Z also set
     }
 
     #[test]
     fn test_sgate_frame_z_unchanged() {
         // S gate: Z correction is unchanged (S commutes with Z)
-        let mut frame = 0b10u64; // Z correction on bit 1
+        let mut frame = frame_from_u64(0b10, 2); // Z correction on bit 1
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::SGate {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b10); // Z stays, no X induced
+        );
+        assert_eq!(frame_as_u64(&frame), 0b10); // Z stays, no X induced
     }
 
     #[test]
     fn test_sgate_frame_no_correction() {
-        let mut frame = 0u64;
+        let mut frame = FrameBits::new(2);
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::SGate {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0); // No correction, no change
+        );
+        assert_eq!(frame_as_u64(&frame), 0); // No correction, no change
     }
 
     #[test]
     fn test_t_injection_frame_ancilla_z_folds() {
         // T injection: ancilla Z bit folds into data Z bit
-        let mut frame = 0b1000u64; // ancilla Z set (bit 3)
+        let mut frame = frame_from_u64(0b1000, 4); // ancilla Z set (bit 3)
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::TGateInjection {
                 z_obs_bit: 1,     // data Z
                 ancilla_z_bit: 3, // ancilla Z
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b1010); // data Z (bit 1) flipped
+        );
+        assert_eq!(frame_as_u64(&frame), 0b1010); // data Z (bit 1) flipped
     }
 
     #[test]
     fn test_t_injection_frame_ancilla_z_cancels() {
         // If data Z already set and ancilla Z set, they cancel (XOR)
-        let mut frame = 0b1010u64; // both data Z (bit 1) and ancilla Z (bit 3)
+        let mut frame = frame_from_u64(0b1010, 4); // both data Z (bit 1) and ancilla Z (bit 3)
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::TGateInjection {
                 z_obs_bit: 1,
                 ancilla_z_bit: 3,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b1000); // data Z cancelled, ancilla unchanged
+        );
+        assert_eq!(frame_as_u64(&frame), 0b1000); // data Z cancelled, ancilla unchanged
     }
 
     #[test]
     fn test_t_injection_frame_no_ancilla_z() {
         // No ancilla Z -> no change
-        let mut frame = 0b0010u64; // data Z set, ancilla Z not set
+        let mut frame = frame_from_u64(0b0010, 4); // data Z set, ancilla Z not set
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::TGateInjection {
                 z_obs_bit: 1,
                 ancilla_z_bit: 3,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b0010); // unchanged
+        );
+        assert_eq!(frame_as_u64(&frame), 0b0010); // unchanged
     }
 
     #[test]
     fn test_hadamard_frame_swap_both() {
         // Both X and Z set -> swap
-        let mut frame = 0b11u64;
+        let mut frame = frame_from_u64(0b11, 2);
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::Hadamard {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b11); // Swap of (1,1) is still (1,1)
+        );
+        assert_eq!(frame_as_u64(&frame), 0b11); // Swap of (1,1) is still (1,1)
     }
 
     #[test]
     fn test_hadamard_frame_z_to_x() {
-        let mut frame = 0b10u64; // Z only
+        let mut frame = frame_from_u64(0b10, 2); // Z only
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
             &BoundaryGate::Hadamard {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        )
-        .expect("boundary observable bits < 64");
-        assert_eq!(frame, 0b01); // Z became X
+        );
+        assert_eq!(frame_as_u64(&frame), 0b01); // Z became X
     }
 
     #[test]
@@ -1226,9 +1494,10 @@ mod tests {
             }],
             boundary_gates: vec![],
             num_observables: 2,
+            num_frame_slots: 2,
         };
-        let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b10)), desc);
-        let mut streaming = StreamingLogicalDecoder::new(inner);
+        let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b10)), desc).unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
 
         // Feed full syndrome at once
         let result = streaming.decode_shot(&[0, 1, 0, 1]).unwrap();
@@ -1245,9 +1514,10 @@ mod tests {
             }],
             boundary_gates: vec![],
             num_observables: 2,
+            num_frame_slots: 2,
         };
-        let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b01)), desc);
-        let mut streaming = StreamingLogicalDecoder::new(inner);
+        let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b01)), desc).unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
 
         // Feed individual detectors
         streaming.feed_detection(1, 1);
@@ -1265,9 +1535,10 @@ mod tests {
             }],
             boundary_gates: vec![],
             num_observables: 2,
+            num_frame_slots: 2,
         };
-        let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b11)), desc);
-        let mut streaming = StreamingLogicalDecoder::new(inner);
+        let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b11)), desc).unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
 
         streaming.decode_shot(&[1, 0, 1, 0]).unwrap();
         assert_eq!(streaming.accumulated_obs().unwrap(), 0b11);
@@ -1285,12 +1556,14 @@ mod tests {
             }],
             boundary_gates: vec![],
             num_observables: 1,
+            num_frame_slots: 2,
         };
         let inner = LogicalAlgorithmDecoder::new(
             Box::new(FixedDecoder(0b1)),
             desc, // always predicts obs flip
-        );
-        let mut streaming = StreamingLogicalDecoder::new(inner);
+        )
+        .unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
 
         let syndromes = vec![vec![0u8, 0], vec![1, 0], vec![0, 1]];
         let expected = vec![0b1, 0b0, 0b1]; // matches on shot 0 and 2
@@ -1310,9 +1583,10 @@ mod tests {
             }],
             boundary_gates: vec![],
             num_observables: 2,
+            num_frame_slots: 2,
         };
-        let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b10)), desc);
-        let mut streaming = StreamingLogicalDecoder::new(inner);
+        let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b10)), desc).unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
 
         let mask = streaming.decode_shot_obs(&[0, 1, 0, 1]).unwrap();
         assert_eq!(mask.to_u64(), Some(0b10));

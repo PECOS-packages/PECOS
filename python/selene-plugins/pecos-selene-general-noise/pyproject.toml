@@ -19,6 +19,7 @@ test = [
 addopts = "-m 'not slow'"
 markers = [
     "slow: extended statistical conformance excluded from the default fast test lane",
+    "noise_channel(name, oracle, evidence): identify independently verified semantic channel coverage",
 ]
 
 [project.urls]

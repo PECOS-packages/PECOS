@@ -48,6 +48,13 @@ def rz(theta: float) -> Matrix:
     )
 
 
+def rzz(theta: float) -> Matrix:
+    """Return the standard two-qubit ZZ rotation in computational order."""
+    negative = np.exp(-0.5j * theta)
+    positive = np.exp(0.5j * theta)
+    return np.diag([negative, positive, positive, negative]).astype(np.complex128)
+
+
 def hadamard() -> Matrix:
     """Return the standard one-qubit Hadamard unitary."""
     return np.array([[1.0, 1.0], [1.0, -1.0]], dtype=np.complex128) / math.sqrt(2.0)

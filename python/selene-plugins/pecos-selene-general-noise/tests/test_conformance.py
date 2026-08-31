@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 from general_noise_conformance import ConformanceExperiment, ExpectedDistribution
-from guppylang import guppy
+from guppylang import comptime, guppy
 from guppylang.std.angles import pi
 from guppylang.std.builtins import result
-from guppylang.std.quantum import cx, measure, qubit, rz, x
+from guppylang.std.quantum import cx, h, measure, qubit, rz, x
 from pecos_selene_general_noise import GeneralNoiseParameters
 from selene_sim import Stim
 from selene_sim.build import build
@@ -71,6 +71,90 @@ def measurement_crosstalk_probe() -> None:
         x(victim)
     result("source", trigger)
     result("victim", measure(victim).read())
+
+
+@guppy
+def measurement_crosstalk_probe_three() -> None:
+    """Expose one or two local victims plus an optional spectator."""
+    source = qubit()
+    victim_a = qubit()
+    victim_b = qubit()
+    cx(source, victim_a)
+    cx(source, victim_b)
+    trigger = measure(source).read()
+    if trigger:
+        x(victim_a)
+        x(victim_b)
+    result("source", trigger)
+    result("victim_a", measure(victim_a).read())
+    result("victim_b", measure(victim_b).read())
+
+
+@guppy
+def measurement_crosstalk_probe_four() -> None:
+    """Expose two local victims while a fourth qubit remains a spectator."""
+    source = qubit()
+    victim_a = qubit()
+    victim_b = qubit()
+    spectator = qubit()
+    cx(source, victim_a)
+    cx(source, victim_b)
+    cx(source, spectator)
+    trigger = measure(source).read()
+    if trigger:
+        x(victim_a)
+        x(victim_b)
+        x(spectator)
+    result("source", trigger)
+    result("victim_a", measure(victim_a).read())
+    result("victim_b", measure(victim_b).read())
+    result("spectator", measure(spectator).read())
+
+
+def repeated_measurement_crosstalk_probe(n_qubits: int, repetitions: int) -> SeleneInstance:
+    """Build a 3Q/4Q probe with repeated mid-circuit measurements."""
+    if n_qubits == 3:
+
+        @guppy
+        def main_three() -> None:
+            data_a = qubit()
+            data_b = qubit()
+            h(data_a)
+            h(data_b)
+            for _ in range(comptime(repetitions)):
+                ancilla = qubit()
+                _ = measure(ancilla).read()
+            h(data_a)
+            h(data_b)
+            result("data_a", measure(data_a).read())
+            result("data_b", measure(data_b).read())
+
+        return build(main_three.compile())
+
+    if n_qubits == 4:
+
+        @guppy
+        def main_four() -> None:
+            data_a = qubit()
+            data_b = qubit()
+            data_c = qubit()
+            h(data_a)
+            h(data_b)
+            h(data_c)
+            for _ in range(comptime(repetitions)):
+                ancilla = qubit()
+                _ = measure(ancilla).read()
+            h(data_a)
+            h(data_b)
+            h(data_c)
+            result("data_a", measure(data_a).read())
+            result("data_b", measure(data_b).read())
+            result("data_c", measure(data_c).read())
+
+        return build(main_four.compile())
+
+    message = f"repeated crosstalk probe supports 3 or 4 qubits, got {n_qubits}"
+    raise ValueError(message)
 
 
 ZERO = ExpectedDistribution({(0,): 1.0})
@@ -373,6 +457,46 @@ def test_noise_suppression_controls(parameters: GeneralNoiseParameters) -> None:
     experiment.assert_conforms(Stim(random_seed=23))
 
 
+@pytest.mark.slow
+@pytest.mark.noise_channel("two-qubit-angle-scaling", oracle="analytic")
+@pytest.mark.parametrize(
+    ("coefficients", "power", "multiplier"),
+    [
+        pytest.param((1.0, 0.0, 1.0, 0.0), 1.0, 0.5, id="linear"),
+        pytest.param((1.0, 0.0, 1.0, 0.0), 2.0, 0.25, id="quadratic"),
+        pytest.param((0.8, 0.1, 0.8, 0.1), 1.0, 0.5, id="coefficient-plus-offset"),
+        pytest.param((0.0, 0.4, 0.0, 0.4), 3.0, 0.4, id="offset-only"),
+        pytest.param((0.0, 1.0, 0.0, 1.0), 1.0, 1.0, id="default"),
+    ],
+)
+def test_two_qubit_angle_scaling_matrix(
+    coefficients: tuple[float, float, float, float],
+    power: float,
+    multiplier: float,
+) -> None:
+    """Several coefficient/power combinations follow the documented RZZ law."""
+    base_probability = 0.6
+    parameters = (
+        GeneralNoiseParameters()
+        .with_p2(base_probability)
+        .with_p2_pauli_model({"XI": 1.0})
+        .with_p2_angle_params(*coefficients)
+        .with_p2_angle_power(power)
+    )
+    fault_probability = base_probability * multiplier
+    experiment = ConformanceExperiment(
+        runner=build(two_qubit_gate.compile()),
+        n_qubits=2,
+        result_tags=("q0", "q1"),
+        parameters=parameters,
+        expected=ExpectedDistribution({(0, 0): 1.0 - fault_probability, (1, 0): fault_probability}),
+        comparison=ZERO_ZERO,
+        shots=4096,
+        seed=350 + round(100 * multiplier),
+    )
+    experiment.assert_conforms(Stim(random_seed=370 + round(100 * multiplier)), n_processes=2)
+
+
 @pytest.mark.parametrize(
     "parameters",
     [
@@ -472,6 +596,7 @@ def test_two_qubit_and_idle_scale_controls(parameters: GeneralNoiseParameters) -
     experiment.assert_conforms(Stim(random_seed=23))
 
 
+@pytest.mark.noise_channel("measurement-crosstalk", oracle="analytic")
 def test_measurement_crosstalk_scale_can_disable_channel() -> None:
     """The measurement-crosstalk scale is independently observable."""
     parameters = (
@@ -599,6 +724,7 @@ def test_leakage_scale_converts_leakage_to_depolarization() -> None:
         ),
     ],
 )
+@pytest.mark.noise_channel("measurement-crosstalk", oracle="analytic")
 def test_measurement_crosstalk_is_device_neutral(parameters: GeneralNoiseParameters) -> None:
     """Global and user-defined local crosstalk project an unmeasured victim."""
     experiment = ConformanceExperiment(
@@ -613,6 +739,7 @@ def test_measurement_crosstalk_is_device_neutral(parameters: GeneralNoiseParamet
     experiment.assert_conforms(Stim(random_seed=23))
 
 
+@pytest.mark.noise_channel("measurement-crosstalk", oracle="analytic")
 def test_measurement_crosstalk_alias_enables_global_channel() -> None:
     """The shared crosstalk convenience method includes the global channel."""
     parameters = (
@@ -628,6 +755,124 @@ def test_measurement_crosstalk_alias_enables_global_channel() -> None:
         shots=64,
     )
     experiment.assert_conforms(Stim(random_seed=23))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("runner", "n_qubits", "result_tags", "groups", "expected"),
+    [
+        pytest.param(
+            build(measurement_crosstalk_probe_three.compile()),
+            3,
+            ("source", "victim_a", "victim_b"),
+            ((0, 1),),
+            (0, 1, 0),
+            id="three-qubit-one-victim",
+        ),
+        pytest.param(
+            build(measurement_crosstalk_probe_three.compile()),
+            3,
+            ("source", "victim_a", "victim_b"),
+            ((0, 1), (0, 2)),
+            (0, 1, 1),
+            id="three-qubit-two-victims",
+        ),
+        pytest.param(
+            build(measurement_crosstalk_probe_four.compile()),
+            4,
+            ("source", "victim_a", "victim_b", "spectator"),
+            ((0, 1), (0, 2)),
+            (0, 1, 1, 0),
+            id="four-qubit-with-spectator",
+        ),
+    ],
+)
+@pytest.mark.noise_channel("measurement-crosstalk-multiqubit", oracle="analytic")
+def test_local_measurement_crosstalk_respects_multiqubit_topology(
+    runner: SeleneInstance,
+    n_qubits: int,
+    result_tags: tuple[str, ...],
+    groups: tuple[tuple[int, ...], ...],
+    expected: tuple[int, ...],
+) -> None:
+    """User-defined local groups affect only their 3Q/4Q victims."""
+    parameters = (
+        GeneralNoiseParameters()
+        .with_p_meas_crosstalk_local(1.0)
+        .with_p_meas_crosstalk_model({"0->1": 1.0, "1->0": 1.0})
+        .with_local_crosstalk_groups(*groups)
+    )
+    experiment = ConformanceExperiment(
+        runner=runner,
+        n_qubits=n_qubits,
+        result_tags=result_tags,
+        parameters=parameters,
+        expected=ExpectedDistribution({expected: 1.0}),
+        comparison=ExpectedDistribution({(0,) * n_qubits: 1.0}),
+        shots=64,
+    )
+    experiment.assert_conforms(Stim(random_seed=23))
+
+
+def _repeated_crosstalk_cases() -> list[pytest.ParameterSet]:
+    cases = []
+    seed_pairs = ((401, 409), (419, 421), (431, 433))
+    for n_qubits in (3, 4):
+        result_tags = tuple(f"data_{letter}" for letter in "abc"[: n_qubits - 1])
+        for repetitions in (1, 5):
+            runner = repeated_measurement_crosstalk_probe(n_qubits, repetitions)
+            for seed_index, (error_seed, simulator_seed) in enumerate(seed_pairs):
+                evidence = f"{n_qubits}q-{repetitions}-mid-circuit-measurements"
+                cases.append(
+                    pytest.param(
+                        runner,
+                        n_qubits,
+                        repetitions,
+                        result_tags,
+                        error_seed,
+                        simulator_seed,
+                        id=f"{evidence}-seed-{seed_index}",
+                        marks=pytest.mark.noise_channel(
+                            "measurement-crosstalk-repeated",
+                            oracle="analytic",
+                            evidence=evidence,
+                        ),
+                    ),
+                )
+    return cases
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("runner", "n_qubits", "repetitions", "result_tags", "error_seed", "simulator_seed"),
+    _repeated_crosstalk_cases(),
+)
+def test_global_measurement_crosstalk_across_repeated_measurements(
+    runner: SeleneInstance,
+    n_qubits: int,
+    repetitions: int,
+    result_tags: tuple[str, ...],
+    error_seed: int,
+    simulator_seed: int,
+) -> None:
+    """One and five mid-circuit measurements project all 3Q/4Q data."""
+    del repetitions
+    n_data = n_qubits - 1
+    probability = 1.0 / (2**n_data)
+    expected = ExpectedDistribution(
+        {tuple((outcome >> bit) & 1 for bit in range(n_data)): probability for outcome in range(2**n_data)},
+    )
+    experiment = ConformanceExperiment(
+        runner=runner,
+        n_qubits=n_qubits,
+        result_tags=result_tags,
+        parameters=GeneralNoiseParameters().with_p_meas_crosstalk_global(1.0),
+        expected=expected,
+        comparison=ExpectedDistribution({(0,) * n_data: 1.0}),
+        shots=4096,
+        seed=error_seed,
+    )
+    experiment.assert_conforms(Stim(random_seed=simulator_seed), n_processes=2)
 
 
 def test_conformance_case_runs_with_pecos_statevec() -> None:

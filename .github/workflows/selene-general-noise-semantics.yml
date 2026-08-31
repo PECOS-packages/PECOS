@@ -1,0 +1,100 @@
+name: Selene General Noise Semantics
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: '17 7 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -C debuginfo=0
+
+jobs:
+  extended-semantics:
+    name: Extended device-neutral semantics
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version-file: .github/uv.toml
+          enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+
+      - name: Set up Rust
+        run: rustup show
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          cache-bin: false
+          prefix-key: v1-selene-general-noise-semantics
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+
+      - name: Build semantic-test plugins
+        run: |
+          cargo build --locked --release \
+            -p pecos-selene-general-noise \
+            -p pecos-selene-statevec
+          mkdir -p python/selene-plugins/pecos-selene-general-noise/python/pecos_selene_general_noise/_dist/lib
+          mkdir -p python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib
+          cp target/release/libpecos_selene_general_noise.so \
+            python/selene-plugins/pecos-selene-general-noise/python/pecos_selene_general_noise/_dist/lib/
+          cp target/release/libpecos_selene_statevec.so \
+            python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
+          uv pip install --system \
+            -e 'python/selene-plugins/pecos-selene-general-noise[test]' \
+            -e python/selene-plugins/pecos-selene-statevec
+
+      - name: Run extended semantic matrix
+        run: |
+          pytest python/selene-plugins/pecos-selene-general-noise/tests \
+            -m slow -v --tb=short | tee general-noise-semantic-results.txt
+
+      - name: Publish channel coverage summary
+        if: always()
+        run: |
+          echo '## General-noise semantic coverage' >> "$GITHUB_STEP_SUMMARY"
+          if [[ ! -f general-noise-semantic-results.txt ]]; then
+            echo 'The semantic-test log was not produced; inspect the earlier build steps.' \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          awk '
+            /general-noise semantic coverage/ { capture = 1; next }
+            capture && /^=+/ { exit }
+            capture { print }
+          ' general-noise-semantic-results.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload semantic-test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: selene-general-noise-semantic-results
+          path: general-noise-semantic-results.txt
+          if-no-files-found: warn

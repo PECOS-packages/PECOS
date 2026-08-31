@@ -156,6 +156,7 @@ def test_parallel_sequences_match_joint_reference_distribution() -> None:
         ),
     ],
 )
+@pytest.mark.noise_channel("preparation-crosstalk", oracle="analytic")
 def test_preparation_crosstalk_is_device_neutral(parameters: GeneralNoiseParameters) -> None:
     """Preparation crosstalk follows public PECOS semantics without a device layout."""
     experiment = ConformanceExperiment(
@@ -170,6 +171,7 @@ def test_preparation_crosstalk_is_device_neutral(parameters: GeneralNoiseParamet
     experiment.assert_conforms(Stim(random_seed=37), n_processes=2)
 
 
+@pytest.mark.noise_channel("preparation-crosstalk", oracle="analytic")
 def test_preparation_crosstalk_scale_can_disable_channel() -> None:
     """The preparation-crosstalk scale is behaviorally observable."""
     parameters = GeneralNoiseParameters().with_p_prep_crosstalk(1.0).with_p_prep_crosstalk_scale(0.0)

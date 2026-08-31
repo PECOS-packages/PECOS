@@ -28,12 +28,16 @@ gate library or runtime. It covers deep and parallel single-qubit sequences plus
 correlated and anti-correlated Bell-state circuits, including the full two-qubit
 Pauli channel.
 
-`test_generated_conformance.py` adds a reproducible matrix of mixed-axis and
-parity-sensitive entangling circuits. The generator retains only circuits whose
-ideal and noisy distributions are statistically distinguishable, and compiles
-them entirely from standard `rx`, `ry`, `rz`, and `cx` operations. Direct Rust
-adapter tests separately exercise Selene's leakage-valued measurement operation,
-so that path does not require a hardware gate library.
+`test_generated_conformance.py` adds a reproducible matrix of 15 mixed-axis
+one-qubit circuits and 25 primitive-RZZ two-qubit circuits. It crosses those
+circuits with isolated symmetric, asymmetric, emission, leakage, seepage, SPAM,
+and combined profiles, and runs every retained pair with three deterministic
+component-seed combinations. The generator retains only profile/circuit pairs
+whose target and mutation-comparison distributions are statistically
+distinguishable. It uses Guppy's public standard rotations and qsystem RZZ
+operation without importing a hardware gate library. Testing the primitive RZZ
+is important: a high-level CX is decomposed before the error model sees it, so an
+atomic-CX oracle would specify the wrong replacement semantics for emission.
 
 Rust adapter-contract tests complement the statistical cases. They verify exact
 RXY, RZ, RZZ, reset, and measurement translation; per-qubit runtime ordering;
@@ -54,6 +58,28 @@ parallel Selene workers. A two-round history localizes a known fault between
 rounds and checks the full analytic distribution under asymmetric readout noise.
 Its larger statistical checks carry the `slow` marker.
 
+`test_idle_matrix.py` independently evaluates the linear, sine-squared, and
+coherent idle laws at normalized schedule depths 100, 200, 300, 400, and 500.
+The coherent cases run against the PECOS StateVec Selene plugin because arbitrary
+rotations are intentionally outside a stabilizer simulator's domain.
+
+`test_layered_matrix.py` adds seeded one- and five-layer workloads on three and
+four qubits. Isolated `p1+SPAM`, `p2+SPAM`, `p1+p2`, and full profiles are checked
+against the qutrit oracle with three component-seed combinations. As elsewhere,
+only profile/workload pairs that can distinguish the target model from the
+noiseless comparison are retained.
+
+Device-neutral crosstalk probes exercise three- and four-qubit local topologies
+with one victim, multiple victims, and an unaffected spectator. The qubit groups
+are supplied directly by the test rather than copied from any device layout. A
+second matrix tests global crosstalk after one and five mid-circuit measurements
+on both qubit counts, using three deterministic component-seed pairs per circuit.
+
+`test_coverage_contract.py` makes semantic breadth an executable contract. Each
+current channel must retain at least three sensitive circuits backed by an
+analytic, basis-state, or qutrit oracle. Collection prints a channel-by-channel
+count and oracle summary. Seed repetitions do not inflate those circuit counts.
+
 The generated matrix and additional statistical seed repetitions carry the
 repository's `slow` marker. The default fast lane retains one seed for every
 qutrit circuit family. Run the two layers explicitly with:
@@ -63,6 +89,12 @@ uv run pytest python/selene-plugins/pecos-selene-general-noise/tests -m "not slo
 uv run pytest python/selene-plugins/pecos-selene-general-noise/tests -m slow
 ```
 
+The extended matrix also runs weekly and on demand in
+`.github/workflows/selene-general-noise-semantics.yml`; the workflow publishes
+the channel summary and complete pytest log as CI artifacts. Pull requests keep
+the deterministic and representative statistical fast lane on all supported
+platforms.
+
 Every behavioral case also supplies a comparison distribution. Before taking
 shots, the framework verifies that the circuit is sensitive enough to distinguish
 the configured channel from that comparison. This prevents a test from passing
@@ -71,9 +103,9 @@ merely because its circuit cannot observe the configured noise.
 The current suite covers preparation and asymmetric readout, process and average
 gate infidelity, custom Pauli and emission channels, two-qubit angle scaling, all
 three idle families, leakage and seepage, preparation crosstalk, global and
-topology-defined local measurement crosstalk, family/global/noiseless controls,
-combined-channel behavior over several seeds, and both Stim and PECOS StateVec
-simulator boundaries.
+topology-defined local measurement crosstalk through four qubits,
+family/global/noiseless controls, combined-channel behavior over several seeds,
+and both Stim and PECOS StateVec simulator boundaries.
 
 The in-test qutrit density matrix remains an independent oracle rather than a
 Selene simulator plugin. End-to-end outcomes `0`, `1`, and leaked `2` are covered

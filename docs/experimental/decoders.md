@@ -14,11 +14,12 @@ Two capabilities live here that the production decoders do not offer:
 
 ## Frontier and BP-Trellis
 
-Both take a Stim-format DEM string and expose the same result surface.
-`FrontierDecoder` and `BpTrellisDecoder` are each a single trellis decoder over
-the same machinery (BP-Trellis adds BP-informed pruning scores); the separate
-`FrontierCommitteeDecoder` runs a two-leg forward/backward committee over them.
-Start with whichever you like and compare.
+`FrontierDecoder.from_dem` and `BpTrellisDecoder.from_dem` take a Stim-format
+DEM string and expose the same result surface. `FrontierDecoder.from_factors`
+also accepts the factor model described below. Each is a single trellis decoder
+over the same machinery (BP-Trellis adds BP-informed pruning scores); the
+separate `FrontierCommitteeDecoder` runs a two-leg forward/backward committee
+over them. Start with whichever you like and compare.
 
 <!--test-name: experimental_decoders_gap-->
 ```python
@@ -55,6 +56,38 @@ assert list(trellis.observable_flips) == [True]
 assert trellis.status == "exact"
 ```
 
+### Factor models
+
+`FrontierDecoder.from_factors(factors, num_detectors, num_observables, ...)`
+accepts a list of independent factors, each containing
+`(probability, detector_indices, observable_indices)` outcome tuples. The
+outcome probabilities in each factor must sum to 1. Binary-shaped factors with
+an empty baseline delegate to the same binary engine as the equivalent DEM.
+
+<!--test-name: experimental_decoder_factors-->
+```python
+import math
+
+from pecos_rslib_exp import FrontierDecoder
+
+factors = [
+    [(0.60, [], []), (0.25, [0], [0]), (0.15, [0], [])],
+    [(0.80, [], []), (0.20, [0], [])],
+]
+result = FrontierDecoder.from_factors(
+    factors,
+    num_detectors=1,
+    num_observables=1,
+    k=10**9,
+    delta=1e6,
+).decode_syndrome([1])
+masses = dict(result.logical_masses)
+
+assert result.observable_flips.mask == 0
+assert math.isclose(masses[0], math.log(0.24), abs_tol=1e-9)
+assert math.isclose(masses[1], math.log(0.20), abs_tol=1e-9)
+```
+
 ### Reading the complementary gap
 
 `logical_masses` holds `(observable_mask, log_mass)` pairs ordered by decreasing
@@ -67,10 +100,12 @@ With the default float metric, when `status` is `"exact"` (nothing was pruned),
 the masses are the true unnormalized posteriors: a large gap means one logical
 class really was overwhelmingly more likely, and a gap near zero means the
 shot was nearly a coin flip -- a natural candidate for post-selection or a
-soft-output pipeline. Under the integer `maxlog_int` metric (Rust API only for
-now), each terminal mass is instead the best-route (Viterbi) mass for that
-logical class, the gap is a route-mass margin, and `log_evidence` is the winning
-route mass rather than evidence.
+soft-output pipeline. Under the integer `maxlog_int` metric (accepted by Python
+`FrontierDecoder` as `metric_mode="maxlog_int"`; `int_metric_scale` sets the
+quantization units per natural-log unit and defaults to 1024; the committee
+remains float-only), each terminal mass is instead the best-route (Viterbi)
+mass for that logical class, the gap is a route-mass margin, and `log_evidence`
+is the winning route mass rather than evidence.
 When the result was pruned, the gap and the masses describe only what the
 search retained, not a certified confidence -- treat them as search
 diagnostics, not posteriors.

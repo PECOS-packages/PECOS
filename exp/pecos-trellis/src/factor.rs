@@ -65,15 +65,32 @@ impl FactorModel {
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError::InvalidConfiguration`] if a factor has no
-    /// outcomes, an outcome probability or index is invalid, an outcome
-    /// repeats an index, or a factor's probabilities do not sum to one within
-    /// `1e-10`.
+    /// Returns [`DecoderError::InvalidConfiguration`] if a declared width
+    /// exceeds the `u32` outcome-index range, a factor has no outcomes, an
+    /// outcome probability or index is invalid, an outcome repeats an index,
+    /// or a factor's probabilities do not sum to one within `1e-10`.
     pub fn new(
         factors: Vec<Factor>,
         num_detectors: usize,
         num_observables: usize,
     ) -> Result<Self, DecoderError> {
+        // Indices are u32, so the largest addressable width is u32::MAX + 1
+        // (index u32::MAX exists) -- the same contract as the DEM parser,
+        // which accepts `D4294967295` and reports that width. Compare in
+        // u64: on a 32-bit target `u32::MAX as usize + 1` would be a
+        // const-eval overflow, while every usize is representable in u64.
+        const MAX_WIDTH: u64 = u32::MAX as u64 + 1;
+        if num_detectors as u64 > MAX_WIDTH {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "num_detectors {num_detectors} exceeds the u32 index-addressable width {MAX_WIDTH}"
+            )));
+        }
+        if num_observables as u64 > MAX_WIDTH {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "num_observables {num_observables} exceeds the u32 index-addressable width {MAX_WIDTH}"
+            )));
+        }
+
         for (factor_index, factor) in factors.iter().enumerate() {
             if factor.outcomes.is_empty() {
                 return Err(DecoderError::InvalidConfiguration(format!(
@@ -244,6 +261,46 @@ fn validate_outcome_indices(
 mod tests {
     use super::{Factor, FactorModel, Outcome};
     use crate::deadline_column_order_for_factors;
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn factor_model_widths_are_bounded_by_the_u32_addressable_width() {
+        // Index u32::MAX exists, so width u32::MAX + 1 is addressable -- the
+        // DEM parser accepts `D4294967295` and reports exactly this width, and
+        // TryFrom<&SparseDem> must not reject a DEM the parser accepts.
+        let max_width = u32::MAX as usize + 1;
+        FactorModel::new(Vec::new(), max_width, max_width).unwrap();
+        let outcome = Outcome {
+            probability: 1.0,
+            detectors: vec![u32::MAX],
+            observables: Vec::new(),
+        };
+        FactorModel::new(
+            vec![Factor {
+                outcomes: vec![outcome],
+            }],
+            max_width,
+            0,
+        )
+        .unwrap();
+
+        let too_wide = max_width + 1;
+        let detector_error = FactorModel::new(Vec::new(), too_wide, 0).unwrap_err();
+        assert_eq!(
+            detector_error.to_string(),
+            format!(
+                "Invalid configuration: num_detectors {too_wide} exceeds the u32 index-addressable width {max_width}"
+            )
+        );
+
+        let observable_error = FactorModel::new(Vec::new(), 0, too_wide).unwrap_err();
+        assert_eq!(
+            observable_error.to_string(),
+            format!(
+                "Invalid configuration: num_observables {too_wide} exceeds the u32 index-addressable width {max_width}"
+            )
+        );
+    }
 
     #[test]
     fn factor_ordering_errors_name_the_factor() {

@@ -954,4 +954,46 @@ fn target_probability_tolerance_and_rng_contracts_are_explicit() {
     reseed(&mut qutrit_state);
     reseed(&mut general_density);
     reseed(&mut qutrit_density);
+
+    let mut expected_rng = PecosRng::seed_from_u64(131);
+    let expected_first_draw = expected_rng.random::<u64>();
+    assert_eq!(general_state.rng_mut().random::<u64>(), expected_first_draw);
+    assert_eq!(qutrit_state.rng_mut().random::<u64>(), expected_first_draw);
+    assert_eq!(
+        general_density.rng_mut().random::<u64>(),
+        expected_first_draw
+    );
+    assert_eq!(
+        qutrit_density.rng_mut().random::<u64>(),
+        expected_first_draw
+    );
+}
+
+#[test]
+fn materially_negative_unchecked_density_has_a_specific_diagnostic() {
+    let entries = vec![
+        c(-0.2),
+        c(0.0),
+        c(0.0),
+        c(0.0),
+        c(0.6),
+        c(0.0),
+        c(0.0),
+        c(0.0),
+        c(0.6),
+    ];
+    let mut density = QutritDensityMatrix::from_density_matrix_unchecked(
+        1,
+        entries,
+        PecosRng::seed_from_u64(137),
+    )
+    .unwrap();
+    assert_eq!(
+        density.outcome_probabilities(0).unwrap_err(),
+        QuditError::InvalidProbability(-0.2)
+    );
+    assert_eq!(
+        density.measure(0).unwrap_err(),
+        QuditError::InvalidProbability(-0.2)
+    );
 }

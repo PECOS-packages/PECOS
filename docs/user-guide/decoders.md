@@ -353,8 +353,13 @@ Decode such a model with a decoder that represents hyperedges directly --
 `bp_osd()` or `tesseract()` -- or supply a decomposed projection (a model
 written with `^` separators passes: each component is graphlike). See
 [Experimental Decoders](../experimental/decoders.md) for the Frontier and
-BP-Trellis decoders, which additionally report a per-shot complementary gap, and
-for provenance-based decomposition of a hyperedge model into a graphlike one.
+BP-Trellis decoders, which additionally report a per-shot complementary gap,
+and for provenance-based decomposition of a hyperedge model into a graphlike
+one. Frontier's exact default-float masses are true unnormalized posteriors.
+Under its integer `maxlog_int` metric (accepted by Python `FrontierDecoder` as
+`metric_mode="maxlog_int"`; the committee remains float-only), terminal masses
+are per-label best-route (Viterbi) masses, the gap is a route-mass margin, and
+`log_evidence` is the winner's mass rather than evidence.
 
 ## See Also
 

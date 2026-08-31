@@ -40,7 +40,8 @@ fn uniform_equivalent_per_gate_matches_scalar_dem() {
         .with_noise(0.01, 0.02, 0.005, 0.003)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     let per_gate = DemBuilder::new(&influence)
         .with_per_gate_noise(PerGateTypeNoise::from_base_noise(NoiseConfig::new(
@@ -48,7 +49,8 @@ fn uniform_equivalent_per_gate_matches_scalar_dem() {
         )))
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Both DEMs should contain the same mechanism set with matching probabilities.
     assert_eq!(scalar.num_contributions(), per_gate.num_contributions());
@@ -88,7 +90,8 @@ fn per_gate_override_produces_decomposed_dem_text() {
         .with_per_gate_noise(cfg)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     let text = dem.to_string_decomposed();
     let error_lines = text.lines().filter(|l| l.starts_with("error(")).count();
@@ -119,12 +122,14 @@ fn per_qubit_cx_override_changes_dem_probabilities() {
         .with_per_gate_noise(cfg_baseline)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
     let boosted = DemBuilder::new(&influence)
         .with_per_gate_noise(cfg_boost)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Both produce the same mechanism set (same circuit structure) but
     // the boosted DEM should have higher-average probabilities in its text.
@@ -166,7 +171,8 @@ fn idle_locations_contribute_to_dem_text() {
         .with_per_gate_noise(cfg)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     let text = dem.to_string();
     assert!(
@@ -189,7 +195,8 @@ fn decomposed_dem_reflects_per_gate_noise() {
         .with_per_gate_noise(cfg)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Both formats should have content.
     let non_decomposed = dem.to_string();

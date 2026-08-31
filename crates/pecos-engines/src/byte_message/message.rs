@@ -633,23 +633,22 @@ impl ByteMessage {
         payload: &[u8],
         params_offset: usize,
         gate_type: GateType,
-    ) -> Result<(GateAngles, GateParams), PecosError> {
+        param_count: usize,
+    ) -> (GateAngles, GateParams) {
         let trace_enabled = log::log_enabled!(Level::Trace);
-        // Get the number of parameters this gate type requires
-        let param_count = gate_type.classical_arity();
         if param_count == 0 {
-            return Ok((GateAngles::new(), GateParams::new()));
+            return (GateAngles::new(), GateParams::new());
         }
 
         if trace_enabled {
             trace!("parse_gate_parameters: Gate {gate_type:?} requires {param_count} parameters");
         }
 
-        // Validate the parameter size
-        let required_size = param_count * size_of::<f64>();
-        Self::validate_params_size(payload, params_offset, required_size, gate_type)?;
-
-        let angle_count = gate_type.angle_arity();
+        let angle_count = if gate_type == GateType::Custom {
+            param_count
+        } else {
+            gate_type.angle_arity()
+        };
         let mut angles = GateAngles::with_capacity(angle_count);
         let mut params = GateParams::with_capacity(param_count.saturating_sub(angle_count));
         for i in 0..param_count {
@@ -674,22 +673,33 @@ impl ByteMessage {
             );
         }
 
-        Ok((angles, params))
+        (angles, params)
     }
 
-    /// Validate if the payload has enough bytes for parameters
+    /// Validate that the payload has exactly the parameter bytes required by the gate.
     fn validate_params_size(
         payload: &[u8],
         params_offset: usize,
         required_size: usize,
         gate_type: GateType,
-    ) -> Result<(), PecosError> {
-        if payload.len() < params_offset + required_size {
+    ) -> Result<usize, PecosError> {
+        let received_size = payload.len().saturating_sub(params_offset);
+        if gate_type == GateType::Custom {
+            if !received_size.is_multiple_of(size_of::<f64>()) {
+                return Err(PecosError::Input(format!(
+                    "Gate Custom received {received_size} parameter bytes, which is not a whole number of f64 parameters"
+                )));
+            }
+            return Ok(received_size / size_of::<f64>());
+        }
+
+        if received_size != required_size {
+            let expected_params = gate_type.classical_arity();
             return Err(PecosError::Input(format!(
-                "Quantum gate message payload too small for {gate_type:?} parameters"
+                "Gate {gate_type:?} expected {expected_params} parameters ({required_size} bytes), received {received_size} parameter bytes"
             )));
         }
-        Ok(())
+        Ok(gate_type.classical_arity())
     }
 
     /// Parse an f64 parameter from the payload
@@ -713,7 +723,7 @@ impl ByteMessage {
         let header = *bytemuck::from_bytes::<GateHeader>(&payload[0..size_of::<GateHeader>()]);
         let num_qubits = header.num_qubits as usize;
         let has_params = header.has_params != 0;
-        let gate_type = GateType::from(header.gate_type);
+        let gate_type = GateType::try_from(header.gate_type).map_err(PecosError::Input)?;
         if gate_type == GateType::Channel {
             return Err(PecosError::Input(
                 "Channel gates carry typed payloads and cannot be encoded in ByteMessage gate commands"
@@ -736,15 +746,20 @@ impl ByteMessage {
         // Parse qubit indices directly to QubitId
         let qubits = Self::parse_qubit_indices(payload, qubits_offset, num_qubits);
 
+        let params_offset = qubits_offset + qubits_byte_size;
+        let required_params_size = gate_type.classical_arity() * size_of::<f64>();
+        let param_count =
+            Self::validate_params_size(payload, params_offset, required_params_size, gate_type)?;
+
         if trace_enabled {
             trace!("parse_gate_command: Parsed qubits: {qubits:?}");
         }
 
         // Parse parameters if present
         // The wire format stores all classical parameters as f64, with angles first (in radians)
-        let (angles, params) = if has_params {
-            let params_offset = qubits_offset + qubits_byte_size;
-            let parsed = Self::parse_gate_parameters(payload, params_offset, gate_type)?;
+        let (angles, params) = if has_params || (gate_type == GateType::Custom && param_count > 0) {
+            let parsed =
+                Self::parse_gate_parameters(payload, params_offset, gate_type, param_count);
             if trace_enabled {
                 trace!(
                     "parse_gate_command: Parsed parameters: angles={:?}, params={:?}",
@@ -782,8 +797,81 @@ impl ByteMessage {
 mod tests {
     use super::*;
     use crate::Engine;
+    use crate::byte_message::protocol::MessageFlags;
     use crate::quantum::StateVecEngine;
     use pecos_core::QubitId;
+
+    #[test]
+    fn quantum_ops_rejects_surplus_gate_parameter_bytes() {
+        let header = GateHeader {
+            gate_type: GateType::RZ as u8,
+            num_qubits: 1,
+            has_params: 1,
+            reserved: 0,
+        };
+        let mut payload = Vec::new();
+        payload.extend_from_slice(bytemuck::bytes_of(&header));
+        payload.extend_from_slice(&0_u32.to_le_bytes());
+        payload.extend_from_slice(&0.5_f64.to_le_bytes());
+        payload.extend_from_slice(&0.25_f64.to_le_bytes());
+
+        let mut builder = ByteMessageBuilder::new();
+        builder.add_message(MessageType::Gate, &payload, MessageFlags::NONE);
+        let err = builder
+            .build()
+            .quantum_ops()
+            .expect_err("surplus angle bytes must be rejected");
+
+        assert!(err.to_string().contains("Gate RZ expected 1 parameters"));
+        assert!(err.to_string().contains("received 16 parameter bytes"));
+    }
+
+    #[test]
+    fn quantum_ops_rejects_retired_and_unknown_gate_ids_without_panicking() {
+        for gate_type in [70_u8, 254_u8] {
+            let header = GateHeader {
+                gate_type,
+                num_qubits: 2,
+                has_params: 0,
+                reserved: 0,
+            };
+            let mut payload = Vec::new();
+            payload.extend_from_slice(bytemuck::bytes_of(&header));
+            payload.extend_from_slice(&0_u32.to_le_bytes());
+            payload.extend_from_slice(&1_u32.to_le_bytes());
+            let mut builder = ByteMessageBuilder::new();
+            builder.add_message(MessageType::Gate, &payload, MessageFlags::NONE);
+
+            let error = builder
+                .build()
+                .quantum_ops()
+                .expect_err("unknown gate id must return a structured error");
+            assert!(
+                matches!(error, PecosError::Input(_)),
+                "unexpected error: {error}"
+            );
+            assert!(error.to_string().contains(&gate_type.to_string()));
+        }
+    }
+
+    #[test]
+    fn quantum_ops_round_trips_custom_gate_angles() {
+        let original = Gate::new(
+            GateType::Custom,
+            vec![Angle64::from_radians(0.5), Angle64::from_radians(0.25)],
+            Vec::<f64>::new(),
+            vec![QubitId(0), QubitId(1)],
+        );
+        let mut builder = ByteMessageBuilder::new();
+        builder.add_gate_command(&original);
+
+        let decoded = builder
+            .build()
+            .quantum_ops()
+            .expect("custom gate angles should decode");
+
+        assert_eq!(decoded, [original]);
+    }
 
     #[test]
     fn test_bytemap_builder() {

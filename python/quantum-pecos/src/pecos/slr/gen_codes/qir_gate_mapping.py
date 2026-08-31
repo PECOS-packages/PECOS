@@ -53,7 +53,7 @@ class QIRGateMetadata(Enum):
     RX = QG("rx")
     S = QG("s")
     T = QG("t")
-    R1XY = QG("u1q")
+    RXY1Q = QG("u1q")
     RZZ = QG("rzz")
     SZZ = QG("zz")
     PZ = QG("reset")

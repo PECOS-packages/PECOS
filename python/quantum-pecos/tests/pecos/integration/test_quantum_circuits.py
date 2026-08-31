@@ -339,15 +339,15 @@ def test_append_rotation_gate_with_angles_tuple() -> None:
     assert results[0][2]["angles"] == (0.5,)
 
 
-def test_append_r1xy_gate() -> None:
-    """Test R1XY gate with theta and phi angles."""
+def test_append_rxy1q_gate() -> None:
+    """Test RXY1Q gate with theta and phi angles."""
     qc = QuantumCircuit()
-    qc.append("R1XY", {0}, angles=(0.3, 0.7))
+    qc.append("RXY1Q", {0}, angles=(0.3, 0.7))
 
     results = list(qc.items())
     assert len(results) == 1
     symbol, _, params = results[0]
-    assert symbol == "R1XY"
+    assert symbol == "RXY1Q"
     assert params["angles"] == (0.3, 0.7)
 
 
@@ -863,6 +863,19 @@ def test_json_roundtrip_with_params() -> None:
     custom_params = results[1][2]
     assert custom_params["custom_param"] == "hello"
     assert custom_params["count"] == 42
+
+
+def test_json_with_legacy_r1xy_loads_as_rxy1q() -> None:
+    qc = QuantumCircuit()
+    qc.append("RXY1Q", {0}, angles=(0.3, 0.7))
+    legacy_json = qc.to_json_str().replace('"RXY1Q"', '"R1XY"')
+
+    restored = QuantumCircuit.from_json_str(legacy_json)
+
+    symbol, locations, params = next(iter(restored.items()))
+    assert symbol == "RXY1Q"
+    assert locations == {0}
+    assert params["angles"] == (0.3, 0.7)
 
 
 def test_json_roundtrip_with_metadata() -> None:

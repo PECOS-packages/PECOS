@@ -64,10 +64,10 @@ fn test_sx_gates_expansion() {
 
     let program = QASMParser::parse_str(qasm).unwrap();
 
-    // After all expansions, we'll have a specific set of native operations
-    // sx -> RZ(-pi/2), H, RZ(-pi/2)
+    // After all expansions, named square-root gates remain native operations.
+    // sx -> SX
     // x -> X (native)
-    // sxdg -> RZ(pi/2), H, RZ(pi/2)
+    // sxdg -> SXdg
     // csx -> CX (in our simplified implementation)
     assert!(!program.operations.is_empty());
 
@@ -88,68 +88,11 @@ fn test_sx_gate_parameters() {
 
     let program = QASMParser::parse_str(qasm).unwrap();
 
-    // sx expands to: sdg, h, sdg
-    assert_eq!(program.operations.len(), 3);
-
-    // Check first sdg gate has correct parameter
-    match &program.operations[0] {
-        Operation::Gate {
-            name, parameters, ..
-        } => {
-            assert_eq!(name, "RZ");
-            assert_eq!(parameters.len(), 1);
-            assert!((parameters[0] + std::f64::consts::PI / 2.0).abs() < 0.0001); // -pi/2
-        }
-        Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, the angle is in the angles field as Angle64
-            // Note: Angle64 normalizes to [0, 2π), so -π/2 becomes 3π/2
-            assert_eq!(gate.angles.len(), 1);
-            let angle = gate.angles[0].to_radians();
-            let expected = 3.0 * std::f64::consts::PI / 2.0; // -pi/2 normalized to 3pi/2
-            assert!(
-                (angle - expected).abs() < 0.0001,
-                "Expected angle {expected}, got {angle}"
-            );
-        }
-        _ => panic!("Expected RZ gate at position 0"),
-    }
-
-    // Check h gate
-    match &program.operations[1] {
-        Operation::Gate {
-            name, parameters, ..
-        } => {
-            assert_eq!(name, "H");
-            assert!(parameters.is_empty());
-        }
-        Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::H) => {
-            // Native Hadamard gate - this is expected
-        }
-        _ => panic!("Expected H gate at position 1"),
-    }
-
-    // Check second sdg gate has correct parameter
-    match &program.operations[2] {
-        Operation::Gate {
-            name, parameters, ..
-        } => {
-            assert_eq!(name, "RZ");
-            assert_eq!(parameters.len(), 1);
-            assert!((parameters[0] + std::f64::consts::PI / 2.0).abs() < 0.0001); // -pi/2
-        }
-        Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, the angle is in the angles field as Angle64
-            // Note: Angle64 normalizes to [0, 2π), so -π/2 becomes 3π/2
-            assert_eq!(gate.angles.len(), 1);
-            let angle = gate.angles[0].to_radians();
-            let expected = 3.0 * std::f64::consts::PI / 2.0; // -pi/2 normalized to 3pi/2
-            assert!(
-                (angle - expected).abs() < 0.0001,
-                "Expected angle {expected}, got {angle}"
-            );
-        }
-        _ => panic!("Expected RZ gate at position 2"),
-    }
+    assert_eq!(program.operations.len(), 1);
+    assert!(matches!(
+        &program.operations[0],
+        Operation::NativeGate(gate) if gate.gate_type == GateType::SX && gate.angles.is_empty()
+    ));
 }
 
 #[test]
@@ -163,56 +106,11 @@ fn test_sxdg_gate_parameters() {
 
     let program = QASMParser::parse_str(qasm).unwrap();
 
-    // sxdg expands to: s, h, s
-    assert_eq!(program.operations.len(), 3);
-
-    // Check first s gate has correct parameter
-    match &program.operations[0] {
-        Operation::Gate {
-            name, parameters, ..
-        } => {
-            assert_eq!(name, "RZ");
-            assert_eq!(parameters.len(), 1);
-            assert!((parameters[0] - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
-        }
-        Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, the angle is in the angles field as Angle64
-            assert_eq!(gate.angles.len(), 1);
-            assert!((gate.angles[0].to_radians() - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
-        }
-        _ => panic!("Expected RZ gate at position 0"),
-    }
-
-    // Check h gate
-    match &program.operations[1] {
-        Operation::Gate {
-            name, parameters, ..
-        } => {
-            assert_eq!(name, "H");
-            assert!(parameters.is_empty());
-        }
-        Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::H) => {
-            // Native Hadamard gate - this is expected
-        }
-        _ => panic!("Expected H gate at position 1"),
-    }
-
-    // Check second s gate has correct parameter
-    match &program.operations[2] {
-        Operation::Gate {
-            name, parameters, ..
-        } => {
-            assert_eq!(name, "RZ");
-            assert_eq!(parameters.len(), 1);
-            assert!((parameters[0] - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
-        }
-        Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, the angle is in the angles field as Angle64
-            assert_eq!(gate.angles.len(), 1);
-            assert!((gate.angles[0].to_radians() - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
-        }
-        _ => panic!("Expected RZ gate at position 2"),
-    }
+    assert_eq!(program.operations.len(), 1);
+    assert!(matches!(
+        &program.operations[0],
+        Operation::NativeGate(gate) if gate.gate_type == GateType::SXdg && gate.angles.is_empty()
+    ));
 }
 
 #[test]

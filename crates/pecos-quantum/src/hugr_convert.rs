@@ -89,7 +89,6 @@ pub fn hugr_op_to_gate_type(op_name: &str) -> Option<GateType> {
         "CH" => Some(GateType::CH),
         "ZZMax" => Some(GateType::SZZ),
         "SWAP" => Some(GateType::SWAP),
-        "CRz" => Some(GateType::CRZ),
         // Three-qubit gates
         "Toffoli" | "CCX" => Some(GateType::CCX),
         // Lifecycle operations
@@ -127,7 +126,6 @@ pub fn gate_type_to_hugr_op(gate_type: GateType) -> Option<&'static str> {
         GateType::CH => Some("CH"),
         GateType::SZZ => Some("ZZMax"),
         GateType::SWAP => Some("SWAP"),
-        GateType::CRZ => Some("CRz"),
         // Three-qubit gates
         GateType::CCX => Some("Toffoli"),
         // Lifecycle operations
@@ -144,7 +142,7 @@ pub fn gate_type_to_hugr_op(gate_type: GateType) -> Option<&'static str> {
 /// Check if an operation name is a quantum operation we care about.
 #[must_use]
 pub fn is_quantum_operation(op_name: &str) -> bool {
-    hugr_op_to_gate_type(op_name).is_some()
+    op_name == "CRz" || hugr_op_to_gate_type(op_name).is_some()
 }
 
 /// Maps PECOS `GateType` to tket `TketOp`.
@@ -158,6 +156,8 @@ fn gate_type_to_tket_op(gate_type: GateType) -> Option<TketOp> {
         GateType::SZdg => Some(TketOp::Sdg),
         GateType::T => Some(TketOp::T),
         GateType::Tdg => Some(TketOp::Tdg),
+        GateType::SX => Some(TketOp::V),
+        GateType::SXdg => Some(TketOp::Vdg),
         GateType::RX => Some(TketOp::Rx),
         GateType::RY => Some(TketOp::Ry),
         GateType::RZ => Some(TketOp::Rz),
@@ -182,6 +182,8 @@ struct QuantumOp {
     hugr_op_name: String,
     /// The PECOS gate type.
     gate_type: GateType,
+    /// Whether this is the external `CRz` spelling that must be lowered.
+    is_crz: bool,
     /// Number of qubit input ports.
     num_qubit_inputs: usize,
     /// Number of qubit output ports.
@@ -193,10 +195,7 @@ struct QuantumOp {
 /// Check if a gate type is a rotation gate that takes angle parameters.
 #[must_use]
 pub fn is_rotation_gate(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::RX | GateType::RY | GateType::RZ | GateType::CRZ
-    )
+    matches!(gate_type, GateType::RX | GateType::RY | GateType::RZ)
 }
 
 /// Try to extract a constant numeric value from a HUGR Const node.
@@ -616,7 +615,12 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
 
         let op_name = ext_op.unqualified_id().to_string();
 
-        let Some(gate_type) = hugr_op_to_gate_type(&op_name) else {
+        let is_crz = op_name == "CRz";
+        let gate_type = if is_crz {
+            GateType::RZZ
+        } else if let Some(gate_type) = hugr_op_to_gate_type(&op_name) {
+            gate_type
+        } else {
             continue;
         };
 
@@ -635,7 +639,7 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
         };
 
         // Extract rotation parameters if this is a rotation gate
-        let params = if is_rotation_gate(gate_type) {
+        let params = if is_crz || is_rotation_gate(gate_type) {
             if let Some(angle) = try_extract_rotation_angle(hugr, node, num_qubit_inputs) {
                 vec![angle]
             } else {
@@ -649,6 +653,7 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
             node,
             hugr_op_name: op_name.clone(),
             gate_type,
+            is_crz,
             num_qubit_inputs,
             num_qubit_outputs,
             params,
@@ -723,9 +728,6 @@ pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> 
 
     // Set circuit-level metadata
     dag.set_attr("source", Attribute::String("hugr".to_string()));
-
-    // Map from HUGR node to DagCircuit node index
-    let mut node_to_dag_idx: BTreeMap<Node, usize> = BTreeMap::new();
 
     // Process operations - we need topological order, but HUGR nodes() doesn't guarantee it.
     // Instead, we'll process by following the wire dependencies.
@@ -826,22 +828,33 @@ pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> 
 
         // Create the gate with proper qubits and extracted angles
         // Convert extracted rotation angles (in full turns) to Angle64
-        let angles: Vec<Angle64> = op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
-        let gate = Gate::with_angles(op.gate_type, angles, qubits.clone());
-        let dag_node_idx = dag.add_gate(gate);
-        node_to_dag_idx.insert(current_node, dag_node_idx);
-
-        // Set gate-level metadata from HUGR
-        dag.set_gate_attr(
-            dag_node_idx,
-            "hugr_node",
-            Attribute::Int(i64::try_from(current_node.index()).unwrap_or(i64::MAX)),
-        );
-        dag.set_gate_attr(
-            dag_node_idx,
-            "hugr_op",
-            Attribute::String(op.hugr_op_name.clone()),
-        );
+        let gates: Vec<Gate> = if op.is_crz {
+            let angle_turns = *op.params.first().ok_or_else(|| {
+                HugrConvertError::UnknownOperation("CRz is missing its rotation angle".to_string())
+            })?;
+            pecos_core::controlled_rotations::lower_crz(
+                angle_turns * std::f64::consts::TAU,
+                qubits[0],
+                qubits[1],
+            )
+            .into()
+        } else {
+            let angles: Vec<Angle64> = op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
+            vec![Gate::with_angles(op.gate_type, angles, qubits.clone())]
+        };
+        for gate in gates {
+            let dag_node_idx = dag.add_gate_auto_wire(gate);
+            dag.set_gate_attr(
+                dag_node_idx,
+                "hugr_node",
+                Attribute::Int(i64::try_from(current_node.index()).unwrap_or(i64::MAX)),
+            );
+            dag.set_gate_attr(
+                dag_node_idx,
+                "hugr_op",
+                Attribute::String(op.hugr_op_name.clone()),
+            );
+        }
 
         processed.insert(current_node);
 
@@ -853,30 +866,6 @@ pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> 
                 let all_preds_ready = check_predecessors_ready(hugr, succ_node, &processed);
                 if all_preds_ready && !work_queue.contains(&succ_node) {
                     work_queue.push(succ_node);
-                }
-            }
-        }
-    }
-
-    // Add edges based on qubit wire connections
-    for op in &operations {
-        if !node_to_dag_idx.contains_key(&op.node) {
-            continue;
-        }
-        let target_dag_idx = node_to_dag_idx[&op.node];
-
-        for port_idx in 0..op.num_qubit_inputs {
-            let in_port = IncomingPort::from(port_idx);
-
-            if let Some((src_node, src_port)) = hugr.single_linked_output(op.node, in_port)
-                && let Some(&source_dag_idx) = node_to_dag_idx.get(&src_node)
-            {
-                let src_port_idx = src_port.index();
-                let wire_key = (src_node, src_port_idx);
-
-                if let Some(&qubit_id) = wire_to_qubit.get(&wire_key) {
-                    // Add edge connecting these gates on this qubit
-                    let _ = dag.connect(source_dag_idx, target_dag_idx, qubit_id);
                 }
             }
         }
@@ -1135,10 +1124,13 @@ pub fn dag_circuit_to_hugr(dag: &DagCircuit) -> Result<Hugr, HugrConvertError> {
         let output_wires: Vec<Wire> = if is_rotation_gate(gate.gate_type) {
             // Get the angle in half-turns (HUGR uses half-turns, not full turns)
             // Angle::to_radians() returns radians; convert to turns by dividing by TAU
-            let angle_turns = gate
-                .angles
-                .first()
-                .map_or(0.0, |a| a.to_radians() / std::f64::consts::TAU);
+            let angle = gate.angles.first().ok_or_else(|| {
+                HugrConvertError::UnknownOperation(format!(
+                    "{} is missing its rotation angle",
+                    gate.gate_type
+                ))
+            })?;
+            let angle_turns = angle.to_radians() / std::f64::consts::TAU;
             let half_turns = angle_turns * 2.0;
 
             // Create a rotation constant
@@ -1304,6 +1296,8 @@ pub enum NotSimpleError {
     ContainsCase,
     /// Other unsupported structure.
     UnsupportedStructure(String),
+    /// A quantum operation could not be converted into a PECOS gate.
+    Conversion(HugrConvertError),
 }
 
 impl std::fmt::Display for NotSimpleError {
@@ -1316,6 +1310,7 @@ impl std::fmt::Display for NotSimpleError {
             NotSimpleError::UnsupportedStructure(msg) => {
                 write!(f, "HUGR contains unsupported structure: {msg}")
             }
+            NotSimpleError::Conversion(err) => write!(f, "{err}"),
         }
     }
 }
@@ -1337,7 +1332,7 @@ impl SimpleHugr {
         // Validate that the HUGR is a simple quantum circuit
         Self::validate_simple(&hugr)?;
 
-        Ok(Self::build_from_hugr(hugr))
+        Self::build_from_hugr(hugr).map_err(NotSimpleError::Conversion)
     }
 
     /// Creates a new `SimpleHugr` from a HUGR without strict validation.
@@ -1352,19 +1347,23 @@ impl SimpleHugr {
     /// If the HUGR contains actual control flow (conditionals, loops), the behavior
     /// when executing is undefined - measurements may not work correctly with
     /// symbolic simulation.
-    #[must_use]
-    pub fn new_relaxed(hugr: Hugr) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HugrConvertError`] when a quantum operation cannot be converted,
+    /// including when a controlled rotation has no statically extractable angle.
+    pub fn new_relaxed(hugr: Hugr) -> Result<Self, HugrConvertError> {
         Self::build_from_hugr(hugr)
     }
 
     /// Internal method to build `SimpleHugr` from a HUGR.
     #[allow(clippy::too_many_lines)]
-    fn build_from_hugr(hugr: Hugr) -> Self {
+    fn build_from_hugr(hugr: Hugr) -> Result<Self, HugrConvertError> {
         // Extract quantum operations
         let quantum_ops = extract_quantum_ops(&hugr);
 
         if quantum_ops.is_empty() {
-            return Self {
+            return Ok(Self {
                 hugr,
                 gates: Vec::new(),
                 qubits: Vec::new(),
@@ -1375,7 +1374,7 @@ impl SimpleHugr {
                 circuit_attrs: BTreeMap::new(),
                 gate_attrs: Vec::new(),
                 depth: 0,
-            };
+            });
         }
 
         // Build node -> index mapping for the quantum ops
@@ -1391,6 +1390,7 @@ impl SimpleHugr {
 
         // Build gates with qubit information
         let mut gates = Vec::with_capacity(quantum_ops.len());
+        let mut op_to_gate_indices = vec![Vec::new(); quantum_ops.len()];
         let mut qubit_set: BTreeSet<QubitId> = BTreeSet::new();
         let mut qubit_to_gates: BTreeMap<QubitId, Vec<usize>> = BTreeMap::new();
 
@@ -1469,6 +1469,9 @@ impl SimpleHugr {
                         let fallback = QubitId::from(next_qubit_id);
                         next_qubit_id += 1;
                         gate_qubits.push(fallback);
+                        if port_idx < op.num_qubit_outputs {
+                            wire_to_qubit.insert((current_node, port_idx), fallback);
+                        }
                     }
                 }
                 gate_qubits
@@ -1477,20 +1480,38 @@ impl SimpleHugr {
             // Track qubits
             for &q in &qubits {
                 qubit_set.insert(q);
-                qubit_to_gates.entry(q).or_default().push(op_idx);
             }
 
-            // Create the gate
-            let angles: Vec<Angle64> = op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
-            let gate = Gate::with_angles(op.gate_type, angles, qubits);
-
-            gates.push(SimpleGate {
-                gate,
-                predecessors: Vec::new(), // Will fill in later
-                successors: Vec::new(),   // Will fill in later
-            });
-
-            topo_order.push(op_idx);
+            let native_gates: Vec<Gate> = if op.is_crz {
+                let angle_turns = *op.params.first().ok_or_else(|| {
+                    HugrConvertError::UnknownOperation(
+                        "CRz is missing its rotation angle".to_string(),
+                    )
+                })?;
+                pecos_core::controlled_rotations::lower_crz(
+                    angle_turns * std::f64::consts::TAU,
+                    qubits[0],
+                    qubits[1],
+                )
+                .into()
+            } else {
+                let angles: Vec<Angle64> =
+                    op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
+                vec![Gate::with_angles(op.gate_type, angles, qubits.clone())]
+            };
+            for gate in native_gates {
+                let gate_idx = gates.len();
+                for &qubit in &gate.qubits {
+                    qubit_to_gates.entry(qubit).or_default().push(gate_idx);
+                }
+                gates.push(SimpleGate {
+                    gate,
+                    predecessors: Vec::new(),
+                    successors: Vec::new(),
+                });
+                op_to_gate_indices[op_idx].push(gate_idx);
+                topo_order.push(gate_idx);
+            }
             processed.insert(current_node);
 
             // Add successors to work queue
@@ -1504,19 +1525,50 @@ impl SimpleHugr {
             }
         }
 
-        // Build predecessor/successor relationships
-        for (idx, op) in quantum_ops.iter().enumerate() {
+        // Build predecessor/successor relationships per qubit. A lowered CRz
+        // ends with a target-only RZ, so a control-wire successor must attach
+        // to the preceding RZZ rather than to the expansion's final node.
+        for (op_idx, op) in quantum_ops.iter().enumerate() {
+            let expanded = &op_to_gate_indices[op_idx];
+            if expanded.is_empty() {
+                continue;
+            }
+
+            let mut previous_on_qubit: BTreeMap<QubitId, usize> = BTreeMap::new();
+            for &gate_idx in expanded {
+                let gate_qubits: Vec<_> = gates[gate_idx].gate.qubits.iter().copied().collect();
+                for qubit in gate_qubits {
+                    if let Some(&previous_idx) = previous_on_qubit.get(&qubit) {
+                        if !gates[previous_idx].successors.contains(&gate_idx) {
+                            gates[previous_idx].successors.push(gate_idx);
+                        }
+                        if !gates[gate_idx].predecessors.contains(&previous_idx) {
+                            gates[gate_idx].predecessors.push(previous_idx);
+                        }
+                    }
+                    previous_on_qubit.insert(qubit, gate_idx);
+                }
+            }
+
             // Find predecessors (quantum ops connected to our inputs)
             for port_idx in 0..op.num_qubit_inputs {
                 let in_port = IncomingPort::from(port_idx);
-                if let Some((src_node, _)) = hugr.single_linked_output(op.node, in_port)
-                    && let Some(&pred_idx) = node_to_idx.get(&src_node)
+                if let Some((src_node, src_port)) = hugr.single_linked_output(op.node, in_port)
+                    && let Some(&pred_op_idx) = node_to_idx.get(&src_node)
+                    && let Some(&qubit) = wire_to_qubit.get(&(src_node, src_port.index()))
+                    && let Some(&pred_idx) = op_to_gate_indices[pred_op_idx]
+                        .iter()
+                        .rev()
+                        .find(|&&idx| gates[idx].gate.qubits.contains(&qubit))
+                    && let Some(&target_idx) = expanded
+                        .iter()
+                        .find(|&&idx| gates[idx].gate.qubits.contains(&qubit))
                 {
-                    if !gates[idx].predecessors.contains(&pred_idx) {
-                        gates[idx].predecessors.push(pred_idx);
+                    if !gates[target_idx].predecessors.contains(&pred_idx) {
+                        gates[target_idx].predecessors.push(pred_idx);
                     }
-                    if !gates[pred_idx].successors.contains(&idx) {
-                        gates[pred_idx].successors.push(idx);
+                    if !gates[pred_idx].successors.contains(&target_idx) {
+                        gates[pred_idx].successors.push(target_idx);
                     }
                 }
             }
@@ -1543,7 +1595,7 @@ impl SimpleHugr {
         // Create gate attributes
         let gate_attrs: Vec<BTreeMap<String, Attribute>> = quantum_ops
             .iter()
-            .map(|op| {
+            .flat_map(|op| {
                 let mut attrs = BTreeMap::new();
                 attrs.insert(
                     "hugr_node".to_string(),
@@ -1553,7 +1605,7 @@ impl SimpleHugr {
                     "hugr_op".to_string(),
                     Attribute::String(op.hugr_op_name.clone()),
                 );
-                attrs
+                std::iter::repeat_n(attrs, if op.is_crz { 2 } else { 1 })
             })
             .collect();
 
@@ -1561,7 +1613,7 @@ impl SimpleHugr {
         let mut circuit_attrs = BTreeMap::new();
         circuit_attrs.insert("source".to_string(), Attribute::String("hugr".to_string()));
 
-        Self {
+        Ok(Self {
             hugr,
             gates,
             qubits: qubit_set.into_iter().collect(),
@@ -1572,7 +1624,7 @@ impl SimpleHugr {
             circuit_attrs,
             gate_attrs,
             depth,
-        }
+        })
     }
 
     /// Validates that the HUGR is a simple quantum circuit.
@@ -1728,6 +1780,302 @@ impl Circuit for SimpleHugr {
 mod tests {
     use super::*;
 
+    fn staggered_chains_hugr() -> Hugr {
+        let mut builder = DFGBuilder::new(Signature::new(vec![], vec![])).expect("create HUGR");
+        let mut q0 = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate q0")
+            .outputs()
+            .next()
+            .expect("q0 output");
+        let mut q1 = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate q1")
+            .outputs()
+            .next()
+            .expect("q1 output");
+
+        for op in [TketOp::H, TketOp::X, TketOp::Y] {
+            q1 = builder
+                .add_dataflow_op(op, vec![q1])
+                .expect("add gate to q1 chain")
+                .outputs()
+                .next()
+                .expect("q1 output");
+        }
+        q0 = builder
+            .add_dataflow_op(TketOp::Z, vec![q0])
+            .expect("add gate to q0 chain")
+            .outputs()
+            .next()
+            .expect("q0 output");
+
+        let mut cx_outputs = builder
+            .add_dataflow_op(TketOp::CX, vec![q0, q1])
+            .expect("join chains with CX")
+            .outputs();
+        q0 = cx_outputs.next().expect("q0 CX output");
+        q1 = cx_outputs.next().expect("q1 CX output");
+        q0 = builder
+            .add_dataflow_op(TketOp::S, vec![q0])
+            .expect("add final q0 gate")
+            .outputs()
+            .next()
+            .expect("q0 output");
+        q1 = builder
+            .add_dataflow_op(TketOp::T, vec![q1])
+            .expect("add final q1 gate")
+            .outputs()
+            .next()
+            .expect("q1 output");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![q0])
+            .expect("free q0");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![q1])
+            .expect("free q1");
+        builder
+            .finish_hugr_with_outputs(vec![])
+            .expect("finish HUGR")
+    }
+
+    fn crz_hugr() -> Hugr {
+        let mut builder = DFGBuilder::new(Signature::new(vec![], vec![])).expect("create HUGR");
+        let control = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate control")
+            .outputs()
+            .next()
+            .expect("control output");
+        let target = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate target")
+            .outputs()
+            .next()
+            .expect("target output");
+        let rotation = builder.add_load_value(
+            ConstRotation::new(1.0 / 3.0).expect("create finite rotation constant"),
+        );
+        let mut outputs = builder
+            .add_dataflow_op(TketOp::CRz, vec![control, target, rotation])
+            .expect("add CRz")
+            .outputs();
+        let control = outputs.next().expect("control output");
+        let target = outputs.next().expect("target output");
+        let control = builder
+            .add_dataflow_op(TketOp::Z, vec![control])
+            .expect("add control successor")
+            .outputs()
+            .next()
+            .expect("control successor output");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![control])
+            .expect("free control");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![target])
+            .expect("free target");
+        builder
+            .finish_hugr_with_outputs(vec![])
+            .expect("finish HUGR")
+    }
+
+    fn dynamic_crz_hugr() -> Hugr {
+        let mut builder = DFGBuilder::new(Signature::new(
+            vec![tket::extension::rotation::rotation_type()],
+            vec![],
+        ))
+        .expect("create HUGR");
+        let rotation = builder.input_wires().next().expect("rotation input wire");
+        let control = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate control")
+            .outputs()
+            .next()
+            .expect("control output");
+        let target = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate target")
+            .outputs()
+            .next()
+            .expect("target output");
+        let mut outputs = builder
+            .add_dataflow_op(TketOp::CRz, vec![control, target, rotation])
+            .expect("add CRz")
+            .outputs();
+        let control = outputs.next().expect("control output");
+        let target = outputs.next().expect("target output");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![control])
+            .expect("free control");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![target])
+            .expect("free target");
+        builder
+            .finish_hugr_with_outputs(vec![])
+            .expect("finish HUGR")
+    }
+
+    fn assert_wire_chain(dag: &DagCircuit, qubit: QubitId, expected: &[GateType]) {
+        let timeline = dag.qubit_timeline(qubit);
+        let actual: Vec<_> = timeline
+            .iter()
+            .map(|&node| dag.gate(node).expect("timeline node has a gate").gate_type)
+            .collect();
+        assert_eq!(actual, expected);
+        for pair in timeline.windows(2) {
+            assert_eq!(dag.predecessor_on_qubit(pair[1], qubit), Some(pair[0]));
+        }
+    }
+
+    #[test]
+    fn hugr_conversion_auto_wires_staggered_chains_by_qubit() {
+        let dag = hugr_to_dag_circuit(&staggered_chains_hugr()).expect("convert HUGR");
+        let q0 = QubitId::from(0);
+        let q1 = QubitId::from(1);
+
+        assert_wire_chain(
+            &dag,
+            q0,
+            &[
+                GateType::QAlloc,
+                GateType::Z,
+                GateType::CX,
+                GateType::SZ,
+                GateType::QFree,
+            ],
+        );
+        assert_wire_chain(
+            &dag,
+            q1,
+            &[
+                GateType::QAlloc,
+                GateType::H,
+                GateType::X,
+                GateType::Y,
+                GateType::CX,
+                GateType::T,
+                GateType::QFree,
+            ],
+        );
+
+        let mut expected_wires = Vec::new();
+        for qubit in [q0, q1] {
+            for pair in dag.qubit_timeline(qubit).windows(2) {
+                expected_wires.push((pair[0], pair[1], qubit));
+            }
+        }
+        expected_wires.sort_unstable();
+        let mut actual_wires = dag.wires();
+        actual_wires.sort_unstable();
+        assert_eq!(actual_wires, expected_wires);
+    }
+
+    #[test]
+    fn simple_hugr_dangling_input_preserves_its_output_dependency() {
+        use tket::hugr::hugr::hugrmut::HugrMut;
+
+        let mut hugr = staggered_chains_hugr();
+        let h_node = hugr
+            .nodes()
+            .find(|&node| {
+                hugr.get_optype(node)
+                    .as_extension_op()
+                    .is_some_and(|op| op.unqualified_id() == "H")
+            })
+            .expect("H node");
+        hugr.disconnect(h_node, IncomingPort::from(0));
+
+        let simple = SimpleHugr::new_relaxed(hugr).expect("convert relaxed dangling HUGR");
+        let find_gate = |gate_type| {
+            simple
+                .nodes()
+                .into_iter()
+                .find(|&idx| {
+                    simple
+                        .gate(idx)
+                        .is_some_and(|gate| gate.gate_type == gate_type)
+                })
+                .expect("expected gate")
+        };
+        let h = find_gate(GateType::H);
+        let x = find_gate(GateType::X);
+
+        assert!(simple.successors(h).contains(&x));
+        assert!(simple.predecessors(x).contains(&h));
+    }
+
+    #[test]
+    fn hugr_crz_lowering_preserves_source_attributes_and_target_wire() {
+        let dag = hugr_to_dag_circuit(&crz_hugr()).expect("convert HUGR");
+        let (rzz_node, rzz) = dag
+            .iter_gates()
+            .find(|(_, gate)| gate.gate_type == GateType::RZZ)
+            .expect("lowered RZZ node");
+        let (rz_node, rz) = dag
+            .iter_gates()
+            .find(|(_, gate)| gate.gate_type == GateType::RZ)
+            .expect("lowered RZ node");
+        assert_eq!(rzz.qubits.as_slice(), [QubitId::from(0), QubitId::from(1)]);
+        assert_eq!(rz.qubits.as_slice(), [QubitId::from(1)]);
+
+        let rzz_hugr_node = dag
+            .get_gate_attr(rzz_node, "hugr_node")
+            .expect("RZZ has hugr_node attribute");
+        let rz_hugr_node = dag
+            .get_gate_attr(rz_node, "hugr_node")
+            .expect("RZ has hugr_node attribute");
+        assert!(matches!(rzz_hugr_node, Attribute::Int(_)));
+        assert_eq!(rzz_hugr_node, rz_hugr_node);
+        assert_eq!(
+            dag.get_gate_attr(rzz_node, "hugr_op"),
+            Some(&Attribute::String("CRz".to_string()))
+        );
+        assert_eq!(
+            dag.get_gate_attr(rz_node, "hugr_op"),
+            Some(&Attribute::String("CRz".to_string()))
+        );
+        assert_eq!(
+            dag.predecessor_on_qubit(rz_node, QubitId::from(1)),
+            Some(rzz_node)
+        );
+    }
+
+    #[test]
+    fn simple_hugr_crz_control_successor_depends_on_rzz_not_target_rz() {
+        let simple = SimpleHugr::new_relaxed(crz_hugr()).expect("convert CRz HUGR");
+        let find_gate = |gate_type| {
+            simple
+                .nodes()
+                .into_iter()
+                .find(|&idx| {
+                    simple
+                        .gate(idx)
+                        .is_some_and(|gate| gate.gate_type == gate_type)
+                })
+                .expect("expected gate")
+        };
+        let rzz = find_gate(GateType::RZZ);
+        let rz = find_gate(GateType::RZ);
+        let control_z = find_gate(GateType::Z);
+
+        assert!(simple.predecessors(control_z).contains(&rzz));
+        assert!(!simple.predecessors(control_z).contains(&rz));
+        assert_eq!(simple.depth(), 4);
+    }
+
+    #[test]
+    fn dynamic_crz_angle_is_an_error_in_both_conversion_paths() {
+        let hugr = dynamic_crz_hugr();
+        let dag_error = hugr_to_dag_circuit(&hugr).expect_err("DAG conversion must reject CRz");
+        assert_eq!(
+            dag_error.to_string(),
+            "Unknown quantum operation: CRz is missing its rotation angle"
+        );
+
+        let simple_error = SimpleHugr::new_relaxed(hugr).expect_err("SimpleHugr must reject CRz");
+        assert_eq!(simple_error.to_string(), dag_error.to_string());
+    }
+
     #[test]
     fn test_hugr_op_to_gate_type() {
         assert_eq!(hugr_op_to_gate_type("H"), Some(GateType::H));
@@ -1774,6 +2122,12 @@ mod tests {
             GateType::X,
             GateType::Y,
             GateType::Z,
+            GateType::SZ,
+            GateType::SZdg,
+            GateType::T,
+            GateType::Tdg,
+            GateType::SX,
+            GateType::SXdg,
             GateType::CX,
             GateType::QAlloc,
             GateType::QFree,
@@ -1812,6 +2166,19 @@ mod tests {
 
         let hugr = dag_circuit_to_hugr(&dag).expect("Failed to convert DagCircuit to HUGR");
         assert!(hugr.nodes().count() > 0, "HUGR should have nodes");
+    }
+
+    #[test]
+    fn dag_circuit_to_hugr_rejects_rotation_without_angle() {
+        let mut dag = DagCircuit::new();
+        let node = dag.add_gate(Gate::rz(Angle64::ZERO, &[QubitId(0)]));
+        dag.gate_mut(node).expect("RZ node").angles.clear();
+
+        let error = dag_circuit_to_hugr(&dag).expect_err("RZ without an angle must fail");
+        assert_eq!(
+            error.to_string(),
+            "Unknown quantum operation: RZ is missing its rotation angle"
+        );
     }
 
     #[test]
@@ -1903,6 +2270,32 @@ mod tests {
                 orig_gate.gate_type,
                 orig_gate.qubits.len()
             );
+        }
+    }
+
+    #[test]
+    fn test_round_trip_sx_and_sxdg_through_v_and_vdg() {
+        for (gate_type, tket_name) in [(GateType::SX, "V"), (GateType::SXdg, "Vdg")] {
+            let mut original = DagCircuit::new();
+            original.add_gate(Gate::with_angles(gate_type, vec![], vec![QubitId::from(0)]));
+
+            let hugr =
+                dag_circuit_to_hugr(&original).expect("SX-family gate should convert to HUGR");
+            let tket_gate_names: Vec<_> = hugr
+                .nodes()
+                .filter_map(|node| hugr.get_optype(node).as_extension_op())
+                .filter(|op| op.extension_id().as_ref() as &str == "tket.quantum")
+                .map(|op| op.unqualified_id().to_string())
+                .collect();
+            assert_eq!(tket_gate_names, [tket_name]);
+
+            let recovered =
+                hugr_to_dag_circuit(&hugr).expect("V-family HUGR should convert back to a circuit");
+            let recovered_types: Vec<_> = recovered
+                .iter_gates()
+                .map(|(_, gate)| gate.gate_type)
+                .collect();
+            assert_eq!(recovered_types, [gate_type]);
         }
     }
 

@@ -47,7 +47,7 @@ def test_all_gate_circ() -> None:
     qc.append({"RY": {0, 3}}, angles=(pc.f64.pi / 8,))
     qc.append({"RZZ": {(0, 3)}}, angles=(pc.f64.pi / 16,))
     qc.append({"RZ": {1, 4}}, angles=(pc.f64.pi / 16,))
-    qc.append({"R1XY": {2}}, angles=(pc.f64.pi / 16, pc.f64.frac_pi_2))
+    qc.append({"RXY1Q": {2}}, angles=(pc.f64.pi / 16, pc.f64.frac_pi_2))
     qc.append({"I": {0, 1, 3}})
     qc.append({"X": {1, 2}})
     qc.append({"Y": {3, 4}})

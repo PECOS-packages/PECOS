@@ -2099,6 +2099,46 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
         self
     }
 
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sy(qubits).z(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(7);
+        }
+        self
+    }
+
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sz(qubits).y(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(7);
+        }
+        self
+    }
+
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sz(qubits).x(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(7);
+        }
+        self
+    }
+
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits).z(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(7);
+        }
+        self
+    }
+
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits).y(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(7);
+        }
+        self
+    }
+
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q0, q1) in pairs {
             self.apply_cx(q0.index(), q1.index());
@@ -2132,6 +2172,97 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
             self.apply_h(q.index());
             self.apply_z(q.index());
             self.apply_h(q.index());
+        }
+        self
+    }
+
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        // The projective Z-then-X decomposition is XZ = -iY.
+        self.z(qubits).x(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(2);
+        }
+        self
+    }
+
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        // The projective Z-then-H decomposition is HZ = exp(-i*pi/4) SY.
+        self.z(qubits).h(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(1);
+        }
+        self
+    }
+
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        // The projective H-then-Z decomposition is ZH = exp(i*pi/4) SYdg.
+        self.h(qubits).z(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(7);
+        }
+        self
+    }
+
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits).sz(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(2);
+        }
+        self
+    }
+
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.szdg(qubits).sxdg(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(6);
+        }
+        self
+    }
+
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sxdg(qubits).sy(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(4);
+        }
+        self
+    }
+
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sydg(qubits).sx(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(4);
+        }
+        self
+    }
+
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sxdg(qubits).sz(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(4);
+        }
+        self
+    }
+
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.szdg(qubits).sx(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(4);
+        }
+        self
+    }
+
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sz(qubits).sx(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(2);
+        }
+        self
+    }
+
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sxdg(qubits).szdg(qubits);
+        for _ in qubits {
+            self.omega.mul_phase(6);
         }
         self
     }

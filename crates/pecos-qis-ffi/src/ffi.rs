@@ -1634,7 +1634,7 @@ mod tests {
     }
 
     #[test]
-    fn test_r1xy_gate() {
+    fn test_rxy1q_gate() {
         setup_test();
         let theta = 1.0;
         let phi = 0.5;

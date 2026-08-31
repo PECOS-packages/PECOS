@@ -78,6 +78,11 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// RZ(theta) = [[cos(theta/2)-i*sin(theta/2), 0],
     ///              [0, cos(theta/2)+i*sin(theta/2)]]
     ///
+    /// This is the symmetric rotation convention. The phase gate
+    /// `P(theta) = U(0, 0, theta) = diag(1, exp(i*theta))` is related by
+    /// `RZ(theta) = exp(-i*theta/2) P(theta)`; the scalar is significant to
+    /// amplitude-carrying representations.
+    ///
     /// # Parameters
     /// - `theta`: The rotation angle.
     /// - `qubits`: The target qubit indices.
@@ -91,7 +96,10 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// `U1_3` = [[cos(theta/2), -e^(i*lambda)sin(theta/2)],
     ///           [e^(i*phi)sin(theta/2), e^(i(lambda+phi))cos(theta/2)]]
     ///
-    /// By default, this is implemented in terms of `rz` and `ry` gates.
+    /// Its exact relationship to the symmetric rotation family is
+    /// `U(theta, phi, lambda) = exp(i*(phi+lambda)/2) * RZ(phi) * RY(theta) * RZ(lambda)`.
+    /// The default decomposition carries that scalar through
+    /// [`Self::apply_global_phase`].
     ///
     /// # Parameters
     /// - `theta`: The rotation angle around the Y-axis.
@@ -109,12 +117,24 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         lambda: Angle64,
         qubits: &[QubitId],
     ) -> &mut Self {
-        self.rz(lambda, qubits).ry(theta, qubits).rz(phi, qubits)
+        // Use the signed principal values independently. Adding the fixed-point
+        // angles before halving can wrap at 2*pi and lose a compensating pi.
+        let phase =
+            Angle64::from_radians((lambda.to_radians_signed() + phi.to_radians_signed()) / 2.0);
+        self.rz(lambda, qubits)
+            .ry(theta, qubits)
+            .rz(phi, qubits)
+            .apply_global_phase(phase, qubits)
     }
 
     /// Applies an X-Y plane rotation gate with a specified angle and axis.
     ///
-    /// By default, this is implemented in terms of `rz` and `ry` gates.
+    /// `RXY1Q(theta, phi) = exp(-i*theta*(cos(phi) X + sin(phi) Y)/2)`, with matrix
+    /// `[[cos(theta/2), -i*exp(-i*phi)*sin(theta/2)],
+    ///   [-i*exp(i*phi)*sin(theta/2), cos(theta/2)]]`.
+    ///
+    /// The default `RZ(pi/2-phi)`, `RY(theta)`, `RZ(phi-pi/2)` decomposition
+    /// is phase-exact because the two Z angles sum to zero.
     ///
     /// # Parameters
     /// - `theta`: The rotation angle.
@@ -124,13 +144,33 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     #[inline]
-    fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+    fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
         self.rz(-phi + Angle64::QUARTER_TURN, qubits)
             .ry(theta, qubits)
             .rz(phi - Angle64::QUARTER_TURN, qubits)
     }
 
-    /// Applies the T gate (pi/8 rotation around Z-axis).
+    /// Applies the scalar `exp(i * phase)` once for every target qubit.
+    ///
+    /// The default is a no-op, which is correct for representations where global
+    /// phase is unobservable, such as density matrices, measurement-only mocks,
+    /// foreign interfaces without a global-phase operation, and compile-only
+    /// resource analyzers. Amplitude-exposing simulators must override this hook.
+    ///
+    /// # Parameters
+    /// - `phase`: The phase angle for one scalar application.
+    /// - `qubits`: The targets whose gate applications each contribute the scalar.
+    ///
+    /// # Returns
+    /// A mutable reference to `Self` for method chaining.
+    #[inline]
+    fn apply_global_phase(&mut self, _phase: Angle64, _qubits: &[QubitId]) -> &mut Self {
+        self
+    }
+
+    /// Applies the conventional T gate, `diag(1, exp(i*pi/4))`.
+    ///
+    /// This differs from `RZ(pi/4)` by the global phase `exp(i*pi/8)`.
     ///
     /// # Parameters
     /// - `qubits`: The target qubit indices.
@@ -140,9 +180,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     #[inline]
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.rz(Angle64::QUARTER_TURN / 2u64, qubits)
+            .apply_global_phase(Angle64::QUARTER_TURN / 4u64, qubits)
     }
 
-    /// Applies the T^dagger (T-dagger) gate (-pi/8 rotation around Z-axis).
+    /// Applies the conventional T-dagger gate, `diag(1, exp(-i*pi/4))`.
+    ///
+    /// This differs from `RZ(-pi/4)` by the global phase `exp(-i*pi/8)`.
     ///
     /// # Parameters
     /// - `qubits`: The target qubit indices.
@@ -152,6 +195,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     #[inline]
     fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 4u64), qubits)
     }
 
     /// Applies a two-qubit XX rotation gate.
@@ -254,76 +298,6 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         self.rxx(theta, pairs).ryy(phi, pairs).rzz(lambda, pairs)
     }
 
-    /// Applies a controlled-RZ rotation: target qubit gets RZ(theta) when control = |1>.
-    ///
-    /// `CRZ(theta) = block-diag(I, RZ(theta)) = diag(1, 1, exp(-i*theta/2), exp(i*theta/2))`.
-    ///
-    /// Default 2q-minimal decomposition (1 RZZ + 1 single-qubit RZ on the
-    /// target): `CRZ(theta) = (I o RZ(theta/2)) . RZZ(-theta/2)`.
-    /// Verified: with the trait's `RZ = exp(-i*theta/2*Z)` and `RZZ =
-    /// exp(-i*theta/2*Z*Z)` conventions, the product on the c=0 sector
-    /// gives `RZ(theta/2) . exp(i*theta/4*I) = I` up to global phase, and
-    /// on c=1 (where ZZ acts as -Z on target) gives `RZ(theta/2) . X .
-    /// RZ(theta/2) . X = RZ(theta)` -- i.e. the convention-1 controlled
-    /// rotation. The non-PECOS-prefactor convention requires no extra
-    /// RZ on the control.
-    ///
-    /// # Parameters
-    /// - `theta`: The rotation angle on the target.
-    /// - `pairs`: Pairs of qubit indices `[(control, target), ...]`.
-    ///
-    /// # Returns
-    /// A mutable reference to `Self` for method chaining.
-    #[inline]
-    fn crz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // Half-angle first, THEN negate -- `Angle<T>` is a wrapping fraction
-        // of a full turn (modulo 2pi), so `-theta / 2` would halve the wrapped
-        // 2*pi - theta and produce pi - theta/2, not -theta/2.
-        let half = theta / 2u64;
-        let targets: QubitBuf = pairs.iter().map(|&(_, t)| t).collect();
-        self.rzz(-half, pairs).rz(half, &targets)
-    }
-
-    /// Applies a controlled-RX rotation: target qubit gets RX(theta) when control = |1>.
-    ///
-    /// Default decomposition: `CRX(theta) = (I o H) . CRZ(theta) . (I o H)`,
-    /// using `H.Z.H = X` so the c=1 sector applies `H.RZ(theta).H = RX(theta)`.
-    /// Same 2q cost as `crz` (1 RZZ).
-    ///
-    /// # Parameters
-    /// - `theta`: The rotation angle on the target.
-    /// - `pairs`: Pairs of qubit indices `[(control, target), ...]`.
-    ///
-    /// # Returns
-    /// A mutable reference to `Self` for method chaining.
-    #[inline]
-    fn crx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let targets: QubitBuf = pairs.iter().map(|&(_, t)| t).collect();
-        self.h(&targets).crz(theta, pairs).h(&targets)
-    }
-
-    /// Applies a controlled-RY rotation: target qubit gets RY(theta) when control = |1>.
-    ///
-    /// Default decomposition: `CRY(theta) = (I o S.H) . CRZ(theta) . (I o H.Sdg)`,
-    /// using `S.X.Sdg = Y` (so `S.Rx.Sdg = Ry`) and `H.Rz.H = Rx`, giving
-    /// `S.H.RZ.H.Sdg = RY`. Same 2q cost as `crz` (1 RZZ).
-    ///
-    /// # Parameters
-    /// - `theta`: The rotation angle on the target.
-    /// - `pairs`: Pairs of qubit indices `[(control, target), ...]`.
-    ///
-    /// # Returns
-    /// A mutable reference to `Self` for method chaining.
-    #[inline]
-    fn cry(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let targets: QubitBuf = pairs.iter().map(|&(_, t)| t).collect();
-        self.szdg(&targets)
-            .h(&targets)
-            .crz(theta, pairs)
-            .h(&targets)
-            .sz(&targets)
-    }
-
     /// Applies a general 2-qubit unitary via KAK decomposition:
     /// U = (U3(before[0]) x U3(before[1])) * RXXRYYRZZ(interaction) * (U3(after[0]) x U3(after[1]))
     ///
@@ -356,5 +330,241 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
             self.u(before[1][0], before[1][1], before[1][2], q1s);
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MeasurementResult, QuantumSimulator};
+
+    #[derive(Default)]
+    struct RecordingSimulator {
+        rz_calls: Vec<(Angle64, Vec<QubitId>)>,
+        global_phase_calls: Vec<(Angle64, Vec<QubitId>)>,
+    }
+
+    impl QuantumSimulator for RecordingSimulator {
+        fn reset(&mut self) -> &mut Self {
+            self
+        }
+
+        fn num_qubits(&self) -> usize {
+            3
+        }
+    }
+
+    impl CliffordGateable for RecordingSimulator {
+        fn sz(&mut self, _qubits: &[QubitId]) -> &mut Self {
+            self
+        }
+
+        fn h(&mut self, _qubits: &[QubitId]) -> &mut Self {
+            self
+        }
+
+        fn cx(&mut self, _pairs: &[(QubitId, QubitId)]) -> &mut Self {
+            self
+        }
+
+        fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+            qubits
+                .iter()
+                .map(|_| MeasurementResult {
+                    outcome: false,
+                    is_deterministic: true,
+                })
+                .collect()
+        }
+    }
+
+    impl ArbitraryRotationGateable for RecordingSimulator {
+        fn rx(&mut self, _theta: Angle64, _qubits: &[QubitId]) -> &mut Self {
+            self
+        }
+
+        fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+            self.rz_calls.push((theta, qubits.to_vec()));
+            self
+        }
+
+        fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+            self.global_phase_calls.push((phase, qubits.to_vec()));
+            self
+        }
+
+        fn rzz(&mut self, _theta: Angle64, _pairs: &[(QubitId, QubitId)]) -> &mut Self {
+            self
+        }
+    }
+
+    #[test]
+    fn default_t_and_tdg_each_emit_one_rz_call() {
+        let targets = [QubitId(0), QubitId(2)];
+        let mut recorder = RecordingSimulator::default();
+
+        recorder.t(&targets);
+        assert_eq!(
+            recorder.rz_calls,
+            vec![(Angle64::QUARTER_TURN / 2u64, targets.to_vec())]
+        );
+
+        recorder.rz_calls.clear();
+        recorder.tdg(&targets);
+        assert_eq!(
+            recorder.rz_calls,
+            vec![(-(Angle64::QUARTER_TURN / 2u64), targets.to_vec())]
+        );
+    }
+
+    fn assert_default_u_phase_gate(
+        lambda: Angle64,
+        expected_half_phase: Angle64,
+        expected_diagonal: num_complex::Complex32,
+    ) {
+        use crate::StateVecSoA32;
+        use num_complex::Complex32;
+
+        let target = [QubitId(0)];
+        let mut sim = StateVecSoA32::new(1);
+        sim.u(Angle64::ZERO, Angle64::ZERO, lambda, &target);
+        let zero_column = [sim.get_amplitude(0), sim.get_amplitude(1)];
+        assert!((zero_column[0] - Complex32::new(1.0, 0.0)).norm() < 2e-6);
+        assert!(zero_column[1].norm() < 2e-6);
+
+        sim.reset().x(&target);
+        sim.u(Angle64::ZERO, Angle64::ZERO, lambda, &target);
+        let one_column = [sim.get_amplitude(0), sim.get_amplitude(1)];
+        assert!(one_column[0].norm() < 2e-6);
+        assert!((one_column[1] - expected_diagonal).norm() < 2e-6);
+
+        // Even the zero-angle case must route through the scalar hook. This is
+        // the mutation witness distinguishing the exact default decomposition
+        // from the old phase-inexact three-rotation implementation.
+        let mut recorder = RecordingSimulator::default();
+        recorder.u(Angle64::ZERO, Angle64::ZERO, lambda, &target);
+        assert_eq!(recorder.global_phase_calls.len(), 1);
+        let (actual_phase, actual_targets) = &recorder.global_phase_calls[0];
+        assert!(actual_phase.abs_diff_eq_radians(&expected_half_phase, 1e-14));
+        assert_eq!(actual_targets, &target);
+    }
+
+    #[test]
+    fn default_u_000_is_exact_identity() {
+        assert_default_u_phase_gate(
+            Angle64::ZERO,
+            Angle64::ZERO,
+            num_complex::Complex32::new(1.0, 0.0),
+        );
+    }
+
+    #[test]
+    fn default_u_00_pi_over_4_is_exact_t() {
+        assert_default_u_phase_gate(
+            Angle64::QUARTER_TURN / 2u64,
+            Angle64::QUARTER_TURN / 4u64,
+            num_complex::Complex32::new(
+                std::f32::consts::FRAC_1_SQRT_2,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ),
+        );
+    }
+
+    #[test]
+    fn default_u_00_pi_over_2_is_exact_sz() {
+        assert_default_u_phase_gate(
+            Angle64::QUARTER_TURN,
+            Angle64::QUARTER_TURN / 2u64,
+            num_complex::Complex32::new(0.0, 1.0),
+        );
+    }
+
+    #[test]
+    fn default_u_00_pi_is_exact_z() {
+        assert_default_u_phase_gate(
+            Angle64::HALF_TURN,
+            Angle64::QUARTER_TURN,
+            num_complex::Complex32::new(-1.0, 0.0),
+        );
+    }
+
+    #[test]
+    fn default_u_matches_documented_matrix() {
+        use crate::StateVecSoA32;
+        use num_complex::Complex64;
+
+        let theta = Angle64::from_radians(0.73);
+        let phi = Angle64::from_radians(-0.41);
+        let lambda = Angle64::from_radians(1.17);
+        let theta_rad = theta.to_radians_signed();
+        let phi_rad = phi.to_radians_signed();
+        let lambda_rad = lambda.to_radians_signed();
+        let c = (theta_rad / 2.0).cos();
+        let s = (theta_rad / 2.0).sin();
+        let expected_columns = [
+            [Complex64::new(c, 0.0), Complex64::from_polar(s, phi_rad)],
+            [
+                -Complex64::from_polar(s, lambda_rad),
+                Complex64::from_polar(c, lambda_rad + phi_rad),
+            ],
+        ];
+
+        for (basis, expected) in expected_columns.iter().enumerate() {
+            let target = [QubitId(0)];
+            let mut sim = StateVecSoA32::new(1);
+            if basis == 1 {
+                sim.x(&target);
+            }
+            sim.u(theta, phi, lambda, &target);
+            for (row, expected_entry) in expected.iter().enumerate() {
+                let actual = sim.get_amplitude(row);
+                let actual = Complex64::new(f64::from(actual.re), f64::from(actual.im));
+                assert!(
+                    (actual - expected_entry).norm() < 3e-6,
+                    "column={basis}, row={row}: expected {expected_entry}, got {actual}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn default_rxy1q_matches_documented_matrix_exactly() {
+        use crate::StateVecSoA32;
+        use num_complex::Complex64;
+
+        let theta = Angle64::from_radians(0.73);
+        let phi = Angle64::from_radians(0.31);
+        let theta_rad = theta.to_radians_signed();
+        let phi_rad = phi.to_radians_signed();
+        let c = (theta_rad / 2.0).cos();
+        let s = (theta_rad / 2.0).sin();
+        let minus_i = Complex64::new(0.0, -1.0);
+        let expected_columns = [
+            [
+                Complex64::new(c, 0.0),
+                minus_i * Complex64::from_polar(s, phi_rad),
+            ],
+            [
+                minus_i * Complex64::from_polar(s, -phi_rad),
+                Complex64::new(c, 0.0),
+            ],
+        ];
+
+        for (basis, expected) in expected_columns.iter().enumerate() {
+            let target = [QubitId(0)];
+            let mut sim = StateVecSoA32::new(1);
+            if basis == 1 {
+                sim.x(&target);
+            }
+            sim.rxy1q(theta, phi, &target);
+            for (row, expected_entry) in expected.iter().enumerate() {
+                let actual = sim.get_amplitude(row);
+                let actual = Complex64::new(f64::from(actual.re), f64::from(actual.im));
+                assert!(
+                    (actual - expected_entry).norm() < 3e-6,
+                    "column={basis}, row={row}: expected {expected_entry}, got {actual}"
+                );
+            }
+        }
     }
 }

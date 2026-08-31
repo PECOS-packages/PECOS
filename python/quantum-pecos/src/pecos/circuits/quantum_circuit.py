@@ -67,7 +67,7 @@ _GATETYPE_TO_SYMBOL = {
     "RX": "RX",
     "RY": "RY",
     "RZ": "RZ",
-    "R1XY": "R1XY",
+    "RXY1Q": "RXY1Q",
     "U": "U",
     "CX": "CX",
     "CY": "CY",
@@ -183,6 +183,9 @@ class QuantumCircuit(MutableSequence):
         # Handle logical gate objects that have a .symbol attribute
         if not isinstance(symbol, str):
             symbol = symbol.symbol if hasattr(symbol, "symbol") else str(symbol)
+
+        if symbol.upper() in {"RXY1Q", "R1XY", "U1Q"}:
+            symbol = "RXY1Q"
 
         # Serialize params for storage (handle tuples -> lists)
         def make_serializable(obj: object) -> object:
@@ -451,7 +454,7 @@ class QuantumCircuit(MutableSequence):
                         # Single angle gates (RX, RY, RZ, RXX, RYY, RZZ)
                         params["angle"] = angles[0]
                     elif len(angles) == 2:
-                        # Two angle gates (R1XY)
+                        # Two angle gates (RXY1Q)
                         params["theta"] = angles[0]
                         params["phi"] = angles[1]
                     elif len(angles) == 3:

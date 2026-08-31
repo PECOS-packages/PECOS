@@ -53,7 +53,7 @@ pub enum GateType {
     RY,
     RZ,
     U,
-    R1XY,
+    RXY1Q,
 
     // Two-qubit gates
     CX,
@@ -66,7 +66,6 @@ pub enum GateType {
     SYY,
     SYYdg,
     SWAP,
-    CRZ,
     RXX,
     RYY,
     RZZ,
@@ -110,7 +109,7 @@ impl GateType {
             | Self::RY
             | Self::RZ
             | Self::U
-            | Self::R1XY
+            | Self::RXY1Q
             | Self::MZ
             | Self::MeasureLeaked
             | Self::MeasureFree
@@ -129,7 +128,6 @@ impl GateType {
             | Self::SYY
             | Self::SYYdg
             | Self::SWAP
-            | Self::CRZ
             | Self::RXX
             | Self::RYY
             | Self::RZZ => 2,
@@ -140,13 +138,8 @@ impl GateType {
 
     /// Returns the number of angle parameters this gate requires.
     #[must_use]
-    pub const fn angle_arity(self) -> usize {
-        match self {
-            Self::RX | Self::RY | Self::RZ | Self::RXX | Self::RYY | Self::RZZ | Self::CRZ => 1,
-            Self::R1XY => 2,
-            Self::U => 3,
-            _ => 0,
-        }
+    pub fn angle_arity(self) -> usize {
+        pecos_core::gate_type::GateType::from(self).angle_arity()
     }
 
     /// Returns true if this is a single-qubit gate.
@@ -257,8 +250,8 @@ impl GateCommand {
     /// the gate" semantics, since `G * G_dagger = I`.
     ///
     /// Rotation inverses use the standard conventions
-    /// (`RX/RY/RZ(theta)` and `CRZ/RXX/RYY/RZZ(theta)` -> negate `theta`;
-    /// `R1XY(theta, phi)` -> `R1XY(-theta, phi)`; `U(theta, phi, lambda)` ->
+    /// (`RX/RY/RZ(theta)` and `RXX/RYY/RZZ(theta)` -> negate `theta`;
+    /// `RXY1Q(theta, phi)` -> `RXY1Q(-theta, phi)`; `U(theta, phi, lambda)` ->
     /// `U(-theta, -lambda, -phi)`).
     #[must_use]
     pub fn dagger(&self) -> Option<GateCommand> {
@@ -301,16 +294,15 @@ impl GateCommand {
             GateType::RX
             | GateType::RY
             | GateType::RZ
-            | GateType::CRZ
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ => neg_first(self.gate_type),
-            // R1XY(theta, phi) dagger = R1XY(-theta, phi).
-            GateType::R1XY => {
+            // RXY1Q(theta, phi) dagger = RXY1Q(-theta, phi).
+            GateType::RXY1Q => {
                 let theta = *self.angles.first()?;
                 let phi = *self.angles.get(1)?;
                 Some(Self::with_angles(
-                    GateType::R1XY,
+                    GateType::RXY1Q,
                     q,
                     smallvec::smallvec![-theta, phi],
                 ))
@@ -607,7 +599,7 @@ mod tests {
         assert_eq!(GateType::CCX.quantum_arity(), 3);
 
         assert_eq!(GateType::RZ.angle_arity(), 1);
-        assert_eq!(GateType::R1XY.angle_arity(), 2);
+        assert_eq!(GateType::RXY1Q.angle_arity(), 2);
         assert_eq!(GateType::U.angle_arity(), 3);
         assert_eq!(GateType::H.angle_arity(), 0);
     }

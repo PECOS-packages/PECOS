@@ -573,13 +573,18 @@ pub fn extract_quantum_ops(hugr: &Hugr) -> BTreeMap<Node, QuantumOp> {
 
         let op_name = ext_op.unqualified_id().to_string();
 
-        let Some(gate_type) = hugr_op_to_gate_type(&op_name) else {
+        let is_crz = op_name == "CRz";
+        let gate_type = if is_crz {
+            GateType::RZZ
+        } else if let Some(gate_type) = hugr_op_to_gate_type(&op_name) {
+            gate_type
+        } else {
             debug!("Unknown quantum operation: {op_name}");
             continue;
         };
 
         // Determine number of qubit inputs/outputs based on gate type
-        // Use quantum_arity() for most gates to correctly handle CRZ, SWAP, CCX, etc.
+        // Use quantum_arity() for most gates to correctly handle SWAP, CCX, etc.
         let (num_qubit_inputs, num_qubit_outputs) = match gate_type {
             GateType::QAlloc => (0, 1),
             GateType::QFree | GateType::MeasureFree => (1, 0),
@@ -591,7 +596,7 @@ pub fn extract_quantum_ops(hugr: &Hugr) -> BTreeMap<Node, QuantumOp> {
 
         // Extract rotation parameters for RX, RY, RZ gates
         // The angle is returned in full turns, we need radians
-        let params = if is_rotation_gate(gate_type) {
+        let params = if is_crz || is_rotation_gate(gate_type) {
             if let Some(angle_turns) = try_extract_rotation_angle(hugr, node, num_qubit_inputs) {
                 // Convert from turns to radians: radians = turns * 2 * PI
                 let angle_radians = angle_turns * std::f64::consts::TAU;
@@ -610,6 +615,8 @@ pub fn extract_quantum_ops(hugr: &Hugr) -> BTreeMap<Node, QuantumOp> {
             QuantumOp {
                 node,
                 gate_type,
+                source_name: op_name,
+                is_crz,
                 num_qubit_inputs,
                 num_qubit_outputs,
                 params,

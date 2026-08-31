@@ -67,6 +67,32 @@ impl Dialect for QisDialect {
             },
         )?;
 
+        for (name, description, num_operands) in [
+            ("h", "Hadamard gate (___h)", 1),
+            ("x", "Pauli-X gate (___x)", 1),
+            ("y", "Pauli-Y gate (___y)", 1),
+            ("z", "Pauli-Z gate (___z)", 1),
+            ("s", "S gate (___s)", 1),
+            ("sdg", "S-dagger gate (___sdg)", 1),
+            ("t", "T gate (___t)", 1),
+            ("tdg", "T-dagger gate (___tdg)", 1),
+            ("sx", "Square-root-of-X gate (___sx)", 1),
+            ("sxdg", "Adjoint square-root-of-X gate (___sxdg)", 1),
+            ("cx", "Controlled-X gate (___cx)", 2),
+        ] {
+            registry.register_operation(
+                self.namespace(),
+                OperationDef {
+                    name: name.to_string(),
+                    description: description.to_string(),
+                    num_operands,
+                    num_results: 0,
+                    num_regions: 0,
+                    traits: vec![OpTrait::NoSideEffect],
+                },
+            )?;
+        }
+
         // Hardware-native rotation gates
         registry.register_operation(
             self.namespace(),
@@ -179,7 +205,10 @@ impl Dialect for QisDialect {
 
     fn get_operation_traits(&self, op_name: &str) -> Vec<OpTrait> {
         match op_name {
-            "rxy" | "rz" | "rzz" => vec![OpTrait::NoSideEffect],
+            "h" | "x" | "y" | "z" | "s" | "sdg" | "t" | "tdg" | "sx" | "sxdg" | "cx" | "rxy"
+            | "rz" | "rzz" => {
+                vec![OpTrait::NoSideEffect]
+            }
             _ => vec![],
         }
     }

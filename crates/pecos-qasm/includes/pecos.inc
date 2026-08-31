@@ -14,7 +14,8 @@ gate z a { Z a; }
 
 // Rotation gates
 gate rz(lambda) a { RZ(lambda) a; }
-gate r1xy(theta,phi) a { R1XY(theta,phi) a; }
+gate rxy1q(theta,phi) a { RXY1Q(theta,phi) a; }
+gate r1xy(theta,phi) a { RXY1Q(theta,phi) a; }
 
 // --- Two-qubit gates ---
 

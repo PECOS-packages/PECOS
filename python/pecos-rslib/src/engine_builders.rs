@@ -1053,7 +1053,7 @@ impl PyGeneralNoiseModelBuilder {
             "T" => GateType::T,
             "TDG" => GateType::Tdg,
             "U" => GateType::U,
-            "R1XY" => GateType::R1XY,
+            "RXY1Q" => GateType::RXY1Q,
             "CX" => GateType::CX,
             "SZZ" => GateType::SZZ,
             "SZZDG" => GateType::SZZdg,

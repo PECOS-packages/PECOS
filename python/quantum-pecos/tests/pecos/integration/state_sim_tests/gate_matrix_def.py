@@ -159,8 +159,10 @@ def RZ(theta: float) -> pc.Array:
     //{
     //   U(0,0,lambda) q;
     //}.
+
+    Exactly, RZ(theta) = exp(-i*theta*Z/2).
     """
-    return pc.exp(i * (theta / 2)) * pc.linalg.expm(-i * Z * theta / 2)
+    return pc.linalg.expm(-i * Z * theta / 2)
 
 
 assert pc.isclose(RZ(0.0), I).all()
@@ -230,12 +232,12 @@ assert eqv2phase(SqrtZZ(), sqrtzz_def)
 
 def RZZ(theta: float) -> pc.Array:
     """Rotation around ZZ axis."""
-    return pc.exp(i * theta / 2) * pc.linalg.expm(-i * (Z & Z) * theta / 2)
+    return pc.linalg.expm(-i * (Z & Z) * theta / 2)
 
 
 assert pc.isclose(RZZ(0.0), I & I).all()
-assert pc.isclose(RZZ(pi), Z & Z).all()
-assert pc.isclose(RZZ(pi / 2), SqrtZZ()).all()
+assert pc.isclose(RZZ(pi), -i * (Z & Z)).all()
+assert pc.isclose(RZZ(pi / 2), pc.exp(-i * pi / 4) * SqrtZZ()).all()
 
 
 # STANDARD GATES
@@ -329,13 +331,15 @@ def T() -> pc.Array:
 
     gate t() a
     {
-       Rz(pi/4) a;
+       T a;
     }.
+
+    Exactly, T = exp(i*pi/8) RZ(pi/4).
     """
     return pc.diag(pc.array([1, pc.exp(i * pi / 4)], dtype=pc.dtypes.complex128))
 
 
-assert eqv2phase(T(), RZ(pi / 4))
+assert pc.isclose(T(), pc.exp(i * pi / 8) * RZ(pi / 4)).all()
 
 
 def Tdg() -> pc.Array:
@@ -343,13 +347,15 @@ def Tdg() -> pc.Array:
 
     gate tdg() a
     {
-       Rz(-pi/4) a;
+       TDG a;
     }.
+
+    Exactly, Tdg = exp(-i*pi/8) RZ(-pi/4).
     """
     return pc.diag(pc.array([1, pc.exp(-i * pi / 4)], dtype=pc.dtypes.complex128))
 
 
-assert eqv2phase(Tdg(), RZ(-pi / 4))
+assert pc.isclose(Tdg(), pc.exp(-i * pi / 8) * RZ(-pi / 4)).all()
 assert not eqv2phase(Tdg(), T())
 
 # // --- Standard rotations ---
@@ -363,7 +369,7 @@ def RX(theta: float) -> pc.Array:
        U1q(theta, 0) a;
     }.
     """
-    return pc.exp(i * (theta / 2)) * pc.linalg.expm(-i * (theta / 2) * X)
+    return pc.linalg.expm(-i * (theta / 2) * X)
 
 
 # try 5 random attempts to equivocate to gate definition
@@ -380,7 +386,7 @@ def RY(theta: float) -> pc.Array:
        U1q(theta, pi/2) a;
     }.
     """
-    return pc.exp(i * (theta / 2)) * pc.linalg.expm(-i * (theta / 2) * Y)
+    return pc.linalg.expm(-i * (theta / 2) * Y)
 
 
 # try 5 random attempts to equivocate to gate definition
@@ -485,17 +491,13 @@ assert eqv2phase(CH(), ch_def)
 def CRZ(theta: float) -> pc.Array:
     """Controlled-RZ(theta) gate. Convention: block-diag(I, RZ(theta)).
 
-    Decomposition (2q-minimal: 1 RZZ + 2 single-qubit RZ):
-        CRZ(theta) = (RZ(theta/2) o RZ(theta/2)) . RZZ(-theta/2)
-    Works because PECOS_RZ and PECOS_RZZ share the same e^{i.t/2}
-    global-phase convention. RZ on control absorbs the c=1-only phase
-    that the bare RZZ-based form would leave (it would otherwise be
-    a *relative* phase, not a global one, and thus observable).
+    Decomposition (2q-minimal: 1 RZZ + 1 single-qubit RZ):
+        CRZ(theta) = (I o RZ(theta/2)) . RZZ(-theta/2)
     """
     return oporder_multiply(
         [
             RZZ(-theta / 2),
-            (RZ(theta / 2), RZ(theta / 2)),
+            (I, RZ(theta / 2)),
         ],
     )
 

@@ -12,7 +12,9 @@
 //! Select one cell with `SATURATION_CELL` and control the campaign protocol
 //! with `SATURATION_WARMUPS` (default 1) and `SATURATION_REPETITIONS` (default 5).
 //! Set `SATURATION_PROJECTION_LOCALITY=1` for the runtime-gated projection and
-//! pre-reduction diagnostic events.
+//! pre-reduction diagnostic events. With that outer flag enabled, set
+//! `SATURATION_DIRECTION_B_SHADOW=0` to retain the eager diagnostics while
+//! disabling only the Direction-B shadow for an overhead A/B.
 
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
@@ -439,9 +441,18 @@ fn projection_walk_model(
     {
         return None;
     }
+    projection_walk_model_for_support(event, event.projector_site_min?, event.projector_site_max?)
+}
+
+fn projection_walk_model_for_support(
+    event: &pecos_stab_tn::stab_mps::ProjectionQrLocalityTelemetry,
+    support_min: usize,
+    support_max: usize,
+) -> Option<(f64, f64, f64)> {
+    if !event.center_before_positioning_is_valid {
+        return None;
+    }
     let center = event.center_before_positioning?;
-    let support_min = event.projector_site_min?;
-    let support_max = event.projector_site_max?;
     let profile = &event.projection_entry_bond_profile;
     let current = profile.iter().map(|&rank| (rank as f64).powi(3)).sum();
     let to_min = bond_walk_cost(profile, center, support_min);
@@ -458,6 +469,24 @@ fn projection_walk_model(
     let bounded = position + span;
     let mandatory_zero = bounded + bond_walk_cost(profile, terminal_edge, 0);
     Some((current, bounded, mandatory_zero))
+}
+
+fn pre_reduction_cnot_chi3_units(event: &PreReductionTelemetry) -> f64 {
+    event
+        .cnot_steps
+        .iter()
+        .filter(|cnot| !cnot.structural_identity && !cnot.unconditional_x)
+        .map(|cnot| {
+            let minimum = cnot.control.min(cnot.target);
+            let maximum = cnot.control.max(cnot.target);
+            let first = (cnot.input_bond_profile[minimum] as f64).powi(3);
+            let return_walk = cnot.input_bond_profile[minimum + 1..maximum]
+                .iter()
+                .map(|&rank| 2.0 * (rank as f64).powi(3))
+                .sum::<f64>();
+            first + return_walk
+        })
+        .sum()
 }
 
 fn print_pre_reduction_summary(
@@ -1266,6 +1295,246 @@ fn print_projector_span_total(cell: Cell, run: usize, profile: &ProbabilityQuery
     );
 }
 
+fn print_direction_b_shadow(cell: Cell, run: usize, profile: &ProbabilityQueryTelemetry) {
+    let all_events = profile
+        .by_depth
+        .iter()
+        .flat_map(|depth| &depth.direction_b_shadow)
+        .collect::<Vec<_>>();
+    if all_events.is_empty() {
+        return;
+    }
+
+    for (depth, bucket) in profile.by_depth.iter().enumerate() {
+        if bucket.direction_b_shadow.is_empty() {
+            continue;
+        }
+        let queue_before = bucket
+            .direction_b_shadow
+            .iter()
+            .map(|event| event.queue_len_before_pre_reduction)
+            .collect();
+        let queue_projection = bucket
+            .direction_b_shadow
+            .iter()
+            .map(|event| event.queue_len_at_projection)
+            .collect();
+        let queue_after = bucket
+            .direction_b_shadow
+            .iter()
+            .map(|event| event.queue_len_after_projection)
+            .collect();
+        let compensation = bucket
+            .direction_b_shadow
+            .iter()
+            .map(|event| event.compensation_cnot_count)
+            .collect();
+        let frame_seconds = bucket
+            .direction_b_shadow
+            .iter()
+            .map(|event| event.frame_wall_time_seconds)
+            .sum::<f64>()
+            + bucket.direction_b_shadow_clone_wall_time_seconds;
+        let flush_reads = bucket
+            .direction_b_shadow
+            .iter()
+            .filter(|event| event.flush_read_required)
+            .count();
+        println!(
+            "B_QUEUE_DEPTH cell={} run={} depth={} events={} order=min/q25/median/q75/max queue_before={} compensation_cnots={} queue_projection={} queue_after={} flush_reads={} shadow_clone_calls={} shadow_clone_measured_s={:.17e} frame_measured_s={:.17e}",
+            cell.name,
+            run,
+            depth,
+            bucket.direction_b_shadow.len(),
+            five_number(queue_before),
+            five_number(compensation),
+            five_number(queue_projection),
+            five_number(queue_after),
+            flush_reads,
+            bucket.direction_b_shadow_clone_calls,
+            bucket.direction_b_shadow_clone_wall_time_seconds,
+            frame_seconds,
+        );
+        for (event_index, event) in bucket.direction_b_shadow.iter().enumerate() {
+            println!(
+                "B_SHADOW_EVENT cell={} run={} depth={} event={} sibling_pair={} outcome={} queue_before={} compensation_cnots={} queue_projection={} queue_after={} flip_sites={} sign_sites={} sites={} s_min={} s_max={} span={} flush_read={} flush_queue={} flush_chi3_units={:.17e} frame_measured_s={:.17e} eager_event={}",
+                cell.name,
+                run,
+                depth,
+                event_index,
+                event
+                    .sibling_pair_id
+                    .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+                usize::from(event.outcome),
+                event.queue_len_before_pre_reduction,
+                event.compensation_cnot_count,
+                event.queue_len_at_projection,
+                event.queue_len_after_projection,
+                joined_usizes(&event.projector_flip_sites),
+                joined_usizes(&event.projector_sign_sites),
+                joined_usizes(&event.projector_sites),
+                event
+                    .projector_site_min
+                    .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+                event
+                    .projector_site_max
+                    .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+                event.projector_span,
+                event.flush_read_required,
+                event.flush_queue_length,
+                event.flush_walk_chi3_units,
+                event.frame_wall_time_seconds,
+                event
+                    .eager_projection_event_index
+                    .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+            );
+        }
+    }
+
+    let eager_direct_spans = profile
+        .by_depth
+        .iter()
+        .flat_map(|depth| &depth.projection_qr_locality)
+        .filter(|event| event.construction == ProjectionConstruction::DirectSum)
+        .map(|event| event.projector_span)
+        .collect::<Vec<_>>();
+    let b_matched_spans = profile
+        .by_depth
+        .iter()
+        .flat_map(|depth| &depth.direction_b_shadow)
+        .filter(|event| event.eager_projection_event_index.is_some())
+        .map(|event| event.projector_span)
+        .collect::<Vec<_>>();
+    let b_on_eager_direct_spans = profile
+        .by_depth
+        .iter()
+        .flat_map(|depth| {
+            depth.direction_b_shadow.iter().filter_map(|shadow| {
+                let eager_index = shadow.eager_projection_event_index?;
+                (depth.projection_qr_locality[eager_index].construction
+                    == ProjectionConstruction::DirectSum)
+                    .then_some(shadow.projector_span)
+            })
+        })
+        .collect::<Vec<_>>();
+    let queue_projection = all_events
+        .iter()
+        .map(|event| event.queue_len_at_projection)
+        .collect();
+    let queue_after = all_events
+        .iter()
+        .map(|event| event.queue_len_after_projection)
+        .collect();
+    println!(
+        "B_SUPPORT_QUINTILES cell={} run={} order=min/q25/median/q75/max eager_direct_events={} eager_direct_span={} b_on_eager_direct_events={} b_on_eager_direct_span={} b_all_matched_events={} b_all_conjugated_span={} queue_projection={} queue_after={}",
+        cell.name,
+        run,
+        eager_direct_spans.len(),
+        five_number(eager_direct_spans),
+        b_on_eager_direct_spans.len(),
+        five_number(b_on_eager_direct_spans),
+        b_matched_spans.len(),
+        five_number(b_matched_spans),
+        five_number(queue_projection),
+        five_number(queue_after),
+    );
+
+    let pre_reduction_seconds = profile
+        .by_depth
+        .iter()
+        .map(|depth| depth.pre_reduction.wall_time_seconds)
+        .sum::<f64>();
+    let pre_reduction_chi3_units = profile
+        .by_depth
+        .iter()
+        .flat_map(|depth| &depth.pre_reduction_diagnostics)
+        .map(pre_reduction_cnot_chi3_units)
+        .sum::<f64>();
+    let pre_reduction_seconds_per_chi3 = if pre_reduction_chi3_units > 0.0 {
+        pre_reduction_seconds / pre_reduction_chi3_units
+    } else {
+        0.0
+    };
+    let frame_seconds = all_events
+        .iter()
+        .map(|event| event.frame_wall_time_seconds)
+        .sum::<f64>()
+        + profile
+            .by_depth
+            .iter()
+            .map(|depth| depth.direction_b_shadow_clone_wall_time_seconds)
+            .sum::<f64>();
+    let flush_reads = all_events
+        .iter()
+        .filter(|event| event.flush_read_required)
+        .count();
+    let flush_chi3_units = all_events
+        .iter()
+        .map(|event| event.flush_walk_chi3_units)
+        .sum::<f64>();
+    let flush_seconds = flush_chi3_units * pre_reduction_seconds_per_chi3;
+
+    let mut extra_projection_seconds = 0.0;
+    let mut modeled_projection_events = 0_usize;
+    let mut unmodeled_projection_events = 0_usize;
+    for bucket in &profile.by_depth {
+        for shadow in &bucket.direction_b_shadow {
+            let Some(eager_index) = shadow.eager_projection_event_index else {
+                continue;
+            };
+            let eager = &bucket.projection_qr_locality[eager_index];
+            let current_units = eager
+                .projection_entry_bond_profile
+                .iter()
+                .map(|&rank| (rank as f64).powi(3))
+                .sum::<f64>();
+            let eager_bounded_units = if eager.construction == ProjectionConstruction::DirectSum {
+                projection_walk_model(eager).map(|(_, bounded, _)| bounded)
+            } else {
+                Some(0.0)
+            };
+            let b_bounded_units = match (shadow.projector_site_min, shadow.projector_site_max) {
+                (Some(minimum), Some(maximum)) => {
+                    projection_walk_model_for_support(eager, minimum, maximum)
+                        .map(|(_, bounded, _)| bounded)
+                }
+                (None, None) => Some(0.0),
+                _ => unreachable!("Direction-B support endpoints must be paired"),
+            };
+            match (eager_bounded_units, b_bounded_units) {
+                (Some(eager_bounded), Some(b_bounded)) if current_units > 0.0 => {
+                    let calibration_seconds = eager.post_projection_qr_wall_time_seconds
+                        + eager.post_projection_svd_wall_time_seconds;
+                    extra_projection_seconds +=
+                        calibration_seconds * (b_bounded - eager_bounded) / current_units;
+                    modeled_projection_events += 1;
+                }
+                _ => unmodeled_projection_events += 1,
+            }
+        }
+    }
+    let delta = pre_reduction_seconds - (extra_projection_seconds + frame_seconds + flush_seconds);
+    println!(
+        "B_NET_MODEL cell={} run={} formula=Delta_T_B=T_prereduction_removed-(T_extra_projection+T_frame+T_flush_read) T_prereduction_removed_s={:.17e} T_prereduction_removed_label=MEASURED T_extra_projection_s={:.17e} T_extra_projection_label=MODEL_chi3_walk_svd T_frame_s={:.17e} T_frame_label=MEASURED_shadow_algebra T_flush_read_s={:.17e} T_flush_read_label=MODEL_chi3_from_measured_prereduction flush_reads={} flush_chi3_units={:.17e} prereduction_chi3_units={:.17e} modeled_projection_events={} unmodeled_projection_events={} Delta_T_B_s={:.17e}",
+        cell.name,
+        run,
+        pre_reduction_seconds,
+        extra_projection_seconds,
+        frame_seconds,
+        flush_seconds,
+        flush_reads,
+        flush_chi3_units,
+        pre_reduction_chi3_units,
+        modeled_projection_events,
+        unmodeled_projection_events,
+        delta,
+    );
+    println!(
+        "B_MAST cell={} run={} exercised=false reason=campaign_uses_StabMps_and_performs_no_MAST_injections",
+        cell.name, run,
+    );
+}
+
 fn print_candidate_branch(
     cell: Cell,
     run: usize,
@@ -1388,8 +1657,14 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
     let query_set = queries(cell.n, cell.seed);
     let projection_locality =
         std::env::var("SATURATION_PROJECTION_LOCALITY").is_ok_and(|value| value != "0");
-    let (probabilities, profile) = if projection_locality {
+    let direction_b_shadow = projection_locality
+        && std::env::var("SATURATION_DIRECTION_B_SHADOW").map_or(true, |value| value != "0");
+    let (probabilities, profile) = if direction_b_shadow {
         simulator.prob_bitstrings_profiled_with_projection_locality(&query_set)
+    } else if projection_locality {
+        simulator.prob_bitstrings_profiled_with_projection_locality_without_direction_b_shadow(
+            &query_set,
+        )
     } else {
         simulator.prob_bitstrings_profiled(&query_set)
     };
@@ -1434,6 +1709,7 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
     print_pre_reduction_total(cell, run, &profile);
     print_locality_total(cell, run, &profile);
     print_projector_span_total(cell, run, &profile);
+    print_direction_b_shadow(cell, run, &profile);
     println!(
         "QUERY_OPS cell={} run={} svds={} capped_svds={} attributed_s={:.9} whole_call_s={:.9} trie_clone_residual_s={:.9}",
         cell.name,
@@ -1445,9 +1721,10 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
         summary.query_residual_seconds,
     );
     println!(
-        "RUN cell={} run={} sim_s={:.9} profiled_sim_s={:.9} telemetry_on_overhead_s={:.9} query_s={:.9} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} expectation_s={:.9} pre_s={:.9} decomposition_s={:.9} projection_s={:.9} qr_s={:.9} svd_s={:.9} survival_s={:.9} normalization_s={:.9} bookkeeping_s={:.9} trie_clone_residual_s={:.9} cascade_s={:.9} add_s={:.9} disent_s={:.9} ofd_avoidable_s={:.9} output_hash={:016x}",
+        "RUN cell={} run={} direction_b_shadow={} sim_s={:.9} profiled_sim_s={:.9} telemetry_on_overhead_s={:.9} query_s={:.9} multi_std={} multi_std_add={} multi_std_cascade={} multi_disent={} signed_candidates={} ofd_in_span_std={} expectation_s={:.9} pre_s={:.9} decomposition_s={:.9} projection_s={:.9} qr_s={:.9} svd_s={:.9} survival_s={:.9} normalization_s={:.9} bookkeeping_s={:.9} trie_clone_residual_s={:.9} cascade_s={:.9} add_s={:.9} disent_s={:.9} ofd_avoidable_s={:.9} output_hash={:016x}",
         cell.name,
         run,
+        direction_b_shadow,
         summary.sim_seconds,
         summary.profiled_sim_seconds,
         summary.profiled_sim_seconds - summary.sim_seconds,
@@ -1608,5 +1885,77 @@ mod tests {
             CELLS.map(|cell| gates(cell).len()),
             [135, 167, 271, 543, 282]
         );
+    }
+
+    #[cfg(feature = "direction-b-phase0-test")]
+    #[test]
+    #[ignore = "decisive n=64 captured Direction-B replay; run explicitly in release mode"]
+    fn captured_n64_direction_b_replay() {
+        let cell = CELLS
+            .iter()
+            .copied()
+            .find(|cell| cell.name == "sparse-n64-t2n")
+            .unwrap();
+        let (simulator, _) = simulate(cell, false);
+        let query_set = queries(cell.n, cell.seed);
+        let replay = simulator.direction_b_phase0_replay(&query_set);
+        let pre_svd_dims = replay
+            .eager_pre_reduction_svds
+            .iter()
+            .map(|step| {
+                format!(
+                    "{}x{}->{}:{}",
+                    step.input_rows, step.input_columns, step.output_rank, step.cap_binding
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let projection_dims = |steps: &[pecos_stab_tn::stab_mps::ProjectionSvdTelemetry]| {
+            steps
+                .iter()
+                .map(|step| {
+                    format!(
+                        "{}:{}x{}->{}:{}",
+                        step.bond,
+                        step.input_rows,
+                        step.input_columns,
+                        step.output_rank,
+                        step.cap_binding
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        println!(
+            "B_REPLAY cell={} depth={} outcome={} input_cap_bonds={} input_bonds={} eager_measured_s={:.17e} b_measured_s={:.17e} b_read_flush_measured_s={:.17e} eager_probability={:.17e} b_probability={:.17e} eager_prered_svds={} eager_projection_svds={} b_prered_svds=0 b_projection_svds={} eager_bonds={} b_virtual_bonds={} b_flushed_bonds={} b_queue={} amplitude_samples={} sampled_overlap={:.17e} sampled_max_aligned_residual={:.17e}",
+            cell.name,
+            replay.depth,
+            usize::from(replay.outcome),
+            replay.input_cap_saturated_bonds,
+            joined_usizes(&replay.input_bond_profile),
+            replay.eager_wall_time_seconds,
+            replay.direction_b_wall_time_seconds,
+            replay.direction_b_flush_wall_time_seconds,
+            replay.eager_probability,
+            replay.direction_b_probability,
+            pre_svd_dims,
+            projection_dims(&replay.eager_projection_svds),
+            projection_dims(&replay.direction_b_projection_svds),
+            joined_usizes(&replay.eager_bond_profile),
+            joined_usizes(&replay.direction_b_bond_profile),
+            joined_usizes(&replay.direction_b_flushed_bond_profile),
+            replay.direction_b_queue_length,
+            replay.amplitude_samples,
+            replay.sampled_state_overlap,
+            replay.sampled_max_aligned_residual,
+        );
+        assert!(replay.input_cap_saturated_bonds > 0);
+        assert!(!replay.eager_pre_reduction_svds.is_empty());
+        assert!(!replay.eager_projection_svds.is_empty());
+        assert!(!replay.direction_b_projection_svds.is_empty());
+        assert!(replay.eager_probability.is_finite());
+        assert!(replay.direction_b_probability.is_finite());
+        assert!(replay.sampled_state_overlap.is_finite());
+        assert!(replay.sampled_state_overlap <= 1.0 + 1e-10);
     }
 }

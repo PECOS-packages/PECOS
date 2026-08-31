@@ -144,8 +144,14 @@ pub(crate) struct BondCompressionTelemetry {
     pub(crate) bond: usize,
     /// Rank entering this compression split, after direct-sum construction.
     pub(crate) input_rank: usize,
+    /// Row dimension of the matrix passed to the SVD.
+    pub(crate) input_rows: usize,
+    /// Column dimension of the matrix passed to the SVD.
+    pub(crate) input_columns: usize,
     /// Rank retained by the configured compression policy.
     pub(crate) output_rank: usize,
+    /// Whether the maximum bond dimension bound the retained rank.
+    pub(crate) cap_binding: bool,
     /// Relative singular-value weight discarded at this bond.
     pub(crate) discarded_weight: f64,
 }
@@ -1592,7 +1598,10 @@ impl Mps {
                 bonds.push(BondCompressionTelemetry {
                     bond: q + 1,
                     input_rank: chi_r,
+                    input_rows: matrix.nrows(),
+                    input_columns: matrix.ncols(),
                     output_rank: new_chi,
+                    cap_binding: hit,
                     discarded_weight: disc,
                 });
             }

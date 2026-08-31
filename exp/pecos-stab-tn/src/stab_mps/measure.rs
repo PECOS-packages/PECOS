@@ -875,6 +875,56 @@ fn pre_reduce_for_measurement_impl<const DIAGNOSTICS: bool>(
     }
 }
 
+/// Apply the tableau half of exact pre-reduction and append its compensating
+/// CNOTs to a deferred virtual frame.
+///
+/// This is the single owner used by both the live Lazy measurement path and
+/// the Direction-B exact-query shadow. Keeping the row update and queue append
+/// together prevents the observational shadow from drifting from the existing
+/// frame algebra.
+fn pre_reduce_for_measurement_deferred(
+    tableau: &mut SparseStabY,
+    q_idx: usize,
+    deferred: &mut Vec<DeferredOp>,
+) -> Vec<usize> {
+    let col_x = &tableau.stabs().col_x[q_idx];
+    if col_x.len() <= 1 {
+        return Vec::new();
+    }
+
+    let replaced_idx = find_replaced_stabilizer(tableau, q_idx);
+    let n = tableau.num_qubits();
+    let anticom = tableau.stabs().col_x[q_idx]
+        .iter()
+        .filter(|&id| id != replaced_idx)
+        .collect::<Vec<_>>();
+    let stabs_snapshot = tableau.stabs().clone();
+    let destabs_snapshot = tableau.destabs().clone();
+    let mut modified_sites = Vec::with_capacity(1 + anticom.len());
+    modified_sites.push(replaced_idx);
+    for other_id in anticom {
+        crate::stab_mps::tableau_compose::multiply_row(
+            tableau.stabs_mut(),
+            other_id,
+            &stabs_snapshot,
+            replaced_idx,
+            n,
+        );
+        crate::stab_mps::tableau_compose::multiply_row(
+            tableau.destabs_mut(),
+            replaced_idx,
+            &destabs_snapshot,
+            other_id,
+            n,
+        );
+        deferred.push(DeferredOp::Cnot(replaced_idx, other_id));
+        modified_sites.push(other_id);
+    }
+    modified_sites.sort_unstable();
+    modified_sites.dedup();
+    modified_sites
+}
+
 fn apply_cnot_to_mps(mps: &mut Mps, control: usize, target: usize) -> Result<(), MpsError> {
     apply_cnot_to_mps_impl::<false>(mps, control, target, &mut PreReductionWork::default())
 }
@@ -1053,6 +1103,30 @@ pub enum DeferredOp {
     /// decomposition phase `sp` is purely imaginary. Conjugation rule:
     /// SZ†·P·SZ — if X at q, toggle Z at q and multiply phase by -i.
     SZ(usize),
+}
+
+fn deferred_flush_walk_chi3_units(mps: &Mps, ops: &[DeferredOp]) -> f64 {
+    let profile = internal_bond_profile(mps);
+    ops.iter()
+        .filter_map(|op| match *op {
+            DeferredOp::Cnot(first, second) | DeferredOp::Cz(first, second) => {
+                Some((first.min(second), first.max(second)))
+            }
+            DeferredOp::H(_) | DeferredOp::Z(_) | DeferredOp::SZdg(_) | DeferredOp::SZ(_) => None,
+        })
+        .map(|(minimum, maximum)| {
+            assert!(
+                minimum < maximum,
+                "deferred two-site op needs distinct sites"
+            );
+            let first = (profile[minimum] as f64).powi(3);
+            let return_walk = profile[minimum + 1..maximum]
+                .iter()
+                .map(|&rank| 2.0 * (rank as f64).powi(3))
+                .sum::<f64>();
+            first + return_walk
+        })
+        .sum()
 }
 
 fn toggle(v: &mut Vec<usize>, x: usize) {
@@ -1597,6 +1671,241 @@ fn enqueue_lazy_measurement_basis_update(
     gauge_sites
 }
 
+/// Advance the measurement-only Direction-B tableau/frame shadow by one
+/// forced trie edge.
+///
+/// The observed MPS is read only to model the existing Lazy path's
+/// trivial-state flush condition and its fixed-entry-rank walk cost. It is
+/// never mutated and never feeds a result back into the live exact query.
+pub(super) fn direction_b_shadow_projection(
+    tableau: &mut SparseStabY,
+    deferred: &mut Vec<DeferredOp>,
+    observed_mps: &Mps,
+    q_idx: usize,
+    outcome: bool,
+) -> super::DirectionBShadowProjectionTelemetry {
+    let started = Instant::now();
+    let flush_read_required = !deferred.is_empty() && is_mps_trivial(observed_mps);
+    let flush_queue_length = if flush_read_required {
+        deferred.len()
+    } else {
+        0
+    };
+    let flush_walk_chi3_units = if flush_read_required {
+        deferred_flush_walk_chi3_units(observed_mps, deferred)
+    } else {
+        0.0
+    };
+    if flush_read_required {
+        // A real read would materialize the frame and clear the queue. The
+        // shadow has no coefficient MPS by design, so only the ordered-frame
+        // state transition is represented here; its numerical price is the
+        // separately modeled `flush_walk_chi3_units` term.
+        deferred.clear();
+    }
+
+    let queue_len_before_pre_reduction = deferred.len();
+    let _modified_sites = pre_reduce_for_measurement_deferred(tableau, q_idx, deferred);
+    let queue_len_at_projection = deferred.len();
+    let compensation_cnot_count = queue_len_at_projection - queue_len_before_pre_reduction;
+
+    let decomposition = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
+    #[cfg(debug_assertions)]
+    let independently_conjugated_support = conjugated_z_support(tableau, q_idx, deferred);
+    let outcome_update_required = matches!(&decomposition, ZDecomposition::DestabilizerFlip { .. });
+    let (mut projector_flip_sites, mut projector_sign_sites, mut phase) = match &decomposition {
+        ZDecomposition::Stabilizer { phase, sign_sites } => {
+            (Vec::new(), sign_sites.clone(), *phase)
+        }
+        ZDecomposition::DestabilizerFlip {
+            flip_sites,
+            phase,
+            sign_sites,
+        } => (flip_sites.clone(), sign_sites.clone(), *phase),
+    };
+    conjugate_pauli_by_deferred_ops(
+        &mut projector_flip_sites,
+        &mut projector_sign_sites,
+        &mut phase,
+        deferred,
+    );
+
+    match decomposition {
+        ZDecomposition::Stabilizer { .. } => {
+            if projector_flip_sites.is_empty() && projector_sign_sites.is_empty() {
+                // An impossible forced sibling is still observed before the
+                // live query prunes it. Its shadow state is never descended,
+                // so retain the live Lazy helper's tableau call without
+                // asserting that the deterministic result equals that dead
+                // edge's requested outcome.
+                let _ = tableau.mz_forced(q_idx, outcome);
+            }
+        }
+        ZDecomposition::DestabilizerFlip {
+            flip_sites,
+            phase,
+            sign_sites,
+        } => {
+            assert_eq!(
+                flip_sites.len(),
+                1,
+                "Direction-B shadow pre-reduction must leave one flip site"
+            );
+            enqueue_lazy_measurement_basis_update(
+                tableau,
+                deferred,
+                q_idx,
+                flip_sites[0],
+                phase,
+                &sign_sites,
+                outcome,
+            );
+        }
+    }
+
+    projector_flip_sites.sort_unstable();
+    projector_flip_sites.dedup();
+    projector_sign_sites.sort_unstable();
+    projector_sign_sites.dedup();
+    let mut projector_sites = projector_flip_sites.clone();
+    projector_sites.extend(projector_sign_sites.iter().copied());
+    projector_sites.sort_unstable();
+    projector_sites.dedup();
+    #[cfg(debug_assertions)]
+    debug_assert_eq!(projector_sites, independently_conjugated_support);
+    debug_assert_eq!(
+        deferred.len() > queue_len_at_projection,
+        outcome_update_required,
+        "only a destabilizer-flip projection appends outcome-dependent frame operations"
+    );
+    let projector_site_min = projector_sites.first().copied();
+    let projector_site_max = projector_sites.last().copied();
+    let projector_span = projector_site_min
+        .zip(projector_site_max)
+        .map_or(0, |(minimum, maximum)| maximum - minimum);
+
+    super::DirectionBShadowProjectionTelemetry {
+        outcome,
+        sibling_pair_id: None,
+        queue_len_before_pre_reduction,
+        compensation_cnot_count,
+        queue_len_at_projection,
+        queue_len_after_projection: deferred.len(),
+        projector_flip_sites,
+        projector_sign_sites,
+        projector_sites,
+        projector_site_min,
+        projector_site_max,
+        projector_span,
+        frame_wall_time_seconds: started.elapsed().as_secs_f64(),
+        flush_read_required,
+        flush_queue_length,
+        flush_walk_chi3_units,
+        eager_projection_event_index: None,
+    }
+}
+
+#[cfg(feature = "direction-b-phase0-test")]
+pub(super) struct DirectionBReplayProjection {
+    pub(super) tableau: SparseStabY,
+    pub(super) mps: Mps,
+    pub(super) deferred_ops: Vec<DeferredOp>,
+    pub(super) probability: f64,
+    pub(super) projection_svds: Vec<super::ProjectionSvdTelemetry>,
+    pub(super) wall_time_seconds: f64,
+}
+
+/// TEST HARNESS ONLY: execute one exact-query projection with Direction-B
+/// compensation queueing and the production full-chain projector add.
+#[cfg(feature = "direction-b-phase0-test")]
+pub(super) fn replay_direction_b_projection(
+    mut tableau: SparseStabY,
+    mut mps: Mps,
+    q_idx: usize,
+    outcome: bool,
+) -> Result<DirectionBReplayProjection, MpsError> {
+    let started = Instant::now();
+    let mut deferred_ops = Vec::new();
+    let _modified_sites =
+        pre_reduce_for_measurement_deferred(&mut tableau, q_idx, &mut deferred_ops);
+    let decomposition = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
+    let (mut flip_sites, mut sign_sites, mut phase) = match &decomposition {
+        ZDecomposition::Stabilizer { phase, sign_sites } => {
+            (Vec::new(), sign_sites.clone(), *phase)
+        }
+        ZDecomposition::DestabilizerFlip {
+            flip_sites,
+            phase,
+            sign_sites,
+        } => (flip_sites.clone(), sign_sites.clone(), *phase),
+    };
+    conjugate_pauli_by_deferred_ops(&mut flip_sites, &mut sign_sites, &mut phase, &deferred_ops);
+    let norm_squared = mps.norm_squared();
+    let expectation = (pauli_expectation(&mps, &flip_sites, &sign_sites, phase).re / norm_squared)
+        .clamp(-1.0, 1.0);
+    let probability = forced_outcome_probability(expectation, outcome);
+    assert!(
+        probability > 0.0,
+        "captured Direction-B replay requires a surviving branch"
+    );
+    apply_pauli_projection(
+        &mut mps,
+        &flip_sites,
+        &sign_sites,
+        phase,
+        if outcome { -1.0 } else { 1.0 },
+        probability,
+    );
+
+    match decomposition {
+        ZDecomposition::Stabilizer { .. } => {
+            if flip_sites.is_empty() && sign_sites.is_empty() {
+                let result = tableau.mz_forced(q_idx, outcome);
+                assert_eq!(result.outcome, outcome);
+            }
+        }
+        ZDecomposition::DestabilizerFlip {
+            flip_sites,
+            phase,
+            sign_sites,
+        } => {
+            assert_eq!(flip_sites.len(), 1);
+            enqueue_lazy_measurement_basis_update(
+                &mut tableau,
+                &mut deferred_ops,
+                q_idx,
+                flip_sites[0],
+                phase,
+                &sign_sites,
+                outcome,
+            );
+        }
+    }
+
+    mps.right_canonicalize();
+    let mut compression = Vec::new();
+    mps.compress_from_right_canonical_profiled(&mut compression)?;
+    mps.normalize();
+    let projection_svds = compression
+        .iter()
+        .map(|observed| super::ProjectionSvdTelemetry {
+            bond: observed.bond,
+            input_rows: observed.input_rows,
+            input_columns: observed.input_columns,
+            output_rank: observed.output_rank,
+            cap_binding: observed.cap_binding,
+        })
+        .collect();
+    Ok(DirectionBReplayProjection {
+        tableau,
+        mps,
+        deferred_ops,
+        probability,
+        projection_svds,
+        wall_time_seconds: started.elapsed().as_secs_f64(),
+    })
+}
+
 /// Convert a normalized single-flip Pauli eigenstate into the coefficient
 /// basis selected by the corresponding tableau measurement.
 fn collapse_projected_flip_site(mps: &mut Mps, id: usize) {
@@ -1833,7 +2142,9 @@ impl ProjectionLocalityContext {
             qr_sites_skippable_by_locality,
             qr_sites_skippable_by_center_ceiling,
             post_projection_qr_wall_time_seconds: 0.0,
+            post_projection_svd_wall_time_seconds: 0.0,
             compression_bonds_observed: 0,
+            projection_svd_steps: Vec::new(),
             external_bonds: Vec::new(),
             external_discarded_weight: 0.0,
             normalization_preserved_center: None,
@@ -1851,6 +2162,16 @@ fn finish_projection_compression_telemetry(
         "post-projection compression must report every internal bond"
     );
     event.compression_bonds_observed = compression.len();
+    event.projection_svd_steps = compression
+        .iter()
+        .map(|observed| super::ProjectionSvdTelemetry {
+            bond: observed.bond,
+            input_rows: observed.input_rows,
+            input_columns: observed.input_columns,
+            output_rank: observed.output_rank,
+            cap_binding: observed.cap_binding,
+        })
+        .collect();
     if event.construction != super::ProjectionConstruction::DirectSum {
         return;
     }
@@ -1899,15 +2220,15 @@ fn reduce_exact_projection_bonds_profiled(
         Mps::right_canonicalize,
     );
     let mut compression = Vec::new();
-    let result = if event.is_some() {
-        profile_query_phase(
+    let (result, svd_wall_time_seconds) = if event.is_some() {
+        profile_query_phase_with_elapsed(
             mps,
             telemetry,
             super::QueryPhase::PostProjectionSvd,
             |mps| mps.compress_from_right_canonical_profiled(&mut compression),
         )
     } else {
-        profile_query_phase(
+        profile_query_phase_with_elapsed(
             mps,
             telemetry,
             super::QueryPhase::PostProjectionSvd,
@@ -1917,6 +2238,7 @@ fn reduce_exact_projection_bonds_profiled(
     result?;
     if let Some(mut event) = event.take() {
         event.post_projection_qr_wall_time_seconds = qr_wall_time_seconds;
+        event.post_projection_svd_wall_time_seconds = svd_wall_time_seconds;
         finish_projection_compression_telemetry(&mut event, &compression);
         telemetry
             .as_deref_mut()
@@ -2439,42 +2761,9 @@ pub(super) fn measure_qubit_stab_mps_lazy_with_update(
         }
     }
 
-    // Push pre_reduce CNOTs to deferred instead of applying eagerly.
-    let mut modified_sites = Vec::new();
-    {
-        let col_x = &tableau.stabs().col_x[q_idx];
-        if col_x.len() > 1 {
-            let replaced_idx = find_replaced_stabilizer(tableau, q_idx);
-            let n = tableau.num_qubits();
-            let anticom: Vec<usize> = tableau.stabs().col_x[q_idx]
-                .iter()
-                .filter(|&id| id != replaced_idx)
-                .collect();
-            let stabs_snapshot = tableau.stabs().clone();
-            let destabs_snapshot = tableau.destabs().clone();
-            modified_sites.push(replaced_idx);
-            for other_id in anticom {
-                crate::stab_mps::tableau_compose::multiply_row(
-                    tableau.stabs_mut(),
-                    other_id,
-                    &stabs_snapshot,
-                    replaced_idx,
-                    n,
-                );
-                crate::stab_mps::tableau_compose::multiply_row(
-                    tableau.destabs_mut(),
-                    replaced_idx,
-                    &destabs_snapshot,
-                    other_id,
-                    n,
-                );
-                deferred.push(DeferredOp::Cnot(replaced_idx, other_id));
-                modified_sites.push(other_id);
-            }
-        }
-    }
-    modified_sites.sort_unstable();
-    modified_sites.dedup();
+    // Push pre-reduction CNOTs to the same ordered helper used by the exact
+    // query's Direction-B shadow.
+    let mut modified_sites = pre_reduce_for_measurement_deferred(tableau, q_idx, deferred);
 
     let decomp = decompose_z(tableau.stabs(), tableau.destabs(), q_idx);
     match decomp {
@@ -2880,6 +3169,22 @@ mod tests {
     fn sort_dedup(v: &mut Vec<usize>) {
         v.sort_unstable();
         v.dedup();
+    }
+
+    #[test]
+    fn direction_b_shadow_models_and_clears_trivial_read_flush() {
+        let mut tableau = SparseStabY::new(2).with_destab_sign_tracking();
+        let mps = Mps::new(2, MpsConfig::default());
+        let mut deferred = vec![DeferredOp::Cnot(0, 1)];
+        let event = direction_b_shadow_projection(&mut tableau, &mut deferred, &mps, 0, false);
+        assert!(event.flush_read_required);
+        assert_eq!(event.flush_queue_length, 1);
+        assert_eq!(event.flush_walk_chi3_units.to_bits(), 1.0_f64.to_bits());
+        assert_eq!(event.queue_len_before_pre_reduction, 0);
+        assert_eq!(event.compensation_cnot_count, 0);
+        assert_eq!(event.queue_len_at_projection, 0);
+        assert_eq!(event.queue_len_after_projection, 0);
+        assert!(deferred.is_empty());
     }
 
     fn dense_pauli(flip_mask: usize, sign_mask: usize, phase: Complex64) -> DMatrix<Complex64> {

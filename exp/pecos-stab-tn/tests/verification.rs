@@ -2589,6 +2589,10 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     let mut projector_external_bonds = 0;
     let mut pre_reduction_sibling_pairs = 0;
     let mut pre_reduction_numerical_events = 0;
+    let mut direction_b_sibling_pairs = 0;
+    let mut direction_b_compensation_events = 0;
+    let mut direction_b_positive_frame_events = 0;
+    let mut direction_b_positive_clone_buckets = 0;
     for truncating in [false, true] {
         for num_qubits in 3..=6 {
             for seed_family in 0..4_u64 {
@@ -2624,6 +2628,10 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                 let (profiled, profile) = stn.prob_bitstrings_profiled(&queries);
                 let (locality_profiled, locality_profile) =
                     stn.prob_bitstrings_profiled_with_projection_locality(&queries);
+                let (shadow_off_profiled, shadow_off_profile) = stn
+                    .prob_bitstrings_profiled_with_projection_locality_without_direction_b_shadow(
+                        &queries,
+                    );
                 assert_eq!(batched.len(), queries.len());
                 assert_eq!(
                     profiled
@@ -2647,6 +2655,35 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         .collect::<Vec<_>>(),
                     "locality diagnostics changed outputs for truncating={truncating} n={num_qubits} seed={circuit_seed}"
                 );
+                assert_eq!(
+                    shadow_off_profiled
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    batched
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    "shadow-OFF locality diagnostics changed outputs for truncating={truncating} n={num_qubits} seed={circuit_seed}"
+                );
+                assert!(shadow_off_profile.by_depth.iter().all(|depth| {
+                    depth.direction_b_shadow.is_empty()
+                        && depth.direction_b_shadow_clone_calls == 0
+                        && depth.direction_b_shadow_clone_wall_time_seconds == 0.0
+                }));
+                assert_eq!(
+                    shadow_off_profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.projection_qr_locality.len())
+                        .collect::<Vec<_>>(),
+                    locality_profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.projection_qr_locality.len())
+                        .collect::<Vec<_>>(),
+                    "shadow ON/OFF must retain the same eager locality population"
+                );
                 assert!(
                     profile
                         .by_depth
@@ -2661,6 +2698,17 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         .all(|depth| depth.pre_reduction_diagnostics.is_empty()),
                     "ordinary query profiling unexpectedly collected pre-reduction diagnostics"
                 );
+                assert!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .all(|depth| depth.direction_b_shadow.is_empty()),
+                    "ordinary query profiling unexpectedly ran the Direction-B shadow"
+                );
+                assert!(profile.by_depth.iter().all(|depth| {
+                    depth.direction_b_shadow_clone_calls == 0
+                        && depth.direction_b_shadow_clone_wall_time_seconds == 0.0
+                }));
                 let pre_reduction_events = locality_profile
                     .by_depth
                     .iter()
@@ -2859,6 +2907,108 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                     );
                     pre_reduction_sibling_pairs += 1;
                 }
+                let shadow_event_count = locality_profile
+                    .by_depth
+                    .iter()
+                    .map(|depth| depth.direction_b_shadow.len() as u64)
+                    .sum::<u64>();
+                assert_eq!(
+                    shadow_event_count,
+                    locality_profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.expectation.calls)
+                        .sum::<u64>(),
+                    "every forced trie edge must advance exactly one Direction-B shadow"
+                );
+                let mut shadow_sibling_pairs = std::collections::BTreeMap::<u64, Vec<_>>::new();
+                for bucket in &locality_profile.by_depth {
+                    let linked_indices = bucket
+                        .direction_b_shadow
+                        .iter()
+                        .filter_map(|event| event.eager_projection_event_index)
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        linked_indices,
+                        (0..bucket.projection_qr_locality.len()).collect::<Vec<_>>(),
+                        "shadow/eager projection links must be complete and ordered"
+                    );
+                    for event in &bucket.direction_b_shadow {
+                        assert_eq!(
+                            event.queue_len_at_projection,
+                            event.queue_len_before_pre_reduction + event.compensation_cnot_count
+                        );
+                        assert!(event.queue_len_after_projection >= event.queue_len_at_projection);
+                        assert!(event.frame_wall_time_seconds.is_finite());
+                        assert!(event.frame_wall_time_seconds >= 0.0);
+                        direction_b_positive_frame_events +=
+                            usize::from(event.frame_wall_time_seconds > 0.0);
+                        assert_eq!(event.flush_read_required, event.flush_queue_length > 0);
+                        if !event.flush_read_required {
+                            assert_eq!(event.flush_walk_chi3_units.to_bits(), 0.0_f64.to_bits());
+                        }
+                        let mut projector_sites = event.projector_flip_sites.clone();
+                        projector_sites.extend(event.projector_sign_sites.iter().copied());
+                        projector_sites.sort_unstable();
+                        projector_sites.dedup();
+                        assert_eq!(event.projector_sites, projector_sites);
+                        assert_eq!(event.projector_site_min, projector_sites.first().copied());
+                        assert_eq!(event.projector_site_max, projector_sites.last().copied());
+                        assert_eq!(
+                            event.projector_span,
+                            event
+                                .projector_site_min
+                                .zip(event.projector_site_max)
+                                .map_or(0, |(minimum, maximum)| maximum - minimum)
+                        );
+                        direction_b_compensation_events +=
+                            usize::from(event.compensation_cnot_count > 0);
+                        if let Some(pair_id) = event.sibling_pair_id {
+                            shadow_sibling_pairs.entry(pair_id).or_default().push(event);
+                        }
+                    }
+                }
+                for pair in shadow_sibling_pairs.values() {
+                    assert_eq!(
+                        pair.len(),
+                        2,
+                        "shadow sibling pair must contain both outcomes"
+                    );
+                    assert_ne!(pair[0].outcome, pair[1].outcome);
+                    assert_eq!(
+                        pair[0].queue_len_before_pre_reduction,
+                        pair[1].queue_len_before_pre_reduction
+                    );
+                    assert_eq!(
+                        pair[0].compensation_cnot_count,
+                        pair[1].compensation_cnot_count
+                    );
+                    assert_eq!(
+                        pair[0].queue_len_at_projection,
+                        pair[1].queue_len_at_projection
+                    );
+                    assert_eq!(pair[0].projector_flip_sites, pair[1].projector_flip_sites);
+                    assert_eq!(pair[0].projector_sign_sites, pair[1].projector_sign_sites);
+                    direction_b_sibling_pairs += 1;
+                }
+                assert_eq!(
+                    locality_profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.direction_b_shadow_clone_calls)
+                        .sum::<u64>(),
+                    1 + shadow_sibling_pairs.len() as u64,
+                    "one root construction plus one clone per trie branch point must be timed"
+                );
+                assert!(locality_profile.by_depth.iter().all(|depth| {
+                    depth.direction_b_shadow_clone_wall_time_seconds.is_finite()
+                        && depth.direction_b_shadow_clone_wall_time_seconds >= 0.0
+                }));
+                direction_b_positive_clone_buckets += locality_profile
+                    .by_depth
+                    .iter()
+                    .filter(|depth| depth.direction_b_shadow_clone_wall_time_seconds > 0.0)
+                    .count();
                 let locality_events = locality_profile
                     .by_depth
                     .iter()
@@ -2885,10 +3035,32 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
                         bucket.post_projection_qr.wall_time_seconds.to_bits(),
                         "per-event QR timers must exactly reproduce their depth bucket"
                     );
+                    assert_eq!(
+                        (bucket
+                            .projection_qr_locality
+                            .iter()
+                            .map(|event| event.post_projection_svd_wall_time_seconds)
+                            .sum::<f64>()
+                            + 0.0)
+                            .to_bits(),
+                        bucket.post_projection_svd.wall_time_seconds.to_bits(),
+                        "per-event SVD timers must exactly reproduce their depth bucket"
+                    );
                 }
                 for event in locality_events {
                     assert_eq!(event.projection_entry_bond_profile.len(), num_qubits - 1);
                     assert_eq!(event.compression_bonds_observed, num_qubits - 1);
+                    assert_eq!(event.projection_svd_steps.len(), num_qubits - 1);
+                    for (expected_bond, step) in (1..num_qubits).zip(&event.projection_svd_steps) {
+                        assert_eq!(step.bond, expected_bond);
+                        assert!(step.input_rows > 0);
+                        assert!(step.input_columns > 0);
+                        assert!(step.output_rank > 0);
+                        assert!(step.output_rank <= step.input_rows.min(step.input_columns));
+                        if step.cap_binding {
+                            assert_eq!(step.output_rank, max_bond_dim);
+                        }
+                    }
                     assert_eq!(
                         event.center_before_positioning, event.center_before_projection_write,
                         "the current path performs no positioning between the two observations"
@@ -3154,6 +3326,22 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     assert!(
         pre_reduction_numerical_events > 0,
         "pre-reduction diagnostics never observed an SVD-bearing event"
+    );
+    assert!(
+        direction_b_sibling_pairs > 0,
+        "Direction-B shadow never exercised independent sibling clones"
+    );
+    assert!(
+        direction_b_compensation_events > 0,
+        "Direction-B shadow never queued a compensation CNOT"
+    );
+    assert!(
+        direction_b_positive_frame_events > 0,
+        "Direction-B shadow frame timer never advanced"
+    );
+    assert!(
+        direction_b_positive_clone_buckets > 0,
+        "Direction-B shadow clone timer never advanced"
     );
 
     // Every false-q0 query is an endpoint-zero subtree. It must be pruned to

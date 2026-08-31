@@ -12,6 +12,11 @@ categories.workspace = true
 description = "Experimental hybrid stabilizer + tensor network simulation methods (STN, MAST, CAMPS, etc.)."
 publish = false
 
+[features]
+# Compiles the Phase-0 captured replay harness. The production simulator does
+# not expose or execute Direction-B mechanics.
+direction-b-phase0-test = []
+
 [lib]
 crate-type = ["rlib"]
 

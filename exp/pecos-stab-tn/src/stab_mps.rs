@@ -1180,6 +1180,98 @@ pub struct PreReductionTelemetry {
     pub output_profile_unchanged: bool,
 }
 
+/// Runtime-gated observation of one forced projection under a simulated
+/// Direction-B deferred compensation frame.
+///
+/// This record is produced by an independent tableau/queue shadow. The live
+/// exact query remains eager and supplies the returned probability and MPS
+/// trajectory; only `eager_projection_event_index` links the observation to
+/// the corresponding live projector event when that event reached an MPS
+/// write.
+#[derive(Clone, Debug)]
+pub struct DirectionBShadowProjectionTelemetry {
+    /// Forced branch outcome requested by the trie edge.
+    pub outcome: bool,
+    /// Pair identifier shared by the two independently cloned sibling shadows.
+    pub sibling_pair_id: Option<u64>,
+    /// Queue length on entry, before this projection's pre-reduction.
+    pub queue_len_before_pre_reduction: usize,
+    /// Compensation CNOTs appended by tableau-side pre-reduction.
+    pub compensation_cnot_count: usize,
+    /// Complete queue length used for reverse-order projector conjugation.
+    pub queue_len_at_projection: usize,
+    /// Queue length after the outcome-dependent inverse and gauge operations.
+    pub queue_len_after_projection: usize,
+    /// Conjugated X/flip support at projection time.
+    pub projector_flip_sites: Vec<usize>,
+    /// Conjugated Z/sign support at projection time.
+    pub projector_sign_sites: Vec<usize>,
+    /// Sorted union of conjugated flip and sign support.
+    pub projector_sites: Vec<usize>,
+    /// Smallest site in `projector_sites`.
+    pub projector_site_min: Option<usize>,
+    /// Largest site in `projector_sites`.
+    pub projector_site_max: Option<usize>,
+    /// `projector_site_max - projector_site_min`, or zero for empty support.
+    pub projector_span: usize,
+    /// Shadow algebra and bookkeeping wall time; no MPS compensation ran.
+    pub frame_wall_time_seconds: f64,
+    /// Whether the existing Lazy trivial-state read would materialize the
+    /// queue at this point.
+    pub flush_read_required: bool,
+    /// Queue length immediately before a modeled read flush, otherwise zero.
+    pub flush_queue_length: usize,
+    /// Fixed-entry-rank `chi^3` walk units for that modeled flush.
+    pub flush_walk_chi3_units: f64,
+    /// Index of the matching eager MPS projection event at this trie depth.
+    /// `None` denotes an endpoint/trivial branch that performed no MPS write.
+    pub eager_projection_event_index: Option<usize>,
+}
+
+/// Result of the feature-gated deterministic n=64 Direction-B replay.
+#[cfg(feature = "direction-b-phase0-test")]
+#[derive(Clone, Debug)]
+pub struct DirectionBPhase0ReplayReport {
+    /// Captured forced-projection depth.
+    pub depth: usize,
+    /// Captured forced outcome.
+    pub outcome: bool,
+    /// Cap-saturated bonds at call entry.
+    pub input_cap_saturated_bonds: usize,
+    /// Complete internal-bond profile at call entry.
+    pub input_bond_profile: Vec<usize>,
+    /// Measured isolated eager wall time.
+    pub eager_wall_time_seconds: f64,
+    /// Measured isolated B-style wall time before any read flush.
+    pub direction_b_wall_time_seconds: f64,
+    /// Measured materializing read-flush wall time for state comparison.
+    pub direction_b_flush_wall_time_seconds: f64,
+    /// Eager compensation SVDs in execution order.
+    pub eager_pre_reduction_svds: Vec<PreReductionSvdTelemetry>,
+    /// Eager post-projection compression SVDs.
+    pub eager_projection_svds: Vec<ProjectionSvdTelemetry>,
+    /// B-style post-projection compression SVDs; pre-reduction performs none.
+    pub direction_b_projection_svds: Vec<ProjectionSvdTelemetry>,
+    /// Eager output bond profile.
+    pub eager_bond_profile: Vec<usize>,
+    /// B output bond profile while the frame remains virtual.
+    pub direction_b_bond_profile: Vec<usize>,
+    /// B bond profile after the comparison read materializes its queue.
+    pub direction_b_flushed_bond_profile: Vec<usize>,
+    /// Number of ordered frame operations after the B projection.
+    pub direction_b_queue_length: usize,
+    /// Number of sampled amplitudes used for state comparison.
+    pub amplitude_samples: usize,
+    /// Squared normalized overlap on the deterministic amplitude sample.
+    pub sampled_state_overlap: f64,
+    /// Largest absolute amplitude residual after sample-derived phase alignment.
+    pub sampled_max_aligned_residual: f64,
+    /// Eager forced-outcome probability.
+    pub eager_probability: f64,
+    /// B-style forced-outcome probability before trajectory changes.
+    pub direction_b_probability: f64,
+}
+
 /// Tensor construction used by one exact forced projection.
 ///
 /// This labels the projection algorithm, not the operation that invalidated
@@ -1216,6 +1308,21 @@ pub struct ExternalProjectionBondTelemetry {
     pub retained_rank_changed: bool,
     /// Relative singular-value weight discarded at this bond.
     pub discarded_weight: f64,
+}
+
+/// Matrix shape and retained rank for one post-projection compression SVD.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionSvdTelemetry {
+    /// Internal bond split by this SVD.
+    pub bond: usize,
+    /// Matrix row dimension.
+    pub input_rows: usize,
+    /// Matrix column dimension.
+    pub input_columns: usize,
+    /// Rank retained by the configured compression policy.
+    pub output_rank: usize,
+    /// Whether the configured maximum bond dimension was binding.
+    pub cap_binding: bool,
 }
 
 /// Runtime-gated locality details for one exact post-projection QR consult.
@@ -1311,8 +1418,12 @@ pub struct ProjectionQrLocalityTelemetry {
     /// Model alternatives use this only to calibrate their dimensionless
     /// `chi^3` units; they remain model numbers, not measured alternatives.
     pub post_projection_qr_wall_time_seconds: f64,
+    /// Measured wall time of this event's configured post-projection SVD sweep.
+    pub post_projection_svd_wall_time_seconds: f64,
     /// Number of per-bond compression decisions observed after this event.
     pub compression_bonds_observed: usize,
+    /// Shapes and retained ranks for every post-projection compression SVD.
+    pub projection_svd_steps: Vec<ProjectionSvdTelemetry>,
     /// Results for every bond external to a direct-sum projector span.
     pub external_bonds: Vec<ExternalProjectionBondTelemetry>,
     /// Sum of per-bond relative discarded weights on `external_bonds`.
@@ -1347,8 +1458,15 @@ pub struct QueryDepthTelemetry {
     pub projection_qr_locality: Vec<ProjectionQrLocalityTelemetry>,
     /// Opt-in event details for every pre-reduction call at this depth.
     pub pre_reduction_diagnostics: Vec<PreReductionTelemetry>,
+    /// Opt-in Direction-B shadow event for every forced trie edge at this depth.
+    pub direction_b_shadow: Vec<DirectionBShadowProjectionTelemetry>,
+    /// Number of Direction-B shadow constructions/clones charged at this depth.
+    pub direction_b_shadow_clone_calls: u64,
+    /// Measured wall time spent constructing/cloning shadow tableau+queue pairs.
+    pub direction_b_shadow_clone_wall_time_seconds: f64,
     phase_active: bool,
     projection_locality_active: bool,
+    direction_b_shadow_active: bool,
 }
 
 /// Depth-bucketed profile returned by [`StabMps::prob_bitstrings_profiled`].
@@ -1380,6 +1498,10 @@ impl QueryDepthTelemetry {
         self.projection_locality_active
     }
 
+    pub(super) fn direction_b_shadow_active(&self) -> bool {
+        self.direction_b_shadow_active
+    }
+
     pub(super) fn record_projection_qr_locality(&mut self, event: ProjectionQrLocalityTelemetry) {
         assert!(
             self.projection_locality_active,
@@ -1394,6 +1516,24 @@ impl QueryDepthTelemetry {
             "pre-reduction diagnostics were not enabled"
         );
         self.pre_reduction_diagnostics.push(event);
+    }
+
+    pub(super) fn record_direction_b_shadow(&mut self, event: DirectionBShadowProjectionTelemetry) {
+        assert!(
+            self.projection_locality_active && self.direction_b_shadow_active,
+            "Direction-B shadow telemetry was not enabled"
+        );
+        self.direction_b_shadow.push(event);
+    }
+
+    pub(super) fn record_direction_b_shadow_clone(&mut self, wall_time_seconds: f64) {
+        assert!(
+            self.projection_locality_active && self.direction_b_shadow_active,
+            "Direction-B shadow clone telemetry was not enabled"
+        );
+        assert!(wall_time_seconds.is_finite() && wall_time_seconds >= 0.0);
+        self.direction_b_shadow_clone_calls += 1;
+        self.direction_b_shadow_clone_wall_time_seconds += wall_time_seconds;
     }
 
     pub(super) fn record_projection_normalization(&mut self, preserved_center: bool) {
@@ -1505,20 +1645,57 @@ struct PrefixSamplingContext<'a> {
 /// Both batched probability queries and prefix-tree sampling use this type so
 /// the clone-at-branch and atomic-projection rules have a single owner.
 #[derive(Clone)]
+struct DirectionBShadowState {
+    tableau: SparseStabY,
+    deferred_ops: Vec<measure::DeferredOp>,
+}
+
+#[derive(Clone)]
 struct PrefixProjectionState {
     tableau: SparseStabY,
     mps: Mps,
+    direction_b_shadow: Option<DirectionBShadowState>,
 }
 
 impl PrefixProjectionState {
+    fn clone_for_branch(&self, telemetry: Option<&mut QueryDepthTelemetry>) -> Self {
+        let tableau = self.tableau.clone();
+        let mps = self.mps.clone();
+        let started = Instant::now();
+        let direction_b_shadow = self.direction_b_shadow.clone();
+        let shadow_clone_seconds = started.elapsed().as_secs_f64();
+        if let Some(telemetry) = telemetry
+            && direction_b_shadow.is_some()
+        {
+            telemetry.record_direction_b_shadow_clone(shadow_clone_seconds);
+        }
+        Self {
+            tableau,
+            mps,
+            direction_b_shadow,
+        }
+    }
+
     fn project_z(
         &mut self,
         qubit: usize,
         outcome: bool,
-        telemetry: Option<&mut QueryDepthTelemetry>,
+        mut telemetry: Option<&mut QueryDepthTelemetry>,
         sibling_pair_id: Option<u64>,
     ) -> Result<f64, MpsError> {
-        match telemetry {
+        let mut shadow_event = self.direction_b_shadow.as_mut().map(|shadow| {
+            measure::direction_b_shadow_projection(
+                &mut shadow.tableau,
+                &mut shadow.deferred_ops,
+                &self.mps,
+                qubit,
+                outcome,
+            )
+        });
+        let eager_projection_event_index = telemetry
+            .as_ref()
+            .map(|telemetry| telemetry.projection_qr_locality.len());
+        let result = match telemetry.as_mut() {
             Some(telemetry) => measure::project_forced_z_profiled(
                 &mut self.tableau,
                 &mut self.mps,
@@ -1528,7 +1705,24 @@ impl PrefixProjectionState {
                 sibling_pair_id,
             ),
             None => measure::project_forced_z(&mut self.tableau, &mut self.mps, qubit, outcome),
+        };
+        if let Some(mut event) = shadow_event.take() {
+            let telemetry = telemetry.expect("Direction-B shadow requires query telemetry");
+            let index = eager_projection_event_index
+                .expect("Direction-B shadow requires eager projection indexing");
+            if telemetry.projection_qr_locality.len() == index + 1 {
+                event.eager_projection_event_index = Some(index);
+            } else {
+                assert_eq!(
+                    telemetry.projection_qr_locality.len(),
+                    index,
+                    "one forced projection emitted multiple eager locality events"
+                );
+            }
+            event.sibling_pair_id = sibling_pair_id;
+            telemetry.record_direction_b_shadow(event);
         }
+        result
     }
 }
 
@@ -2075,7 +2269,7 @@ impl StabMps {
         &self,
         bitstrings: &[B],
     ) -> (Vec<f64>, ProbabilityQueryTelemetry) {
-        self.prob_bitstrings_profiled_impl(bitstrings, false)
+        self.prob_bitstrings_profiled_impl(bitstrings, false, false)
     }
 
     /// Profiled [`Self::prob_bitstrings`] with opt-in projection-locality and
@@ -2090,18 +2284,33 @@ impl StabMps {
         &self,
         bitstrings: &[B],
     ) -> (Vec<f64>, ProbabilityQueryTelemetry) {
-        self.prob_bitstrings_profiled_impl(bitstrings, true)
+        self.prob_bitstrings_profiled_impl(bitstrings, true, true)
+    }
+
+    /// Diagnostic A/B sibling that retains all projection-locality and
+    /// pre-reduction observations while disabling only the Direction-B shadow.
+    #[must_use]
+    pub fn prob_bitstrings_profiled_with_projection_locality_without_direction_b_shadow<
+        B: AsRef<[bool]>,
+    >(
+        &self,
+        bitstrings: &[B],
+    ) -> (Vec<f64>, ProbabilityQueryTelemetry) {
+        self.prob_bitstrings_profiled_impl(bitstrings, true, false)
     }
 
     fn prob_bitstrings_profiled_impl<B: AsRef<[bool]>>(
         &self,
         bitstrings: &[B],
         projection_locality_active: bool,
+        direction_b_shadow_active: bool,
     ) -> (Vec<f64>, ProbabilityQueryTelemetry) {
+        assert!(!direction_b_shadow_active || projection_locality_active);
         let mut telemetry = ProbabilityQueryTelemetry {
             by_depth: (0..self.num_qubits)
                 .map(|_| QueryDepthTelemetry {
                     projection_locality_active,
+                    direction_b_shadow_active,
                     ..QueryDepthTelemetry::default()
                 })
                 .collect(),
@@ -2117,7 +2326,7 @@ impl StabMps {
     fn prob_bitstrings_impl<B: AsRef<[bool]>>(
         &self,
         bitstrings: &[B],
-        telemetry: Option<&mut ProbabilityQueryTelemetry>,
+        mut telemetry: Option<&mut ProbabilityQueryTelemetry>,
     ) -> Vec<f64> {
         let mut trie = ProbabilityQueryTrieNode::default();
         for (query_index, bitstring) in bitstrings.iter().enumerate() {
@@ -2133,8 +2342,29 @@ impl StabMps {
             return Vec::new();
         }
 
+        let direction_b_shadow_active = telemetry.as_deref().is_some_and(|telemetry| {
+            telemetry
+                .by_depth
+                .first()
+                .is_some_and(QueryDepthTelemetry::direction_b_shadow_active)
+        });
+        let tableau = self.tableau.clone();
+        let shadow_started = Instant::now();
+        let direction_b_shadow = direction_b_shadow_active.then(|| DirectionBShadowState {
+            tableau: tableau.clone(),
+            deferred_ops: Vec::new(),
+        });
+        let shadow_initialization_seconds = shadow_started.elapsed().as_secs_f64();
+        if direction_b_shadow_active {
+            telemetry
+                .as_deref_mut()
+                .expect("Direction-B shadow initialization requires telemetry")
+                .by_depth[0]
+                .record_direction_b_shadow_clone(shadow_initialization_seconds);
+        }
         let state = PrefixProjectionState {
-            tableau: self.tableau.clone(),
+            direction_b_shadow,
+            tableau,
             mps: self.mps.clone(),
         };
         let mut probabilities = vec![0.0; bitstrings.len()];
@@ -2151,6 +2381,201 @@ impl StabMps {
             "StabMps::prob_bitstrings forced projection",
         );
         probabilities
+    }
+
+    /// TEST HARNESS ONLY: capture and replay the first deterministic
+    /// cap-saturated pre-reduction+direct-sum projection on one query path.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless this is the required 64-qubit replay, unless at least one
+    /// complete query is supplied, or if no cap-saturated pre-reduction plus
+    /// direct-sum projection is encountered on the deterministic path.
+    #[cfg(feature = "direction-b-phase0-test")]
+    #[must_use]
+    pub fn direction_b_phase0_replay<B: AsRef<[bool]>>(
+        &self,
+        bitstrings: &[B],
+    ) -> DirectionBPhase0ReplayReport {
+        assert_eq!(self.num_qubits, 64, "Phase-0 replay is the n=64 falsifier");
+        let first = bitstrings
+            .first()
+            .expect("Phase-0 replay requires at least one query")
+            .as_ref();
+        assert_eq!(first.len(), self.num_qubits);
+        let mut state = PrefixProjectionState {
+            tableau: self.tableau.clone(),
+            mps: self.mps.clone(),
+            direction_b_shadow: None,
+        };
+        let bond_profile = |mps: &Mps| {
+            mps.bond_dims()
+                .iter()
+                .copied()
+                .skip(1)
+                .take(mps.num_sites().saturating_sub(1))
+                .collect::<Vec<_>>()
+        };
+
+        for (depth, &outcome) in first.iter().enumerate() {
+            let input_is_cap_saturated =
+                state.mps.max_bond_dim() == state.mps.config().max_bond_dim;
+            let input_needs_pre_reduction = state.tableau.stabs().col_x[depth].len() > 1;
+            if input_is_cap_saturated && input_needs_pre_reduction {
+                let input_tableau = state.tableau.clone();
+                let input_mps = state.mps.clone();
+                let mut eager_tableau = input_tableau.clone();
+                let mut eager_mps = input_mps.clone();
+                let mut eager_telemetry = QueryDepthTelemetry {
+                    projection_locality_active: true,
+                    ..QueryDepthTelemetry::default()
+                };
+                let eager_started = Instant::now();
+                let eager_probability = expect_mps_operation(
+                    measure::project_forced_z_profiled(
+                        &mut eager_tableau,
+                        &mut eager_mps,
+                        depth,
+                        outcome,
+                        &mut eager_telemetry,
+                        None,
+                    ),
+                    "Direction-B Phase-0 eager replay",
+                );
+                let eager_wall_time_seconds = eager_started.elapsed().as_secs_f64();
+                let pre_reduction = eager_telemetry
+                    .pre_reduction_diagnostics
+                    .first()
+                    .expect("captured eager replay must record pre-reduction");
+                let eager_projection = eager_telemetry.projection_qr_locality.first();
+                let capture_is_faithful = eager_probability >= QUERY_ZERO_PROBABILITY_FLOOR
+                    && pre_reduction.input_cap_saturated_bonds > 0
+                    && pre_reduction.svd_operations > 0
+                    && eager_projection.is_some_and(|event| {
+                        event.construction == ProjectionConstruction::DirectSum
+                    });
+                if capture_is_faithful {
+                    let direction_b = expect_mps_operation(
+                        measure::replay_direction_b_projection(
+                            input_tableau,
+                            input_mps,
+                            depth,
+                            outcome,
+                        ),
+                        "Direction-B Phase-0 B-style replay",
+                    );
+                    let direction_b_queue_length = direction_b.deferred_ops.len();
+                    let direction_b_bond_profile = bond_profile(&direction_b.mps);
+                    let mut direction_b_flushed_mps = direction_b.mps.clone();
+                    let mut direction_b_flush_queue = direction_b.deferred_ops.clone();
+                    let flush_started = Instant::now();
+                    expect_mps_operation(
+                        measure::flush_deferred_ops(
+                            &mut direction_b_flushed_mps,
+                            &mut direction_b_flush_queue,
+                        ),
+                        "Direction-B Phase-0 comparison read flush",
+                    );
+                    let direction_b_flush_wall_time_seconds = flush_started.elapsed().as_secs_f64();
+                    assert!(direction_b_flush_queue.is_empty());
+                    let direction_b_flushed_bond_profile = bond_profile(&direction_b_flushed_mps);
+
+                    let mut eager_view = self.clone();
+                    eager_view.tableau = eager_tableau;
+                    eager_view.mps = eager_mps;
+                    eager_view.deferred_ops.clear();
+                    eager_view.pending_rz.fill(None);
+                    let mut direction_b_view = self.clone();
+                    direction_b_view.tableau = direction_b.tableau;
+                    direction_b_view.mps = direction_b_flushed_mps;
+                    direction_b_view.deferred_ops.clear();
+                    direction_b_view.pending_rz.fill(None);
+
+                    // Two complementary deterministic suffixes keep the
+                    // n=64 iterative-amplitude oracle on its established
+                    // convergent path while still testing a relative
+                    // amplitude, which one bitstring cannot do.
+                    let mut samples = Vec::with_capacity(2);
+                    for variant in 0..2_usize {
+                        let mut sample = first.to_vec();
+                        sample[depth] = outcome;
+                        for (site, bit) in sample.iter_mut().enumerate().skip(depth + 1) {
+                            let base = (site * 17 + depth) & 1;
+                            *bit = (base ^ variant) != 0;
+                        }
+                        if !samples.contains(&sample) {
+                            samples.push(sample);
+                        }
+                    }
+                    let eager_amplitudes = samples
+                        .iter()
+                        .map(|sample| eager_view.amplitude_iterative(sample))
+                        .collect::<Vec<_>>();
+                    let direction_b_amplitudes = samples
+                        .iter()
+                        .map(|sample| direction_b_view.amplitude_iterative(sample))
+                        .collect::<Vec<_>>();
+                    let sample_inner = eager_amplitudes
+                        .iter()
+                        .zip(&direction_b_amplitudes)
+                        .map(|(&eager, &b)| eager.conj() * b)
+                        .sum::<Complex64>();
+                    let eager_sample_norm = eager_amplitudes
+                        .iter()
+                        .map(Complex64::norm_sqr)
+                        .sum::<f64>();
+                    let direction_b_sample_norm = direction_b_amplitudes
+                        .iter()
+                        .map(Complex64::norm_sqr)
+                        .sum::<f64>();
+                    assert!(eager_sample_norm > 0.0 && direction_b_sample_norm > 0.0);
+                    let sampled_state_overlap =
+                        sample_inner.norm_sqr() / (eager_sample_norm * direction_b_sample_norm);
+                    let alignment = if sample_inner.norm() > 0.0 {
+                        sample_inner.conj() / Complex64::new(sample_inner.norm(), 0.0)
+                    } else {
+                        Complex64::new(1.0, 0.0)
+                    };
+                    let sampled_max_aligned_residual = eager_amplitudes
+                        .iter()
+                        .zip(&direction_b_amplitudes)
+                        .map(|(&eager, &b)| (eager - alignment * b).norm())
+                        .fold(0.0, f64::max);
+                    let eager_projection =
+                        eager_projection.expect("faithful capture has an eager projection event");
+                    return DirectionBPhase0ReplayReport {
+                        depth,
+                        outcome,
+                        input_cap_saturated_bonds: pre_reduction.input_cap_saturated_bonds,
+                        input_bond_profile: pre_reduction.input_bond_profile.clone(),
+                        eager_wall_time_seconds,
+                        direction_b_wall_time_seconds: direction_b.wall_time_seconds,
+                        direction_b_flush_wall_time_seconds,
+                        eager_pre_reduction_svds: pre_reduction.svd_steps.clone(),
+                        eager_projection_svds: eager_projection.projection_svd_steps.clone(),
+                        direction_b_projection_svds: direction_b.projection_svds,
+                        eager_bond_profile: bond_profile(&eager_view.mps),
+                        direction_b_bond_profile,
+                        direction_b_flushed_bond_profile,
+                        direction_b_queue_length,
+                        amplitude_samples: samples.len(),
+                        sampled_state_overlap,
+                        sampled_max_aligned_residual,
+                        eager_probability,
+                        direction_b_probability: direction_b.probability,
+                    };
+                }
+            }
+
+            let probability = expect_mps_operation(
+                state.project_z(depth, outcome, None, None),
+                "Direction-B Phase-0 capture walk",
+            );
+            if probability < QUERY_ZERO_PROBABILITY_FLOOR {
+                break;
+            }
+        }
+        panic!("n=64 query path contained no surviving cap-heavy direct-sum projection")
     }
 
     fn probability_query_prefix_tree(
@@ -2175,7 +2600,11 @@ impl StabMps {
                 let sibling_pair_id = telemetry
                     .as_deref_mut()
                     .and_then(ProbabilityQueryTelemetry::allocate_sibling_pair_id);
-                let mut zero_state = state.clone();
+                let mut zero_state = state.clone_for_branch(
+                    telemetry
+                        .as_deref_mut()
+                        .map(|profile| &mut profile.by_depth[qubit]),
+                );
                 let zero_probability = total_probability
                     * zero_state.project_z(
                         qubit,
@@ -2716,6 +3145,7 @@ impl StabMps {
         let mut state = PrefixProjectionState {
             tableau: working.tableau,
             mps: working.mps,
+            direction_b_shadow: None,
         };
         expect_mps_operation(
             Self::sample_prefix_tree(&mut state, num_shots, &mut prefix, &mut context),

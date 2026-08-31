@@ -33,6 +33,7 @@ from zluppy._zluppy import (
     ZluppyError,
     compile_to_slr,
     compile_to_slr_json,
+    compile_to_phir_json,
     compile_to_hugr,
     compile_file,
     compile_file_json,
@@ -57,6 +58,7 @@ __all__ = [
     # Source compilation
     "compile_to_slr",
     "compile_to_slr_json",
+    "compile_to_phir_json",
     "compile_to_hugr",
     "check",
     "parse_debug",

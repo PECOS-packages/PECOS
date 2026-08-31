@@ -4364,7 +4364,6 @@ fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
         GateType::SZZ => pecos_neo::GateType::SZZ,
         GateType::SZZdg => pecos_neo::GateType::SZZdg,
         GateType::SWAP => pecos_neo::GateType::SWAP,
-        GateType::CRZ => pecos_neo::GateType::CRZ,
         GateType::RXX => pecos_neo::GateType::RXX,
         GateType::RYY => pecos_neo::GateType::RYY,
         GateType::RZZ => pecos_neo::GateType::RZZ,

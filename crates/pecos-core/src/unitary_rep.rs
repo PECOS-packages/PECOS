@@ -3512,8 +3512,7 @@ fn gate_type_color(gt: GateType) -> CellColor {
         | GateType::MZ
         | GateType::PZ
         | GateType::SZZ
-        | GateType::SZZdg
-        | GateType::CRZ => CellColor::ZAxis,
+        | GateType::SZZdg => CellColor::ZAxis,
         GateType::SX | GateType::SXdg => CellColor::YZMix,
         GateType::SY | GateType::SYdg | GateType::H | GateType::CH => CellColor::XZMix,
         GateType::SZ | GateType::SZdg => CellColor::XYMix,

@@ -50,7 +50,6 @@ impl GateType {
             Self::SYY => gates::SYY,
             Self::SYYdg => gates::SYYdg,
             Self::SWAP => gates::SWAP,
-            Self::CRZ => gates::CRZ,
             Self::RXX => gates::RXX,
             Self::RYY => gates::RYY,
             Self::RZZ => gates::RZZ,
@@ -129,7 +128,6 @@ impl GateId {
             65 => GateType::SZZdg,
 
             // Two-qubit parameterized gates
-            70 => GateType::CRZ,
             71 => GateType::RXX,
             72 => GateType::RYY,
             73 => GateType::RZZ,
@@ -239,7 +237,6 @@ mod tests {
             GateType::SYY,
             GateType::SYYdg,
             GateType::SWAP,
-            GateType::CRZ,
             GateType::RXX,
             GateType::RYY,
             GateType::RZZ,

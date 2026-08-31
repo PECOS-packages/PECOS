@@ -1,5 +1,4 @@
 // Copyright 2026 The PECOS Developers
-use crate::dtypes::AngleParam;
 use crate::prelude::*;
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -424,9 +423,9 @@ impl PyStateVec {
                     ));
                 };
                 let angle = match params.get_item("angle") {
-                    Ok(Some(py_any)) => py_any.extract::<AngleParam>().map_err(|_| {
+                    Ok(Some(py_any)) => py_any.extract::<f64>().map_err(|_| {
                         PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            "Expected a valid angle parameter for controlled rotation gate",
+                            "Expected a float radians parameter for controlled rotation gate",
                         )
                     })?,
                     Ok(None) => {
@@ -436,17 +435,43 @@ impl PyStateVec {
                     }
                     Err(err) => return Err(err),
                 };
-                match symbol {
+                let gates: Vec<Gate> = match symbol {
                     "CRX" => {
-                        self.inner.crx(angle.0, pair);
+                        pecos_core::controlled_rotations::lower_crx(angle, pair[0].0, pair[0].1)
+                            .into()
                     }
                     "CRY" => {
-                        self.inner.cry(angle.0, pair);
+                        pecos_core::controlled_rotations::lower_cry(angle, pair[0].0, pair[0].1)
+                            .into()
                     }
                     "CRZ" => {
-                        self.inner.crz(angle.0, pair);
+                        pecos_core::controlled_rotations::lower_crz(angle, pair[0].0, pair[0].1)
+                            .into()
                     }
                     _ => unreachable!(),
+                };
+                for gate in gates {
+                    match gate.gate_type {
+                        GateType::H => {
+                            self.inner.h(&gate.qubits);
+                        }
+                        GateType::SX => {
+                            self.inner.sx(&gate.qubits);
+                        }
+                        GateType::SXdg => {
+                            self.inner.sxdg(&gate.qubits);
+                        }
+                        GateType::RZ => {
+                            self.inner.rz(gate.angles[0], &gate.qubits);
+                        }
+                        GateType::RZZ => {
+                            self.inner
+                                .rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])]);
+                        }
+                        _ => {
+                            unreachable!("controlled-rotation lowering emitted an unexpected gate")
+                        }
+                    }
                 }
                 Ok(None)
             }

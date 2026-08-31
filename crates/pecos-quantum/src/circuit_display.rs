@@ -59,7 +59,6 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::SZZ => "SZZ",
         GateType::SZZdg => "SZZdg",
         GateType::SWAP => "SWAP",
-        GateType::CRZ => "CRZ",
         GateType::RXX => "RXX",
         GateType::RYY => "RYY",
         GateType::RZZ => "RZZ",
@@ -194,8 +193,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::MZ
         | GateType::PZ
         | GateType::SZZ
-        | GateType::SZZdg
-        | GateType::CRZ => CellColor::ZAxis,
+        | GateType::SZZdg => CellColor::ZAxis,
         GateType::SX | GateType::SXdg | GateType::SXX | GateType::SXXdg => CellColor::YZMix,
         GateType::SY
         | GateType::SYdg

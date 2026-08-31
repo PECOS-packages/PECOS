@@ -31,3 +31,12 @@ executing the mutant against this crate's suite rather than assumed.
 | `bp_tables_from_dem_priors` | In `bp_suffix_compatibility`, replace the call that builds tables from the BP-derived `moments` with clones of each column's static `suffix_compatibility` table. | `bp_scores_change_the_greedy_survivor_without_changing_its_mass` |
 | `bp_clamp_removed` | In `bp_score_probability`, replace the complete `probability.clamp(BP_SCORE_PROBABILITY_MIN, 1.0 - BP_SCORE_PROBABILITY_MIN)` expression with `probability`. | `bp_score_probability_clamps_saturated_llrs` |
 | `bp_runs_in_unpruned_fast_path` | In `TrellisDecoder::from_sparse_dem`, delete `&& !(config.k == usize::MAX && config.delta.is_infinite())` from the `bp_score` construction condition. | `bp_flag_is_bitwise_inert_on_the_unpruned_fast_path` |
+| `maxlog_quantize_round_ties_even` | In `quantize_metric`, replace `"scaled.round()"` with `"scaled.round_ties_even()"`. | `integer_metric_quantization_saturates_at_its_boundaries` |
+| `maxlog_dropped_mass_keeps_last_candidate` | In `prune_maxlog`, replace `"dropped_log_mass.max(scored.candidate.log_mass)"` with `"scored.candidate.log_mass"`. | `maxlog_dropped_mass_is_the_largest_discarded_route` |
+| `maxlog_dropped_mass_keeps_last_column` | In binary max-log decode, replace `"dropped_log_mass.max(pruned.dropped_log_mass)"` with `"pruned.dropped_log_mass"`. | `maxlog_dropped_mass_is_the_largest_discarded_route` |
+| `maxlog_delta_excludes_cutoff_tie` | In `prune_maxlog`, replace `"scored.score >= cutoff"` with `"scored.score > cutoff"`. | `maxlog_delta_retains_a_candidate_exactly_at_the_cutoff` |
+| `bp_maxlog_builds_unquantized_suffix_tables` | In `bp_suffix_compatibility`, pass `None` instead of the selected integer scale. | `bp_scored_maxlog_changes_the_greedy_binary_survivor` |
+| `bp_maxlog_uses_static_suffix_tables` | In binary max-log decode, ignore `bp_suffix_compatibility` and use `column.suffix_compatibility`. | `bp_scored_maxlog_changes_the_greedy_binary_survivor` |
+| `maxlog_zero_alpha_scores_suffix` | Remove the `alpha_int == 0` short-circuit in `prune_maxlog`. | `maxlog_zero_alpha_skips_negative_infinite_suffix_scores` |
+| `allow_maxlog_indistinguishable_merge` | Delete the `MetricMode::MaxLogInt` plus `merge_indistinguishable` rejection from `validate_config`. | `validates_probabilities_indices_order_and_pruning_configuration` |
+| `maxlog_score_tie_ignores_log_mass` | Delete the log-mass comparator from `prune_maxlog`'s candidate ordering. | `maxlog_score_ties_prefer_the_higher_mass_state` |

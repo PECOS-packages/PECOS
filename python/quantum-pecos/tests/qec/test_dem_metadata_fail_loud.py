@@ -82,6 +82,22 @@ def test_exact_measurement_crosstalk_payload_emits_python_source_record() -> Non
     assert records[0]["gate_type_labels"] == ["MeasCrosstalkLocalPayload"]
 
 
+def test_exact_branch_replay_circuit_rejects_unsupported_gate() -> None:
+    """The independently supplied Python replay circuit is validated too."""
+    im = DagFaultAnalyzer(_one_measurement_dag()).build_influence_map()
+
+    replay = DagCircuit()
+    replay.pz([0])
+    replay.t([0])
+    replay.mz([0])
+
+    builder = DemBuilder(im)
+    builder.with_noise(**_NOISE)
+    builder.with_exact_branch_replay_circuit(replay)
+    with pytest.raises(ValueError, match=r"unsupported gate T at DAG node 1"):
+        builder.build()
+
+
 # --- out-of-range record offsets -------------------------------------------
 
 

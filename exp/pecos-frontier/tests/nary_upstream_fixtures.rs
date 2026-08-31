@@ -10,13 +10,16 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_decoder_core::dem::SparseDem;
-use pecos_decoder_core::obs_mask::ObsMask;
-use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierResult};
+use pecos_frontier::{
+    Factor, FactorModel, FrontierConfig, FrontierDecoder, FrontierResult, FrontierStatus, ObsMask,
+    Outcome,
+};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-const FIXTURES_JSON: &str = include_str!("fixtures/upstream_fixtures.json");
+const FIXTURES_JSON: &str = include_str!("fixtures/upstream_nary_fixtures.json");
+type FixtureOutcome = (f64, Vec<u32>, Vec<u32>);
+type FixtureFactor = Vec<FixtureOutcome>;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,7 +32,7 @@ struct FixtureFile {
 #[serde(deny_unknown_fields)]
 struct Fixture {
     name: String,
-    mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>,
+    factors: Vec<FixtureFactor>,
     num_detectors: usize,
     num_observables: usize,
     syndromes: Vec<u128>,
@@ -56,10 +59,6 @@ struct ExpectedResult {
     engine: String,
 }
 
-fn parse_fixtures() -> FixtureFile {
-    serde_json::from_str(FIXTURES_JSON).expect("upstream fixture file must parse")
-}
-
 fn dense_syndrome(mask: u128, num_detectors: usize) -> Vec<u8> {
     (0..num_detectors)
         .map(|bit| u8::from(mask & (1_u128 << bit) != 0))
@@ -67,10 +66,7 @@ fn dense_syndrome(mask: u128, num_detectors: usize) -> Vec<u8> {
 }
 
 fn mask_as_u128(mask: &ObsMask) -> u128 {
-    assert!(
-        mask.words().iter().skip(2).all(|&word| word == 0),
-        "fixture labels must fit in u128"
-    );
+    assert!(mask.words().iter().skip(2).all(|&word| word == 0));
     u128::from(mask.words().first().copied().unwrap_or(0))
         | (u128::from(mask.words().get(1).copied().unwrap_or(0)) << 64)
 }
@@ -83,25 +79,38 @@ fn actual_masses(result: &FrontierResult) -> BTreeMap<u128, f64> {
         .collect()
 }
 
+fn factor_model(fixture: &Fixture) -> FactorModel {
+    let factors = fixture
+        .factors
+        .iter()
+        .map(|outcomes| Factor {
+            outcomes: outcomes
+                .iter()
+                .map(|(probability, detectors, observables)| Outcome {
+                    probability: *probability,
+                    detectors: detectors.clone(),
+                    observables: observables.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+    FactorModel::new(factors, fixture.num_detectors, fixture.num_observables)
+        .unwrap_or_else(|error| panic!("{}: invalid fixture model: {error}", fixture.name))
+}
+
 fn assert_expected_results(
     fixture: &Fixture,
     config: FrontierConfig,
     expected_results: &[ExpectedResult],
     regime: &str,
 ) {
-    let dem = SparseDem {
-        mechanisms: fixture.mechanisms.clone(),
-        detector_coords: BTreeMap::new(),
-        num_detectors: fixture.num_detectors,
-        num_observables: fixture.num_observables,
-    };
-    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, config).unwrap_or_else(|error| {
+    let model = factor_model(fixture);
+    let mut decoder = FrontierDecoder::from_factor_model(&model, config).unwrap_or_else(|error| {
         panic!(
             "{} {regime}: decoder construction failed: {error}",
             fixture.name
         )
     });
-
     let mut expected_by_syndrome = BTreeMap::new();
     for expected in expected_results {
         assert!(
@@ -112,25 +121,14 @@ fn assert_expected_results(
             fixture.name
         );
     }
-    assert_eq!(
-        expected_by_syndrome.len(),
-        fixture.syndromes.len(),
-        "{} {regime}: expected result count differs from syndrome count",
-        fixture.name
-    );
+    assert_eq!(expected_by_syndrome.len(), fixture.syndromes.len());
 
     for &syndrome_mask in &fixture.syndromes {
         let expected = expected_by_syndrome
             .remove(&syndrome_mask)
             .unwrap_or_else(|| panic!("{} {regime}: missing expected result", fixture.name));
-        assert_eq!(
-            expected.engine, "native_binary",
-            "{} {regime} syndrome {syndrome_mask}: unexpected engine",
-            fixture.name
-        );
-        let syndrome = dense_syndrome(syndrome_mask, fixture.num_detectors);
-        let decoded = decoder.decode(&syndrome);
-
+        assert_eq!(expected.engine, "native_choice");
+        let decoded = decoder.decode(&dense_syndrome(syndrome_mask, fixture.num_detectors));
         match expected.status.as_str() {
             "ok" => {
                 let result = decoded.unwrap_or_else(|error| {
@@ -139,14 +137,15 @@ fn assert_expected_results(
                         fixture.name
                     )
                 });
-                let logical_hat = expected.logical_hat.expect("ok result needs logical_hat");
+                if regime == "unpruned" {
+                    assert_eq!(result.status, FrontierStatus::Exact);
+                }
                 assert_eq!(
                     mask_as_u128(&result.predicted),
-                    logical_hat,
+                    expected.logical_hat.expect("ok result needs logical_hat"),
                     "{} {regime} syndrome {syndrome_mask}: predicted label",
                     fixture.name
                 );
-
                 let expected_masses: BTreeMap<u128, f64> = expected
                     .terminal_log_masses
                     .iter()
@@ -174,7 +173,6 @@ fn assert_expected_results(
                         fixture.name
                     );
                 }
-
                 let expected_evidence = expected
                     .log_evidence
                     .expect("ok result needs finite log_evidence");
@@ -186,28 +184,15 @@ fn assert_expected_results(
                 );
             }
             "no_path" => {
-                assert!(
-                    expected.logical_hat.is_none(),
-                    "{} {regime} syndrome {syndrome_mask}: no-path logical_hat must be null",
-                    fixture.name
-                );
-                assert!(
-                    expected.log_evidence.is_none(),
-                    "{} {regime} syndrome {syndrome_mask}: no-path log_evidence must be null",
-                    fixture.name
-                );
-                assert!(
-                    expected.terminal_log_masses.is_empty(),
-                    "{} {regime} syndrome {syndrome_mask}: no-path masses must be empty",
-                    fixture.name
-                );
+                assert!(expected.logical_hat.is_none());
+                assert!(expected.log_evidence.is_none());
+                assert!(expected.terminal_log_masses.is_empty());
                 assert!(
                     matches!(
                         decoded,
                         Err(pecos_frontier::DecoderError::DecodingFailed(_))
                     ),
-                    "{} {regime} syndrome {syndrome_mask}: expected a genuine \
-                     no-path, got {decoded:?}",
+                    "{} {regime} syndrome {syndrome_mask}: expected no path, got {decoded:?}",
                     fixture.name
                 );
             }
@@ -217,18 +202,14 @@ fn assert_expected_results(
             ),
         }
     }
-
-    assert!(
-        expected_by_syndrome.is_empty(),
-        "{} {regime}: expected results contain extra syndromes",
-        fixture.name
-    );
+    assert!(expected_by_syndrome.is_empty());
 }
 
 #[test]
-fn unpruned_and_pruned_results_match_upstream_golden_fixtures() {
-    let fixture_file = parse_fixtures();
-    assert_eq!(fixture_file.generator, "generate_upstream_fixtures.py");
+fn unpruned_and_pruned_nary_results_match_upstream_golden_fixtures() {
+    let fixture_file: FixtureFile =
+        serde_json::from_str(FIXTURES_JSON).expect("upstream fixture file must parse");
+    assert_eq!(fixture_file.generator, "generate_upstream_nary_fixtures.py");
 
     for fixture in fixture_file.fixtures {
         assert_expected_results(

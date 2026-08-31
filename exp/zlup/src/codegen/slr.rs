@@ -942,6 +942,7 @@ fn gate_kind_arity(kind: &crate::ast::GateKind) -> usize {
         | GateKind::SXXdg
         | GateKind::SYYdg
         | GateKind::SZZdg
+        | GateKind::CRZ
         | GateKind::RZZ => 2,
         // Three-qubit gates
         GateKind::CCX => 3,
@@ -1949,6 +1950,7 @@ impl SlrCodegen {
             GateKind::SXXdg => "SXXdg",
             GateKind::SYYdg => "SYYdg",
             GateKind::SZZdg => "SZZdg",
+            GateKind::CRZ => "CRZ",
             GateKind::RZZ => "RZZ",
             GateKind::CCX => "CCX",
             GateKind::F => "F",
@@ -2556,6 +2558,7 @@ impl SlrCodegen {
             GateKind::SXXdg => "SXXdg",
             GateKind::SYYdg => "SYYdg",
             GateKind::SZZdg => "SZZdg",
+            GateKind::CRZ => "CRZ",
             GateKind::RZZ => "RZZ",
             GateKind::CCX => "CCX",
             GateKind::F => "F",

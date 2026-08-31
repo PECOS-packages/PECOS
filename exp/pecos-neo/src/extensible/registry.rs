@@ -214,13 +214,6 @@ impl GateRegistry {
 
         // Two-qubit parameterized gates
         self.set_core(
-            gates::CRZ,
-            &GateSpec::new("CRZ")
-                .with_quantum_arity(2)
-                .with_angle_arity(core_angle_arity(GateType::CRZ))
-                .with_category(GateCategory::TwoQubitUnitary),
-        );
-        self.set_core(
             gates::RXX,
             &GateSpec::new("RXX")
                 .with_quantum_arity(2)

@@ -298,12 +298,6 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 sim.try_rxy1q(cmd.angles[0], cmd.angles[1], &cmd.qubits)
                     .map_err(PecosError::Processing)?;
             }
-            GateType::CRZ => {
-                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                    sim.try_crz(cmd.angles[0], pairs).map(|_| ())
-                })
-                .map_err(PecosError::Processing)?;
-            }
             GateType::U => {
                 sim.try_u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits)
                     .map_err(PecosError::Processing)?;
@@ -356,7 +350,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
 /// Process a `ByteMessage` against any simulator supporting full gate set.
 ///
 /// Shared gate dispatch for `StabVecEngine`, `DensityMatrixEngine`, etc.
-/// Supports all Clifford gates, arbitrary rotations, composite gates (CH, CCX, CRZ),
+/// Supports all Clifford gates, arbitrary rotations, composite gates (CH, CCX),
 /// preparations, and measurements with MZ batching.
 fn process_general_message<
     S: CliffordGateable + ArbitraryRotationGateable + QuantumSimulator + ChannelDispatch,
@@ -535,16 +529,6 @@ fn process_general_message<
                 with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
                     sim.ryy(cmd.angles[0], pairs);
                 });
-            }
-            GateType::CRZ => {
-                let angle = cmd.angles[0];
-                let half_angle = angle / 2u64;
-                for qubits in cmd.qubits.as_chunks::<2>().0 {
-                    sim.rz(half_angle, &[qubits[1]]);
-                    sim.cx(&[(qubits[0], qubits[1])]);
-                    sim.rz(-half_angle, &[qubits[1]]);
-                    sim.cx(&[(qubits[0], qubits[1])]);
-                }
             }
             GateType::RXY1Q => {
                 sim.rxy1q(cmd.angles[0], cmd.angles[1], &cmd.qubits);
@@ -791,6 +775,17 @@ where
             let rng = self.simulator.rng().clone();
             self.simulator = S::create_with_rng(required_qubits, rng);
         }
+    }
+
+    /// Return the state-vector simulator owned by this engine.
+    #[must_use]
+    pub fn simulator(&self) -> &S {
+        &self.simulator
+    }
+
+    /// Return the mutable state-vector simulator owned by this engine.
+    pub fn simulator_mut(&mut self) -> &mut S {
+        &mut self.simulator
     }
 }
 
@@ -1058,27 +1053,6 @@ where
                     debug!("Processing SWAP gate on qubits {:?}", cmd.qubits);
                     let pairs = flat_to_pairs(&cmd.qubits);
                     self.simulator.swap(&pairs);
-                }
-                GateType::CRZ => {
-                    if cmd.qubits.len() % 2 != 0 {
-                        return Err(quantum_error(format!(
-                            "CRZ gate requires even number of qubits, got {}",
-                            cmd.qubits.len()
-                        )));
-                    }
-                    let angle = cmd.angles[0];
-                    let half_angle = angle / 2u64;
-                    // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
-                    for qubits in cmd.qubits.as_chunks::<2>().0 {
-                        debug!(
-                            "Processing CRZ gate on qubits {:?} and {:?} with angle {:?}",
-                            qubits[0], qubits[1], angle
-                        );
-                        self.simulator.rz(half_angle, &[qubits[1]]);
-                        self.simulator.cx(&[(qubits[0], qubits[1])]);
-                        self.simulator.rz(-half_angle, &[qubits[1]]);
-                        self.simulator.cx(&[(qubits[0], qubits[1])]);
-                    }
                 }
                 GateType::CCX => {
                     if cmd.qubits.len() % 3 != 0 {

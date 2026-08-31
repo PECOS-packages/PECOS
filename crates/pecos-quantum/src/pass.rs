@@ -336,13 +336,7 @@ fn is_idle_gate(gate: &Gate) -> bool {
 fn is_rotation(gt: GateType) -> bool {
     matches!(
         gt,
-        GateType::RX
-            | GateType::RY
-            | GateType::RZ
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ
-            | GateType::CRZ
+        GateType::RX | GateType::RY | GateType::RZ | GateType::RXX | GateType::RYY | GateType::RZZ
     )
 }
 
@@ -1091,7 +1085,6 @@ fn is_z_diagonal(gate: &Gate) -> bool {
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::RZZ
-            | GateType::CRZ
     )
 }
 
@@ -1100,7 +1093,7 @@ fn is_z_diagonal(gate: &Gate) -> bool {
 ///
 /// Z-basis preparations (PZ / `QAlloc`) produce |0>, an eigenstate of every
 /// Z-diagonal operator.  Applying any Z-diagonal gate (Z, SZ, `SZdg`, T,
-/// `Tdg`, RZ, CZ, SZZ, `SZZdg`, RZZ, CRZ) when all its qubits are still
+/// `Tdg`, RZ, CZ, SZZ, `SZZdg`, RZZ) when all its qubits are still
 /// in a Z eigenstate only adds a global phase -- a physical no-op.
 /// Similarly, Z-diagonal gates immediately before Z-basis measurements
 /// (MZ / `MeasureFree`) do not change measurement statistics and can be
@@ -2419,7 +2412,6 @@ mod tests {
             Gate::rxx(Angle64::ZERO, &[(0, 1)]),
             Gate::ryy(Angle64::ZERO, &[(0, 1)]),
             Gate::rzz(Angle64::ZERO, &[(0, 1)]),
-            Gate::crz(Angle64::ZERO, &[(0, 1)]),
         ];
         for gate in gates {
             assert!(is_identity_gate(&gate), "{:?}", gate.gate_type);

@@ -123,6 +123,10 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<sim_neo_bindings::PyStabMpsBuilder>()?;
     m.add_class::<sim_neo_bindings::PyNoiseModelBuilder>()?;
     m.add_function(wrap_pyfunction!(sim_neo_bindings::py_sim_neo, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        sim_neo_bindings::neo_fallback_native_gates,
+        m
+    )?)?;
     m.add_class::<sim_neo_bindings::PyMonteCarloBuilder>()?;
     m.add_function(wrap_pyfunction!(sim_neo_bindings::monte_carlo, m)?)?;
     m.add_class::<sim_neo_bindings::PyPathEnumerationBuilder>()?;

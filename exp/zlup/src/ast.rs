@@ -681,6 +681,7 @@ pub enum GateKind {
     SXXdg,
     SYYdg,
     SZZdg,
+    CRZ,
     RZZ,
 
     // Three-qubit gates
@@ -702,7 +703,8 @@ impl GateKind {
         use GateKind::*;
         match self {
             CCX => 3,
-            CX | CY | CZ | CH | SWAP | ISWAP | SXX | SYY | SZZ | SXXdg | SYYdg | SZZdg | RZZ => 2,
+            CX | CY | CZ | CH | SWAP | ISWAP | SXX | SYY | SZZ | SXXdg | SYYdg | SZZdg | CRZ
+            | RZZ => 2,
             _ => 1,
         }
     }
@@ -710,7 +712,7 @@ impl GateKind {
     /// Whether this gate takes angle parameters.
     pub fn is_parameterized(&self) -> bool {
         use GateKind::*;
-        matches!(self, RX | RY | RZ | RZZ)
+        matches!(self, RX | RY | RZ | CRZ | RZZ)
     }
 
     /// Whether this gate is a preparation/reset operation.

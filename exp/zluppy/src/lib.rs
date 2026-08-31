@@ -30,7 +30,7 @@ use std::path::Path;
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 
-use ::zlup::codegen::{HugrCodegen, SlrCodegen};
+use ::zlup::codegen::{HugrCodegen, PhirJsonCodegen, SlrCodegen};
 use ::zlup::semantic::SemanticAnalyzer;
 
 // =============================================================================
@@ -154,6 +154,26 @@ fn compile_to_slr_json(source: &str, strict: bool, compact: bool) -> PyResult<St
     } else {
         codegen.to_json(&slr_program).map_err(codegen_error_to_py)
     }
+}
+
+/// Compile Zluppy source to PHIR/JSON.
+#[pyfunction]
+#[pyo3(signature = (source, strict = false))]
+fn compile_to_phir_json(source: &str, strict: bool) -> PyResult<String> {
+    let program = ::zlup::parse(source).map_err(parse_error_to_py)?;
+    let mut analyzer = if strict {
+        SemanticAnalyzer::new()
+    } else {
+        SemanticAnalyzer::new_permissive()
+    };
+    analyzer.analyze(&program).map_err(semantic_error_to_py)?;
+    let mut codegen = PhirJsonCodegen::new();
+    let phir = codegen
+        .compile(&program)
+        .map_err(|error| ZluppyError::new_err(format!("PHIR codegen error: {error}")))?;
+    codegen
+        .to_json(&phir)
+        .map_err(|error| ZluppyError::new_err(format!("PHIR serialization error: {error}")))
 }
 
 /// Check Zluppy source for errors without compiling.
@@ -1141,6 +1161,7 @@ fn _zluppy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add functions
     m.add_function(wrap_pyfunction!(compile_to_slr, m)?)?;
     m.add_function(wrap_pyfunction!(compile_to_slr_json, m)?)?;
+    m.add_function(wrap_pyfunction!(compile_to_phir_json, m)?)?;
     m.add_function(wrap_pyfunction!(check, m)?)?;
     m.add_function(wrap_pyfunction!(parse_debug, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;

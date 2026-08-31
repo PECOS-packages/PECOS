@@ -1,10 +1,12 @@
 """Tests for the Zluppy Python bindings."""
 
 import json
+import math
 
 import pytest
 
 import zluppy
+from pecos.simulators import StateVec
 
 # =============================================================================
 # Version Tests
@@ -723,6 +725,77 @@ def test_compile_all_new_gates():
     assert result["type"] == "Program"
     # Should have 16 operations in body
     assert len(result["body"]) == 16
+
+
+def test_slr_program_accepts_both_crz_spellings():
+    """CRZ remains an accepted SLR boundary spelling in either case."""
+    prog = zluppy.SlrProgram("main")
+    prog.add_allocator("q", 2)
+    prog.add_gate("CRZ", [("q", 0), ("q", 1)], params=[0.5])
+    prog.add_gate("crz", [("q", 0), ("q", 1)], params=[0.25])
+
+    result = json.loads(prog.to_json())
+    assert [op["gate"] for op in result["body"]] == ["CRZ", "CRZ"]
+
+
+def test_zlup_parser_to_phir_crz_preserves_full_matrix():
+    """The zlup CRZ spelling retains its control-relative phase through PHIR."""
+
+    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, 3 * math.pi):
+        columns = []
+        for basis in range(4):
+            prep = []
+            if basis & 1:
+                prep.append("x(q[0]);")
+            if basis & 2:
+                prep.append("x(q[1]);")
+            source_turns = theta / math.tau
+            source_angle = repr(source_turns) if source_turns >= 0 else f"0.0 - {abs(source_turns)!r}"
+            source = f"""
+pub fn main() -> unit {{
+    mut q := qalloc(2);
+    {" ".join(prep)}
+    crz ({source_angle}) (q[1], q[0]);
+    return unit;
+}}
+"""
+            phir = json.loads(zluppy.compile_to_phir_json(source))
+            simulator = StateVec(2)
+            for op in phir["ops"]:
+                name = op.get("qop")
+                if name == "X":
+                    for _, qubit in op["args"]:
+                        simulator.backend.run_1q_gate("X", qubit, None)
+                elif name == "RZ":
+                    angle = op["angles"][0][0]
+                    for _, qubit in op["args"]:
+                        simulator.backend.run_1q_gate("RZ", qubit, {"angle": angle})
+                elif name == "RZZ":
+                    angle = op["angles"][0][0]
+                    for pair in op["args"]:
+                        simulator.backend.run_2q_gate(
+                            "RZZ",
+                            (pair[0][1], pair[1][1]),
+                            {"angle": angle},
+                        )
+            columns.append([complex(value) for value in simulator.backend.vector])
+
+        half = theta / 2
+        reference = [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, complex(math.cos(half), -math.sin(half)), 0],
+            [0, 0, 0, complex(math.cos(half), math.sin(half))],
+        ]
+        phase = columns[0][0] / reference[0][0]
+        assert abs(abs(phase) - 1) < 1e-12
+        if theta in {-math.pi, math.pi / 3, math.pi}:
+            assert abs(phase - 1) < 1e-12
+        else:
+            assert min(abs(phase - 1), abs(phase + 1)) < 1e-12
+        for column in range(4):
+            for row in range(4):
+                assert abs(columns[column][row] / phase - reference[row][column]) < 1e-12
 
 
 # =============================================================================

@@ -105,17 +105,6 @@ pub trait CliffordRotation: CliffordGateable {
         qubits: &[QubitId],
     ) -> Result<&mut Self, String>;
 
-    /// Try to apply CRZ(angle). CRZ(0) is identity, while CRZ(pi) is the
-    /// Clifford `(SZdg ⊗ I) . CZ`.
-    ///
-    /// # Errors
-    /// Returns `Err` with a message if the angle is not 0 or pi.
-    fn try_crz(
-        &mut self,
-        angle: Angle64,
-        pairs: &[(QubitId, QubitId)],
-    ) -> Result<&mut Self, String>;
-
     /// Try to apply U(theta, phi, lambda). Succeeds when the decomposition
     /// `RZ(phi) * RY(theta) * RZ(lambda)` consists entirely of Clifford gates.
     ///
@@ -191,29 +180,6 @@ impl<T: CliffordGateable> CliffordRotation for T {
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
         apply_two_qubit_rotation(self, GateType::RYY, angle, pairs)
-    }
-
-    fn try_crz(
-        &mut self,
-        angle: Angle64,
-        pairs: &[(QubitId, QubitId)],
-    ) -> Result<&mut Self, String> {
-        // CRZ(theta) = CX * RZ(-theta/2)_target * CX * RZ(theta/2)_target
-        // Each RZ(theta/2) must be Clifford for this to work.
-        let half = angle / 2u64;
-        for &(_, target) in pairs {
-            let target = &[target];
-            self.try_rz(half, target)
-                .map_err(|_| format!("CRZ({angle}) is not a Clifford rotation"))?;
-        }
-        self.cx(pairs);
-        for &(_, target) in pairs {
-            let target = &[target];
-            self.try_rz(-half, target)
-                .map_err(|_| format!("CRZ({angle}) is not a Clifford rotation"))?;
-        }
-        self.cx(pairs);
-        Ok(self)
     }
 
     fn try_rxy1q(
@@ -501,7 +467,7 @@ fn dispatch_two_qubit_clifford<T: CliffordGateable>(
 mod tests {
     use super::*;
     use crate::sparse_stab::SparseStab;
-    use pecos_core::{QubitId, qid};
+    use pecos_core::{QubitId, controlled_rotations::lower_crz, qid};
 
     #[test]
     fn try_rz_clifford_angles() {
@@ -599,6 +565,22 @@ mod tests {
             sim.try_rzz(Angle64::from_radians(0.5), &[(QubitId(0), QubitId(1))])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn lower_crz_pi_matches_sz_then_szzdg_tableau() {
+        let [rzz, rz] = lower_crz(std::f64::consts::PI, QubitId(0), QubitId(1));
+        let mut lowered = SparseStab::new(2);
+        lowered
+            .try_rzz(rzz.angles[0], &[(rzz.qubits[0], rzz.qubits[1])])
+            .unwrap();
+        lowered.try_rz(rz.angles[0], &rz.qubits).unwrap();
+
+        let mut expected = SparseStab::new(2);
+        expected.sz(&qid(1)).szzdg(&[(QubitId(0), QubitId(1))]);
+
+        assert_eq!(lowered.stab_tableau(), expected.stab_tableau());
+        assert_eq!(lowered.destab_tableau(), expected.destab_tableau());
     }
 
     #[test]
@@ -711,56 +693,6 @@ mod tests {
             );
         }
     }
-
-    // --- CRZ tests ---
-
-    #[test]
-    fn try_crz_zero_succeeds() {
-        let mut sim = SparseStab::new(2);
-        assert!(
-            sim.try_crz(Angle64::ZERO, &[(QubitId(0), QubitId(1))])
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn try_crz_pi_succeeds() {
-        // CRZ(pi) decomposes to SZ, CX, SZdg, CX -- all Clifford
-        let mut sim = SparseStab::new(2);
-        assert!(
-            sim.try_crz(Angle64::HALF_TURN, &[(QubitId(0), QubitId(1))])
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn try_crz_neg_pi_succeeds() {
-        let mut sim = SparseStab::new(2);
-        assert!(
-            sim.try_crz(-Angle64::HALF_TURN, &[(QubitId(0), QubitId(1))])
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn try_crz_quarter_turn_fails() {
-        let mut sim = SparseStab::new(2);
-        // CRZ(pi/2) requires an RZ(pi/4), projectively T and not Clifford.
-        assert!(
-            sim.try_crz(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))])
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn try_crz_non_clifford_fails() {
-        let mut sim = SparseStab::new(2);
-        assert!(
-            sim.try_crz(Angle64::from_radians(0.5), &[(QubitId(0), QubitId(1))])
-                .is_err()
-        );
-    }
-
     // --- U gate tests ---
 
     #[test]

@@ -262,8 +262,7 @@ _MANIFEST: dict[str, tuple[str, _Spec]] = {
     # in place, the honest class is X.)
     "qeclib.generic_check_xyz": (
         "X",
-        "XYZ stabiliser check on |0..0>: not an eigenstate -> single "
-        "uniformly random syndrome bit; no hard invariant.",
+        "XYZ stabiliser check on |0..0>: not an eigenstate -> single uniformly random syndrome bit; no hard invariant.",
     ),
     "qeclib.generic_check_1flag_ch": (
         "X",
@@ -613,12 +612,12 @@ def test_controlled_rotations_executable() -> None:
 
     import math as _math
 
-    crx_pi = lambda q: qb.CRX(rad(_math.pi), q[0], q[1])  # noqa: E731
-    cry_pi = lambda q: qb.CRY(rad(_math.pi), q[0], q[1])  # noqa: E731
-    crz_pi = lambda q: qb.CRZ(rad(_math.pi), q[0], q[1])  # noqa: E731
-    crx_half = lambda q: qb.CRX(rad(_math.pi / 2), q[0], q[1])  # noqa: E731
-    cry_half = lambda q: qb.CRY(rad(_math.pi / 2), q[0], q[1])  # noqa: E731
-    crz_half = lambda q: qb.CRZ(rad(_math.pi / 2), q[0], q[1])  # noqa: E731
+    crx_pi = lambda q: qb.CRX(_math.pi, q[0], q[1])  # noqa: E731
+    cry_pi = lambda q: qb.CRY(_math.pi, q[0], q[1])  # noqa: E731
+    crz_pi = lambda q: qb.CRZ(_math.pi, q[0], q[1])  # noqa: E731
+    crx_half = lambda q: qb.CRX(_math.pi / 2, q[0], q[1])  # noqa: E731
+    cry_half = lambda q: qb.CRY(_math.pi / 2, q[0], q[1])  # noqa: E731
+    crz_half = lambda q: qb.CRZ(_math.pi / 2, q[0], q[1])  # noqa: E731
     x_q0 = lambda q: qb.X(q[0])  # noqa: E731
     h_q1 = lambda q: qb.H(q[1])  # noqa: E731
 
@@ -645,40 +644,66 @@ def test_controlled_rotations_executable() -> None:
     assert _run([x_q0], [cry_half, cry_half], meas_idx=1) == {(1,)}, "CRY(pi/2)^2 must agree with Test A CRY(pi)"
     assert _run([x_q0], [crz_half, crz_half], meas_idx=1) == {(0,)}, "CRZ(pi/2)^2 must agree with Test A CRZ(pi)"
 
-    # Control-superposition phase test (Test C). Tests A/B and the
-    # angle-propagation tests above all put the control in a
-    # computational basis state, so they cannot observe the c=1-only
-    # relative phase that the control-side `RZ(theta/2)` in the
-    # `_GATE_DECOMP[CR*]` is there to absorb. Mutations that drop
-    # the control RZ (or change its angle to theta instead of
-    # theta/2) survive Tests A/B silently.
-    #
-    # The discriminator: prep `|+>` on the
-    # control and an R*(pi)-eigenstate on the target so the
-    # CORRECT decomp leaves the control in `|+>`; then H(control)
-    # takes `|+>` -> `|0>` deterministically.
-    #   - CRZ(pi): target=|0>, RZ(pi)|0>=|0> in PECOS convention
-    #     (no kickback when target=|0>); correct CR*: control
-    #     stays in |+>, H sends to |0>, measure 0.
-    #   - CRX(pi): target=|+>, RX(pi)~X, X|+>=|+>: same logic.
-    #   - CRY(pi): target=|+i>=(|0>+i|1>)/sqrt(2), RY(pi)~Y,
-    #     Y|+i>=|+i>: same logic.
-    # A mutation (drop control RZ, or use theta on control instead
-    # of theta/2) gives the control sector a c=1-only relative
-    # phase, rotating it off |+>, so H(control); M(control) is no
-    # longer deterministic 0.
-    h_q0 = lambda q: qb.H(q[0])  # noqa: E731
-    sz_q1 = lambda q: qb.SZ(q[1])  # noqa: E731
+    # At theta=2pi, textbook CR*(theta) is Z on the control and identity on
+    # the target. Probe 1 observes that control-side Z deterministically; a
+    # controlled-phase mutation (#635) instead acts as identity and returns 0.
+    # Probe 2 keeps the control at |0> and observes target identity. Dropping
+    # the target RZ leaves the RZZ factor, which flips the measured target
+    # after the gate-specific conjugation and returns 1.
+    def h_q0(q):
+        return qb.H(q[0])
 
-    # CRZ phase: H q0; CRZ(pi); H q0; M q0 -> 0 (target=|0>).
-    assert _run([h_q0], [crz_pi, h_q0], meas_idx=0) == {
-        (0,),
-    }, "CRZ(pi) control-phase: H q0; CRZ; H q0; M q0 must be 0 (drop-control-RZ / wrong-angle mutations break this)"
-    # CRX phase: H q0; H q1; CRX(pi); H q0; M q0 -> 0 (target=|+>).
-    assert _run([h_q0, h_q1], [crx_pi, h_q0], meas_idx=0) == {
-        (0,),
-    }, "CRX(pi) control-phase: H q0; H q1; CRX; H q0; M q0 must be 0"
-    # CRY phase: H q0; H q1; SZ q1; CRY(pi); H q0; M q0 -> 0 (target=|+i>).
-    assert _run([h_q0, h_q1, sz_q1], [cry_pi, h_q0], meas_idx=0) == {
-        (0,),
-    }, "CRY(pi) control-phase: H q0; H q1; SZ q1; CRY; H q0; M q0 must be 0"
+    def crx_tau(q):
+        return qb.CRX(_math.tau, q[0], q[1])
+
+    def cry_tau(q):
+        return qb.CRY(_math.tau, q[0], q[1])
+
+    def crz_tau(q):
+        return qb.CRZ(_math.tau, q[0], q[1])
+
+    assert _run([h_q0], [crx_tau, h_q0], meas_idx=0) == {(1,)}, "CRX(2pi) must apply Z to the control"
+    assert _run([h_q0], [cry_tau, h_q0], meas_idx=0) == {(1,)}, "CRY(2pi) must apply Z to the control"
+    assert _run([h_q0], [crz_tau, h_q0], meas_idx=0) == {(1,)}, "CRZ(2pi) must apply Z to the control"
+
+    assert _run([], [crx_tau], meas_idx=1) == {(0,)}, "CRX(2pi) must be identity on the target when control=0"
+    assert _run([], [cry_tau], meas_idx=1) == {(0,)}, "CRY(2pi) must be identity on the target when control=0"
+    assert _run([h_q1], [crz_tau, h_q1], meas_idx=1) == {(0,)}, "CRZ(2pi) must be identity on the target when control=0"
+
+    # A non-Clifford source angle distinguishes the correct target-only RZ
+    # lowering from a full-angle RZ accidentally added on the control. Put the
+    # target in the +1 eigenstate of X, Y, or Z and apply CR*(pi/3) three times.
+    # Correct execution gives the control-sector phase exp(-i*pi/2), which
+    # RZ_control(pi/2) cancels before the final H. The erroneous extra control
+    # rotations compose to RZ_control(pi), changing the deterministic result
+    # from 0 to 1 for every controlled-rotation spelling.
+    def crx_third(q):
+        return qb.CRX(_math.pi / 3, q[0], q[1])
+
+    def cry_third(q):
+        return qb.CRY(_math.pi / 3, q[0], q[1])
+
+    def crz_third(q):
+        return qb.CRZ(_math.pi / 3, q[0], q[1])
+
+    def sz_q1(q):
+        return qb.SZ(q[1])
+
+    def rz_q0_quarter(q):
+        return qb.RZ(rad(_math.pi / 2), q[0])
+
+    assert _run(
+        [h_q0, h_q1],
+        [crx_third, crx_third, crx_third, rz_q0_quarter, h_q0],
+        meas_idx=0,
+    ) == {(0,)}, "CRX(pi/3)^3 must retain the analytic control phase"
+    assert _run(
+        [h_q0, h_q1, sz_q1],
+        [cry_third, cry_third, cry_third, rz_q0_quarter, h_q0],
+        meas_idx=0,
+    ) == {(0,)}, "CRY(pi/3)^3 must retain the analytic control phase"
+    assert _run(
+        [h_q0],
+        [crz_third, crz_third, crz_third, rz_q0_quarter, h_q0],
+        meas_idx=0,
+    ) == {(0,)}, "CRZ(pi/3)^3 must retain the analytic control phase"

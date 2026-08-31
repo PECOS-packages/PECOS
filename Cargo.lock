@@ -4870,6 +4870,8 @@ dependencies = [
  "num-complex 0.4.6",
  "paste",
  "pecos-core",
+ "pecos-cppsparsestab",
+ "pecos-gpu-sims",
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",

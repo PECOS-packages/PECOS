@@ -57,3 +57,6 @@
 pub mod errors;
 pub mod mps;
 pub mod stab_mps;
+
+#[cfg(test)]
+mod gate_conformance;

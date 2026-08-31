@@ -29,6 +29,8 @@ thiserror.workspace = true
 approx.workspace = true
 paste.workspace = true
 rand_chacha.workspace = true
+pecos-cppsparsestab.workspace = true
+pecos-gpu-sims.workspace = true
 
 [lints.clippy]
 # Inherit workspace pedantic lint policy

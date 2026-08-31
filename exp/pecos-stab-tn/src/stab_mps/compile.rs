@@ -94,6 +94,20 @@ impl StabMpsCompile {
         }
     }
 
+    /// Materialize the tracked Clifford state for the gate-conformance suite.
+    ///
+    /// Compile mode deliberately has no stored global-phase scalar, so this
+    /// helper must not manufacture one. The phase-exact tier is responsible
+    /// for reporting the resulting mismatch.
+    #[cfg(test)]
+    pub(crate) fn conformance_state_vector(&self) -> Vec<num_complex::Complex64> {
+        let mut view = super::StabMps::builder(self.num_qubits)
+            .merge_rz(false)
+            .build();
+        view.tableau = self.tableau.clone();
+        view.state_vector()
+    }
+
     #[must_use]
     /// Return the number of qubits being analyzed.
     pub fn num_qubits(&self) -> usize {

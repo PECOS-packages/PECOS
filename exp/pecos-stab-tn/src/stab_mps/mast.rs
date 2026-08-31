@@ -200,6 +200,38 @@ impl Mast {
         }
     }
 
+    /// Materialize the data-qubit state for the gate-conformance suite.
+    ///
+    /// This intentionally reuses the existing dense `StabMps` read path. Any
+    /// overall phase returned by that path remains observable to the test.
+    #[cfg(test)]
+    pub(crate) fn conformance_state_vector(&mut self) -> Vec<Complex64> {
+        self.project_all();
+        let mut view = super::StabMps::builder(self.total_qubits)
+            .merge_rz(false)
+            .build();
+        view.tableau = self.tableau.clone();
+        view.mps = self.mps.clone();
+        view.global_phase = self.global_phase;
+        let full = view.state_vector();
+        let data_dimension = 1_usize << self.num_data_qubits;
+        let mut data = Vec::new();
+        let mut data_norm = 0.0_f64;
+        for block in full.chunks_exact(data_dimension) {
+            let norm = block.iter().map(Complex64::norm_sqr).sum::<f64>();
+            if norm > data_norm {
+                data_norm = norm;
+                data = block.to_vec();
+            }
+        }
+        assert!(data_norm > 1.0 - 1e-8, "MAST ancillas did not factor");
+        let scale = data_norm.sqrt().recip();
+        for amplitude in &mut data {
+            *amplitude *= scale;
+        }
+        data
+    }
+
     /// Create with a specific seed for reproducible stochastic operations.
     ///
     /// Seeds both the simulator's [`pecos_random::PecosRng`] and its tableau.

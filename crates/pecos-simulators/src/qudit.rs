@@ -557,9 +557,6 @@ where
         targets: &[usize],
         operators: &[Vec<Complex64>],
     ) -> Result<KrausSample, QuditError> {
-        if operators.is_empty() {
-            return Err(QuditError::EmptyKrausChannel);
-        }
         let local_size =
             validate_kraus_channel(targets, operators, self.num_sites, self.local_dimension)?;
         let mut branches = Vec::with_capacity(operators.len());
@@ -1418,9 +1415,6 @@ where
         targets: &[usize],
         operators: &[Vec<Complex64>],
     ) -> Result<&mut Self, QuditError> {
-        if operators.is_empty() {
-            return Err(QuditError::EmptyKrausChannel);
-        }
         let local_size =
             validate_kraus_channel(targets, operators, self.num_sites, self.local_dimension)?;
         let dimension = self.dimension();
@@ -2143,6 +2137,9 @@ fn validate_kraus_slices(
     num_sites: usize,
     local_dimension: usize,
 ) -> Result<usize, QuditError> {
+    if operators.is_empty() {
+        return Err(QuditError::EmptyKrausChannel);
+    }
     let mut local_size = 0;
     for &operator in operators {
         local_size = validate_operator(targets, operator, num_sites, local_dimension)?;

@@ -674,6 +674,11 @@ fn invalid_targets_and_channels_return_errors() {
         state.apply_kraus(&[0], &[]).unwrap_err(),
         QuditError::EmptyKrausChannel
     );
+    let mut density = QutritDensityMatrix::with_seed(2, 37).unwrap();
+    assert_eq!(
+        density.apply_kraus(&[0], &[]).unwrap_err(),
+        QuditError::EmptyKrausChannel
+    );
     assert!(matches!(
         state.apply_operator(&[0], &[c(1.0); 9]).unwrap_err(),
         QuditError::NonUnitary { .. }
@@ -995,5 +1000,58 @@ fn materially_negative_unchecked_density_has_a_specific_diagnostic() {
     assert_eq!(
         density.measure(0).unwrap_err(),
         QuditError::InvalidProbability(-0.2)
+    );
+}
+
+#[test]
+fn qutrit_convenience_constructors_and_unwrapping_preserve_contracts() {
+    let wrapped_state = QutritStateVec::qutrit(2).unwrap();
+    assert_eq!(wrapped_state.local_dimension(), 3);
+    assert_eq!(wrapped_state.dimension(), 9);
+    assert_close(wrapped_state.probability(0).unwrap(), 1.0);
+
+    let general_state = QuditStateVec::qutrit(2).unwrap();
+    assert_eq!(general_state.local_dimension(), 3);
+    assert_eq!(general_state.dimension(), 9);
+    assert_close(general_state.probability(0).unwrap(), 1.0);
+
+    let wrapped_density = QutritDensityMatrix::qutrit(2).unwrap();
+    assert_eq!(wrapped_density.local_dimension(), 3);
+    assert_eq!(wrapped_density.dimension(), 9);
+    assert_close(wrapped_density.probability(0).unwrap(), 1.0);
+
+    let general_density = QuditDensityMatrix::qutrit(2).unwrap();
+    assert_eq!(general_density.local_dimension(), 3);
+    assert_eq!(general_density.dimension(), 9);
+    assert_close(general_density.probability(0).unwrap(), 1.0);
+
+    let state_seed = 149;
+    let mut wrapped_state =
+        QutritStateVec::with_rng(2, PecosRng::seed_from_u64(state_seed)).unwrap();
+    wrapped_state
+        .apply_operator(&[1], &basis_swap(3, 0, 2).unwrap())
+        .unwrap();
+    let mut inner_state = wrapped_state.into_inner();
+    assert_eq!(inner_state.local_dimension(), 3);
+    assert_close(inner_state.probability(6).unwrap(), 1.0);
+    let mut expected_state_rng = PecosRng::seed_from_u64(state_seed);
+    assert_eq!(
+        inner_state.rng_mut().random::<u64>(),
+        expected_state_rng.random::<u64>()
+    );
+
+    let density_seed = 151;
+    let mut wrapped_density =
+        QutritDensityMatrix::with_rng(2, PecosRng::seed_from_u64(density_seed)).unwrap();
+    wrapped_density
+        .apply_operator(&[0], &basis_swap(3, 0, 1).unwrap())
+        .unwrap();
+    let mut inner_density = wrapped_density.into_inner();
+    assert_eq!(inner_density.local_dimension(), 3);
+    assert_close(inner_density.probability(1).unwrap(), 1.0);
+    let mut expected_density_rng = PecosRng::seed_from_u64(density_seed);
+    assert_eq!(
+        inner_density.rng_mut().random::<u64>(),
+        expected_density_rng.random::<u64>()
     );
 }

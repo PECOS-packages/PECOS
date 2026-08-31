@@ -41,6 +41,9 @@ gate sxdg a { SXDG a; }
 // Controlled-NOT (CNOT) - native
 gate cx c,t { CX c,t; }
 
+// Controlled-Hadamard - native
+gate ch a,b { CH a,b; }
+
 // Controlled-Z
 gate cz a,b {
   h b;
@@ -127,9 +130,6 @@ gate ccx a,b,c {
   tdg b;
   cx a,b;
 }
-
-// Note: More complex gates like controlled-H (ch)
-// and other gates would require additional implementations
 
 // --- Utility gates ---
 

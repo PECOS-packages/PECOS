@@ -50,8 +50,14 @@ struct Epsilon {
 }
 
 impl Epsilon {
+    /// Practical ceiling on the tolerance exponent. Synthesis to `2^-4096`
+    /// is far beyond any use, and admitting arbitrary `u32` exponents lets a
+    /// compact option eagerly materialise a multi-hundred-megabyte `2^h`
+    /// numerator instead of failing (closure-review finding): reject early.
+    const MAX_LOG_DENOMINATOR: u32 = 4096;
+
     fn new(numerator: u64, log_denominator: u32) -> Result<Self, GridError> {
-        if numerator == 0 {
+        if numerator == 0 || log_denominator > Self::MAX_LOG_DENOMINATOR {
             return Err(GridError::InvalidEpsilon);
         }
         let less_than_two = if log_denominator >= 63 {
@@ -1479,6 +1485,19 @@ mod tests {
             exact_branch_test(&cap, &boundary, CandidateBranch::Unshifted, precision),
             Ok(Some(boundary))
         );
+    }
+
+    #[test]
+    fn oversized_epsilon_exponent_is_rejected_without_allocation() {
+        assert!(matches!(
+            Epsilon::new(1, Epsilon::MAX_LOG_DENOMINATOR + 1),
+            Err(GridError::InvalidEpsilon)
+        ));
+        assert!(matches!(
+            Epsilon::new(1, u32::MAX),
+            Err(GridError::InvalidEpsilon)
+        ));
+        assert!(Epsilon::new(1, Epsilon::MAX_LOG_DENOMINATOR).is_ok());
     }
 
     #[test]

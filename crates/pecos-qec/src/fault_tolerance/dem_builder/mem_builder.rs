@@ -21,7 +21,7 @@ use super::DemBuilderError;
 use super::types::{
     IdleChannelFamilies, MeasurementMechanism, MeasurementNoiseChannelResidual,
     MeasurementNoiseModel, NoiseChannelKind, NoiseConfig, fit_exclusive_signatures,
-    validate_exclusive_probabilities,
+    is_two_qubit_noise_gate, validate_exclusive_probabilities,
 };
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
@@ -110,21 +110,7 @@ impl<'a> MemBuilder<'a> {
                 {
                     self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_meas, &mut mem);
                 }
-                GateType::CX
-                | GateType::CZ
-                | GateType::CY
-                | GateType::SZZ
-                | GateType::SZZdg
-                | GateType::SXX
-                | GateType::SXXdg
-                | GateType::SYY
-                | GateType::SYYdg
-                | GateType::SWAP
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ
-                    if !loc.before =>
-                {
+                gate_type if is_two_qubit_noise_gate(gate_type) && !loc.before => {
                     two_qubit_groups.entry(loc.node).or_default().push(loc_idx);
                 }
                 GateType::H

@@ -43,3 +43,6 @@ pub mod clifford_rotation_simulation_test;
 
 #[path = "integration/phase_exactness_test.rs"]
 pub mod phase_exactness_test;
+
+#[path = "integration/include_gate_conformance_test.rs"]
+pub mod include_gate_conformance_test;

@@ -38,6 +38,18 @@ if TYPE_CHECKING:
 PatchSnapshot = dict[str, tuple[bool, list[str], list[str], list[str], list[str]]]
 
 
+def _validate_boundary_cardinality(segments: list[object], boundary_gates: list[object]) -> None:
+    """Require exactly one boundary list between consecutive segments."""
+    expected_boundaries = len(segments) - 1
+    if len(boundary_gates) != expected_boundaries:
+        msg = (
+            f"algorithm descriptor has {len(boundary_gates)} boundary gate lists and "
+            f"{len(segments)} segments; expected exactly one boundary list between "
+            "consecutive segments"
+        )
+        raise ValueError(msg)
+
+
 class LogicalGateType(Enum):
     """Types of logical operations in a surface code circuit."""
 
@@ -701,6 +713,14 @@ class LogicalCircuitBuilder:
 
         for i, op in enumerate(self._operations):
             if op.gate_type == LogicalGateType.MEMORY:
+                if not segments and pending_gates:
+                    gate_kinds = ", ".join(dict.fromkeys(gate["type"] for gate in pending_gates))
+                    msg = (
+                        f"leading logical gates before any syndrome round have no representable "
+                        f"boundary (no preceding segment): {gate_kinds}"
+                    )
+                    raise ValueError(msg)
+
                 # If there are pending gates, they form the boundary
                 # between the previous segment and this one.
                 if segments and pending_gates:
@@ -794,6 +814,10 @@ class LogicalCircuitBuilder:
                     },
                 )
 
+        if not segments:
+            msg = "algorithm descriptor must contain at least one segment"
+            raise ValueError(msg)
+
         if pending_gates:
             gate_kinds = ", ".join(dict.fromkeys(gate["type"] for gate in pending_gates))
             msg = (
@@ -803,14 +827,7 @@ class LogicalCircuitBuilder:
             )
             raise ValueError(msg)
 
-        expected_boundaries = len(segments) - 1
-        if len(boundary_gates) != expected_boundaries:
-            msg = (
-                f"algorithm descriptor has {len(boundary_gates)} boundary gate lists and "
-                f"{len(segments)} segments; expected exactly one boundary list between "
-                "consecutive segments"
-            )
-            raise ValueError(msg)
+        _validate_boundary_cardinality(segments, boundary_gates)
 
         # Build per-segment sub-DEMs by filtering the full DEM.
         # Each segment gets only the mechanisms involving its detectors.

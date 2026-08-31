@@ -5288,6 +5288,119 @@ fn req_bit(
     Ok(bit)
 }
 
+struct ParsedAlgorithmDescriptor<'py> {
+    full_dem: String,
+    segment_dicts: Vec<pyo3::Bound<'py, pyo3::types::PyDict>>,
+    algorithm: pecos_decoder_core::logical_algorithm::AlgorithmDescriptor,
+}
+
+/// Parse the cheap descriptor metadata needed for validation before constructing
+/// any full-DEM decoder or logical subgraphs.
+fn parse_algorithm_descriptor<'py>(
+    descriptor: &pyo3::Bound<'py, pyo3::types::PyDict>,
+) -> PyResult<ParsedAlgorithmDescriptor<'py>> {
+    use pecos_decoder_core::logical_algorithm::{
+        AlgorithmDescriptor, BoundaryGate, SegmentDescriptor,
+    };
+
+    let full_dem: String = descriptor
+        .get_item("full_dem")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("full_dem"))?
+        .extract()?;
+    let segment_dicts: Vec<pyo3::Bound<'py, pyo3::types::PyDict>> = descriptor
+        .get_item("segments")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("segments"))?
+        .extract()?;
+    let num_observables: usize = descriptor
+        .get_item("num_observables")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_observables"))?
+        .extract()?;
+    let num_frame_slots: usize = descriptor
+        .get_item("num_frame_slots")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_frame_slots"))?
+        .extract()?;
+
+    let mut segments = Vec::with_capacity(segment_dicts.len());
+    for (segment_index, segment) in segment_dicts.iter().enumerate() {
+        let num_detectors: usize = segment
+            .get_item("num_detectors")?
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_detectors"))?
+            .extract()?;
+        let segment_dem: String = segment
+            .get_item("dem")?
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("dem"))?
+            .extract()?;
+        let parsed_segment_dem = segment_dem.parse::<RustParsedDem>().map_err(|error| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "invalid DEM for algorithm segment {segment_index}: {error}"
+            ))
+        })?;
+        let segment_num_observables = usize::try_from(parsed_segment_dem.num_observables())
+            .map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "observable count for algorithm segment {segment_index} does not fit usize"
+                ))
+            })?;
+        segments.push(SegmentDescriptor {
+            num_detectors,
+            num_observables: segment_num_observables,
+        });
+    }
+
+    let boundary_dicts: Vec<Vec<pyo3::Bound<'py, pyo3::types::PyDict>>> = descriptor
+        .get_item("boundary_gates")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("boundary_gates"))?
+        .extract()?;
+    let mut boundary_gates = Vec::with_capacity(boundary_dicts.len());
+    for gates in &boundary_dicts {
+        let mut parsed_gates = Vec::with_capacity(gates.len());
+        for gate in gates {
+            let gate_type: String = gate
+                .get_item("type")?
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("type"))?
+                .extract()?;
+            let parsed_gate = match gate_type.as_str() {
+                "Hadamard" => BoundaryGate::Hadamard {
+                    x_obs_bit: req_bit(gate, "x_obs_bit", &gate_type)?,
+                    z_obs_bit: req_bit(gate, "z_obs_bit", &gate_type)?,
+                },
+                "Cnot" => BoundaryGate::Cnot {
+                    ctrl_x_bit: req_bit(gate, "ctrl_x_bit", &gate_type)?,
+                    ctrl_z_bit: req_bit(gate, "ctrl_z_bit", &gate_type)?,
+                    tgt_x_bit: req_bit(gate, "tgt_x_bit", &gate_type)?,
+                    tgt_z_bit: req_bit(gate, "tgt_z_bit", &gate_type)?,
+                },
+                "SGate" => BoundaryGate::SGate {
+                    x_obs_bit: req_bit(gate, "x_obs_bit", &gate_type)?,
+                    z_obs_bit: req_bit(gate, "z_obs_bit", &gate_type)?,
+                },
+                "TGateInjection" => BoundaryGate::TGateInjection {
+                    z_obs_bit: req_bit(gate, "z_obs_bit", &gate_type)?,
+                    ancilla_z_bit: req_bit(gate, "ancilla_z_bit", &gate_type)?,
+                },
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Unknown gate type: {gate_type}"
+                    )));
+                }
+            };
+            parsed_gates.push(parsed_gate);
+        }
+        boundary_gates.push(parsed_gates);
+    }
+
+    Ok(ParsedAlgorithmDescriptor {
+        full_dem,
+        segment_dicts,
+        algorithm: AlgorithmDescriptor {
+            segments,
+            boundary_gates,
+            num_observables,
+            num_frame_slots,
+        },
+    })
+}
+
 /// Decoder for logical quantum algorithms with per-segment logical-subgraph decoder and
 /// Pauli frame propagation at transversal gate boundaries.
 ///
@@ -5314,34 +5427,21 @@ impl PyLogicalAlgorithmDecoder {
         descriptor: &pyo3::Bound<'_, pyo3::types::PyDict>,
         inner_decoder: &str,
     ) -> PyResult<Self> {
-        use pecos_decoder_core::logical_algorithm::{
-            AlgorithmDescriptor, BoundaryGate, LogicalAlgorithmDecoder, SegmentDescriptor,
-        };
+        use pecos_decoder_core::logical_algorithm::LogicalAlgorithmDecoder;
         use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
-        // Parse full DEM and stab_coords for full-circuit logical-subgraph decoder
-        let full_dem: String = descriptor
-            .get_item("full_dem")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("full_dem"))?
-            .extract()?;
+        let ParsedAlgorithmDescriptor {
+            full_dem,
+            segment_dicts: seg_list,
+            algorithm: algo_desc,
+        } = parse_algorithm_descriptor(descriptor)?;
+        algo_desc.validate().map_err(decoder_parse_error_to_py)?;
+        algo_desc
+            .reject_unsupported_decision_points()
+            .map_err(decoder_parse_error_to_py)?;
 
-        // Use first segment's stab_coords as the base (they have the
-        // original X/Z assignment; the full-circuit DEM uses original coords).
-        let seg_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = descriptor
-            .get_item("segments")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("segments"))?
-            .extract()?;
-
-        let num_obs: usize = descriptor
-            .get_item("num_observables")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_observables"))?
-            .extract()?;
-        let num_frame_slots: usize = descriptor
-            .get_item("num_frame_slots")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_frame_slots"))?
-            .extract()?;
-
-        // Parse stab_coords from the first segment (original orientation)
+        // Full-DEM/subgraph construction starts only after cheap descriptor validation.
+        // Use the first segment's original X/Z orientation as the full-circuit base.
         let first_seg = seg_list.first().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("algorithm descriptor has no segments")
         })?;
@@ -5377,83 +5477,9 @@ impl PyLogicalAlgorithmDecoder {
         })
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        // Parse segment descriptors (for metadata)
-        let mut seg_descs = Vec::with_capacity(seg_list.len());
-        for seg_dict in &seg_list {
-            let n_det: usize = seg_dict
-                .get_item("num_detectors")?
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_detectors"))?
-                .extract()?;
-            seg_descs.push(SegmentDescriptor {
-                num_detectors: n_det,
-                num_observables: num_obs,
-            });
-        }
-
-        // Parse boundary gates
-        let bg_list: Vec<Vec<pyo3::Bound<'_, pyo3::types::PyDict>>> = descriptor
-            .get_item("boundary_gates")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("boundary_gates"))?
-            .extract()?;
-
-        let mut boundary_gates = Vec::with_capacity(bg_list.len());
-        for gates in &bg_list {
-            let mut bg_vec = Vec::new();
-            for gate_dict in gates {
-                let gate_type: String = gate_dict
-                    .get_item("type")?
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("type"))?
-                    .extract()?;
-                match gate_type.as_str() {
-                    "Hadamard" => {
-                        bg_vec.push(BoundaryGate::Hadamard {
-                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
-                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
-                        });
-                    }
-                    "Cnot" => {
-                        bg_vec.push(BoundaryGate::Cnot {
-                            ctrl_x_bit: req_bit(gate_dict, "ctrl_x_bit", &gate_type)?,
-                            ctrl_z_bit: req_bit(gate_dict, "ctrl_z_bit", &gate_type)?,
-                            tgt_x_bit: req_bit(gate_dict, "tgt_x_bit", &gate_type)?,
-                            tgt_z_bit: req_bit(gate_dict, "tgt_z_bit", &gate_type)?,
-                        });
-                    }
-                    "SGate" => {
-                        bg_vec.push(BoundaryGate::SGate {
-                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
-                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
-                        });
-                    }
-                    "TGateInjection" => {
-                        let z = req_bit(gate_dict, "z_obs_bit", &gate_type)?;
-                        let a = req_bit(gate_dict, "ancilla_z_bit", &gate_type)?;
-                        bg_vec.push(BoundaryGate::TGateInjection {
-                            z_obs_bit: z,
-                            ancilla_z_bit: a,
-                        });
-                    }
-                    _ => {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "Unknown gate type: {gate_type}"
-                        )));
-                    }
-                }
-            }
-            boundary_gates.push(bg_vec);
-        }
-
-        let algo_desc = AlgorithmDescriptor {
-            segments: seg_descs,
-            boundary_gates,
-            num_observables: num_obs,
-            num_frame_slots,
-        };
-
         let algo_dec = LogicalAlgorithmDecoder::new(Box::new(full_osd), algo_desc)
             .map_err(decoder_parse_error_to_py)?;
-        let inner = pecos_decoder_core::logical_algorithm::StreamingLogicalDecoder::new(algo_dec)
-            .map_err(decoder_parse_error_to_py)?;
+        let inner = pecos_decoder_core::logical_algorithm::StreamingLogicalDecoder::new(algo_dec);
         Ok(Self { inner })
     }
 
@@ -5587,33 +5613,20 @@ impl PyLogicalCircuitDecoder {
         strict: bool,
     ) -> PyResult<Self> {
         use pecos_decoder_core::decode_budget::DecodeBudget;
-        use pecos_decoder_core::logical_algorithm::{
-            AlgorithmDescriptor, BoundaryGate, FullCircuitStrategy, LogicalCircuitDecoder,
-            SegmentDescriptor,
-        };
+        use pecos_decoder_core::logical_algorithm::{FullCircuitStrategy, LogicalCircuitDecoder};
         use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
-        // Parse full DEM
-        let full_dem: String = descriptor
-            .get_item("full_dem")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("full_dem"))?
-            .extract()?;
+        let ParsedAlgorithmDescriptor {
+            full_dem,
+            segment_dicts: seg_list,
+            algorithm: algo_desc,
+        } = parse_algorithm_descriptor(descriptor)?;
+        algo_desc.validate().map_err(decoder_parse_error_to_py)?;
+        algo_desc
+            .reject_unsupported_decision_points()
+            .map_err(decoder_parse_error_to_py)?;
 
-        let seg_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = descriptor
-            .get_item("segments")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("segments"))?
-            .extract()?;
-
-        let num_obs: usize = descriptor
-            .get_item("num_observables")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_observables"))?
-            .extract()?;
-        let num_frame_slots: usize = descriptor
-            .get_item("num_frame_slots")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_frame_slots"))?
-            .extract()?;
-
-        // Parse stab_coords from first segment
+        // Full-DEM/subgraph construction starts only after cheap descriptor validation.
         let first_seg = seg_list.first().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("algorithm descriptor has no segments")
         })?;
@@ -5647,79 +5660,6 @@ impl PyLogicalCircuitDecoder {
                 as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
         })
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        // Parse segments
-        let mut seg_descs = Vec::with_capacity(seg_list.len());
-        for seg_dict in &seg_list {
-            let n_det: usize = seg_dict
-                .get_item("num_detectors")?
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_detectors"))?
-                .extract()?;
-            seg_descs.push(SegmentDescriptor {
-                num_detectors: n_det,
-                num_observables: num_obs,
-            });
-        }
-
-        // Parse boundary gates
-        let bg_list: Vec<Vec<pyo3::Bound<'_, pyo3::types::PyDict>>> = descriptor
-            .get_item("boundary_gates")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("boundary_gates"))?
-            .extract()?;
-
-        let mut boundary_gates = Vec::with_capacity(bg_list.len());
-        for gates in &bg_list {
-            let mut bg_vec = Vec::new();
-            for gate_dict in gates {
-                let gate_type: String = gate_dict
-                    .get_item("type")?
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("type"))?
-                    .extract()?;
-                match gate_type.as_str() {
-                    "Hadamard" => {
-                        bg_vec.push(BoundaryGate::Hadamard {
-                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
-                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
-                        });
-                    }
-                    "Cnot" => {
-                        bg_vec.push(BoundaryGate::Cnot {
-                            ctrl_x_bit: req_bit(gate_dict, "ctrl_x_bit", &gate_type)?,
-                            ctrl_z_bit: req_bit(gate_dict, "ctrl_z_bit", &gate_type)?,
-                            tgt_x_bit: req_bit(gate_dict, "tgt_x_bit", &gate_type)?,
-                            tgt_z_bit: req_bit(gate_dict, "tgt_z_bit", &gate_type)?,
-                        });
-                    }
-                    "SGate" => {
-                        bg_vec.push(BoundaryGate::SGate {
-                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
-                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
-                        });
-                    }
-                    "TGateInjection" => {
-                        let z = req_bit(gate_dict, "z_obs_bit", &gate_type)?;
-                        let a = req_bit(gate_dict, "ancilla_z_bit", &gate_type)?;
-                        bg_vec.push(BoundaryGate::TGateInjection {
-                            z_obs_bit: z,
-                            ancilla_z_bit: a,
-                        });
-                    }
-                    _ => {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "Unknown gate type: {gate_type}"
-                        )));
-                    }
-                }
-            }
-            boundary_gates.push(bg_vec);
-        }
-
-        let algo_desc = AlgorithmDescriptor {
-            segments: seg_descs,
-            boundary_gates,
-            num_observables: num_obs,
-            num_frame_slots,
-        };
 
         // Select budget: "unlimited" for full-circuit, "windowed" for
         // bounded-latency, or a cycle time in microseconds like "1000us".
@@ -5922,13 +5862,14 @@ impl PyLogicalCircuitDecoder {
         self.inner.total_detectors()
     }
 
-    /// Whether the circuit has feed-forward decision points (T gates).
-    /// If False, the reaction time budget doesn't matter — Clifford only.
+    /// Always `false` in phase 0: descriptors containing decision points are
+    /// rejected at construction (issue #596). Phase 2 restores its meaning.
     fn has_decision_points(&self) -> bool {
         self.inner.has_decision_points()
     }
 
-    /// Number of decision points.
+    /// Always `0` in phase 0: descriptors containing decision points are
+    /// rejected at construction (issue #596). Phase 2 restores its meaning.
     fn num_decision_points(&self) -> usize {
         self.inner.num_decision_points()
     }

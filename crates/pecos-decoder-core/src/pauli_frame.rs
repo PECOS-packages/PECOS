@@ -17,10 +17,11 @@
 //! tracks the net logical correction. The frame is consumed only when
 //! a logical operation requires it (T-gate injection, logical measurement).
 //!
-//! S-gate propagation for algorithm frames lives in
-//! `logical_algorithm::LogicalAlgorithmDecoder::apply_boundary_gate`'s
-//! `BoundaryGate::SGate` arm. A pair of X/Z masks cannot express that operation:
-//! it identifies the two sets of slots but carries no X-to-Z pairing information.
+//! H- and S-gate propagation for algorithm frames lives in
+//! `logical_algorithm::LogicalAlgorithmDecoder::apply_boundary_gate`'s explicit
+//! `BoundaryGate` arms. A pair of X/Z masks cannot express those operations: it
+//! identifies the two sets of slots but carries no X-to-Z pairing information
+//! needed to swap or propagate each pair independently.
 //!
 //! # Example
 //!
@@ -157,23 +158,6 @@ pub fn propagate_cnot_frames(
     *control.frame_mut() ^= tgt_frame & z_obs_mask;
 }
 
-/// Propagate Pauli frame through a logical Hadamard.
-///
-/// H gate: X ↔ Z. Swaps X-type and Z-type frame bits.
-pub fn propagate_h_gate_frame(frame: &mut PauliFrameAccumulator, x_obs_mask: u64, z_obs_mask: u64) {
-    let f = frame.current_frame();
-    let x_bits = f & x_obs_mask;
-    let z_bits = f & z_obs_mask;
-    // Clear both, then swap
-    *frame.frame_mut() &= !(x_obs_mask | z_obs_mask);
-    // X bits go to Z positions, Z bits go to X positions
-    // (This assumes x_obs_mask and z_obs_mask don't overlap and have
-    // matching bit positions. For a single logical qubit with obs 0 = X
-    // and obs 1 = Z: x_mask=0b01, z_mask=0b10, swap bits 0 and 1.)
-    *frame.frame_mut() |= if x_bits != 0 { z_obs_mask } else { 0 };
-    *frame.frame_mut() |= if z_bits != 0 { x_obs_mask } else { 0 };
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,14 +225,15 @@ mod tests {
     }
 
     #[test]
-    fn test_hadamard_frame() {
-        let mut frame = PauliFrameAccumulator::new(Box::new(FixedDecoder(0)));
-        // Set X correction (bit 0).
-        frame.flip_bit(0);
-        assert_eq!(frame.current_frame(), 0b01);
+    fn test_cnot_frame_propagation_handles_multiple_selected_bits() {
+        let mut ctrl = PauliFrameAccumulator::new(Box::new(FixedDecoder(0)));
+        let mut tgt = PauliFrameAccumulator::new(Box::new(FixedDecoder(0)));
+        *ctrl.frame_mut() = 0b0101_0101;
+        *tgt.frame_mut() = 0b1010_1010;
 
-        // Hadamard: X ↔ Z (swap bits 0 and 1).
-        propagate_h_gate_frame(&mut frame, 0b01, 0b10);
-        assert_eq!(frame.current_frame(), 0b10); // X became Z
+        propagate_cnot_frames(&mut ctrl, &mut tgt, 0b0101_0101, 0b1010_1010);
+
+        assert_eq!(ctrl.current_frame(), 0b1111_1111);
+        assert_eq!(tgt.current_frame(), 0b1111_1111);
     }
 }

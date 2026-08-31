@@ -28,6 +28,7 @@ from __future__ import annotations
 import pytest
 import stim
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
+from pecos.qec.surface.logical_circuit import _validate_boundary_cardinality
 from pecos_rslib.qec import LogicalAlgorithmDecoder, LogicalCircuitDecoder
 
 
@@ -83,12 +84,34 @@ def test_algorithm_descriptor_rejects_trailing_logical_gates():
         builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
 
 
-def test_algorithm_descriptor_rejects_boundary_cardinality_mismatch():
+def test_algorithm_descriptor_rejects_leading_logical_gates():
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_transversal_h("A")
+    builder.add_memory("A", 2, "Z")
+
+    with pytest.raises(
+        ValueError,
+        match=r"leading logical gates before any syndrome round.*no representable boundary.*Hadamard",
+    ) as exc_info:
+        builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
+
+    message = str(exc_info.value)
+    assert "terminal-segment support" not in message
+    assert "#595" not in message
+
+
+def test_algorithm_descriptor_rejects_empty_segment_list():
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(3), "A")
 
-    with pytest.raises(ValueError, match=r"0 boundary gate lists and 0 segments"):
+    with pytest.raises(ValueError, match=r"must contain at least one segment"):
         builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
+
+
+def test_algorithm_descriptor_rejects_boundary_cardinality_mismatch():
+    with pytest.raises(ValueError, match=r"0 boundary gate lists and 2 segments"):
+        _validate_boundary_cardinality([object(), object()], [])
 
 
 def test_unlimited_budget_reports_unlimited():
@@ -96,6 +119,8 @@ def test_unlimited_budget_reports_unlimited():
     assert dec.effective_windowing == "unlimited"
     assert dec.can_window is False
     assert dec.actual_num_windows == []
+    assert dec.has_decision_points() is False
+    assert dec.num_decision_points() == 0
 
 
 def test_windowed_budget_is_explicit_full_fallback_not_silent():
@@ -147,7 +172,7 @@ def test_logical_circuit_decoder_rejects_empty_segments():
     desc = _memory_descriptor(3, 3)
     desc["segments"] = []
 
-    with pytest.raises(ValueError, match="no segments"):
+    with pytest.raises(ValueError, match="must contain at least one segment"):
         LogicalCircuitDecoder(desc, budget="unlimited")
 
 
@@ -178,8 +203,28 @@ def test_logical_circuit_decoder_rejects_boundary_cardinality_mismatch():
 
 
 @pytest.mark.parametrize("decoder_type", [LogicalAlgorithmDecoder, LogicalCircuitDecoder])
+@pytest.mark.parametrize(
+    ("num_frame_slots", "message"),
+    [(0, "must be greater than zero"), (3, "must be even")],
+)
+def test_python_logical_decoders_validate_frame_schema_before_full_dem_build(
+    decoder_type,
+    num_frame_slots,
+    message,
+):
+    desc = _memory_descriptor(3, 3)
+    desc["num_frame_slots"] = num_frame_slots
+    desc["full_dem"] = "not a detector error model"
+    kwargs = {} if decoder_type is LogicalAlgorithmDecoder else {"budget": "unlimited"}
+
+    with pytest.raises(ValueError, match=message):
+        decoder_type(desc, **kwargs)
+
+
+@pytest.mark.parametrize("decoder_type", [LogicalAlgorithmDecoder, LogicalCircuitDecoder])
 def test_python_logical_decoders_reject_decision_points(decoder_type):
     desc = _decision_descriptor()
+    desc["full_dem"] = "not a detector error model"
     kwargs = {} if decoder_type is LogicalAlgorithmDecoder else {"budget": "unlimited"}
 
     with pytest.raises(

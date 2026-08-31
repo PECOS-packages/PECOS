@@ -38,7 +38,7 @@ const UNSUPPORTED_DECISION_POINT_MESSAGE: &str = "descriptor contains feed-forwa
 /// stores its Z frame. The storage reuses [`ObsMask`] so frame widths are not
 /// limited to one machine word; `num_slots` records the descriptor's logical
 /// width independently of the detector error model's observable count.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FrameBits {
     bits: ObsMask,
     num_slots: usize,
@@ -64,9 +64,7 @@ impl FrameBits {
     /// Toggle a frame slot.
     pub fn flip(&mut self, slot: usize) {
         assert!(slot < self.num_slots, "frame slot {slot} is out of range");
-        let mut mask = ObsMask::new();
-        mask.set(slot);
-        self.bits ^= &mask;
+        self.bits.toggle(slot);
     }
 
     /// Set a frame slot to `value`.
@@ -179,7 +177,8 @@ impl AlgorithmDescriptor {
     /// # Errors
     ///
     /// Returns [`DecoderError::InvalidConfiguration`] when the descriptor is
-    /// empty, its boundary cardinality is not exactly one fewer than its segment
+    /// empty, its frame schema is empty or not composed of X/Z pairs, its
+    /// boundary cardinality is not exactly one fewer than its segment
     /// cardinality, or a boundary gate references a slot outside
     /// `num_frame_slots`.
     pub fn validate(&self) -> Result<(), DecoderError> {
@@ -187,6 +186,19 @@ impl AlgorithmDescriptor {
             return Err(DecoderError::InvalidConfiguration(
                 "algorithm descriptor must contain at least one segment".into(),
             ));
+        }
+
+        if self.num_frame_slots == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "algorithm descriptor num_frame_slots must be greater than zero".into(),
+            ));
+        }
+
+        if !self.num_frame_slots.is_multiple_of(2) {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "algorithm descriptor num_frame_slots must be even (two slots per patch), got {}",
+                self.num_frame_slots,
+            )));
         }
 
         let expected_boundaries = self.segments.len() - 1;
@@ -216,7 +228,13 @@ impl AlgorithmDescriptor {
         Ok(())
     }
 
-    fn reject_unsupported_decision_points(&self) -> Result<(), DecoderError> {
+    /// Reject decision-point descriptors until phase-2 consultation is wired.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] if the descriptor contains
+    /// a `TGateInjection` boundary.
+    pub fn reject_unsupported_decision_points(&self) -> Result<(), DecoderError> {
         if self.has_decision_points() {
             return Err(DecoderError::InvalidConfiguration(
                 UNSUPPORTED_DECISION_POINT_MESSAGE.into(),
@@ -236,6 +254,8 @@ impl AlgorithmDescriptor {
 }
 
 /// Outcome of consulting an interactive decoder at a feed-forward boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DecisionStatus {
     /// The frame-corrected ancilla bit is ready and selects the S correction.
     Ready { corrected_bit: bool },
@@ -249,17 +269,25 @@ pub enum DecisionStatus {
 /// boundary *after* the post-injection segment's syndrome has been fed.
 /// [`DecisionStatus::Ready`] carries the frame-corrected ancilla bit selecting
 /// the S correction; [`DecisionStatus::NeedMoreData`] asks the harness for
-/// additional syndrome rounds under the patience protocol. No implementation
-/// exists yet, and all current logical decoders reject decision descriptors so
-/// they cannot silently bypass consultation (issue #596). Terminal-segment
-/// support for gates after final measurement remains tracked by issue #595.
-/// See `pecos-docs/design/streaming-transversal-decoding.md`.
+/// additional syndrome rounds under the patience protocol. Requests are subject
+/// to a maximum-horizon budget owned by the harness; strategies must not assume
+/// unbounded retries. No implementation exists yet, and all current logical
+/// decoders reject decision descriptors so they cannot silently bypass
+/// consultation (issue #596). Terminal-segment support for gates after final
+/// measurement remains tracked by issue #595. See the patience section of
+/// `pecos-docs/design/streaming-transversal-decoding.md`.
 pub trait DecisionConsultingStrategy: DecodeStrategy {
     /// Consult the strategy at a T-injection decision boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if the strategy cannot decode or assess the
+    /// requested boundary with the syndrome supplied so far.
     fn consult(
         &mut self,
+        boundary_index: usize,
         gate: &BoundaryGate,
-        raw_ancilla_outcome: u8,
+        raw_ancilla_outcome: bool,
         frame: &FrameBits,
     ) -> Result<DecisionStatus, DecoderError>;
 }
@@ -323,6 +351,9 @@ impl LogicalAlgorithmDecoder {
     /// Apply boundary gate to a Pauli frame.
     /// Used when consuming the frame at logical operations.
     ///
+    /// # Panics
+    ///
+    /// Panics if the gate references a slot outside the frame's declared width.
     pub fn apply_boundary_gate(frame: &mut FrameBits, gate: &BoundaryGate) {
         match gate {
             BoundaryGate::Hadamard {
@@ -424,7 +455,7 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 ///     num_frame_slots: 2,
 /// };
 /// let decoder = LogicalAlgorithmDecoder::new(Box::new(AnyDetectionDecoder), descriptor).unwrap();
-/// let mut stream = StreamingLogicalDecoder::new(decoder).unwrap();
+/// let mut stream = StreamingLogicalDecoder::new(decoder);
 ///
 /// // Feed syndrome round by round
 /// for sparse_round in [vec![(0, 1)], vec![(1, 0)]] {
@@ -451,17 +482,16 @@ pub struct StreamingLogicalDecoder {
 
 impl StreamingLogicalDecoder {
     /// Create from a `LogicalAlgorithmDecoder`.
-    pub fn new(decoder: LogicalAlgorithmDecoder) -> Result<Self, DecoderError> {
-        decoder.descriptor.validate()?;
-        decoder.descriptor.reject_unsupported_decision_points()?;
+    #[must_use]
+    pub fn new(decoder: LogicalAlgorithmDecoder) -> Self {
         let total = decoder.total_detectors();
-        Ok(Self {
+        Self {
             inner: decoder,
             syndrome: vec![0u8; total],
             total_detectors: total,
             rounds_fed: 0,
             accumulated_obs: ObsMask::new(),
-        })
+        }
     }
 
     /// Feed one detection event into the syndrome buffer.
@@ -704,9 +734,9 @@ impl LogicalCircuitDecoder {
 
     /// Whether the algorithm has any feed-forward decision points.
     ///
-    /// If false, the budget doesn't matter — all corrections are
-    /// metadata applied at the end (Clifford-only circuit).
-    /// If true, the reaction time budget is meaningful.
+    /// Always `false` in phase 0: descriptors containing decision points are
+    /// rejected at construction (issue #596). Phase 2 restores this accessor's
+    /// runtime meaning.
     #[must_use]
     pub fn has_decision_points(&self) -> bool {
         self.boundary_gates
@@ -715,6 +745,10 @@ impl LogicalCircuitDecoder {
     }
 
     /// Number of decision points (T gates, magic state injections).
+    ///
+    /// Always `0` in phase 0: descriptors containing decision points are
+    /// rejected at construction (issue #596). Phase 2 restores this accessor's
+    /// runtime meaning.
     #[must_use]
     pub fn num_decision_points(&self) -> usize {
         self.boundary_gates
@@ -1019,12 +1053,43 @@ mod tests {
             }],
             boundary_gates: vec![vec![]],
             num_observables: 0,
-            num_frame_slots: 0,
+            num_frame_slots: 2,
         };
         let error = descriptor.validate().unwrap_err();
         let message = error.to_string();
         assert!(message.contains("1 boundary gate lists"));
         assert!(message.contains("1 segments"));
+    }
+
+    #[test]
+    fn descriptor_rejects_zero_frame_slots() {
+        let descriptor = AlgorithmDescriptor {
+            segments: vec![SegmentDescriptor {
+                num_detectors: 1,
+                num_observables: 0,
+            }],
+            boundary_gates: vec![],
+            num_observables: 0,
+            num_frame_slots: 0,
+        };
+        let error = descriptor.validate().unwrap_err();
+        assert!(error.to_string().contains("must be greater than zero"));
+    }
+
+    #[test]
+    fn descriptor_rejects_odd_frame_slots() {
+        let descriptor = AlgorithmDescriptor {
+            segments: vec![SegmentDescriptor {
+                num_detectors: 1,
+                num_observables: 0,
+            }],
+            boundary_gates: vec![],
+            num_observables: 0,
+            num_frame_slots: 3,
+        };
+        let error = descriptor.validate().unwrap_err();
+        assert!(error.to_string().contains("must be even"));
+        assert!(error.to_string().contains("got 3"));
     }
 
     #[test]
@@ -1091,25 +1156,6 @@ mod tests {
     }
 
     #[test]
-    fn streaming_logical_decoder_revalidates_decision_points() {
-        let valid = AlgorithmDescriptor {
-            segments: vec![SegmentDescriptor {
-                num_detectors: 1,
-                num_observables: 1,
-            }],
-            boundary_gates: vec![],
-            num_observables: 1,
-            num_frame_slots: 4,
-        };
-        let mut decoder = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0)), valid).unwrap();
-        decoder.descriptor = decision_descriptor();
-        let error = StreamingLogicalDecoder::new(decoder)
-            .err()
-            .expect("decision descriptors must be rejected");
-        assert_decision_rejection(error);
-    }
-
-    #[test]
     fn logical_circuit_decoder_rejects_decision_points() {
         let strategy = FullCircuitStrategy::new(Box::new(FixedDecoder(0)));
         let error = LogicalCircuitDecoder::new(
@@ -1123,6 +1169,13 @@ mod tests {
     }
 
     #[test]
+    fn decode_strategy_exposes_decision_consultation_hook() {
+        let mut strategy: Box<dyn DecodeStrategy> =
+            Box::new(FullCircuitStrategy::new(Box::new(FixedDecoder(0))));
+        assert!(strategy.as_decision_consulting().is_none());
+    }
+
+    #[test]
     fn frame_bits_support_slots_above_u64() {
         let mut frame = FrameBits::new(130);
         frame.flip(97);
@@ -1130,6 +1183,19 @@ mod tests {
         frame.set(97, false);
         assert!(!frame.get(97));
         assert_eq!(frame.num_slots(), 130);
+    }
+
+    #[test]
+    #[should_panic(expected = "frame slot 64 is out of range")]
+    fn apply_boundary_gate_panics_for_out_of_range_frame_slot() {
+        let mut frame = FrameBits::new(2);
+        LogicalAlgorithmDecoder::apply_boundary_gate(
+            &mut frame,
+            &BoundaryGate::Hadamard {
+                x_obs_bit: 64,
+                z_obs_bit: 1,
+            },
+        );
     }
 
     #[test]
@@ -1497,7 +1563,7 @@ mod tests {
             num_frame_slots: 2,
         };
         let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b10)), desc).unwrap();
-        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner);
 
         // Feed full syndrome at once
         let result = streaming.decode_shot(&[0, 1, 0, 1]).unwrap();
@@ -1517,7 +1583,7 @@ mod tests {
             num_frame_slots: 2,
         };
         let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b01)), desc).unwrap();
-        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner);
 
         // Feed individual detectors
         streaming.feed_detection(1, 1);
@@ -1538,7 +1604,7 @@ mod tests {
             num_frame_slots: 2,
         };
         let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b11)), desc).unwrap();
-        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner);
 
         streaming.decode_shot(&[1, 0, 1, 0]).unwrap();
         assert_eq!(streaming.accumulated_obs().unwrap(), 0b11);
@@ -1563,7 +1629,7 @@ mod tests {
             desc, // always predicts obs flip
         )
         .unwrap();
-        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner);
 
         let syndromes = vec![vec![0u8, 0], vec![1, 0], vec![0, 1]];
         let expected = vec![0b1, 0b0, 0b1]; // matches on shot 0 and 2
@@ -1586,7 +1652,7 @@ mod tests {
             num_frame_slots: 2,
         };
         let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b10)), desc).unwrap();
-        let mut streaming = StreamingLogicalDecoder::new(inner).unwrap();
+        let mut streaming = StreamingLogicalDecoder::new(inner);
 
         let mask = streaming.decode_shot_obs(&[0, 1, 0, 1]).unwrap();
         assert_eq!(mask.to_u64(), Some(0b10));

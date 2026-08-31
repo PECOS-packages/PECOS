@@ -21,11 +21,12 @@ use core::fmt::{Debug, Display, Formatter};
 use core::ops::{Deref, DerefMut};
 use nalgebra::DMatrix;
 use num_complex::Complex64;
-use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
+use pecos_random::{PecosRng, Rng, RngExt, RngManageable, SeedableRng};
 use std::error::Error;
 
 const PROBABILITY_TOLERANCE: f64 = 1e-12;
 const OPERATOR_TOLERANCE: f64 = 1e-10;
+const NORMALIZATION_TOLERANCE: f64 = OPERATOR_TOLERANCE;
 
 /// Errors returned by the generalized local-dimension simulators.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,6 +41,8 @@ pub enum QuditError {
     TargetOutOfRange { target: usize, num_sites: usize },
     /// A target site appeared more than once in a local operation.
     DuplicateTarget(usize),
+    /// A local operation or measurement did not identify any target sites.
+    EmptyTargets,
     /// A local operator did not have the required square dimensions.
     InvalidOperatorLength { expected: usize, actual: usize },
     /// A basis-state index or local outcome does not exist.
@@ -48,7 +51,7 @@ pub enum QuditError {
     ZeroNorm,
     /// A state, channel, or probability contained a non-finite value.
     NonFiniteValue,
-    /// A channel probability was outside the inclusive unit interval.
+    /// A probability weight was outside the inclusive unit interval.
     InvalidProbability(f64),
     /// A state or channel was not normalized within numerical tolerance.
     NotNormalized { norm: f64 },
@@ -88,6 +91,7 @@ impl Display for QuditError {
                 write!(f, "target {target} is out of range for {num_sites} sites")
             }
             Self::DuplicateTarget(target) => write!(f, "target {target} appears more than once"),
+            Self::EmptyTargets => write!(f, "at least one target site is required"),
             Self::InvalidOperatorLength { expected, actual } => {
                 write!(f, "expected {expected} operator entries, received {actual}")
             }
@@ -102,10 +106,10 @@ impl Display for QuditError {
             Self::InvalidProbability(probability) => {
                 write!(
                     f,
-                    "probability must be between zero and one, received {probability}"
+                    "probability weight must be between zero and one, received {probability}"
                 )
             }
-            Self::NotNormalized { norm } => write!(f, "state is not normalized; norm is {norm}"),
+            Self::NotNormalized { norm } => write!(f, "normalization check failed; norm is {norm}"),
             Self::EmptyKrausChannel => write!(f, "a Kraus channel must contain an operator"),
             Self::NonUnitary { deviation } => {
                 write!(
@@ -322,6 +326,25 @@ where
     }
 }
 
+impl<R> RngManageable for QutritStateVec<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    type Rng = R;
+
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.0.set_rng(rng);
+    }
+
+    fn rng(&self) -> &Self::Rng {
+        self.0.rng()
+    }
+
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        self.0.rng_mut()
+    }
+}
+
 impl QuditStateVec<PecosRng> {
     /// Bytes required for the dense state amplitudes, excluding container overhead.
     ///
@@ -483,6 +506,7 @@ where
             probabilities[extract_local_index(index, targets, self.local_dimension)?] +=
                 amplitude.norm_sqr();
         }
+        sanitize_probability_weights(&mut probabilities, NORMALIZATION_TOLERANCE)?;
         Ok(probabilities)
     }
 
@@ -555,14 +579,11 @@ where
             branches.push(branch);
             probabilities.push(probability.max(0.0));
         }
-        let total = probabilities.iter().sum::<f64>();
-        if total <= PROBABILITY_TOLERANCE {
-            return Err(QuditError::ZeroNorm);
-        }
-        if (total - 1.0).abs() > channel_normalization_tolerance(local_size) {
-            return Err(QuditError::NotNormalized { norm: total });
-        }
-        let selected = sample_distribution(&mut self.rng, &probabilities, total);
+        let selected = sample_distribution(
+            &mut self.rng,
+            &mut probabilities,
+            channel_normalization_tolerance(local_size),
+        )?;
         let scale = probabilities[selected].sqrt();
         self.state = branches.swap_remove(selected);
         for amplitude in &mut self.state {
@@ -609,8 +630,8 @@ where
                 probabilities[outcome] += branch.iter().map(Complex64::norm_sqr).sum::<f64>();
             }
         }
-        validate_total_probability(
-            probabilities.iter().sum(),
+        sanitize_probability_weights(
+            &mut probabilities,
             channel_normalization_tolerance(local_size),
         )?;
         Ok(probabilities)
@@ -671,9 +692,11 @@ where
             branch_probabilities.push(probability);
             branches.push(branch);
         }
-        let total = branch_probabilities.iter().sum::<f64>();
-        validate_total_probability(total, channel_normalization_tolerance(local_size))?;
-        let selected = sample_distribution(&mut self.rng, &branch_probabilities, total);
+        let selected = sample_distribution(
+            &mut self.rng,
+            &mut branch_probabilities,
+            channel_normalization_tolerance(local_size),
+        )?;
         let (outcome, operator_index, _) = indexed_operators[selected];
         let branch_probability = branch_probabilities[selected];
         self.state = branches.swap_remove(selected);
@@ -704,9 +727,9 @@ where
     ///
     /// Returns an error for invalid targets or an impossible selected outcome.
     pub fn measure_joint(&mut self, targets: &[usize]) -> Result<MeasurementSample, QuditError> {
-        let probabilities = self.joint_outcome_probabilities(targets)?;
-        let total = probabilities.iter().sum::<f64>();
-        let selected = sample_distribution(&mut self.rng, &probabilities, total);
+        let mut probabilities = self.joint_outcome_probabilities(targets)?;
+        let selected =
+            sample_distribution(&mut self.rng, &mut probabilities, NORMALIZATION_TOLERANCE)?;
         let probability = probabilities[selected];
         let mut allowed = vec![false; probabilities.len()];
         allowed[selected] = true;
@@ -732,7 +755,7 @@ where
     ) -> Result<MeasurementSample, QuditError> {
         let basis_probabilities = self.joint_outcome_probabilities(targets)?;
         validate_measurement_partition(groups, basis_probabilities.len())?;
-        let probabilities = groups
+        let mut probabilities = groups
             .iter()
             .map(|group| {
                 group
@@ -741,8 +764,8 @@ where
                     .sum::<f64>()
             })
             .collect::<Vec<_>>();
-        let total = probabilities.iter().sum::<f64>();
-        let selected = sample_distribution(&mut self.rng, &probabilities, total);
+        let selected =
+            sample_distribution(&mut self.rng, &mut probabilities, NORMALIZATION_TOLERANCE)?;
         let mut allowed = vec![false; basis_probabilities.len()];
         for &outcome in &groups[selected] {
             allowed[outcome] = true;
@@ -764,14 +787,18 @@ where
     ///
     /// Returns an error if the target is invalid or has population outside `|0>, |1>`.
     pub fn measure_computational(&mut self, target: usize) -> Result<bool, QuditError> {
-        let probabilities = self.outcome_probabilities(target)?;
+        let mut probabilities = self.outcome_probabilities(target)?;
         let leakage_probability = probabilities.iter().skip(2).sum::<f64>();
         if leakage_probability > PROBABILITY_TOLERANCE {
             return Err(QuditError::LeakagePopulation {
                 probability: leakage_probability,
             });
         }
-        let selected = sample_distribution(&mut self.rng, &probabilities[..2], 1.0);
+        let selected = sample_distribution(
+            &mut self.rng,
+            &mut probabilities[..2],
+            NORMALIZATION_TOLERANCE,
+        )?;
         let probability = probabilities[selected];
         let mut allowed = vec![false; self.local_dimension];
         allowed[selected] = true;
@@ -779,12 +806,16 @@ where
         Ok(selected == 1)
     }
 
-    /// Reset a site to local basis state zero.
+    /// Reset a site to local basis state zero by sampling a trajectory branch.
+    ///
+    /// This consumes randomness because a pure-state trajectory represents the
+    /// reset channel by measuring the site's local basis before mapping the
+    /// selected level to zero.
     ///
     /// # Errors
     ///
     /// Returns an error if `target` does not identify a simulated site.
-    pub fn reset(&mut self, target: usize) -> Result<&mut Self, QuditError> {
+    pub fn reset_site(&mut self, target: usize) -> Result<&mut Self, QuditError> {
         let outcome = self.measure(target)?;
         if outcome != 0 {
             let operator = basis_swap(self.local_dimension, 0, outcome)?;
@@ -809,7 +840,7 @@ where
                 dimension: self.local_dimension,
             });
         }
-        self.reset(target)?;
+        self.reset_site(target)?;
         if basis_state != 0 {
             let operator = basis_swap(self.local_dimension, 0, basis_state)?;
             self.apply_operator(&[target], &operator)?;
@@ -852,7 +883,7 @@ where
         allowed: &[bool],
         probability: f64,
     ) -> Result<(), QuditError> {
-        if probability <= PROBABILITY_TOLERANCE {
+        if probability <= 0.0 {
             return Err(QuditError::ZeroNorm);
         }
         let scale = probability.sqrt();
@@ -865,6 +896,25 @@ where
             }
         }
         Ok(())
+    }
+}
+
+impl<R> RngManageable for QuditStateVec<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    type Rng = R;
+
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.rng = rng;
+    }
+
+    fn rng(&self) -> &Self::Rng {
+        &self.rng
+    }
+
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        &mut self.rng
     }
 }
 
@@ -1012,6 +1062,25 @@ where
     }
 }
 
+impl<R> RngManageable for QutritDensityMatrix<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    type Rng = R;
+
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.0.set_rng(rng);
+    }
+
+    fn rng(&self) -> &Self::Rng {
+        self.0.rng()
+    }
+
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        self.0.rng_mut()
+    }
+}
+
 impl QuditDensityMatrix<PecosRng> {
     /// Bytes required for the dense density operator, excluding container overhead.
     ///
@@ -1105,7 +1174,7 @@ where
     ) -> Result<Self, QuditError> {
         let simulator =
             Self::from_density_matrix_unchecked(num_sites, local_dimension, density_matrix, rng)?;
-        simulator.validate_physicality(PROBABILITY_TOLERANCE * 10.0)?;
+        simulator.validate_physicality(NORMALIZATION_TOLERANCE)?;
         Ok(simulator)
     }
 
@@ -1145,7 +1214,8 @@ where
             rng,
         };
         let trace = simulator.trace();
-        if (trace.re - 1.0).abs() > PROBABILITY_TOLERANCE || trace.im.abs() > PROBABILITY_TOLERANCE
+        if (trace.re - 1.0).abs() > NORMALIZATION_TOLERANCE
+            || trace.im.abs() > NORMALIZATION_TOLERANCE
         {
             return Err(QuditError::NotNormalized { norm: trace.re });
         }
@@ -1296,6 +1366,7 @@ where
             probabilities[extract_local_index(index, targets, self.local_dimension)?] +=
                 self.density_matrix[index * dimension + index].re;
         }
+        sanitize_probability_weights(&mut probabilities, NORMALIZATION_TOLERANCE)?;
         Ok(probabilities)
     }
 
@@ -1422,8 +1493,8 @@ where
                     .sum::<f64>();
             }
         }
-        validate_total_probability(
-            probabilities.iter().sum(),
+        sanitize_probability_weights(
+            &mut probabilities,
             channel_normalization_tolerance(local_size),
         )?;
         Ok(probabilities)
@@ -1482,9 +1553,11 @@ where
             probabilities.push(probability);
             outcome_states.push(outcome_state);
         }
-        let total = probabilities.iter().sum::<f64>();
-        validate_total_probability(total, channel_normalization_tolerance(local_size))?;
-        let selected = sample_distribution(&mut self.rng, &probabilities, total);
+        let selected = sample_distribution(
+            &mut self.rng,
+            &mut probabilities,
+            channel_normalization_tolerance(local_size),
+        )?;
         let probability = probabilities[selected];
         self.density_matrix = outcome_states.swap_remove(selected);
         for value in &mut self.density_matrix {
@@ -1511,9 +1584,9 @@ where
     ///
     /// Returns an error for invalid targets or an impossible selected outcome.
     pub fn measure_joint(&mut self, targets: &[usize]) -> Result<MeasurementSample, QuditError> {
-        let probabilities = self.joint_outcome_probabilities(targets)?;
-        let total = probabilities.iter().sum::<f64>();
-        let selected = sample_distribution(&mut self.rng, &probabilities, total);
+        let mut probabilities = self.joint_outcome_probabilities(targets)?;
+        let selected =
+            sample_distribution(&mut self.rng, &mut probabilities, NORMALIZATION_TOLERANCE)?;
         let probability = probabilities[selected];
         let mut allowed = vec![false; probabilities.len()];
         allowed[selected] = true;
@@ -1539,7 +1612,7 @@ where
     ) -> Result<MeasurementSample, QuditError> {
         let basis_probabilities = self.joint_outcome_probabilities(targets)?;
         validate_measurement_partition(groups, basis_probabilities.len())?;
-        let probabilities = groups
+        let mut probabilities = groups
             .iter()
             .map(|group| {
                 group
@@ -1548,8 +1621,8 @@ where
                     .sum::<f64>()
             })
             .collect::<Vec<_>>();
-        let total = probabilities.iter().sum::<f64>();
-        let selected = sample_distribution(&mut self.rng, &probabilities, total);
+        let selected =
+            sample_distribution(&mut self.rng, &mut probabilities, NORMALIZATION_TOLERANCE)?;
         let mut allowed = vec![false; basis_probabilities.len()];
         for &outcome in &groups[selected] {
             allowed[outcome] = true;
@@ -1571,14 +1644,18 @@ where
     ///
     /// Returns an error if the target is invalid or has population outside `|0>, |1>`.
     pub fn measure_computational(&mut self, target: usize) -> Result<bool, QuditError> {
-        let probabilities = self.outcome_probabilities(target)?;
+        let mut probabilities = self.outcome_probabilities(target)?;
         let leakage_probability = probabilities.iter().skip(2).sum::<f64>();
         if leakage_probability > PROBABILITY_TOLERANCE {
             return Err(QuditError::LeakagePopulation {
                 probability: leakage_probability,
             });
         }
-        let selected = sample_distribution(&mut self.rng, &probabilities[..2], 1.0);
+        let selected = sample_distribution(
+            &mut self.rng,
+            &mut probabilities[..2],
+            NORMALIZATION_TOLERANCE,
+        )?;
         let probability = probabilities[selected];
         let mut allowed = vec![false; self.local_dimension];
         allowed[selected] = true;
@@ -1591,7 +1668,7 @@ where
     /// # Errors
     ///
     /// Returns an error if `target` does not identify a simulated site.
-    pub fn reset(&mut self, target: usize) -> Result<&mut Self, QuditError> {
+    pub fn reset_site(&mut self, target: usize) -> Result<&mut Self, QuditError> {
         validate_targets(&[target], self.num_sites)?;
         let mut operators = Vec::with_capacity(self.local_dimension);
         let operator_size = square(self.local_dimension)?;
@@ -1619,7 +1696,7 @@ where
                 dimension: self.local_dimension,
             });
         }
-        self.reset(target)?;
+        self.reset_site(target)?;
         if basis_state != 0 {
             let operator = basis_swap(self.local_dimension, 0, basis_state)?;
             self.apply_operator(&[target], &operator)?;
@@ -1663,7 +1740,7 @@ where
         allowed: &[bool],
         probability: f64,
     ) -> Result<(), QuditError> {
-        if probability <= PROBABILITY_TOLERANCE {
+        if probability <= 0.0 {
             return Err(QuditError::ZeroNorm);
         }
         let dimension = self.dimension();
@@ -1680,6 +1757,25 @@ where
             }
         }
         Ok(())
+    }
+}
+
+impl<R> RngManageable for QuditDensityMatrix<R>
+where
+    R: Rng + SeedableRng + Debug + Clone,
+{
+    type Rng = R;
+
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.rng = rng;
+    }
+
+    fn rng(&self) -> &Self::Rng {
+        &self.rng
+    }
+
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        &mut self.rng
     }
 }
 
@@ -1897,7 +1993,7 @@ fn validate_state(state: &[Complex64], expected: usize) -> Result<(), QuditError
         return Err(QuditError::NonFiniteValue);
     }
     let norm = state.iter().map(Complex64::norm_sqr).sum::<f64>();
-    if (norm - 1.0).abs() > PROBABILITY_TOLERANCE {
+    if (norm - 1.0).abs() > NORMALIZATION_TOLERANCE {
         return Err(QuditError::NotNormalized { norm });
     }
     Ok(())
@@ -1914,6 +2010,9 @@ fn validate_probability(probability: f64) -> Result<(), QuditError> {
 }
 
 fn validate_targets(targets: &[usize], num_sites: usize) -> Result<(), QuditError> {
+    if targets.is_empty() {
+        return Err(QuditError::EmptyTargets);
+    }
     let mut seen = vec![false; num_sites];
     for &target in targets {
         if target >= num_sites {
@@ -1966,6 +2065,26 @@ fn validate_total_probability(total: f64, tolerance: f64) -> Result<(), QuditErr
     } else {
         Ok(())
     }
+}
+
+fn sanitize_probability_weights(
+    probabilities: &mut [f64],
+    tolerance: f64,
+) -> Result<f64, QuditError> {
+    for probability in probabilities.iter_mut() {
+        if !probability.is_finite() {
+            return Err(QuditError::NonFiniteValue);
+        }
+        if *probability < -tolerance {
+            return Err(QuditError::InvalidProbability(*probability));
+        }
+        if *probability < 0.0 {
+            *probability = 0.0;
+        }
+    }
+    let total = probabilities.iter().sum::<f64>();
+    validate_total_probability(total, tolerance)?;
+    Ok(total)
 }
 
 fn channel_normalization_tolerance(local_size: usize) -> f64 {
@@ -2159,10 +2278,15 @@ fn apply_operator_to_density_matrix(
     Ok(result)
 }
 
-fn sample_distribution<R>(rng: &mut R, probabilities: &[f64], total: f64) -> usize
+fn sample_distribution<R>(
+    rng: &mut R,
+    probabilities: &mut [f64],
+    tolerance: f64,
+) -> Result<usize, QuditError>
 where
     R: Rng + ?Sized,
 {
+    let total = sanitize_probability_weights(probabilities, tolerance)?;
     let mut threshold = rng.random::<f64>() * total;
     let mut last_nonzero = 0;
     for (index, probability) in probabilities.iter().copied().enumerate() {
@@ -2170,11 +2294,11 @@ where
             last_nonzero = index;
         }
         if threshold < probability {
-            return index;
+            return Ok(index);
         }
         threshold -= probability;
     }
-    last_nonzero
+    Ok(last_nonzero)
 }
 
 fn target_membership(targets: &[usize], num_sites: usize) -> Vec<bool> {

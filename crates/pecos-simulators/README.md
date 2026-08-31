@@ -79,8 +79,12 @@ partitions are also supported on arbitrary target sets.
 
 Constructing a density-matrix simulator from external data validates trace,
 Hermiticity, and positive semidefiniteness by default. The `required_memory_bytes`
-helpers estimate dense storage before construction, and internal dense allocations
-return errors when their requested capacity cannot be reserved.
+helpers estimate primary dense storage before construction. Primary state allocations
+use fallible reservation, but operations and diagnostics can require comparably sized
+temporary buffers, so callers should retain memory headroom beyond that estimate.
+
+State-vector `reset_site` samples a trajectory branch and consumes randomness. The
+density-matrix implementation applies the exact reset channel without sampling.
 
 Full measurement reports any local basis level. Computational measurement is
 strict: it returns an error when a site has population outside `|0>, |1>`, avoiding

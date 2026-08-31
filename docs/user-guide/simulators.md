@@ -80,8 +80,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | **SparseStab** | Stabilizer | QEC simulations, Clifford circuits | None (default) |
 | **Stabilizer** | Stabilizer | Dense Clifford circuits | None |
 | **StateVec** | State vector | Arbitrary circuits, small systems | None |
-| **QutritStateVec** | Qutrit state vector | Physical leakage trajectories, small systems | Rust API |
-| **QutritDensityMatrix** | Qutrit density matrix | Exact leakage/noise references, very small systems | Rust API |
+| **QutritStateVec** | Qutrit state vector | Physical leakage trajectories, small systems | Native Rust only |
+| **QutritDensityMatrix** | Qutrit density matrix | Exact leakage/noise references, very small systems | Native Rust only |
 | **StabVec** | Clifford + Rz | Clifford circuits with Z rotations | None |
 | **PauliProp** | Fault tracking | Error propagation analysis | None |
 | **CuStateVec** | State vector (GPU, Python) | Large circuits with GPU | CUDA, cuQuantum |
@@ -246,6 +246,10 @@ unitaries, embedded qubit gates,
 full and computational-subspace measurements, preparation and reset, and Kraus
 channels. The state-vector backend samples channel trajectories, while the
 density-matrix backend evolves mixed states exactly.
+
+State-vector `reset_site` samples a trajectory branch and therefore consumes
+randomness. Density-matrix `reset_site` applies the exact reset channel without
+sampling.
 
 Both backends support joint basis measurements, coarse-grained projective
 partitions, and generalized measurement instruments expressed as outcome-grouped

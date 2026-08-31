@@ -237,10 +237,42 @@ jobs:
 
       - name: Set up Rust (Unix)
         if: runner.os != 'Windows' && (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest')
+        # rustc 1.98.0 on aarch64-apple-darwin segfaults compiling ordinary
+        # dependency build scripts (libc, proc-macro2) in this lane, the same
+        # 1.98 aarch64-darwin crash that pinned the python-compat-smoke lane;
+        # pinned to 1.97.1 until fixed upstream. Unpin tracked in issue #566.
         run: |
-          bash scripts/ci/ensure-rust.sh stable minimal
+          bash scripts/ci/ensure-rust.sh "${{ matrix.os == 'macos-latest' && '1.97.1' || 'stable' }}" minimal
           export PATH="$HOME/.cargo/bin:$PATH"
+          rustup default "${{ matrix.os == 'macos-latest' && '1.97.1' || 'stable' }}"
           rustup show
+
+      # Self-expiring pin: probe whether latest stable still crashes (issue
+      # #566) so the pin above cannot go stale silently. This lane's crash is
+      # a plain cargo build of dependency build scripts (no maturin link
+      # args), so the probe is a plain `cargo check`. The crash is
+      # nondeterministic, so probe repeatedly and only suggest unpinning when
+      # a run sees zero crashes -- and unpin only once that holds across
+      # several PRs AND a real unpinned build is verified on a draft PR
+      # first. Never fails the job.
+      - name: Check whether the Rust toolchain pin is still needed
+        if: matrix.os == 'macos-latest' && github.event_name != 'pull_request'
+        run: |
+          rustup toolchain install stable --profile minimal
+          probe_dir="$(mktemp -d)"
+          cargo +stable init --lib --name pin_probe "$probe_dir" >/dev/null 2>&1
+          crashes=0
+          for _ in 1 2 3 4 5; do
+            rm -rf "$probe_dir/target"
+            cargo +stable check --manifest-path "$probe_dir/Cargo.toml" \
+              >/dev/null 2>&1 || crashes=$((crashes + 1))
+          done
+          rm -rf "$probe_dir"
+          if [ "$crashes" -eq 0 ]; then
+            echo "::warning title=Rust toolchain pin may be obsolete::rustc $(rustc +stable --version) survived 5/5 cargo check probes on this runner. The crash is nondeterministic, so remove the 1.97.1 pin only after this warning persists across several PRs AND an unpinned build passes on a draft PR (issue #566)."
+          else
+            echo "Latest stable ($(rustc +stable --version)) crashed $crashes/5 cargo check probes; the 1.97.1 pin remains required (issue #566)."
+          fi
 
       - name: Install just
         if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'

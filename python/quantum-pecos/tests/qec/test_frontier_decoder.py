@@ -31,6 +31,13 @@ error(0.1) D0 L0
 error(0.2) D1
 """
 
+N1_FACTORS = [
+    [(0.60, [], []), (0.25, [0], [0]), (0.15, [0], [])],
+    [(0.80, [], []), (0.20, [0], [])],
+]
+
+METRIC_FLIP_DEM = "error(0.20) D0 L0\nerror(0.15) D0\nerror(0.15) D0\n"
+
 
 def test_sparse_and_dense_decode_agree() -> None:
     decoder = FrontierDecoder.from_dem(SMALL_DEM)
@@ -84,6 +91,155 @@ def test_column_order_variants_and_validation() -> None:
         FrontierDecoder.from_dem(SMALL_DEM, column_order=object())
     with pytest.raises(RuntimeError, match="permutation"):
         FrontierDecoder.from_dem(SMALL_DEM, column_order=[0, 0])
+
+
+def test_factor_model_decode_preserves_degeneracy_mass() -> None:
+    decoder = FrontierDecoder.from_factors(
+        N1_FACTORS,
+        1,
+        1,
+        k=10**9,
+        delta=1e6,
+    )
+
+    result = decoder.decode_syndrome([1])
+    logical_masses = dict(result.logical_masses)
+
+    assert result.observable_flips.mask == 0
+    assert logical_masses[0] == pytest.approx(math.log(0.24), abs=1e-9)
+    assert logical_masses[1] == pytest.approx(math.log(0.20), abs=1e-9)
+
+
+def test_maxlog_metric_can_flip_the_prediction() -> None:
+    default_result = FrontierDecoder.from_dem(METRIC_FLIP_DEM).decode_syndrome([1])
+    maxlog_result = FrontierDecoder.from_dem(
+        METRIC_FLIP_DEM,
+        k=10**9,
+        delta=1e6,
+        metric_mode="frontier_lite",
+    ).decode_syndrome([1])
+
+    assert default_result.observable_flips.mask == 0
+    assert maxlog_result.observable_flips.mask == 1
+    assert maxlog_result.status == "exact"
+    assert maxlog_result.logical_masses[0] == (1, -1.93359375)
+
+
+@pytest.mark.parametrize(
+    ("int_metric_scale", "expected_masses"),
+    [
+        (1, [(1, -1.0), (0, -2.0)]),
+        (1024, [(1, -1.93359375), (0, -2.28125)]),
+    ],
+)
+def test_maxlog_int_metric_scale_is_forwarded(
+    int_metric_scale: int,
+    expected_masses: list[tuple[int, float]],
+) -> None:
+    result = FrontierDecoder.from_dem(
+        METRIC_FLIP_DEM,
+        k=10**9,
+        delta=1e6,
+        metric_mode="maxlog_int",
+        int_metric_scale=int_metric_scale,
+    ).decode_syndrome([1])
+
+    assert result.logical_masses == expected_masses
+
+
+@pytest.mark.parametrize(
+    "metric_mode",
+    [
+        "logsumexp_float",
+        "float",
+        "exact",
+        "frontierLite",
+        "frontier_lite",
+        "frontier-lite",
+        "frontierlite",
+        "maxlog_int",
+        "max_log_int",
+        "viterbi_int",
+    ],
+)
+def test_metric_mode_aliases_are_accepted_with_surrounding_whitespace(metric_mode: str) -> None:
+    decoder = FrontierDecoder.from_dem(
+        "error(0.1) D0\n",
+        metric_mode=f"  {metric_mode}  ",
+    )
+    assert decoder.decode_syndrome([0]).status == "exact"
+
+
+def test_metric_and_factor_model_error_paths() -> None:
+    with pytest.raises(ValueError, match=r"logsumexp_float.*maxlog_int"):
+        FrontierDecoder.from_dem(SMALL_DEM, metric_mode="not_a_metric")
+    with pytest.raises(ValueError, match=r"logsumexp_float.*maxlog_int"):
+        FrontierDecoder.from_factors(
+            N1_FACTORS,
+            1,
+            1,
+            column_order="not_an_order",
+            metric_mode="not_a_metric",
+        )
+    with pytest.raises(RuntimeError, match="integer max-log metric is not supported"):
+        FrontierCommitteeDecoder.from_dem(SMALL_DEM, metric_mode="maxlog_int")
+    with pytest.raises(RuntimeError, match="delta must be finite under maxlog_int"):
+        FrontierDecoder.from_dem(
+            SMALL_DEM,
+            delta=float("inf"),
+            metric_mode="maxlog_int",
+        )
+    with pytest.raises(RuntimeError, match="BP-guided pruning requires a binary model"):
+        FrontierDecoder.from_factors(
+            N1_FACTORS,
+            1,
+            1,
+            bp_score_iterations=1,
+        )
+    with pytest.raises(RuntimeError, match="outcome probabilities must sum to 1"):
+        FrontierDecoder.from_factors(
+            [[(0.6, [], []), (0.3, [0], [])]],
+            1,
+            0,
+        )
+    with pytest.raises(
+        RuntimeError,
+        match="num_detectors 1000000000000000 exceeds the u32 index-addressable width 4294967296",
+    ):
+        FrontierDecoder.from_factors(
+            [[(0.5, [], []), (0.5, [0], [])]],
+            10**15,
+            1,
+        )
+
+
+@pytest.mark.parametrize(
+    "column_order",
+    ["time_order", "deadline_reorder", "backward_deadline_reorder"],
+)
+def test_binary_factor_model_delegates_identically_to_dem(column_order: str) -> None:
+    factors = [
+        [(0.9, [], []), (0.1, [0], [0])],
+        [(0.8, [], []), (0.2, [1], [])],
+    ]
+    config = {
+        "k": 10**9,
+        "delta": 1e6,
+        "score_alpha": 0.7,
+        "bp_score_iterations": 2,
+        "column_order": column_order,
+    }
+    factor_decoder = FrontierDecoder.from_factors(factors, 2, 1, **config)
+    dem_decoder = FrontierDecoder.from_dem(SMALL_DEM, **config)
+
+    for syndrome in ([0, 0], [1, 0], [0, 1], [1, 1]):
+        factor_result = factor_decoder.decode_syndrome(syndrome)
+        dem_result = dem_decoder.decode_syndrome(syndrome)
+        assert factor_result.observable_flips.mask == dem_result.observable_flips.mask
+        assert factor_result.log_evidence == dem_result.log_evidence
+        assert factor_result.runner_up_gap == dem_result.runner_up_gap
+        assert factor_result.logical_masses == dem_result.logical_masses
+        assert factor_result.status == dem_result.status
 
 
 def test_committee_easy_tie_selects_forward() -> None:

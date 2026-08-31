@@ -4879,6 +4879,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-synth"
+version = "0.2.0-dev.0"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "pecos-core",
+]
+
+[[package]]
 name = "pecos-tesseract"
 version = "0.2.0-dev.0"
 dependencies = [

@@ -37,7 +37,9 @@
 
 use super::dem_sampler::SamplingEngine;
 use super::types::{DemOutput, NoiseConfig, PerGateTypeNoise};
-use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, DemOutputKind};
+use crate::fault_tolerance::propagator::{
+    DagFaultInfluenceMap, DemOutputKind, is_supported_prep_gate,
+};
 use pecos_core::prelude::GateType;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_num::z2_linalg::z2_rank_from_records;
@@ -47,6 +49,8 @@ use rand_core::Rng;
 /// Errors from detector definition validation.
 #[derive(Debug, Clone)]
 pub enum DetectorValidationError {
+    /// Circuit gate whose action Pauli propagation cannot represent.
+    UnsupportedGate(crate::fault_tolerance::propagator::UnsupportedGateError),
     /// A detector definition references a non-deterministic measurement.
     NonDeterministicReference {
         detector_id: usize,
@@ -75,6 +79,7 @@ pub enum DetectorValidationError {
 impl std::fmt::Display for DetectorValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedGate(error) => write!(f, "DEM sampler {error}"),
             Self::NonDeterministicReference {
                 detector_id,
                 measurement_idx,
@@ -122,6 +127,12 @@ impl std::fmt::Display for DetectorValidationError {
 }
 
 impl std::error::Error for DetectorValidationError {}
+
+impl From<crate::fault_tolerance::propagator::UnsupportedGateError> for DetectorValidationError {
+    fn from(error: crate::fault_tolerance::propagator::UnsupportedGateError) -> Self {
+        Self::UnsupportedGate(error)
+    }
+}
 
 /// Error returned when a sampler backend is asked to directly evaluate tracked
 /// Paulis it only preserves as metadata.
@@ -423,6 +434,11 @@ impl DemSampler {
         circuit: &pecos_quantum::TickCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
+        if let Some(error) =
+            crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
+        {
+            return Err(DetectorValidationError::UnsupportedGate(error));
+        }
         let dag = pecos_quantum::DagCircuit::try_from(circuit).map_err(|err| {
             DetectorValidationError::InvalidMetadata {
                 message: err.to_string(),
@@ -448,6 +464,9 @@ impl DemSampler {
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
 
         let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
+        if let Some(error) = influence_map.unsupported_gate() {
+            return Err(DetectorValidationError::UnsupportedGate(error.clone()));
+        }
         let annotation_map = InfluenceBuilder::new(circuit)
             .with_circuit_annotations()
             .map_err(|err| DetectorValidationError::InvalidMetadata {
@@ -601,14 +620,18 @@ impl DemSampler {
 
     /// Create a `DemSampler` directly from an influence map with per-location
     /// probabilities (raw measurement mode).
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DetectorValidationError::UnsupportedGate`] if the influence
+    /// map came from a circuit Pauli propagation cannot faithfully represent.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
         per_location_probs: &[f64],
-    ) -> Self {
+    ) -> Result<Self, DetectorValidationError> {
         let default_noise = super::NoiseConfig::default();
         let inner =
-            SamplingEngine::from_influence_map(influence_map, per_location_probs, &default_noise);
+            SamplingEngine::from_influence_map(influence_map, per_location_probs, &default_noise)?;
         let num_outputs = inner.num_detectors();
         let num_dem_outputs = inner.num_dem_outputs();
         let mut labels = SamplerLabels::default();
@@ -616,7 +639,7 @@ impl DemSampler {
         labels.dem_output_labels = labels_from_dem_outputs(&labels.dem_outputs);
         labels.tracked_paulis = tracked_paulis_from_influence_map(influence_map);
         labels.tracked_pauli_labels = labels_from_dem_outputs(&labels.tracked_paulis);
-        Self {
+        Ok(Self {
             inner,
             non_det_mask: Vec::new(),
             detector_records_abs: Vec::new(),
@@ -626,7 +649,7 @@ impl DemSampler {
             labels,
             raw_remap: None,
             measurement_deps: Vec::new(),
-        }
+        })
     }
 
     /// Number of output channels (measurements in raw mode, detectors in detector mode).
@@ -1315,7 +1338,7 @@ impl<'a> DemSamplerBuilder<'a> {
             }
         }
         match self.output_mode {
-            OutputMode::RawMeasurements => Ok(self.build_raw()),
+            OutputMode::RawMeasurements => self.build_raw(),
             OutputMode::DetectorEvents => self.build_detector(),
         }
     }
@@ -1324,7 +1347,7 @@ impl<'a> DemSamplerBuilder<'a> {
     ///
     /// Mechanism table is in measurement coordinates. Non-deterministic
     /// measurements are identified and marked for coin-flip output.
-    fn build_raw(self) -> DemSampler {
+    fn build_raw(self) -> Result<DemSampler, DetectorValidationError> {
         let num_measurements = self.influence_map.measurements.len();
 
         // Build per-location probabilities from gate-type noise
@@ -1335,7 +1358,7 @@ impl<'a> DemSamplerBuilder<'a> {
             self.influence_map,
             &per_location_probs,
             &self.noise,
-        );
+        )?;
 
         // Identify non-deterministic measurements.
         // A measurement is deterministic if the influence builder found it
@@ -1366,7 +1389,7 @@ impl<'a> DemSamplerBuilder<'a> {
         let dem_outputs = dem_outputs_from_influence_map(self.influence_map, num_dem_outputs);
         let tracked_paulis = tracked_paulis_from_influence_map(self.influence_map);
 
-        DemSampler {
+        Ok(DemSampler {
             inner,
             non_det_mask,
             detector_records_abs: self.detector_records_abs.unwrap_or_default(),
@@ -1376,7 +1399,7 @@ impl<'a> DemSamplerBuilder<'a> {
             labels: merge_dem_output_metadata(self.labels, dem_outputs, tracked_paulis),
             raw_remap: None,
             measurement_deps: Vec::new(), // No expansion needed (engine covers all measurements)
-        }
+        })
     }
 
     /// Build in detector-event mode.
@@ -1444,7 +1467,7 @@ impl<'a> DemSamplerBuilder<'a> {
             builder = builder.with_measurement_order(order);
         }
 
-        let inner = builder.build();
+        let inner = builder.build()?;
         let num_dem_outputs = inner.num_dem_outputs();
         let dem_outputs =
             dem_outputs_from_records(self.influence_map, &observable_records, num_dem_outputs);
@@ -1508,7 +1531,7 @@ pub(crate) fn compute_location_probs_from_noise(
         .map(|loc| {
             #[allow(clippy::match_same_arms)]
             match loc.gate_type {
-                GateType::PX | GateType::PZ | GateType::QAlloc => noise.p_prep,
+                gate_type if is_supported_prep_gate(gate_type) => noise.p_prep,
                 GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => noise.p_meas,
                 GateType::CX
                 | GateType::CZ
@@ -1726,7 +1749,7 @@ mod tests {
 
         // DemSampler::from_influence_map (same mechanism construction)
         let probs = vec![p; im.locations.len()];
-        let dem = DemSampler::from_influence_map(&im, &probs);
+        let dem = DemSampler::from_influence_map(&im, &probs).unwrap();
         let dem_stats = dem.sample_statistics(num_shots, 42);
 
         // Same seed, same mechanism construction → identical results
@@ -1923,7 +1946,7 @@ mod tests {
             Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
         );
 
-        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.02, 0.0);
+        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.02, 0.0).unwrap();
 
         let sampler = DemSampler::from_detector_error_model(&dem);
 
@@ -2012,7 +2035,7 @@ mod tests {
         assert_metadata(&from_circuit);
         assert_eq!(sample_once(&from_circuit), (vec![true], vec![true]));
 
-        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 1.0, 0.0);
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 1.0, 0.0).unwrap();
         let from_dem = DemSampler::from_detector_error_model(&dem);
         assert_metadata(&from_dem);
         assert_eq!(sample_once(&from_dem), (vec![true], vec![true]));
@@ -2089,7 +2112,7 @@ mod tests {
             Attribute::String(format!("[{}]", obs.join(","))),
         );
 
-        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.02, 0.0);
+        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.02, 0.0).unwrap();
         let sampler = DemSampler::from_detector_error_model(&dem);
         assert_eq!(sampler.num_dem_outputs(), n);
 
@@ -2137,7 +2160,7 @@ mod tests {
             Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
         );
 
-        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.02, 0.0);
+        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.02, 0.0).unwrap();
         let sampler = DemSampler::from_detector_error_model(&dem);
 
         assert_eq!(sampler.observable_ids(), vec![0]);

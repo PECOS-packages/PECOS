@@ -166,7 +166,8 @@ fn benchmark_circuit(
 
     // CPU sampling
     let probs = vec![p_error; num_locations];
-    let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs);
+    let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs)
+        .expect("pipeline influence map must support Pauli propagation");
 
     let cpu_start = Instant::now();
     let cpu_stats = cpu_sampler.sample_statistics(num_shots as usize, seed);

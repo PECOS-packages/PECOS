@@ -1,4 +1,9 @@
 //! Ross--Selinger one- and two-dimensional grid-candidate machinery.
+//!
+//! Ross and Selinger, arXiv:1403.2975v3, Lemmas 7.2 and 9.6 assume
+//! `epsilon < |1 - exp(i*pi/8)| = 2*sin(pi/16)`. This layer deliberately
+//! accepts every `0 < epsilon < 2`; the later synthesis driver owns the
+//! Clifford shortcut above the paper's threshold.
 
 use std::cmp::Ordering;
 
@@ -41,7 +46,7 @@ impl From<SynthError> for GridError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Epsilon {
     numerator: u64,
-    log_denominator: u32,
+    h_exponent: u32,
 }
 
 impl Epsilon {
@@ -59,7 +64,7 @@ impl Epsilon {
         if !less_than_two {
             return Err(GridError::InvalidEpsilon);
         }
-        u32::try_from(
+        let h_exponent = u32::try_from(
             u64::from(log_denominator)
                 .checked_mul(2)
                 .and_then(|value| value.checked_add(1))
@@ -68,18 +73,16 @@ impl Epsilon {
         .map_err(|_| GridError::ExponentOverflow)?;
         Ok(Self {
             numerator,
-            log_denominator,
+            h_exponent,
         })
     }
 
-    fn h(&self, precision: u32) -> Result<DyadicInterval, GridError> {
-        let exponent = u64::from(self.log_denominator)
-            .checked_mul(2)
-            .and_then(|value| value.checked_add(1))
-            .ok_or(GridError::ExponentOverflow)?;
-        let exponent = u32::try_from(exponent).map_err(|_| GridError::ExponentOverflow)?;
-        let numerator = BigInt::from(self.numerator) * BigInt::from(self.numerator);
-        Ok(DyadicInterval::exact(numerator, exponent).at_precision(precision))
+    fn h_numerator(&self) -> BigInt {
+        BigInt::from(self.numerator) * BigInt::from(self.numerator)
+    }
+
+    fn h(&self, precision: u32) -> DyadicInterval {
+        DyadicInterval::exact(self.h_numerator(), self.h_exponent).at_precision(precision)
     }
 }
 
@@ -89,16 +92,21 @@ struct CapGeometry {
     perpendicular: [DyadicInterval; 2],
     h: DyadicInterval,
     d: DyadicInterval,
+    d_numerator: BigInt,
+    d_exponent: u32,
+    exact_z: Option<ZOmega>,
     transverse_squared: DyadicInterval,
 }
 
 impl CapGeometry {
     fn new(angle_fraction: u64, epsilon: &Epsilon, precision: u32) -> Result<Self, GridError> {
         let (zx, zy) = target_phase(angle_fraction, precision)?;
-        let h = epsilon.h(precision)?;
+        let h = epsilon.h(precision);
         let one = DyadicInterval::integer(1_u8, precision);
         let two = DyadicInterval::integer(2_u8, precision);
         let d = one.sub(&h);
+        let d_numerator =
+            (BigInt::one() << shift_count(epsilon.h_exponent)) - epsilon.h_numerator();
         let transverse_squared = match h.compare(&one) {
             IntervalOrdering::DefinitelyLess => h.mul(&two.sub(&h)),
             IntervalOrdering::DefinitelyGreaterOrEqual => h.clone(),
@@ -115,6 +123,9 @@ impl CapGeometry {
             perpendicular: [zy.neg(), zx],
             h,
             d,
+            d_numerator,
+            d_exponent: epsilon.h_exponent,
+            exact_z: exact_grid_phase(angle_fraction),
             transverse_squared,
         })
     }
@@ -162,8 +173,14 @@ impl CapGeometry {
     }
 }
 
+pub(crate) type CandidateStreamResult = Result<Vec<GridCandidate>, GridError>;
+
 /// Enumerates both Ross--Selinger branches through `max_k`, in increasing
 /// denominator exponent, with the unshifted branch before the shifted branch.
+///
+/// Ross--Selinger Lemmas 7.2 and 9.6 impose the smaller synthesis-driver
+/// threshold documented at the module level; this grid layer accepts the full
+/// defensive range `0 < epsilon < 2`.
 pub(crate) fn candidate_stream(
     angle_fraction: u64,
     epsilon_numerator: u64,
@@ -171,7 +188,7 @@ pub(crate) fn candidate_stream(
     max_k: u32,
     base_precision: u32,
     max_precision: u32,
-) -> Result<Vec<GridCandidate>, GridError> {
+) -> CandidateStreamResult {
     let epsilon = Epsilon::new(epsilon_numerator, epsilon_log_denominator)?;
     retry_with_precision(
         base_precision,
@@ -206,15 +223,19 @@ fn enumerate_at_precision(
 /// of the fundamental unit until the first interval has width in
 /// `[lambda^-1, 1)`, then enumerate its `sqrt(2)` coordinate. Multiplication
 /// by `lambda` changes the conjugate interval by `-lambda^-1`, so the width
-/// product is invariant. Outward interval endpoints can only add trials; the
-/// final exact algebraic checks below remove them and retain closed boundaries.
+/// product is invariant. If the exact dyadic width is `w`, there is a unique
+/// integer `n` with `lambda^(n-1) <= w < lambda^n`; scaling once by
+/// `lambda^-n` gives precisely the required half-open range. To compare
+/// `w=W/2^p` with `lambda^n=a+b*sqrt(2)`, multiply by `2^p` and determine the
+/// sign of `(W-2^p*a) - (2^p*b)*sqrt(2)`. The phase-1 `ZSqrt2` ordering does
+/// exactly the required sign split and, when the two terms oppose, one exact
+/// comparison of their squares. Thus equality at the inclusive lower endpoint
+/// is decided symbolically rather than by an interval enclosure.
 fn solve_one_dimensional(
     x: &DyadicInterval,
     y: &DyadicInterval,
     precision: u32,
 ) -> Result<Vec<ZSqrt2>, GridError> {
-    let mut exponent = 0_i64;
-    let mut scale = ZSqrt2::one();
     let width = DyadicInterval::exact(x.width_numerator(), x.precision());
     if width.lo_numerator().is_zero() {
         let lower = x.ceil_lower();
@@ -226,44 +247,13 @@ fn solve_one_dimensional(
         }
         return Ok(Vec::new());
     }
-    let one = DyadicInterval::integer(1_u8, precision);
-    let inverse_lambda = evaluate_zsqrt(&ZSqrt2::new(BigInt::from(-1), BigInt::one()), precision);
-
-    let mut normalized = false;
-    for _ in 0..4096_u32 {
-        let scaled_width = width
-            .at_precision(precision)
-            .mul(&evaluate_zsqrt(&scale, precision));
-        if scaled_width.compare(&one) != IntervalOrdering::DefinitelyLess {
-            if scaled_width.is_exact() && scaled_width == one {
-                exponent = exponent.checked_sub(1).ok_or(GridError::ExponentOverflow)?;
-                scale = &scale * &lambda_pow(-1);
-                continue;
-            }
-            if scaled_width.compare(&one) == IntervalOrdering::Straddles {
-                return Err(GridError::Synthesis(SynthError::Inconclusive { precision }));
-            }
-            exponent = exponent.checked_sub(1).ok_or(GridError::ExponentOverflow)?;
-            scale = &scale * &lambda_pow(-1);
-            continue;
-        }
-        match scaled_width.compare(&inverse_lambda) {
-            IntervalOrdering::DefinitelyLess => {
-                exponent = exponent.checked_add(1).ok_or(GridError::ExponentOverflow)?;
-                scale = &scale * &lambda_pow(1);
-            }
-            IntervalOrdering::DefinitelyGreaterOrEqual => {
-                normalized = true;
-                break;
-            }
-            IntervalOrdering::Straddles => {
-                return Err(GridError::Synthesis(SynthError::Inconclusive { precision }));
-            }
-        }
-    }
-    if !normalized {
-        return Err(GridError::ExponentOverflow);
-    }
+    let normalization_exponent =
+        exact_normalization_exponent(width.lo_numerator(), width.precision())?;
+    let scale = lambda_pow(
+        normalization_exponent
+            .checked_neg()
+            .ok_or(GridError::ExponentOverflow)?,
+    );
 
     let transformed_x = scale_real_interval(x, &scale, precision);
     let bullet_scale = scale.sqrt2_conjugate();
@@ -278,7 +268,7 @@ fn solve_one_dimensional(
     .mul(&sqrt2_over_four);
     let mut b = b_bounds.ceil_lower();
     let b_max = b_bounds.floor_upper();
-    let inverse_scale = lambda_pow(exponent.checked_neg().ok_or(GridError::ExponentOverflow)?);
+    let inverse_scale = lambda_pow(normalization_exponent);
     let mut solutions = Vec::new();
 
     while b <= b_max {
@@ -307,6 +297,58 @@ fn solve_one_dimensional(
     });
     solutions.dedup();
     Ok(solutions)
+}
+
+fn exact_normalization_exponent(
+    width_numerator: &BigInt,
+    width_precision: u32,
+) -> Result<i64, GridError> {
+    debug_assert!(width_numerator > &BigInt::zero());
+    let lambda = ZSqrt2::new(BigInt::one(), BigInt::one());
+    let inverse_lambda = ZSqrt2::new(BigInt::from(-1), BigInt::one());
+    let mut exponent = 0_i64;
+    let mut lower = inverse_lambda.clone();
+    let mut upper = ZSqrt2::one();
+
+    // Defensive iteration bound. The loop walks monotonically toward the
+    // unique exponent with lambda^(e-1) <= w < lambda^e, so by construction
+    // it terminates in about bits(w)/log2(lambda) + precision steps. A logic
+    // bug here (e.g. a broken endpoint comparison) would otherwise ping-pong
+    // FOREVER rather than fail -- a mutation test demonstrated exactly that
+    // hang -- so the bound turns an impossible state into a loud error.
+    let mut remaining = u64::from(width_precision)
+        .saturating_add(width_numerator.bits())
+        .saturating_add(8);
+
+    loop {
+        if remaining == 0 {
+            return Err(GridError::ExponentOverflow);
+        }
+        remaining -= 1;
+
+        if compare_dyadic_to_zsqrt(width_numerator, width_precision, &upper) != Ordering::Less {
+            exponent = exponent.checked_add(1).ok_or(GridError::ExponentOverflow)?;
+            lower = upper;
+            upper = &lower * &lambda;
+            continue;
+        }
+        if compare_dyadic_to_zsqrt(width_numerator, width_precision, &lower) == Ordering::Less {
+            exponent = exponent.checked_sub(1).ok_or(GridError::ExponentOverflow)?;
+            upper = lower;
+            lower = &upper * &inverse_lambda;
+            continue;
+        }
+        return Ok(exponent);
+    }
+}
+
+fn compare_dyadic_to_zsqrt(numerator: &BigInt, precision: u32, value: &ZSqrt2) -> Ordering {
+    let scale = BigInt::one() << shift_count(precision);
+    ZSqrt2::new(
+        numerator - value.rational_part() * &scale,
+        -value.sqrt2_part() * scale,
+    )
+    .cmp(&ZSqrt2::zero())
 }
 
 fn contains_zsqrt(interval: &DyadicInterval, value: &ZSqrt2) -> bool {
@@ -938,6 +980,119 @@ fn transformed_disk_box(
     })
 }
 
+fn exact_grid_phase(angle_fraction: u64) -> Option<ZOmega> {
+    let quarter_turn = 1_u64 << 62;
+    if angle_fraction & (quarter_turn - 1) != 0 {
+        return None;
+    }
+    // Angle64 uses the principal interval (-pi, pi]. Thus the four exact
+    // half-angle phases z=exp(-i*theta/2) are 1, omega^-1, -i, and omega.
+    Some(match angle_fraction >> 62 {
+        0 => ZOmega::one(),
+        1 => ZOmega::omega().conjugate(),
+        2 => -ZOmega::i(),
+        3 => ZOmega::omega(),
+        _ => unreachable!("two high bits select the quarter turn"),
+    })
+}
+
+fn exact_grid_cap_comparison(
+    cap: &CapGeometry,
+    exact_z: &ZOmega,
+    value: &DOmega,
+    branch: CandidateBranch,
+) -> Result<Ordering, GridError> {
+    let product = &DOmega::from(exact_z.conjugate()) * value;
+    let (real, _) = complex_parts(&product);
+    let (dot, dot_exponent) = real_domega_as_dyadic_zsqrt(&real)?;
+    let threshold = ZSqrt2::new(cap.d_numerator.clone(), BigInt::zero());
+
+    if branch == CandidateBranch::Unshifted {
+        return Ok(compare_dyadic_zsqrt(
+            &dot,
+            dot_exponent,
+            &threshold,
+            cap.d_exponent,
+        ));
+    }
+
+    // The shifted condition is dot >= d*|delta|. Although |delta| is not in
+    // Q(sqrt(2)), both sides have known signs and |delta|^2=2+sqrt(2).
+    // After the sign split, one exact square comparison in dyadic Z[sqrt(2)]
+    // decides the same closed inequality, including equality.
+    let dot_sign = dot.cmp(&ZSqrt2::zero());
+    let threshold_sign = cap.d_numerator.cmp(&BigInt::zero());
+    if threshold_sign == Ordering::Equal {
+        return Ok(dot_sign);
+    }
+    if threshold_sign == Ordering::Greater && dot_sign == Ordering::Less {
+        return Ok(Ordering::Less);
+    }
+    if threshold_sign == Ordering::Less && dot_sign != Ordering::Less {
+        return Ok(Ordering::Greater);
+    }
+
+    let dot_squared = &dot * &dot;
+    let threshold_squared = &threshold * &threshold;
+    let radius_squared = ZSqrt2::new(BigInt::from(2_u8), BigInt::one());
+    let scaled_threshold_squared = &threshold_squared * &radius_squared;
+    let squared_comparison = compare_dyadic_zsqrt(
+        &dot_squared,
+        checked_double_exponent(dot_exponent)?,
+        &scaled_threshold_squared,
+        checked_double_exponent(cap.d_exponent)?,
+    );
+    if threshold_sign == Ordering::Greater {
+        Ok(squared_comparison)
+    } else {
+        Ok(squared_comparison.reverse())
+    }
+}
+
+fn real_domega_as_dyadic_zsqrt(value: &DOmega) -> Result<(ZSqrt2, u32), GridError> {
+    let coordinates = value.numerator().coordinates();
+    debug_assert!(coordinates[2].is_zero());
+    debug_assert_eq!(coordinates[1], -&coordinates[3]);
+    let exponent = value.least_denominator_exponent();
+    if exponent.is_multiple_of(2) {
+        Ok((
+            ZSqrt2::new(coordinates[0].clone(), coordinates[1].clone()),
+            exponent / 2,
+        ))
+    } else {
+        let dyadic_exponent = u32::try_from(u64::from(exponent).div_ceil(2))
+            .map_err(|_| GridError::ExponentOverflow)?;
+        Ok((
+            ZSqrt2::new(BigInt::from(2_u8) * &coordinates[1], coordinates[0].clone()),
+            dyadic_exponent,
+        ))
+    }
+}
+
+fn compare_dyadic_zsqrt(
+    left: &ZSqrt2,
+    left_exponent: u32,
+    right: &ZSqrt2,
+    right_exponent: u32,
+) -> Ordering {
+    let common_exponent = left_exponent.max(right_exponent);
+    let left_scale = BigInt::one() << shift_count(common_exponent - left_exponent);
+    let right_scale = BigInt::one() << shift_count(common_exponent - right_exponent);
+    let left = ZSqrt2::new(
+        left.rational_part() * &left_scale,
+        left.sqrt2_part() * left_scale,
+    );
+    let right = ZSqrt2::new(
+        right.rational_part() * &right_scale,
+        right.sqrt2_part() * right_scale,
+    );
+    left.cmp(&right)
+}
+
+fn checked_double_exponent(exponent: u32) -> Result<u32, GridError> {
+    u32::try_from(u64::from(exponent) * 2).map_err(|_| GridError::ExponentOverflow)
+}
+
 fn exact_branch_test(
     cap: &CapGeometry,
     shifted_value: &DOmega,
@@ -946,8 +1101,8 @@ fn exact_branch_test(
 ) -> Result<Option<DOmega>, GridError> {
     // Ross and Selinger, arXiv:1403.2975v3, equations (13)--(14): the
     // epsilon region is the intersection of the unit disk and the half-plane
-    // Re(z^dagger u) >= 1-epsilon^2/2. The packet requires the closed form,
-    // so equality is accepted by the interval comparison below.
+    // Re(z^dagger u) >= 1-epsilon^2/2. The exact grid-angle path below accepts
+    // equality symbolically; the interval path refines every undecided case.
     let (radius_squared, bullet_radius_squared) = match branch {
         CandidateBranch::Unshifted => (ZSqrt2::one(), ZSqrt2::one()),
         CandidateBranch::Shifted => (
@@ -960,17 +1115,34 @@ fn exact_branch_test(
     {
         return Ok(None);
     }
-    let (x, y) = evaluate_complex_domega(shifted_value, precision);
-    let dot = cap.z[0].mul(&x).add(&cap.z[1].mul(&y));
-    let rhs = if branch == CandidateBranch::Unshifted {
-        cap.d.clone()
+    let cap_comparison = if let Some(exact_z) = &cap.exact_z {
+        exact_grid_cap_comparison(cap, exact_z, shifted_value, branch)?
     } else {
-        cap.d
-            .mul(&sqrt_interval(&evaluate_zsqrt(&radius_squared, precision)))
+        // Off the pi/2 angle grid, an exact boundary hit would require an
+        // exact algebraic coincidence between the dyadic candidate and the
+        // higher-cyclotomic target phase. We neither accept arbitrary
+        // Straddles nor silently reject them: the retry policy reports
+        // Inconclusive at the caller's precision ceiling.
+        let (x, y) = evaluate_complex_domega(shifted_value, precision);
+        let dot = cap.z[0].mul(&x).add(&cap.z[1].mul(&y));
+        let rhs = if branch == CandidateBranch::Unshifted {
+            cap.d.clone()
+        } else {
+            cap.d
+                .mul(&sqrt_interval(&evaluate_zsqrt(&radius_squared, precision)))
+        };
+        match dot.compare(&rhs) {
+            IntervalOrdering::DefinitelyLess => Ordering::Less,
+            IntervalOrdering::DefinitelyGreaterOrEqual => Ordering::Greater,
+            IntervalOrdering::Straddles => {
+                return Err(GridError::Synthesis(SynthError::Inconclusive { precision }));
+            }
+        }
     };
-    match dot.compare(&rhs) {
-        IntervalOrdering::DefinitelyLess => Ok(None),
-        IntervalOrdering::DefinitelyGreaterOrEqual => {
+
+    match cap_comparison {
+        Ordering::Less => Ok(None),
+        Ordering::Equal | Ordering::Greater => {
             let u = if branch == CandidateBranch::Unshifted {
                 shifted_value.clone()
             } else {
@@ -982,9 +1154,6 @@ fn exact_branch_test(
                 shifted_value * &delta_inverse
             };
             Ok(Some(u))
-        }
-        IntervalOrdering::Straddles => {
-            Err(GridError::Synthesis(SynthError::Inconclusive { precision }))
         }
     }
 }
@@ -1121,6 +1290,20 @@ mod tests {
     }
 
     #[test]
+    fn symbolic_normalization_includes_lambda_lower_endpoint() {
+        let precision = 96;
+        let one_width_numerator = BigInt::one() << 96_usize;
+        assert_eq!(
+            compare_dyadic_to_zsqrt(&one_width_numerator, precision, &ZSqrt2::one()),
+            Ordering::Equal
+        );
+        assert_eq!(
+            exact_normalization_exponent(&one_width_numerator, precision),
+            Ok(1)
+        );
+    }
+
+    #[test]
     fn one_dimensional_solver_matches_bounded_brute_force_and_order() {
         let precision = 96;
         let boxes = [
@@ -1160,12 +1343,24 @@ mod tests {
                     precision,
                 ),
             ),
+            (
+                DyadicInterval::new(
+                    BigInt::from(15_u8) << 96_usize,
+                    BigInt::from(16_u8) << 96_usize,
+                    precision,
+                ),
+                DyadicInterval::new(
+                    BigInt::from(-2_i8) << 96_usize,
+                    BigInt::from(2_i8) << 96_usize,
+                    precision,
+                ),
+            ),
         ];
         for (x, y) in boxes {
             let actual = solve_one_dimensional(&x, &y, precision).unwrap();
             let mut expected = Vec::new();
-            for a in -12_i64..=12 {
-                for b in -12_i64..=12 {
+            for a in -24_i64..=24 {
+                for b in -24_i64..=24 {
                     let value = ZSqrt2::new(BigInt::from(a), BigInt::from(b));
                     if contains_zsqrt(&x, &value) && contains_zsqrt(&y, &value.sqrt2_conjugate()) {
                         expected.push(value);
@@ -1197,42 +1392,98 @@ mod tests {
         let pi = crate::interval::pi_interval(precision);
         for log_denominator in 4_u32..=40 {
             let epsilon = Epsilon::new(1, log_denominator).unwrap();
-            let h = epsilon.h(precision).unwrap();
-            let two = DyadicInterval::integer(2_u8, precision);
-            let transverse_squared = h.mul(&two.sub(&h));
+            assert_cap_ellipse_case(&epsilon, precision, &pi, true);
+        }
+        for (numerator, log_denominator, narrow) in
+            [(181_u64, 7_u32, true), (91, 6, false), (255, 7, false)]
+        {
+            let epsilon = Epsilon::new(numerator, log_denominator).unwrap();
+            assert_cap_ellipse_case(&epsilon, precision, &pi, narrow);
+        }
+    }
+
+    fn assert_cap_ellipse_case(
+        epsilon: &Epsilon,
+        precision: u32,
+        pi: &DyadicInterval,
+        expected_narrow: bool,
+    ) {
+        let h = epsilon.h(precision);
+        let one = DyadicInterval::integer(1_u8, precision);
+        let two = DyadicInterval::integer(2_u8, precision);
+        let narrow = h.compare(&one) == IntervalOrdering::DefinitelyLess;
+        assert_eq!(narrow, expected_narrow);
+        let transverse_squared = if narrow {
+            h.mul(&two.sub(&h))
+        } else {
+            h.clone()
+        };
+        let (ellipse_upper, cap_lower) = if narrow {
             let shared_factor = h.mul(&sqrt_interval(&transverse_squared));
-            let ellipse_upper = pi.mul(&shared_factor);
-            let cap_lower = shared_factor
-                .mul(&DyadicInterval::integer(4_u8, precision))
-                .div_positive_int(&BigInt::from(3_u8));
-            let three_cap_lower = cap_lower.mul(&DyadicInterval::integer(3_u8, precision));
+            (
+                pi.mul(&shared_factor),
+                shared_factor
+                    .mul(&DyadicInterval::integer(4_u8, precision))
+                    .div_positive_int(&BigInt::from(3_u8)),
+            )
+        } else {
+            (
+                pi.mul(&h).mul(&sqrt_interval(&h)),
+                pi.mul(&h).div_positive_int(&BigInt::from(2_u8)),
+            )
+        };
+        let three_cap_lower = cap_lower.mul(&DyadicInterval::integer(3_u8, precision));
+        assert_eq!(
+            three_cap_lower.compare(&ellipse_upper),
+            IntervalOrdering::DefinitelyGreaterOrEqual
+        );
+
+        let h_squared = h.square();
+        let right = h_squared.mul(&transverse_squared);
+        for sample in 1_u8..16 {
+            let t = h
+                .mul(&DyadicInterval::integer(sample, precision))
+                .div_positive_int(&BigInt::from(16_u8));
+            let x_minus_center = h.sub(&t);
+            let y_squared = t.mul(&two.sub(&t));
+            let left = x_minus_center
+                .square()
+                .mul(&transverse_squared)
+                .add(&y_squared.mul(&h_squared));
             assert_eq!(
-                three_cap_lower.compare(&ellipse_upper),
+                right.compare(&left),
                 IntervalOrdering::DefinitelyGreaterOrEqual
             );
-            assert_eq!(
-                h.compare(&DyadicInterval::integer(1_u8, precision)),
-                IntervalOrdering::DefinitelyLess
-            );
-
-            let h_squared = h.square();
-            let right = h_squared.mul(&transverse_squared);
-            for sample in 1_u8..16 {
-                let t = h
-                    .mul(&DyadicInterval::integer(sample, precision))
-                    .div_positive_int(&BigInt::from(16_u8));
-                let x_minus_center = h.sub(&t);
-                let y_squared = t.mul(&two.sub(&t));
-                let left = x_minus_center
-                    .square()
-                    .mul(&transverse_squared)
-                    .add(&y_squared.mul(&h_squared));
-                assert_eq!(
-                    right.compare(&left),
-                    IntervalOrdering::DefinitelyGreaterOrEqual
-                );
-            }
         }
+    }
+
+    #[test]
+    fn exact_grid_angle_accepts_closed_cap_boundary() {
+        let precision = 128;
+        let epsilon = Epsilon::new(3, 3).unwrap();
+        let cap = CapGeometry::new(1_u64 << 62, &epsilon, precision).unwrap();
+        assert_eq!(cap.d_numerator, BigInt::from(119_u8));
+        assert_eq!(cap.d_exponent, 7);
+        assert_eq!(cap.exact_z, Some(ZOmega::omega().conjugate()));
+        let boundary = DOmega::new(
+            ZOmega::new(
+                BigInt::zero(),
+                BigInt::zero(),
+                BigInt::zero(),
+                BigInt::from(-119_i16),
+            ),
+            14,
+        );
+        assert_eq!(boundary.least_denominator_exponent(), 14);
+        assert_eq!(
+            exact_branch_test(&cap, &boundary, CandidateBranch::Unshifted, precision),
+            Ok(Some(boundary))
+        );
+    }
+
+    #[test]
+    fn width_one_candidate_stream_reproducer_resolves() {
+        assert!(candidate_stream(0, 1, 2, 8, 64, 256).is_ok());
     }
 
     #[test]

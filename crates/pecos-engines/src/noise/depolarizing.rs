@@ -57,6 +57,73 @@ pub struct DepolarizingFaultSite{
     pub outcomes: Vec<DepolarizingFaultOutcome>,
 }
 
+impl DepolarizingFaultSite {
+    #[must_use]
+    pub fn outcome_label_probability(&self, outcome_label: &str) -> Option<f64> {
+        self.outcomes
+            .iter()
+            .find(|outcome| outcome.label == outcome_label)
+            .map(|outcome| outcome.probability)
+    }
+
+    #[must_use]
+    pub fn outcome_probability(&self, outcome: DepolarizingFaultOutcome) -> Option<f64> {
+        self.outcome_label_probability(outcome.label)
+    }
+
+    pub fn random_outcome(&self) -> DepolarizingFaultOutcome {
+        // Get a random number between zero and 1
+        let rand_val = rand::random::<f64>();
+        // Scale the random number to the cumulative probabilities of the outcomes
+        let scaled_val = rand_val * self.outcomes.iter().map(|o| o.probability).sum::<f64>();
+        // Loop through the outcomes and find the first one whose cumulative probability exceeds the random number
+        let mut cumulative_probability = 0.0;
+        for outcome in &self.outcomes {
+            cumulative_probability += outcome.probability;
+            if scaled_val < cumulative_probability {
+                return outcome.clone();
+            }
+        }
+        self.outcomes.last().unwrap().clone()
+    }
+
+    // Find a random outcome that is not the current outcome
+    pub fn random_outcome_except(&self, current_outcome_label: &str) -> DepolarizingFaultOutcome {
+
+        // Grab a list of all the outcomes except the specified one
+        let filtered_outcomes: Vec<&DepolarizingFaultOutcome> = self
+            .outcomes
+            .iter()
+            .filter(|outcome| outcome.label != current_outcome_label)
+            .collect();
+
+        assert!(!filtered_outcomes.is_empty(), "No outcomes available except the current one");
+
+        // Get a random number between zero and 1
+        let rand_val = rand::random::<f64>();
+
+        // Scale the random number to the cumulative probabilities of the filtered outcomes
+        let scaled_val = rand_val * filtered_outcomes.iter().map(|o| o.probability).sum::<f64>();
+        assert!(scaled_val > f64::EPSILON, "Random value is too small, check probabilities of outcomes");
+
+        // Loop through the outcomes and find the first one whose cumulative probability exceeds
+        // the random number
+        let mut cumulative_probability = 0.0;
+        for outcome in &filtered_outcomes {
+            cumulative_probability += outcome.probability;
+            if scaled_val < cumulative_probability {
+                return (*outcome).clone();
+            }
+        }
+        (*filtered_outcomes.last().unwrap()).clone()
+    }
+
+    #[must_use]
+    pub fn no_fault_probability(&self) -> Option<f64> {
+        self.outcome_label_probability("NoFault")
+    }
+}
+
 /// A single fault-site sampled fault (not a history of faults)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DepolarizingSampledFault {
@@ -73,6 +140,158 @@ pub struct DepolarizingSampledFault {
 pub struct DepolarizingFaultCatalog {
     /// Ordered fault sites.
     pub sites: Vec<DepolarizingFaultSite>,
+}
+
+impl DepolarizingFaultCatalog {
+    // Function that computes the probability of a sampled fault history
+    pub fn fault_history_probability(
+        &self,
+        sampled_fault_history: &[DepolarizingSampledFault],
+    ) -> f64 {
+        let mut probability = 1.0;
+        let mut next_fault_history_ind = 0;
+
+        for site in &self.sites {
+            let no_fault_probability = site.no_fault_probability().unwrap_or_else(|| {
+                panic!("No-fault outcome not found for fault site {}", site.uid);
+            });
+
+            match sampled_fault_history.get(next_fault_history_ind) {
+                Some(fault) if fault.site_uid == site.uid => {
+                    let label = fault.outcome_label;
+                    probability *= site.outcome_label_probability(label).unwrap_or_else(|| {
+                        panic!("Outcome label {} not found for fault site {}", label, site.uid);
+                    });
+                    next_fault_history_ind += 1;
+                }
+                Some(_) => {
+                    probability *= no_fault_probability;
+                }
+                None => {
+                    probability *= no_fault_probability;
+                }
+            }
+        }
+        probability
+    }
+
+    // TODO Implement a "next" function that takes a sampled
+    // fault history and returns the next sampled fault history
+
+    // TODO Implement a iterator function that returns an iterator
+    // over all fault histories
+
+    pub fn get_site(&self, site_uid: usize) -> &DepolarizingFaultSite {
+        self.sites.iter().find(|s| s.uid == site_uid).unwrap_or_else(|| {
+            panic!("Site uid {} not found in fault catalog", site_uid);
+        })
+    }
+
+    // Checks that two catalogs are compatible with each other
+    fn is_catalog_compatible(&self, other: &DepolarizingFaultCatalog) -> bool {
+        // Check that they have the same number of sites
+        if self.sites.len() != other.sites.len() {
+            return false;
+        }
+        // check that each site has the same uid and gate type
+        for (site, other_site) in self.sites.iter().zip(other.sites.iter()) {
+            if site.uid != other_site.uid || site.gate_type != other_site.gate_type {
+                return false;
+            }
+        }
+        true
+    }
+
+    // Takes another fault catalog and returns the ratio of the
+    // probabilities of a single fault history.
+    pub fn fault_catalog_probability_ratio(
+        &self,
+        other: &DepolarizingFaultCatalog,
+        sampled_fault_history: &[DepolarizingSampledFault],
+    ) -> f64 {
+        assert!(self.is_catalog_compatible(other), "Fault catalogs are not compatible");
+        // Easiest to compute probabilities separately since 
+        // we no fault probabilities will be different for each catalog
+        let prob_self = self.fault_history_probability(sampled_fault_history);
+        let prob_other = other.fault_history_probability(sampled_fault_history);
+        prob_self / prob_other
+    }
+
+    // Takes two fault histories and returns the ratio of their probabilitieis
+    pub fn fault_histories_probability_ratio(
+        &self,
+        sampled_fault_history_a: &[DepolarizingSampledFault],
+        sampled_fault_history_b: &[DepolarizingSampledFault],
+    ) -> f64 {
+
+        // Track the ratio
+        let mut ratio = 1.0;
+        
+        // Counters to track the next fault sites
+        let mut next_fault_history_ind_a = 0;
+        let mut next_fault_history_ind_b = 0;
+        let mut next_fault_a = sampled_fault_history_a.get(next_fault_history_ind_a);
+        let mut next_fault_b = sampled_fault_history_b.get(next_fault_history_ind_b);
+        let mut next_fault_site_a = next_fault_a.map(|f| f.site_uid);
+        let mut next_fault_site_b = next_fault_b.map(|f| f.site_uid);
+
+        // Iterate through sites, only updating if there is a fault site
+        for site in &self.sites {
+            // Check if history_a or history_b both have a fault here
+            let has_fault_a = next_fault_site_a == Some(site.uid);
+            let has_fault_b = next_fault_site_b == Some(site.uid);
+            if has_fault_a && has_fault_b {
+                // Both histories have a fault here, compute ratio of probabilities
+                let label_a = next_fault_a.unwrap().outcome_label;
+                let label_b = next_fault_b.unwrap().outcome_label;
+                let prob_a = site.outcome_label_probability(label_a).unwrap_or_else(|| {
+                    panic!("Outcome label {} not found for fault site {}", label_a, site.uid);
+                });
+                let prob_b = site.outcome_label_probability(label_b).unwrap_or_else(|| {
+                    panic!("Outcome label {} not found for fault site {}", label_b, site.uid);
+                });
+                // Update the ratio
+                ratio *= prob_a / prob_b;
+            }
+            else if has_fault_a {
+                // Only history_a has a fault here, multiply by its probability and divide by no-fault probability
+                let label_a = next_fault_a.unwrap().outcome_label;
+                let prob_a = site.outcome_label_probability(label_a).unwrap_or_else(|| {
+                    panic!("Outcome label {} not found for fault site {}", label_a, site.uid);
+                });
+                let prob_b = site.no_fault_probability().unwrap_or_else(|| {
+                    panic!("No-fault outcome not found for fault site {}", site.uid);
+                });
+                // Update the ratio
+                ratio *= prob_a / prob_b;
+            }
+            else if has_fault_b {
+                // Only history_b has a fault here, multiply by no-fault probability and divide by its probability
+                let label_b = next_fault_b.unwrap().outcome_label;
+                let prob_b = site.outcome_label_probability(label_b).unwrap_or_else(|| {
+                    panic!("Outcome label {} not found for fault site {}", label_b, site.uid);
+                });
+                let prob_a = site.no_fault_probability().unwrap_or_else(|| {
+                    panic!("No-fault outcome not found for fault site {}", site.uid);
+                });
+                // Update the ratio
+                ratio *= prob_a / prob_b;
+            }
+
+            // Update to the next sites
+            if has_fault_a {
+                next_fault_history_ind_a += 1;
+                next_fault_a = sampled_fault_history_a.get(next_fault_history_ind_a);
+                next_fault_site_a = next_fault_a.map(|f| f.site_uid);
+            }
+            if has_fault_b {
+                next_fault_history_ind_b += 1;
+                next_fault_b = sampled_fault_history_b.get(next_fault_history_ind_b);
+                next_fault_site_b = next_fault_b.map(|f| f.site_uid);
+            }
+        }
+        ratio
+    }
 }
 
 /// Implements depolarizing channel noise for quantum simulations
@@ -323,7 +542,7 @@ impl DepolarizingNoiseModel {
     ///
     /// This does not modify the simulator state and is intended for
     /// pre-sampling catalog construction.
-    fn build_fault_catalog_from_gates(
+    pub fn build_fault_catalog_from_gates(
         &self,
         gates: &[Gate],
     ) -> DepolarizingFaultCatalog {
@@ -388,12 +607,16 @@ impl DepolarizingNoiseModel {
                     Self::two_qubit_outcomes(self.p2),
                 )),
                 // Measure 
-                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => Some((
+                GateType::MZ
+                | GateType::MX
+                | GateType::MPZ
+                | GateType::MeasureLeaked
+                | GateType::MeasureFree => Some((
                     DepolarizingFaultSiteKind::Meas,
                     Self::binary_x_outcomes(self.p_meas),
                 )),
                 // Prepare
-                GateType::PZ | GateType::QAlloc => Some((
+                GateType::PZ | GateType::PX | GateType::QAlloc => Some((
                     DepolarizingFaultSiteKind::Prep,
                     Self::binary_x_outcomes(self.p_prep),
                 )),
@@ -530,8 +753,9 @@ impl DepolarizingNoiseModel {
                 // Apply noise after the gate and cache the noise event
                 let site_uid = *next_fault_site_uid;
                 *next_fault_site_uid += 1;
+                // While replaying, every site is forced (absent sites force no-fault) so no RNG is consumed.
                 let forced_outcome = replay_outcomes_by_site
-                    .and_then(|replay| replay.get(&site_uid).copied());
+                    .map(|replay| replay.get(&site_uid).copied().unwrap_or(0));
                 if let Some((outcome_index, outcome_label)) = 
                     Self::apply_sq_faults(rng, p1_threshold, builder, gate, forced_outcome)
                 {
@@ -561,8 +785,9 @@ impl DepolarizingNoiseModel {
                 // Applying noise after the gate and cache the noise event
                 let site_uid = *next_fault_site_uid;
                 *next_fault_site_uid += 1;
+                // While replaying, every site is forced (absent sites force no-fault) so no RNG is consumed.
                 let forced_outcome = replay_outcomes_by_site
-                    .and_then(|replay| replay.get(&site_uid).copied());
+                    .map(|replay| replay.get(&site_uid).copied().unwrap_or(0));
                 if let Some((outcome_index, outcome_label)) = 
                     Self::apply_tq_faults(rng, p2_threshold, builder, gate, forced_outcome)
                 {
@@ -576,8 +801,9 @@ impl DepolarizingNoiseModel {
                 // Apply noise after the gate and cache the noise event
                 let site_uid = *next_fault_site_uid;
                 *next_fault_site_uid += 1;
+                // While replaying, every site is forced (absent sites force no-fault) so no RNG is consumed.
                 let forced_outcome = replay_outcomes_by_site
-                    .and_then(|replay| replay.get(&site_uid).copied());
+                    .map(|replay| replay.get(&site_uid).copied().unwrap_or(0));
                 if let Some((outcome_index, outcome_label)) = 
                     Self::apply_tq_faults(rng, p2_threshold, builder, gate, forced_outcome)
                 {
@@ -589,14 +815,15 @@ impl DepolarizingNoiseModel {
             // identically; the prepare-half lands with the dedicated
             // measure-prepare channel across all of them at onces
             GateType::MPZ | GateType::MX | GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
-                if gate.gatetype != GateType::MPZ {
+                if gate.gate_type != GateType::MPZ {
                     trace!("Applying measurement with possible fault");
                 }
                 // Apply noise before the gate and cache the noise event
                 let site_uid = *next_fault_site_uid;
                 *next_fault_site_uid += 1;
+                // While replaying, every site is forced (absent sites force no-fault) so no RNG is consumed.
                 let forced_outcome = replay_outcomes_by_site
-                    .and_then(|replay| replay.get(&site_uid).copied());
+                    .map(|replay| replay.get(&site_uid).copied().unwrap_or(0));
                 if let Some((outcome_index, outcome_label)) = 
                     Self::apply_meas_faults(rng, p_meas_threshold, builder, gate, forced_outcome)
                 {
@@ -612,8 +839,9 @@ impl DepolarizingNoiseModel {
                 // Apply noise after the prep and cache the noise event
                 let site_uid = *next_fault_site_uid;
                 *next_fault_site_uid += 1;
+                // While replaying, every site is forced (absent sites force no-fault) so no RNG is consumed.
                 let forced_outcome = replay_outcomes_by_site
-                    .and_then(|replay| replay.get(&site_uid).copied());
+                    .map(|replay| replay.get(&site_uid).copied().unwrap_or(0));
                 if let Some((outcome_index, outcome_label)) = 
                     Self::apply_prep_faults(rng, p_prep_threshold, builder, gate, forced_outcome)
                 {
@@ -815,8 +1043,12 @@ impl DepolarizingNoiseModel {
         gate: &Gate,
         forced_outcome: Option<u8>,
     ) -> Option<(u8, &'static str)> {
-        let sampled_outcome = rng.inner_mut().noise_sample_1q(p1_threshold).map(|v| v + 1);
-        let outcome_index = forced_outcome.or(sampled_outcome);
+        // A forced outcome (including a forced no-fault of 0) must skip the RNG
+        // draw entirely, or replay would desync from the recorded history.
+        let outcome_index = match forced_outcome {
+            Some(outcome) => Some(outcome),
+            None => rng.inner_mut().noise_sample_1q(p1_threshold).map(|v| v + 1),
+        };
         outcome_index.and_then(|outcome| Self::apply_sq_outcome(builder, gate, outcome))
     }
 
@@ -827,8 +1059,12 @@ impl DepolarizingNoiseModel {
         gate: &Gate,
         forced_outcome: Option<u8>,
     ) -> Option<(u8, &'static str)> {
-        let sampled_outcome = rng.inner_mut().noise_sample_2q(p2_threshold).map(|v| v + 1);
-        let outcome_index = forced_outcome.or(sampled_outcome);
+        // A forced outcome (including a forced no-fault of 0) must skip the RNG
+        // draw entirely, or replay would desync from the recorded history.
+        let outcome_index = match forced_outcome {
+            Some(outcome) => Some(outcome),
+            None => rng.inner_mut().noise_sample_2q(p2_threshold).map(|v| v + 1),
+        };
         outcome_index.and_then(|outcome| Self::apply_tq_outcome(builder, gate, outcome))
     }
 }
@@ -1531,13 +1767,13 @@ mod tests {
         let history = noise
             .sampled_fault_history()
             .expect("history should exist when enabled");
-        assert_eq!(history.len(), 4);
+        assert_eq!(history.len(), 3);
         assert_eq!(history[0].site_uid, 0);
         assert_eq!(history[1].site_uid, 2);
         assert_eq!(history[2].site_uid, 3);
         assert_eq!(history[0].outcome_label, "X");
-        assert_eq!(history[2].outcome_label, "ZZ");
-        assert_eq!(history[3].outcome_label, "X");
+        assert_eq!(history[1].outcome_label, "ZZ");
+        assert_eq!(history[2].outcome_label, "X");
     }
 
     #[test]
@@ -1677,5 +1913,194 @@ mod tests {
         };
 
         assert_eq!(out_no_replay.as_bytes(), out_empty_replay.as_bytes());
+    }
+
+    // Tests that sums of all possible fault histories add to 1
+    #[test]
+    fn test_fault_history_probability_sums_to_one() {
+        // Specify a circuit
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.pz(&[0]);
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+        let msg = builder.build();
+
+        // Build the noise model and fault catalog
+        let source = DepolarizingNoiseModel::new_uniform(0.5);
+        let catalog = source
+            .build_fault_catalog_from_message(&msg)
+            .expect("catalog generation should succeed");
+
+        let mut prob = 0.0;
+        for outcome1 in &catalog.sites[0].outcomes {
+            for outcome2 in &catalog.sites[1].outcomes {
+                for outcome3 in &catalog.sites[2].outcomes {
+                    for outcome4 in &catalog.sites[3].outcomes {
+                        let mut history = Vec::new();
+                        if outcome1.label != "NoFault" {
+                            let index = catalog.sites[0].outcomes.iter().position(|o| o.label == outcome1.label).unwrap() as u8;
+                            history.push(DepolarizingSampledFault {
+                                site_uid: 0,
+                                outcome_index: index,
+                                outcome_label: &outcome1.label,
+                            });
+                        }
+                        if outcome2.label != "NoFault" {
+                            let index = catalog.sites[1].outcomes.iter().position(|o| o.label == outcome2.label).unwrap() as u8;
+                            history.push(DepolarizingSampledFault {
+                                site_uid: 1,
+                                outcome_index: index,
+                                outcome_label: &outcome2.label,
+                            });
+                        }
+                        if outcome3.label != "NoFault" {
+                            let index = catalog.sites[2].outcomes.iter().position(|o| o.label == outcome3.label).unwrap() as u8;
+                            history.push(DepolarizingSampledFault {
+                                site_uid: 2,
+                                outcome_index: index,
+                                outcome_label: &outcome3.label,
+                            });
+                        }
+                        if outcome4.label != "NoFault" {
+                            let index = catalog.sites[3].outcomes.iter().position(|o| o.label == outcome4.label).unwrap() as u8;
+                            history.push(DepolarizingSampledFault {
+                                site_uid: 3,
+                                outcome_index: index,
+                                outcome_label: &outcome4.label,
+                            });
+                        }
+                        let history_prob = catalog
+                            .fault_history_probability(&history);
+                        prob += history_prob;
+                    }
+                }
+            }
+        }
+        let tolerance = 1e-12;
+        assert!((prob - 1.0).abs() < tolerance, "total probability should sum to 1");
+    }
+
+    // Tests that probabilities are correctly computed when compared to known examples
+    #[test]
+    fn test_fault_history_probability_computation() {
+        // Specify a circuit
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.pz(&[0]);
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+        let msg = builder.build();
+
+        // Create a noise model where no faults are allowed and
+        // check that the probability of the empty history is 1
+        // and any other histories have probability 0
+        let source = DepolarizingNoiseModel::new_uniform(0.0);
+        let catalog = source
+            .build_fault_catalog_from_message(&msg)
+            .expect("catalog generation should succeed");
+        let empty_history: Vec<DepolarizingSampledFault> = Vec::new();
+
+        let prob_empty = catalog
+            .fault_history_probability(&empty_history);
+        assert!((prob_empty - 1.0).abs() < f64::EPSILON, "empty history should have probability 1");
+
+        let non_empty_history = vec![DepolarizingSampledFault {
+            site_uid: 0,
+            outcome_index: 1,
+            outcome_label: "X",
+        }];
+        let prob_non_empty = catalog
+            .fault_history_probability(&non_empty_history);
+        assert!((prob_non_empty - 0.0).abs() < f64::EPSILON, "non-empty history should have probability 0");
+
+        // Create a noise model where faults are forced 
+        // and check that the probability of the empty history is 0
+        let source = DepolarizingNoiseModel::new_uniform(1.0);
+        let catalog = source
+            .build_fault_catalog_from_message(&msg)
+            .expect("catalog generation should succeed");
+        let empty_history: Vec<DepolarizingSampledFault> = Vec::new();
+
+        let prob_empty = catalog
+            .fault_history_probability(&empty_history);
+        assert!((prob_empty).abs() < f64::EPSILON, "empty history should have probability 0");
+
+        // Create a non-trivial noise model and check that the probability of a specified
+        // history is computed correctly
+        let source = DepolarizingNoiseModel::new(0.1, 0.2, 0.3, 0.4);
+        let catalog = source
+            .build_fault_catalog_from_message(&msg)
+            .expect("catalog generation should succeed");
+
+        let empty_history: Vec<DepolarizingSampledFault> = Vec::new();
+        let prob_empty = catalog
+            .fault_history_probability(&empty_history);
+        assert!((prob_empty - 0.9*0.8*0.7*0.6).abs() < f64::EPSILON, "empty history should have correct probability");
+
+        let history = vec![
+            DepolarizingSampledFault {
+                site_uid: 0,
+                outcome_index: 1,
+                outcome_label: "X",
+            },
+            DepolarizingSampledFault {
+                site_uid: 1,
+                outcome_index: 2,
+                outcome_label: "Y",
+            },
+        ];
+        let prob_history = catalog
+            .fault_history_probability(&history);
+        let expected_prob = 0.1 * 0.1 * 0.6 * 0.8;
+        let tolerance = 1e-12;
+        assert!((prob_history - expected_prob).abs() < tolerance, "history should have correct probability");
+    }
+
+    #[test]
+    fn test_fault_history_probability_ratios() {
+        let mut source = DepolarizingNoiseModel::new_uniform(0.5);
+        source.set_seed(0);
+        source.set_sampled_fault_history_enabled(true);
+
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.pz(&[0]);
+        builder.x(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.mz(&[1]);
+        let msg = builder.build();
+
+        // Get the fault catalog
+        let catalog = source
+            .build_fault_catalog_from_message(&msg)
+            .expect("catalog generation should succeed");
+
+        // Get two history samples
+        source.start(msg.clone()).expect("source start should succeed");
+        let history1 = source
+            .sampled_fault_history()
+            .expect("sampled history should exist")
+            .to_vec();
+        source.start(msg.clone()).expect("source start should succeed");
+        let history2 = source
+            .sampled_fault_history()
+            .expect("sampled history should exist")
+            .to_vec();
+
+        // Compute the probabilities & compare
+        let prob1 = catalog
+            .fault_history_probability(&history1);
+        let prob2 = catalog
+            .fault_history_probability(&history2);
+
+        let ratio = prob1 / prob2;
+
+        let ratio_from_function = catalog
+            .fault_histories_probability_ratio(&history1, &history2);
+
+        assert!((ratio - ratio_from_function).abs() < f64::EPSILON, "ratios should match");
     }
 }

@@ -17,6 +17,7 @@ use crate::engine_system::{
 };
 use crate::hybrid::HybridEngineBuilder;
 use crate::noise::{DepolarizingNoiseModel, DepolarizingSampledFault, NoiseModel};
+use crate::noise::depolarizing::DepolarizingFaultCatalog;
 use crate::quantum::{QuantumEngine, StateVecEngine};
 use crate::shot_results::{Data, Shot, ShotVec};
 use log::debug;
@@ -465,6 +466,30 @@ impl MonteCarloEngine {
         })
     }
 
+    /// Performs a "dry run" of the Monte Carlo simulation to collect
+    /// the fault locations without actually doing any sampling
+    pub fn return_fault_catalog(&mut self) -> Result<DepolarizingFaultCatalog, PecosError> {
+        if !self.fault_history_enabled {
+            return Err(PecosError::Input(
+                "catalog_faults requires fault_history_enabled to be true".to_string(),
+            ));
+        }
+        let mut engine = self.hybrid_engine_template.clone();
+        let noise_model = engine.quantum_system.noise_model_mut();
+        let depolarizing = noise_model
+            .as_any_mut()
+            .downcast_mut::<DepolarizingNoiseModel>()
+            .ok_or_else(|| {
+                PecosError::Input(
+                    "catalog_faults requires DepolarizingNoiseModel".to_string(),
+                )
+            })?;
+        let msg = engine.classical_engine.generate_commands().unwrap_or_else(|e| {
+            panic!("Failed to generate commands for fault catalog: {e}");
+        });
+        depolarizing.build_fault_catalog_from_message(&msg)
+    }
+
     /// Runs by specifying a set of fault histories. There should be one
     /// fault history per shot.
     ///
@@ -539,6 +564,14 @@ impl MonteCarloEngine {
             results: ShotVec::from_measurements(&shots),
             fault_histories: applied_histories,
         })
+    }
+
+    // Simple function to run with a single fault history
+    pub fn run_with_fault_history(
+        &mut self,
+        fault_history: &DepolarizingFaultHistory,
+    ) -> Result<MonteCarloRunResult, PecosError> {
+        self.run_with_fault_histories(vec![fault_history.clone()])
     }
 
     /// Run a simulation using the provided engines directly.
@@ -1098,7 +1131,7 @@ mod tests {
             .fault_history_enabled()
             .build();
 
-        sampler_mc.set_seed(1234);
+        sampler_mc.set_seed(0);
 
         let sampled_run = sampler_mc
             .run(12)
@@ -1115,11 +1148,51 @@ mod tests {
             .fault_history_enabled()
             .build();
 
+        replay_mc.set_seed(1);
+
         let replay_run = replay_mc
             .run_with_fault_histories(sampled_histories.clone())
             .expect("replay run should succeed");
 
         assert_eq!(replay_run.results.shots.len(), 12);
         assert_eq!(replay_run.fault_histories, sampled_histories);
+    }
+
+    #[test]
+    fn test_run_with_fault_history_replays_sampled_history() {
+        // Test that runs with specified fault history produce the same
+        // results as the original sampled run.
+        let mut sampler_mc = MonteCarloEngine::builder()
+            .with_classical_engine(Box::new(FixedCircuitClassicalEngine::new()))
+            .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+            .with_depolarizing_noise(0.5)
+            .fault_history_enabled()
+            .build();
+
+        sampler_mc.set_seed(0);
+
+        let sampled_run = sampler_mc
+            .run(2)
+            .expect("initial run should succeed");
+        let sampled_histories = sampled_run.fault_histories.clone();
+
+        assert_eq!(sampled_histories.len(), 2);
+
+        // Replay in a zero-noise engine so only forced faults are applied.
+        let mut replay_mc = MonteCarloEngine::builder()
+            .with_classical_engine(Box::new(FixedCircuitClassicalEngine::new()))
+            .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+            .with_depolarizing_noise(0.0)
+            .fault_history_enabled()
+            .build();
+
+        replay_mc.set_seed(1);
+
+        let replay_run = replay_mc
+            .run_with_fault_history(&sampled_histories[0].clone())
+            .expect("replay run should succeed");
+
+        assert_eq!(replay_run.results.shots.len(), 1);
+        assert_eq!(replay_run.fault_histories[0], sampled_histories[0]);
     }
 }

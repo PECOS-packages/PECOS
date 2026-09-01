@@ -8,9 +8,9 @@ Companion architecture: [`surface-logical-circuit-guppy.md`](surface-logical-cir
 
 Implement the smallest useful version of the typed instruction model end to
 end. A user must be able to construct one two-patch surface-code experiment in
-Rust or Python, select implementations explicitly, lower it directly to a
-normalized `TickCircuit`, optionally lower the same physical plan through
-Guppy/QIS, and build a DEM.
+Rust or Python, select implementations explicitly, lower it to a portable
+protocol-level physical plan and then to a normalized `TickCircuit`, optionally
+lower the same protocol plan through Guppy/QIS, and build a DEM.
 
 This document is normative for the MVP. The companion design explains how the
 model later grows to modules, PHIR, code switching, structured control,
@@ -55,9 +55,10 @@ control_result = graph.apply(surface.measure(basis="Z"), patch=control)
 target_result = graph.apply(surface.measure(basis="X"), patch=target)
 
 resolved = program.resolve()
-direct = resolved.to_tick_program()
+protocol = resolved.to_protocol_physical_plan()
+direct = protocol.to_tick_program(reference_schedule)
 dem = direct.build_dem(noise_model)
-guppy = resolved.to_guppy_program()
+guppy = protocol.to_guppy_program()
 trace = guppy.trace_qis()
 ```
 
@@ -76,11 +77,13 @@ The MVP generic crate/module contains only:
   and a dialect semantic-interface reference;
 - `InstrCall`: definition ID, named input `ValueId`s, canonical parameters,
   optional explicit implementation ID, output `ValueId`s, and source ID;
-- `ValueType`: registered opaque type ID plus canonical dialect-owned payload
-  and `Linear` or `Copyable` usage;
+- `ValueType`: registered opaque type ID plus canonical dialect-owned payload;
+- `UsePolicy`: the small, orthogonal resource-use rule `SingleUse` or
+  `Reusable`;
 - `InstrSet`: definitions, implementation candidates, and optional explicitly
   configured defaults;
-- `InstrImpl`: stable ID, `supports` check, and plan construction;
+- `InstrImpl`: stable ID, structured support assessment, declared
+  requirements, and plan construction;
 - `ResolvedInstrProgram`: every implementation choice, concrete value type,
   selected plan, measurement identity, and selection source fixed.
 
@@ -88,7 +91,28 @@ The MVP generic crate/module contains only:
 instantiate their own type payloads and semantic interfaces.
 
 The first schema is versioned. IDs are deterministic Rust newtypes and are not
-Python object identities.
+Python object identities or display names.
+
+## Required identity model
+
+The MVP distinguishes persistent semantic identity from transient value
+versions:
+
+| Identity | Meaning | Stability |
+|---|---|---|
+| `InstrDefId` / `ImplDefId` | reusable instruction and implementation definitions | stable across programs for the same versioned definition |
+| `CallId` | one instruction application | stable through resolution and lowering |
+| `CodeBlockInstanceId` | one logical/code-block instance | stable from declaration through preparation, syndrome extraction, gates, and measurement |
+| `ValueId` | one SSA state version of a block or classical value | replaced by a consuming call; never used as persistent block identity |
+| `CodeElementId` | a stable data site, check, or other element of a code specification | stable while target bindings may change |
+| `ProtocolWireId` | an implementation-local physical role, including a temporary ancilla role | stable within the selected protocol-plan instance |
+| `MeasurementId` | one semantic measurement occurrence | stable through both backend routes and bound to any runtime result identity |
+
+Two patches with identical geometry have distinct `CodeBlockInstanceId`s.
+Syndrome extraction returns a new `ValueId` for the same block instance.
+Target physical-resource identities are deliberately absent from the authored
+and protocol artifacts; a mapped backend may bind them later without changing
+these PECOS identities.
 
 ## Required type checking
 
@@ -99,19 +123,26 @@ Construction and final validation enforce:
 - input type compatibility;
 - concrete output type instantiation by the owning dialect;
 - definition before use;
-- exactly one consumption of every linear value version;
-- no use of a consumed value;
+- at most one consumption of every `SingleUse` value version;
+- no reuse of a consumed `SingleUse` value;
 - exported values being live and well typed.
 
-The builder infers returned value types. Users do not manually write type
-expressions for ordinary calls.
+The builder infers returned value types and advances optional block cursors.
+Users do not manually write ownership types or type expressions for ordinary
+calls. Whether a live block must eventually be measured, exported, or
+explicitly discarded is a QEC lifecycle rule, not a generic linear type rule.
 
 Implementation-specific restrictions are not forced into the generic type
 system. For example, logical CX has two patch inputs and two patch outputs;
 matching layouts required by the transversal implementation are checked by
-that implementation's `supports` method during resolution.
+that implementation's structured support assessment during resolution.
 
 ## Required resolution behavior
+
+Each candidate returns a structured `SupportAssessment`, not only a Boolean.
+For the MVP it records `Supported` or `Unsupported`, machine-readable reason
+codes, human-readable diagnostics, required capabilities, and resource
+quantities whose precision is `Exact`, bounded, estimated, or unknown.
 
 For each call, resolution uses this order:
 
@@ -127,13 +158,25 @@ failures, and the action needed to resolve ambiguity.
 The resolved artifact records `Explicit`, `ConfiguredDefault`, or
 `SoleCandidate` as the selection source.
 
+Instruction sets are explicit package dependencies, never process-global
+registrations. A serialized program and resolved program record the package's
+stable ID, semantic version, serialization version, implementation/profile
+fingerprint, canonical parameter bindings, and content digest. A test-only
+instruction set defined in a separate Rust crate or package must be importable,
+serializable, and resolvable without dynamic plugin loading.
+
 ## Required QEC and surface subset
 
-The QEC layer defines a linear `QecBlockType` carrying:
+The QEC layer defines a `SingleUse` `QecBlockType` carrying:
 
 - a canonical surface-patch structural key/specification;
 - lifecycle state: `Declared` or `Active`;
 - encoded logical-interface identity needed by the supported operations.
+
+`CodeBlockInstanceId` is value/provenance identity, not part of
+`QecBlockType`: two same-geometry patches are type-compatible while remaining
+different block instances. Each block-valued `ValueId` records which persistent
+instance or explicitly declared merge/split/create relation it represents.
 
 The MVP must not assume that every future instruction preserves block type or
 arity, even though the initial active-patch operations do.
@@ -162,13 +205,19 @@ lossless adapter from the existing `SurfacePatch`. Rust and Python must not
 independently calculate geometry, checks, logical supports, schedules, or
 implementation support.
 
-## Shared physical plan
+## Shared protocol physical plan
 
 Resolution composes selected `QecInstrPlan`s into one Rust
-`PhysicalCircuitPlan`. It contains:
+`ProtocolPhysicalPlan`. This is portable physical intent, not a final target
+mapping or total schedule. It contains:
 
-- physical operations and ordering constraints;
-- stable physical/data/ancilla identities and lifetimes;
+- portable physical operations and a dependency DAG;
+- persistent code-element identities, implementation-local
+  `ProtocolWireId`s, temporary resource roles, and lifetimes;
+- atomic or tightly ordered stages, permitted concurrency, and quiescence
+  boundaries;
+- typed resource/service requirements and locality, connectivity, workspace,
+  feedback, and latency constraints without preassigned target resources;
 - instruction and syndrome-round boundaries;
 - measurement IDs and result tags;
 - detector and observable definitions;
@@ -178,13 +227,20 @@ The direct TickCircuit and Guppy backends consume this plan. They must not each
 reconstruct syndrome schedules, ancillas, measurement order, or detector
 boundaries from the logical graph.
 
+A scheduling backend refines this artifact into a `ScheduledPhysicalPlan` with
+concrete resource bindings, a legal operation order, and an explicit schedule
+origin. An observed `ExecutionTrace` may additionally bind physical result IDs,
+actual branch outcomes, and authoritative runtime timing. Neither refinement
+may replace PECOS semantic identities with target identities.
+
 ## Required outputs
 
 ### Direct Rust route
 
-`ResolvedInstrProgram::to_tick_program()` returns a
+`ProtocolPhysicalPlan::to_tick_program(reference_schedule)` returns a
 `GeneratedTickProgram` containing:
 
+- the reference `ScheduledPhysicalPlan` used for this route;
 - a normalized `TickCircuit`;
 - measurement, detector, observable, and result metadata;
 - selected implementation and schedule provenance;
@@ -194,13 +250,16 @@ This route imports neither Python nor Guppy.
 
 ### Guppy route
 
-`ResolvedInstrProgram::to_guppy_program()` returns deterministic Guppy source
+`ProtocolPhysicalPlan::to_guppy_program()` returns deterministic Guppy source
 plus the same semantic sidecars. The thin Python bridge compiles and executes
-it through HUGR/QIS and returns the traced normalized `TickCircuit`.
+it through HUGR/QIS and returns the traced normalized `TickCircuit` plus its
+schedule/result bindings.
 
-The initial scheduling context must allow the direct and traced routes to be
-compared operation-by-operation. Later target-specific Guppy schedules may
-differ while retaining provenance and semantic equivalence.
+The initial reference scheduling context must allow the direct and traced
+routes to be compared operation-by-operation. In general, conformance compares
+the protocol dependency order, logical action, resource lifetimes, measurement
+ledger, detectors, and observables. Exact tick equality is required only when
+both routes declare the same scheduling policy.
 
 ### Optional exports
 
@@ -229,6 +288,7 @@ The MVP does not implement:
 - general `QecTypeExpr` algebra beyond the concrete rules needed above;
 - `SpaceTimeProgram`, shape/volume planning, visualization, or Bevy;
 - target mapping, routing, calibrated timing, or adaptive runtime control;
+- execution-trace import and target-specific physical-resource identities;
 - third-party implementation plugins;
 - replacing or removing existing factories.
 
@@ -240,11 +300,12 @@ silently constrain their later design.
 1. Land the generic Rust IDs, definitions, signatures, graph, values,
    validation, serialization, resolution, and structured diagnostics.
 2. Prove the generic boundary with one tiny non-QEC instruction set using a
-   linear value and two competing implementations.
+   `SingleUse` value and two competing implementations.
 3. Add the minimal Rust QEC block type and surface instruction definitions.
 4. Adapt/reuse existing patch geometry and surface planning for prepare,
    SZZ syndrome extraction, transversal CX, and measurement.
-5. Build `PhysicalCircuitPlan` and direct `GeneratedTickProgram` lowering.
+5. Build `ProtocolPhysicalPlan`, the reference `ScheduledPhysicalPlan`, and
+   direct `GeneratedTickProgram` lowering.
 6. Build the direct native DEM and match existing surface-code references.
 7. Generate Guppy from the same plan, trace QIS, and compare the normalized
    TickCircuit and metadata.
@@ -257,7 +318,7 @@ The MVP is complete only when:
 
 - the demonstration program works in Rust and Python;
 - Rust and Python serialize byte-equivalent authored and resolved artifacts;
-- invalid arity, type, lifecycle, linear use, parameters, and implementation
+- invalid arity, type, lifecycle, single-use reuse, parameters, and implementation
   choices fail with structured actionable diagnostics;
 - direct lowering and DEM construction run in a Rust-only test;
 - the direct normalized TickCircuit, measurement ledger, detectors,
@@ -265,6 +326,16 @@ The MVP is complete only when:
 - generated Guppy compiles and its QIS trace matches the direct route under the
   equivalence scheduling context;
 - two same-geometry patches retain distinct instance identities;
+- syndrome extraction preserves each `CodeBlockInstanceId` while producing a
+  new `ValueId`;
+- a temporary ancilla has a `ProtocolWireId` and bounded lifetime but is not a
+  persistent patch value or preassigned target resource;
+- one candidate's structured support failure reports a machine-readable reason
+  and actionable explanation;
+- serialization round-trips definition, implementation, call, block, value,
+  code-element, protocol-wire, and measurement identities;
+- a backend may legally reorder independent operations only when it preserves
+  the protocol partial order and semantic ledgers;
 - the PRs implementing the MVP do not add any deferred public abstraction.
 
 After these criteria pass, the companion architecture determines which feature

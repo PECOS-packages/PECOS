@@ -54,10 +54,11 @@ implementation support without changing the generic graph container.
 
 Here a “resource” is a value flowing through instruction ports, not necessarily
 a hardware allocation. Every value has a registered type, although the generic
-graph may treat that type as opaque. It checks port compatibility and generic
-traits such as linear versus copyable use; the owning dialect interprets what a
-type means. A QEC patch value is linear, a measurement bit is usually copyable,
-and a Pauli-byproduct token may be linear.
+graph may treat that type as opaque. A separate, deliberately small
+`UsePolicy` says whether a value is `SingleUse` or `Reusable`. The graph can
+therefore reject reuse of a consumed patch handle without exposing a general
+linear or affine type system. The owning dialect interprets the value type and
+checks lifecycle obligations such as measurement, export, or explicit discard.
 
 The three containers have distinct scopes:
 
@@ -119,18 +120,19 @@ Typed graph values/resources + opaque instruction applications
              +-------------+
              |             |
              v             v
-           PHIR    PhysicalCircuitPlan
-     (MLIR-like target)      |
+           PHIR    ProtocolPhysicalPlan
+     (MLIR-like target) (portable physical intent)
+                             |
                        +-----+-----+
                        |           |
                        v           v
-                  direct Rust    Guppy
-                    lowering       |
+               reference/target  Guppy
+                  scheduling       |
                        |           v
-                       |    HUGR / QIS lowering
+          ScheduledPhysicalPlan  HUGR / QIS lowering
                        |           |
                        |           v
-                       |    runtime QIS trace
+                       |    scheduled QIS trace
                        |           |
                        +-----+-----+
                              |
@@ -148,6 +150,15 @@ Typed graph values/resources + opaque instruction applications
               Guppy -> HUGR -> InstrModule
                 (supported structural subset or opaque external module)
 ```
+
+`ProtocolPhysicalPlan` is the device-independent handoff: it contains portable
+physical operations, resource roles and lifetimes, partial order, semantic
+identities, and target capability requirements, but no final physical-resource
+addresses or authoritative time. A reference scheduler or an external target
+backend refines it into a `ScheduledPhysicalPlan`. An optional
+`ExecutionTrace` then records observed results, branches, and runtime timing.
+These artifacts retain PECOS identities and add bindings; they do not rewrite
+logical or QEC semantics.
 
 Elaboration in this diagram is structural/template processing. It resolves
 imports and symbols, canonicalizes supplied parameters, specializes module
@@ -221,7 +232,7 @@ factory-specific recipe.
    its intended logical transformation, including explicit identity actions.
 5. Represent preparation, syndrome extraction, logical gates, destructive
    measurement, injection, and surgery uniformly as QEC instruction applications.
-6. Generate executable Guppy while retaining patch structure and linear qubit
+6. Generate executable Guppy while retaining patch structure and owned qubit
    ownership.
 7. Reach PECOS-native circuit and analysis forms directly in Rust as well as
    through the executed Guppy-to-QIS trace path.
@@ -246,6 +257,14 @@ factory-specific recipe.
 16. Produce stable visualization views of code gadgets, space-time slices, and
     physical activity for architectural reasoning without coupling semantic
     lowering to a particular renderer.
+17. Keep portable protocol physical intent separate from mapped/scheduled
+    execution and observed runtime traces.
+18. Preserve stable block, code-element, protocol-wire, and measurement
+    identities independently of SSA value versions and target bindings.
+19. Support structured implementation requirements and deferred feasibility
+    without weakening explicit implementation choices.
+20. Permit hierarchical, lazy, and streaming processing without making full
+    primitive expansion a prerequisite for validation or analysis.
 
 ## Non-goals for the first version
 
@@ -283,8 +302,8 @@ pecos_instr (crate/module name provisional)
     InstrProgram, InstrModule, InstrGraph, InstrCall
     InstrDef, InstrSet, InstrImpl, generic resolver interfaces
     InstrDefId, ImplDefId, ModuleDefId, ModuleInstanceId
-    ValueId, CallId, RegionId
-    symbol tables, hierarchy, typed SSA/linearity validation
+    ValueId, CallId, RegionId, UsePolicy
+    symbol tables, hierarchy, typed SSA/single-use validation
     dialect schemas, annotations, provenance, serialization
 
 pecos_phir::instr_lowering
@@ -296,6 +315,7 @@ pecos_qec::instr
     QecInstr, QecInstrSet, QecInstrImpl, QecInstrPlan
     QecInstrSemantics, QecTypeExpr, QecLogicalTransform
     QecFrameTransfer, QEC-specific support constraints
+    CodeBlockInstanceId, CodeElementId, ProtocolWireId, MeasurementId
     type variables, substitution, constraints, and unification
 
 pecos_qec::surface
@@ -308,7 +328,8 @@ pecos_qec::spacetime
     SpaceTimeProgram, volume constraints, SpaceTimePlan
 
 pecos_qec::physical
-    PhysicalCircuitPlan, scheduling context, GeneratedTickProgram
+    ProtocolPhysicalPlan, ScheduledPhysicalPlan, ExecutionTrace
+    scheduling context, GeneratedTickProgram
     direct normalized TickCircuit and native DEM handoff
 
 pecos_qec::guppy
@@ -327,7 +348,7 @@ all share the same schema.
 PHIR's current `CustomOp`, `CustomType`, and dialect registration provide the
 right lowering targets but not the complete high-level contract needed here.
 `InstrProgram` must add stable definition references, named typed ports,
-parameter schemas, value linearity/copyability, implementation candidates,
+parameter schemas, value use policies, implementation candidates, structured
 support diagnostics, and deterministic resolution. PHIR emission must use
 registered typed dialect operations/types and preserve source IDs; core QEC
 facts must not be smuggled through unvalidated string attributes.
@@ -339,6 +360,17 @@ in built-in resolution or planning, because that would make the Rust API a
 second-class path and complicate determinism, threading, and serialization.
 Future third-party implementations should cross a deliberate serialized or
 plugin boundary rather than being arbitrary objects hidden inside the IR.
+
+An external instruction-set package has a versioned manifest containing its
+stable package ID, instruction and implementation IDs, semantic version,
+serialization-schema version, implementation/profile fingerprints, and
+content or external-artifact digests. Resolution records that manifest,
+canonical parameter bindings, the selected implementation, and selection
+source. Static Rust crates, dynamically discovered packages, and serialized
+remote artifacts may eventually use different loading mechanisms, but they
+must implement this same explicit contract and must not mutate a global
+registry. An early conformance fixture should define an instruction set in a
+separate crate, import and serialize it, and resolve it reproducibly.
 
 ### Canonical surface geometry
 
@@ -509,12 +541,13 @@ The generic layer should remain deliberately small:
   generic traits/effects, and typed dialect semantic interfaces.
 - `InstrSet` owns definitions, candidate `InstrImpl` objects, explicit
   defaults/preferences, and version identity.
-- `InstrImpl` answers whether it supports a bound call in a lowering context
-  and produces a serializable resolved plan or dialect lowering.
+- `InstrImpl` produces a structured support assessment for a bound call and
+  lowering context, declares requirements, and produces a serializable
+  resolved plan or dialect lowering.
 
-The graph understands generic value properties such as type, linearity,
-copyability, definition/use, region ownership, and source identity. It does not
-understand QEC patches, qubits, pulses, decoder meanings, or operation names.
+The graph understands generic value properties such as type, `SingleUse` versus
+`Reusable` policy, definition/use, region ownership, and source identity. It
+does not understand QEC patches, qubits, pulses, decoder meanings, or operation names.
 Those belong to registered dialect interfaces. A program may import multiple
 dialects, allowing a later phase to compose QEC, physical quantum, and
 classical instructions without putting all of their concepts in one enum.
@@ -529,17 +562,18 @@ compose an implementation with unsupported operands, so they benefit from the
 same validation as a person using the Python or Rust builder.
 
 The type system should nevertheless remain ergonomic. It is a compact,
-serializable runtime type algebra with dialect-owned opaque types and generic
-linearity/copyability traits, not a requirement that users spell deeply nested
-Rust generic types. Common instruction builders infer result types from the
-definition, input values, and parameters. Hand authors normally see named
-ports, returned values, and actionable errors; generic tooling can inspect the
-same concrete type IDs and payloads.
+serializable runtime type algebra with dialect-owned opaque types. Resource-use
+policy is orthogonal and intentionally limited to `SingleUse | Reusable`; it is
+not a general user-facing linear or affine type system. Common instruction
+builders infer result types and use policies from the definition, input values,
+and parameters. Hand authors normally see named ports, returned values, cursor
+updates, and actionable errors; generic tooling can inspect the same concrete
+type IDs and payloads.
 
 The validation responsibilities are deliberately layered:
 
 1. generic construction verifies named ports, arity, type compatibility,
-   definition/use, linear ownership, and structured-region joins;
+   definition/use, single-use violations, and structured-region joins;
 2. implementation resolution verifies facts such as patch geometry,
    orientation, adjacency, supported bases, and target capabilities;
 3. QEC semantic verification checks that the selected plan realizes the
@@ -558,9 +592,17 @@ compiler transformations.
 
 The generic resolution order mirrors the QEC-specific policy developed below:
 an explicit call constraint wins, then an explicit program/profile preference,
-then a sole supported candidate; zero or multiple remaining candidates are
-errors. A dialect can refine `supports`, plan contents, and semantic
-verification, but cannot change that deterministic selection contract.
+then a sole supported candidate. Zero candidates is unsupported; multiple or
+deferred candidates require an explicit later feasibility context and become an
+ambiguity error if that context still leaves more than one. A dialect can
+refine support assessment, plan contents, and semantic verification, but cannot
+change that deterministic selection contract.
+
+Generic validation prevents a second use of a `SingleUse` value. Whether a
+still-live QEC block must eventually be measured, exported, or explicitly
+discarded is checked by the QEC dialect's lifecycle verifier. Some downstream
+IRs describe comparable ownership constraints as linearity, but that
+terminology and machinery need not appear in the authoring API.
 
 The relationship to existing artifacts is therefore:
 
@@ -569,7 +611,8 @@ Original QuantumCircuit       symbol + locations + params
 Current GateRegistry          gate signature + one decomposition
 InstrProgram / InstrGraph     typed definition calls + selectable implementations
 ResolvedInstrProgram          every implementation and support decision fixed
-PhysicalCircuitPlan           shared structured physical realization + metadata
+ProtocolPhysicalPlan          portable structured physical intent + metadata
+ScheduledPhysicalPlan         mapped and ordered refinement with schedule origin
 PHIR                          general MLIR-like compiler representation
 TickCircuit / DagCircuit      concrete scheduled quantum circuit representations
 ```
@@ -595,7 +638,7 @@ An intuitive analogy is a typed QEC gadget:
 
 For example, logical CX has two active code-block inputs and returns two
 replacement active code-block values. `surface.transversal_cx` is one
-implementation whose `supports` method may additionally require matching patch
+implementation whose support assessment may additionally require matching patch
 layouts. Those geometry restrictions do not change the public two-input,
 two-output logical-CX contract. The same model covers identity syndrome
 extraction, type-changing code switching, arity-changing merge/split,
@@ -653,11 +696,11 @@ class QecInstrImpl(InstrImpl):
     implementation_id: str
     instruction: QecInstr
 
-    def supports(
+    def assess_support(
         self,
         inputs: tuple[BoundInstrInput, ...],
         context: LoweringContext,
-    ) -> SupportResult: ...
+    ) -> SupportAssessment: ...
 
     def plan(
         self,
@@ -736,7 +779,7 @@ analysis and verification consume them through a separate interface.
 
 Every `QecInstrImpl` has a proof obligation: its generated
 `QecInstrPlan` must realize the instruction's declared block-boundary and
-logical transformation for every input accepted by `supports`. This obligation
+logical transformation for every input accepted by its support assessment. This obligation
 is stronger than producing a type-correct physical circuit and gives #513 a
 precise property to verify.
 
@@ -763,7 +806,7 @@ surface.h = QecInstr(
 The semantic instruction accepts a surface patch of any parameters and preserves
 its code specification. A transversal-H implementation can refine support to
 square rotated patches, while a different implementation may accept a broader
-set. Those restrictions belong to `implementation.supports`, not to the
+set. Those restrictions belong to `implementation.assess_support`, not to the
 graph.
 
 Syndrome extraction can have the same block boundary while making its intended
@@ -936,10 +979,23 @@ silently change the instruction's port names, arity, ownership, or visible outpu
 contract. If two procedures expose different inputs or outputs, they are
 different instructions even if users informally give them the same gate name.
 
-`supports` returns a useful diagnostic, not only a Boolean. A transversal CX
-implementation can therefore explain that its operands have different data
-layouts; a transversal H can reject a rectangular patch; and a lattice-surgery
+`assess_support` returns structured data, not only a Boolean. Its status is
+`Supported`, `Unsupported`, or `Deferred`. It includes machine-readable reason
+codes, human-readable explanations, required code and logical interfaces,
+capability/service requirements, placement/locality constraints, and resource
+quantities with explicit precision. A transversal CX implementation can
+therefore explain that its operands have different data layouts; a
+transversal H can reject a rectangular patch; and a lattice-surgery
 implementation can require compatible boundary orientations and workspace.
+
+`Deferred` means semantic compatibility is known but feasibility or cost
+depends on a later mapping/scheduling context. Candidate sets and their
+requirements may survive into a cooperative planning step. A
+`ResolvedInstrProgram` is produced only after one implementation is selected
+for every call. An explicit `.using(...)` choice is always a hard constraint:
+if its requirements cannot be satisfied, planning fails rather than selecting
+a different implementation. An explicitly configured default is likewise not
+a silent fallback chain; once applicable, its failure is reported.
 
 Instruction-set resolution must be deterministic and local to the program or
 lowering call. There is no process-global registry whose installed plugins
@@ -955,10 +1011,13 @@ this order:
 
 1. Use the call's `.using(...)` constraint, if present.
 2. Otherwise use an explicitly configured instruction-set default.
-3. Otherwise select the implementation if exactly one candidate supports the
-   bound inputs and lowering context.
-4. Report an unsupported-instruction error if no candidate supports the call.
-5. Report an ambiguous-implementation error if multiple candidates support it.
+3. Otherwise select the implementation if exactly one candidate is supported
+   and no unresolved candidate could compete under the supplied context.
+4. Report an unsupported-instruction error if every candidate is unsupported.
+5. Retain a deferred candidate set when feasibility requires a later explicit
+   planning context.
+6. Report an ambiguous-implementation error if multiple candidates remain
+   feasible after the required context is supplied.
 
 The recommended conventional surface profile is SZZ syndrome extraction plus
 transversal logical operations, but selecting it must be visible in source. The
@@ -1045,7 +1104,7 @@ instances, while preserving a source/provenance map to the original call.
 
 There are important differences from an ordinary combinational netlist:
 
-- QEC block values are linear owned resources, not freely reusable wires; a
+- QEC block values are single-use resources, not freely reusable wires; a
   consumed value cannot fan out or be used again;
 - a cell may change resource type or arity, as in code switching, merge, split,
   preparation, and destructive measurement;
@@ -1093,6 +1152,23 @@ should mirror those distinctions:
 - hierarchical instance paths are stable ID paths, not strings reconstructed
   from generated names.
 
+The QEC and physical layers additionally distinguish these identities:
+
+| Identity | Scope and stability |
+|---|---|
+| `CodeBlockInstanceId` | One persistent logical/code-block instance; stable across preparation, syndrome extraction, logical gates, deformation, mapping changes, and destructive measurement of that instance. |
+| `ValueId` | One SSA state version; a consuming call returns a new value version and must not change the block instance identity unless its semantics create, merge, split, or replace blocks. |
+| `CodeElementId` | A stable data site, check, boundary feature, or other element of a `CodeSpec`/`PatchSpec`; target bindings may change without changing this ID. |
+| `ProtocolWireId` | One implementation-local physical role or temporary-resource role within a selected plan instance; stable through scheduling but not shared across different implementations. |
+| `MeasurementId` | One semantic measurement occurrence; stable through expansion, scheduling, tracing, detector construction, and binding to a runtime result ID. |
+| `PhysicalResourceId` | A target-owned binding introduced only by mapped/scheduled refinement; never used as the persistent logical or code-element identity. |
+
+Inlining, specialization, cloning, mapping, and execution must return explicit
+provenance/binding maps rather than overloading one ID for several of these
+roles. Two same-geometry blocks have different `CodeBlockInstanceId`s, while
+successive state versions of one block share that ID and have distinct
+`ValueId`s.
+
 This follows the structure of [CIRCT's HW module and instance
 operations](https://circt.llvm.org/docs/Dialects/HW/) and [MLIR symbol/SSA
 scoping](https://mlir.llvm.org/docs/LangRef/).
@@ -1135,7 +1211,7 @@ services. It cannot implicitly capture a live block, decoder, allocator, or
 host-language value.
 
 Calling a module creates a `InstrModuleCall` with a stable `ModuleInstanceId`
-and hierarchy path. Each call consumes its own linear inputs and returns fresh
+and hierarchy path. Each call consumes its own `SingleUse` inputs and returns fresh
 output versions; reusing a module definition never means reusing the same patch
 instance. Elaboration specializes parameters and block types, validates the
 module boundary, and may inline the body for a backend while retaining a
@@ -1226,6 +1302,24 @@ textual language's filesystem search paths, package manager, or source-level
 `import` syntax is separate work and is not required for this object-level
 module/linkage contract.
 
+#### Scalable hierarchy and streaming
+
+Validation, resource inspection, visualization, and physical lowering must not
+require eagerly cloning every primitive operation in a large program.
+Definitions remain immutable and shared across instances; static repetition
+may stay symbolic; elaboration and implementation expansion may proceed one
+module, region, or logical epoch at a time. Instance paths and specialization
+keys are deterministic, while provenance is stored in compact side tables
+rather than copied onto every primitive.
+
+`ProtocolPhysicalPlan` should support bounded streaming or sharded consumption
+with explicit dependencies and barriers between chunks. Each chunk records its
+schema version, source range, stable-ID namespace, digest, imported definition
+digests, and predecessor/successor constraints. Backends may retain a full
+trace, selected regions, or aggregate resource/timing summaries, but changing
+retention must not change program meaning or identity. Full flattening remains
+a backend/debug option rather than a prerequisite for correctness.
+
 #### Structure versus control
 
 Calyx explicitly separates instantiated cells and connections from the control
@@ -1251,21 +1345,30 @@ This is required for teleportation, lattice-surgery outcomes, magic-state
 injection, decoder decisions, and repeat-until-success protocols. SLR's
 `If(condition).Then(...).Else(...)` demonstrates that conditional authoring can
 lower to Guppy, but the new representation must additionally account for
-linear QEC blocks at branch boundaries.
+single-use QEC blocks at branch boundaries.
+
+The serialized identity model should reserve stable `AttemptId`, `OutcomeId`,
+`PredicateId`, `BranchId`, `FrameExprId`, and `CleanupRegionId` roles. A planned
+set of alternatives, a producer-supplied or sampled realization, and an
+observed execution result are different facts and must never be collapsed into
+one Boolean. Importing a realized branch must preserve its lineage rather than
+silently resample it. A backend that cannot execute retries or dynamic control
+must return a typed capability error while retaining the attempt, outcome,
+correction, and cleanup semantics in the source artifact.
 
 The generic graph should have typed classical SSA values such as
 `Bit`, `PauliByproduct[OneQubit]`, and instruction-defined decoder results.
-Value types declare whether they are copyable. Ordinary measurement bits may
-be copied; a QEC block remains linear; a byproduct token should normally be
-linear so it cannot accidentally be discharged twice.
+Values carry an independent use policy. Ordinary measurement bits may be
+`Reusable`; a QEC block remains `SingleUse`; a byproduct token should normally
+be `SingleUse` so it cannot accidentally be discharged twice.
 
 A conditional is a structural region, not a surface-code instruction and not a
 special kind of named gate. It has:
 
 - a typed, shot-time or compile-time Boolean predicate;
-- explicit region inputs, including any linear blocks used by either branch;
+- explicit region inputs, including any single-use blocks used by either branch;
 - `then` and `otherwise` regions with block arguments rather than implicit
-  capture of linear resources;
+  capture of single-use resources;
 - explicit yields from both regions;
 - a join requiring the same output arity and compatible output types.
 
@@ -1315,12 +1418,12 @@ unrestricted control-flow graph into `InstrGraph`. The initial forms should be:
   state preparation, decoding, or repeat-until-success injection where the
   condition is produced by the body.
 
-Every loop has explicit loop-carried arguments and yields. A linear QEC block
+Every loop has explicit loop-carried arguments and yields. A single-use QEC block
 enters one iteration exactly once, is consumed and replaced inside the body,
 and the replacement becomes either the next iteration's argument or the loop's
 result. The verifier requires compatible carried types at the back edge and at
 loop exit; it rejects implicit capture, dropping, duplicating, or returning an
-iteration-local QEC value. Copyable classical constants may be explicit
+iteration-local QEC value. Reusable classical constants may be explicit
 invariant arguments.
 
 Conceptually:
@@ -1460,7 +1563,7 @@ frame_expr = graph.frame_of(destination)  # symbolic, read-only view
 introspection and cannot mutate the frame behind a live block. The update is
 therefore explicit in serialized dataflow and consumes/returns the block like
 any other instruction. `apply_byproduct(...).using("frame_update")` is the
-typed convenience when the delta is already packaged as a linear
+typed convenience when the delta is already packaged as a single-use
 `PauliByproduct` token.
 
 The Rust artifacts should make frame evolution inspectable at three points:
@@ -1500,7 +1603,7 @@ CIRCT ESI distinguishes typed application channels from their later physical
 signaling and models required services explicitly. PECOS should borrow this
 selectively:
 
-- ordinary QEC block transitions remain linear SSA values, not streaming
+- ordinary QEC block transitions remain single-use SSA values, not streaming
   channels;
 - measurement streams, decoder request/response paths, and adaptive classical
   feedback may use typed channel values when latency or repeated communication
@@ -1510,6 +1613,15 @@ selectively:
   never discovered through global state;
 - the lowering context binds those requirements to concrete providers and
   records the binding in provenance.
+
+Resource requirements name semantic roles and lease scopes, not preassigned
+target resources. For example, a protocol can request temporary ancillas with
+locality, concurrency, lifetime, and cleanup constraints while retaining stable
+`ProtocolWireId` roles. A mapped backend supplies `PhysicalResourceId` bindings
+and may move or rebind them over time, provided it preserves the protocol
+constraints and returns the binding history. Persistent recipe roles,
+temporary work resources, and produced resource states remain distinguishable
+even when a target allocator satisfies them from the same physical pool.
 
 The logical type should describe the message/service contract without fixing a
 wire protocol or target latency, following [ESI's separation of typed channels
@@ -1540,15 +1652,19 @@ consumers of that map, not substitutes for it.
 
 Each explicit artifact has its own verifier:
 
-- authored program: symbol, port, linearity, and region well-formedness;
+- authored program: symbol, port, use-policy, and region well-formedness;
 - elaborated program: all parameters concrete, output types instantiated, and
   hierarchy valid;
 - resolved program: one supported implementation per call and all service/
   capability requirements bound;
 - instruction plan: resource/control constraints and declared logical semantics
   satisfied;
-- generated/traced artifacts: source identities, measurements, detectors, and
-  observables preserved.
+- protocol physical plan: portable operation DAG, resource roles/lifetimes,
+  stage constraints, capability requirements, and semantic ledgers complete;
+- scheduled physical plan: target bindings and total/partial schedule satisfy
+  the protocol plan without changing semantic identities;
+- generated/traced artifacts: source identities, measurements, results,
+  detectors, and observables preserved.
 
 Transforms should fail at the phase that owns the violated invariant rather
 than allowing a malformed artifact to reach Guppy.
@@ -1558,7 +1674,7 @@ than allowing a malformed artifact to reach Guppy.
 PECOS should not inherit HDL mechanisms that do not match this abstraction:
 
 - no implicit nets, implicit port connections, or “last connect wins” rules;
-- no unrestricted fanout of linear QEC resources;
+- no unrestricted fanout of single-use QEC resources;
 - no four-state bit semantics, clocks, or resets in the logical instruction IR;
 - no assumption that every value is a ready/valid channel, as in a fully
   elastic dataflow circuit;
@@ -1682,7 +1798,7 @@ result = graph.apply(surface.measure(basis="Z"), patch=data)
 ```
 
 `apply` is generic: it binds arguments using the supplied instruction
-signature, emits one opaque call, consumes linear input versions, and returns
+signature, emits one opaque call, consumes single-use input versions, and returns
 the typed output versions. It does not recognize `h`, `cx`, or any other name.
 A future QASM-like textual front end should be equally direct:
 
@@ -1951,8 +2067,10 @@ Each refinement carries a verification obligation:
 
 ```text
 QecInstrPlan realizes the QecInstr semantic contract
-mapped physical circuit realizes the QecInstrPlan
-physical-circuit occupancy satisfies its claimed SpaceTimeShape projections
+ProtocolPhysicalPlan composes the QecInstrPlans without losing constraints
+ScheduledPhysicalPlan satisfies the protocol plan and target capabilities
+scheduled occupancy satisfies the claimed SpaceTimeShape projections
+ExecutionTrace preserves the scheduled semantic and result identities
 ```
 
 Black-boxing must therefore preserve all externally observable outputs and
@@ -1976,6 +2094,13 @@ cooperative planning) and produces a `SpaceTimePlan` whose shapes and detailed
 realizations reference the corresponding `QecInstrPlan` objects. Device placement,
 native timing, idle insertion, and feedback latency still belong to #514's
 mapped/timed execution layer.
+
+Space-time planning is not a second application scheduler or a substitute for
+target scheduling. It may estimate gadget envelopes, test local feasibility,
+and compose declared dependencies, but it must preserve application-level
+ordering constraints supplied by the authored/imported program. Abstract round
+or interval coordinates are not authoritative device time; only a
+`ScheduledPhysicalPlan` or `ExecutionTrace` can provide that refinement.
 
 Consequently, these are two views of one pipeline:
 
@@ -2009,7 +2134,7 @@ The recommended everyday form uses program-scoped `LogicalBlock` cursors. An
 `append` consumes the cursor's current SSA value and advances it to the matching
 typed output port. Multi-block instructions advance every participating cursor.
 This keeps the source close to a physical-circuit or QASM listing without
-weakening the underlying linear representation:
+weakening the underlying single-use representation:
 
 ```python
 from pecos.instr import InstrProgram
@@ -2128,7 +2253,7 @@ dem = artifact.build_dem(runtime=..., noise=...)
 itself.
 This distinguishes two logical patches with identical geometry and prevents a
 patch from accidentally being used in two programs. Each QEC instruction application consumes
-its input value versions and returns new ones, following linear SSA-style
+its input value versions and returns new ones, following single-use SSA-style
 ownership. A measurement instruction returns a logical-result handle that can name
 the final observable without relying on record position.
 
@@ -2237,9 +2362,9 @@ type-preserving `.when(...)` shorthand.
 
 ## Program state and validation
 
-QEC block values use linear SSA-style lifetimes. `InstrGraph` understands only
-that a linear input version may be consumed once and that a QEC instruction application
-produces zero or more typed output versions:
+QEC block values use single-use SSA-style lifetimes. `InstrGraph` understands
+only that a `SingleUse` input version may be consumed at most once and that a
+QEC instruction application produces zero or more typed output versions:
 
 ```text
 %block0 = declare CodeBlock[SurfacePatch, declared]
@@ -2251,8 +2376,8 @@ produces zero or more typed output versions:
 Names and state meanings remain owned by the instruction set. The graph does not
 know that `prepare_z` changes a block from "declared" to "active" or that
 `measure_z` is destructive. It merely checks the opaque input and output types
-declared by their instruction signatures and enforces linear use. This maps
-directly to Guppy's ownership rules and permits instructions with different
+declared by their instruction signatures and enforces the use policy. This maps
+cleanly to Guppy's ownership rules and permits instructions with different
 lifecycles, including merge/split or code switching.
 
 Validation occurs when an operation is appended, with a full validation pass
@@ -2260,11 +2385,11 @@ before lowering. Generic program/graph validation checks:
 
 - unique block labels;
 - instruction input arity and opaque signature types;
-- single consumption of linear values;
+- rejection of a second consumption of `SingleUse` values;
 - result arity and use-before-definition;
 - condition type, region argument binding, and matching branch yields;
-- single consumption and replacement of linear values across every branch;
-- legal copying of classical values according to their declared value kind;
+- single-use consumption and replacement across every branch;
+- legal reuse of classical values according to their declared use policy;
 - attribute conformance to the instruction's declared schema;
 - well-typed composition of block interfaces and declared logical
   transformations.
@@ -2294,7 +2419,7 @@ QEC semantic verification checks:
   set and lowering context.
 
 Validation therefore has three layers. Code-independent structural, type, and
-linearity errors are reported while authoring. Implementation compatibility is
+use-policy errors are reported while authoring. Implementation compatibility is
 checked during deterministic instruction-set resolution because the graph does
 not interpret instruction identity and the same contract can be legal under one
 implementation and illegal under another. QEC semantic verification then
@@ -2367,16 +2492,20 @@ InstrProgram
     -> ResolvedInstrProgram
         +-> PHIR + optional SpaceTimePlan/shape projections
         |
-        +-> PhysicalCircuitPlan
-              +-> direct Rust TickCircuit lowering
-              |     -> normalized TickCircuit
-              |     -> DagCircuit / DEM / Stim-compatible exports
+        +-> ProtocolPhysicalPlan
+              +-> reference or target scheduler
+              |     -> ScheduledPhysicalPlan
+              |     -> GeneratedTickProgram
+              |     -> normalized TickCircuit / DagCircuit / DEM
               |
-              +-> generated Guppy
-                    -> HUGR / QIS lowering
-                    -> runtime QIS trace
-                    -> normalized TickCircuit
-                    -> DagCircuit / DEM / Stim-compatible exports
+              +-> generated Guppy -> HUGR / QIS lowering
+              |     -> scheduled QIS trace
+              |     -> normalized TickCircuit / DagCircuit / DEM
+              |
+              +-> external target backend
+                    -> ScheduledPhysicalPlan
+                    -> optional ExecutionTrace
+                    -> imported TickCircuit / analysis artifacts when supported
 ```
 
 Elaboration first produces an `ElaboratedInstrProgram` with canonical
@@ -2384,7 +2513,7 @@ parameters, concrete output value types, resolved definition symbols, explicit
 profile preferences, and retained hierarchy/source paths. Instruction-set
 resolution then produces a `ResolvedInstrProgram` containing:
 
-- code-block instances and linear value versions;
+- stable code-block instances and single-use value versions;
 - typed classical values, structured regions, and predicate timing class;
 - selected QEC protocol implementation IDs and options;
 - inspectable `QecInstrPlan` artifacts for the selected calls;
@@ -2399,31 +2528,36 @@ resolution then produces a `ResolvedInstrProgram` containing:
   policies;
 - conditional-effect lowering decisions, outstanding symbolic frame
   expressions, and materialization points;
-- the information needed to emit typed PHIR and construct a shared physical
-  circuit plan for direct TickCircuit and Guppy lowering.
+- the information needed to emit typed PHIR and construct a shared protocol
+  physical plan for direct TickCircuit, Guppy, and external target lowering.
 
 This resolved program is not a second public authoring IR. Each implementation
 plan describes hardware-independent realization details such as ancilla
 lifecycle, interaction partial order, measurement semantics, QEC protocol phases,
-and decoder dependencies. A Rust `PhysicalCircuitPlan` composes those selected
-plans into physical operations, resource lifetimes, scheduling constraints,
+and decoder dependencies. A Rust `ProtocolPhysicalPlan` composes those selected
+plans into portable physical operations, stable resource roles and lifetimes,
+partial-order and atomic-stage constraints, typed capability requirements,
 structured control, and the measurement/detector/observable/provenance ledger.
 It retains logical-block and instruction boundaries even when a backend later
 flattens them.
 
-`PhysicalCircuitPlan` is the common physical-lowering seam, not an arbitrary
-already-flattened `TickCircuit`. It contains enough structure for Guppy's linear
-patch values and control flow while also supporting deterministic Rust
-scheduling and direct TickCircuit emission. This prevents a Python Guppy
-renderer and a Rust Tick renderer from independently rediscovering ancillas,
-check order, frame effects, measurements, or detector boundaries.
+`ProtocolPhysicalPlan` is the common physical-lowering seam, not an arbitrary
+already-flattened `TickCircuit` and not a target schedule. It never needs final
+physical-resource addresses, target-native rebasing, inserted idles, or
+authoritative wall-clock time. It contains enough structure for Guppy's owned
+patch values and control flow, deterministic Rust reference scheduling, and
+external mapping/scheduling backends. This prevents each renderer or target
+backend from independently rediscovering ancillas, check order, frame effects,
+measurements, or detector boundaries.
 
-It is also the executable detailed form of the previously described
-`SpaceTimeRealization`, not a competing representation. Before scheduling, it
-may retain partial orders and relative geometry; after a scheduling context is
-applied, its physical operations have concrete ticks and locations. Those same
-scheduled operations project both to the detailed 2+1D circuit view and to the
-normalized TickCircuit.
+It is also the portable detailed form of the previously described
+`SpaceTimeRealization`, not a competing representation. It may retain partial
+orders, symbolic/relative geometry, and alternative resource bindings. A
+scheduler or target backend refines it into a `ScheduledPhysicalPlan` whose
+operations have concrete bindings and schedule coordinates. An optional
+`ExecutionTrace` adds observed result bindings, selected branches/iterations,
+and runtime timing. Both refinements preserve source and semantic IDs and
+return explicit binding/provenance maps.
 
 The PHIR lowering is a first-class Rust output of the same resolved artifact,
 not a Python reconstruction. It should emit registered dialect operations and
@@ -2431,18 +2565,38 @@ types with source maps to program/module/call/value IDs. PHIR, direct Tick, and
 Guppy are sibling outputs with explicit capability sets; none needs Python in
 order for the Rust program to produce a usable physical circuit and DEM.
 
-The direct backend deterministically schedules the physical plan under an
-explicit direct-lowering context and returns a `GeneratedTickProgram` containing
-the normalized `TickCircuit`, measurement ledger, detector/observable metadata,
-selected implementation IDs, schedule provenance, and links to logical calls.
-Its TickCircuit is authoritative for that direct route and may be passed to the
-native DEM builder without compiling or executing Guppy.
+The direct backend deterministically refines the protocol plan under an
+explicit reference-scheduling context. It returns a `ScheduledPhysicalPlan` and
+a `GeneratedTickProgram` containing the normalized `TickCircuit`, measurement
+ledger, detector/observable metadata, selected implementation IDs, schedule
+provenance, and links to logical calls. Its TickCircuit is authoritative for
+that direct route and may be passed to the native DEM builder without compiling
+or executing Guppy.
 
-The Guppy backend emits the same physical plan through structured Guppy. Guppy
+The Guppy backend emits the same protocol plan through structured Guppy. Guppy
 compilation, QIS lowering, and a selected target/runtime may legally reschedule
 operations. For that route, the executed QIS trace is authoritative for physical
 gate and measurement order, and DEM construction uses the normalized
 TickCircuit recovered from the trace following `build_dem_from_guppy`.
+
+A generic external target backend may instead consume the versioned protocol
+plan directly. It owns final physical-resource binding, placement, routing,
+target-native operation validation/rebasing, total or refined scheduling, idle
+insertion, and authoritative target time. It returns a
+`ScheduledPhysicalPlan` and optionally an `ExecutionTrace`; it may reject a
+semantically valid plan as infeasible but must not change the declared QEC
+semantics or silently substitute an implementation.
+
+The native-operation boundary is explicit. QEC implementations emit a
+versioned portable physical vocabulary such as preparation, measurement,
+one-/two-qubit Clifford operations, classical dependencies, and frame effects.
+An optional `TargetLoweringProfile` may rebase those operations into a target
+vocabulary, but the selected profile ID, semantic/version fingerprint,
+parameter conventions, and conformance evidence are recorded. The executing
+backend remains authoritative for the target definition it accepts and rejects
+unknown operations rather than silently reinterpreting them. Target profiles
+and backends may live outside PECOS while implementing the same serialized,
+device-independent contract.
 
 Both routes must make their schedule origin visible—for example,
 `generated_tick.tick_circuit` with `schedule_source="direct"` versus
@@ -2450,6 +2604,21 @@ Both routes must make their schedule origin visible—for example,
 required while implementations migrate and remains an important regression
 oracle, but a verified direct TickCircuit is not permanently subordinate to or
 dependent on Guppy.
+
+Conformance is semantic by default. Backends must preserve the protocol
+dependency relation, logical action, block/resource lifetimes, measurement and
+result bindings, frames, detectors, observables, and provenance. Exact
+operation or tick order is compared only when both routes declare an
+equivalence-constrained scheduling policy; a legal reordering of independent
+operations is otherwise not a mismatch.
+
+PECOS should be able to consume a conforming scheduled plan or execution trace
+for simulation, Tick/DAG construction, detector/observable evaluation,
+decoding, and logical-result interpretation. The imported artifact may add
+binding histories, target operation spans, physical result IDs, noise or
+calibration annotations, selected branches, and timing summaries. It must keep
+the original call, block, code-element, protocol-wire, frame, and measurement
+IDs as provenance rather than asking PECOS to infer them from a flat circuit.
 
 Some resolved programs exceed TickCircuit's control model. Static loops can be
 unrolled, compile-time branches specialized, and virtual Pauli corrections
@@ -2493,8 +2662,13 @@ measurement creates a logical measurement reference. The Guppy/QIS trace path
 resolves it to runtime identity:
 
 - resolved instruction program: a logical measurement reference;
+- protocol plan: the same `MeasurementId` attached to a portable operation and
+  semantic code/check role;
+- scheduled plan: a target operation/binding and scheduled occurrence linked
+  to that `MeasurementId`;
 - Guppy: a stable scalar result tag and occurrence association;
-- QIS trace and normalized Tick/DAG: `MeasId` plus runtime order;
+- execution/QIS trace and normalized Tick/DAG: physical result binding,
+  `MeasId`, observed value when present, and runtime order;
 - Stim: a record offset computed only at export;
 - DEM: the resolved measurement identity expected by the analysis pipeline.
 
@@ -2562,8 +2736,8 @@ special-purpose:
 
 ```rust
 let resolved = program.resolve(&surface.lowering_context())?;
-let physical = resolved.lower_physical(&direct_context)?;
-let generated = physical.to_tick_program()?;
+let protocol = resolved.to_protocol_physical_plan()?;
+let generated = protocol.to_tick_program(&reference_schedule)?;
 let tick: &TickCircuit = generated.tick_circuit();
 let dem = generated.build_dem(&noise_model)?;
 ```
@@ -2572,17 +2746,17 @@ Python should be a thin wrapper over those same artifacts:
 
 ```python
 resolved = program.resolve(context=surface.lowering_context())
-physical = resolved.lower_physical(context=direct_context)
-generated = physical.to_tick_program()
+protocol = resolved.to_protocol_physical_plan()
+generated = protocol.to_tick_program(reference_schedule)
 tick = generated.tick_circuit
 dem = generated.build_dem(noise_model)
 ```
 
 Convenience methods such as `resolved.to_tick_circuit(...)` and
 `resolved.build_dem(..., via="direct")` may compose these steps, but the
-inspectable `PhysicalCircuitPlan` and `GeneratedTickProgram` artifacts must
-remain available. Direct lowering must run entirely in Rust and must not import
-Guppy or Python.
+inspectable `ProtocolPhysicalPlan`, `ScheduledPhysicalPlan`, and
+`GeneratedTickProgram` artifacts must remain available. Direct lowering must
+run entirely in Rust and must not import Guppy or Python.
 
 ## Guppy lowering
 
@@ -2615,7 +2789,7 @@ the existing convention of returning an entry point. The new
 source, entry point, resolved QEC protocol implementations, measurement layout, and
 detector/observable metadata. Its `trace_qis()` and `build_dem()` methods use
 the same generated program and make the traced analysis route explicit. Guppy
-emission consumes the shared physical plan plus retained structured
+emission consumes the shared protocol plan plus retained structured
 block/control information; it is not generated by converting the direct
 TickCircuit back into Guppy.
 
@@ -2716,7 +2890,7 @@ into Rust and targets the new module/region/value contracts.
 Remains the geometry authority. No stabilizer or logical-support calculation
 is copied into the new program, instruction set, or renderer. A surface QEC protocol
 implementation receives the concrete `SurfacePatch` specifications associated
-with its operand logical values and validates them through `supports`.
+with its operand logical values and validates them through structured support assessment.
 
 ### `SurfaceInstrSet`
 
@@ -2785,7 +2959,7 @@ implementations and program at a higher level, while making the abstraction
 boundaries explicit and usable by different kinds of users.
 
 The new Rust model should not copy SLR's block model directly. It adds typed
-logical and classical values, explicit gadget input/output contracts, linear
+logical and classical values, explicit gadget input/output contracts, single-use
 region arguments and yields, hierarchical black-box views, late selection among
 implementations, and a semantic distinction between physical conditional
 execution and Pauli-frame updates. It also makes resource summaries,
@@ -2814,8 +2988,8 @@ The proposed types map onto the RFC ladder as follows:
 | `EncodedProgram` / logical ISA | `InstrProgram` whose graph calls logical-level `QecInstr` interfaces |
 | `QecProtocol` | A selected `QecInstrImpl`, potentially expressed hierarchically as more QEC instruction applications |
 | `ImplementationPlan` | Concrete `QecInstrPlan` produced by the selected implementation |
-| Circuit/hybrid program | `PhysicalCircuitPlan`, generated Guppy, and compiled HUGR/QIS |
-| Mapped/timed execution | Direct Rust schedule or platform/runtime lowering observed through QIS trace |
+| Circuit/hybrid program | `ProtocolPhysicalPlan`, generated Guppy, and compiled HUGR/QIS |
+| Mapped/timed execution | `ScheduledPhysicalPlan` plus an optional `ExecutionTrace` from a reference or target backend |
 | Analysis product | Normalized TickCircuit, DagCircuit, and DEM with recorded schedule source |
 
 This design adopts #508's explicit-artifact rule: the authored
@@ -2847,7 +3021,7 @@ SurfacePatch-backed logical value
     -> InstrProgram / InstrGraph QEC instruction applications
     -> ElaboratedInstrProgram
     -> selected surface implementation plans
-    -> PHIR and shared PhysicalCircuitPlan
+    -> PHIR and shared ProtocolPhysicalPlan
        +-> direct normalized TickCircuit
        +-> Guppy -> QIS trace -> normalized TickCircuit
     -> DEM
@@ -2880,13 +3054,13 @@ examples in this document are Python-shaped but are not intended to make Python
 objects the interchange format.
 
 The HDL exploration should test whether parameterized instruction signatures,
-multiple implementations, implementation constraints, linear values, and
+multiple implementations, implementation constraints, single-use values, and
 derived output types can be expressed naturally. SLR/Zlup may become one front
 end or implementation-plan notation; `InstrProgram` should not depend on its
 surface syntax.
 
 The cell/netlist analogy above provides the likely HDL structure: instruction
-definitions are cell interfaces, bound calls are instances, linear QEC values
+definitions are cell interfaces, bound calls are instances, single-use QEC values
 are ownership-carrying nets, and resolution is technology mapping. An HDL front
 end should serialize to the same Rust `InstrProgram` rather than introduce a
 parallel semantic model.
@@ -2906,7 +3080,7 @@ here is:
 - `QecInstrSet`: definitions, candidate implementations, explicit selection
   policy, and introspectable configured defaults;
 - `ResolvedInstrProgram`: selected plans composed according to the opaque
-  calls and linear values in an `InstrProgram`.
+  calls and single-use values in an `InstrProgram`.
 
 The first implementation should be developed as part of #512 rather than
 introducing separate competing protocol types under `pecos.qec.surface`.
@@ -2917,7 +3091,7 @@ The boundary for #513 is:
 
 ```text
 ResolvedInstrProgram / QecInstrPlan
-    -> shared PhysicalCircuitPlan + semantic source map
+    -> shared ProtocolPhysicalPlan + semantic source map
        +-> direct normalized TickCircuit
        +-> generated Guppy -> HUGR/QIS -> QIS trace
     -> resolved measurement identity map for either route
@@ -2938,15 +3112,15 @@ the declared state or observable semantics.
 
 ### [#514: mapping and timed scheduling](https://github.com/PECOS-packages/PECOS/issues/514)
 
-QEC protocol implementation plans remain hardware-independent. Target topology,
-native decomposition, placement, timing, idles, and feedback latency enter
-through the existing HUGR/QIS platform and runtime lowering selected by the
+QEC protocol implementation plans remain device-independent. Target topology,
+native decomposition, placement, routing, timing, idles, and feedback latency
+enter through HUGR/QIS or another explicit target backend selected by the
 `LoweringContext`.
 
 For a target/runtime route, the QIS trace is authoritative because it reflects
 that route's chosen mapped schedule. For direct lowering, the
 `GeneratedTickProgram` is authoritative for its explicit scheduling context.
-Both artifacts retain links through the shared physical plan to QEC instruction
+Both artifacts retain links through the shared protocol plan to QEC instruction
 applications and code entities. Different direct policies, runtimes, or target
 choices produce distinct scheduled artifacts and potentially distinct DEMs,
 even from the same logical graph.
@@ -2988,7 +3162,7 @@ experiment overlays, not different instruction, protocol, or code types.
    first slice of #512; add bindings only after the Rust API and serialization
    tests pass.
 4. Implement `ResolvedInstrProgram` -> typed PHIR emission with source maps.
-5. Implement the single-patch shared physical plan with both direct
+5. Implement the single-patch shared protocol plan with both direct
    TickCircuit -> DEM and Guppy -> QIS trace -> TickCircuit -> DEM paths and a
    common semantic source map under #513.
 6. Exercise two surface implementations of one instruction so alternate
@@ -3052,11 +3226,11 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 ### Stage 1a: Rust `InstrProgram` and surface instruction-set skeleton
 
 - Implement Rust-owned `InstrProgram`, `InstrGraph`, typed IDs and values,
-  linear-use validation, and the opaque `InstrCall` in the generic layer.
+  use-policy validation, and the opaque `InstrCall` in the generic layer.
 - Implement `InstrModule`, `InstrModuleBuilder`, typed module ports,
   `InstrModuleCall`, stable instance paths, and a first-version acyclic
   instance-graph verifier.
-- Include copyability traits for classical values plus serializable structured
+- Include reusable-value policies for classical values plus serializable structured
   region interfaces; implement `IfRegion` verification even if adaptive Guppy
   lowering lands in a later stage.
 - Define versioned `LogicalPauliFrame`, symbolic Boolean frame expressions,
@@ -3101,14 +3275,15 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 - Require paired Rust/Python examples and byte-equivalent serialized programs,
   resolved programs, PHIR artifacts, defaults, and provenance.
 
-### Stage 2: shared physical plan, direct TickCircuit, Guppy, and DEM
+### Stage 2: shared protocol plan, direct TickCircuit, Guppy, and DEM
 
 - Port or extract reusable patch-level planning into a Rust
-  `PhysicalCircuitPlan` in `crates/pecos-qec` rather than either renderer.
-- Implement Rust-only `PhysicalCircuitPlan` -> `GeneratedTickProgram` lowering,
-  including the normalized TickCircuit, measurement ledger,
-  detector/observable definitions, provenance, and native DEM construction.
-- Implement deterministic Guppy source emission from that same physical plan
+  `ProtocolPhysicalPlan` in `crates/pecos-qec` rather than either renderer.
+- Implement Rust-only `ProtocolPhysicalPlan` -> reference
+  `ScheduledPhysicalPlan` -> `GeneratedTickProgram` lowering, including the
+  normalized TickCircuit, measurement ledger, detector/observable definitions,
+  provenance, and native DEM construction.
+- Implement deterministic Guppy source emission from that same protocol plan
   and retained block/control structure.
 - Keep only Guppy source loading/compilation and runtime orchestration in the
   Python bridge.
@@ -3121,7 +3296,7 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 
 ### Stage 3: multi-patch Clifford gates
 
-- Add transversal H, S/S-dagger, and CX to the shared physical plan and both
+- Add transversal H, S/S-dagger, and CX to the shared protocol plan and both
   direct TickCircuit and Guppy lowerings.
 - Support parallel syndrome rounds over compatible patches.
 - Match the existing logical builder's Tick traces and detector boundaries.
@@ -3174,7 +3349,7 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 ### Stage 6: structured control and repetition
 
 - Add typed `repeat`, `while_loop`, and `repeat_until` regions with explicit
-  loop-carried linear values, conditions, yields, and result signatures.
+  loop-carried single-use values, conditions, yields, and result signatures.
 - Evaluate a structured syndrome-round loop aligned with
   `design/measurement-id-system.md`, including stable dynamic measurement
   identities across iterations.
@@ -3203,7 +3378,7 @@ PyO3 and Python ergonomics follow as a thin view over those established types.
 ## Testing and acceptance criteria
 
 Each supported operation sequence must be validated through the Rust-owned
-physical plan and every backend that claims to support it. Direct TickCircuit
+protocol plan and every backend that claims to support it. Direct TickCircuit
 lowering is a production Rust path; generated Guppy and its QIS trace are a
 separate production execution path. Cross-route equivalence is required where
 their declared scheduling contexts and capabilities should produce the same
@@ -3218,6 +3393,11 @@ Required tests include:
 - one small non-QEC instruction set exercising definitions, typed calls,
   modules, deterministic implementation resolution, and PHIR emission so the
   generic boundary is real rather than nominal;
+- one instruction set defined in a separate test crate/package being imported,
+  serialized, fingerprinted, and resolved without process-global registration;
+- structured support assessments reporting machine-readable incompatibility
+  reasons, capability requirements, resource quantities, and deferred
+  feasibility where a mapping context is required;
 - Guppy -> HUGR -> structurally imported `InstrModule` preserving function
   signature, linear value flow, supported conditionals/loops, hierarchy, and
   HUGR node/function provenance;
@@ -3236,6 +3416,11 @@ Required tests include:
   profile preferences, and rejecting unresolved required parameters;
 - stable definition IDs, instance IDs, and hierarchy paths across
   serialization and deterministic elaboration;
+- definition, call, code-block instance, SSA value, code-element,
+  protocol-wire, measurement, and target-binding identities round-tripping
+  without relying on object addresses or display names;
+- two same-geometry blocks retaining distinct `CodeBlockInstanceId`s while
+  syndrome extraction returns new `ValueId`s for each same persistent block;
 - hierarchical composite implementations matching their external instruction
   contracts before and after flattening;
 - two calls to one `InstrModule` producing distinct instance, block,
@@ -3243,17 +3428,17 @@ Required tests include:
   definition ID;
 - direct module calls and provenance-preserving inlining producing equivalent
   typed instruction graphs and traced behavior;
-- module construction rejecting implicit linear captures, recursive instance
+- module construction rejecting implicit single-use captures, recursive instance
   graphs, incompatible output types, and unresolved required parameters;
 - specialization/cache keys including canonical type/parameter substitutions,
   instruction-set versions, and implementation profiles without merging
   instance-local identities;
 - independent calls remaining unordered unless resource dependencies or
   explicit control regions constrain them;
-- conditional regions rejecting non-Boolean predicates, implicit linear
+- conditional regions rejecting non-Boolean predicates, implicit single-use
   captures, missing yields, incompatible branch result types, and double use
   of a branch input;
-- loop regions rejecting incompatible carried types, implicit linear captures,
+- loop regions rejecting incompatible carried types, implicit single-use captures,
   dropped or duplicated QEC blocks, non-Boolean dynamic conditions, and
   iteration-local values escaping their scope;
 - static repeats producing equivalent unrolled and structured Guppy/QIS traces,
@@ -3294,6 +3479,9 @@ Required tests include:
 - parity between Rust fluent call builders and Python keyword-bound calls;
 - Python cursor and parallel-region wrappers delegating state transitions and
   validation to Rust rather than maintaining shadow state;
+- direct reuse of a consumed `SingleUse` value producing a domain-readable
+  error while the cursor API expresses the same valid program without explicit
+  SSA rebinding;
 - stable translation of each structured Rust diagnostic into the corresponding
   Python exception and fields;
 - canonical `SurfacePatch` geometry, stabilizers, logical supports, schedules,
@@ -3327,11 +3515,21 @@ Required tests include:
   representatives;
 - frame materialization, absorption into a measurement, and decoder-driven
   physical-frame updates remaining distinguishable in plan provenance;
-- deterministic Rust-only `ResolvedInstrProgram` -> `PhysicalCircuitPlan` ->
-  `GeneratedTickProgram` lowering without importing Python or Guppy;
+- deterministic Rust-only `ResolvedInstrProgram` -> `ProtocolPhysicalPlan` ->
+  reference `ScheduledPhysicalPlan` -> `GeneratedTickProgram` lowering without
+  importing Python or Guppy;
+- temporary protocol ancillas having stable `ProtocolWireId`s and bounded
+  scopes without becoming persistent patch values or preassigned target
+  resources;
+- an external target scheduler legally reordering independent operations while
+  preserving protocol dependencies, resource lifetimes, semantic identities,
+  frames, measurement ledger, detectors, and observables;
+- scheduled-plan and execution-trace import preserving source identities and
+  target binding/result histories without reconstructing them from display
+  names or circuit positions;
 - direct TickCircuit measurement identities, detector/observable metadata,
   result tags, instruction boundaries, and provenance agreeing with the shared
-  physical plan;
+  protocol plan;
 - native DEM construction succeeding directly from `GeneratedTickProgram` and
   preserving the same detector/observable identities;
 - direct lowering rejecting unsupported adaptive branches/loops without
@@ -3411,9 +3609,10 @@ compilation.
 
 ## Open questions
 
-1. How rich should the initial generic type interface be? At minimum it needs
-   linear/copyable value kinds and instruction-supplied input/output signatures;
-   QEC lifecycle states can remain QEC-dialect type tokens.
+1. How rich should the initial generic type interface be? The current answer is
+   deliberately small: instruction-supplied input/output types plus the
+   orthogonal `SingleUse`/`Reusable` policy. QEC lifecycle obligations remain
+   QEC-dialect validation rather than general type-system machinery.
 2. Should instruction-set resolution happen eagerly when calls are appended or
    only when a target and lowering context are known? The proposed compromise
    is eager resolution when fully specified, followed by mandatory resolution
@@ -3452,8 +3651,8 @@ Stage 1c PyO3 wrappers and prove Rust/Python construction parity.
 
 Only then implement one complete single-patch vertical slice: Rust
 `InstrProgram` QEC applications -> Rust-resolved plan -> Rust-generated PHIR
-and shared `PhysicalCircuitPlan`, then both (a) Rust-direct normalized
-TickCircuit -> DEM and (b) Guppy source/metadata -> thin Python compilation ->
+and shared `ProtocolPhysicalPlan`, then both (a) Rust reference scheduling ->
+normalized TickCircuit -> DEM and (b) Guppy source/metadata -> thin Python compilation ->
 QIS trace -> normalized TickCircuit -> DEM. Compare both routes' measurement
 ledgers, detectors, observables, representative DEMs, and PHIR semantics against
 `make_surface_code`, and compare their concrete schedules where the selected

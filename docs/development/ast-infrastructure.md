@@ -18,10 +18,18 @@ Converts compiled Guppy programs (HUGR format) to SLR-AST for analysis and code 
 
 **Supported features:**
 - Straight-line quantum circuits
-- Conditionals (if/else based on measurement results)
-- Nested conditionals
-- While loops with classical conditions
+- One conditional (if/else) whose predicate is the direct read of a measurement
 - Gates: H, X, Y, Z, S, Sdg, T, Tdg, SX, SXdg, CX, CY, CZ, CH, RX, RY, RZ, RZZ
+- Rotation angles, when the angle is a constant
+
+**Deliberately rejected** (`UnsupportedHugrStructureError`), because the
+converter cannot represent them without fabricating part of the circuit:
+- Sequential or nested conditionals
+- Branch predicates that are not a direct measurement read: negations,
+  comparisons, purely classical expressions, and loop counters. `while` loops
+  fall here -- the CFG shape is recognized, but the counter predicate is not
+  convertible, so the loop is refused rather than given an invented condition.
+- Rotation gates whose angle is not a constant
 
 **Key functions:**
 ```python
@@ -172,8 +180,11 @@ assert ast_equal(ast, restored)
 ### Near-term
 
 1. **Additional gate support** - Add more gates as needed (e.g., multi-controlled gates)
-2. **Better condition tracking** - Currently nested conditionals use simplified condition variables
-3. **For loop support** - Add ForStmt generation from HUGR bounded loops
+2. **Classical expression extraction** - Build AST expressions from the HUGR
+   classical dataflow feeding a branch, so negations, comparisons and loop
+   counters convert instead of being rejected
+3. **For loop support** - Recognize the induction-variable pattern behind a
+   counter-driven `while` and emit a ForStmt with its trip count
 
 ### Medium-term
 

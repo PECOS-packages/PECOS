@@ -16,21 +16,142 @@ use num_complex::Complex64;
 use pecos_random::PecosRng;
 use pecos_simulators::{
     DensityMatrixDiagnostics, InstrumentSample, KrausSample, MeasurementSample, QuditDensityMatrix,
-    QuditError, QuditStateVec, basis_swap, embedded_qubit_unitary, qutrit_leakage_channel,
-    qutrit_seepage_channel,
+    QuditError as CoreQuditError, QuditStateVec, QutritDensityMatrix, QutritStateVec, basis_swap,
+    embedded_qubit_unitary, qutrit_leakage_channel, qutrit_seepage_channel,
 };
-use pyo3::exceptions::{PyIndexError, PyMemoryError, PyValueError};
+use pyo3::exceptions::{PyException, PyIndexError, PyMemoryError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyType;
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyDict, PyTuple, PyType};
 
-fn python_error(error: QuditError) -> PyErr {
+pyo3::create_exception!(
+    pecos_rslib,
+    QuditError,
+    PyException,
+    "Base class for every error raised by the qudit reference simulators.\n\n\
+     Each instance carries a `kind` attribute holding a stable machine-readable\n\
+     tag for the underlying condition, such as `\"LeakagePopulation\"`."
+);
+
+static QUDIT_VALUE_ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+static QUDIT_INDEX_ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+static QUDIT_MEMORY_ERROR: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+
+/// Build (once) an exception class deriving from both `QuditError` and a builtin.
+///
+/// Deriving from the builtin keeps every existing `except ValueError` /
+/// `except IndexError` / `except MemoryError` working unchanged, while the
+/// `QuditError` base makes the whole family catchable in one clause.
+fn derived_exception<'py>(
+    py: Python<'py>,
+    cell: &'static PyOnceLock<Py<PyType>>,
+    name: &str,
+    builtin: &Bound<'py, PyType>,
+) -> PyResult<Bound<'py, PyType>> {
+    let class = cell.get_or_try_init(py, || {
+        let bases = PyTuple::new(
+            py,
+            [
+                py.get_type::<QuditError>().into_any(),
+                builtin.clone().into_any(),
+            ],
+        )?;
+        let namespace = PyDict::new(py);
+        namespace.set_item("__module__", "pecos_rslib.simulators")?;
+        let metaclass = py.import("builtins")?.getattr("type")?;
+        let class = metaclass.call1((name, bases, namespace))?;
+        Ok::<_, PyErr>(class.cast_into::<PyType>()?.unbind())
+    })?;
+    Ok(class.bind(py).clone())
+}
+
+/// Every exception class this module publishes, in registration order.
+pub fn exception_classes(py: Python<'_>) -> PyResult<Vec<(&'static str, Bound<'_, PyAny>)>> {
+    Ok(vec![
+        ("QuditError", py.get_type::<QuditError>().into_any()),
+        ("QuditValueError", value_error_class(py)?.into_any()),
+        ("QuditIndexError", index_error_class(py)?.into_any()),
+        ("QuditMemoryError", memory_error_class(py)?.into_any()),
+    ])
+}
+
+fn value_error_class(py: Python<'_>) -> PyResult<Bound<'_, PyType>> {
+    derived_exception(
+        py,
+        &QUDIT_VALUE_ERROR,
+        "QuditValueError",
+        &py.get_type::<PyValueError>(),
+    )
+}
+
+fn index_error_class(py: Python<'_>) -> PyResult<Bound<'_, PyType>> {
+    derived_exception(
+        py,
+        &QUDIT_INDEX_ERROR,
+        "QuditIndexError",
+        &py.get_type::<PyIndexError>(),
+    )
+}
+
+fn memory_error_class(py: Python<'_>) -> PyResult<Bound<'_, PyType>> {
+    derived_exception(
+        py,
+        &QUDIT_MEMORY_ERROR,
+        "QuditMemoryError",
+        &py.get_type::<PyMemoryError>(),
+    )
+}
+
+/// Stable machine-readable tag for a core error.
+///
+/// Deliberately exhaustive: adding a `QuditError` variant must fail this match
+/// rather than silently produce an unlabelled Python exception.
+fn error_kind(error: &CoreQuditError) -> &'static str {
     match error {
-        QuditError::AllocationFailed { .. } => PyMemoryError::new_err(error.to_string()),
-        QuditError::TargetOutOfRange { .. } | QuditError::InvalidBasisState { .. } => {
-            PyIndexError::new_err(error.to_string())
-        }
-        _ => PyValueError::new_err(error.to_string()),
+        CoreQuditError::InvalidLocalDimension(_) => "InvalidLocalDimension",
+        CoreQuditError::DimensionOverflow => "DimensionOverflow",
+        CoreQuditError::InvalidStateLength { .. } => "InvalidStateLength",
+        CoreQuditError::TargetOutOfRange { .. } => "TargetOutOfRange",
+        CoreQuditError::DuplicateTarget(_) => "DuplicateTarget",
+        CoreQuditError::EmptyTargets => "EmptyTargets",
+        CoreQuditError::InvalidOperatorLength { .. } => "InvalidOperatorLength",
+        CoreQuditError::InvalidBasisState { .. } => "InvalidBasisState",
+        CoreQuditError::ZeroNorm => "ZeroNorm",
+        CoreQuditError::NonFiniteValue => "NonFiniteValue",
+        CoreQuditError::InvalidProbability(_) => "InvalidProbability",
+        CoreQuditError::NotNormalized { .. } => "NotNormalized",
+        CoreQuditError::EmptyKrausChannel => "EmptyKrausChannel",
+        CoreQuditError::NonUnitary { .. } => "NonUnitary",
+        CoreQuditError::NotTracePreserving { .. } => "NotTracePreserving",
+        CoreQuditError::LeakagePopulation { .. } => "LeakagePopulation",
+        CoreQuditError::InvalidMeasurementPartition => "InvalidMeasurementPartition",
+        CoreQuditError::InvalidMeasurementInstrument => "InvalidMeasurementInstrument",
+        CoreQuditError::NonHermitian { .. } => "NonHermitian",
+        CoreQuditError::NotPositiveSemidefinite { .. } => "NotPositiveSemidefinite",
+        CoreQuditError::AllocationFailed { .. } => "AllocationFailed",
+        CoreQuditError::InvalidTolerance(_) => "InvalidTolerance",
     }
+}
+
+fn python_error(error: CoreQuditError) -> PyErr {
+    let kind = error_kind(&error);
+    let message = error.to_string();
+    Python::attach(|py| {
+        let class = match error {
+            CoreQuditError::AllocationFailed { .. } => memory_error_class(py),
+            CoreQuditError::TargetOutOfRange { .. } | CoreQuditError::InvalidBasisState { .. } => {
+                index_error_class(py)
+            }
+            _ => value_error_class(py),
+        };
+        match class.and_then(|class| {
+            let error = PyErr::from_type(class, message);
+            error.value(py).setattr("kind", kind)?;
+            Ok(error)
+        }) {
+            Ok(error) | Err(error) => error,
+        }
+    })
 }
 
 fn seeded_rng(seed: Option<u64>) -> PecosRng {
@@ -62,13 +183,16 @@ pub fn py_qutrit_leakage_channel(probability: f64) -> PyResult<Vec<Vec<Complex64
     qutrit_leakage_channel(probability).map_err(python_error)
 }
 
-/// Return a qutrit seepage channel and choose the target computational population.
+/// Return a qutrit seepage channel.
+///
+/// `zero_fraction` is the conditional probability that seeped population returns
+/// to `|0>` rather than `|1>`, matching the Rust core's parameter of the same name.
 #[pyfunction(name = "qutrit_seepage_channel")]
 pub fn py_qutrit_seepage_channel(
     probability: f64,
-    zero_population: f64,
+    zero_fraction: f64,
 ) -> PyResult<Vec<Vec<Complex64>>> {
-    qutrit_seepage_channel(probability, zero_population).map_err(python_error)
+    qutrit_seepage_channel(probability, zero_fraction).map_err(python_error)
 }
 
 /// Result of sampling a Kraus trajectory branch.
@@ -185,6 +309,15 @@ impl From<DensityMatrixDiagnostics> for PyDensityMatrixDiagnostics {
 }
 
 /// Dense state-vector simulation with a uniform local dimension.
+///
+/// Index conventions, matching the Rust core:
+///
+/// - Site 0 is the least-significant radix digit of a global basis index.
+/// - For a local operator, ``targets[0]`` is the least-significant digit of the
+///   operator's row and column indices, so `[0, 1]` and `[1, 0]` are different
+///   operations.
+/// - Operators, Kraus operators, and reduced density matrices are flat
+///   row-major sequences, never nested rows.
 #[pyclass(name = "QuditStateVec", module = "pecos_rslib.simulators", subclass)]
 pub struct PyQuditStateVec {
     inner: QuditStateVec,
@@ -251,12 +384,19 @@ impl PyQuditStateVec {
             .map_err(python_error)
     }
 
+    /// Joint outcome distribution over the ordered target sites.
+    ///
+    /// `targets[0]` is the least-significant digit of the returned outcome index.
     fn joint_outcome_probabilities(&self, targets: Vec<usize>) -> PyResult<Vec<f64>> {
         self.inner
             .joint_outcome_probabilities(&targets)
             .map_err(python_error)
     }
 
+    /// Apply a flat row-major local operator of length `local_dimension ** (2 * len(targets))`.
+    ///
+    /// `targets[0]` is the least-significant digit of the operator's row and
+    /// column indices. The operator must be unitary.
     fn apply_operator(&mut self, targets: Vec<usize>, operator: Vec<Complex64>) -> PyResult<()> {
         self.inner
             .apply_operator(&targets, &operator)
@@ -318,6 +458,10 @@ impl PyQuditStateVec {
             .map_err(python_error)
     }
 
+    /// Measure a coarse-grained partition of the targets' joint local basis.
+    ///
+    /// Each group lists joint basis indices in the `targets[0]`-least-significant
+    /// ordering. The groups must cover every joint basis index exactly once.
     fn measure_partition(
         &mut self,
         targets: Vec<usize>,
@@ -329,13 +473,22 @@ impl PyQuditStateVec {
             .map_err(python_error)
     }
 
+    /// Measure `|0>` versus `|1>` on a site with no population above `|1>`.
+    ///
+    /// Raises `ValueError` when the site carries leakage population, rather than
+    /// binning it into a detector outcome.
     fn measure_computational(&mut self, target: usize) -> PyResult<bool> {
         self.inner
             .measure_computational(target)
             .map_err(python_error)
     }
 
-    fn reset(&mut self, target: usize) -> PyResult<()> {
+    /// Reset one site to local basis state zero.
+    ///
+    /// This resets a single site, not the whole simulator. On the state-vector
+    /// backend it samples a trajectory branch and so consumes randomness; the
+    /// density-matrix backend applies the exact reset channel.
+    fn reset_site(&mut self, target: usize) -> PyResult<()> {
         self.inner
             .reset_site(target)
             .map(|_| ())
@@ -349,6 +502,10 @@ impl PyQuditStateVec {
             .map_err(python_error)
     }
 
+    /// Reduced density matrix over the ordered target sites.
+    ///
+    /// Returned flat and row-major, with `targets[0]` the least-significant
+    /// digit of both the row and the column index.
     fn reduced_density_matrix(&self, targets: Vec<usize>) -> PyResult<Vec<Complex64>> {
         self.inner
             .reduced_density_matrix(&targets)
@@ -366,7 +523,9 @@ impl PyQutritStateVec {
     #[pyo3(signature = (num_sites, seed=None))]
     fn new(num_sites: usize, seed: Option<u64>) -> PyResult<PyClassInitializer<Self>> {
         let base = PyQuditStateVec {
-            inner: QuditStateVec::with_rng(num_sites, 3, seeded_rng(seed)).map_err(python_error)?,
+            inner: QutritStateVec::with_rng(num_sites, seeded_rng(seed))
+                .map_err(python_error)?
+                .into_inner(),
         };
         Ok(PyClassInitializer::from(base).add_subclass(Self))
     }
@@ -381,19 +540,29 @@ impl PyQutritStateVec {
         seed: Option<u64>,
     ) -> PyResult<Py<Self>> {
         let base = PyQuditStateVec {
-            inner: QuditStateVec::from_state(num_sites, 3, state, seeded_rng(seed))
-                .map_err(python_error)?,
+            inner: QutritStateVec::from_state(num_sites, state, seeded_rng(seed))
+                .map_err(python_error)?
+                .into_inner(),
         };
         Py::new(py, PyClassInitializer::from(base).add_subclass(Self))
     }
 
     #[staticmethod]
     fn required_memory_bytes(num_sites: usize) -> PyResult<usize> {
-        QuditStateVec::required_memory_bytes(num_sites, 3).map_err(python_error)
+        QutritStateVec::required_memory_bytes(num_sites).map_err(python_error)
     }
 }
 
 /// Exact dense density-matrix simulation with a uniform local dimension.
+///
+/// Index conventions, matching the Rust core:
+///
+/// - Site 0 is the least-significant radix digit of a global basis index.
+/// - For a local operator, ``targets[0]`` is the least-significant digit of the
+///   operator's row and column indices, so `[0, 1]` and `[1, 0]` are different
+///   operations.
+/// - Operators, Kraus operators, and reduced density matrices are flat
+///   row-major sequences, never nested rows.
 #[pyclass(
     name = "QuditDensityMatrix",
     module = "pecos_rslib.simulators",
@@ -487,12 +656,19 @@ impl PyQuditDensityMatrix {
             .map_err(python_error)
     }
 
+    /// Joint outcome distribution over the ordered target sites.
+    ///
+    /// `targets[0]` is the least-significant digit of the returned outcome index.
     fn joint_outcome_probabilities(&self, targets: Vec<usize>) -> PyResult<Vec<f64>> {
         self.inner
             .joint_outcome_probabilities(&targets)
             .map_err(python_error)
     }
 
+    /// Apply a flat row-major local operator of length `local_dimension ** (2 * len(targets))`.
+    ///
+    /// `targets[0]` is the least-significant digit of the operator's row and
+    /// column indices. The operator must be unitary.
     fn apply_operator(&mut self, targets: Vec<usize>, operator: Vec<Complex64>) -> PyResult<()> {
         self.inner
             .apply_operator(&targets, &operator)
@@ -550,6 +726,10 @@ impl PyQuditDensityMatrix {
             .map_err(python_error)
     }
 
+    /// Measure a coarse-grained partition of the targets' joint local basis.
+    ///
+    /// Each group lists joint basis indices in the `targets[0]`-least-significant
+    /// ordering. The groups must cover every joint basis index exactly once.
     fn measure_partition(
         &mut self,
         targets: Vec<usize>,
@@ -561,13 +741,22 @@ impl PyQuditDensityMatrix {
             .map_err(python_error)
     }
 
+    /// Measure `|0>` versus `|1>` on a site with no population above `|1>`.
+    ///
+    /// Raises `ValueError` when the site carries leakage population, rather than
+    /// binning it into a detector outcome.
     fn measure_computational(&mut self, target: usize) -> PyResult<bool> {
         self.inner
             .measure_computational(target)
             .map_err(python_error)
     }
 
-    fn reset(&mut self, target: usize) -> PyResult<()> {
+    /// Reset one site to local basis state zero.
+    ///
+    /// This resets a single site, not the whole simulator. On the state-vector
+    /// backend it samples a trajectory branch and so consumes randomness; the
+    /// density-matrix backend applies the exact reset channel.
+    fn reset_site(&mut self, target: usize) -> PyResult<()> {
         self.inner
             .reset_site(target)
             .map(|_| ())
@@ -581,6 +770,10 @@ impl PyQuditDensityMatrix {
             .map_err(python_error)
     }
 
+    /// Reduced density matrix over the ordered target sites.
+    ///
+    /// Returned flat and row-major, with `targets[0]` the least-significant
+    /// digit of both the row and the column index.
     fn reduced_density_matrix(&self, targets: Vec<usize>) -> PyResult<Vec<Complex64>> {
         self.inner
             .reduced_density_matrix(&targets)
@@ -602,8 +795,9 @@ impl PyQutritDensityMatrix {
     #[pyo3(signature = (num_sites, seed=None))]
     fn new(num_sites: usize, seed: Option<u64>) -> PyResult<PyClassInitializer<Self>> {
         let base = PyQuditDensityMatrix {
-            inner: QuditDensityMatrix::with_rng(num_sites, 3, seeded_rng(seed))
-                .map_err(python_error)?,
+            inner: QutritDensityMatrix::with_rng(num_sites, seeded_rng(seed))
+                .map_err(python_error)?
+                .into_inner(),
         };
         Ok(PyClassInitializer::from(base).add_subclass(Self))
     }
@@ -618,19 +812,19 @@ impl PyQutritDensityMatrix {
         seed: Option<u64>,
     ) -> PyResult<Py<Self>> {
         let base = PyQuditDensityMatrix {
-            inner: QuditDensityMatrix::from_density_matrix(
+            inner: QutritDensityMatrix::from_density_matrix(
                 num_sites,
-                3,
                 density_matrix,
                 seeded_rng(seed),
             )
-            .map_err(python_error)?,
+            .map_err(python_error)?
+            .into_inner(),
         };
         Py::new(py, PyClassInitializer::from(base).add_subclass(Self))
     }
 
     #[staticmethod]
     fn required_memory_bytes(num_sites: usize) -> PyResult<usize> {
-        QuditDensityMatrix::required_memory_bytes(num_sites, 3).map_err(python_error)
+        QutritDensityMatrix::required_memory_bytes(num_sites).map_err(python_error)
     }
 }

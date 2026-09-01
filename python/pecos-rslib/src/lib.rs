@@ -269,6 +269,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMeasurementSample>()?;
     m.add_class::<PyInstrumentSample>()?;
     m.add_class::<PyDensityMatrixDiagnostics>()?;
+    for (name, class) in qudit_bindings::exception_classes(m.py())? {
+        m.add(name, class)?;
+    }
     m.add_function(wrap_pyfunction!(qudit_bindings::py_basis_swap, m)?)?;
     m.add_function(wrap_pyfunction!(
         qudit_bindings::py_embedded_qubit_unitary,

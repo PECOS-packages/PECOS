@@ -80,6 +80,16 @@ pub fn register_simulators_module(parent: &Bound<'_, PyModule>) -> PyResult<()> 
         parent.getattr("qutrit_seepage_channel")?,
     )?;
 
+    // Exception family raised by the multilevel simulators.
+    for name in [
+        "QuditError",
+        "QuditValueError",
+        "QuditIndexError",
+        "QuditMemoryError",
+    ] {
+        simulators.add(name, parent.getattr(name)?)?;
+    }
+
     // Other simulators
     simulators.add("CoinToss", parent.getattr("CoinToss")?)?;
     simulators.add("PauliProp", parent.getattr("PauliProp")?)?;

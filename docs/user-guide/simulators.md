@@ -277,6 +277,52 @@ print(sample.operator_index, state.outcome_probabilities(0))
 Supplying `seed` makes stochastic trajectories and measurements reproducible;
 omitting it uses entropy-derived randomness.
 
+### Errors
+
+Every failure raises a subclass of `QuditError`, which also derives from the
+builtin exception it would otherwise have been, so existing `except ValueError`,
+`except IndexError`, and `except MemoryError` handlers keep working:
+
+| Exception | Also derives from | Raised for |
+| --- | --- | --- |
+| `QuditValueError` | `ValueError` | invalid operators, channels, states, partitions, probabilities |
+| `QuditIndexError` | `IndexError` | out-of-range target sites and basis states |
+| `QuditMemoryError` | `MemoryError` | dense allocations that cannot be reserved |
+
+Each carries a `kind` attribute holding a stable machine-readable tag, so a
+caller can branch on a specific physical condition without matching on message
+text:
+
+```python
+from pecos_rslib.simulators import QuditError, QutritStateVec
+
+state = QutritStateVec(1, seed=42)
+try:
+    state.measure_computational(0)
+except QuditError as error:
+    if error.kind == "LeakagePopulation":
+        ...  # the site carries population above |1>
+    else:
+        raise
+```
+
+### Index conventions
+
+Both backends use one radix convention throughout, and getting it wrong produces
+plausible but incorrect results rather than an error:
+
+- **Site 0 is the least-significant radix digit** of a global basis index. For
+  two qutrits, global index `g = digit(site 0) + 3 * digit(site 1)`.
+- **`targets[0]` is the least-significant digit** of a local operator's row and
+  column indices, and of a joint measurement outcome. `[0, 1]` and `[1, 0]` are
+  therefore different operations, not the same one written two ways.
+- **Operators, Kraus operators, and reduced density matrices are flat and
+  row-major** — a `k`-site operator is a sequence of `d ** (2 * k)` complex
+  values, not a nested list of rows.
+
+The same statements are on the class docstrings, so `help(QutritStateVec)`
+reaches them from a REPL.
+
 ## GPU-Accelerated Simulators
 
 For large circuits, GPU acceleration can provide significant speedups.

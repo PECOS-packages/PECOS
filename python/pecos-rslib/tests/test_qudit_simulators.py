@@ -195,20 +195,14 @@ def test_joint_outcome_and_reduced_matrix_orderings_are_literal() -> None:
         [a * b.conjugate() for a in EXPECTED_STATE_01 for b in EXPECTED_STATE_01],
         seed=TEST_SEED,
     )
-    assert density.joint_outcome_probabilities([0, 1]) == pytest.approx(
-        EXPECTED_JOINT_01
-    )
-    assert density.joint_outcome_probabilities([1, 0]) == pytest.approx(
-        EXPECTED_JOINT_10
-    )
+    assert density.joint_outcome_probabilities([0, 1]) == pytest.approx(EXPECTED_JOINT_01)
+    assert density.joint_outcome_probabilities([1, 0]) == pytest.approx(EXPECTED_JOINT_10)
     assert density.reduced_density_matrix([0]) == pytest.approx(EXPECTED_RDM_SITE0)
     assert density.reduced_density_matrix([1]) == pytest.approx(EXPECTED_RDM_SITE1)
 
 
 def test_seepage_channel_keyword_matches_the_rust_core() -> None:
-    assert qutrit_seepage_channel(probability=0.4, zero_fraction=0.25) == (
-        qutrit_seepage_channel(0.4, 0.25)
-    )
+    assert qutrit_seepage_channel(probability=0.4, zero_fraction=0.25) == qutrit_seepage_channel(0.4, 0.25)
 
 
 def test_errors_are_distinguishable_without_matching_message_text() -> None:

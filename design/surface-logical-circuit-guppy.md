@@ -2,6 +2,10 @@
 
 Status: proposed.
 
+Initial implementation companion: [`instr-program-mvp.md`](instr-program-mvp.md).
+That document is the small normative vertical slice; this document records the
+longer-term architecture and extension points.
+
 ## Summary
 
 PECOS should support constructing programs from typed graph values/resources

@@ -85,9 +85,7 @@ def test_state_import_and_reduced_density_matrix_use_python_sequences() -> None:
     )
     reduced = state.reduced_density_matrix([0])
 
-    assert reduced == pytest.approx(
-        [0.5, -0.5j, 0j, 0.5j, 0.5, 0j, 0j, 0j, 0j]
-    )
+    assert reduced == pytest.approx([0.5, -0.5j, 0j, 0.5j, 0.5, 0j, 0j, 0j, 0j])
 
 
 def test_measurements_instruments_reset_and_seepage_are_exposed() -> None:

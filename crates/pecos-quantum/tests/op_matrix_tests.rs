@@ -14,7 +14,7 @@
 //!
 //! For each Clifford gate, the Op stores both a `CliffordRep` (tableau) and a
 //! `UnitaryRep` (expression). This test verifies that the `UnitaryRep` expression
-//! produces a matrix equivalent (up to global phase) to the expected gate.
+//! produces the phase-fixed matrix of the expected gate.
 
 use pecos_core::Angle64;
 use pecos_core::op;
@@ -23,9 +23,27 @@ use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix, unitaries_equiv};
 /// Verify a 1-qubit Clifford Op's `UnitaryRep` matches a reference `UnitaryRep`.
 fn check_1q_clifford(gate: pecos_core::Op, reference: &pecos_core::UnitaryRep, name: &str) {
     let ur = gate.into_unitary().unwrap();
+    let actual = ur.to_matrix().into_inner();
+    let expected = reference.to_matrix().into_inner();
+    let error = actual
+        .iter()
+        .zip(expected.iter())
+        .map(|(lhs, rhs)| (lhs - rhs).norm())
+        .fold(0.0, f64::max);
     assert!(
-        unitaries_equiv(&ur, reference),
-        "{name}: UnitaryRep decomposition does not match reference"
+        error < 1e-12,
+        "{name}: phase-fixed UnitaryRep differs from reference by {error:e}"
+    );
+
+    let phase = num_complex::Complex64::from_polar(1.0, std::f64::consts::FRAC_PI_4);
+    let mutant_error = actual
+        .iter()
+        .zip(expected.iter())
+        .map(|(lhs, rhs)| (*lhs * phase - rhs).norm())
+        .fold(0.0, f64::max);
+    assert!(
+        mutant_error > 1e-12,
+        "{name}: phase mutation escaped exact guard"
     );
 }
 
@@ -84,36 +102,41 @@ fn op_szdg_matches_unitary_rep() {
 
 #[test]
 fn op_h2_decomposition_correct() {
-    // H2 = Z * SY (apply SY first, then Z)
-    let reference = pecos_core::unitary_rep::Z(0) * pecos_core::unitary_rep::SY(0);
+    // H2 = exp(-i*pi/4) * Z * SY (apply SY first, then Z)
+    let reference = pecos_core::unitary_rep::phase(-(Angle64::QUARTER_TURN / 2u64))
+        * (pecos_core::unitary_rep::Z(0) * pecos_core::unitary_rep::SY(0));
     check_1q_clifford(op::H2(0), &reference, "H2");
 }
 
 #[test]
 fn op_h3_decomposition_correct() {
-    // H3 = Y * SZ (apply SZ first, then Y)
-    let reference = pecos_core::unitary_rep::Y(0) * pecos_core::unitary_rep::SZ(0);
+    // H3 = exp(-i*pi/4) * Y * SZ (apply SZ first, then Y)
+    let reference = pecos_core::unitary_rep::phase(-(Angle64::QUARTER_TURN / 2u64))
+        * (pecos_core::unitary_rep::Y(0) * pecos_core::unitary_rep::SZ(0));
     check_1q_clifford(op::H3(0), &reference, "H3");
 }
 
 #[test]
 fn op_h4_decomposition_correct() {
-    // H4 = X * SZ (apply SZ first, then X)
-    let reference = pecos_core::unitary_rep::X(0) * pecos_core::unitary_rep::SZ(0);
+    // H4 = exp(-i*pi/4) * X * SZ (apply SZ first, then X)
+    let reference = pecos_core::unitary_rep::phase(-(Angle64::QUARTER_TURN / 2u64))
+        * (pecos_core::unitary_rep::X(0) * pecos_core::unitary_rep::SZ(0));
     check_1q_clifford(op::H4(0), &reference, "H4");
 }
 
 #[test]
 fn op_h5_decomposition_correct() {
-    // H5 = Z * SX (apply SX first, then Z)
-    let reference = pecos_core::unitary_rep::Z(0) * pecos_core::unitary_rep::SX(0);
+    // H5 = exp(-i*pi/4) * Z * SX (apply SX first, then Z)
+    let reference = pecos_core::unitary_rep::phase(-(Angle64::QUARTER_TURN / 2u64))
+        * (pecos_core::unitary_rep::Z(0) * pecos_core::unitary_rep::SX(0));
     check_1q_clifford(op::H5(0), &reference, "H5");
 }
 
 #[test]
 fn op_h6_decomposition_correct() {
-    // H6 = Y * SX (apply SX first, then Y)
-    let reference = pecos_core::unitary_rep::Y(0) * pecos_core::unitary_rep::SX(0);
+    // H6 = exp(-i*pi/4) * Y * SX (apply SX first, then Y)
+    let reference = pecos_core::unitary_rep::phase(-(Angle64::QUARTER_TURN / 2u64))
+        * (pecos_core::unitary_rep::Y(0) * pecos_core::unitary_rep::SX(0));
     check_1q_clifford(op::H6(0), &reference, "H6");
 }
 
@@ -123,56 +146,65 @@ fn op_h6_decomposition_correct() {
 
 #[test]
 fn op_f_decomposition_correct() {
-    // F = SZ * SX (apply SX first, then SZ)
-    let reference = pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0);
+    // F = i * SZ * SX (apply SX first, then SZ)
+    let reference = pecos_core::unitary_rep::phase(Angle64::QUARTER_TURN)
+        * (pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0));
     check_1q_clifford(op::F(0), &reference, "F");
 }
 
 #[test]
 fn op_fdg_decomposition_correct() {
-    let reference = (pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0)).dg();
+    // Fdg = -i * SXdg * SZdg.
+    let reference = pecos_core::unitary_rep::phase(-Angle64::QUARTER_TURN)
+        * (pecos_core::unitary_rep::SX(0).dg() * pecos_core::unitary_rep::SZ(0).dg());
     check_1q_clifford(op::Fdg(0), &reference, "Fdg");
 }
 
 #[test]
 fn op_f2_decomposition_correct() {
-    // F2 = SY * SXdg (apply SXdg first, then SY)
-    let reference = pecos_core::unitary_rep::SY(0) * pecos_core::unitary_rep::SX(0).dg();
+    // F2 = -SY * SXdg (apply SXdg first, then SY)
+    let reference = pecos_core::unitary_rep::phase(Angle64::HALF_TURN)
+        * (pecos_core::unitary_rep::SY(0) * pecos_core::unitary_rep::SX(0).dg());
     check_1q_clifford(op::F2(0), &reference, "F2");
 }
 
 #[test]
 fn op_f2dg_decomposition_correct() {
-    // F2dg = SX * SYdg (apply SYdg first, then SX)
-    let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SY(0).dg();
+    // F2dg = -SX * SYdg (apply SYdg first, then SX)
+    let reference = pecos_core::unitary_rep::phase(Angle64::HALF_TURN)
+        * (pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SY(0).dg());
     check_1q_clifford(op::F2dg(0), &reference, "F2dg");
 }
 
 #[test]
 fn op_f3_decomposition_correct() {
-    // F3 = SZ * SXdg (apply SXdg first, then SZ)
-    let reference = pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0).dg();
+    // F3 = -SZ * SXdg (apply SXdg first, then SZ)
+    let reference = pecos_core::unitary_rep::phase(Angle64::HALF_TURN)
+        * (pecos_core::unitary_rep::SZ(0) * pecos_core::unitary_rep::SX(0).dg());
     check_1q_clifford(op::F3(0), &reference, "F3");
 }
 
 #[test]
 fn op_f3dg_decomposition_correct() {
-    // F3dg = SX * SZdg (apply SZdg first, then SX)
-    let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0).dg();
+    // F3dg = -SX * SZdg (apply SZdg first, then SX)
+    let reference = pecos_core::unitary_rep::phase(Angle64::HALF_TURN)
+        * (pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0).dg());
     check_1q_clifford(op::F3dg(0), &reference, "F3dg");
 }
 
 #[test]
 fn op_f4_decomposition_correct() {
-    // F4 = SX * SZ (apply SZ first, then SX)
-    let reference = pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0);
+    // F4 = i * SX * SZ (apply SZ first, then SX)
+    let reference = pecos_core::unitary_rep::phase(Angle64::QUARTER_TURN)
+        * (pecos_core::unitary_rep::SX(0) * pecos_core::unitary_rep::SZ(0));
     check_1q_clifford(op::F4(0), &reference, "F4");
 }
 
 #[test]
 fn op_f4dg_decomposition_correct() {
-    // F4dg = SZdg * SXdg (apply SXdg first, then SZdg)
-    let reference = pecos_core::unitary_rep::SZ(0).dg() * pecos_core::unitary_rep::SX(0).dg();
+    // F4dg = -i * SZdg * SXdg (apply SXdg first, then SZdg)
+    let reference = pecos_core::unitary_rep::phase(-Angle64::QUARTER_TURN)
+        * (pecos_core::unitary_rep::SZ(0).dg() * pecos_core::unitary_rep::SX(0).dg());
     check_1q_clifford(op::F4dg(0), &reference, "F4dg");
 }
 

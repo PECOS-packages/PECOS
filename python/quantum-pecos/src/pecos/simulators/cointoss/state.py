@@ -202,8 +202,9 @@ gate_dict = {
     "RX": _noop_gate,
     "RY": _noop_gate,
     "RZ": _noop_gate,
-    "R1XY": _noop_gate,
     "RXY1Q": _noop_gate,
+    "R1XY": _noop_gate,
+    "U1q": _noop_gate,
     # Other gates
     "Q": _noop_gate,
     "Qd": _noop_gate,

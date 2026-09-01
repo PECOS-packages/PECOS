@@ -32,8 +32,6 @@ jobs:
             build-mode: ""
           - language: c-cpp
             build-mode: none
-          - language: go
-            build-mode: autobuild
           - language: python
             build-mode: ""
           - language: rust

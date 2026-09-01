@@ -1569,6 +1569,30 @@ fn build_rust_tick_circuit(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_quantum::
     build_rust_tick_circuit_from_gates(py_tc)
 }
 
+type LoweredGateRecord = (usize, String, Vec<usize>, Vec<f64>);
+
+/// Rebuild a legacy Python circuit through neo's fallback and expose its native gates.
+#[pyfunction]
+#[pyo3(name = "neo_fallback_native_gates")]
+pub fn neo_fallback_native_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<LoweredGateRecord>> {
+    let circuit = build_rust_tick_circuit_from_gates(py_tc)?;
+    Ok(circuit
+        .iter_gate_batches_with_tick()
+        .map(|(tick, batch)| {
+            let gate = batch.as_gate();
+            (
+                tick,
+                gate.gate_type.to_string(),
+                gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
+                gate.angles
+                    .iter()
+                    .map(pecos_core::Angle64::to_radians_signed)
+                    .collect(),
+            )
+        })
+        .collect())
+}
+
 /// Reconstruct TickCircuit from Python gate iteration, preserving tick structure.
 ///
 /// Respects the original tick boundaries: all gates from the same Python tick
@@ -1592,7 +1616,7 @@ fn build_rust_tick_circuit_from_gates(
         // Separate gates by type: MZ, PZ, and other
         let mut mz_qubits: Vec<pecos_core::QubitId> = Vec::new();
         let mut pz_qubits: Vec<pecos_core::QubitId> = Vec::new();
-        let mut other_gates: Vec<pecos_core::Gate> = Vec::new();
+        let mut other_gate_stages: Vec<Vec<pecos_core::Gate>> = vec![Vec::new()];
 
         for gate in &gates {
             let gate_type_obj = gate.getattr("gate_type")?;
@@ -1618,9 +1642,41 @@ fn build_rust_tick_circuit_from_gates(
                     pz_qubits.extend(qubit_ids);
                 }
                 "TrackedPauli" | "TrackedPauliMeta" => {}
+                "CRX" | "CRY" | "CRZ" => {
+                    let angle = extract_boundary_rotation_angle(gate, &gate_name)?;
+                    let (pairs, remainder) = qubit_ids.as_slice().as_chunks::<2>();
+                    if !remainder.is_empty() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "{gate_name} requires control-target qubit pairs"
+                        )));
+                    }
+                    for pair in pairs {
+                        let lowered: Vec<Gate> = match gate_name.as_str() {
+                            "CRX" => {
+                                pecos_core::controlled_rotations::lower_crx(angle, pair[0], pair[1])
+                                    .into()
+                            }
+                            "CRY" => {
+                                pecos_core::controlled_rotations::lower_cry(angle, pair[0], pair[1])
+                                    .into()
+                            }
+                            "CRZ" => {
+                                pecos_core::controlled_rotations::lower_crz(angle, pair[0], pair[1])
+                                    .into()
+                            }
+                            _ => unreachable!(),
+                        };
+                        if other_gate_stages.len() < lowered.len() {
+                            other_gate_stages.resize_with(lowered.len(), Vec::new);
+                        }
+                        for (stage, lowered_gate) in lowered.into_iter().enumerate() {
+                            other_gate_stages[stage].push(lowered_gate);
+                        }
+                    }
+                }
                 _ => {
                     let core_gate = build_gate_from_python(gate, &gate_name, &qubit_ids)?;
-                    other_gates.push(core_gate);
+                    other_gate_stages[0].push(core_gate);
                 }
             }
         }
@@ -1631,13 +1687,15 @@ fn build_rust_tick_circuit_from_gates(
         }
 
         // Add other gates in one tick (error on qubit conflicts)
-        if !other_gates.is_empty() {
-            let mut tick_handle = tc.tick();
-            for g in &other_gates {
-                if let Err(e) = tick_handle.try_add_gate(g.clone()) {
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "Gate conflict in tick {tick_idx}: {e}"
-                    )));
+        for gates_at_stage in other_gate_stages {
+            if !gates_at_stage.is_empty() {
+                let mut tick_handle = tc.tick();
+                for gate in gates_at_stage {
+                    if let Err(e) = tick_handle.try_add_gate(gate) {
+                        return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Gate conflict while lowering Python tick {tick_idx}: {e}"
+                        )));
+                    }
                 }
             }
         }
@@ -1871,7 +1929,7 @@ fn build_gate_from_python(
         "SXXdg" => GateType::SXXdg,
         "SYY" => GateType::SYY,
         "SYYdg" => GateType::SYYdg,
-        "R1XY" => GateType::R1XY,
+        "RXY1Q" => GateType::RXY1Q,
         "I" | "Idle" => GateType::I,
         other => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -1907,6 +1965,54 @@ fn build_gate_from_python(
 // ============================================================================
 // Circuit extraction
 // ============================================================================
+
+fn extract_exact_gate_angles(
+    gate: &Bound<'_, PyAny>,
+    gate_type: pecos_core::gate_type::GateType,
+) -> PyResult<Vec<Angle64>> {
+    let angles: Vec<f64> = gate.getattr("angles")?.extract()?;
+    let expected = gate_type.angle_arity();
+    if angles.len() != expected {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Gate {gate_type:?} expected {expected} angle parameters, got {}",
+            angles.len()
+        )));
+    }
+    Ok(angles.into_iter().map(Angle64::from_radians).collect())
+}
+
+fn extract_boundary_rotation_angle(gate: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
+    let angles: Vec<f64> = gate.getattr("angles")?.extract()?;
+    let [angle] = angles.as_slice() else {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{name} expected one radians parameter, got {}",
+            angles.len()
+        )));
+    };
+    Ok(*angle)
+}
+
+fn append_lowered_command(mut builder: CommandBuilder, gate: &Gate) -> PyResult<CommandBuilder> {
+    use pecos_core::gate_type::GateType;
+
+    let qubits: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+    builder = match gate.gate_type {
+        GateType::H => builder.h(&qubits),
+        GateType::SX => builder.sx(&qubits),
+        GateType::SXdg => builder.sxdg(&qubits),
+        GateType::RZ => builder.rz(&qubits, gate.angles[0]),
+        GateType::RZZ => {
+            let pairs = [(qubits[0], qubits[1])];
+            builder.rzz(&pairs, gate.angles[0])
+        }
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "controlled-rotation lowering produced unsupported neo gate {other}"
+            )));
+        }
+    };
+    Ok(builder)
+}
 
 /// Extract a CommandQueue from a Python TickCircuit by iterating its stored gate batches.
 fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::CommandQueue> {
@@ -2027,55 +2133,79 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                     cb = cb.mz(&qubits);
                 }
                 "RX" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        cb = cb.rx(&qubits, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RX)?;
+                    cb = cb.rx(&qubits, angles[0]);
                 }
                 "RY" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        cb = cb.ry(&qubits, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RY)?;
+                    cb = cb.ry(&qubits, angles[0]);
                 }
                 "RZ" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        cb = cb.rz(&qubits, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RZ)?;
+                    cb = cb.rz(&qubits, angles[0]);
                 }
-                "R1XY" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if angles.len() >= 2 {
-                        cb = cb.r1xy(
-                            &qubits,
-                            Angle64::from_radians(angles[0]),
-                            Angle64::from_radians(angles[1]),
-                        );
-                    }
+                "RXY1Q" => {
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RXY1Q)?;
+                    cb = cb.rxy1q(&qubits, angles[0], angles[1]);
                 }
                 "RZZ" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        let pairs: Vec<(usize, usize)> =
-                            qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                        cb = cb.rzz(&pairs, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RZZ)?;
+                    let pairs: Vec<(usize, usize)> =
+                        qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                    cb = cb.rzz(&pairs, angles[0]);
                 }
                 "RXX" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        let pairs: Vec<(usize, usize)> =
-                            qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                        cb = cb.rxx(&pairs, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RXX)?;
+                    let pairs: Vec<(usize, usize)> =
+                        qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                    cb = cb.rxx(&pairs, angles[0]);
                 }
                 "RYY" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        let pairs: Vec<(usize, usize)> =
-                            qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                        cb = cb.ryy(&pairs, Angle64::from_radians(angle));
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RYY)?;
+                    let pairs: Vec<(usize, usize)> =
+                        qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                    cb = cb.ryy(&pairs, angles[0]);
+                }
+                "CRX" | "CRY" | "CRZ" => {
+                    let angle = extract_boundary_rotation_angle(gate, &name)?;
+                    let (pairs, remainder) = qubits.as_slice().as_chunks::<2>();
+                    if !remainder.is_empty() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "{name} requires control-target qubit pairs"
+                        )));
+                    }
+                    for pair in pairs {
+                        let lowered: Vec<Gate> = match name.as_str() {
+                            "CRX" => pecos_core::controlled_rotations::lower_crx(
+                                angle,
+                                QubitId(pair[0]),
+                                QubitId(pair[1]),
+                            )
+                            .into(),
+                            "CRY" => pecos_core::controlled_rotations::lower_cry(
+                                angle,
+                                QubitId(pair[0]),
+                                QubitId(pair[1]),
+                            )
+                            .into(),
+                            "CRZ" => pecos_core::controlled_rotations::lower_crz(
+                                angle,
+                                QubitId(pair[0]),
+                                QubitId(pair[1]),
+                            )
+                            .into(),
+                            _ => unreachable!(),
+                        };
+                        for lowered_gate in &lowered {
+                            cb = append_lowered_command(cb, lowered_gate)?;
+                        }
                     }
                 }
                 "I" | "Idle" | "TrackedPauli" | "TrackedPauliMeta" => {

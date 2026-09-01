@@ -64,6 +64,7 @@ mod programs_module;
 mod py_foreign_decoder;
 mod py_foreign_simulator;
 mod quantum_info_bindings;
+mod qudit_bindings;
 mod shot_results_bindings;
 mod sim;
 mod simulator_utils;
@@ -94,6 +95,10 @@ use pauli_prop_bindings::PyPauliProp;
 use pecos_array::Array;
 use pecos_random_bindings::RngPcg;
 use pyo3::prelude::*;
+use qudit_bindings::{
+    PyDensityMatrixDiagnostics, PyInstrumentSample, PyKrausSample, PyMeasurementSample,
+    PyQuditDensityMatrix, PyQuditStateVec, PyQutritDensityMatrix, PyQutritStateVec,
+};
 use sparse_stab_bindings::PySparseStab;
 use sparse_stab_engine_bindings::PySparseStabEngine;
 use stab_bindings::PyStabilizer;
@@ -256,6 +261,30 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_class::<PyStateVec>()?;
+    m.add_class::<PyQuditStateVec>()?;
+    m.add_class::<PyQutritStateVec>()?;
+    m.add_class::<PyQuditDensityMatrix>()?;
+    m.add_class::<PyQutritDensityMatrix>()?;
+    m.add_class::<PyKrausSample>()?;
+    m.add_class::<PyMeasurementSample>()?;
+    m.add_class::<PyInstrumentSample>()?;
+    m.add_class::<PyDensityMatrixDiagnostics>()?;
+    for (name, class) in qudit_bindings::exception_classes(m.py())? {
+        m.add(name, class)?;
+    }
+    m.add_function(wrap_pyfunction!(qudit_bindings::py_basis_swap, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        qudit_bindings::py_embedded_qubit_unitary,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        qudit_bindings::py_qutrit_leakage_channel,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        qudit_bindings::py_qutrit_seepage_channel,
+        m
+    )?)?;
     m.add_class::<PyCoinToss>()?;
     m.add_class::<PyPauliProp>()?;
     m.add_class::<PyByteMessage>()?;

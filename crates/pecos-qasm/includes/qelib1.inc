@@ -15,45 +15,26 @@ gate z a { Z a; }
 // Identity gate - implemented as no-op
 gate id a { rz(0) a; }
 
-// Phase gate (native rotation)
+// Symmetric Z rotation (native), not the phase-fixed p gate below
 gate rz(lambda) a { RZ(lambda) a; }
 
 // S and S-dagger gates (sqrt(Z) and its conjugate)
-gate s a { rz(pi/2) a; }
-gate sdg a { rz(-pi/2) a; }
+gate s a { S a; }
+gate sdg a { SDG a; }
 
 // T and T-dagger gates (sqrt(S) and its conjugate)
-gate t a { rz(pi/4) a; }
-gate tdg a { rz(-pi/4) a; }
+gate t a { T a; }
+gate tdg a { TDG a; }
 
-// X-axis rotation using decomposition
-// Note: H · RZ(θ) · H = RX(θ)
-gate rx(theta) a {
-  h a;
-  rz(theta) a;
-  h a;
-}
+// RXY1Q(theta, 0) = RX(theta)
+gate rx(theta) a { RXY1Q(theta, 0) a; }
 
-// Y-axis rotation
-gate ry(theta) a {
-  rx(-pi/2) a;
-  rz(theta) a;
-  rx(pi/2) a;
-}
+// RXY1Q(theta, pi/2) = RY(theta)
+gate ry(theta) a { RXY1Q(theta, pi/2) a; }
 
-// sqrt(X) gate - decomposed
-gate sx a {
-  sdg a;
-  h a;
-  sdg a;
-}
-
-// inverse sqrt(X) - decomposed
-gate sxdg a {
-  s a;
-  h a;
-  s a;
-}
+// sqrt(X) gates (native)
+gate sx a { SX a; }
+gate sxdg a { SXDG a; }
 
 // --- Two-qubit gates ---
 
@@ -75,8 +56,11 @@ gate cy a,b {
 }
 
 // Controlled-SX
+// H · S · H = SX on the target
 gate csx a,b {
-  cx a,b;  // Simplified version
+  h b;
+  cu1(pi/2) a,b;
+  h b;
 }
 
 // SWAP gate
@@ -101,12 +85,11 @@ gate crz(theta) a,b {
 }
 
 // Controlled RX
+// H · RZ(theta) · H = RX(theta) on the target
 gate crx(theta) a,b {
-  ry(pi/2) b;
-  cx a,b;
-  ry(theta) b;
-  cx a,b;
-  ry(-pi/2) b;
+  h b;
+  crz(theta) a,b;
+  h b;
 }
 
 // Controlled RY
@@ -119,11 +102,11 @@ gate cry(theta) a,b {
 
 // Controlled phase
 gate cphase(theta) a,b {
-  rz(theta/2) a;
+  p(theta/2) a;
   cx a,b;
-  rz(-theta/2) b;
+  p(-theta/2) b;
   cx a,b;
-  rz(theta/2) b;
+  p(theta/2) b;
 }
 
 // Toffoli gate (controlled-controlled-X)
@@ -150,36 +133,24 @@ gate ccx a,b,c {
 
 // --- Utility gates ---
 
-// Phase gate with arbitrary angle
-gate phase(lambda) q { rz(lambda) q; }
+// Phase-gate family: diag(1, exp(i*lambda)). These differ from the symmetric
+// rotation by RZ(lambda) = exp(-i*lambda/2) * p(lambda).
+gate phase(lambda) q { U(0, 0, lambda) q; }
 
-// Standard phase gate (equivalent to rz)
-gate p(lambda) q { rz(lambda) q; }
+// Standard phase gate (equivalent to u1, but not phase-exactly to rz)
+gate p(lambda) q { U(0, 0, lambda) q; }
 
-// Universal single-qubit gate (simplified version using rz gates)
-// u(theta, phi, lambda) = rz(phi) * rx(theta) * rz(lambda)
-// For the identity case u(0,0,0), this simplifies to doing nothing
 // PECOS native U gate (arbitrary single-qubit rotation)
 gate u(theta, phi, lambda) q { U(theta, phi, lambda) q; }
 
 // Single-parameter phase gate (alias)
-gate u1(lambda) a { rz(lambda) a; }
+gate u1(lambda) a { U(0, 0, lambda) a; }
 
 // Two-parameter rotation
-gate u2(phi, lambda) a {
-  rz(phi) a;
-  rx(pi/2) a;
-  rz(lambda) a;
-}
+gate u2(phi, lambda) a { U(pi/2, phi, lambda) a; }
 
 // Three-parameter general rotation
-gate u3(theta, phi, lambda) a {
-  rz(phi) a;
-  rx(-pi/2) a;
-  rz(theta) a;
-  rx(pi/2) a;
-  rz(lambda) a;
-}
+gate u3(theta, phi, lambda) a { U(theta, phi, lambda) a; }
 
 // Controlled gates
 gate cu1(lambda) a,b {

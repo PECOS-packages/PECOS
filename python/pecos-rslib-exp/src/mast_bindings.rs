@@ -10,7 +10,7 @@
 // express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pecos_core::{Angle64, QubitId};
+use pecos_core::QubitId;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
@@ -390,11 +390,11 @@ impl PyMast {
                 Ok(None)
             }
             "T" => {
-                self.inner.rz(Angle64::QUARTER_TURN / 2u64, q);
+                self.inner.t(q);
                 Ok(None)
             }
             "Tdg" => {
-                self.inner.rz(-(Angle64::QUARTER_TURN / 2u64), q);
+                self.inner.tdg(q);
                 Ok(None)
             }
             "PZ" | "Init" | "init |0>" => {

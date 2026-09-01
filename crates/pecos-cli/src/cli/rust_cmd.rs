@@ -17,16 +17,10 @@ use std::process::Command;
 ///   don't want a routine `cargo check` to do. Dedicated CUDA workflows can
 ///   opt in via `--include-ffi` or by setting up the cache first.
 /// - pecos-julia-ffi needs Julia.
-/// - pecos-go-ffi needs Go.
 ///
-/// All four are excluded from the default workspace check / clippy / test
+/// All three are excluded from the default workspace check / clippy / test
 /// invocations and only touched when the caller opts in with `--include-ffi`.
-const FFI_CRATES: &[&str] = &[
-    "pecos-rslib",
-    "pecos-rslib-cuda",
-    "pecos-julia-ffi",
-    "pecos-go-ffi",
-];
+const FFI_CRATES: &[&str] = &["pecos-rslib", "pecos-rslib-cuda", "pecos-julia-ffi"];
 
 /// Extra pyo3 cdylib crates excluded only from `cargo test --workspace`.
 ///
@@ -369,21 +363,6 @@ fn run_check(include_ffi: bool) -> Result<()> {
                 ));
             }
         }
-
-        if is_tool_available("go") {
-            println!("Checking pecos-go-ffi...");
-            if !run_cargo_command(&[
-                "check",
-                "-p",
-                "pecos-go-ffi",
-                "--all-targets",
-                "--all-features",
-            ]) {
-                return Err(Error::Config(
-                    "cargo check (pecos-go-ffi) failed".to_string(),
-                ));
-            }
-        }
     }
 
     println!();
@@ -463,24 +442,6 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             if !run_cargo_command(&args) {
                 return Err(Error::Config(
                     "cargo clippy (pecos-julia-ffi) failed".to_string(),
-                ));
-            }
-        }
-
-        if is_tool_available("go") {
-            println!("Running clippy on pecos-go-ffi...");
-            let mut args: Vec<&str> = vec![
-                "clippy",
-                "-p",
-                "pecos-go-ffi",
-                "--all-targets",
-                "--all-features",
-            ];
-            args.extend(&fix_args);
-            args.extend(&["--", "-D", "warnings"]);
-            if !run_cargo_command(&args) {
-                return Err(Error::Config(
-                    "cargo clippy (pecos-go-ffi) failed".to_string(),
                 ));
             }
         }

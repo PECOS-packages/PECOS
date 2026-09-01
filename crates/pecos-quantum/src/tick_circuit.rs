@@ -2629,6 +2629,12 @@ impl<'a> TickHandle<'a> {
         self.tick_idx
     }
 
+    /// Return the gate-batch index most recently written through this handle.
+    #[must_use]
+    pub fn last_gate_index(&self) -> Option<usize> {
+        self.last_gate_idx
+    }
+
     /// Add a gate to this tick.
     ///
     /// # Panics
@@ -2865,7 +2871,7 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::rz(theta.into(), qubits))
     }
 
-    /// Apply R1XY rotation(s) to one or more qubits.
+    /// Apply RXY1Q rotation(s) to one or more qubits.
     ///
     /// This is a single-qubit rotation parameterized by two angles (theta, phi).
     ///
@@ -2876,15 +2882,15 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().r1xy(PI / 2.0, PI / 4.0, &[0]);
+    /// circuit.tick().rxy1q(PI / 2.0, PI / 4.0, &[0]);
     /// ```
-    pub fn r1xy(
+    pub fn rxy1q(
         &mut self,
         theta: impl Into<Angle64>,
         phi: impl Into<Angle64>,
         qubits: &[impl Into<QubitId> + Copy],
     ) -> &mut Self {
-        self.add_gate(Gate::r1xy(theta.into(), phi.into(), qubits))
+        self.add_gate(Gate::rxy1q(theta.into(), phi.into(), qubits))
     }
 
     /// Apply U gate(s) (general single-qubit unitary) to one or more qubits.
@@ -3100,23 +3106,88 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::rzz(theta.into(), pairs))
     }
 
-    /// Apply CRZ (controlled-RZ) gate(s) to one or more qubit pairs.
+    /// Lower CRZ boundary spelling into native rotations in consecutive ticks.
     ///
-    /// The first qubit in each pair is the control, the second is the target.
+    /// # Panics
+    ///
+    /// Panics if either native gate conflicts with an operation already present
+    /// in its destination tick. Use [`Self::try_crz`] for fallible insertion.
     pub fn crz(
         &mut self,
-        theta: impl Into<Angle64>,
+        theta_radians: f64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
-        let angle = theta.into();
-        for &(c, t) in pairs {
-            self.add_gate(Gate::with_angles(
-                GateType::CRZ,
-                vec![angle],
-                vec![c.into(), t.into()],
-            ));
+        match self.try_crz(theta_radians, pairs) {
+            Ok(handle) => handle,
+            Err(err) => panic!("{err}"),
         }
-        self
+    }
+
+    /// Try to lower CRZ boundary spelling into consecutive native ticks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TickGateError`] if either native gate is invalid or conflicts
+    /// with an operation already present in its destination tick. Neither gate
+    /// is inserted when preflight validation fails.
+    pub fn try_crz(
+        &mut self,
+        theta_radians: f64,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Result<&mut Self, TickGateError> {
+        if pairs.is_empty() {
+            return Ok(self);
+        }
+
+        let mut rzz_batch: Option<Gate> = None;
+        let mut rz_batch: Option<Gate> = None;
+        for &(control, target) in pairs {
+            let [rzz, rz] = pecos_core::controlled_rotations::lower_crz(
+                theta_radians,
+                control.into(),
+                target.into(),
+            );
+            if let Some(batch) = &mut rzz_batch {
+                batch.append_batch(rzz);
+            } else {
+                rzz_batch = Some(rzz);
+            }
+            if let Some(batch) = &mut rz_batch {
+                batch.append_batch(rz);
+            } else {
+                rz_batch = Some(rz);
+            }
+        }
+
+        let Some(rzz_batch) = rzz_batch else {
+            return Ok(self);
+        };
+        let Some(rz_batch) = rz_batch else {
+            return Ok(self);
+        };
+        let rz_tick = self.tick_idx + 1;
+
+        let mut rzz_preview = self.circuit.ticks[self.tick_idx].clone();
+        if let Err(mut err) = rzz_preview.try_add_gate(rzz_batch.clone()) {
+            err.set_tick_idx(self.tick_idx);
+            return Err(err);
+        }
+        let mut rz_preview = self.circuit.ticks.get(rz_tick).cloned().unwrap_or_default();
+        if let Err(mut err) = rz_preview.try_add_gate(rz_batch.clone()) {
+            err.set_tick_idx(rz_tick);
+            return Err(err);
+        }
+
+        self.try_add_gate(rzz_batch)?;
+        while rz_tick >= self.circuit.ticks.len() {
+            self.circuit.ticks.push(Tick::new());
+        }
+        self.circuit.next_tick = self.circuit.next_tick.max(rz_tick + 1);
+        if let Err(mut err) = self.circuit.ticks[rz_tick].try_add_gate(rz_batch) {
+            err.set_tick_idx(rz_tick);
+            return Err(err);
+        }
+        Ok(self)
     }
 
     // --- Three-qubit gates ---
@@ -3811,6 +3882,52 @@ mod tests {
         assert_eq!(tc.get_tick(1).unwrap().len(), 1); // One H
         assert_eq!(tc.get_tick(2).unwrap().len(), 1); // One CX
         assert_eq!(tc.get_tick(3).unwrap().len(), 1); // One bulk measurement
+    }
+
+    #[test]
+    fn crz_boundary_lowers_into_consecutive_native_ticks() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().crz(std::f64::consts::TAU, &[(0, 1)]);
+
+        assert_eq!(circuit.num_ticks(), 2);
+        assert_eq!(circuit.gate_count(), 2);
+        assert_eq!(
+            circuit.get_tick(0).unwrap().gate_batches()[0].gate_type,
+            GateType::RZZ
+        );
+        assert_eq!(
+            circuit.get_tick(1).unwrap().gate_batches()[0].gate_type,
+            GateType::RZ
+        );
+        assert_eq!(
+            circuit.get_tick(1).unwrap().gate_batches()[0]
+                .qubits
+                .as_slice(),
+            &[QubitId(1)]
+        );
+    }
+
+    #[test]
+    fn try_crz_reports_conflict_in_the_destination_tick_without_partial_insertion() {
+        let mut circuit = TickCircuit::new();
+        circuit.reserve_ticks(2);
+        circuit.tick_at(1).h(&[1]);
+
+        let Err(error) = circuit
+            .tick_at(0)
+            .try_crz(std::f64::consts::PI / 3.0, &[(0, 1)])
+        else {
+            panic!("the lowered target RZ must conflict with H");
+        };
+        assert_eq!(
+            error,
+            TickGateError::QubitConflict(QubitConflictError {
+                conflicting_qubits: vec![QubitId(1)],
+                tick_idx: Some(1),
+            })
+        );
+        assert!(circuit.get_tick(0).unwrap().is_empty());
+        assert_eq!(circuit.get_tick(1).unwrap().gate_count(), 1);
     }
 
     #[test]
@@ -5013,7 +5130,7 @@ mod tests {
             .rx(Angle64::from_turns(0.125), &[40])
             .ry(Angle64::from_turns(0.25), &[41])
             .rz(Angle64::from_turns(0.375), &[42])
-            .r1xy(Angle64::from_turns(0.125), Angle64::from_turns(0.25), &[43])
+            .rxy1q(Angle64::from_turns(0.125), Angle64::from_turns(0.25), &[43])
             .u(
                 Angle64::from_turns(0.125),
                 Angle64::from_turns(0.25),

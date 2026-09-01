@@ -682,7 +682,7 @@ impl QisEngine {
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RXY(theta, phi, qubit) => {
-                            builder.r1xy(
+                            builder.rxy1q(
                                 Angle64::from_radians(*theta),
                                 Angle64::from_radians(*phi),
                                 &[self.mapped_qubit(*qubit, qop)?],
@@ -726,6 +726,18 @@ impl QisEngine {
                                 )],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
+                        }
+                        QuantumOp::CRZ(angle, control, target) => {
+                            let control = self.mapped_qubit(*control, qop)?;
+                            let target = self.mapped_qubit(*target, qop)?;
+                            let gates = pecos_core::controlled_rotations::lower_crz(
+                                *angle,
+                                control.into(),
+                                target.into(),
+                            );
+                            builder.add_gate_commands(&gates);
+                            let metadata = std::mem::take(&mut pending_metadata);
+                            gate_metadata.extend([metadata.clone(), metadata]);
                         }
                         QuantumOp::Reset(qubit) => {
                             builder.pz(&[self.mapped_qubit(*qubit, qop)?]);
@@ -837,7 +849,7 @@ impl QisEngine {
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RXY(theta, phi, qubit) => {
-                        builder.r1xy(
+                        builder.rxy1q(
                             Angle64::from_radians(theta),
                             Angle64::from_radians(phi),
                             &[qubit],
@@ -869,6 +881,15 @@ impl QisEngine {
                     QuantumOp::RZZ(angle, qubit1, qubit2) => {
                         builder.rzz(Angle64::from_radians(angle), &[(qubit1, qubit2)]);
                         gate_metadata.push(metadata);
+                    }
+                    QuantumOp::CRZ(angle, control, target) => {
+                        let gates = pecos_core::controlled_rotations::lower_crz(
+                            angle,
+                            control.into(),
+                            target.into(),
+                        );
+                        builder.add_gate_commands(&gates);
+                        gate_metadata.extend([metadata.clone(), metadata]);
                     }
                     QuantumOp::Reset(qubit) => {
                         builder.pz(&[qubit]);
@@ -2086,6 +2107,105 @@ mod tests {
     }
 
     #[test]
+    fn qis_crz_carrier_lowers_before_angle_storage() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        let lowered = engine
+            .quantum_ops_to_lowered_commands(vec![
+                QuantumOp::CRZ(std::f64::consts::TAU, 0, 1).into(),
+            ])
+            .expect("lower QIS CRZ");
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(gates.len(), 2);
+        assert_eq!(gates[0].gate_type, pecos_core::gate_type::GateType::RZZ);
+        assert_eq!(gates[1].gate_type, pecos_core::gate_type::GateType::RZ);
+        assert_eq!(gates[1].qubits.as_slice(), [1.into()]);
+        assert_eq!(lowered.gate_metadata.len(), 2);
+    }
+
+    fn qis_crz_state(theta: f64, basis: usize) -> Vec<(f64, f64)> {
+        use pecos_engines::Engine;
+        use pecos_engines::quantum::StateVecEngine;
+
+        let mut ops = vec![
+            Operation::AllocateQubit { id: 0 },
+            Operation::AllocateQubit { id: 1 },
+        ];
+        if basis & 1 != 0 {
+            ops.push(QuantumOp::X(0).into());
+        }
+        if basis & 2 != 0 {
+            ops.push(QuantumOp::X(1).into());
+        }
+        ops.push(QuantumOp::CRZ(theta, 1, 0).into());
+
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        let lowered = engine
+            .lower_operations_to_commands(&ops)
+            .expect("lower QIS operations");
+        let mut simulator = StateVecEngine::new(2);
+        simulator
+            .process(lowered.commands)
+            .expect("execute lowered QIS operations");
+        simulator
+            .simulator_mut()
+            .state()
+            .iter()
+            .map(|amplitude| (amplitude.re, amplitude.im))
+            .collect()
+    }
+
+    #[test]
+    fn qis_crz_carrier_preserves_full_matrix() {
+        for theta in [
+            -std::f64::consts::PI,
+            std::f64::consts::PI / 3.0,
+            std::f64::consts::PI,
+            std::f64::consts::TAU,
+            3.0 * std::f64::consts::PI,
+        ] {
+            let mut actual = vec![vec![(0.0, 0.0); 4]; 4];
+            for column in 0..4 {
+                for (row_values, amplitude) in actual.iter_mut().zip(qis_crz_state(theta, column)) {
+                    row_values[column] = amplitude;
+                }
+            }
+            let half = theta / 2.0;
+            let reference = [
+                (1.0, 0.0),
+                (1.0, 0.0),
+                (half.cos(), -half.sin()),
+                (half.cos(), half.sin()),
+            ];
+            let phase = actual[0][0];
+            let phase_norm = phase.0 * phase.0 + phase.1 * phase.1;
+            assert!((phase_norm - 1.0).abs() < 1e-12);
+            if theta.abs() <= std::f64::consts::PI {
+                assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+            } else {
+                assert!((phase.0.abs() - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+            }
+            for (row, row_values) in actual.iter().enumerate() {
+                for (column, &value) in row_values.iter().enumerate() {
+                    let normalized = (
+                        (value.0 * phase.0 + value.1 * phase.1) / phase_norm,
+                        (value.1 * phase.0 - value.0 * phase.1) / phase_norm,
+                    );
+                    let expected = if row == column {
+                        reference[row]
+                    } else {
+                        (0.0, 0.0)
+                    };
+                    assert!(
+                        (normalized.0 - expected.0).abs() < 1e-12
+                            && (normalized.1 - expected.1).abs() < 1e-12,
+                        "theta={theta}, entry=({row}, {column}), actual={normalized:?}, expected={expected:?}, phase={phase:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_direct_lowering_preserves_leakage_measurement() {
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
         let ops = vec![
@@ -2125,7 +2245,7 @@ mod tests {
         let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(1)));
         let mut builder = ByteMessage::quantum_operations_builder();
         builder.pz(&[0]);
-        builder.r1xy(
+        builder.rxy1q(
             Angle64::from_radians(std::f64::consts::FRAC_PI_2),
             Angle64::from_radians(3.0 * std::f64::consts::FRAC_PI_2),
             &[0],

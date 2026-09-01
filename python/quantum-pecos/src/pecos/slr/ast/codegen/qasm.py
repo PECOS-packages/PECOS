@@ -80,8 +80,8 @@ GATE_TO_QASM: dict[GateKind, str] = {
     # Hadamard
     GateKind.H: "h",
     # Phase gates
-    GateKind.T: "rz(pi/4)",  # T gate as rotation
-    GateKind.Tdg: "rz(-pi/4)",
+    GateKind.T: "t",
+    GateKind.Tdg: "tdg",
     # Square root gates
     GateKind.SX: "rx(pi/2)",
     GateKind.SY: "ry(pi/2)",
@@ -106,7 +106,7 @@ GATE_TO_QASM: dict[GateKind, str] = {
     GateKind.SYYdg: "SYYdg",
     GateKind.SZZdg: "SZZdg",
     GateKind.RZZ: "rzz",
-    # Controlled rotation gates
+    # qelib1.inc owns these source-precision controlled-rotation spellings.
     GateKind.CRX: "crx",
     GateKind.CRY: "cry",
     GateKind.CRZ: "crz",
@@ -116,6 +116,7 @@ GATE_TO_QASM: dict[GateKind, str] = {
     GateKind.F4: None,
     GateKind.F4dg: None,
 }
+CONTROLLED_ROTATION_GATES = {GateKind.CRX, GateKind.CRY, GateKind.CRZ}
 
 # Mapping from AST BinaryOp to QASM operators
 BINARY_OP_TO_QASM: dict[BinaryOp, str] = {
@@ -334,18 +335,27 @@ class AstToQasm(BaseVisitor[list[str]]):
             )
             raise NotImplementedError(msg)
 
-        # Typed-angle guard: a user/direct-AST parameterized gate's params
-        # must be typed `Angle` literals (matches Guppy + the typed-AST
-        # contract); reject bare floats so backends do not diverge.
+        # Stored rotations carry typed `Angle` literals. Controlled-rotation
+        # boundary spellings carry unreduced real radians literals.
         if node.gate.is_parameterized:
             from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
             for p in node.params:
-                if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
-                    msg = (
-                        f"QASM codegen: parameterized gate {node.gate.name!r} requires typed `Angle` "
-                        f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
+                if node.gate in CONTROLLED_ROTATION_GATES:
+                    valid = (
+                        isinstance(p, LiteralExpr)
+                        and isinstance(p.value, int | float)
+                        and not isinstance(p.value, bool)
                     )
+                else:
+                    valid = isinstance(p, LiteralExpr) and isinstance(p.value, Angle)
+                if not valid:
+                    expected = (
+                        "an unreduced real radians literal"
+                        if node.gate in CONTROLLED_ROTATION_GATES
+                        else "typed `Angle` params (use `rad(...)` / `turns(...)` in SLR)"
+                    )
+                    msg = f"QASM codegen: parameterized gate {node.gate.name!r} requires {expected}; got {p!r}."
                     raise NotImplementedError(msg)
 
         # Handle special face rotation gates
@@ -827,7 +837,7 @@ class AstToQasm(BaseVisitor[list[str]]):
         from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
         if isinstance(node.value, Angle):
-            # OpenQASM rotations are in radians; signed principal value.
+            # OpenQASM stored rotations are emitted in radians.
             return str(node.value.value.to_radians_signed())
         return str(node.value)
 

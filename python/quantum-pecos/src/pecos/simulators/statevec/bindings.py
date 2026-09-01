@@ -238,7 +238,9 @@ def get_bindings(state: StateVec) -> dict:
             q,
             {"angle": p["angles"][0]} if "angles" in p else {"angle": 0},
         ),
-        "R1XY": lambda _s, q, **p: sim.run_1q_gate("R1XY", q, {"angles": p["angles"]}),
+        "RXY1Q": lambda _s, q, **p: sim.run_1q_gate("RXY1Q", q, {"angles": p["angles"]}),
+        "R1XY": lambda _s, q, **p: sim.run_1q_gate("RXY1Q", q, {"angles": p["angles"]}),
+        "U1q": lambda _s, q, **p: sim.run_1q_gate("RXY1Q", q, {"angles": p["angles"]}),
         "U": lambda _s, q, **p: sim.run_1q_gate("U", q, {"angles": p["angles"]}),
         "RXX": lambda _s, qs, **p: sim.run_2q_gate(
             "RXX",
@@ -270,22 +272,21 @@ def get_bindings(state: StateVec) -> dict:
             tuple(qs) if isinstance(qs, list) else qs,
             {"angles": p["angles"]} if "angles" in p else {"angles": [0, 0, 0]},
         ),
-        # Controlled rotations -- dispatch the parameterized 2q gate to the
-        # Rust binding which then calls the new `crx`/`cry`/`crz` default
-        # methods on `ArbitraryRotationGateable` (1-RZZ 2q-minimal decomp).
+        # Controlled rotations are boundary spellings lowered by the Rust
+        # binding from the source radians value before Angle64 normalization.
         "CRX": lambda _s, qs, **p: sim.run_2q_gate(
             "CRX",
             tuple(qs) if isinstance(qs, list) else qs,
-            {"angle": p["angles"][0]} if "angles" in p else {"angle": 0},
+            {"angle": p["angles"][0]},
         ),
         "CRY": lambda _s, qs, **p: sim.run_2q_gate(
             "CRY",
             tuple(qs) if isinstance(qs, list) else qs,
-            {"angle": p["angles"][0]} if "angles" in p else {"angle": 0},
+            {"angle": p["angles"][0]},
         ),
         "CRZ": lambda _s, qs, **p: sim.run_2q_gate(
             "CRZ",
             tuple(qs) if isinstance(qs, list) else qs,
-            {"angle": p["angles"][0]} if "angles" in p else {"angle": 0},
+            {"angle": p["angles"][0]},
         ),
     }

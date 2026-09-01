@@ -181,6 +181,20 @@ fn test_foreign_simulator_rotation_panic() {
 }
 
 #[test]
+#[should_panic(expected = "cannot apply exact T:")]
+fn test_foreign_simulator_rejects_phase_inexact_t() {
+    let mut sim = make_toy_sim(1);
+    sim.t(&[QubitId(0)]);
+}
+
+#[test]
+#[should_panic(expected = "cannot apply exact Tdg:")]
+fn test_foreign_simulator_rejects_phase_inexact_tdg() {
+    let mut sim = make_toy_sim(1);
+    sim.tdg(&[QubitId(0)]);
+}
+
+#[test]
 fn test_foreign_simulator_batch_gates() {
     let mut sim = make_toy_sim(4);
 

@@ -98,7 +98,7 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
         CoreGateType::RY => NeoGateType::RY,
         CoreGateType::RZ => NeoGateType::RZ,
         CoreGateType::U => NeoGateType::U,
-        CoreGateType::R1XY => NeoGateType::R1XY,
+        CoreGateType::RXY1Q => NeoGateType::RXY1Q,
 
         // Two-qubit gates
         CoreGateType::CX => NeoGateType::CX,
@@ -111,7 +111,6 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
         CoreGateType::SYY => NeoGateType::SYY,
         CoreGateType::SYYdg => NeoGateType::SYYdg,
         CoreGateType::SWAP => NeoGateType::SWAP,
-        CoreGateType::CRZ => NeoGateType::CRZ,
         CoreGateType::RXX => NeoGateType::RXX,
         CoreGateType::RYY => NeoGateType::RYY,
         CoreGateType::RZZ => NeoGateType::RZZ,
@@ -537,7 +536,7 @@ fn convert_neo_to_core_gate_type(neo_type: NeoGateType) -> CoreGateType {
         NeoGateType::RY => CoreGateType::RY,
         NeoGateType::RZ => CoreGateType::RZ,
         NeoGateType::U => CoreGateType::U,
-        NeoGateType::R1XY => CoreGateType::R1XY,
+        NeoGateType::RXY1Q => CoreGateType::RXY1Q,
         NeoGateType::CX => CoreGateType::CX,
         NeoGateType::CY => CoreGateType::CY,
         NeoGateType::CZ => CoreGateType::CZ,
@@ -548,7 +547,6 @@ fn convert_neo_to_core_gate_type(neo_type: NeoGateType) -> CoreGateType {
         NeoGateType::SYY => CoreGateType::SYY,
         NeoGateType::SYYdg => CoreGateType::SYYdg,
         NeoGateType::SWAP => CoreGateType::SWAP,
-        NeoGateType::CRZ => CoreGateType::CRZ,
         NeoGateType::RXX => CoreGateType::RXX,
         NeoGateType::RYY => CoreGateType::RYY,
         NeoGateType::RZZ => CoreGateType::RZZ,

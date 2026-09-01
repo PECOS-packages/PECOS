@@ -264,6 +264,25 @@ impl PhirJsonQop {
         }
     }
 
+    /// Create a two-qubit rotation operation.
+    pub fn two_qubit_rotation(
+        gate: impl Into<String>,
+        angle: f64,
+        unit: &str,
+        pairs: Vec<((String, usize), (String, usize))>,
+    ) -> Self {
+        let args: Vec<serde_json::Value> = pairs
+            .into_iter()
+            .map(|((n1, i1), (n2, i2))| serde_json::json!([[n1, i1], [n2, i2]]))
+            .collect();
+        Self {
+            qop: gate.into(),
+            angles: Some((vec![angle], unit.to_string())),
+            args: serde_json::Value::Array(args),
+            returns: None,
+        }
+    }
+
     /// Create a single-qubit rotation.
     pub fn rotation(
         gate: impl Into<String>,
@@ -592,6 +611,11 @@ fn get_gate_info(kind: GateKind) -> GateInfo {
             phir_name: "SZZdg",
             num_qubits: 2,
             num_angles: 0,
+        },
+        GateKind::CRZ => GateInfo {
+            phir_name: "CRZ",
+            num_qubits: 2,
+            num_angles: 1,
         },
         GateKind::RZZ => GateInfo {
             phir_name: "RZZ",
@@ -952,6 +976,37 @@ impl PhirJsonCodegen {
         &self,
         gate_expr: &crate::ast::GateExpr,
     ) -> PhirJsonResult<Vec<PhirJsonOp>> {
+        if gate_expr.kind == GateKind::CRZ {
+            let theta = gate_expr
+                .params
+                .first()
+                .and_then(|param| self.eval_expr_to_float(param))
+                .ok_or(PhirJsonError::InvalidAngle)?
+                * std::f64::consts::TAU;
+            let qubits = self.extract_qubits_from_target(&gate_expr.target)?;
+            if qubits.len() != 2 {
+                return Err(PhirJsonError::WrongArgumentCount {
+                    gate: "CRZ".to_string(),
+                    expected: 2,
+                    got: qubits.len(),
+                });
+            }
+            let pair = (qubits[0].clone(), qubits[1].clone());
+            return Ok(vec![
+                PhirJsonOp::Qop(PhirJsonQop::two_qubit_rotation(
+                    "RZZ",
+                    -theta / 2.0,
+                    "rad",
+                    vec![pair],
+                )),
+                PhirJsonOp::Qop(PhirJsonQop::rotation(
+                    "RZ",
+                    theta / 2.0,
+                    "rad",
+                    vec![qubits[1].clone()],
+                )),
+            ]);
+        }
         let gate_info = get_gate_info(gate_expr.kind);
 
         // Handle prepare operations
@@ -980,7 +1035,7 @@ impl PhirJsonCodegen {
                     .params
                     .first()
                     .and_then(|p| self.eval_expr_to_float(p))
-                    .unwrap_or(0.0);
+                    .ok_or(PhirJsonError::InvalidAngle)?;
                 Ok(vec![PhirJsonOp::Qop(PhirJsonQop::rotation(
                     gate_info.phir_name,
                     angle * std::f64::consts::TAU,
@@ -1103,6 +1158,37 @@ impl PhirJsonCodegen {
     }
 
     fn convert_gate(&self, gate_op: &GateOp) -> PhirJsonResult<Vec<PhirJsonOp>> {
+        if gate_op.kind == GateKind::CRZ {
+            let theta = gate_op
+                .params
+                .first()
+                .and_then(|param| self.eval_expr_to_float(param))
+                .ok_or(PhirJsonError::InvalidAngle)?
+                * std::f64::consts::TAU;
+            let qubits = self.convert_slot_refs(&gate_op.targets);
+            if qubits.len() != 2 {
+                return Err(PhirJsonError::WrongArgumentCount {
+                    gate: "CRZ".to_string(),
+                    expected: 2,
+                    got: qubits.len(),
+                });
+            }
+            let pair = (qubits[0].clone(), qubits[1].clone());
+            return Ok(vec![
+                PhirJsonOp::Qop(PhirJsonQop::two_qubit_rotation(
+                    "RZZ",
+                    -theta / 2.0,
+                    "rad",
+                    vec![pair],
+                )),
+                PhirJsonOp::Qop(PhirJsonQop::rotation(
+                    "RZ",
+                    theta / 2.0,
+                    "rad",
+                    vec![qubits[1].clone()],
+                )),
+            ]);
+        }
         let gate_info = get_gate_info(gate_op.kind);
 
         // Handle prepare operations
@@ -1132,7 +1218,7 @@ impl PhirJsonCodegen {
                     .params
                     .first()
                     .and_then(|p| self.eval_expr_to_float(p))
-                    .unwrap_or(0.0);
+                    .ok_or(PhirJsonError::InvalidAngle)?;
                 Ok(vec![PhirJsonOp::Qop(PhirJsonQop::rotation(
                     gate_info.phir_name,
                     angle * std::f64::consts::TAU,
@@ -1330,6 +1416,20 @@ impl PhirJsonCodegen {
                 let value = self.eval_expr_to_float(&angle.value)?;
                 Some(angle.unit.to_turns(value))
             }
+            Expr::Binary(binary) => {
+                let left = self.eval_expr_to_float(&binary.left)?;
+                let right = self.eval_expr_to_float(&binary.right)?;
+                match binary.op {
+                    BinaryOp::Add => Some(left + right),
+                    BinaryOp::Sub => Some(left - right),
+                    BinaryOp::Mul => Some(left * right),
+                    BinaryOp::Div if right != 0.0 => Some(left / right),
+                    _ => None,
+                }
+            }
+            Expr::Unary(unary) if unary.op == UnaryOp::Neg => self
+                .eval_expr_to_float(&unary.operand)
+                .map(std::ops::Neg::neg),
             _ => None,
         }
     }

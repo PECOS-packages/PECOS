@@ -150,7 +150,7 @@ impl Converter {
             }
 
             QasmOp::NativeGate(gate) => {
-                let quantum_op = gate_type_to_quantum_op(gate.gate_type, &gate.params)?;
+                let quantum_op = gate_type_to_quantum_op(gate.gate_type, &gate.angles)?;
                 let operands: Vec<SSAValue> = gate.qubits.iter().map(|q| qubit_ssa[q.0]).collect();
                 let results: Vec<SSAValue> = operands.iter().map(|_| self.new_ssa()).collect();
                 let result_types = vec![Type::Qubit; results.len()];
@@ -329,21 +329,23 @@ fn gate_name_to_quantum_op(name: &str, params: &[f64]) -> Result<QuantumOp> {
         "sdg" => Ok(QuantumOp::Sdg),
         "t" => Ok(QuantumOp::T),
         "tdg" => Ok(QuantumOp::Tdg),
+        "sx" => Ok(QuantumOp::SX),
+        "sxdg" => Ok(QuantumOp::SXdg),
         "cx" | "cnot" => Ok(QuantumOp::CX),
         "cz" => Ok(QuantumOp::CZ),
         "swap" => Ok(QuantumOp::SWAP),
-        "rx" => Ok(QuantumOp::RX(angle_param(params, 0))),
-        "ry" => Ok(QuantumOp::RY(angle_param(params, 0))),
-        "rz" => Ok(QuantumOp::RZ(angle_param(params, 0))),
-        "rzz" => Ok(QuantumOp::RZZ(angle_param(params, 0))),
-        "r1xy" => Ok(QuantumOp::R1XY(
-            angle_param(params, 0),
-            angle_param(params, 1),
+        "rx" => Ok(QuantumOp::RX(angle_param(params, 0, GateType::RX)?)),
+        "ry" => Ok(QuantumOp::RY(angle_param(params, 0, GateType::RY)?)),
+        "rz" => Ok(QuantumOp::RZ(angle_param(params, 0, GateType::RZ)?)),
+        "rzz" => Ok(QuantumOp::RZZ(angle_param(params, 0, GateType::RZZ)?)),
+        "rxy1q" | "r1xy" => Ok(QuantumOp::RXY1Q(
+            angle_param(params, 0, GateType::RXY1Q)?,
+            angle_param(params, 1, GateType::RXY1Q)?,
         )),
         "u" | "u3" => Ok(QuantumOp::U3(
-            angle_param(params, 0),
-            angle_param(params, 1),
-            angle_param(params, 2),
+            angle_param(params, 0, GateType::U)?,
+            angle_param(params, 1, GateType::U)?,
+            angle_param(params, 2, GateType::U)?,
         )),
         "reset" => Ok(QuantumOp::Reset),
         _ => Err(pecos_phir::PhirError::internal(format!(
@@ -353,7 +355,15 @@ fn gate_name_to_quantum_op(name: &str, params: &[f64]) -> Result<QuantumOp> {
 }
 
 /// Map a `GateType` enum + angles to a PHIR `QuantumOp`.
-fn gate_type_to_quantum_op(gate_type: GateType, params: &[f64]) -> Result<QuantumOp> {
+fn gate_type_to_quantum_op(gate_type: GateType, angles: &[Angle64]) -> Result<QuantumOp> {
+    let expected = gate_type.angle_arity();
+    if angles.len() != expected {
+        return Err(pecos_phir::PhirError::internal(format!(
+            "Gate {gate_type:?} expected {expected} angle parameters, got {}",
+            angles.len()
+        )));
+    }
+
     match gate_type {
         GateType::H => Ok(QuantumOp::H),
         GateType::X => Ok(QuantumOp::X),
@@ -363,16 +373,16 @@ fn gate_type_to_quantum_op(gate_type: GateType, params: &[f64]) -> Result<Quantu
         GateType::SZdg => Ok(QuantumOp::Sdg),
         GateType::T => Ok(QuantumOp::T),
         GateType::Tdg => Ok(QuantumOp::Tdg),
+        GateType::SX => Ok(QuantumOp::SX),
+        GateType::SXdg => Ok(QuantumOp::SXdg),
         GateType::CX => Ok(QuantumOp::CX),
         GateType::CZ => Ok(QuantumOp::CZ),
-        GateType::RX => Ok(QuantumOp::RX(angle_param(params, 0))),
-        GateType::RY => Ok(QuantumOp::RY(angle_param(params, 0))),
-        GateType::RZ => Ok(QuantumOp::RZ(angle_param(params, 0))),
-        GateType::RZZ => Ok(QuantumOp::RZZ(angle_param(params, 0))),
-        GateType::R1XY => Ok(QuantumOp::R1XY(
-            angle_param(params, 0),
-            angle_param(params, 1),
-        )),
+        GateType::RX => Ok(QuantumOp::RX(angles[0])),
+        GateType::RY => Ok(QuantumOp::RY(angles[0])),
+        GateType::RZ => Ok(QuantumOp::RZ(angles[0])),
+        GateType::RZZ => Ok(QuantumOp::RZZ(angles[0])),
+        GateType::RXY1Q => Ok(QuantumOp::RXY1Q(angles[0], angles[1])),
+        GateType::U => Ok(QuantumOp::U3(angles[0], angles[1], angles[2])),
         GateType::MZ => Ok(QuantumOp::Measure),
         GateType::PZ => Ok(QuantumOp::Reset),
         _ => Err(pecos_phir::PhirError::internal(format!(
@@ -387,8 +397,15 @@ fn program_qreg_ids(_name: &str) -> Option<Vec<usize>> {
 }
 
 /// Extract a radians parameter from a slice and convert to `Angle64`.
-fn angle_param(params: &[f64], index: usize) -> Angle64 {
-    Angle64::from_radians(params.get(index).copied().unwrap_or(0.0))
+fn angle_param(params: &[f64], index: usize, gate_type: GateType) -> Result<Angle64> {
+    let expected = gate_type.angle_arity();
+    if params.len() != expected {
+        return Err(pecos_phir::PhirError::internal(format!(
+            "Gate {gate_type:?} expected {expected} angle parameters, got {}",
+            params.len()
+        )));
+    }
+    Ok(Angle64::from_radians(params[index]))
 }
 
 #[cfg(test)]
@@ -490,6 +507,113 @@ mod tests {
             .iter()
             .any(|i| matches!(&i.operation, Operation::Quantum(QuantumOp::RZ(_))));
         assert!(has_rz, "should contain RZ gate");
+    }
+
+    #[test]
+    fn uppercase_native_rotations_preserve_angles_in_phir() {
+        let qasm = r"
+            OPENQASM 2.0;
+            qreg q[2];
+            RX(0.1) q[0];
+            RY(0.2) q[0];
+            RZ(0.3) q[0];
+            RZZ(0.4) q[0], q[1];
+            RXY1Q(0.5, 0.6) q[0];
+            U(0.7, 0.8, 0.9) q[0];
+        ";
+        let module = parse_and_convert(qasm);
+        let quantum_ops: Vec<_> = get_main_block(&module)
+            .operations
+            .iter()
+            .filter_map(|instruction| match &instruction.operation {
+                Operation::Quantum(op) => Some(op.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            quantum_ops,
+            [
+                QuantumOp::RX(Angle64::from_radians(0.1)),
+                QuantumOp::RY(Angle64::from_radians(0.2)),
+                QuantumOp::RZ(Angle64::from_radians(0.3)),
+                QuantumOp::RZZ(Angle64::from_radians(0.4)),
+                QuantumOp::RXY1Q(Angle64::from_radians(0.5), Angle64::from_radians(0.6)),
+                QuantumOp::U3(
+                    Angle64::from_radians(0.7),
+                    Angle64::from_radians(0.8),
+                    Angle64::from_radians(0.9)
+                ),
+            ]
+        );
+
+        let ron = qasm_to_ron(qasm).expect("native rotations should convert to RON");
+        let ron_module: Module = pecos_phir::from_ron(&ron).expect("RON should deserialize");
+        assert_eq!(ron_module, module);
+    }
+
+    #[test]
+    fn native_rotation_conversion_rejects_wrong_angle_count() {
+        let err = gate_type_to_quantum_op(GateType::RZ, &[])
+            .expect_err("wrong native rotation arity must fail");
+        assert!(
+            err.to_string()
+                .contains("Gate RZ expected 1 angle parameters, got 0")
+        );
+    }
+
+    #[test]
+    fn named_rotation_conversion_rejects_missing_angle() {
+        let err = gate_name_to_quantum_op("rz", &[])
+            .expect_err("missing named rotation angles must fail");
+        assert!(
+            err.to_string()
+                .contains("Gate RZ expected 1 angle parameters, got 0")
+        );
+
+        let err = gate_name_to_quantum_op("rz", &[0.5, 0.25])
+            .expect_err("surplus named rotation angles must fail");
+        assert!(
+            err.to_string()
+                .contains("Gate RZ expected 1 angle parameters, got 2")
+        );
+    }
+
+    #[test]
+    fn named_phase_sensitive_gates_remain_named() {
+        let qasm = r#"
+            OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            s q[0];
+            sdg q[0];
+            t q[0];
+            tdg q[0];
+            sx q[0];
+            sxdg q[0];
+        "#;
+        let module = parse_and_convert(qasm);
+        let block = get_main_block(&module);
+        let quantum_ops: Vec<_> = block
+            .operations
+            .iter()
+            .filter_map(|instruction| match &instruction.operation {
+                Operation::Quantum(op) => Some(op.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            quantum_ops,
+            [
+                QuantumOp::S,
+                QuantumOp::Sdg,
+                QuantumOp::T,
+                QuantumOp::Tdg,
+                QuantumOp::SX,
+                QuantumOp::SXdg,
+            ]
+        );
     }
 
     #[test]

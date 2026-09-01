@@ -12,11 +12,15 @@
 
 //! Python bindings for the gate registration system.
 
+use crate::dtypes::AngleParam;
 use pecos_core::Value;
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, AngleSource, GateDefinitionBuilder, GateRegistry, QubitId};
+use pecos_core::{
+    Angle64, AngleSource, GateDefinitionBuilder, GateRegistry, QubitId,
+    half_turn_decomposition_snapped, try_simplify_rotation_snapped, try_simplify_rxy1q,
+};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyList};
+use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
 use std::collections::HashMap;
 
 /// Parse a gate name string into a `GateType`.
@@ -39,7 +43,7 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         "T" => Ok(GateType::T),
         "Tdg" => Ok(GateType::Tdg),
         "U" => Ok(GateType::U),
-        "R1XY" => Ok(GateType::R1XY),
+        "RXY1Q" | "R1XY" => Ok(GateType::RXY1Q),
         "CX" | "CNOT" => Ok(GateType::CX),
         "CY" => Ok(GateType::CY),
         "CZ" => Ok(GateType::CZ),
@@ -47,10 +51,10 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         "SZZ" => Ok(GateType::SZZ),
         "SZZdg" => Ok(GateType::SZZdg),
         "SWAP" => Ok(GateType::SWAP),
-        "CRZ" => Ok(GateType::CRZ),
         "RXX" => Ok(GateType::RXX),
         "RYY" => Ok(GateType::RYY),
         "RZZ" => Ok(GateType::RZZ),
+        "RXXRYYRZZ" => Ok(GateType::RXXRYYRZZ),
         "CCX" | "Toffoli" => Ok(GateType::CCX),
         "Measure" | "MZ" => Ok(GateType::MZ),
         "MeasureLeaked" => Ok(GateType::MeasureLeaked),
@@ -64,6 +68,82 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
             "Unknown gate type: '{name}'"
         ))),
     }
+}
+
+/// Lower a table-backed rotation at a Clifford angle to named gates.
+///
+/// Results are equivalent only up to global phase and are suitable only for
+/// projective consumers such as stabilizer/tableau simulators. They must not be
+/// used for phase-carrying simulation or matrix-exact rewriting. Concretely,
+/// `RZZ(3*pi/2) = -SZZdg`, while this function returns `SZZdg`.
+#[pyfunction]
+fn lower_clifford_rotation(
+    py: Python<'_>,
+    symbol: &str,
+    angles: Vec<AngleParam>,
+) -> PyResult<Py<PyList>> {
+    let gate = parse_gate_type(symbol)?;
+    match gate {
+        GateType::RZ
+        | GateType::RX
+        | GateType::RY
+        | GateType::RZZ
+        | GateType::RXX
+        | GateType::RYY
+        | GateType::RXY1Q => {}
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{symbol} is unsupported by lower_clifford_rotation"
+            )));
+        }
+    }
+    let expected_angles = gate.angle_arity();
+    if angles.len() != expected_angles {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Gate {gate:?} expected {expected_angles} angle parameters, got {}",
+            angles.len()
+        )));
+    }
+    let angles: Vec<Angle64> = angles.into_iter().map(|angle| angle.0).collect();
+
+    let lowered = match gate {
+        GateType::RXY1Q => {
+            try_simplify_rxy1q(angles[0], angles[1]).map(|named| vec![(named, vec![0])])
+        }
+        GateType::RZ | GateType::RX | GateType::RY => {
+            try_simplify_rotation_snapped(gate, angles[0]).map(|named| vec![(named, vec![0])])
+        }
+        GateType::RZZ | GateType::RXX | GateType::RYY => {
+            if let Some(named) = try_simplify_rotation_snapped(gate, angles[0]) {
+                if named == GateType::I {
+                    Some(vec![(named, vec![0]), (named, vec![1])])
+                } else {
+                    Some(vec![(named, vec![0, 1])])
+                }
+            } else {
+                half_turn_decomposition_snapped(gate, angles[0])
+                    .map(|pauli| vec![(pauli, vec![0]), (pauli, vec![1])])
+            }
+        }
+        _ => unreachable!(),
+    };
+
+    let lowered = lowered.ok_or_else(|| {
+        let message = if gate == GateType::RXY1Q {
+            format!(
+                "RXY1Q(theta={}, phi={}) is not a Clifford rotation",
+                angles[0], angles[1]
+            )
+        } else {
+            format!("{gate}({}) is not a Clifford rotation", angles[0])
+        };
+        pyo3::exceptions::PyValueError::new_err(message)
+    })?;
+    let result = PyList::empty(py);
+    for (named, positions) in lowered {
+        result.append((named.to_string(), PyTuple::new(py, positions)?))?;
+    }
+    Ok(result.unbind())
 }
 
 /// Convert a Python object to a `Value`.
@@ -327,5 +407,6 @@ pub fn register_gate_registry_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGateRegistry>()?;
     m.add_class::<PyGateDefBuilder>()?;
     m.add_class::<PyAngleSource>()?;
+    m.add_function(wrap_pyfunction!(lower_clifford_rotation, m)?)?;
     Ok(())
 }

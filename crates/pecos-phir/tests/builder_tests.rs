@@ -182,7 +182,7 @@ fn test_builder_ron_roundtrip_bell() {
 
     // RON should contain quantum operation names
     assert!(ron_string.contains("RZ"), "RON should contain RZ ops");
-    assert!(ron_string.contains("R1XY"), "RON should contain R1XY ops");
+    assert!(ron_string.contains("RXY1Q"), "RON should contain RXY1Q ops");
     assert!(
         ron_string.contains("Measure"),
         "RON should contain Measure ops"

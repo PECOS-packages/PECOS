@@ -1,5 +1,8 @@
-// Copyright 2025 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 use crate::prelude::*;
+use crate::simulator_utils::{
+    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_supported_symbol,
+};
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -11,8 +14,10 @@ use crate::prelude::*;
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use pecos_simulators::clifford_rotation::CliffordRotation;
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PySet};
+use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
 use std::collections::BTreeMap;
 
 /// Python wrapper for the Rust `PauliProp` simulator
@@ -24,6 +29,83 @@ pub struct PyPauliProp {
     inner: PauliProp,
     num_qubits: Option<usize>,
     track_sign: bool,
+}
+
+#[cfg(test)]
+crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
+    PyPauliProp::new(Some(2), false)
+});
+
+fn supports(entry: &SymbolEntry) -> bool {
+    supports_exact! { entry;
+        I => ["I"];
+        X => ["X"];
+        Y => ["Y"];
+        Z => ["Z"];
+        H => ["H", "H1", "H+z+x"];
+        H2 => ["H2", "H-z-x"];
+        H3 => ["H3", "H+y-z"];
+        H4 => ["H4", "H-y-z"];
+        H5 => ["H5", "H-x+y"];
+        H6 => ["H6", "H-x-y"];
+        F => ["F", "F1"];
+        Fdg => ["Fdg", "F1d", "F1dg"];
+        F2 => ["F2"];
+        F2dg => ["F2dg", "F2d"];
+        F3 => ["F3"];
+        F3dg => ["F3dg", "F3d"];
+        F4 => ["F4"];
+        F4dg => ["F4dg", "F4d"];
+        Sx => ["Q", "SX", "SqrtX"];
+        Sxdg => ["Qd", "SXdg", "SqrtXd", "SqrtXdg"];
+        Sy => ["R", "SY", "SqrtY"];
+        Sydg => ["Rd", "SYdg", "SqrtYd", "SqrtYdg"];
+        Sz => ["S", "SZ", "SqrtZ"];
+        Szdg => ["Sd", "SZdg", "SqrtZd", "SqrtZdg"];
+        Pz => ["PZ"];
+        PzForced => ["PZForced"];
+        Pnz => ["PNZ"];
+        Px => ["PX"];
+        Pnx => ["PNX"];
+        Py => ["PY"];
+        Pny => ["PNY"];
+        InitZ => ["Init", "Init +Z", "init |0>", "leak", "leak |0>", "unleak |0>"];
+        InitNz => ["Init -Z", "init |1>", "leak |1>", "unleak |1>"];
+        InitX => ["Init +X", "init |+>"];
+        InitNx => ["Init -X", "init |->"];
+        InitY => ["Init +Y", "init |+i>"];
+        InitNy => ["Init -Y", "init |-i>"];
+        Mz => ["MZ"];
+        MzForced => ["MZForced"];
+        MeasureZ => ["Measure", "measure Z", "Measure +Z"];
+        Mx => ["MX", "Measure +X", "measure X"];
+        My => ["MY", "Measure +Y", "measure Y"];
+        Rx => ["RX"];
+        Ry => ["RY"];
+        Rz => ["RZ"];
+        Rxy1q => ["RXY1Q", "R1XY"];
+        U => ["U"];
+        Cx => ["CX", "CNOT"];
+        Cy => ["CY"];
+        Cz => ["CZ"];
+        Sxx => ["SXX", "SqrtXX"];
+        Msxx => ["MS", "MSXX"];
+        Sxxdg => ["SXXdg", "SqrtXXd", "SqrtXXdg"];
+        Syy => ["SYY", "SqrtYY"];
+        Syydg => ["SYYdg", "SqrtYYd", "SqrtYYdg"];
+        Szz => ["SZZ", "SqrtZZ"];
+        Szzdg => ["SZZdg", "SqrtZZd", "SqrtZZdg"];
+        Swap => ["SWAP"];
+        G => ["G", "G2"];
+        Gdg => ["Gdg"];
+        Iswap => ["ISWAP"];
+        Iswapdg => ["ISWAPdg"];
+        Rxx => ["RXX"];
+        Ryy => ["RYY"];
+        Rzz => ["RZZ"];
+        RxxRyyRzz => ["RXXRYYRZZ", "RZZRYYRXX", "R2XXYYZZ", "RXXYYZZ"];
+        Ii => ["II"];
+    }
 }
 
 impl PyPauliProp {
@@ -99,6 +181,374 @@ impl PyPauliProp {
     /// Reset the simulator state
     pub fn reset(&mut self) {
         self.inner.reset();
+    }
+
+    #[expect(clippy::too_many_lines)]
+    #[pyo3(signature = (symbol, location, params=None))]
+    fn run_1q_gate(
+        &mut self,
+        symbol: &str,
+        location: usize,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let q = &[QubitId(location)];
+        match symbol {
+            "I" => Ok(None),
+            "X" => {
+                self.inner.x(q);
+                Ok(None)
+            }
+            "Y" => {
+                self.inner.y(q);
+                Ok(None)
+            }
+            "Z" => {
+                self.inner.z(q);
+                Ok(None)
+            }
+            "H" | "H1" | "H+z+x" => {
+                self.inner.h(q);
+                Ok(None)
+            }
+            "H2" | "H-z-x" => {
+                self.inner.h2(q);
+                Ok(None)
+            }
+            "H3" | "H+y-z" => {
+                self.inner.h3(q);
+                Ok(None)
+            }
+            "H4" | "H-y-z" => {
+                self.inner.h4(q);
+                Ok(None)
+            }
+            "H5" | "H-x+y" => {
+                self.inner.h5(q);
+                Ok(None)
+            }
+            "H6" | "H-x-y" => {
+                self.inner.h6(q);
+                Ok(None)
+            }
+            "F" | "F1" => {
+                self.inner.f(q);
+                Ok(None)
+            }
+            "Fdg" | "F1d" | "F1dg" => {
+                self.inner.fdg(q);
+                Ok(None)
+            }
+            "F2" => {
+                self.inner.f2(q);
+                Ok(None)
+            }
+            "F2dg" | "F2d" => {
+                self.inner.f2dg(q);
+                Ok(None)
+            }
+            "F3" => {
+                self.inner.f3(q);
+                Ok(None)
+            }
+            "F3dg" | "F3d" => {
+                self.inner.f3dg(q);
+                Ok(None)
+            }
+            "F4" => {
+                self.inner.f4(q);
+                Ok(None)
+            }
+            "F4dg" | "F4d" => {
+                self.inner.f4dg(q);
+                Ok(None)
+            }
+            "Q" | "SX" | "SqrtX" => {
+                self.inner.sx(q);
+                Ok(None)
+            }
+            "Qd" | "SXdg" | "SqrtXd" | "SqrtXdg" => {
+                self.inner.sxdg(q);
+                Ok(None)
+            }
+            "R" | "SY" | "SqrtY" => {
+                self.inner.sy(q);
+                Ok(None)
+            }
+            "Rd" | "SYdg" | "SqrtYd" | "SqrtYdg" => {
+                self.inner.sydg(q);
+                Ok(None)
+            }
+            "S" | "SZ" | "SqrtZ" => {
+                self.inner.sz(q);
+                Ok(None)
+            }
+            "Sd" | "SZdg" | "SqrtZd" | "SqrtZdg" => {
+                self.inner.szdg(q);
+                Ok(None)
+            }
+            "RX" => {
+                let angle = extract_angle(params, "RX")?;
+                self.inner
+                    .try_rx(angle, q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RY" => {
+                let angle = extract_angle(params, "RY")?;
+                self.inner
+                    .try_ry(angle, q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RZ" => {
+                let angle = extract_angle(params, "RZ")?;
+                self.inner
+                    .try_rz(angle, q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RXY1Q" | "R1XY" => {
+                let angles = extract_angles(params, "RXY1Q", GateType::RXY1Q.angle_arity())?;
+                self.inner
+                    .try_rxy1q(angles[0], angles[1], q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "U" => {
+                let angles = extract_angles(params, "U", GateType::U.angle_arity())?;
+                self.inner
+                    .try_u(angles[0], angles[1], angles[2], q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "PZ" | "PZForced" | "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>"
+            | "unleak |0>" => {
+                self.inner.pz(q);
+                Ok(None)
+            }
+            "PNZ" | "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" => {
+                self.inner.pnz(q);
+                Ok(None)
+            }
+            "PX" | "Init +X" | "init |+>" => {
+                self.inner.px(q);
+                Ok(None)
+            }
+            "PNX" | "Init -X" | "init |->" => {
+                self.inner.pnx(q);
+                Ok(None)
+            }
+            "PY" | "Init +Y" | "init |+i>" => {
+                self.inner.py(q);
+                Ok(None)
+            }
+            "PNY" | "Init -Y" | "init |-i>" => {
+                self.inner.pny(q);
+                Ok(None)
+            }
+            "MZ" | "MZForced" | "Measure" | "measure Z" | "Measure +Z" => {
+                Ok(Some(u8::from(self.inner.mz(q)[0].outcome)))
+            }
+            "MX" | "Measure +X" | "measure X" => Ok(Some(u8::from(self.inner.mx(q)[0].outcome))),
+            "MY" | "Measure +Y" | "measure Y" => Ok(Some(u8::from(self.inner.my(q)[0].outcome))),
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Unsupported single-qubit gate",
+            )),
+        }
+    }
+
+    #[pyo3(signature = (symbol, location, params=None))]
+    fn run_2q_gate(
+        &mut self,
+        symbol: &str,
+        location: &Bound<'_, PyTuple>,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        if location.len() != 2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Two-qubit gate requires exactly 2 qubit locations",
+            ));
+        }
+
+        let q1: usize = location.get_item(0)?.extract()?;
+        let q2: usize = location.get_item(1)?.extract()?;
+        let pair = &[(QubitId(q1), QubitId(q2))];
+
+        match symbol {
+            "CX" | "CNOT" => {
+                self.inner.cx(pair);
+                Ok(None)
+            }
+            "CY" => {
+                self.inner.cy(pair);
+                Ok(None)
+            }
+            "CZ" => {
+                self.inner.cz(pair);
+                Ok(None)
+            }
+            "SXX" | "SqrtXX" | "MS" | "MSXX" => {
+                self.inner.sxx(pair);
+                Ok(None)
+            }
+            "SXXdg" | "SqrtXXd" | "SqrtXXdg" => {
+                self.inner.sxxdg(pair);
+                Ok(None)
+            }
+            "SYY" | "SqrtYY" => {
+                self.inner.syy(pair);
+                Ok(None)
+            }
+            "SYYdg" | "SqrtYYd" | "SqrtYYdg" => {
+                self.inner.syydg(pair);
+                Ok(None)
+            }
+            "SZZ" | "SqrtZZ" => {
+                self.inner.szz(pair);
+                Ok(None)
+            }
+            "SZZdg" | "SqrtZZd" | "SqrtZZdg" => {
+                self.inner.szzdg(pair);
+                Ok(None)
+            }
+            "SWAP" => {
+                self.inner.swap(pair);
+                Ok(None)
+            }
+            "G" | "G2" => {
+                self.inner.g(pair);
+                Ok(None)
+            }
+            "Gdg" => {
+                self.inner.gdg(pair);
+                Ok(None)
+            }
+            "ISWAP" => {
+                self.inner.iswap(pair);
+                Ok(None)
+            }
+            "ISWAPdg" => {
+                self.inner.iswapdg(pair);
+                Ok(None)
+            }
+            "RXX" => {
+                let angle = extract_angle(params, "RXX")?;
+                self.inner
+                    .try_rxx(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RYY" => {
+                let angle = extract_angle(params, "RYY")?;
+                self.inner
+                    .try_ryy(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RZZ" => {
+                let angle = extract_angle(params, "RZZ")?;
+                self.inner
+                    .try_rzz(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
+                let angles =
+                    extract_angles(params, "RXXRYYRZZ", GateType::RXXRYYRZZ.angle_arity())?;
+                self.inner
+                    .try_rxxryyrzz(angles[0], angles[1], angles[2], pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "II" => Ok(None),
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Unsupported two-qubit gate",
+            )),
+        }
+    }
+
+    #[pyo3(signature = (symbol, location, params=None))]
+    fn run_gate_internal(
+        &mut self,
+        symbol: &str,
+        location: &Bound<'_, PyTuple>,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        match location.len() {
+            1 => self.run_1q_gate(symbol, location.get_item(0)?.extract()?, params),
+            2 => self.run_2q_gate(symbol, location, params),
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Gate location must be specified for either 1 or 2 qubits",
+            )),
+        }
+    }
+
+    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        self.run_gate_highlevel(symbol, locations, params, py)
+    }
+
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate_highlevel(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let output = PyDict::new(py);
+
+        if matches!(symbol, "force output" | "check" | "measure") {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Unsupported gate",
+            ));
+        }
+
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        validate_supported_symbol(symbol, &locations_set, supports)?;
+
+        if let Some(p) = params
+            && let Ok(Some(simulate_gate)) = p.get_item("simulate_gate")
+            && let Ok(false) = simulate_gate.extract::<bool>()
+        {
+            return Ok(output.into());
+        }
+
+        if locations_set.is_empty() {
+            return Ok(output.into());
+        }
+
+        let has_special_params = params.is_some_and(|p| !p.is_empty());
+        if !has_special_params
+            && let Some(result) = crate::simulator_utils::try_clifford_batch_dispatch(
+                &mut self.inner,
+                symbol,
+                &locations_set,
+                py,
+            )?
+        {
+            return Ok(result);
+        }
+
+        for location in locations_set.iter() {
+            let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
+                location.clone().cast_into()?
+            } else {
+                PyTuple::new(py, std::slice::from_ref(&location))?
+            };
+            if let Some(value) = self.run_gate_internal(symbol, &loc_tuple, params)? {
+                output.set_item(location, value)?;
+            }
+        }
+
+        Ok(output.into())
     }
 
     /// Check if a qubit has an X operator
@@ -374,6 +824,15 @@ impl PyPauliProp {
             obj.inner.flip_img(img as usize);
         }
         Ok(obj)
+    }
+
+    #[getter]
+    fn bindings(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::GateBindingsDict> {
+        let py = slf.py();
+        let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
+        Ok(crate::simulator_utils::GateBindingsDict::new(
+            sim_obj, supports,
+        ))
     }
 
     /// String representation

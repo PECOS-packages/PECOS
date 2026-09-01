@@ -86,6 +86,7 @@ from pecos_rslib import (
     kron,  # Kronecker product
     ln,  # Natural logarithm
     log,  # Logarithm with base
+    lower_clifford_rotation,  # Lower table-backed Clifford-angle rotations
     max,  # Maximum value
     mean,  # Mean/average
     min,  # Minimum value
@@ -432,6 +433,7 @@ __all__ = [
     "linspace",
     "ln",
     "log",
+    "lower_clifford_rotation",
     "math",
     "max",
     "mean",

@@ -624,34 +624,6 @@ impl Gate {
         Self::ch_vec(&flat_qubits)
     }
 
-    /// Create CRZ gate from flat qubit list
-    ///
-    /// # Panics
-    ///
-    /// Panics if the number of qubits is not even.
-    #[must_use]
-    pub fn crz_vec(theta: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        assert!(
-            qubits.len().is_multiple_of(2),
-            "CRZ gate requires an even number of qubits"
-        );
-        Self::with_angles(
-            GateType::CRZ,
-            vec![theta],
-            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
-        )
-    }
-
-    /// Create CRZ gate on multiple qubit pairs
-    #[must_use]
-    pub fn crz(
-        theta: Angle64,
-        qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
-    ) -> Self {
-        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
-        Self::crz_vec(theta, &flat_qubits)
-    }
-
     /// Create CCX (Toffoli) gate on qubit triples
     #[must_use]
     pub fn ccx(
@@ -782,11 +754,11 @@ impl Gate {
         )
     }
 
-    /// Create R1XY gate on multiple qubits
+    /// Create RXY1Q gate on multiple qubits
     #[must_use]
-    pub fn r1xy(theta: Angle64, phi: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+    pub fn rxy1q(theta: Angle64, phi: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::with_angles(
-            GateType::R1XY,
+            GateType::RXY1Q,
             smallvec::smallvec![theta, phi],
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
         )
@@ -1487,13 +1459,13 @@ mod tests {
         assert!(!rz_gate.is_two_qubit());
 
         // Test two-parameter single-qubit gates
-        let r1xy_gate = Gate::r1xy(Angle64::from_turns(0.5), Angle64::from_turns(0.25), &[1]);
-        assert_eq!(r1xy_gate.classical_arity(), 2);
-        assert_eq!(r1xy_gate.angle_arity(), 2);
-        assert_eq!(r1xy_gate.quantum_arity(), 1);
-        assert!(r1xy_gate.is_parameterized());
-        assert!(r1xy_gate.is_single_qubit());
-        assert!(!r1xy_gate.is_two_qubit());
+        let rxy1q_gate = Gate::rxy1q(Angle64::from_turns(0.5), Angle64::from_turns(0.25), &[1]);
+        assert_eq!(rxy1q_gate.classical_arity(), 2);
+        assert_eq!(rxy1q_gate.angle_arity(), 2);
+        assert_eq!(rxy1q_gate.quantum_arity(), 1);
+        assert!(rxy1q_gate.is_parameterized());
+        assert!(rxy1q_gate.is_single_qubit());
+        assert!(!rxy1q_gate.is_two_qubit());
 
         // Test three-parameter single-qubit gates
         let u_gate = Gate::u(
@@ -1546,8 +1518,8 @@ mod tests {
         let valid_rz = Gate::rz(Angle64::from_turns(0.25), &[1]);
         assert!(valid_rz.validate().is_ok());
 
-        let valid_r1xy = Gate::r1xy(Angle64::from_turns(0.5), Angle64::from_turns(0.25), &[2]);
-        assert!(valid_r1xy.validate().is_ok());
+        let valid_rxy1q = Gate::rxy1q(Angle64::from_turns(0.5), Angle64::from_turns(0.25), &[2]);
+        assert!(valid_rxy1q.validate().is_ok());
 
         let valid_u = Gate::u(
             Angle64::from_turns(0.5),

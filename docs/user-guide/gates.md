@@ -95,6 +95,20 @@ PECOS supports two categories of quantum gates:
 | G | Clifford | Two-qubit Clifford |
 | RXX, RYY, RZZ | Non-Clifford | Two-qubit rotations |
 
+`CRX`, `CRY`, `CRZ`, `CPhase`, and `CU1` may be accepted by source-format and
+simulator APIs, but they are boundary spellings rather than stored PECOS gates.
+The HUGR, QIS, PHIR, SLR native-codegen, circuit-builder, and direct-simulator
+ingresses lower them to native Clifford, `RZ`, `RZZ`, and `U` operations.
+Consequently a lowered `CRZ` is one two-qubit `RZZ` noise location followed by
+one single-qubit `RZ` location in consecutive ticks. Gate counts and traces
+describe those executed native operations.
+
+OpenQASM is the exception: lowercase controlled-rotation names are not native
+PECOS gates and expand through `qelib1.inc` macros. The `crz` and `cphase`
+macros are correct (as is the `cu1` controlled-phase alias), while the current
+`ry`, `crx`, and `cry` macros have known correctness defects tracked by issue
+#637. Fixing those macros is outside the controlled-rotation IR removal.
+
 ### Measurements and Preparations
 
 | Operation | Description |
@@ -840,6 +854,13 @@ RZ(θ) = [[e^(-iθ/2),     0     ],
          [    0,      e^(iθ/2) ]]
 ```
 
+RZ belongs to the symmetric exponential rotation family. The phase-fixed
+OpenQASM gate `p(θ) = U(0,0,θ) = diag(1, exp(iθ))` differs by a scalar:
+
+```
+RZ(θ) = exp(-iθ/2) p(θ)
+```
+
 === ":fontawesome-brands-python: Python"
     ```python
     state.run_gate("RZ", {q}, angles=(theta,))
@@ -854,7 +875,8 @@ RZ(θ) = [[e^(-iθ/2),     0     ],
 
 #### T Gate (π/8 Gate)
 
-The T gate is a π/4 rotation around the Z-axis (equivalent to RZ(π/4)).
+The T gate is the conventional phase gate `diag(1, exp(iπ/4))`. Its exact
+relationship to the symmetric rotation family is T = exp(iπ/8) RZ(π/4).
 
 **Matrix:**
 ```
@@ -876,11 +898,27 @@ T = [[1,        0     ],
 
 ---
 
+#### Phase Gate (p, phase, u1)
+
+The OpenQASM spellings `p(θ)`, `phase(θ)`, and `u1(θ)` are phase-fixed aliases:
+
+```
+p(θ) = U(0,0,θ) = [[1,       0    ],
+                    [0, exp(iθ)    ]]
+```
+
+Consequently `p(0) = I`, `p(π/4) = T`, `p(π/2) = SZ`, and `p(π) = Z`
+exactly, including global phase. This family must not be substituted with RZ;
+their exact bridge is `RZ(θ) = exp(-iθ/2) p(θ)`.
+
+---
+
 #### U Gate (General Single-Qubit Unitary)
 
 The U gate is a general single-qubit unitary with three parameters.
 
-**Definition:** U(θ, φ, λ) = RZ(φ) · RY(θ) · RZ(λ)
+**Definition:**
+`U(θ, φ, λ) = exp(i(φ+λ)/2) RZ(φ) · RY(θ) · RZ(λ)`
 
 **Matrix:**
 ```
@@ -900,13 +938,22 @@ U(θ,φ,λ) = [[        cos(θ/2),      -e^(iλ)·sin(θ/2)],
 
 ---
 
-#### R1XY (X-Y Plane Rotation)
+#### RXY1Q (X-Y Plane Rotation)
 
-An X-Y plane rotation gate with a specified angle and axis.
+An X-Y plane rotation gate with a specified angle and axis:
+
+```
+RXY1Q(θ,φ) = exp(-iθ(cos(φ)X + sin(φ)Y)/2)
+           = [[cos(θ/2), -i exp(-iφ) sin(θ/2)],
+              [-i exp(iφ) sin(θ/2), cos(θ/2)]]
+```
+
+Its `RZ(π/2-φ)`, `RY(θ)`, `RZ(φ-π/2)` decomposition is exact, not merely
+equal up to global phase, because the two Z angles sum to zero.
 
 === ":fontawesome-brands-rust: Rust"
     ```rust
-    sim.r1xy(theta, phi, &[q]);
+    sim.rxy1q(theta, phi, &[q]);
     ```
 
 ---

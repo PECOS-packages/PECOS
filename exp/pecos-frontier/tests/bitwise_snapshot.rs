@@ -172,6 +172,8 @@ fn collect_snapshot() -> SnapshotFile {
                     column_order: None,
                     merge_indistinguishable: false,
                     bp_score_iterations: 0,
+                    metric_mode: pecos_frontier::MetricMode::default(),
+                    int_metric_scale: 1024,
                 },
             ),
             (
@@ -183,6 +185,8 @@ fn collect_snapshot() -> SnapshotFile {
                     column_order: None,
                     merge_indistinguishable: false,
                     bp_score_iterations: 0,
+                    metric_mode: pecos_frontier::MetricMode::default(),
+                    int_metric_scale: 1024,
                 },
             ),
         ] {
@@ -226,6 +230,8 @@ fn collect_snapshot() -> SnapshotFile {
                 column_order: Some(fixture.forward_ordering),
                 merge_indistinguishable: false,
                 bp_score_iterations: 0,
+                metric_mode: pecos_frontier::MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .expect("fixture committee construction must succeed");
@@ -289,6 +295,8 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
+            metric_mode: pecos_frontier::MetricMode::default(),
+            int_metric_scale: 1024,
         };
         let mut off = FrontierDecoder::from_sparse_dem(&dem, off_config.clone()).unwrap();
         let mut on = FrontierDecoder::from_sparse_dem(

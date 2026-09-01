@@ -17,6 +17,7 @@
 //! the MNM maps faults directly to raw measurement flips for fast approximate
 //! sampling.
 
+use super::DemBuilderError;
 use super::types::{
     IdleChannelFamilies, MeasurementMechanism, MeasurementNoiseChannelResidual,
     MeasurementNoiseModel, NoiseChannelKind, NoiseConfig, fit_exclusive_signatures,
@@ -70,11 +71,18 @@ impl<'a> MemBuilder<'a> {
 
     /// Builds the Measurement Noise Model.
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the influence map contains a gate that Pauli
+    /// propagation cannot faithfully represent.
+    ///
     /// # Panics
     ///
     /// Panics if a noise input or signature channel is invalid.
-    #[must_use]
-    pub fn build(&self) -> MeasurementNoiseModel {
+    pub fn build(&self) -> Result<MeasurementNoiseModel, DemBuilderError> {
+        if let Some(error) = self.influence_map.unsupported_gate() {
+            return Err(DemBuilderError::UnsupportedGate(error.clone()));
+        }
         let num_measurements = self.influence_map.measurements.len();
         let mut mem = MeasurementNoiseModel::new(num_measurements);
 
@@ -137,7 +145,7 @@ impl<'a> MemBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY
+                | GateType::RXY1Q
                     if self.noise.p1 != 0.0 && !loc.before =>
                 {
                     self.process_single_qubit_fault(loc_idx, &mut mem);
@@ -170,7 +178,7 @@ impl<'a> MemBuilder<'a> {
             }
         }
 
-        mem
+        Ok(mem)
     }
 
     fn compute_im_to_tc_mapping(&self, tc_order: &[usize]) -> Vec<usize> {

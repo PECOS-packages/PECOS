@@ -13,7 +13,7 @@
 #![allow(clippy::needless_pass_by_value)] // PyO3 requires passing extracted types by value
 
 use pecos_core::clifford_rep::CliffordRep;
-use pecos_core::{Angle64, Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
+use pecos_core::{Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CHForm, CliffordGateable, QuantumSimulator};
 use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
 use pyo3::prelude::*;
@@ -407,6 +407,8 @@ impl PyStabMps {
     /// `merge_rz` defaults to true for throughput; MAST defaults it to false so
     /// every call immediately exposes its injection-capacity cost. Numerical
     /// flag redetection self-disables while lazy deferred operations are pending.
+    /// `saturation_telemetry=True` enables the diagnostic signed-eigenstate
+    /// scan and per-event Rust telemetry; it defaults to false.
     ///
     /// `seed` seeds PECOS's buffered RapidHash RNG and the stabilizer tableau.
     /// Fresh instances with the same configuration and call sequence reproduce
@@ -427,6 +429,7 @@ impl PyStabMps {
         max_truncation_error=None,
         svd_cutoff=None,
         numerical_flag_redetection=None,
+        saturation_telemetry=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -442,6 +445,7 @@ impl PyStabMps {
         max_truncation_error: Option<f64>,
         svd_cutoff: Option<f64>,
         numerical_flag_redetection: Option<bool>,
+        saturation_telemetry: Option<bool>,
     ) -> PyResult<Self> {
         if max_truncation_error.is_some_and(|error| !error.is_finite() || error < 0.0) {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -481,6 +485,9 @@ impl PyStabMps {
         }
         if let Some(v) = numerical_flag_redetection {
             b = b.numerical_flag_redetection(v);
+        }
+        if let Some(v) = saturation_telemetry {
+            b = b.saturation_telemetry(v);
         }
         Ok(PyStabMps { inner: b.build() })
     }
@@ -1134,11 +1141,11 @@ impl PyStabMps {
                 Ok(None)
             }
             "T" => {
-                self.inner.rz(Angle64::QUARTER_TURN / 2u64, q);
+                self.inner.t(q);
                 Ok(None)
             }
             "Tdg" => {
-                self.inner.rz(-(Angle64::QUARTER_TURN / 2u64), q);
+                self.inner.tdg(q);
                 Ok(None)
             }
             "PZ" | "Init" | "init |0>" => {

@@ -352,15 +352,40 @@ where
     ///
     /// Common in quantum computing where rotation gates use half-angle
     /// components (e.g., `cos(theta/2)` and `sin(theta/2)` for RX, RY gates).
-    /// Halving the fixed-point fraction is exact (integer division by 2).
+    /// Halving the fixed-point fraction is exact (integer division by 2). For
+    /// fractions strictly greater than half a turn the signed principal value
+    /// is negative: its half is the unsigned half minus pi, so both trig
+    /// outputs are negated. Exactly half a turn is +pi, matching
+    /// [`to_radians_signed`](Self::to_radians_signed)'s `(-pi, pi]` range.
+    ///
+    /// The sign test is made on the fixed-point fraction, not on a converted
+    /// f64. Near half a turn that is strictly more accurate: fractions one
+    /// unit above `HALF_TURN` have a negative principal value, but converting
+    /// them to radians rounds to exactly pi, so an f64-based test would call
+    /// them positive. Do not "simplify" this to agree with
+    /// `to_radians_signed` bit for bit.
     ///
     /// # Panics
-    /// Panics if `T` cannot represent the value 2 (unreachable for all
-    /// standard unsigned integer types).
+    /// Panics if `T` cannot represent the value 2 or its fraction cannot be
+    /// converted to `u128` (unreachable for all standard unsigned integer
+    /// types).
     #[inline]
     pub fn half_angle_sin_cos(&self) -> (f64, f64) {
         let half = Self::new(self.fraction / T::from_u32(2).expect("2 must be representable"));
-        half.sin_cos()
+        let (sin_half, cos_half) = half.sin_cos();
+        let bit_count = std::mem::size_of::<T>() * 8;
+        let fraction = self
+            .fraction
+            .to_u128()
+            .expect("Failed to convert fraction to u128");
+        // Strictly greater: `to_radians_signed` maps to (-pi, pi], so exactly
+        // half a turn is +pi, not -pi. Using the top bit alone would negate it
+        // and flip RZ(pi) from -iZ to +iZ.
+        let is_negative = fraction > (1_u128 << (bit_count - 1));
+        (
+            apply_sign(sin_half, is_negative),
+            apply_sign(cos_half, is_negative),
+        )
     }
 
     /// Returns `e^(i*theta) = cos(theta) + i*sin(theta)` as a `Complex64`.
@@ -693,12 +718,61 @@ mod tests {
     // -- half_angle_sin_cos -----------------------------------------------
 
     #[test]
-    fn half_angle_matches_manual_halving() {
-        // half_angle_sin_cos(HALF_TURN) should equal sin_cos(QUARTER_TURN)
-        let (s, c) = Angle64::HALF_TURN.half_angle_sin_cos();
-        let (s_ref, c_ref) = Angle64::QUARTER_TURN.sin_cos();
-        assert!((s - s_ref).abs() < TOL, "sin mismatch: {s} vs {s_ref}");
-        assert!((c - c_ref).abs() < TOL, "cos mismatch: {c} vs {c_ref}");
+    fn half_angle_uses_signed_principal_value() {
+        macro_rules! check {
+            ($angle:ty, $fraction:ty) => {{
+                let cases = [
+                    ("zero", <$angle>::ZERO, <$angle>::ZERO),
+                    (
+                        "positive Clifford",
+                        <$angle>::QUARTER_TURN,
+                        <$angle>::QUARTER_TURN / 2,
+                    ),
+                    (
+                        "positive non-Clifford",
+                        <$angle>::QUARTER_TURN / 2,
+                        <$angle>::QUARTER_TURN / 4,
+                    ),
+                    (
+                        "half turn is +pi, matching to_radians_signed's (-pi, pi]",
+                        <$angle>::HALF_TURN,
+                        <$angle>::QUARTER_TURN,
+                    ),
+                    (
+                        "negative Clifford",
+                        <$angle>::THREE_QUARTERS_TURN,
+                        -(<$angle>::QUARTER_TURN / 2),
+                    ),
+                    (
+                        "negative non-Clifford",
+                        -(<$angle>::QUARTER_TURN / 2),
+                        -(<$angle>::QUARTER_TURN / 4),
+                    ),
+                    (
+                        "near full turn",
+                        <$angle>::new(<$fraction>::MAX),
+                        <$angle>::new(<$fraction>::MAX),
+                    ),
+                ];
+
+                for (label, angle, signed_half) in cases {
+                    let actual = angle.half_angle_sin_cos();
+                    let expected = signed_half.sin_cos();
+                    assert_eq!(
+                        actual,
+                        expected,
+                        "{} {label}: angle={angle:?}",
+                        stringify!($angle)
+                    );
+                }
+            }};
+        }
+
+        check!(Angle8, u8);
+        check!(Angle16, u16);
+        check!(Angle32, u32);
+        check!(Angle64, u64);
+        check!(Angle128, u128);
     }
 
     #[test]
@@ -723,7 +797,13 @@ mod tests {
             let frac: u64 = rng.random();
             let angle = Angle64::new(frac);
             let (s, c) = angle.half_angle_sin_cos();
-            let halved = Angle64::new(frac / 2);
+            let unsigned_half = frac / 2;
+            let signed_half = if frac > Angle64::HALF_TURN.fraction() {
+                unsigned_half.wrapping_sub(Angle64::HALF_TURN.fraction())
+            } else {
+                unsigned_half
+            };
+            let halved = Angle64::new(signed_half);
             let (s_ref, c_ref) = halved.sin_cos();
             assert!((s - s_ref).abs() < TOL, "sin mismatch for frac={frac}");
             assert!((c - c_ref).abs() < TOL, "cos mismatch for frac={frac}");

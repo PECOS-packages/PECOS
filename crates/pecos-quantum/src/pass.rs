@@ -212,8 +212,6 @@ impl CircuitPass for PassPipeline {
 /// | RZ | pi   | Z   |
 /// | RZ | pi/2 | SZ  |
 /// | RZ | 3pi/2 | `SZdg` |
-/// | RZ | pi/4 | T   |
-/// | RZ | 7pi/4 | `Tdg` |
 /// | RX | pi   | X   |
 /// | RX | pi/2 | SX  |
 /// | RX | 3pi/2 | `SXdg` |
@@ -286,9 +284,12 @@ impl CircuitPass for InsertIdleAfterTwoQubitGates {
 /// Apply an in-place simplification to a gate. Returns `true` if the gate was
 /// simplified (either renamed in place or needs decomposition handling).
 fn simplify_gate_in_place(gate: &mut Gate) -> bool {
-    // R1XY has two angles — handle separately
-    if gate.gate_type == GateType::R1XY && gate.angles.len() == 2 {
-        if let Some(named) = pecos_core::try_simplify_r1xy(gate.angles[0], gate.angles[1]) {
+    // RXY1Q has two angles — handle separately
+    if gate.gate_type == GateType::RXY1Q && gate.angles.len() == 2 {
+        if let Some(named) = pecos_core::try_simplify_rxy1q(gate.angles[0], gate.angles[1]) {
+            if named == GateType::I {
+                return false;
+            }
             gate.gate_type = named;
             gate.angles.clear();
             return true;
@@ -305,6 +306,9 @@ fn simplify_gate_in_place(gate: &mut Gate) -> bool {
         return false;
     }
     if let Some(named) = pecos_core::try_simplify_rotation(gate.gate_type, gate.angles[0]) {
+        if named == GateType::I {
+            return false;
+        }
         gate.gate_type = named;
         gate.angles.clear();
         return true;
@@ -332,13 +336,7 @@ fn is_idle_gate(gate: &Gate) -> bool {
 fn is_rotation(gt: GateType) -> bool {
     matches!(
         gt,
-        GateType::RX
-            | GateType::RY
-            | GateType::RZ
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ
-            | GateType::CRZ
+        GateType::RX | GateType::RY | GateType::RZ | GateType::RXX | GateType::RYY | GateType::RZZ
     )
 }
 
@@ -1087,7 +1085,6 @@ fn is_z_diagonal(gate: &Gate) -> bool {
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::RZZ
-            | GateType::CRZ
     )
 }
 
@@ -1096,7 +1093,7 @@ fn is_z_diagonal(gate: &Gate) -> bool {
 ///
 /// Z-basis preparations (PZ / `QAlloc`) produce |0>, an eigenstate of every
 /// Z-diagonal operator.  Applying any Z-diagonal gate (Z, SZ, `SZdg`, T,
-/// `Tdg`, RZ, CZ, SZZ, `SZZdg`, RZZ, CRZ) when all its qubits are still
+/// `Tdg`, RZ, CZ, SZZ, `SZZdg`, RZZ) when all its qubits are still
 /// in a Z eigenstate only adds a global phase -- a physical no-op.
 /// Similarly, Z-diagonal gates immediately before Z-basis measurements
 /// (MZ / `MeasureFree`) do not change measurement statistics and can be
@@ -1627,20 +1624,20 @@ mod tests {
     }
 
     #[test]
-    fn simplify_rz_eighth_turn_to_t() {
+    fn does_not_simplify_rz_eighth_turn_to_t() {
         let eighth = Angle64::from_turn_ratio(1, 8);
         assert_eq!(
             pecos_core::try_simplify_rotation(GateType::RZ, eighth),
-            Some(GateType::T)
+            None
         );
     }
 
     #[test]
-    fn simplify_rz_seven_eighths_to_tdg() {
+    fn does_not_simplify_rz_seven_eighths_to_tdg() {
         let seven_eighths = Angle64::from_turn_ratio(7, 8);
         assert_eq!(
             pecos_core::try_simplify_rotation(GateType::RZ, seven_eighths),
-            Some(GateType::Tdg)
+            None
         );
     }
 
@@ -1851,6 +1848,17 @@ mod tests {
     }
 
     #[test]
+    fn tick_near_quarter_turn_rotation_unchanged() {
+        let angle = Angle64::from_turns(0.25 + 1e-12);
+        let mut tc = TickCircuit::new();
+        tc.tick().rz(angle, &[0]);
+        SimplifyRotations.apply_tick(&mut tc);
+        let gate = &tc.ticks()[0].gate_batches()[0];
+        assert_eq!(gate.gate_type, GateType::RZ);
+        assert_eq!(gate.angles.as_slice(), &[angle]);
+    }
+
+    #[test]
     fn tick_zero_angle_rotation_unchanged() {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::ZERO, &[0]);
@@ -1858,6 +1866,28 @@ mod tests {
         let gate = &tc.ticks()[0].gate_batches()[0];
         assert_eq!(gate.gate_type, GateType::RZ);
         assert_eq!(gate.angles.as_slice(), &[Angle64::ZERO]);
+    }
+
+    #[test]
+    fn tick_near_zero_angle_rotation_unchanged() {
+        let angle = Angle64::from_turns(1e-10);
+        let mut tc = TickCircuit::new();
+        tc.tick().rz(angle, &[0]);
+        SimplifyRotations.apply_tick(&mut tc);
+        let gate = &tc.ticks()[0].gate_batches()[0];
+        assert_eq!(gate.gate_type, GateType::RZ);
+        assert_eq!(gate.angles.as_slice(), &[angle]);
+    }
+
+    #[test]
+    fn tick_near_zero_rxy1q_rotation_unchanged() {
+        let theta = Angle64::from_turns(1e-10);
+        let mut tc = TickCircuit::new();
+        tc.tick().rxy1q(theta, Angle64::ZERO, &[0]);
+        SimplifyRotations.apply_tick(&mut tc);
+        let gate = &tc.ticks()[0].gate_batches()[0];
+        assert_eq!(gate.gate_type, GateType::RXY1Q);
+        assert_eq!(gate.angles.as_slice(), &[theta, Angle64::ZERO]);
     }
 
     #[test]
@@ -1870,13 +1900,13 @@ mod tests {
     }
 
     #[test]
-    fn tick_simplify_eighth_turn_to_t() {
+    fn tick_preserves_eighth_turn_rz() {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);
         SimplifyRotations.apply_tick(&mut tc);
         let gate = &tc.ticks()[0].gate_batches()[0];
-        assert_eq!(gate.gate_type, GateType::T);
-        assert!(gate.angles.is_empty());
+        assert_eq!(gate.gate_type, GateType::RZ);
+        assert_eq!(gate.angles.as_slice(), &[Angle64::from_turn_ratio(1, 8)]);
     }
 
     // ==================== DagCircuit pass tests ====================
@@ -1983,22 +2013,6 @@ mod tests {
         assert!(unitaries_equiv(
             &unitary_rep::RZ(Angle64::THREE_QUARTERS_TURN, 0),
             &unitary_rep::SZ(0).dg(),
-        ));
-    }
-
-    #[test]
-    fn matrix_rz_eighth_equiv_t() {
-        assert!(unitaries_equiv(
-            &unitary_rep::RZ(Angle64::from_turn_ratio(1, 8), 0),
-            &unitary_rep::T(0),
-        ));
-    }
-
-    #[test]
-    fn matrix_rz_seven_eighths_equiv_tdg() {
-        assert!(unitaries_equiv(
-            &unitary_rep::RZ(Angle64::from_turn_ratio(7, 8), 0),
-            &unitary_rep::T(0).dg(),
         ));
     }
 
@@ -2150,8 +2164,8 @@ mod tests {
             GateType::SYdg => Some(unitary_rep::SY(q0).dg()),
             GateType::SZ => Some(unitary_rep::SZ(q0)),
             GateType::SZdg => Some(unitary_rep::SZ(q0).dg()),
-            GateType::F => Some(unitary_rep::SZ(q0) * unitary_rep::SX(q0)),
-            GateType::Fdg => Some(unitary_rep::SX(q0).dg() * unitary_rep::SZ(q0).dg()),
+            GateType::F => Some(Clifford::F.to_unitary_rep_on_qubit(q0)),
+            GateType::Fdg => Some(Clifford::Fdg.to_unitary_rep_on_qubit(q0)),
             GateType::T => Some(unitary_rep::T(q0)),
             GateType::Tdg => Some(unitary_rep::T(q0).dg()),
             GateType::RX => {
@@ -2343,7 +2357,7 @@ mod tests {
 
     #[test]
     fn circuit_equiv_all_single_qubit_simplifications() {
-        // One gate for every single-qubit entry in the mapping table.
+        // Every mapped single-qubit rotation plus the non-rewritable T angles.
         let seventh_eighth = Angle64::from_turn_ratio(7, 8);
         let eighth = Angle64::from_turn_ratio(1, 8);
         let mut original = TickCircuit::new();
@@ -2352,10 +2366,10 @@ mod tests {
             .rz(Angle64::HALF_TURN, &[0]) // -> Z
             .rz(Angle64::QUARTER_TURN, &[1]) // -> SZ
             .rz(Angle64::THREE_QUARTERS_TURN, &[2]) // -> SZdg
-            .rz(eighth, &[3]); // -> T
+            .rz(eighth, &[3]); // preserved: not exact T
         original
             .tick()
-            .rz(seventh_eighth, &[0]) // -> Tdg
+            .rz(seventh_eighth, &[0]) // preserved: not exact Tdg
             .rx(Angle64::HALF_TURN, &[1]) // -> X
             .rx(Angle64::QUARTER_TURN, &[2]) // -> SX
             .rx(Angle64::THREE_QUARTERS_TURN, &[3]); // -> SXdg
@@ -2398,7 +2412,6 @@ mod tests {
             Gate::rxx(Angle64::ZERO, &[(0, 1)]),
             Gate::ryy(Angle64::ZERO, &[(0, 1)]),
             Gate::rzz(Angle64::ZERO, &[(0, 1)]),
-            Gate::crz(Angle64::ZERO, &[(0, 1)]),
         ];
         for gate in gates {
             assert!(is_identity_gate(&gate), "{:?}", gate.gate_type);
@@ -3059,7 +3072,8 @@ mod tests {
             .rz(Angle64::QUARTER_TURN, &[0])
             .rz(Angle64::from_turn_ratio(3, 8), &[1]);
         // Merge: RZ(pi/2)+RZ(pi/2)->RZ(pi) on q0, RZ(1/8)+RZ(1/8)->RZ(1/4) on q1
-        // Simplify: RZ(pi)->Z, RZ(pi/4)->T, etc.
+        // Simplify up to global phase: RZ(pi)->Z. RZ(pi/4) remains a
+        // rotation because conventional T carries a different scalar.
         // After CX: same pattern again
         let (b2, a2) = pipeline_stats(&mut c2);
 
@@ -3855,7 +3869,7 @@ mod tests {
 
     #[test]
     fn pipeline_applies_passes_in_order() {
-        // RZ(pi/4) RZ(pi/4) -> merge to RZ(pi/2) -> simplify to SZ
+        // RZ(pi/4) RZ(pi/4) -> merge to RZ(pi/2) -> simplify to SZ up to phase
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);
         tc.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);

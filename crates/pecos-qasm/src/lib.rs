@@ -55,7 +55,15 @@
 
 pub mod ast;
 pub mod bitvec_expression;
-pub mod dag_bridge;
+/// Kept crate-private while [issue #653] tracks the required `DagCircuit` classical-bit API.
+///
+/// Conditional conversion is not faithful: bit indices are dropped, whole-register
+/// comparisons are collapsed to single-bit booleans, and conditions have no classical
+/// dependency edges, so emission has no ordering guarantees.
+///
+/// [issue #653]: https://github.com/PECOS-packages/PECOS/issues/653
+#[cfg(test)]
+pub(crate) mod dag_bridge;
 // pub mod config; // TODO: Update to use unified API types
 pub mod engine;
 pub mod engine_builder;

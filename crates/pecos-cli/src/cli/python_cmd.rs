@@ -122,7 +122,7 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
 
     // Build up RUSTFLAGS. For native we inject -C target-cpu=native because
     // profile.native.rustflags in Cargo.toml is still gated on nightly; other
-    // callers (Justfile go-build/julia-build/build-selene/bench) inject the
+    // callers (Justfile julia-build/build-selene/bench) inject the
     // same flag so the resulting artifacts are consistent regardless of entry
     // point.
     let mut flags = std::env::var("RUSTFLAGS").unwrap_or_default();

@@ -60,9 +60,10 @@ pub enum RustCommands {
         #[arg(long, value_enum, default_value = "dev")]
         profile: BuildProfile,
 
-        /// Also test FFI crates (pecos-rslib, pecos-rslib-cuda,
-        /// pecos-julia-ffi). Same external-toolchain caveats as `rust check
-        /// --include-ffi`.
+        /// Also run pecos-rslib's Rust tests. It is the only excluded FFI
+        /// crate with Rust tests of its own, so the others are not added back
+        /// here even with this flag -- unlike `rust check`/`rust clippy`,
+        /// which do cover them.
         #[arg(long)]
         include_ffi: bool,
     },

@@ -19,7 +19,9 @@ use std::process::Command;
 /// - pecos-julia-ffi needs Julia.
 ///
 /// All three are excluded from the default workspace check / clippy / test
-/// invocations and only touched when the caller opts in with `--include-ffi`.
+/// invocations. `--include-ffi` adds them back for check and clippy, each
+/// behind the toolchain it needs. For `test` it adds back only pecos-rslib,
+/// the one crate here with Rust tests of its own.
 const FFI_CRATES: &[&str] = &["pecos-rslib", "pecos-rslib-cuda", "pecos-julia-ffi"];
 
 /// Extra pyo3 cdylib crates excluded only from `cargo test --workspace`.
@@ -349,6 +351,25 @@ fn run_check(include_ffi: bool) -> Result<()> {
             ));
         }
 
+        // Gated on a CUDA toolkit being present: without one there is nothing
+        // for pecos-cuquantum's build script to build against. `find_cuda()` is
+        // the same resolver those build scripts use, so this agrees with what a
+        // real pecos-rslib-cuda build would see.
+        if pecos_build::cuda::find_cuda().is_some() {
+            println!("Checking pecos-rslib-cuda...");
+            if !run_cargo_command(&[
+                "check",
+                "-p",
+                "pecos-rslib-cuda",
+                "--all-targets",
+                "--all-features",
+            ]) {
+                return Err(Error::Config(
+                    "cargo check (pecos-rslib-cuda) failed".to_string(),
+                ));
+            }
+        }
+
         if is_tool_available("julia") {
             println!("Checking pecos-julia-ffi...");
             if !run_cargo_command(&[
@@ -426,6 +447,25 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             return Err(Error::Config(
                 "cargo clippy (pecos-rslib) failed".to_string(),
             ));
+        }
+
+        // See the CUDA gate in run_check for why this is conditional.
+        if pecos_build::cuda::find_cuda().is_some() {
+            println!("Running clippy on pecos-rslib-cuda...");
+            let mut args: Vec<&str> = vec![
+                "clippy",
+                "-p",
+                "pecos-rslib-cuda",
+                "--all-targets",
+                "--all-features",
+            ];
+            args.extend(&fix_args);
+            args.extend(&["--", "-D", "warnings"]);
+            if !run_cargo_command(&args) {
+                return Err(Error::Config(
+                    "cargo clippy (pecos-rslib-cuda) failed".to_string(),
+                ));
+            }
         }
 
         if is_tool_available("julia") {

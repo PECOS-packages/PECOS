@@ -8,11 +8,41 @@ longer-term architecture and extension points.
 
 ## Summary
 
-PECOS should support constructing programs from typed graph values/resources
-and unresolved instruction applications, then selecting implementations in an
-explicit lowering environment. Logical QEC is the first motivating dialect: users create
-abstract surface-code patches and logical operations, then lower the program to
-Guppy, `TickCircuit`, `DagCircuit`, Stim, and detector error models.
+PECOS should provide an HDL-like way to describe, compose, inspect, and lower
+QEC programs across levels of abstraction. The same hierarchical program should
+let one user reason only about logical transformations over abstract code
+blocks, another define or select the QEC gadgets that implement them, and
+another inspect space-time costs, mapped physical circuits, or executable
+backend output. As in hardware description languages such as Verilog,
+hierarchy and stable interfaces let a component be treated as a black box at
+one level and opened at a more detailed level when needed.
+
+The QEC portion of this design is strongly inspired by SLR and can be viewed as
+an evolutionary successor—informally, an "SLR 2.0" direction. SLR demonstrated
+how QEC implementations could be composed from blocks and rendered to multiple
+targets. This proposal builds on that idea with one typed, hierarchical model
+spanning logical intent, selectable protocols, resource and space-time views,
+physical realization, and executable lowering. It also revives earlier PECOS
+`QuantumCircuit` and `LogicalCircuit` ideas: an authored program can retain
+generic instruction identities whose concrete meanings are supplied and
+resolved later. The proposal does not require source compatibility with SLR or
+make SLR an implementation dependency; a staged migration or adapters can be
+considered once the replacement path is proven.
+
+Visualization is a projection of the same program and its realizations, not a
+separate authoring model. Users should be able to view a code gadget as a coarse
+space-time cell, expand it into data and ancilla activity through time slices,
+and trace either view back to logical operations and physical gates. Designing
+complete QEC architectures need not become PECOS's primary focus, but these
+views make it practical to reason about how gadgets occupy resources, compose,
+and interact while exploring a QEC architecture.
+
+Concretely, PECOS should support constructing programs from typed graph
+values/resources and unresolved instruction applications, then selecting
+implementations in an explicit lowering environment. Logical QEC is the first
+motivating dialect: users create abstract surface-code patches and logical
+operations, then lower the program to Guppy, `TickCircuit`, `DagCircuit`, Stim,
+and detector error models.
 
 The generic authoring model is an `InstrProgram` containing reusable
 `InstrModule` definitions and appendable `InstrGraph` bodies. It does not have
@@ -42,12 +72,13 @@ Modules are independently serializable, hashable/versioned artifacts and can be
 built and linked across Rust or Python source files. A dedicated textual
 language and its filesystem/package syntax are not required initially.
 
-A surface-code convenience API should live under
-`pecos.qec.surface` and use `SurfacePatch` as its only source of surface-code
-geometry. SLR is useful precedent for separating authoring from rendering, but
-the new API should not depend on SLR. The existing SLR surface gate library is
-incomplete, and its generic representation is lower-level than users need for
-logical QEC experiments.
+A surface-code convenience API should live under `pecos.qec.surface` and use
+`SurfacePatch` as its only source of surface-code geometry. The initial API
+should not depend on SLR: the existing SLR surface gate library is incomplete,
+and its generic block representation is lower-level than users need for logical
+QEC experiments. The architectural lessons and useful lowering logic should be
+carried forward without making the new representation a thin wrapper around
+SLR.
 
 The generic graph must not become a second general-purpose PECOS IR. PHIR
 already has modules, regions, blocks, SSA operands/results, custom dialects,
@@ -209,6 +240,12 @@ factory-specific recipe.
 14. Import supported compiled Guppy/HUGR functions as typed `InstrModule`
     definitions or opaque external modules without claiming to infer missing
     high-level QEC semantics.
+15. Let tools and users inspect the same hierarchical program at logical,
+    gadget/protocol, resource-estimate, space-time, and physical-circuit levels
+    without eagerly expanding every black box.
+16. Produce stable visualization views of code gadgets, space-time slices, and
+    physical activity for architectural reasoning without coupling semantic
+    lowering to a particular renderer.
 
 ## Non-goals for the first version
 
@@ -216,6 +253,9 @@ factory-specific recipe.
   version; the generic structure may represent and validate more than every
   initial backend supports.
 - A new general compiler IR replacing PHIR, HUGR, or SLR.
+- A complete QEC architecture placement, routing, or optimization product in
+  the first version; the representation and views should support such analysis
+  without making it the primary initial deliverable.
 - Automatic lattice-surgery synthesis.
 - Supporting operations whose detector-boundary semantics are not defined.
 - Converting an arbitrary `TickCircuit` back into structured Guppy.
@@ -2736,14 +2776,27 @@ and result keys should remain stable.
 
 ### SLR
 
-No dependency is proposed. SLR demonstrates the value of a renderer boundary
-and may later gain adapters to or from `InstrProgram`. Its
-`If(condition).Then(...).Else(...)` form and Steane injection/feed-forward
-examples are useful authoring precedent. The new Rust IR should not copy SLR's
-block model directly: it needs typed classical SSA values, explicit linear
-region arguments and yields, and a semantic distinction between physical
-conditional execution and Pauli-frame updates. Completing SLR's surface gate
-placeholders is independent work.
+SLR is the closest conceptual predecessor and the QEC portion of this proposal
+may eventually subsume it. SLR's layered block composition, renderer boundary,
+`If(condition).Then(...).Else(...)` form, and Steane injection/feed-forward
+examples are important precedent. It is reasonable to use “SLR 2.0” as an
+informal description of the direction: preserve the ability to build QEC
+implementations and program at a higher level, while making the abstraction
+boundaries explicit and usable by different kinds of users.
+
+The new Rust model should not copy SLR's block model directly. It adds typed
+logical and classical values, explicit gadget input/output contracts, linear
+region arguments and yields, hierarchical black-box views, late selection among
+implementations, and a semantic distinction between physical conditional
+execution and Pauli-frame updates. It also makes resource summaries,
+space-time realization, visualization, physical circuits, and executable
+lowering related views of one program rather than unrelated products.
+
+No implementation dependency on SLR is proposed. SLR may later gain adapters to
+or from `InstrProgram`, and reusable lowering logic should be extracted where
+appropriate. A decision to deprecate or replace SLR should follow working
+feature and migration parity rather than be assumed by this design. Completing
+SLR's surface gate placeholders remains independent work in the meantime.
 
 ## Relationship to issues #508-#516
 

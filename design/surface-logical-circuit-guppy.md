@@ -479,6 +479,36 @@ Those belong to registered dialect interfaces. A program may import multiple
 dialects, allowing a later phase to compose QEC, physical quantum, and
 classical instructions without putting all of their concepts in one enum.
 
+### Intended authors and ergonomic typing
+
+`InstrProgram` is the shared artifact for both hand-authored experiments and
+programmatically generated, imported, or transformed programs. There is no
+unchecked “generated program” variant. Generators and compiler passes can still
+miswire ports, reuse a consumed block, produce incompatible branch results, or
+compose an implementation with unsupported operands, so they benefit from the
+same validation as a person using the Python or Rust builder.
+
+The type system should nevertheless remain ergonomic. It is a compact,
+serializable runtime type algebra with dialect-owned opaque types and generic
+linearity/copyability traits, not a requirement that users spell deeply nested
+Rust generic types. Common instruction builders infer result types from the
+definition, input values, and parameters. Hand authors normally see named
+ports, returned values, and actionable errors; generic tooling can inspect the
+same concrete type IDs and payloads.
+
+The validation responsibilities are deliberately layered:
+
+1. generic construction verifies named ports, arity, type compatibility,
+   definition/use, linear ownership, and structured-region joins;
+2. implementation resolution verifies facts such as patch geometry,
+   orientation, adjacency, supported bases, and target capabilities;
+3. QEC semantic verification checks that the selected plan realizes the
+   instruction's declared logical transformation, frame transfer, measurement,
+   and lifecycle contract.
+
+This keeps “well formed” precise without forcing every implementation-specific
+surface-code restriction into the generic graph type system.
+
 This is intentionally less abstract than a general IR. The first version does
 not need arbitrary memory models, exceptions, object systems, unrestricted
 CFG construction, or a generic optimization framework. When resolved domain
@@ -512,6 +542,25 @@ happens for particular operand codes and a particular lowering environment.
 The spelling “QEC instruction” is deliberate: it avoids collision with Python's
 `typing.Protocol` while preserving “QEC protocol” for an actual fault-tolerant
 realization.
+
+An intuitive analogy is a typed QEC gadget:
+
+- `QecInstr` is the gadget interface: named code-block/classical input and
+  output types plus the declared logical relation or transformation;
+- `QecInstrImpl` is one selectable gadget realization;
+- `QecInstrPlan` is that realization bound to concrete patches, parameters,
+  frame state, and a lowering context;
+- `InstrGraph` composes gadget instances by connecting compatible output values
+  to later inputs.
+
+For example, logical CX has two active code-block inputs and returns two
+replacement active code-block values. `surface.transversal_cx` is one
+implementation whose `supports` method may additionally require matching patch
+layouts. Those geometry restrictions do not change the public two-input,
+two-output logical-CX contract. The same model covers identity syndrome
+extraction, type-changing code switching, arity-changing merge/split,
+preparation, and destructive measurement. “Gadget” is explanatory terminology;
+the API uses `QecInstr` because gadget has several narrower meanings in QEC.
 
 For example, these are one instruction with different implementations:
 
@@ -1016,7 +1065,7 @@ authored `InstrProgram` and implementation resolution. Elaboration:
 
 - canonicalizes every supplied parameter value;
 - expands named convenience profiles into explicit instruction-to-
-  implementation preferences;
+  implementation resolution preferences without selecting a candidate;
 - unifies input types and instantiates concrete output `QecBlockType` values;
 - resolves definition symbols and validates port bindings;
 - specializes reusable hierarchical definitions while retaining instance
@@ -1126,6 +1175,16 @@ compiler may cache their verified/elaborated bodies by definition ID, canonical
 parameter substitution, imported instruction-set versions, and implementation
 profile. Caching must not merge instance-local block IDs, measurement IDs,
 frame expressions, annotations, or result provenance.
+
+Source-file boundaries do not define module identity. An `InstrProgram` may
+own a module or import an independently serialized module by stable qualified
+definition ID, schema/version requirements, and content digest. Linkage resolves
+those symbols before elaboration and reports missing, conflicting, or
+incompatible definitions explicitly. Rust and Python packages can therefore
+construct modules in different files and link the same artifacts. Designing a
+textual language's filesystem search paths, package manager, or source-level
+`import` syntax is separate work and is not required for this object-level
+module/linkage contract.
 
 #### Structure versus control
 
@@ -2182,15 +2241,26 @@ Instruction-set resolution checks:
 - support for every shot-time conditional effect required by the selected
   implementation and target;
 - complete discharge or deliberate export of Pauli byproducts and tracked
-  frames;
-- a semantic-verification strategy for the selected plan against the
-  instruction's declared logical transformation.
+  frames.
 
-Validation therefore has two phases. Code-independent structural and linearity
-errors are reported while authoring. Implementation compatibility is checked during
-deterministic instruction-set resolution, because the graph does not interpret
-the instruction identity and the same contract can be legal under one
-implementation and illegal under another.
+QEC semantic verification checks:
+
+- the selected plan's induced logical action against the declared logical
+  transformation;
+- logical and physical frame transfer at every block boundary;
+- preparation, measurement, and lifecycle effects;
+- detector/observable and measurement-identity correspondence;
+- implementation proof/certificate requirements declared by the instruction
+  set and lowering context.
+
+Validation therefore has three layers. Code-independent structural, type, and
+linearity errors are reported while authoring. Implementation compatibility is
+checked during deterministic instruction-set resolution because the graph does
+not interpret instruction identity and the same contract can be legal under one
+implementation and illegal under another. QEC semantic verification then
+checks the selected plan against the instruction's declared logical, frame,
+measurement, and lifecycle behavior. An implementation is not accepted merely
+because its physical circuit is structurally well formed.
 
 This is stricter than the current `add_memory` model, where the first and last
 memory operations implicitly decide when preparation and final measurement

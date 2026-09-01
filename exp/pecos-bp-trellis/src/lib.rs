@@ -28,8 +28,8 @@
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_trellis::{
-    DecoderError, ObsMask, SparseDem, TrellisConfig, TrellisDecodeAttempt, TrellisDecoder,
-    TrellisResult, backward_deadline_column_order, deadline_column_order,
+    DecoderError, MetricMode, ObsMask, SparseDem, TrellisConfig, TrellisDecodeAttempt,
+    TrellisDecoder, TrellisResult, backward_deadline_column_order, deadline_column_order,
 };
 use std::time::Instant;
 
@@ -155,6 +155,9 @@ impl BpTrellisDecoder {
             column_order,
             merge_indistinguishable,
             bp_score_iterations,
+            // BpTrellis escalation is defined over coset masses, so max-log is deliberately absent from its config.
+            metric_mode: MetricMode::LogSumExpFloat,
+            int_metric_scale: 1024,
         };
         let inner = TrellisDecoder::from_sparse_dem(dem, trellis_config.clone())?;
         let escalation = escalation_ks

@@ -54,6 +54,12 @@ pub(crate) fn stab_mps_stats_to_dict(py: Python<'_>, stats: &StabMpsStats) -> Py
     result.set_item("deferred_disent_bypass", stats.deferred_disent_bypass)?;
     result.set_item("numerical_redetect", stats.numerical_redetect)?;
     result.set_item("multi_std", stats.multi_std)?;
+    result.set_item("multi_std_add", stats.multi_std_add)?;
+    result.set_item("multi_std_cascade", stats.multi_std_cascade)?;
+    result.set_item(
+        "signed_eigenstate_candidates",
+        stats.signed_eigenstate_candidates,
+    )?;
     result.set_item("stabilizer", stats.stabilizer)?;
     result.set_item("ofd_in_span", stats.ofd_in_span)?;
     result.set_item("ofd_new_dim", stats.ofd_new_dim)?;
@@ -117,6 +123,10 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<sim_neo_bindings::PyStabMpsBuilder>()?;
     m.add_class::<sim_neo_bindings::PyNoiseModelBuilder>()?;
     m.add_function(wrap_pyfunction!(sim_neo_bindings::py_sim_neo, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        sim_neo_bindings::neo_fallback_native_gates,
+        m
+    )?)?;
     m.add_class::<sim_neo_bindings::PyMonteCarloBuilder>()?;
     m.add_function(wrap_pyfunction!(sim_neo_bindings::monte_carlo, m)?)?;
     m.add_class::<sim_neo_bindings::PyPathEnumerationBuilder>()?;

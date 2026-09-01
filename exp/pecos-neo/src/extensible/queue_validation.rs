@@ -130,8 +130,13 @@ pub fn is_clifford_circuit(commands: &CommandQueue) -> bool {
             return false;
         }
 
+        let expected = cmd.gate_type.angle_arity();
+        if expected > 0 && cmd.angles.len() != expected {
+            return false;
+        }
+
         // For parameterized gates, check if angles are Clifford angles
-        if cmd.gate_type.angle_arity() > 0 && !cmd.angles.is_empty() {
+        if expected > 0 {
             return cmd.angles.iter().all(|a| is_clifford_angle(*a));
         }
 
@@ -270,7 +275,7 @@ mod tests {
     fn test_rz_at_non_clifford_angle() {
         let commands = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::HALF_TURN / 4) // RZ(pi/4) = T, not Clifford
+            .rz(&[0], Angle64::HALF_TURN / 4) // RZ(pi/4) is projectively T, not Clifford.
             .mz(&[0])
             .build();
 

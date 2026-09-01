@@ -559,6 +559,7 @@ impl QasmCodegen {
             GateKind::SXXdg => "sxxdg",
             GateKind::SYYdg => "syydg",
             GateKind::SZZdg => "szzdg",
+            GateKind::CRZ => "crz",
             GateKind::RZZ => "rzz",
             GateKind::CCX => "ccx",
             GateKind::F => "f",

@@ -312,5 +312,8 @@ fn execute_gate_direct<S: CliffordGateable>(sim: &mut S, gate: &Gate) -> usize {
 
 fn run_tick_circuit_executor(circuit: &TickCircuit, num_qubits: usize) -> usize {
     let mut sim = SparseStab::new(num_qubits);
-    CircuitExecutor::new(circuit).run(&mut sim).len()
+    CircuitExecutor::new(circuit)
+        .run(&mut sim)
+        .expect("benchmark circuit contains supported Clifford gates")
+        .len()
 }

@@ -336,7 +336,10 @@ impl PyQuditStateVec {
     }
 
     fn reset(&mut self, target: usize) -> PyResult<()> {
-        self.inner.reset(target).map(|_| ()).map_err(python_error)
+        self.inner
+            .reset_site(target)
+            .map(|_| ())
+            .map_err(python_error)
     }
 
     fn prepare_basis(&mut self, target: usize, basis_state: usize) -> PyResult<()> {
@@ -565,7 +568,10 @@ impl PyQuditDensityMatrix {
     }
 
     fn reset(&mut self, target: usize) -> PyResult<()> {
-        self.inner.reset(target).map(|_| ()).map_err(python_error)
+        self.inner
+            .reset_site(target)
+            .map(|_| ())
+            .map_err(python_error)
     }
 
     fn prepare_basis(&mut self, target: usize, basis_state: usize) -> PyResult<()> {

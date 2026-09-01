@@ -398,9 +398,7 @@ impl TwoQubitChannel {
 
         // Only scale for parameterized two-qubit gates
         let scale = match gate_type {
-            GateType::RZZ | GateType::RXX | GateType::RYY | GateType::CRZ => {
-                self.angle_scaling.scale(angles[0])
-            }
+            GateType::RZZ | GateType::RXX | GateType::RYY => self.angle_scaling.scale(angles[0]),
             _ => 1.0,
         };
 

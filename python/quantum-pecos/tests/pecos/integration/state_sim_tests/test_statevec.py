@@ -288,7 +288,7 @@ def _test_all_gates_incremental(
     _apply({"RY": {0, 3}}, angles=(pc.f64.pi / 8,))
     _apply({"RZZ": {(0, 3)}}, angles=(pc.f64.pi / 16,))
     _apply({"RZ": {1, 3}}, angles=(pc.f64.pi / 16,))
-    _apply({"R1XY": {2}}, angles=(pc.f64.pi / 16, pc.f64.frac_pi_2))
+    _apply({"RXY1Q": {2}}, angles=(pc.f64.pi / 16, pc.f64.frac_pi_2))
     _apply({"I": {0, 1, 3}})
     _apply({"X": {1, 2}})
     _apply({"Y": {2, 3}})
@@ -348,35 +348,64 @@ def _test_all_gates_incremental(
 
 
 def test_controlled_rotations_statevec() -> None:
-    """CRX/CRY/CRZ via the StateVec backend (cross-codegen QC support).
+    """Pin both StateVec CR* ingresses with one full-matrix global phase."""
 
-    Verifies the 1-RZZ default implementations in
-    `ArbitraryRotationGateable::{crx,cry,crz}` produce the textbook
-    block-diag(I, R*(theta)) action by comparing against direct
-    R*(theta) on the target with the control prepared in |1>.
-    """
-    theta = pc.f64.pi / 3
-    for sym, direct_sym in [("CRZ", "RZ"), ("CRX", "RX"), ("CRY", "RY")]:
-        # c=0: |00> stays |00>.
-        sim_c0 = StateVec(2)
-        sim_c0.backend.run_2q_gate(sym, (0, 1), {"angle": theta})
-        baseline_c0 = StateVec(2)
-        assert pc.allclose(
-            sim_c0.backend.vector,
-            baseline_c0.backend.vector,
-        ), f"{sym}|00> changed the state -- expected identity when control=0"
+    def reference(symbol: str, theta: float) -> list[list[complex]]:
+        c = complex(pc.cos(theta / 2))
+        s = complex(pc.sin(theta / 2))
+        matrix = [[0j] * 4 for _ in range(4)]
+        matrix[0][0] = 1
+        matrix[1][1] = 1
+        if symbol == "CRZ":
+            matrix[2][2] = complex(pc.cos(theta / 2), -pc.sin(theta / 2))
+            matrix[3][3] = complex(pc.cos(theta / 2), pc.sin(theta / 2))
+        elif symbol == "CRX":
+            matrix[2][2] = c
+            matrix[3][2] = -1j * s
+            matrix[2][3] = -1j * s
+            matrix[3][3] = c
+        else:
+            matrix[2][2] = c
+            matrix[3][2] = s
+            matrix[2][3] = -s
+            matrix[3][3] = c
+        return matrix
 
-        # c=1: |10> -> |1, R*(theta)|0>>. Compare against direct R* on target.
-        sim_c1 = StateVec(2)
-        sim_c1.backend.run_1q_gate("X", 0, None)
-        sim_c1.backend.run_2q_gate(sym, (0, 1), {"angle": theta})
-        sim_direct = StateVec(2)
-        sim_direct.backend.run_1q_gate("X", 0, None)
-        sim_direct.backend.run_1q_gate(direct_sym, 1, {"angle": theta})
-        assert pc.allclose(
-            sim_c1.backend.vector,
-            sim_direct.backend.vector,
-        ), f"{sym}(theta) when c=1 must equal direct {direct_sym}(theta) on target"
+    def assert_one_phase(actual: list[list[complex]], expected: list[list[complex]], theta: float) -> None:
+        phase = actual[0][0] / expected[0][0]
+        assert abs(abs(phase) - 1) < 1e-12
+        if theta in {-pc.f64.pi, pc.f64.pi / 3, pc.f64.pi}:
+            assert abs(phase - 1) < 1e-12
+        else:
+            assert min(abs(phase - 1), abs(phase + 1)) < 1e-12
+        for column in range(4):
+            for row in range(4):
+                assert abs(actual[column][row] / phase - expected[row][column]) < 1e-12
+
+    for theta in (-pc.f64.pi, pc.f64.pi / 3, pc.f64.pi, pc.f64.tau, 3 * pc.f64.pi):
+        for symbol in ("CRZ", "CRX", "CRY"):
+            binding_columns = []
+            circuit_columns = []
+            for basis in range(4):
+                direct = StateVec(2)
+                circuit = QuantumCircuit()
+                if basis & 2:
+                    direct.backend.run_1q_gate("X", 0, None)
+                    circuit.append({"X": {0}})
+                if basis & 1:
+                    direct.backend.run_1q_gate("X", 1, None)
+                    circuit.append({"X": {1}})
+                direct.backend.run_2q_gate(symbol, (0, 1), {"angle": theta})
+                circuit.append({symbol: {(0, 1)}}, angles=(theta,))
+                via_circuit = StateVec(2)
+                via_circuit.run_circuit(circuit)
+                binding_vector = [complex(value) for value in direct.backend.vector]
+                circuit_vector = [complex(value) for value in via_circuit.vector]
+                binding_columns.append([binding_vector[index] for index in (0, 2, 1, 3)])
+                circuit_columns.append(circuit_vector)
+            expected = reference(symbol, theta)
+            assert_one_phase(binding_columns, expected, theta)
+            assert_one_phase(circuit_columns, expected, theta)
 
 
 @pytest.mark.parametrize(

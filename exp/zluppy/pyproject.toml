@@ -34,6 +34,14 @@ build-backend = "maturin"
 [tool.maturin]
 module-name = "zluppy._zluppy"
 python-source = "python"
+features = ["extension-module"]
+
+[tool.uv]
+reinstall-package = [
+    "pecos-rslib",
+    "pecos-rslib-llvm",
+    "zluppy",
+]
 
 [dependency-groups]
 dev = [

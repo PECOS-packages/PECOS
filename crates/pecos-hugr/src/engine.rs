@@ -1763,6 +1763,13 @@ impl HugrEngine {
     ) -> Result<bool, PecosError> {
         let mut hit_measurement = false;
 
+        if op.is_crz {
+            let angle = self.resolve_rotation_angle(hugr, node, op)?;
+            let gates = pecos_core::controlled_rotations::lower_crz(angle, qubits[0], qubits[1]);
+            self.message_builder.add_gate_commands(&gates);
+            return Ok(false);
+        }
+
         match op.gate_type {
             // Lifecycle operations
             GateType::QAlloc => {
@@ -1786,28 +1793,16 @@ impl HugrEngine {
                 self.message_builder.z(&[qubits[0].0]);
             }
             GateType::SZ => {
-                self.message_builder.rz(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                    &[qubits[0].0],
-                );
+                self.message_builder.sz(&[qubits[0].0]);
             }
             GateType::SZdg => {
-                self.message_builder.rz(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
-                    &[qubits[0].0],
-                );
+                self.message_builder.szdg(&[qubits[0].0]);
             }
             GateType::T => {
-                self.message_builder.rz(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                    &[qubits[0].0],
-                );
+                self.message_builder.t(&[qubits[0].0]);
             }
             GateType::Tdg => {
-                self.message_builder.rz(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                    &[qubits[0].0],
-                );
+                self.message_builder.tdg(&[qubits[0].0]);
             }
             GateType::RX => {
                 let angle = self.resolve_rotation_angle(hugr, node, op)?;
@@ -1828,16 +1823,10 @@ impl HugrEngine {
                 self.message_builder.pz(&[qubits[0].0]);
             }
             GateType::SX => {
-                self.message_builder.rx(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                    &[qubits[0].0],
-                );
+                self.message_builder.sx(&[qubits[0].0]);
             }
             GateType::SXdg => {
-                self.message_builder.rx(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
-                    &[qubits[0].0],
-                );
+                self.message_builder.sxdg(&[qubits[0].0]);
             }
 
             // Two-qubit gates
@@ -1872,49 +1861,24 @@ impl HugrEngine {
                     &[target],
                 );
             }
-            GateType::CRZ => {
-                let angle = self.resolve_rotation_angle(hugr, node, op)?;
-                let half_angle = angle / 2.0;
-                self.message_builder
-                    .rz(Angle64::from_radians(half_angle), &[qubits[1].0]);
-                self.message_builder.cx(&[(qubits[0].0, qubits[1].0)]);
-                self.message_builder
-                    .rz(Angle64::from_radians(-half_angle), &[qubits[1].0]);
-                self.message_builder.cx(&[(qubits[0].0, qubits[1].0)]);
-            }
             GateType::CCX => {
                 let c0 = qubits[0].0;
                 let c1 = qubits[1].0;
                 let target = qubits[2].0;
                 self.message_builder.h(&[target]);
                 self.message_builder.cx(&[(c1, target)]);
-                self.message_builder.rz(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                    &[target],
-                );
+                self.message_builder.tdg(&[target]);
                 self.message_builder.cx(&[(c0, target)]);
-                self.message_builder.rz(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                    &[target],
-                );
+                self.message_builder.t(&[target]);
                 self.message_builder.cx(&[(c1, target)]);
-                self.message_builder.rz(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                    &[target],
-                );
+                self.message_builder.tdg(&[target]);
                 self.message_builder.cx(&[(c0, target)]);
-                self.message_builder
-                    .rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[c1]);
-                self.message_builder.rz(
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                    &[target],
-                );
+                self.message_builder.t(&[c1]);
+                self.message_builder.t(&[target]);
                 self.message_builder.h(&[target]);
                 self.message_builder.cx(&[(c0, c1)]);
-                self.message_builder
-                    .rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[c0]);
-                self.message_builder
-                    .rz(Angle64::from_radians(-std::f64::consts::FRAC_PI_4), &[c1]);
+                self.message_builder.t(&[c0]);
+                self.message_builder.tdg(&[c1]);
                 self.message_builder.cx(&[(c0, c1)]);
             }
 
@@ -1980,8 +1944,8 @@ impl HugrEngine {
         // No silent default: a zero angle would turn the gate into a no-op and
         // corrupt the simulated physics without any visible failure.
         Err(PecosError::Input(format!(
-            "{:?} at {node:?}: rotation angle unavailable (no static extraction, no runtime value); refusing to default to 0",
-            op.gate_type
+            "{} at {node:?}: rotation angle unavailable (no static extraction, no runtime value); refusing to default to 0",
+            op.source_name
         )))
     }
 
@@ -2516,6 +2480,61 @@ mod tests {
         let engine = HugrEngine::default();
         assert!(engine.hugr.is_none());
         assert!(engine.quantum_ops.is_empty());
+    }
+
+    #[test]
+    fn dynamic_crz_missing_angle_error_uses_source_spelling() {
+        use tket::TketOp;
+        use tket::hugr::builder::{DFGBuilder, Dataflow, DataflowHugr};
+        use tket::hugr::types::Signature;
+
+        let mut builder = DFGBuilder::new(Signature::new(
+            vec![tket::extension::rotation::rotation_type()],
+            vec![],
+        ))
+        .expect("create HUGR");
+        let rotation = builder.input_wires().next().expect("rotation input");
+        let control = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate control")
+            .outputs()
+            .next()
+            .expect("control output");
+        let target = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate target")
+            .outputs()
+            .next()
+            .expect("target output");
+        let mut outputs = builder
+            .add_dataflow_op(TketOp::CRz, vec![control, target, rotation])
+            .expect("add CRz")
+            .outputs();
+        let control = outputs.next().expect("control output");
+        let target = outputs.next().expect("target output");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![control])
+            .expect("free control");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![target])
+            .expect("free target");
+        let hugr = builder
+            .finish_hugr_with_outputs(vec![])
+            .expect("finish HUGR");
+        let engine = HugrEngine::from_hugr(hugr);
+        let hugr = engine.hugr.as_ref().expect("engine HUGR");
+        let (&node, op) = engine
+            .quantum_ops
+            .iter()
+            .find(|(_, op)| op.is_crz)
+            .expect("CRz operation");
+
+        let error = engine
+            .resolve_rotation_angle(hugr, node, op)
+            .expect_err("dynamic angle has no runtime input value");
+        let message = error.to_string();
+        assert!(message.contains("CRz at"), "error was: {message}");
+        assert!(!message.contains("RZZ at"), "error was: {message}");
     }
 
     /// Build the RNG chain from tket-qsystem's own builder test and drive
@@ -3826,6 +3845,54 @@ mod tests {
                 (rz_cmd.params[0] - expected_radians).abs() < 1e-10,
                 "RZ command should have angle {expected_radians}, got {}",
                 rz_cmd.params[0]
+            );
+        }
+    }
+
+    #[test]
+    fn test_named_phase_sensitive_gate_command_generation() {
+        let mut dag = DagCircuit::new();
+        let q0 = QubitId::from(0);
+        dag.add_gate(Gate::with_angles(GateType::SZ, vec![], vec![q0]));
+        dag.add_gate(Gate::with_angles(GateType::SZdg, vec![], vec![q0]));
+        dag.add_gate(Gate::with_angles(GateType::T, vec![], vec![q0]));
+        dag.add_gate(Gate::with_angles(GateType::Tdg, vec![], vec![q0]));
+        dag.add_gate(Gate::with_angles(GateType::SX, vec![], vec![q0]));
+        dag.add_gate(Gate::with_angles(GateType::SXdg, vec![], vec![q0]));
+
+        let mut engine = engine_from_dag(&dag);
+        let msg = engine
+            .generate_commands()
+            .expect("Failed to generate commands");
+        let ops = msg.quantum_ops().expect("Failed to parse quantum ops");
+        let gates: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op.gate_type {
+                GateType::SZ
+                | GateType::SZdg
+                | GateType::T
+                | GateType::Tdg
+                | GateType::SX
+                | GateType::SXdg
+                | GateType::RX
+                | GateType::RZ => Some(op.gate_type),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(gates.len(), 6);
+        for expected in [
+            GateType::SZ,
+            GateType::SZdg,
+            GateType::T,
+            GateType::Tdg,
+            GateType::SX,
+            GateType::SXdg,
+        ] {
+            assert_eq!(
+                gates.iter().filter(|&&gate| gate == expected).count(),
+                1,
+                "expected one {expected} command, got {gates:?}"
             );
         }
     }

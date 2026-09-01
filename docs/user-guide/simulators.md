@@ -247,6 +247,10 @@ full and computational-subspace measurements, preparation and reset, and Kraus
 channels. The state-vector backend samples channel trajectories, while the
 density-matrix backend evolves mixed states exactly.
 
+State-vector `reset_site` samples a trajectory branch and therefore consumes
+randomness. Density-matrix `reset_site` applies the exact reset channel without
+sampling.
+
 Both backends support joint basis measurements, coarse-grained projective
 partitions, and generalized measurement instruments expressed as outcome-grouped
 Kraus operators. Trajectory samples expose branch probabilities, while exact

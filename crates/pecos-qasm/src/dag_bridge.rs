@@ -325,19 +325,6 @@ fn resolve_gate(
                 ));
             }
         }
-        "crz" => {
-            if parameters.len() == 1 && qubits.len() == 2 {
-                Gate::with_angles(
-                    GateType::CRZ,
-                    vec![Angle64::from_radians(parameters[0])],
-                    qubits.to_vec(),
-                )
-            } else {
-                return Err(QasmBridgeError::ParameterError(
-                    "CRZ gate requires 1 parameter and 2 qubits".into(),
-                ));
-            }
-        }
         "rxx" => {
             if parameters.len() == 1 && qubits.len() == 2 {
                 Gate::with_angles(
@@ -512,7 +499,7 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
         GateType::RY => "ry",
         GateType::RZ => "rz",
         GateType::U => "u",
-        GateType::R1XY => "r1xy",
+        GateType::RXY1Q => "rxy1q",
         GateType::CX => "cx",
         GateType::CY => "cy",
         GateType::CZ => "cz",
@@ -520,7 +507,6 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
         GateType::SZZ => "szz",
         GateType::SZZdg => "szzdg",
         GateType::SWAP => "swap",
-        GateType::CRZ => "crz",
         GateType::RXX => "rxx",
         GateType::RYY => "ryy",
         GateType::RZZ => "rzz",

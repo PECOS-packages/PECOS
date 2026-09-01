@@ -23,7 +23,10 @@ use super::types::{
     record_offset_to_absolute_index, validate_exclusive_probabilities, validate_idle_probabilities,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
-use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Direction, Pauli, apply_gate};
+use crate::fault_tolerance::propagator::{
+    DagFaultInfluenceMap, Direction, Pauli, apply_gate_unchecked,
+    is_supported_noop_or_metadata_gate, is_supported_prep_gate,
+};
 use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
 use pecos_simulators::{
@@ -78,7 +81,7 @@ struct ParsedObservable {
 ///
 /// // Build DEM from circuit + noise (reads detectors from circuit metadata)
 /// let dag = DagCircuit::new();
-/// let dem = DemBuilder::from_circuit(&dag, 0.001, 0.01, 0.001, 0.001);
+/// let dem = DemBuilder::from_circuit(&dag, 0.001, 0.01, 0.001, 0.001).unwrap();
 /// assert_eq!(dem.num_detectors(), 0);
 /// ```
 ///
@@ -89,7 +92,7 @@ struct ParsedObservable {
 /// use pecos_quantum::TickCircuit;
 ///
 /// let tc = TickCircuit::new();
-/// let dem = DemBuilder::from_tick_circuit(&tc, 0.001, 0.01, 0.001, 0.001);
+/// let dem = DemBuilder::from_tick_circuit(&tc, 0.001, 0.01, 0.001, 0.001).unwrap();
 /// assert_eq!(dem.num_detectors(), 0);
 /// ```
 ///
@@ -105,7 +108,7 @@ struct ParsedObservable {
 /// let dem = DemBuilder::new(&influence_map)
 ///     .with_noise(0.01, 0.01, 0.01, 0.01)
 ///     .with_detectors_json("[]").unwrap()
-///     .build();
+///     .build().unwrap();
 /// ```
 pub struct DemBuilder<'a> {
     /// Reference to the fault influence map.
@@ -170,7 +173,7 @@ impl<'a> DemBuilder<'a> {
     /// use pecos_quantum::DagCircuit;
     ///
     /// let dag = DagCircuit::new();
-    /// let dem = DemBuilder::from_circuit(&dag, 0.001, 0.01, 0.001, 0.001);
+    /// let dem = DemBuilder::from_circuit(&dag, 0.001, 0.01, 0.001, 0.001).unwrap();
     /// assert_eq!(dem.num_detectors(), 0);
     /// ```
     /// Build a `DetectorErrorModel` directly from a `DagCircuit` and noise.
@@ -178,20 +181,17 @@ impl<'a> DemBuilder<'a> {
     /// One-liner for the common case. Reads detector/DEM output definitions
     /// from circuit metadata.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the circuit's detector/observable metadata is malformed (use
-    /// [`Self::try_from_circuit`] to handle that as an error instead).
-    #[must_use]
+    /// Returns an error for malformed metadata or an unsupported gate.
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
         p1: f64,
         p2: f64,
         p_meas: f64,
         p_prep: f64,
-    ) -> DetectorErrorModel {
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
         Self::try_from_circuit(circuit, p1, p2, p_meas, p_prep)
-            .unwrap_or_else(|err| panic!("invalid DEM metadata on circuit: {err}"))
     }
 
     /// Try to build a `DetectorErrorModel` directly from a `DagCircuit` and noise.
@@ -201,7 +201,8 @@ impl<'a> DemBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if detector or observable metadata is malformed.
+    /// Returns an error if detector or observable metadata is malformed or if
+    /// the circuit contains a gate Pauli propagation cannot represent.
     ///
     /// # Panics
     ///
@@ -229,7 +230,8 @@ impl<'a> DemBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if detector or observable metadata is malformed.
+    /// Returns an error if detector or observable metadata is malformed or if
+    /// the circuit contains a gate Pauli propagation cannot represent.
     ///
     /// # Panics
     ///
@@ -250,20 +252,18 @@ impl<'a> DemBuilder<'a> {
     ///
     /// Converts to `DagCircuit` internally.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the circuit's detector/observable metadata is malformed (use
-    /// [`Self::try_from_tick_circuit`] to handle that as an error instead).
-    #[must_use]
+    /// Returns an error for conversion failure, malformed metadata, or an
+    /// unsupported gate.
     pub fn from_tick_circuit(
         circuit: &pecos_quantum::TickCircuit,
         p1: f64,
         p2: f64,
         p_meas: f64,
         p_prep: f64,
-    ) -> DetectorErrorModel {
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
         Self::try_from_tick_circuit(circuit, p1, p2, p_meas, p_prep)
-            .unwrap_or_else(|err| panic!("invalid DEM metadata on circuit: {err}"))
     }
 
     /// Try to build a `DetectorErrorModel` from a `TickCircuit` and noise.
@@ -273,9 +273,10 @@ impl<'a> DemBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if detector or observable metadata is malformed, or
-    /// if the `TickCircuit` cannot be converted to a `DagCircuit` (two
-    /// measurements sharing a `MeasId`).
+    /// Returns an error if detector or observable metadata is malformed, the
+    /// circuit contains a gate Pauli propagation cannot represent, or the
+    /// `TickCircuit` cannot be converted to a `DagCircuit` (two measurements
+    /// sharing a `MeasId`).
     ///
     /// # Panics
     ///
@@ -292,6 +293,11 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
+        if let Some(error) =
+            crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
+        {
+            return Err(DemBuilderError::UnsupportedGate(error));
+        }
         let dag = pecos_quantum::DagCircuit::try_from(circuit)
             .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
         build_dem_from_circuit(&dag, NoiseConfig::new(p1, p2, p_meas, p_prep))
@@ -305,9 +311,10 @@ impl<'a> DemBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if detector or observable metadata is malformed, or
-    /// if the `TickCircuit` cannot be converted to a `DagCircuit` (two
-    /// measurements sharing a `MeasId`).
+    /// Returns an error if detector or observable metadata is malformed, the
+    /// circuit contains a gate Pauli propagation cannot represent, or the
+    /// `TickCircuit` cannot be converted to a `DagCircuit` (two measurements
+    /// sharing a `MeasId`).
     ///
     /// # Panics
     ///
@@ -321,6 +328,11 @@ impl<'a> DemBuilder<'a> {
         circuit: &pecos_quantum::TickCircuit,
         noise: NoiseConfig,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
+        if let Some(error) =
+            crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
+        {
+            return Err(DemBuilderError::UnsupportedGate(error));
+        }
         let dag = pecos_quantum::DagCircuit::try_from(circuit)
             .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
         build_dem_from_circuit(&dag, noise)
@@ -816,12 +828,27 @@ impl<'a> DemBuilder<'a> {
     /// [`DemBuilderError::ConfigurationError`] for an invalid noise input or a
     /// non-positive signature-channel character.
     pub fn try_build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
+        self.validate_supported_gates()?;
         self.validate_measurement_count()?;
         self.validate_metadata_refs()?;
         self.validate_replacement_branch_approximation()?;
         self.validate_measurement_crosstalk_dem_mode()?;
         self.validate_idle_noise()?;
         self.build_inner()
+    }
+
+    fn validate_supported_gates(&self) -> Result<(), DemBuilderError> {
+        if let Some(error) = self.influence_map.unsupported_gate() {
+            return Err(DemBuilderError::UnsupportedGate(error.clone()));
+        }
+        if let Some(context) = self.exact_branch_context
+            && let Some(error) =
+                crate::fault_tolerance::propagator::DagFaultAnalyzer::new(context.circuit)
+                    .first_unsupported_gate()
+        {
+            return Err(DemBuilderError::UnsupportedGate(error));
+        }
+        Ok(())
     }
 
     /// Builds the Detector Error Model with source tracking.
@@ -833,21 +860,17 @@ impl<'a> DemBuilder<'a> {
     ///
     /// This does **not** validate metadata refs; callers ingesting
     /// circuit-derived metadata must use [`Self::try_build`] instead.
-    /// # Panics
     ///
-    /// Panics if the configured replacement-branch approximation is invalid,
-    /// or if a noise input or signature channel is invalid. Use
-    /// [`Self::try_build`] to receive those failures as errors.
-    #[must_use]
-    pub fn build(&self) -> DetectorErrorModel {
-        self.validate_replacement_branch_approximation()
-            .expect("invalid DEM replacement branch approximation");
-        self.validate_measurement_crosstalk_dem_mode()
-            .expect("invalid DEM measurement crosstalk configuration");
-        self.validate_idle_noise()
-            .expect("invalid DEM idle-noise configuration");
+    /// # Errors
+    ///
+    /// Returns an error for an unsupported circuit gate, invalid noise or
+    /// replacement-branch configuration, or failed signature conversion.
+    pub fn build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
+        self.validate_supported_gates()?;
+        self.validate_replacement_branch_approximation()?;
+        self.validate_measurement_crosstalk_dem_mode()?;
+        self.validate_idle_noise()?;
         self.build_inner()
-            .expect("invalid DEM signature conversion")
     }
 
     fn build_inner(&self) -> Result<DetectorErrorModel, DemBuilderError> {
@@ -1198,7 +1221,7 @@ impl<'a> DemBuilder<'a> {
             })?;
         for &node in topo_order[payload_pos + 1..].iter().rev() {
             if let Some(gate) = context.circuit.gate(node) {
-                apply_gate(&mut prop, gate, Direction::Backward);
+                let _outcome = apply_gate_unchecked(&mut prop, gate, Direction::Backward);
             }
         }
 
@@ -1273,25 +1296,16 @@ impl<'a> DemBuilder<'a> {
                     sim.pz(qubit);
                 }
             }
-            GateType::PX => {
+            gate_type if is_supported_prep_gate(gate_type) => {
                 require(1)?;
                 for &qubit in qubits {
                     sim.pz(qubit);
-                    sim.h(&[qubit]);
+                    if gate_type == GateType::PX {
+                        sim.h(&[qubit]);
+                    }
                 }
             }
-            GateType::PZ | GateType::QAlloc => {
-                require(1)?;
-                for &qubit in qubits {
-                    sim.pz(qubit);
-                }
-            }
-            GateType::I
-            | GateType::Idle
-            | GateType::QFree
-            | GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload
-            | GateType::TrackedPauliMeta => {}
+            gate_type if is_supported_noop_or_metadata_gate(gate_type) => {}
             _ => {
                 return Err(DemBuilderError::ConfigurationError(format!(
                     "measurement crosstalk exact deterministic replay does not support gate {gate_type:?} before payload node {node}"
@@ -1467,8 +1481,10 @@ impl<'a> DemBuilder<'a> {
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
-                GateType::PX | GateType::PZ | GateType::QAlloc
-                    if !loc.before && self.init_rate_for_loc(loc) > 0.0 =>
+                gate_type
+                    if is_supported_prep_gate(gate_type)
+                        && !loc.before
+                        && self.init_rate_for_loc(loc) > 0.0 =>
                 {
                     self.process_prep_fault_source_tracked(
                         loc_idx,
@@ -1545,7 +1561,7 @@ impl<'a> DemBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY
+                | GateType::RXY1Q
                     if !loc.before =>
                 {
                     let rates = self.rates_1q_for_loc(loc);
@@ -3451,6 +3467,9 @@ fn build_dem_from_circuit(
     use pecos_num::graph::Attribute;
 
     let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
+    if let Some(error) = influence_map.unsupported_gate() {
+        return Err(DemBuilderError::UnsupportedGate(error.clone()));
+    }
     let annotated_observable_records =
         observable_records_from_annotations(circuit, &influence_map)?;
     let annotation_map = InfluenceBuilder::new(circuit)
@@ -3798,6 +3817,8 @@ pub fn resolve_result_tags(
 /// Errors that can occur during DEM building.
 #[derive(Debug, Clone)]
 pub enum DemBuilderError {
+    /// Circuit gate whose action Pauli propagation cannot represent.
+    UnsupportedGate(crate::fault_tolerance::propagator::UnsupportedGateError),
     /// JSON parsing error.
     ParseError(String),
     /// Invalid DEM builder configuration.
@@ -3807,6 +3828,7 @@ pub enum DemBuilderError {
 impl std::fmt::Display for DemBuilderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedGate(error) => write!(f, "DEM builder {error}"),
             Self::ParseError(msg) => write!(f, "DEM builder parse error: {msg}"),
             Self::ConfigurationError(msg) => write!(f, "DEM builder configuration error: {msg}"),
         }
@@ -3895,7 +3917,7 @@ mod tests {
         circuit.h(&[0]);
         circuit.tracked_pauli_labeled("x_check", X(0));
 
-        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.0, 0.0);
+        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.0, 0.0).unwrap();
 
         assert_eq!(dem.num_dem_outputs(), 0);
         assert_eq!(dem.num_tracked_paulis(), 1);
@@ -3935,7 +3957,7 @@ mod tests {
             Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
         );
 
-        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.02, 0.03);
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.02, 0.03).unwrap();
 
         assert_eq!(dem.num_dem_outputs(), 1);
         assert_eq!(dem.num_tracked_paulis(), 1);
@@ -3989,7 +4011,7 @@ mod tests {
             .unwrap();
         let round_tripped =
             TickCircuit::from(&DagCircuit::try_from(&circuit).expect("valid circuit"));
-        let dem = DemBuilder::from_tick_circuit(&round_tripped, 0.03, 0.0, 0.02, 0.0);
+        let dem = DemBuilder::from_tick_circuit(&round_tripped, 0.03, 0.0, 0.02, 0.0).unwrap();
 
         assert_eq!(dem.num_detectors(), 1);
         assert_eq!(dem.num_observables(), 1);
@@ -4042,7 +4064,7 @@ mod tests {
             .observable_labeled("obs0", &[meas[0]])
             .expect("refs are from this circuit");
 
-        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 1.0, 0.0);
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 1.0, 0.0).unwrap();
 
         assert_eq!(dem.num_dem_outputs(), 1);
         assert_eq!(dem.num_observables(), 1);
@@ -4092,7 +4114,7 @@ mod tests {
             );
             circuit.set_meta("observables", Attribute::String("[]".to_string()));
 
-            let dem = DemBuilder::from_tick_circuit(&circuit, 0.03, 0.0, 0.0, 0.0);
+            let dem = DemBuilder::from_tick_circuit(&circuit, 0.03, 0.0, 0.0, 0.0).unwrap();
             let contributions = dem.contributions_for_effect(&[0], &[]);
 
             assert!(
@@ -4309,7 +4331,7 @@ mod tests {
             assert_eq!(locations.len(), 1, "{gate_type:?}");
             assert_eq!(locations[0].faults.len(), 3, "{gate_type:?}");
 
-            let dem = DemBuilder::from_tick_circuit(&circuit, 0.03, 0.0, 0.0, 0.0);
+            let dem = DemBuilder::from_tick_circuit(&circuit, 0.03, 0.0, 0.0, 0.0).unwrap();
             assert!(
                 dem_has_source(&dem, gate_type),
                 "DEM should track a source contribution for {gate_type:?}"
@@ -4357,7 +4379,7 @@ mod tests {
             assert_eq!(locations.len(), 1, "{gate_type:?}");
             assert_eq!(locations[0].faults.len(), 15, "{gate_type:?}");
 
-            let dem = DemBuilder::from_tick_circuit(&circuit, 0.0, 0.15, 0.0, 0.0);
+            let dem = DemBuilder::from_tick_circuit(&circuit, 0.0, 0.15, 0.0, 0.0).unwrap();
             assert!(
                 dem_has_source(&dem, gate_type),
                 "DEM should track a source contribution for {gate_type:?}"
@@ -4414,7 +4436,8 @@ mod tests {
         let dem = DemBuilder::new(&influence_map)
             .with_observables_json(r#"[{"id": 0, "records": [-1, -3]}]"#)
             .unwrap()
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(dem.num_dem_outputs(), 1);
         assert_eq!(dem.num_observables(), 1);
@@ -4431,7 +4454,8 @@ mod tests {
             .with_observables_json(r#"[{"id": 0, "meas_ids": [1]}]"#)
             .unwrap()
             .with_num_measurements(3)
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(dem.detectors[0].records.as_slice(), &[-3, -1]);
         assert_eq!(dem.dem_outputs()[0].records.as_slice(), &[-2]);
@@ -4466,7 +4490,8 @@ mod tests {
         let _ = DemBuilder::new(&influence_map)
             .with_observables_json(r#"[{"id": 0, "records": [-1, -3]}]"#)
             .unwrap()
-            .build();
+            .build()
+            .unwrap();
 
         // Empty influence map keeps the escape hatch: a declared count with
         // no real measurements is allowed (opaque pass-through coordinates).
@@ -5514,7 +5539,7 @@ mod tests {
         );
         circuit.set_attr("detectors", Attribute::String("[]".to_string()));
 
-        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.5, 0.0);
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.5, 0.0).unwrap();
         assert_eq!(dem.num_observables(), 1);
         assert_eq!(
             dem.observables().next().unwrap().label.as_deref(),

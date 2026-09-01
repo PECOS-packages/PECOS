@@ -164,9 +164,9 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
                             &payload[0..size_of::<GateHeader>()],
                         );
 
-                        let gate_type = match std::panic::catch_unwind(|| {
-                            pecos_core::gate_type::GateType::from(gate_header.gate_type)
-                        }) {
+                        let gate_type = match pecos_core::gate_type::GateType::try_from(
+                            gate_header.gate_type,
+                        ) {
                             Ok(gt) => format!("{gt}"),
                             Err(_) => format!("Unknown({})", gate_header.gate_type),
                         };
@@ -228,7 +228,7 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
                                         writeln!(output, "    Theta: {theta}").unwrap();
                                     }
                                 36
-                                    // R1XY
+                                    // RXY1Q
                                     if params_offset + 2 * size_of::<f64>() <= payload.len() => {
                                         let phi = f64::from_le_bytes([
                                             payload[params_offset],

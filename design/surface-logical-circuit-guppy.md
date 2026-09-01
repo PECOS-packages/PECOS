@@ -4,9 +4,9 @@ Status: proposed.
 
 ## Summary
 
-PECOS should support constructing programs from typed resources and unresolved
-instruction applications, then selecting implementations in an explicit
-lowering environment. Logical QEC is the first motivating dialect: users create
+PECOS should support constructing programs from typed graph values/resources
+and unresolved instruction applications, then selecting implementations in an
+explicit lowering environment. Logical QEC is the first motivating dialect: users create
 abstract surface-code patches and logical operations, then lower the program to
 Guppy, `TickCircuit`, `DagCircuit`, Stim, and detector error models.
 
@@ -17,6 +17,26 @@ ports, parameters, effects, and domain semantic interfaces; `InstrImpl` objects
 describe selectable realizations. QEC adds code-block types, logical
 transformations, Pauli-frame transfer, protocol planning, and surface-specific
 implementation support without changing the generic graph container.
+
+Here a “resource” is a value flowing through instruction ports, not necessarily
+a hardware allocation. Every value has a registered type, although the generic
+graph may treat that type as opaque. It checks port compatibility and generic
+traits such as linear versus copyable use; the owning dialect interprets what a
+type means. A QEC patch value is linear, a measurement bit is usually copyable,
+and a Pauli-byproduct token may be linear.
+
+The three containers have distinct scopes:
+
+- `InstrGraph` is one typed body containing calls, value edges, and structured
+  control regions;
+- `InstrModule` is a reusable parameterized definition with a signature and an
+  `InstrGraph` body;
+- `InstrProgram` is a compilation/linkage unit that owns or imports modules,
+  symbol identities, entry points, and exports.
+
+Modules are independently serializable, hashable/versioned artifacts and can be
+built and linked across Rust or Python source files. A dedicated textual
+language and its filesystem/package syntax are not required initially.
 
 A surface-code convenience API should live under
 `pecos.qec.surface` and use `SurfacePatch` as its only source of surface-code
@@ -41,14 +61,15 @@ compiler.
 The core direction is:
 
 ```text
-Typed resources + opaque instruction applications
+Typed graph values/resources + opaque instruction applications
                          |
                          v
       InstrProgram / InstrModule / InstrGraph
         (compact high-level structure)
                          |
                          v
-   parameter/type/hierarchy/dialect elaboration
+   structural elaboration: bind parameters,
+   resolve symbols, specialize modules, instantiate types
                          |
                          v
              ElaboratedInstrProgram
@@ -92,6 +113,14 @@ Typed resources + opaque instruction applications
               Guppy -> HUGR -> InstrModule
                 (supported structural subset or opaque external module)
 ```
+
+Elaboration in this diagram is structural/template processing. It resolves
+imports and symbols, canonicalizes supplied parameters, specializes module
+instances, unifies type variables, and computes concrete output types. It does
+not choose a QEC protocol implementation. A profile may elaborate into explicit
+resolution preferences, but the following `InstrSet` resolution stage is what
+selects SZZ versus CX syndrome extraction, transversal versus surgery, or any
+other `InstrImpl`.
 
 Purpose-specific functions such as `make_surface_code` remain convenient
 shortcuts, but should eventually be implemented by constructing this IR rather
